@@ -20,12 +20,14 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/saas-portal/ apps/saas-portal/
 
-# Next.js needs public env vars at build time
+# Next.js needs public env vars at build time.
+# SAAS_API_URL is the server-side rewrite target (Docker DNS), not the browser URL.
 ARG NEXT_PUBLIC_API_URL=http://localhost:3002
 ARG NEXT_PUBLIC_VOXLY_DOMAIN=getvoxly.ru
+ARG SAAS_API_URL=http://saas-api:3002
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_VOXLY_DOMAIN=${NEXT_PUBLIC_VOXLY_DOMAIN}
-ENV SAAS_API_URL=http://localhost:3002
+ENV SAAS_API_URL=${SAAS_API_URL}
 ENV VOXLY_DOMAIN=${NEXT_PUBLIC_VOXLY_DOMAIN}
 
 RUN pnpm --filter @voxly/saas-portal... build

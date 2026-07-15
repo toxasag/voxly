@@ -174,7 +174,19 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
-        tenantMembers: { include: { tenant: true } },
+        tenantMembers: {
+          include: {
+            tenant: {
+              include: {
+                subscriptions: { orderBy: { endsAt: 'desc' } },
+                addons: true,
+                aiWallet: true,
+                referralCode: true,
+                users: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -182,15 +194,50 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(404).send({ error: 'User not found' });
     }
 
+    const primary = user.tenantMembers[0];
+    const tenant = primary?.tenant;
+    const activeSub =
+      tenant?.subscriptions.find((s) => s.status === 'active') ?? tenant?.subscriptions[0] ?? null;
+
+    // Flat shape expected by the portal dashboard
     return reply.send({
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        telegramUserId: user.telegramUserId?.toString(),
-      },
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      telegramUserId: user.telegramUserId?.toString(),
+      tenant: tenant
+        ? {
+            id: tenant.id,
+            slug: tenant.slug,
+            name: tenant.slug,
+            status: tenant.status,
+            portalHost: tenant.portalHost,
+            crmSubdomain: tenant.crmSubdomain,
+            membershipRole: primary.role,
+            subscription: activeSub
+              ? {
+                  status: activeSub.status,
+                  plan: activeSub.productCode,
+                  expiresAt: activeSub.endsAt,
+                  seatsUsed: tenant.users.length,
+                  seatsIncluded: activeSub.seatsIncluded + activeSub.extraSeats,
+                }
+              : null,
+            addons: tenant.addons.map((a) => ({
+              id: a.id,
+              type: a.type,
+              status: a.status,
+            })),
+            aiWallet: {
+              balanceRub: Number(tenant.aiWallet?.balanceRub ?? 0),
+            },
+            referralCode: tenant.referralCode
+              ? { code: tenant.referralCode.code }
+              : null,
+          }
+        : null,
       tenants: user.tenantMembers.map((m) => ({
         id: m.tenant.id,
         slug: m.tenant.slug,

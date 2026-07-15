@@ -125,6 +125,13 @@ docs/ARCHITECTURE.md     Полная архитектурная докумен�
 - Установлен Context7 MCP (`.cursor/mcp.json`) — актуальные доки библиотек.
 - Создан этот файл `steps.md` + Cursor-правило для авто-загрузки состояния.
 
+### День 2 (позже) — локальный запуск + фикс регистрации
+- Подняты Colima + Docker: postgres-control, redis, saas-api (:3002), saas-portal (:3001).
+- Исправлен прокси портала: rewrite `/api/*` → `saas-api:3002/api/*` (раньше бил в `localhost` и без префикса `/api`).
+- Форма регистрации шлёт `companySlug` (не `workspaceName`); проверка пароля ≥8.
+- Регистрация через UI/прокси проверена: HTTP 201.
+- Фикс дашборда: `/api/auth/me` отдаёт flat `user.tenant` (subscription/addons/aiWallet/referralCode); убран невалидный HTML `pattern` в register.
+
 ---
 
 ## 4. Текущее состояние
@@ -167,8 +174,8 @@ docs/ARCHITECTURE.md     Полная архитектурная докумен�
 - `emailWorker` в `saas-api` — сейчас logging-stub, нужна реальная SMTP-отправка (nodemailer, настройки в .env.example).
 - `notifyHumanOperator` в AI-воркерах — не реализован (уведомление оператору при handoff).
 - `generateSecret` в `manager-bot-service` — использует `Math.random`, можно заменить на `@voxly/crypto` `generateSecret()`.
-- **Prisma migrations** — `prisma generate` работает, но миграции не созданы (нужны перед первым деплоем: `pnpm db:migrate`).
-- **Docker runtime-верификация** — Dockerfile'ы корректны по паттерну, но не собирались/не запускались (нет Docker-демона в среде разработки).
+- **Prisma migrations** — `prisma generate` работает, но миграции не созданы (нужны перед первым деплоем: `pnpm db:migrate`). Схема локально применена (`db push`), таблицы есть.
+- **Docker runtime** — локально подняты postgres/redis/saas-api/saas-portal (Colima); Twenty + воркеры ещё не запускались.
 
 ### Перед продакшеном
 - Заполнить `.env` реальными кредами (Robokassa, Telegram Manager Bot, OpenAI, SMTP, ENCRYPTION_KEY через `openssl rand -hex 32`).

@@ -13,11 +13,17 @@ interface UserData {
     slug: string;
     name: string;
     status: string;
-    subscription: any;
-    addons: any[];
-    aiWallet: any;
+    subscription: {
+      status: string;
+      plan: string;
+      expiresAt: string | null;
+      seatsUsed: number;
+      seatsIncluded: number;
+    } | null;
+    addons: { id: string; type: string; status: string }[];
+    aiWallet: { balanceRub: number } | null;
     referralCode: { code: string } | null;
-  };
+  } | null;
 }
 
 export default function DashboardPage() {
@@ -53,14 +59,25 @@ export default function DashboardPage() {
 
   if (!user) return null;
 
-  const sub = user.tenant.subscription;
+  if (!user.tenant) {
+    return (
+      <main style={{ maxWidth: 640, margin: '80px auto', padding: 24, textAlign: 'center' }}>
+        <h1 style={{ fontSize: 24, marginBottom: 12 }}>Нет воркспейса</h1>
+        <p style={{ color: '#a1a1aa', marginBottom: 24 }}>Аккаунт есть, но tenant ещё не привязан.</p>
+        <a href="/register" style={primaryBtn}>Создать воркспейс</a>
+      </main>
+    );
+  }
+
+  const tenant = user.tenant;
+  const sub = tenant.subscription;
   const isSuperadmin = user.role === 'superadmin';
 
   return (
     <main style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 24px' }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 }}>
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>{user.tenant.name}</h1>
+          <h1 style={{ fontSize: 28, fontWeight: 700 }}>{tenant.name || tenant.slug}</h1>
           <p style={{ color: '#a1a1aa' }}>{user.email}</p>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
@@ -82,10 +99,10 @@ export default function DashboardPage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 32 }}>
         <StatCard label="Статус подписки" value={sub?.status === 'active' ? '✅ Активна' : '❌ Неактивна'} />
         <StatCard label="Тариф" value={sub?.plan || '—'} />
-        <StatCard label="AI-баланс" value={`${user.tenant.aiWallet?.balanceRub || 0} ₽`} />
+        <StatCard label="AI-баланс" value={`${tenant.aiWallet?.balanceRub || 0} ₽`} />
         <StatCard
           label="Реферальный код"
-          value={user.tenant.referralCode?.code || '—'}
+          value={tenant.referralCode?.code || '—'}
         />
       </div>
 
@@ -109,10 +126,10 @@ export default function DashboardPage() {
 
         {/* Add-ons */}
         <Section title="Дополнения">
-          {user.tenant.addons?.length === 0 ? (
+          {!tenant.addons?.length ? (
             <p style={muted}>Нет активных дополнений</p>
           ) : (
-            user.tenant.addons?.map((a) => (
+            tenant.addons.map((a) => (
               <div key={a.id} style={{ padding: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 8, marginBottom: 8 }}>
                 <strong>{a.type}</strong>
                 <p style={muted}>Статус: {a.status}</p>
@@ -124,29 +141,31 @@ export default function DashboardPage() {
         {/* AI Wallet */}
         <Section title="AI-баланс">
           <p style={{ fontSize: 32, fontWeight: 700, marginBottom: 16 }}>
-            {user.tenant.aiWallet?.balanceRub || 0} ₽
+            {tenant.aiWallet?.balanceRub || 0} ₽
           </p>
           <button style={primaryBtn}>Пополнить</button>
         </Section>
 
         {/* Referral */}
         <Section title="Реферальная программа">
-          <p style={muted}>Ваш код: <strong style={{ color: 'white' }}>{user.tenant.referralCode?.code}</strong></p>
-          <p style={muted}>
-            Ссылка:{' '}
-            <a
-              href={`https://getvoxly.ru/r/${user.tenant.referralCode?.code}`}
-              style={{ color: '#6366f1' }}
-            >
-              getvoxly.ru/r/{user.tenant.referralCode?.code}
-            </a>
-          </p>
+          <p style={muted}>Ваш код: <strong style={{ color: 'white' }}>{tenant.referralCode?.code || '—'}</strong></p>
+          {tenant.referralCode?.code && (
+            <p style={muted}>
+              Ссылка:{' '}
+              <a
+                href={`https://getvoxly.ru/r/${tenant.referralCode.code}`}
+                style={{ color: '#6366f1' }}
+              >
+                getvoxly.ru/r/{tenant.referralCode.code}
+              </a>
+            </p>
+          )}
         </Section>
 
         {/* CRM Access */}
         <Section title="CRM">
           <a
-            href={`https://${user.tenant.slug}.app.getvoxly.ru`}
+            href={`https://${tenant.slug}-crm.getvoxly.ru`}
             style={primaryBtn}
           >
             Открыть Twenty CRM →

@@ -18,6 +18,24 @@ export default function RegisterPage() {
     setLoading(true);
     setError('');
 
+    const companySlug = workspaceName
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    if (!companySlug || companySlug.length < 2) {
+      setError('Название воркспейса: латиница, цифры или дефис (минимум 2 символа)');
+      setLoading(false);
+      return;
+    }
+
+    if (password.length < 8) {
+      setError('Пароль должен быть не короче 8 символов');
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -26,15 +44,27 @@ export default function RegisterPage() {
           email,
           password,
           firstName,
-          workspaceName,
+          companySlug,
           referralCode: refCode || undefined,
         }),
       });
 
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(text || 'Registration failed');
+      }
 
       if (!res.ok) {
-        throw new Error(data.error || 'Registration failed');
+        const errMsg =
+          typeof data?.error === 'string'
+            ? data.error
+            : data?.error
+              ? JSON.stringify(data.error)
+              : 'Registration failed';
+        throw new Error(errMsg);
       }
 
       localStorage.setItem('voxly_token', data.token);
@@ -85,10 +115,13 @@ export default function RegisterPage() {
           />
           <input
             type="text"
-            placeholder="Название воркспейса"
+            placeholder="Slug воркспейса (например: my-company)"
             value={workspaceName}
             onChange={(e) => setWorkspaceName(e.target.value)}
             required
+            minLength={2}
+            maxLength={50}
+            title="Только латиница, цифры и дефис"
             style={inputStyle}
           />
           <input

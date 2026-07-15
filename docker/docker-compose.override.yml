@@ -13,9 +13,11 @@ services:
       args:
         NEXT_PUBLIC_API_URL: http://localhost:3002
         NEXT_PUBLIC_VOXLY_DOMAIN: localhost
+        SAAS_API_URL: http://saas-api:3002
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:3002
       NEXT_PUBLIC_VOXLY_DOMAIN: localhost
+      SAAS_API_URL: http://saas-api:3002
     ports:
       - "3001:3000"
 

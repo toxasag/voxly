@@ -201,6 +201,7 @@ services:
       NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
       NEXT_PUBLIC_VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      SAAS_API_URL: http://saas-api:3002
     labels:
       - "traefik.enable=true"
       # Landing on getvoxly.ru (apex)
