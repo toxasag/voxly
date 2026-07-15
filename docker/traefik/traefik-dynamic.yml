@@ -1,0 +1,39 @@
+# Traefik dynamic configuration
+# Used for CORS, rate limiting, and middleware shared across routers
+
+http:
+  middlewares:
+    # Redirect HTTP to HTTPS
+    redirect-to-https:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+    # CORS for API
+    api-cors:
+      headers:
+        accessControlAllowOriginList:
+          - "https://getvoxly.ru"
+          - "https://*.getvoxly.ru"
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        accessControlAllowHeaders: ["Authorization", "Content-Type", "X-Tenant-Slug"]
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 86400
+
+    # Rate limiting for auth endpoints
+    auth-rate-limit:
+      rateLimit:
+        average: 10
+        period: 1m
+        burst: 20
+
+    # Security headers
+    security-headers:
+      headers:
+        frameDeny: true
+        sslRedirect: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true

@@ -1,0 +1,328 @@
+# ============================================================
+# Voxly — Docker Compose
+# Twenty CRM (multi-workspace) + Control Plane + Bot Workers
+# ============================================================
+
+services:
+  # --- Reverse Proxy (wildcard SSL for *.getvoxly.ru) ---
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # Entry points
+      - "--entryPoints.web.address=:80"
+      - "--entryPoints.websecure.address=:443"
+      # HTTP -> HTTPS redirect
+      - "--entryPoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entryPoints.web.http.redirections.entryPoint.scheme=https"
+      # Let's Encrypt resolver (wildcard via DNS challenge)
+      # Uncomment and configure for production
+      # - "--certificatesresolvers.le.acme.dnschallenge=true"
+      # - "--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare"
+      # - "--certificatesresolvers.le.acme.email=admin@getvoxly.ru"
+      # - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Dashboard (restrict in prod)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik-dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks:
+      - voxly-net
+
+  # --- PostgreSQL for Control Plane ---
+  postgres-control:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: voxly
+      POSTGRES_PASSWORD: ${POSTGRES_CONTROL_PASSWORD:-voxly_pass}
+      POSTGRES_DB: voxly_control
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-control-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voxly -d voxly_control"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxly-net
+
+  # --- PostgreSQL for Twenty CRM ---
+  postgres-twenty:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: twenty
+      POSTGRES_PASSWORD: ${POSTGRES_TWENTY_PASSWORD:-twenty_pass}
+      POSTGRES_DB: twenty
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-twenty-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U twenty -d twenty"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxly-net
+
+  # --- Redis (BullMQ queues, sessions, caching) ---
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxly-net
+
+  # --- Twenty CRM Server (multi-workspace) ---
+  twenty-server:
+    image: twentycrm/twenty:v2.21.0
+    restart: unless-stopped
+    depends_on:
+      postgres-twenty:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Multi-workspace mode (required for SaaS)
+      IS_MULTIWORKSPACE_ENABLED: "true"
+      DEFAULT_SUBDOMAIN: "app"
+      # Database
+      PG_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
+      # Redis
+      REDIS_URL: redis://redis:6379
+      # Auth
+      AUTH_JWT_SECRET: ${TWENTY_JWT_SECRET:-change-twenty-jwt-secret}
+      # API
+      API_BASE_PATH: "/rest"
+      # Email (SMTP for invites)
+      EMAIL_SYSTEM_ADDRESS: noreply@getvoxly.ru
+      MAILER_SMTP_HOST: ${SMTP_HOST}
+      MAILER_SMTP_PORT: ${SMTP_PORT}
+      MAILER_SMTP_USER: ${SMTP_USER}
+      MAILER_SMTP_PASSWORD: ${SMTP_PASS}
+      MAILER_SMTP_SECURE: "false"
+      # Frontend URL (used for email links)
+      FRONT_BASE_URL: https://app.getvoxly.ru
+      # Disable signup if managed by control plane
+      IS_SIGN_UP_DISABLED: "false"
+    labels:
+      - "traefik.enable=true"
+      # Dashboard / API on app.getvoxly.ru (default subdomain)
+      - "traefik.http.routers.twenty-app.rule=Host(`app.getvoxly.ru`)"
+      - "traefik.http.routers.twenty-app.entrypoints=websecure"
+      # - "traefik.http.routers.twenty-app.tls.certresolver=le"
+      - "traefik.http.routers.twenty-app.service=twenty-server"
+      - "traefik.http.services.twenty-server.loadbalancer.server.port=3000"
+      # Wildcard for workspace subdomains: *.getvoxly.ru (but NOT the portal slugs)
+      # Traefik will route via dynamic config priority
+      - "traefik.http.routers.twenty-wildcard.rule=HostRegexp(`{subdomain:[a-z0-9-]+}-crm.getvoxly.ru`)"
+      - "traefik.http.routers.twenty-wildcard.entrypoints=websecure"
+      # - "traefik.http.routers.twenty-wildcard.tls.certresolver=le"
+      - "traefik.http.routers.twenty-wildcard.service=twenty-server"
+    networks:
+      - voxly-net
+
+  # --- Control Plane API (Node.js + Fastify) ---
+  saas-api:
+    build:
+      context: ..
+      dockerfile: apps/saas-api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      TWENTY_API_URL: http://twenty-server:3000/graphql
+      TWENTY_API_KEY: ${TWENTY_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ROBOKASSA_LOGIN: ${ROBOKASSA_LOGIN}
+      ROBOKASSA_PASSWORD1: ${ROBOKASSA_PASSWORD1}
+      ROBOKASSA_PASSWORD2: ${ROBOKASSA_PASSWORD2}
+      ROBOKASSA_IS_TEST: ${ROBOKASSA_IS_TEST:-1}
+      TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
+      AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
+    labels:
+      - "traefik.enable=true"
+      # API on api.getvoxly.ru
+      - "traefik.http.routers.saas-api.rule=Host(`api.getvoxly.ru`)"
+      - "traefik.http.routers.saas-api.entrypoints=websecure"
+      # - "traefik.http.routers.saas-api.tls.certresolver=le"
+      - "traefik.http.routers.saas-api.service=saas-api"
+      - "traefik.http.services.saas-api.loadbalancer.server.port=3002"
+    networks:
+      - voxly-net
+
+  # --- SaaS Portal (Next.js — landing + client portals + admin) ---
+  saas-portal:
+    build:
+      context: ..
+      dockerfile: apps/saas-portal/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
+        NEXT_PUBLIC_VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    restart: unless-stopped
+    depends_on:
+      - saas-api
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
+      NEXT_PUBLIC_VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    labels:
+      - "traefik.enable=true"
+      # Landing on getvoxly.ru (apex)
+      - "traefik.http.routers.portal-landing.rule=Host(`getvoxly.ru`,`www.getvoxly.ru`)"
+      - "traefik.http.routers.portal-landing.entrypoints=websecure"
+      # - "traefik.http.routers.portal-landing.tls.certresolver=le"
+      - "traefik.http.routers.portal-landing.service=saas-portal"
+      # Client portals on {slug}.getvoxly.ru (catch-all, lower priority than twenty-wildcard)
+      - "traefik.http.routers.portal-portals.rule=HostRegexp(`{slug:[a-z0-9-]+}.getvoxly.ru`)"
+      - "traefik.http.routers.portal-portals.entrypoints=websecure"
+      # - "traefik.http.routers.portal-portals.tls.certresolver=le"
+      - "traefik.http.routers.portal-portals.service=saas-portal"
+      # Set priority lower than twenty-wildcard so {slug}-crm wins
+      - "traefik.http.routers.portal-portals.priority=10"
+      - "traefik.http.routers.twenty-wildcard.priority=20"
+      - "traefik.http.services.saas-portal.loadbalancer.server.port=3001"
+    networks:
+      - voxly-net
+
+  # --- Manager Bot Service (Telegram Managed Bots) ---
+  manager-bot-service:
+    build:
+      context: ..
+      dockerfile: apps/manager-bot-service/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyManagerBot}
+      MANAGER_WEBHOOK_URL: https://api.getvoxly.ru/bots/manager/webhook
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      SAAS_API_URL: http://saas-api:3002
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.manager-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/bots/manager`)"
+      - "traefik.http.routers.manager-bot.entrypoints=websecure"
+      - "traefik.http.routers.manager-bot.service=manager-bot-service"
+      - "traefik.http.services.manager-bot-service.loadbalancer.server.port=3003"
+    networks:
+      - voxly-net
+
+  # --- Gift Bot Worker (gift delivery, funnels, broadcasts) ---
+  gift-bot-worker:
+    build:
+      context: ..
+      dockerfile: apps/gift-bot-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TWENTY_API_URL: http://twenty-server:3000/graphql
+      TWENTY_API_KEY: ${TWENTY_API_KEY}
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    networks:
+      - voxly-net
+
+  # --- AI Telegram Worker (AI agent for Telegram) ---
+  ai-telegram-worker:
+    build:
+      context: ..
+      dockerfile: apps/ai-telegram-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      TWENTY_API_URL: http://twenty-server:3000/graphql
+      TWENTY_API_KEY: ${TWENTY_API_KEY}
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    networks:
+      - voxly-net
+
+  # --- AI WhatsApp Worker (AI agent for WhatsApp Cloud API) ---
+  ai-whatsapp-worker:
+    build:
+      context: ..
+      dockerfile: apps/ai-whatsapp-worker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      WHATSAPP_API_VERSION: v20.0
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    networks:
+      - voxly-net
+
+volumes:
+  traefik-letsencrypt:
+  postgres-control-data:
+  postgres-twenty-data:
+  redis-data:
+
+networks:
+  voxly-net:
+    driver: bridge

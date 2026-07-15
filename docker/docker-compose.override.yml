@@ -1,0 +1,40 @@
+# ============================================================
+# Voxly — Local Development Override
+# Auto-merged with docker-compose.yml. Publishes direct ports so the
+# portal/API are reachable on localhost without Traefik/TLS/domains.
+# ============================================================
+services:
+  saas-api:
+    ports:
+      - "3002:3002"
+
+  saas-portal:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3002
+        NEXT_PUBLIC_VOXLY_DOMAIN: localhost
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3002
+      NEXT_PUBLIC_VOXLY_DOMAIN: localhost
+    ports:
+      - "3001:3000"
+
+  manager-bot-service:
+    ports:
+      - "3003:3003"
+
+  gift-bot-worker:
+    ports:
+      - "3004:3004"
+
+  ai-telegram-worker:
+    ports:
+      - "3005:3005"
+
+  ai-whatsapp-worker:
+    ports:
+      - "3006:3006"
+
+  twenty-server:
+    ports:
+      - "3007:3000"

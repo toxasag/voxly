@@ -1,0 +1,23 @@
+---
+description: Project state journal — read steps.md first in every new chat
+alwaysApply: true
+---
+
+This project keeps a living progress journal at `steps.md` in the repo root.
+
+**MANDATORY at the start of every new chat in this project:**
+1. Read `steps.md` FIRST (before exploring the codebase). It contains the project overview, tech stack, phase checklist (done/pending), known TODO stubs, and the development timeline.
+2. Treat `steps.md` section 4 «Текущее состояние» as the source of truth for what is done and what remains. Do not re-derive project state by scanning files unless `steps.md` is clearly stale.
+3. Verify the phase checklist in `steps.md` against reality before starting non-trivial work — if the file says a phase is done but the code disagrees, trust the code and then update `steps.md`.
+
+**After completing significant work (new phase, bugfix, architectural change, new package):**
+1. Update `steps.md`: add a timeline entry under section 3, flip the phase status in section 4, and update section 5 if new TODOs surfaced or old ones closed.
+2. Run `source $HOME/.local/bin/env && graphify . --code-only --update` to refresh the knowledge graph (AST-only, no API cost).
+
+**Memory cascade (do not waste tokens re-scanning):**
+1. `steps.md` — project state & history (read first)
+2. Graphify `graphify-out/` — codebase knowledge graph (query/path/explain before Read/Grep/Glob)
+3. `docs/ARCHITECTURE.md` — full architecture for deep dives
+4. Context7 MCP — up-to-date library docs on demand
+
+This rule applies to YOU and to every subagent you spawn. Include it in every subagent prompt that touches the Voxly project.

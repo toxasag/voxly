@@ -1,0 +1,38 @@
+{
+  "name": "@voxly/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push",
+    "prisma:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "@voxly/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

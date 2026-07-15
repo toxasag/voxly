@@ -1,0 +1,25 @@
+{
+  "name": "Voxly Platform",
+  "description": "Bot subscribers, conversations, chat messages and gift campaign management for Voxly",
+  "version": "0.1.0",
+  "icon": "💬",
+  "category": "communication",
+  "developer": {
+    "name": "Voxly",
+    "email": "support@getvoxly.ru",
+    "url": "https://getvoxly.ru"
+  },
+  "settings": {
+    "voxlyTenantId": {
+      "type": "text",
+      "label": "Voxly Tenant ID",
+      "description": "Your Voxly tenant identifier for syncing data"
+    },
+    "voxlyApiUrl": {
+      "type": "text",
+      "label": "Voxly API URL",
+      "description": "Voxly Control Plane API endpoint",
+      "default": "https://api.getvoxly.ru"
+    }
+  }
+}

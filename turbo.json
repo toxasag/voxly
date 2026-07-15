@@ -1,0 +1,60 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": [".env"],
+  "globalEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "TWENTY_API_URL",
+    "TWENTY_API_KEY",
+    "ROBOKASSA_LOGIN",
+    "ROBOKASSA_PASSWORD1",
+    "ROBOKASSA_PASSWORD2",
+    "JWT_SECRET",
+    "ENCRYPTION_KEY",
+    "TELEGRAM_MANAGER_BOT_TOKEN",
+    "OPENAI_API_KEY",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USER",
+    "SMTP_PASS",
+    "VOXLY_DOMAIN"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "build/**", ".next/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "outputs": []
+    },
+    "test": {
+      "outputs": ["coverage/**"],
+      "dependsOn": ["^build"]
+    },
+    "typecheck": {
+      "outputs": [],
+      "dependsOn": ["^build"]
+    },
+    "prisma:generate": {
+      "outputs": ["node_modules/.prisma/**"],
+      "cache": false
+    },
+    "prisma:migrate": {
+      "cache": false,
+      "persistent": false
+    },
+    "prisma:push": {
+      "cache": false,
+      "persistent": false
+    },
+    "prisma:studio": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

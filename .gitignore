@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Env files (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Docker volumes
+docker/data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Prisma
+packages/db/prisma/migrations/dev.db*
+
+# Twenty app build
+twenty-app/voxly-platform/dist/
+twenty-app/voxly-platform/.twenty/
+
+# Graphify (optional tool)
+graphify-out/
+
+# OS
+Thumbs.db

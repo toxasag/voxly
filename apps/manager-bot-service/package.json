@@ -1,0 +1,24 @@
+{
+  "name": "@voxly/manager-bot-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@voxly/crypto": "workspace:*",
+    "@voxly/db": "workspace:*",
+    "@voxly/shared": "workspace:*",
+    "ioredis": "^5.4.0",
+    "nanoid": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

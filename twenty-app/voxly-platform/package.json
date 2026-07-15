@@ -1,0 +1,6 @@
+{
+  "name": "voxly-platform-app",
+  "version": "0.1.0",
+  "description": "Voxly Platform extension for Twenty CRM — BotSubscriber, Conversation, ChatMessage objects",
+  "twentyApp": true
+}

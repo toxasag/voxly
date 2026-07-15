@@ -1,0 +1,572 @@
+// Voxly Control Plane — Prisma Schema
+// All billing, tenants, users, bots, referrals, analytics, AI wallet
+
+generator client {
+  provider        = "prisma-client-js"
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Tenants & Users
+// ============================================================
+
+model Tenant {
+  id                String         @id @default(cuid())
+  slug              String         @unique
+  portalHost        String         @unique // {slug}.getvoxly.ru
+  twentyWorkspaceId String?        // set after provisioning
+  twentyWorkspaceSlug String?      // subdomain for {slug}-crm
+  crmSubdomain      String?        // {slug}-crm
+  status            TenantStatus   @default(trial)
+  aiMarkupPercent   Int?           // override global markup for this tenant
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  users             TenantMember[]
+  subscriptions     Subscription[]
+  payments          Payment[]
+  addons            Addon[]
+  aiWallet          AiWallet?
+  tenantBalance     TenantBalance?
+  botInstances      BotInstance[]
+  botProvisionReqs  BotProvisionRequest[]
+  analyticsIntegr   AnalyticsIntegration[]
+  trackingLinks     TrackingLink[]
+  attributionSess   AttributionSession[]
+  conversionEvents  ConversionEvent[]
+  giftCampaigns     GiftCampaignConfig[]
+  referralCode      ReferralCode?
+  referralsMade     Referral[]     @relation("ReferrerTenant")
+  referralReceived  Referral?      @relation("ReferredTenant")
+  referralEarnings  ReferralEarning[]
+  pricingOverrides  PricingOverride[]
+  auditLogs         AuditLog[]
+  broadcasts        Broadcast[]
+  conversations     Conversation[]
+  aiUsageLog        AiUsageLog[]
+
+  @@index([status])
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  passwordHash    String
+  role            UserRole   @default(member)
+  firstName       String?
+  lastName        String?
+  telegramUserId  BigInt?    @unique // for Managed Bots linking
+  isEmailVerified Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  tenantMembers   TenantMember[]
+  auditLogs       AuditLog[]
+
+  @@index([email])
+}
+
+model TenantMember {
+  id        String   @id @default(cuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId  String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  role      UserRole @default(member) // owner or member within tenant
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+// ============================================================
+// Subscriptions & Payments
+// ============================================================
+
+model Subscription {
+  id             String   @id @default(cuid())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId       String
+  productCode    String   // crm_base, extra_seat, gift_bot, etc.
+  periodMonths   Int      // 1, 3, 6, 12, 24
+  seatsIncluded  Int      @default(10)
+  extraSeats     Int      @default(0)
+  startsAt       DateTime
+  endsAt         DateTime
+  status         String   @default("active") // active, expired, cancelled
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  payments       Payment[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([endsAt])
+}
+
+model Payment {
+  id              String       @id @default(cuid())
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  subscriptionId  String?
+  robokassaInvId  Int          @unique
+  amount          Decimal      @db.Decimal(10, 2)
+  status          String       @default("pending") // pending, paid, failed, refunded
+  productCode     String
+  periodMonths    Int?
+  description     String
+  idempotencyKey  String       @unique
+  shpTenantId     String
+  fiscalReceipt   Json?        // 54-ФЗ receipt data
+  paidAt          DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  referralEarnings ReferralEarning[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+// ============================================================
+// Add-ons (gift bot, AI, analytics per tenant)
+// ============================================================
+
+model Addon {
+  id          String    @id @default(cuid())
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  type        String    // gift_bot, ai_tg, ai_wa, analytics_metrika, analytics_ga4, analytics_facebook, analytics_vk
+  config      Json      // platform-specific config
+  activeUntil DateTime
+  status      String    @default("active") // active, expired, suspended
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  analyticsIntegr AnalyticsIntegration[]
+  aiUsageLog      AiUsageLog[]
+  botInstances    BotInstance[]
+
+  @@unique([tenantId, type])
+  @@index([tenantId])
+  @@index([activeUntil])
+}
+
+// ============================================================
+// AI Wallet & Usage
+// ============================================================
+
+model AiWallet {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String   @unique
+  balanceRub Decimal  @db.Decimal(10, 2) @default(0)
+  updatedAt  DateTime @updatedAt
+
+  aiUsageLog AiUsageLog[]
+
+  @@index([tenantId])
+}
+
+model AiUsageLog {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  addon           Addon?   @relation(fields: [addonId], references: [id])
+  addonId         String?
+  aiWallet        AiWallet @relation(fields: [aiWalletId], references: [id])
+  aiWalletId      String
+  model           String   // gpt-4o, gpt-4o-mini, etc.
+  tokens          Int      // total tokens (prompt + completion)
+  providerCostRub Decimal  @db.Decimal(10, 4)
+  markupPercent   Int
+  chargedRub      Decimal  @db.Decimal(10, 4)
+  requestType     String   // text, transcribe, vision
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([aiWalletId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Tenant Balance (referral credits + manual admin credits)
+// ============================================================
+
+model TenantBalance {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String   @unique
+  balanceRub Decimal  @db.Decimal(10, 2) @default(0)
+  updatedAt  DateTime @updatedAt
+}
+
+// ============================================================
+// Platform Settings (key-value)
+// ============================================================
+
+model PlatformSetting {
+  key         String   @id
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================================
+// Pricing Overrides (custom prices / free access per tenant)
+// ============================================================
+
+model PricingOverride {
+  id              String   @id @default(cuid())
+  tenant          Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String?  // null = global default override
+  productCode     String
+  customPriceRub  Decimal? @db.Decimal(10, 2)
+  freeUntil       DateTime?
+  aiMarkupPercent Int?
+  note            String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, productCode])
+  @@index([productCode])
+}
+
+// ============================================================
+// Bot Instances & Provisioning (Managed Bots)
+// ============================================================
+
+model BotInstance {
+  id                String            @id @default(cuid())
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId          String
+  managedBotUserId  BigInt?           @unique // telegram user_id of managed bot creator
+  botUsername       String?
+  botTokenEncrypted String?           // AES-256 encrypted token
+  webhookSecret     String            @default(cuid())
+  provisionedVia    BotProvisionVia   @default(managed)
+  botType           String            @default("gift") // gift, ai_tg, ai_wa
+  status            String            @default("active") // active, inactive, suspended
+  addon             Addon?            @relation(fields: [addonId], references: [id])
+  addonId           String?
+  phoneNumberId     String?           // WhatsApp Cloud API phone_number_id
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  giftCampaigns     GiftCampaignConfig[]
+  conversations     Conversation[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model BotProvisionRequest {
+  id                String   @id @default(cuid())
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId          String
+  nonce             String   @unique
+  suggestedUsername String?
+  suggestedName     String?
+  botType           String   @default("gift")
+  status            String   @default("pending") // pending, confirmed, failed, expired
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([nonce])
+}
+
+// ============================================================
+// Referral Program
+// ============================================================
+
+model ReferralCode {
+  id           String   @id @default(cuid())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String   @unique
+  code         String   @unique // e.g. ACME7X2K
+  isActive     Boolean  @default(true)
+  clicksCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Referral {
+  id                 String    @id @default(cuid())
+  referrerTenant     Tenant    @relation("ReferrerTenant", fields: [referrerTenantId], references: [id])
+  referrerTenantId   String
+  referredTenant     Tenant    @relation("ReferredTenant", fields: [referredTenantId], references: [id], onDelete: Cascade)
+  referredTenantId   String    @unique
+  attributedAt       DateTime  @default(now())
+  firstPaymentAt     DateTime?
+  status             String    @default("attributed") // attributed, earned, cancelled
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  earnings           ReferralEarning[]
+
+  @@index([referrerTenantId])
+}
+
+model ReferralRule {
+  id              String          @id @default(cuid())
+  type            ReferralRuleType
+  value           Decimal         @db.Decimal(10, 2) // fixed amount or percentage
+  durationMonths  Int?            // for percent_recurring
+  productScope    String          @default("all") // all, crm
+  isDefault       Boolean         @default(false)
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model ReferralEarning {
+  id              String    @id @default(cuid())
+  referral        Referral  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  referralId      String
+  payment         Payment?  @relation(fields: [paymentId], references: [id])
+  paymentId       String?
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String // the referrer tenant
+  amountRub       Decimal   @db.Decimal(10, 2)
+  ruleApplied     String
+  creditedAt      DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([referralId])
+}
+
+// ============================================================
+// Analytics Integrations & Conversion Tracking
+// ============================================================
+
+model AnalyticsIntegration {
+  id                 String             @id @default(cuid())
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId           String
+  platform           AnalyticsPlatform  // metrika, ga4, facebook, vk
+  credentialsEncrypted String?          // AES-256 encrypted JSON
+  isActive           Boolean            @default(false)
+  addon              Addon?             @relation(fields: [addonId], references: [id])
+  addonId            String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([tenantId, platform])
+  @@index([tenantId])
+}
+
+model AttributionSession {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  clickId         String   @unique
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmContent      String?
+  utmTerm         String?
+  yclid           String?
+  ymUid           String?
+  fbp             String?
+  fbc             String?
+  gclid           String?
+  rbClickid       String?
+  telegramUserId  BigInt?
+  creativeTag     String?
+  postId          String?
+  landedAt        DateTime @default(now())
+
+  conversionEvents ConversionEvent[]
+
+  @@index([tenantId])
+  @@index([clickId])
+}
+
+model ConversionEvent {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  goalName        String   // bot_start, subscription_verified, etc.
+  subscriberId    String?  // BotSubscriber ID in Twenty
+  attribution     AttributionSession? @relation(fields: [attributionId], references: [id])
+  attributionId   String?
+  platformsStatus Json     // { metrika: "sent", facebook: "failed", ... }
+  status          String   @default("dispatched") // dispatched, sent, partial, failed
+  payload         Json?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([goalName])
+  @@index([createdAt])
+}
+
+model TrackingLink {
+  id           String   @id @default(cuid())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String
+  shortCode    String   @unique
+  targetUrl    String?  // if null, redirect to bot start
+  utmParams    Json?
+  creativeTag  String?
+  postId       String?
+  clicksCount  Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([shortCode])
+}
+
+// ============================================================
+// Gift Campaign Config (stored in control plane, synced to Twenty)
+// ============================================================
+
+model GiftCampaignConfig {
+  id            String       @id @default(cuid())
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId      String
+  botInstance   BotInstance  @relation(fields: [botInstanceId], references: [id])
+  botInstanceId String
+  channelId     String       // Telegram channel ID
+  channelUsername String?
+  giftFileUrl   String?
+  funnelJson    Json         // step definitions with timeouts, goals
+  analyticsConfig Json?      // goal mappings per platform
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([tenantId])
+}
+
+model Broadcast {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  status      String   @default("draft") // draft, scheduled, sending, sent, failed
+  scheduledAt DateTime?
+  sentCount   Int      @default(0)
+  totalCount  Int      @default(0)
+  messageJson Json     // text, media, buttons
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+// ============================================================
+// Conversations & Chat Messages (AI agents)
+// ============================================================
+
+model Conversation {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  botInstance     BotInstance? @relation(fields: [botInstanceId], references: [id])
+  botInstanceId   String?
+  platform        String   // telegram, whatsapp
+  platformUserId  String
+  platformUsername String?
+  platformFirstName String?
+  status          String   @default("open") // open, waiting_for_human, resolved, closed
+  mode            String   @default("ai") // ai, human
+  lastAiMessageAt DateTime?
+  assignedToUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  messages        ChatMessage[]
+
+  @@index([tenantId])
+  @@index([botInstanceId])
+  @@index([status])
+  @@index([platformUserId])
+}
+
+model ChatMessage {
+  id              String   @id @default(cuid())
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId  String
+  role            String   // user, assistant, system, operator
+  content         String
+  externalMessageId String? // Telegram/WhatsApp message ID
+  tokensUsed      Int?
+  modelUsed       String?
+  providerCostRub Decimal? @db.Decimal(10, 4)
+  chargedRub      Decimal? @db.Decimal(10, 4)
+  sentAt          DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([role])
+}
+
+// ============================================================
+// Audit Log
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  tenantId  String?
+  actor     User?    @relation(fields: [actorUserId], references: [id])
+  actorUserId String?
+  action    String   // pricing_override, free_access, suspend, impersonate, etc.
+  payload   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([actorUserId])
+  @@index([action])
+}
+
+// ============================================================
+// Enums
+// ============================================================
+
+enum TenantStatus {
+  trial
+  provisioning
+  provisioning_failed
+  active
+  suspended
+  cancelled
+}
+
+enum UserRole {
+  superadmin
+  owner
+  member
+}
+
+enum BotProvisionVia {
+  managed
+  manual
+}
+
+enum AnalyticsPlatform {
+  metrika
+  ga4
+  facebook
+  vk
+}
+
+enum ReferralRuleType {
+  fixed_first_payment
+  percent_first_payment
+  percent_recurring
+  credit_discount
+  credit
+}

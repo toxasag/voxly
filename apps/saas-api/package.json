@@ -1,0 +1,36 @@
+{
+  "name": "@voxly/saas-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@fastify/jwt": "^8.0.0",
+    "@fastify/rate-limit": "^9.0.0",
+    "@voxly/analytics-dispatchers": "workspace:*",
+    "@voxly/billing": "workspace:*",
+    "@voxly/db": "workspace:*",
+    "@voxly/shared": "workspace:*",
+    "@voxly/twenty-client": "workspace:*",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.13.0",
+    "fastify": "^4.28.0",
+    "ioredis": "^5.4.0",
+    "nanoid": "^5.0.0",
+    "nodemailer": "^6.9.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.16",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
