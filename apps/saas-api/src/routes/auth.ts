@@ -4,7 +4,9 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { PRICING } from '@voxly/shared';
+import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { encrypt, generateSecret } from '@voxly/crypto';
+import { provisionWorkspace } from '../services/provisioning.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -50,8 +52,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
+    const trialStartsAt = new Date();
+    const trialEndsAt = new Date(trialStartsAt);
+    trialEndsAt.setDate(trialEndsAt.getDate() + TRIAL_PERIOD_DAYS);
+    const twentyOwnerPassword = generateSecret(24);
+    const twentyOwnerPasswordEncrypted = encrypt(twentyOwnerPassword);
 
-    // Create user + tenant + membership + referral code in a transaction
+    // Create user + tenant + 14-day trial + membership + referral code in a transaction
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -67,7 +74,18 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           slug: companySlug,
           portalHost: `${companySlug}.${voxlyDomain}`,
           crmSubdomain: `${companySlug}-crm`,
+          twentyOwnerPasswordEncrypted,
           status: 'trial',
+          subscriptions: {
+            create: {
+              productCode: PRODUCT_CODES.CRM_BASE,
+              periodMonths: 0,
+              seatsIncluded: PRICING.SEATS_INCLUDED,
+              startsAt: trialStartsAt,
+              endsAt: trialEndsAt,
+              status: 'active',
+            },
+          },
           users: {
             create: {
               userId: user.id,
@@ -104,11 +122,30 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return { user, tenant };
     });
 
+    try {
+      await provisionWorkspace({
+        tenantId: result.tenant.id,
+        workspaceName: companySlug,
+        subdomain: companySlug,
+        ownerEmail: email,
+        ownerPasswordEncrypted: twentyOwnerPasswordEncrypted,
+        ownerFirstName: firstName,
+        ownerLastName: lastName,
+      });
+    } catch (error) {
+      fastify.log.error({ err: error, tenantId: result.tenant.id }, 'Failed to enqueue CRM provisioning');
+      await prisma.tenant.update({
+        where: { id: result.tenant.id },
+        data: { status: 'provisioning_failed' },
+      });
+    }
+
     // Generate JWT
     const token = fastify.jwt.sign({
       sub: result.user.id,
       email: result.user.email,
       role: result.user.role,
+      tenantRole: 'owner',
       tenantId: result.tenant.id,
     });
 
@@ -145,6 +182,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       sub: user.id,
       email: user.email,
       role: user.role,
+      tenantRole: primaryMembership?.role,
       tenantId: primaryMembership?.tenantId,
     });
 
@@ -156,6 +194,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
+        tenantRole: primaryMembership?.role,
       },
       tenants: user.tenantMembers.map((m) => ({
         id: m.tenant.id,
@@ -215,11 +254,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
             status: tenant.status,
             portalHost: tenant.portalHost,
             crmSubdomain: tenant.crmSubdomain,
+            twentyWorkspaceId: tenant.twentyWorkspaceId,
             membershipRole: primary.role,
             subscription: activeSub
               ? {
                   status: activeSub.status,
                   plan: activeSub.productCode,
+                  isTrial: activeSub.periodMonths === 0,
+                  startsAt: activeSub.startsAt,
                   expiresAt: activeSub.endsAt,
                   seatsUsed: tenant.users.length,
                   seatsIncluded: activeSub.seatsIncluded + activeSub.extraSeats,
@@ -257,11 +299,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const { email, role } = parsed.data;
-    const { tenantId, role: userRole } = (request as any).user;
+    const { tenantId, role: userRole, tenantRole } = (request as any).user;
     const prisma = fastify.prisma;
 
     // Only owner or superadmin can invite
-    if (userRole !== 'owner' && userRole !== 'superadmin') {
+    if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
       return reply.code(403).send({ error: 'Only workspace owners can invite' });
     }
 

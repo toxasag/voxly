@@ -35,6 +35,7 @@ export const PERIOD_DISCOUNTS: Record<number, number> = {
 };
 
 export const GRACE_PERIOD_DAYS = 7;
+export const TRIAL_PERIOD_DAYS = 14;
 export const REFERRAL_COOKIE_DAYS = 30;
 
 export const ADDON_TYPES = [
@@ -75,6 +76,7 @@ export type ConversationMode = (typeof CONVERSATION_MODES)[keyof typeof CONVERSA
 
 export const PRESET_GOALS = [
   'bot_start',
+  'promo_click',
   'subscription_requested',
   'subscription_verified',
   'gift_delivered',
@@ -83,3 +85,156 @@ export const PRESET_GOALS = [
 ] as const;
 
 export type PresetGoal = (typeof PRESET_GOALS)[keyof typeof PRESET_GOALS];
+
+/** Linear gift-bot funnel stored in GiftCampaignConfig.funnelJson */
+export interface GiftFunnelMessage {
+  delayMinutes: number;
+  text: string;
+  /** @deprecated prefer telegramFileId — kept for older drafts */
+  imageUrl?: string;
+  /** Telegram Bot API file_id from portal upload */
+  telegramFileId?: string;
+  mediaType?: GiftPromoMediaType;
+}
+
+export interface GiftFunnelConfig {
+  start: {
+    text: string;
+    imageUrl?: string;
+    telegramFileId?: string;
+    mediaType?: GiftPromoMediaType;
+  };
+  notSubscribed: GiftFunnelMessage[];
+  gift: {
+    type: 'file' | 'link' | 'video';
+    /** HTTPS URL for links (and legacy file/video URLs) */
+    url: string;
+    /** Telegram file_id when gift is uploaded via portal */
+    telegramFileId?: string;
+    /** photo when an image was uploaded as “file” — drives sendPhoto vs sendDocument */
+    mediaType?: GiftPromoMediaType;
+    caption?: string;
+  };
+  afterGift: GiftFunnelMessage[];
+  notGifted: GiftFunnelMessage[];
+  subscribeButton?: { confirmLabel?: string };
+}
+
+export const GIFT_PROMO_MEDIA_TYPES = ['photo', 'video'] as const;
+export type GiftPromoMediaType = (typeof GIFT_PROMO_MEDIA_TYPES)[number];
+
+/** Promo post published to the Telegram channel (gift lead magnet) */
+export interface GiftPromoPost {
+  text: string;
+  /** photo | video; defaults to photo when omitted */
+  mediaType?: GiftPromoMediaType;
+  /** Telegram Bot API file_id (preferred — from portal file upload) */
+  telegramFileId?: string;
+  telegramFileUniqueId?: string;
+  /** Public HTTPS URL fallback for older drafts */
+  mediaUrl?: string;
+  /** @deprecated use mediaUrl / telegramFileId — kept for older drafts */
+  imageUrl?: string;
+  buttonText: string;
+  clickCount: number;
+  telegramMessageId?: number;
+  telegramChatId?: string;
+  publishedAt?: string;
+}
+
+export const DEFAULT_GIFT_PROMO: GiftPromoPost = {
+  text: '🎁 Забери подарок бесплатно!\n\nПодпишись на канал и нажми кнопку ниже — бот сразу отправит материал.',
+  mediaType: 'photo',
+  buttonText: 'Получить подарок',
+  clickCount: 0,
+};
+
+/** Prefer file_id, then mediaUrl / legacy imageUrl (for sendPhoto/sendVideo). */
+export function resolveTelegramMedia(
+  m: Pick<GiftPromoPost, 'telegramFileId' | 'mediaUrl' | 'imageUrl'>,
+): string | undefined {
+  return m.telegramFileId || m.mediaUrl || m.imageUrl || undefined;
+}
+
+/** @deprecated use resolveTelegramMedia */
+export function promoMediaUrl(promo: Pick<GiftPromoPost, 'mediaUrl' | 'imageUrl' | 'telegramFileId'>): string | undefined {
+  return resolveTelegramMedia(promo);
+}
+
+export function promoMediaType(promo: Pick<GiftPromoPost, 'mediaType'>): GiftPromoMediaType {
+  return promo.mediaType === 'video' ? 'video' : 'photo';
+}
+
+/** Deep-link start payload for promo button → gift bot */
+export function giftPromoStartPayload(campaignId: string): string {
+  return `g_${campaignId}`;
+}
+
+export function formatPromoButtonLabel(buttonText: string, clickCount: number): string {
+  const base = buttonText.trim() || 'Получить подарок';
+  return `${base} · ${clickCount}`;
+}
+
+/**
+ * Suggested Telegram bot username for Managed Bots provision.
+ * Pattern: voxly_{nickname}_{01}_bot (5–32 chars, a-z0-9_, must end with "bot").
+ */
+export function buildVoxlyBotUsername(nickname: string, sequence: number): string {
+  const nick =
+    nickname
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .slice(0, 16) || 'client';
+  const n = Number.isFinite(sequence) ? Math.floor(sequence) : 1;
+  const num = String(Math.min(99, Math.max(1, n))).padStart(2, '0');
+  const suffix = `_${num}_bot`;
+  const prefix = 'voxly_';
+  const maxNick = Math.max(1, 32 - prefix.length - suffix.length);
+  const nickTrim = nick.slice(0, maxNick);
+  return `${prefix}${nickTrim}${suffix}`;
+}
+
+export {
+  TELEGRAM_CLIENT_MD_HINT,
+  parseTelegramClientMd,
+  clientMdToMarkdownV2,
+  type TgMdNode,
+} from './telegram-md.js';
+
+export const DEFAULT_GIFT_FUNNEL: GiftFunnelConfig = {
+  start: {
+    text: '**После /start**\nЭто сообщение клиент видит после того как запустил бота. То есть тут мы выдаем подарок, но предварительно проверяем подписку.',
+  },
+  notSubscribed: [
+    {
+      delayMinutes: 1,
+      text: '**Если не подписан**\nТы нажал «Я подписался», но подписки на канал ещё нет. Подпишись и нажми кнопку снова.',
+    },
+    {
+      delayMinutes: 20,
+      text: '**Если не подписан**\nВсё ещё не вижу подписку. Зайди в канал и нажми «Я подписался».',
+    },
+  ],
+  gift: {
+    type: 'file',
+    url: '',
+    caption: '**Подарок** Вот твой подарок 🎁',
+  },
+  afterGift: [
+    {
+      delayMinutes: 1,
+      text: '**После выдачи подарка**\nКак тебе материал? Если нужна помощь — напиши нам.',
+    },
+  ],
+  notGifted: [
+    {
+      delayMinutes: 3,
+      text: '**Если подарок не забрали**\nПодарок всё ещё ждёт тебя. Подпишись на канал и нажми «Я подписался».',
+    },
+    {
+      delayMinutes: 10,
+      text: '**Если подарок не забрали**\nНе забудь забрать подарок — подпишись на канал и нажми кнопку в боте.',
+    },
+  ],
+  subscribeButton: { confirmLabel: 'Я подписался ✅' },
+};

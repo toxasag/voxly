@@ -2,12 +2,16 @@
 // Handles Telegram Managed Bots: receives ManagedBotUpdated updates,
 // retrieves child bot tokens, links them to tenant bot instances.
 
+import { randomBytes } from 'node:crypto';
 import { prisma } from '@voxly/db';
 import { encrypt } from '@voxly/crypto';
 
 const MANAGER_BOT_TOKEN = process.env.TELEGRAM_MANAGER_BOT_TOKEN || '';
-const MANAGER_BOT_USERNAME = process.env.TELEGRAM_MANAGER_BOT_USERNAME || 'VoxlyManagerBot';
+const MANAGER_BOT_USERNAME = process.env.TELEGRAM_MANAGER_BOT_USERNAME || 'VoxlyGiftbot';
 const WEBHOOK_PORT = 3003;
+const USE_POLLING =
+  process.env.MANAGER_USE_POLLING === 'true' ||
+  process.env.GIFT_BOT_USE_POLLING === 'true';
 
 if (!MANAGER_BOT_TOKEN) {
   console.error('TELEGRAM_MANAGER_BOT_TOKEN is required');
@@ -19,16 +23,55 @@ const TELEGRAM_API = `https://api.telegram.org/bot${MANAGER_BOT_TOKEN}`;
 declare const Bun: { serve?: (...args: any[]) => unknown } | undefined;
 
 async function main() {
-  // Set webhook for manager bot
-  await setManagerWebhook();
+  if (USE_POLLING) {
+    await fetch(`${TELEGRAM_API}/deleteWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ drop_pending_updates: false }),
+    });
+    console.log('[manager-bot-service] Long-polling mode enabled');
+    void pollManagerUpdates();
+  } else {
+    await setManagerWebhook();
+  }
 
-  // Start HTTP server to receive updates
-  const server = typeof Bun !== 'undefined' && Bun.serve
-    ? startBunServer()
-    : await startNodeServer();
+  // Health server always on
+  if (typeof Bun !== 'undefined' && Bun.serve) {
+    startBunServer();
+  } else {
+    await startNodeServer();
+  }
 
   console.log(`[manager-bot-service] Listening on port ${WEBHOOK_PORT}`);
   console.log(`[manager-bot-service] Manager bot: @${MANAGER_BOT_USERNAME}`);
+}
+
+async function pollManagerUpdates() {
+  let offset = 0;
+  for (;;) {
+    try {
+      const res = await fetch(
+        `${TELEGRAM_API}/getUpdates?timeout=25&offset=${offset}&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'managed_bot']))}`,
+      );
+      const data = (await res.json()) as any;
+      if (!data.ok) {
+        console.error('[manager-bot-service] getUpdates failed:', data);
+        await sleep(3000);
+        continue;
+      }
+      for (const update of data.result || []) {
+        offset = update.update_id + 1;
+        await handleUpdate(update);
+      }
+    } catch (err) {
+      console.error('[manager-bot-service] poll error:', err);
+      await sleep(3000);
+    }
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 async function setManagerWebhook() {
@@ -102,87 +145,111 @@ async function handleUpdate(update: any) {
 }
 
 /**
- * Process ManagedBotUpdated: a child bot was created or token rotated
+ * Process ManagedBotUpdated (Bot API 9.6+):
+ * shape is { user: User, bot: User } — creator + managed bot.
+ * getManagedBotToken(user_id) expects the managed bot's telegram id.
  */
 async function handleManagedBotUpdated(managedBot: any) {
-  const { user_id, bot_id, username, added, revoked } = managedBot;
+  const creator = managedBot.user;
+  const botUser = managedBot.bot;
+  const creatorId = creator?.id;
+  const managedBotId = botUser?.id;
+  const username = botUser?.username as string | undefined;
 
-  console.log(`[manager-bot-service] ManagedBotUpdated: user_id=${user_id}, bot=${username}, added=${added}, revoked=${revoked}`);
+  console.log(
+    `[manager-bot-service] ManagedBotUpdated: creator=${creatorId}, bot_id=${managedBotId}, @${username}`,
+  );
 
-  if (added) {
-    // New bot created — fetch its token
-    const token = await getManagedBotToken(user_id);
-    if (!token) {
-      console.error(`[manager-bot-service] Failed to get token for managed bot user_id=${user_id}`);
-      return;
-    }
+  if (!creatorId || !managedBotId) {
+    console.error('[manager-bot-service] ManagedBotUpdated missing user/bot ids', managedBot);
+    return;
+  }
 
-    // Find the provision request by telegram user_id
-    // The user who created the bot should have a pending provision request
-    const user = await prisma.user.findFirst({
-      where: { telegramUserId: BigInt(user_id) },
-      include: {
-        tenantMembers: { where: { role: 'owner' }, take: 1 },
-      },
-    });
+  const token = await getManagedBotToken(managedBotId);
+  if (!token) {
+    console.error(`[manager-bot-service] Failed to get token for managed bot id=${managedBotId}`);
+    return;
+  }
 
-    if (!user || !user.tenantMembers[0]) {
-      console.warn(`[manager-bot-service] No tenant found for telegram user_id=${user_id}`);
-      // Store token temporarily, will be linked later
-      return;
-    }
+  const user = await prisma.user.findFirst({
+    where: { telegramUserId: BigInt(creatorId) },
+    include: {
+      tenantMembers: { where: { role: 'owner' }, take: 1 },
+    },
+  });
 
-    const tenantId = user.tenantMembers[0].tenantId;
+  if (!user || !user.tenantMembers[0]) {
+    console.warn(`[manager-bot-service] No tenant found for telegram creator_id=${creatorId}`);
+    return;
+  }
 
-    // Find pending provision request
-    const provisionReq = await prisma.botProvisionRequest.findFirst({
-      where: {
-        tenantId,
-        status: 'pending',
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  const tenantId = user.tenantMembers[0].tenantId;
 
-    if (!provisionReq) {
-      console.warn(`[manager-bot-service] No pending provision request for tenant ${tenantId}`);
-      return;
-    }
+  const existing = await prisma.botInstance.findFirst({
+    where: {
+      OR: [
+        { managedBotUserId: BigInt(managedBotId) },
+        ...(username ? [{ botUsername: username, tenantId }] : []),
+      ],
+    },
+  });
 
-    // Create bot instance
-    const encryptedToken = encrypt(token);
-    await prisma.botInstance.create({
+  if (existing) {
+    await prisma.botInstance.update({
+      where: { id: existing.id },
       data: {
-        tenantId,
-        managedBotUserId: BigInt(user_id),
-        botUsername: username,
-        botTokenEncrypted: encryptedToken,
-        provisionedVia: 'managed',
-        botType: provisionReq.botType,
+        botTokenEncrypted: encrypt(token),
+        botUsername: username || existing.botUsername,
+        managedBotUserId: BigInt(managedBotId),
         status: 'active',
       },
     });
-
-    // Mark provision request as confirmed
-    await prisma.botProvisionRequest.update({
-      where: { id: provisionReq.id },
-      data: { status: 'confirmed' },
-    });
-
-    // Register webhook for the child bot
-    await registerChildBotWebhook(token, tenantId);
-
-    console.log(`[manager-bot-service] Bot @${username} linked to tenant ${tenantId}`);
+    await registerChildBotWebhook(token, tenantId, existing.id, existing.botType);
+    console.log(`[manager-bot-service] Bot @${username} token refreshed for tenant ${tenantId}`);
+    return;
   }
 
-  if (revoked) {
-    // Token was rotated or revoked — update or deactivate
-    await prisma.botInstance.updateMany({
-      where: { managedBotUserId: BigInt(user_id) },
-      data: { status: 'inactive', botTokenEncrypted: null },
-    });
-    console.log(`[manager-bot-service] Bot for user_id=${user_id} revoked`);
+  const provisionReq = await prisma.botProvisionRequest.findFirst({
+    where: {
+      tenantId,
+      status: 'pending',
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!provisionReq) {
+    console.warn(`[manager-bot-service] No pending provision request for tenant ${tenantId}`);
+    return;
   }
+
+  const addonType = provisionReq.botType === 'gift' ? 'gift_bot' : provisionReq.botType;
+  const addon = await prisma.addon.findUnique({
+    where: { tenantId_type: { tenantId, type: addonType } },
+    select: { id: true },
+  });
+
+  const botInstance = await prisma.botInstance.create({
+    data: {
+      tenantId,
+      managedBotUserId: BigInt(managedBotId),
+      botUsername: username,
+      botTokenEncrypted: encrypt(token),
+      provisionedVia: 'managed',
+      botType: provisionReq.botType,
+      status: 'active',
+      addonId: addon?.id,
+    },
+  });
+
+  await prisma.botProvisionRequest.update({
+    where: { id: provisionReq.id },
+    data: { status: 'confirmed' },
+  });
+
+  await registerChildBotWebhook(token, tenantId, botInstance.id, provisionReq.botType);
+
+  console.log(`[manager-bot-service] Bot @${username} linked to tenant ${tenantId} bot=${botInstance.id}`);
 }
 
 /**
@@ -204,13 +271,33 @@ async function getManagedBotToken(userId: number): Promise<string | null> {
 
 /**
  * Register webhook for a child bot (route to gift-bot-worker or ai-telegram-worker)
+ * Path contract: /tg/{tenantId}/{botId}
  */
-async function registerChildBotWebhook(botToken: string, tenantId: string) {
+async function registerChildBotWebhook(
+  botToken: string,
+  tenantId: string,
+  botId: string,
+  botType: string,
+) {
   const botApi = `https://api.telegram.org/bot${botToken}`;
-  // Webhook goes to gift-bot-worker (or ai-telegram-worker based on bot type)
-  // For now, route to saas-api which will forward
-  const webhookUrl = `https://api.${process.env.VOXLY_DOMAIN || 'getvoxly.ru'}/bots/webhook/${tenantId}`;
+  const publicBase =
+    process.env.GIFT_BOT_WEBHOOK_BASE_URL ||
+    process.env.BOT_WEBHOOK_BASE_URL ||
+    `https://api.${process.env.VOXLY_DOMAIN || 'getvoxly.ru'}`;
+  const webhookUrl = `${publicBase.replace(/\/+$/, '')}/tg/${tenantId}/${botId}`;
   const secretToken = generateSecret();
+
+  // Local/dev without public HTTPS: skip setWebhook — gift-bot-worker can long-poll
+  if (process.env.GIFT_BOT_USE_POLLING === 'true' || webhookUrl.includes('localhost')) {
+    console.log(
+      `[manager-bot-service] Skipping setWebhook (polling mode). Expected path ${webhookUrl}`,
+    );
+    await prisma.botInstance.update({
+      where: { id: botId },
+      data: { webhookSecret: secretToken },
+    });
+    return;
+  }
 
   const response = await fetch(`${botApi}/setWebhook`, {
     method: 'POST',
@@ -224,7 +311,11 @@ async function registerChildBotWebhook(botToken: string, tenantId: string) {
   });
   const data = await response.json() as any;
   if (data.ok) {
-    console.log(`[manager-bot-service] Webhook registered for tenant ${tenantId}`);
+    await prisma.botInstance.update({
+      where: { id: botId },
+      data: { webhookSecret: secretToken },
+    });
+    console.log(`[manager-bot-service] Webhook registered ${webhookUrl} type=${botType}`);
   } else {
     console.error(`[manager-bot-service] Failed to register webhook:`, data);
   }
@@ -293,7 +384,7 @@ async function sendManagerMessage(chatId: number, text: string) {
 }
 
 function generateSecret(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return randomBytes(24).toString('hex');
 }
 
 main().catch(console.error);

@@ -21,6 +21,7 @@ model Tenant {
   portalHost        String         @unique // {slug}.getvoxly.ru
   twentyWorkspaceId String?        // set after provisioning
   twentyWorkspaceSlug String?      // subdomain for {slug}-crm
+  twentyOwnerPasswordEncrypted String? // random Twenty credential for SSO, AES-256-GCM
   crmSubdomain      String?        // {slug}-crm
   status            TenantStatus   @default(trial)
   aiMarkupPercent   Int?           // override global markup for this tenant
@@ -40,6 +41,7 @@ model Tenant {
   attributionSess   AttributionSession[]
   conversionEvents  ConversionEvent[]
   giftCampaigns     GiftCampaignConfig[]
+  giftSubscribers   GiftSubscriber[]
   referralCode      ReferralCode?
   referralsMade     Referral[]     @relation("ReferrerTenant")
   referralReceived  Referral?      @relation("ReferredTenant")
@@ -396,7 +398,9 @@ model ConversionEvent {
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId        String
   goalName        String   // bot_start, subscription_verified, etc.
-  subscriberId    String?  // BotSubscriber ID in Twenty
+  subscriberId    String?  // telegram user id or campaign id (promo_click)
+  botInstanceId   String?  // gift / AI bot that produced the goal
+  campaignId      String?  // GiftCampaignConfig id when applicable
   attribution     AttributionSession? @relation(fields: [attributionId], references: [id])
   attributionId   String?
   platformsStatus Json     // { metrika: "sent", facebook: "failed", ... }
@@ -407,6 +411,9 @@ model ConversionEvent {
   @@index([tenantId])
   @@index([goalName])
   @@index([createdAt])
+  @@index([campaignId])
+  @@index([botInstanceId])
+  @@index([tenantId, goalName])
 }
 
 model TrackingLink {
@@ -437,16 +444,54 @@ model GiftCampaignConfig {
   tenantId      String
   botInstance   BotInstance  @relation(fields: [botInstanceId], references: [id])
   botInstanceId String
+  /// Human name of the project/campaign (e.g. "Подарок июль")
+  name          String       @default("Проект")
   channelId     String       // Telegram channel ID
   channelUsername String?
   giftFileUrl   String?
   funnelJson    Json         // step definitions with timeouts, goals
+  promoPost     Json?        // channel promo: text, mediaType photo|video, mediaUrl, button, clickCount
   analyticsConfig Json?      // goal mappings per platform
+  /// Off = paused: no new /start via bare link; deep-link g_{id} also requires isActive
   isActive      Boolean      @default(true)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  subscribers   GiftSubscriber[]
+
   @@index([tenantId])
+  @@index([botInstanceId, isActive])
+}
+
+/// Subscriber state for gift-bot funnels / broadcasts (synced to Twenty CRM)
+model GiftSubscriber {
+  id                 String             @id @default(cuid())
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId           String
+  campaign           GiftCampaignConfig @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId         String
+  botInstanceId      String
+  telegramId         String
+  username           String?
+  firstName          String?
+  phone              String?
+  subscribed         Boolean            @default(false)
+  giftDelivered      Boolean            @default(false)
+  funnelPhase        String             @default("started") // started, awaiting_sub, gifted, not_gifted
+  twentyPersonId     String?
+  twentyOpportunityId String?
+  conversationId     String?
+  lastMessageAt      DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([campaignId, telegramId])
+  @@index([tenantId])
+  @@index([botInstanceId])
+  @@index([giftDelivered])
+  @@index([subscribed])
+  @@index([twentyOpportunityId])
+  @@index([twentyPersonId])
 }
 
 model Broadcast {
@@ -500,6 +545,8 @@ model ChatMessage {
   conversationId  String
   role            String   // user, assistant, system, operator
   content         String
+  /// Telegram media: [{ type, fileId, fileUniqueId?, fileName?, mimeType?, fileSize? }]
+  attachments     Json?
   externalMessageId String? // Telegram/WhatsApp message ID
   tokensUsed      Int?
   modelUsed       String?

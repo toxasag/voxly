@@ -12,9 +12,11 @@
   "dependencies": {
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.0",
+    "@fastify/multipart": "^8.3.0",
     "@fastify/rate-limit": "^9.0.0",
     "@voxly/analytics-dispatchers": "workspace:*",
     "@voxly/billing": "workspace:*",
+    "@voxly/crypto": "workspace:*",
     "@voxly/db": "workspace:*",
     "@voxly/shared": "workspace:*",
     "@voxly/twenty-client": "workspace:*",

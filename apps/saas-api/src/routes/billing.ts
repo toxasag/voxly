@@ -147,6 +147,17 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       const endsAt = new Date(now);
       endsAt.setMonth(endsAt.getMonth() + periodMonths);
 
+      if (existing.productCode === 'crm_base') {
+        await tx.subscription.updateMany({
+          where: {
+            tenantId: existing.tenantId,
+            status: 'active',
+            periodMonths: 0,
+          },
+          data: { status: 'expired' },
+        });
+      }
+
       await tx.subscription.create({
         data: {
           tenantId: existing.tenantId,

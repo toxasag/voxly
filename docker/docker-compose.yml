@@ -81,7 +81,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
     ports:
       - "6379:6379"
     volumes:
@@ -96,7 +96,13 @@ services:
 
   # --- Twenty CRM Server (multi-workspace) ---
   twenty-server:
-    image: twentycrm/twenty:v2.21.0
+    image: voxly-twenty:2.22.0
+    build:
+      context: ..
+      dockerfile: docker/twenty.Dockerfile
+      args:
+        VOXLY_CABINET_URL: ${VOXLY_CABINET_URL:-https://getvoxly.ru/dashboard}
+        VOXLY_API_URL: ${VOXLY_API_URL:-https://api.getvoxly.ru}
     restart: unless-stopped
     depends_on:
       postgres-twenty:
@@ -106,11 +112,14 @@ services:
     environment:
       # Multi-workspace mode (required for SaaS)
       IS_MULTIWORKSPACE_ENABLED: "true"
+      IS_WORKSPACE_CREATION_LIMITED_TO_SERVER_ADMINS: "false"
       DEFAULT_SUBDOMAIN: "app"
       # Database
       PG_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
       # Redis
       REDIS_URL: redis://redis:6379
+      SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Auth
       AUTH_JWT_SECRET: ${TWENTY_JWT_SECRET:-change-twenty-jwt-secret}
       # API
@@ -143,6 +152,24 @@ services:
     networks:
       - voxly-net
 
+  # --- Twenty background worker ---
+  twenty-worker:
+    image: voxly-twenty:2.22.0
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    depends_on:
+      postgres-twenty:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PG_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
+      REDIS_URL: redis://redis:6379
+      SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+    networks:
+      - voxly-net
+
   # --- Control Plane API (Node.js + Fastify) ---
   saas-api:
     build:
@@ -160,6 +187,7 @@ services:
       REDIS_URL: redis://redis:6379
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
+      TWENTY_SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ROBOKASSA_LOGIN: ${ROBOKASSA_LOGIN}
@@ -167,6 +195,7 @@ services:
       ROBOKASSA_PASSWORD2: ${ROBOKASSA_PASSWORD2}
       ROBOKASSA_IS_TEST: ${ROBOKASSA_IS_TEST:-1}
       TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
@@ -238,7 +267,7 @@ services:
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
-      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyManagerBot}
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
       MANAGER_WEBHOOK_URL: https://api.getvoxly.ru/bots/manager/webhook
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       SAAS_API_URL: http://saas-api:3002

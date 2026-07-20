@@ -8,7 +8,7 @@ export interface ProvisioningParams {
   workspaceName: string;
   subdomain: string;
   ownerEmail: string;
-  ownerPassword: string;
+  ownerPasswordEncrypted: string;
   ownerFirstName?: string;
   ownerLastName?: string;
 }
@@ -28,6 +28,7 @@ export async function provisionWorkspace(params: ProvisioningParams) {
   await enqueueProvisioning({
     tenantId: params.tenantId,
     ownerEmail: params.ownerEmail,
+    ownerPasswordEncrypted: params.ownerPasswordEncrypted,
     ownerFirstName: params.ownerFirstName,
     workspaceName: params.workspaceName,
     slug: params.subdomain,
@@ -36,11 +37,4 @@ export async function provisionWorkspace(params: ProvisioningParams) {
   return { status: 'queued', tenantId: params.tenantId };
 }
 
-/**
- * Generate a temporary password for the workspace owner
- * (They'll set their own password on first login to Twenty)
- */
-export function generateTempPassword(): string {
-  return Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 6);
-}
 

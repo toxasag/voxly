@@ -42,6 +42,36 @@ async function checkExpiredSubscriptions() {
   });
 
   for (const sub of expiredInGrace) {
+    // Trials end after exactly 14 days; the paid-subscription grace period
+    // must not silently extend the advertised free period.
+    if (sub.periodMonths === 0) {
+      const hasPaidSubscription = await prisma.subscription.count({
+        where: {
+          tenantId: sub.tenantId,
+          status: 'active',
+          periodMonths: { gt: 0 },
+          endsAt: { gt: now },
+        },
+      });
+
+      await prisma.$transaction([
+        ...(hasPaidSubscription === 0
+          ? [
+              prisma.tenant.update({
+                where: { id: sub.tenantId },
+                data: { status: 'suspended' },
+              }),
+            ]
+          : []),
+        prisma.subscription.update({
+          where: { id: sub.id },
+          data: { status: 'expired' },
+        }),
+      ]);
+      console.log(`[scheduler] Trial expired for tenant ${sub.tenantId}`);
+      continue;
+    }
+
     const daysSinceExpiry = Math.floor((now.getTime() - sub.endsAt.getTime()) / (1000 * 60 * 60 * 24));
 
     if (daysSinceExpiry >= GRACE_PERIOD_DAYS) {

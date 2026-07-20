@@ -2,6 +2,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import type { TenantStatus } from '@voxly/db';
+import { decrypt } from '@voxly/crypto';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.requireSuperadmin);
@@ -83,6 +84,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         slug: t.slug,
         portalHost: t.portalHost,
         crmSubdomain: t.crmSubdomain,
+        twentyWorkspaceId: t.twentyWorkspaceId,
+        twentyWorkspaceSlug: t.twentyWorkspaceSlug,
         status: t.status,
         createdAt: t.createdAt,
         owner: t.users[0]?.user
@@ -123,6 +126,46 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     return reply.send(tenant);
+  });
+
+  // --- Re-apply Voxly CRM defaults (ru-RU, 24h, Сделки) ---
+  fastify.post('/tenants/:id/reapply-crm-defaults', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const tenant = await fastify.prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        users: {
+          where: { role: 'owner' },
+          include: { user: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!tenant) {
+      return reply.code(404).send({ error: 'Tenant not found' });
+    }
+    if (!tenant.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+      return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+    }
+
+    const owner = tenant.users[0]?.user;
+    if (!owner) {
+      return reply.code(404).send({ error: 'Tenant owner not found' });
+    }
+
+    try {
+      const password = decrypt(tenant.twentyOwnerPasswordEncrypted);
+      await fastify.twenty.applyWorkspaceDefaultsWithCredentials(
+        owner.email,
+        password,
+        tenant.twentyWorkspaceId,
+      );
+      return reply.send({ ok: true, slug: tenant.slug });
+    } catch (error) {
+      fastify.log.error({ err: error, tenantId: id }, 'Failed to reapply CRM defaults');
+      return reply.code(502).send({ error: 'Could not apply CRM defaults' });
+    }
   });
 
   // --- Suspend tenant ---
@@ -216,6 +259,130 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({ message: 'Credit added', amountRub });
   });
 
+  // --- Gift funnel effectiveness across all tenants ---
+  fastify.get('/funnels', async (_request, reply) => {
+    const prisma = fastify.prisma;
+
+    const campaigns = await prisma.giftCampaignConfig.findMany({
+      include: {
+        tenant: { select: { id: true, slug: true, status: true } },
+        botInstance: { select: { id: true, botUsername: true, status: true, botType: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const campaignIds = campaigns.map((c) => c.id);
+    if (campaignIds.length === 0) {
+      return reply.send({ campaigns: [], totals: emptyFunnelTotals() });
+    }
+
+    const [startsAgg, subscribedAgg, giftedAgg, phaseAgg, goalAgg] = await Promise.all([
+      prisma.giftSubscriber.groupBy({
+        by: ['campaignId'],
+        where: { campaignId: { in: campaignIds } },
+        _count: { _all: true },
+      }),
+      prisma.giftSubscriber.groupBy({
+        by: ['campaignId'],
+        where: { campaignId: { in: campaignIds }, subscribed: true },
+        _count: { _all: true },
+      }),
+      prisma.giftSubscriber.groupBy({
+        by: ['campaignId'],
+        where: { campaignId: { in: campaignIds }, giftDelivered: true },
+        _count: { _all: true },
+      }),
+      prisma.giftSubscriber.groupBy({
+        by: ['campaignId', 'funnelPhase'],
+        where: { campaignId: { in: campaignIds } },
+        _count: { _all: true },
+      }),
+      prisma.conversionEvent.groupBy({
+        by: ['campaignId', 'goalName'],
+        where: { campaignId: { in: campaignIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const startsMap = toCountMap(startsAgg);
+    const subscribedMap = toCountMap(subscribedAgg);
+    const giftedMap = toCountMap(giftedAgg);
+
+    const phaseMap = new Map<string, Record<string, number>>();
+    for (const row of phaseAgg) {
+      const phases = phaseMap.get(row.campaignId) || {};
+      phases[row.funnelPhase] = row._count._all;
+      phaseMap.set(row.campaignId, phases);
+    }
+
+    const goalsMap = new Map<string, Record<string, number>>();
+    for (const row of goalAgg) {
+      if (!row.campaignId) continue;
+      const goals = goalsMap.get(row.campaignId) || {};
+      goals[row.goalName] = row._count._all;
+      goalsMap.set(row.campaignId, goals);
+    }
+
+    const rows = campaigns.map((campaign) => {
+      const starts = startsMap.get(campaign.id) || 0;
+      const subscribed = subscribedMap.get(campaign.id) || 0;
+      const gifted = giftedMap.get(campaign.id) || 0;
+      const goals = goalsMap.get(campaign.id) || {};
+      const promoClicks = Math.max(
+        readPromoClickCount(campaign.promoPost),
+        goals.promo_click || 0,
+      );
+      const subscriptionRequested = goals.subscription_requested || 0;
+
+      return {
+        tenantId: campaign.tenant.id,
+        tenantSlug: campaign.tenant.slug,
+        tenantStatus: campaign.tenant.status,
+        botId: campaign.botInstance.id,
+        botUsername: campaign.botInstance.botUsername,
+        botStatus: campaign.botInstance.status,
+        campaignId: campaign.id,
+        channelUsername: campaign.channelUsername,
+        isActive: campaign.isActive,
+        metrics: {
+          promoClicks,
+          starts,
+          subscriptionRequested,
+          subscribed,
+          gifted,
+          phases: phaseMap.get(campaign.id) || {},
+          goals,
+          rates: {
+            promoToStart: pct(starts, promoClicks),
+            startToSubscribed: pct(subscribed, starts),
+            startToGift: pct(gifted, starts),
+            subscribedToGift: pct(gifted, subscribed),
+          },
+        },
+      };
+    });
+
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.promoClicks += row.metrics.promoClicks;
+        acc.starts += row.metrics.starts;
+        acc.subscriptionRequested += row.metrics.subscriptionRequested;
+        acc.subscribed += row.metrics.subscribed;
+        acc.gifted += row.metrics.gifted;
+        return acc;
+      },
+      emptyFunnelTotals(),
+    );
+    totals.rates = {
+      promoToStart: pct(totals.starts, totals.promoClicks),
+      startToSubscribed: pct(totals.subscribed, totals.starts),
+      startToGift: pct(totals.gifted, totals.starts),
+      subscribedToGift: pct(totals.gifted, totals.subscribed),
+    };
+
+    return reply.send({ campaigns: rows, totals });
+  });
+
   // --- Update platform settings ---
   fastify.patch('/settings', async (request, reply) => {
     const body = request.body as { key: string; value: string };
@@ -252,4 +419,40 @@ function getMonthlyPriceForProduct(productCode: string): number {
     analytics_vk: 500,
   };
   return prices[productCode] || 0;
+}
+
+function emptyFunnelTotals() {
+  return {
+    promoClicks: 0,
+    starts: 0,
+    subscriptionRequested: 0,
+    subscribed: 0,
+    gifted: 0,
+    rates: {
+      promoToStart: null as number | null,
+      startToSubscribed: null as number | null,
+      startToGift: null as number | null,
+      subscribedToGift: null as number | null,
+    },
+  };
+}
+
+function toCountMap(rows: { campaignId: string; _count: { _all: number } }[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    map.set(row.campaignId, row._count._all);
+  }
+  return map;
+}
+
+function readPromoClickCount(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const count = (raw as { clickCount?: unknown }).clickCount;
+  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
+}
+
+/** Percent with one decimal; null when denominator is 0 */
+function pct(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return Math.round((numerator / denominator) * 1000) / 10;
 }

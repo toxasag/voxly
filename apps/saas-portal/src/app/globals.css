@@ -1,14 +1,85 @@
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+
+/* Voxly portal — aligned with Twenty CRM light theme tokens
+   (gray surfaces, hairline borders, ink CTAs, sparse blue accent) */
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* System stack — no Google Fonts fetch at Docker build time */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-html, body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  background: #0a0a0f;
-  color: #f5f5f7;
+:root {
+  /* Twenty dashboard: soft gray canvas, white cards, hairline borders */
+  --background: 0 0% 97.5%; /* ~#f8f8f8 */
+  --foreground: 0 0% 11%; /* ~#1c1c1c */
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 11%;
+  /* Prefer outline CTAs; filled = quiet ink */
+  --primary: 0 0% 11%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 95%;
+  --secondary-foreground: 0 0% 11%;
+  --muted: 0 0% 95%;
+  --muted-foreground: 0 0% 38%; /* readable on #f8f8f8 / white cards */
+  --accent: 0 0% 95%;
+  --accent-foreground: 0 0% 11%;
+  --destructive: 0 72% 51%;
+  --border: 0 0% 86%; /* hairline but visible on white */
+  --input: 0 0% 86%;
+  --ring: 220 10% 62%;
+  --radius: 0.5rem;
+  --link: 0 0% 11%;
+  /* Product motion — short, functional (Twenty-like) */
+  --duration-fast: 120ms;
+  --duration-default: 200ms;
+  --duration-slow: 280ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Elevation scale — ui-ux-pro-max (subtle; avoid heavy 3D) */
+  --elevation-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --elevation-2: 0 2px 4px rgba(0, 0, 0, 0.04), 0 8px 20px rgba(0, 0, 0, 0.06);
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html,
+body {
   min-height: 100vh;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  /* No purple glow — clean product surface like Twenty */
+  background-color: hsl(var(--background));
 }
 
 a {
@@ -18,6 +89,93 @@ a {
 
 button {
   cursor: pointer;
-  border: none;
   font-family: inherit;
+}
+
+::selection {
+  /* Soft ink selection — not indigo */
+  background: hsl(0 0% 11% / 0.12);
+}
+
+@keyframes voxly-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes voxly-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes voxly-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+.animate-in {
+  animation: voxly-fade-up var(--duration-slow) var(--ease-out) both;
+}
+
+.animate-fade {
+  animation: voxly-fade-in var(--duration-default) var(--ease-out) both;
+}
+
+.animate-error {
+  animation: voxly-shake 280ms var(--ease-in-out);
+}
+
+.stagger > * {
+  animation: voxly-fade-up var(--duration-slow) var(--ease-out) both;
+}
+
+.stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 40ms;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 80ms;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 120ms;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 160ms;
+}
+.stagger > *:nth-child(6) {
+  animation-delay: 200ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .animate-fade,
+  .animate-error,
+  .stagger > * {
+    animation: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
 }

@@ -2,6 +2,7 @@
 // Seeds initial platform settings, default referral rule, and super-admin user
 
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -66,9 +67,7 @@ async function main() {
   });
 
   if (!existingAdmin) {
-    const { createHash } = await import('node:crypto');
-    // Use simple hash for seed — replace with bcrypt in production
-    const hashedPassword = createHash('sha256').update(adminPassword).digest('hex');
+    const hashedPassword = await bcrypt.hash(adminPassword, 12);
 
     await prisma.user.create({
       data: {
@@ -82,10 +81,16 @@ async function main() {
     console.log(`✓ Created super-admin: ${adminEmail}`);
     console.log('  ⚠️  Please change the password immediately!');
   } else {
-    // Ensure existing admin has superadmin role
+    // Ensure existing admin has superadmin role and a bcrypt password hash
+    const hashedPassword = existingAdmin.passwordHash.startsWith('$2')
+      ? existingAdmin.passwordHash
+      : await bcrypt.hash(adminPassword, 12);
     await prisma.user.update({
       where: { email: adminEmail },
-      data: { role: 'superadmin' },
+      data: {
+        role: 'superadmin',
+        passwordHash: hashedPassword,
+      },
     });
     console.log(`✓ Super-admin already exists: ${adminEmail}`);
   }

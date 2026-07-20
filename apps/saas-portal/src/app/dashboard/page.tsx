@@ -1,7 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { ChevronRight } from 'lucide-react';
+import { authHeaders } from '@/lib/auth';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { AppShell, LoadingState } from '@/components/portal/app-shell';
+import { Alert } from '@/components/portal/alert';
+import { CopyButton } from '@/components/portal/copy-button';
+import { cn } from '@/lib/utils';
 
 interface UserData {
   id: string;
@@ -13,187 +23,444 @@ interface UserData {
     slug: string;
     name: string;
     status: string;
+    twentyWorkspaceId: string | null;
     subscription: {
       status: string;
       plan: string;
+      isTrial: boolean;
+      startsAt: string;
       expiresAt: string | null;
       seatsUsed: number;
       seatsIncluded: number;
     } | null;
-    addons: { id: string; type: string; status: string }[];
     aiWallet: { balanceRub: number } | null;
     referralCode: { code: string } | null;
   } | null;
 }
 
+interface ReferralStats {
+  code: string;
+  link: string;
+  referrals: unknown[];
+  totalEarnings: string;
+  balance: string;
+}
+
+interface BotRow {
+  id: string;
+  botUsername: string | null;
+  botType: string;
+  status: string;
+  subscriberCount?: number;
+  campaign: { channelUsername: string | null } | null;
+}
+
+function Kpi({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: 'sage' | 'blue' | 'peach' | 'pink' | 'neutral';
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border border-border/80 px-4 py-3 transition-colors duration-[var(--duration-fast)]',
+        accent === 'sage' && 'bg-[#f3f7f2]',
+        accent === 'blue' && 'bg-[#f0f4fb]',
+        accent === 'peach' && 'bg-[#fbf3ee]',
+        accent === 'pink' && 'bg-[#faf0f3]',
+        (!accent || accent === 'neutral') && 'bg-secondary/50',
+      )}
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<UserData | null>(null);
+  const [referral, setReferral] = useState<ReferralStats | null>(null);
+  const [bots, setBots] = useState<BotRow[]>([]);
+  const [giftPrice, setGiftPrice] = useState(500);
   const [loading, setLoading] = useState(true);
+  const [crmOpening, setCrmOpening] = useState(false);
+  const [crmError, setCrmError] = useState('');
+  const [crmFallbackUrl, setCrmFallbackUrl] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) {
       router.push('/login');
       return;
     }
 
-    fetch('/api/auth/me', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Unauthorized');
-        return res.json();
-      })
-      .then((data) => setUser(data))
-      .catch(() => {
-        localStorage.removeItem('voxly_token');
-        router.push('/login');
-      })
-      .finally(() => setLoading(false));
+    try {
+      const [meRes, refRes, botsRes] = await Promise.all([
+        fetch('/api/auth/me', { headers: authHeaders() }),
+        fetch('/api/referrals', { headers: authHeaders() }),
+        fetch('/api/bots', { headers: authHeaders() }),
+      ]);
+
+      if (!meRes.ok) throw new Error('Unauthorized');
+      const me = (await meRes.json()) as UserData;
+      setUser(me);
+
+      if (refRes.ok) setReferral(await refRes.json());
+
+      if (botsRes.ok) {
+        const botsJson = await botsRes.json();
+        setBots((botsJson.bots || []).filter((b: BotRow) => b.botType === 'gift'));
+        if (typeof botsJson.giftBotPriceMonthly === 'number') {
+          setGiftPrice(botsJson.giftBotPriceMonthly);
+        }
+      }
+
+      if (me.tenant && !me.tenant.twentyWorkspaceId) {
+        setTimeout(() => load(), 3000);
+      }
+    } catch {
+      localStorage.removeItem('voxly_token');
+      router.push('/login');
+    } finally {
+      setLoading(false);
+    }
   }, [router]);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const openCrm = async () => {
+    const token = localStorage.getItem('voxly_token');
+    if (!token) return router.push('/login');
+
+    setCrmOpening(true);
+    setCrmError('');
+    setCrmFallbackUrl('');
+
+    // Named window keeps a reference (Chrome `_blank` + noopener often returns null).
+    const popup = window.open('about:blank', 'voxly_crm');
+    if (popup) {
+      try {
+        popup.document.write(
+          '<!doctype html><title>Voxly CRM</title><body style="font:14px system-ui;padding:24px;color:#333">Открываем CRM…</body>',
+        );
+        popup.document.close();
+      } catch {
+        /* ignore */
+      }
+    }
+
+    try {
+      const res = await fetch('/api/tenant/crm-login', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || 'Не удалось открыть CRM');
+      const crmUrl =
+        data.chatToken && typeof data.chatToken === 'string'
+          ? `${data.url}${data.url.includes('#') ? '&' : '#'}voxlyChatToken=${encodeURIComponent(data.chatToken)}`
+          : data.url;
+
+      setCrmFallbackUrl(crmUrl);
+
+      // Re-open same named window with the real SSO URL (more reliable than location.replace).
+      const navigated = window.open(crmUrl, 'voxly_crm');
+      if (!navigated && !(popup && !popup.closed)) {
+        setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
+      } else if (popup && !popup.closed && !navigated) {
+        try {
+          popup.location.replace(crmUrl);
+        } catch {
+          setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
+        }
+      }
+    } catch (error) {
+      try {
+        popup?.close();
+      } catch {
+        /* ignore */
+      }
+      setCrmError(error instanceof Error ? error.message : 'Не удалось открыть CRM');
+    } finally {
+      setCrmOpening(false);
+    }
+  };
+
   if (loading) {
-    return <div style={{ padding: 40, textAlign: 'center', color: '#a1a1aa' }}>Загрузка...</div>;
+    return (
+      <AppShell>
+        <LoadingState />
+      </AppShell>
+    );
   }
 
   if (!user) return null;
 
   if (!user.tenant) {
     return (
-      <main style={{ maxWidth: 640, margin: '80px auto', padding: 24, textAlign: 'center' }}>
-        <h1 style={{ fontSize: 24, marginBottom: 12 }}>Нет воркспейса</h1>
-        <p style={{ color: '#a1a1aa', marginBottom: 24 }}>Аккаунт есть, но tenant ещё не привязан.</p>
-        <a href="/register" style={primaryBtn}>Создать воркспейс</a>
-      </main>
+      <AppShell showNav={false} maxWidth="2xl">
+        <div className="py-16 text-center">
+          <h1 className="text-xl font-semibold">Нет воркспейса</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Аккаунт есть, но tenant ещё не привязан.</p>
+          <Button asChild variant="outline" className="mt-6">
+            <Link href="/register">Создать воркспейс</Link>
+          </Button>
+        </div>
+      </AppShell>
     );
   }
 
   const tenant = user.tenant;
   const sub = tenant.subscription;
+  const isTrial = sub?.isTrial === true;
   const isSuperadmin = user.role === 'superadmin';
+  const crmReady = Boolean(tenant.twentyWorkspaceId);
+  const referralCount = referral?.referrals?.length ?? 0;
+  const earnedRub = Number(referral?.totalEarnings ?? 0);
+  const refCode = referral?.code || tenant.referralCode?.code || '—';
+  const refLink =
+    referral?.link ||
+    (tenant.referralCode?.code ? `https://getvoxly.ru/r/${tenant.referralCode.code}` : null);
+  const totalSubscribers = bots.reduce((sum, b) => sum + (b.subscriberCount ?? 0), 0);
 
   return (
-    <main style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 24px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 40 }}>
+    <AppShell>
+      <header className="mb-10 flex items-end justify-between gap-4">
         <div>
-          <h1 style={{ fontSize: 28, fontWeight: 700 }}>{tenant.name || tenant.slug}</h1>
-          <p style={{ color: '#a1a1aa' }}>{user.email}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Кабинет
+          </p>
+          <h1 className="mt-1 text-[28px] font-semibold tracking-tight text-foreground">
+            {tenant.name || tenant.slug}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">{user.email}</p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div className="flex gap-2">
           {isSuperadmin && (
-            <a href="/admin" style={navBtnStyle}>Админка</a>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/admin">Админка</Link>
+            </Button>
           )}
-          <button
-            onClick={() => {
-              localStorage.removeItem('voxly_token');
-              router.push('/');
-            }}
-            style={navBtnStyle}
-          >
-            Выйти
-          </button>
         </div>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginBottom: 32 }}>
-        <StatCard label="Статус подписки" value={sub?.status === 'active' ? '✅ Активна' : '❌ Неактивна'} />
-        <StatCard label="Тариф" value={sub?.plan || '—'} />
-        <StatCard label="AI-баланс" value={`${tenant.aiWallet?.balanceRub || 0} ₽`} />
-        <StatCard
-          label="Реферальный код"
-          value={tenant.referralCode?.code || '—'}
-        />
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 24 }}>
-        {/* Subscription */}
-        <Section title="Подписка">
-          {sub?.status === 'active' ? (
-            <>
-              <p style={muted}>Тариф: {sub.plan}</p>
-              <p style={muted}>Действует до: {sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString('ru-RU') : '—'}</p>
-              <p style={muted}>Пользователей: {sub.seatsUsed} / {sub.seatsIncluded}</p>
-              <button style={primaryBtn}>Продлить</button>
-            </>
-          ) : (
-            <>
-              <p style={muted}>Подписка не активна</p>
-              <button style={primaryBtn}>Оформить подписку — 500 ₽/мес</button>
-            </>
-          )}
-        </Section>
-
-        {/* Add-ons */}
-        <Section title="Дополнения">
-          {!tenant.addons?.length ? (
-            <p style={muted}>Нет активных дополнений</p>
-          ) : (
-            tenant.addons.map((a) => (
-              <div key={a.id} style={{ padding: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 8, marginBottom: 8 }}>
-                <strong>{a.type}</strong>
-                <p style={muted}>Статус: {a.status}</p>
-              </div>
-            ))
-          )}
-        </Section>
-
-        {/* AI Wallet */}
-        <Section title="AI-баланс">
-          <p style={{ fontSize: 32, fontWeight: 700, marginBottom: 16 }}>
-            {tenant.aiWallet?.balanceRub || 0} ₽
-          </p>
-          <button style={primaryBtn}>Пополнить</button>
-        </Section>
-
-        {/* Referral */}
-        <Section title="Реферальная программа">
-          <p style={muted}>Ваш код: <strong style={{ color: 'white' }}>{tenant.referralCode?.code || '—'}</strong></p>
-          {tenant.referralCode?.code && (
-            <p style={muted}>
-              Ссылка:{' '}
-              <a
-                href={`https://getvoxly.ru/r/${tenant.referralCode.code}`}
-                style={{ color: '#6366f1' }}
-              >
-                getvoxly.ru/r/{tenant.referralCode.code}
-              </a>
+      <div className="stagger grid gap-4 md:grid-cols-2">
+        <Card className="md:col-span-2">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="text-lg">Подписка</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {sub?.status === 'active'
+                  ? isTrial
+                    ? 'Пробный период CRM'
+                    : sub.plan
+                  : 'Подписка не активна'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm">
+                {isTrial || sub?.status !== 'active' ? 'Выбрать тариф' : 'Продлить'}
+              </Button>
+              <Button variant="solid" size="sm" onClick={openCrm} disabled={!crmReady || crmOpening}>
+                {crmOpening ? 'Открываем…' : crmReady ? 'Открыть CRM' : 'CRM создаётся…'}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-xs text-muted-foreground">
+              CRM открывается в новой вкладке. Кабинет остаётся открытым — вернитесь к нему в браузере.
             </p>
-          )}
-        </Section>
+            {crmError && (
+              <Alert className="mb-3" variant="error">
+                <div className="space-y-2">
+                  <p>{crmError}</p>
+                  {crmFallbackUrl ? (
+                    <a
+                      href={crmFallbackUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex text-sm font-semibold underline underline-offset-2"
+                    >
+                      Открыть CRM в новой вкладке →
+                    </a>
+                  ) : null}
+                </div>
+              </Alert>
+            )}
+            {!crmError && crmFallbackUrl ? (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Если вкладка пустая —{' '}
+                <a
+                  href={crmFallbackUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline underline-offset-2"
+                >
+                  откройте CRM по ссылке
+                </a>
+                .
+              </p>
+            ) : null}
+            {sub?.status === 'active' ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Kpi label="Статус" value={isTrial ? 'Пробный' : 'Активна'} accent="sage" />
+                <Kpi
+                  label="Действует до"
+                  value={sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString('ru-RU') : '—'}
+                  accent="blue"
+                />
+                <Kpi
+                  label="Пользователи"
+                  value={`${sub.seatsUsed} / ${sub.seatsIncluded}`}
+                  accent="peach"
+                />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Оформите подписку, чтобы пользоваться CRM.</p>
+            )}
+          </CardContent>
+        </Card>
 
-        {/* CRM Access */}
-        <Section title="CRM">
-          <a
-            href={`https://${tenant.slug}-crm.getvoxly.ru`}
-            style={primaryBtn}
-          >
-            Открыть Twenty CRM →
-          </a>
-        </Section>
+        <Card className="md:col-span-2">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Реферальная программа</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">Код и ссылка для приглашений</p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Kpi label="Рефералов" value={String(referralCount)} accent="blue" />
+              <Kpi
+                label="Заработано"
+                value={`${earnedRub.toLocaleString('ru-RU')} ₽`}
+                accent="sage"
+              />
+            </div>
+            <div className="overflow-hidden rounded-lg border border-border">
+              <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Код
+                  </p>
+                  <p className="mt-0.5 text-sm font-medium">{refCode}</p>
+                </div>
+                {refCode !== '—' && <CopyButton value={refCode} label="Код" />}
+              </div>
+              <div className="flex items-center justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Ссылка
+                  </p>
+                  {refLink ? (
+                    <a
+                      href={refLink}
+                      className="mt-0.5 block truncate text-sm font-medium text-foreground hover:underline"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {refLink.replace(/^https?:\/\//, '')}
+                    </a>
+                  ) : (
+                    <p className="mt-0.5 text-sm">—</p>
+                  )}
+                </div>
+                {refLink && <CopyButton value={refLink} label="Ссылку" />}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-2">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="text-lg">Бот выдачи подарков</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {giftPrice.toLocaleString('ru-RU')} ₽/мес за канал
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href="/dashboard/bots">Создать бота</Link>
+              </Button>
+              <Button asChild variant="secondary" size="sm">
+                <Link href="/dashboard/bots/broadcasts">Рассылка</Link>
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Kpi label="Ботов" value={String(bots.length)} accent="peach" />
+              <Kpi label="Подписчиков" value={String(totalSubscribers)} accent="pink" />
+            </div>
+
+            {bots.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Пока нет подключённых ботов. Создайте бота и привяжите канал.
+              </p>
+            ) : (
+              <ul className="overflow-hidden rounded-lg border border-border">
+                {bots.map((bot, i) => {
+                  const channel = bot.campaign?.channelUsername
+                    ? `@${bot.campaign.channelUsername.replace(/^@/, '')}`
+                    : 'Канал не настроен';
+                  return (
+                    <li key={bot.id} className={cn(i > 0 && 'border-t border-border')}>
+                      <Link
+                        href={`/dashboard/bots/${bot.id}`}
+                        className="flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-[var(--duration-fast)] hover:bg-secondary/70"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">{channel}</p>
+                          <p className="truncate text-sm text-muted-foreground">
+                            @{bot.botUsername || '…'}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-3">
+                          <span className="text-sm text-muted-foreground">
+                            {bot.subscriberCount ?? 0} подп.
+                          </span>
+                          <Badge variant={bot.status === 'active' ? 'success' : 'warning'}>
+                            {bot.status}
+                          </Badge>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-2">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="text-lg">AI-агент</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Баланс на AI-ответы в мессенджерах
+              </p>
+            </div>
+            <Button variant="outline" size="sm">
+              Пополнить
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div className="max-w-xs">
+              <Kpi
+                label="Баланс"
+                value={`${(tenant.aiWallet?.balanceRub || 0).toLocaleString('ru-RU')} ₽`}
+                accent="blue"
+              />
+            </div>
+          </CardContent>
+        </Card>
       </div>
-    </main>
-  );
-}
-
-const muted: React.CSSProperties = { color: '#a1a1aa', fontSize: 14, marginBottom: 8 };
-const navBtnStyle: React.CSSProperties = { padding: '10px 20px', background: 'rgba(255,255,255,0.05)', color: 'white', borderRadius: 8, fontSize: 14, border: '1px solid rgba(255,255,255,0.1)' };
-const primaryBtn: React.CSSProperties = { padding: '12px 24px', background: '#6366f1', color: 'white', borderRadius: 8, fontSize: 15, fontWeight: 600, display: 'inline-block', marginTop: 12 };
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ padding: 20, background: 'rgba(255,255,255,0.03)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)' }}>
-      <p style={{ color: '#71717a', fontSize: 13, marginBottom: 8 }}>{label}</p>
-      <p style={{ fontSize: 18, fontWeight: 600 }}>{value}</p>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ padding: 24, background: 'rgba(255,255,255,0.03)', borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)' }}>
-      <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>{title}</h3>
-      {children}
-    </div>
+    </AppShell>
   );
 }

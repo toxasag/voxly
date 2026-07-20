@@ -5,6 +5,7 @@ import { Queue, Worker, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
 import { prisma } from '@voxly/db';
 import { TwentyClient } from '@voxly/twenty-client';
+import { decrypt } from '@voxly/crypto';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
@@ -23,6 +24,7 @@ export const subscriptionQueue = new Queue('subscription', { connection });
 export interface ProvisioningJobData {
   tenantId: string;
   ownerEmail: string;
+  ownerPasswordEncrypted: string;
   ownerFirstName?: string;
   workspaceName: string;
   slug: string;
@@ -46,22 +48,29 @@ const twentyClient = new TwentyClient({
 export const provisioningWorker = new Worker<ProvisioningJobData>(
   'provisioning',
   async (job) => {
-    const { tenantId, ownerEmail, ownerFirstName, workspaceName, slug } = job.data;
+    const { tenantId, ownerEmail, ownerPasswordEncrypted, ownerFirstName, workspaceName, slug } = job.data;
 
     console.log(`[provisioning] Starting for tenant ${tenantId}`);
 
     // 1. Create workspace in Twenty CRM
-    const tempPassword = generateTempPassword();
     const workspace = await twentyClient.provisionWorkspace({
       workspaceName,
       ownerEmail,
-      ownerPassword: tempPassword,
+      ownerPassword: decrypt(ownerPasswordEncrypted),
       ownerFirstName,
       subdomain: slug,
     });
 
     // 2. Install voxly-platform app
-    await twentyClient.installApp('voxly-platform');
+    try {
+      await twentyClient.installApp('voxly-platform');
+    } catch (error) {
+      console.warn(
+        `[provisioning] Workspace created, but app installation was skipped: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     // 3. Update tenant with workspace ID
     await prisma.tenant.update({
@@ -132,6 +141,3 @@ export async function enqueueEmail(data: EmailJobData): Promise<void> {
   });
 }
 
-function generateTempPassword(): string {
-  return Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 6);
-}

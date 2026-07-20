@@ -1,7 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert } from '@/components/portal/alert';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -25,70 +32,82 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Login failed');
+        throw new Error(data.error || 'Не удалось войти');
       }
 
       localStorage.setItem('voxly_token', data.token);
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ошибка входа');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div style={{ width: '100%', maxWidth: 480 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 8 }}>Вход</h1>
-        <p style={{ color: '#a1a1aa', marginBottom: 32 }}>Войдите в ваш воркспейс Voxly</p>
-
-        {error && (
-          <div style={{ padding: 16, background: 'rgba(239,68,68,0.1)', borderRadius: 12, marginBottom: 24, color: '#ef4444' }}>
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={inputStyle}
-          />
-          <input
-            type="password"
-            placeholder="Пароль"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={inputStyle}
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            style={{ padding: '16px 32px', background: '#6366f1', color: 'white', borderRadius: 12, fontSize: 18, fontWeight: 600, opacity: loading ? 0.5 : 1 }}
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
+      <div className="w-full max-w-md animate-in">
+        <div className="mb-8 text-center">
+          <Link
+            href="/"
+            className="rounded-sm text-lg font-semibold tracking-tight text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           >
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
-        </form>
-
-        <p style={{ marginTop: 24, textAlign: 'center', color: '#a1a1aa' }}>
-          Нет аккаунта? <a href="/register" style={{ color: '#6366f1' }}>Зарегистрироваться</a>
-        </p>
+            Voxly
+          </Link>
+        </div>
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl">Вход</CardTitle>
+            <CardDescription>Войдите в воркспейс Voxly</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {error && (
+              <Alert className="mb-4" variant="error">
+                {error}
+              </Alert>
+            )}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@company.ru"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Пароль</Label>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <Button type="submit" variant="solid" className="w-full" disabled={loading}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {loading ? 'Вход…' : 'Войти'}
+              </Button>
+            </form>
+            <p className="mt-6 text-center text-sm text-muted-foreground">
+              Нет аккаунта?{' '}
+              <Link href="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
+                Зарегистрироваться
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
       </div>
     </main>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: '14px 16px',
-  background: 'rgba(255,255,255,0.05)',
-  borderRadius: 12,
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: 'white',
-  fontSize: 16,
-  outline: 'none',
-};

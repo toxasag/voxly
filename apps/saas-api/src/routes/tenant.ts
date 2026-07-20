@@ -1,8 +1,78 @@
 // Tenant routes: get tenant info, list members, update settings
 
 import type { FastifyPluginAsync } from 'fastify';
+import { decrypt } from '@voxly/crypto';
+
+/**
+ * Twenty multiworkspace SSO: `http://{slug}.localhost:3007/verify?...`.
+ * Keep `*.localhost` — Chromium resolves it to 127.0.0.1 (RFC 6761).
+ * Do NOT rewrite to bare localhost (→ /welcome) or lvh.me (blank page in browsers).
+ */
+function toBrowserCrmUrl(ssoUrl: string): string {
+  try {
+    const u = new URL(ssoUrl);
+    if (u.hostname === 'twenty-server' || u.hostname.endsWith('.twenty-server')) {
+      const publicBase = process.env.TWENTY_SERVER_URL?.trim() || 'http://localhost:3007';
+      const base = new URL(publicBase);
+      // Preserve workspace subdomain if present on internal URL (rare).
+      const sub = u.hostname.replace(/\.?twenty-server$/, '');
+      u.protocol = base.protocol;
+      u.hostname = sub && sub !== 'twenty-server' ? `${sub}.${base.hostname}` : base.hostname;
+      u.port = base.port;
+      return u.toString();
+    }
+  } catch {
+    /* keep original */
+  }
+  return ssoUrl;
+}
 
 export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
+  // --- Create a short-lived SSO link to this tenant's Twenty workspace ---
+  fastify.get('/crm-login', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId, sub: userId } = (request as any).user;
+    const [tenant, user] = await Promise.all([
+      fastify.prisma.tenant.findUnique({ where: { id: tenantId } }),
+      fastify.prisma.user.findUnique({ where: { id: userId } }),
+    ]);
+
+    if (!tenant || !user) {
+      return reply.code(404).send({ error: 'Tenant or user not found' });
+    }
+    if (!tenant.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+      return reply.code(409).send({
+        error: 'CRM workspace is still being provisioned',
+        status: tenant.status,
+      });
+    }
+
+    try {
+      const password = decrypt(tenant.twentyOwnerPasswordEncrypted);
+      const rawUrl = await fastify.twenty.createWorkspaceLoginUrl(
+        user.email,
+        password,
+        tenant.twentyWorkspaceId,
+      );
+      const url = toBrowserCrmUrl(rawUrl);
+      // Token for deal-card chat inject inside Twenty (same claims as portal JWT)
+      const member = await fastify.prisma.tenantMember.findFirst({
+        where: { tenantId, userId },
+      });
+      const chatToken = fastify.jwt.sign({
+        sub: userId,
+        email: user.email,
+        role: user.role,
+        tenantRole: member?.role || 'member',
+        tenantId,
+        purpose: 'crm-chat',
+      });
+      return reply.send({ url, chatToken });
+    } catch (error) {
+      fastify.log.error({ err: error, tenantId }, 'Failed to create Twenty SSO URL');
+      return reply.code(502).send({ error: 'Could not open CRM workspace' });
+    }
+  });
+
   // --- Get tenant info ---
   fastify.get('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId } = (request as any).user;
@@ -78,11 +148,11 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
 
   // --- Remove member ---
   fastify.delete('/members/:memberId', { preHandler: [fastify.authenticate] }, async (request, reply) => {
-    const { tenantId, role: userRole } = (request as any).user;
+    const { tenantId, role: userRole, tenantRole } = (request as any).user;
     const { memberId } = request.params as { memberId: string };
     const prisma = fastify.prisma;
 
-    if (userRole !== 'owner' && userRole !== 'superadmin') {
+    if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
       return reply.code(403).send({ error: 'Only owners can remove members' });
     }
 
@@ -95,10 +165,10 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
 
   // --- Update tenant settings ---
   fastify.patch('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
-    const { tenantId, role: userRole } = (request as any).user;
+    const { tenantId, role: userRole, tenantRole } = (request as any).user;
     const prisma = fastify.prisma;
 
-    if (userRole !== 'owner' && userRole !== 'superadmin') {
+    if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
       return reply.code(403).send({ error: 'Only owners can update settings' });
     }
 

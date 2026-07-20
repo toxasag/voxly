@@ -16,11 +16,19 @@ import { adminRoutes } from './routes/admin.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { crmChatRoutes } from './routes/crm-chat.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
 import './jobs/queues.js'; // Start BullMQ workers
 
 const PORT = parseInt(process.env.API_PORT || '3002', 10);
 const VOXLY_DOMAIN = process.env.VOXLY_DOMAIN || 'getvoxly.ru';
+
+function isAllowedCorsOrigin(origin: string): boolean {
+  if (origin.includes('localhost') || origin.includes('127.0.0.1')) return true;
+  if (origin === `https://${VOXLY_DOMAIN}` || origin === `https://www.${VOXLY_DOMAIN}`) return true;
+  const escaped = VOXLY_DOMAIN.replace(/\./g, '\\.');
+  return new RegExp(`^https://[a-z0-9-]+\\.${escaped}(?::\\d+)?$`).test(origin);
+}
 
 async function buildServer() {
   const fastify = Fastify({
@@ -29,13 +37,15 @@ async function buildServer() {
     },
   });
 
-  // --- CORS ---
+  // --- CORS (portal + Twenty CRM subdomain / localhost) ---
   await fastify.register(cors, {
-    origin: [
-      `https://${VOXLY_DOMAIN}`,
-      `https://www.${VOXLY_DOMAIN}`,
-      new RegExp(`https://[a-z0-9-]+\\.${VOXLY_DOMAIN.replace('.', '\\.')}`),
-    ],
+    origin: (origin, cb) => {
+      if (!origin || isAllowedCorsOrigin(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
@@ -103,6 +113,7 @@ async function buildServer() {
   await fastify.register(referralRoutes, { prefix: '/api/referrals' });
   await fastify.register(botRoutes, { prefix: '/api/bots' });
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
+  await fastify.register(crmChatRoutes, { prefix: '/api/crm/chat' });
 
   return fastify;
 }

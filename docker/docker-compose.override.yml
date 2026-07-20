@@ -7,6 +7,10 @@ services:
   saas-api:
     ports:
       - "3002:3002"
+    environment:
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
+      # Local SSO must use *.localhost (not lvh.me / bare host)
+      TWENTY_SERVER_URL: http://localhost:3007
 
   saas-portal:
     build:
@@ -21,13 +25,22 @@ services:
     ports:
       - "3001:3000"
 
-  manager-bot-service:
-    ports:
-      - "3003:3003"
-
   gift-bot-worker:
     ports:
       - "3004:3004"
+    environment:
+      GIFT_BOT_USE_POLLING: "true"
+      TWENTY_API_URL: http://twenty-server:3000/graphql
+
+  manager-bot-service:
+    ports:
+      - "3003:3003"
+    environment:
+      GIFT_BOT_USE_POLLING: "true"
+      MANAGER_USE_POLLING: "true"
+      GIFT_BOT_WEBHOOK_BASE_URL: http://localhost:3004
+      BOT_WEBHOOK_BASE_URL: http://localhost:3004
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
 
   ai-telegram-worker:
     ports:
@@ -38,5 +51,17 @@ services:
       - "3006:3006"
 
   twenty-server:
+    build:
+      args:
+        VOXLY_CABINET_URL: http://localhost:3001/dashboard
+        VOXLY_API_URL: http://localhost:3002
+    environment:
+      # Force localhost for local multiworkspace (ignore prod/lvh.me from .env).
+      # SSO URLs: http://{slug}.localhost:3007 — Chromium resolves *.localhost.
+      SERVER_URL: http://localhost:3007
     ports:
       - "3007:3000"
+
+  twenty-worker:
+    environment:
+      SERVER_URL: http://localhost:3007

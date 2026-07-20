@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PRODUCT_CODES,
   PRICING,
+  TRIAL_PERIOD_DAYS,
   PERIOD_DISCOUNTS,
   ADDON_TYPES,
   ANALYTICS_PLATFORMS,
@@ -10,6 +11,9 @@ import {
   USER_ROLES,
   BOT_PROVISION_VIA,
   PRESET_GOALS,
+  clientMdToMarkdownV2,
+  parseTelegramClientMd,
+  buildVoxlyBotUsername,
 } from '../src/index';
 
 describe('@voxly/shared exports', () => {
@@ -27,6 +31,7 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.SEATS_INCLUDED).toBe(10);
     expect(PRICING.AI_MARKUP_PERCENT_DEFAULT).toBe(50);
     expect(PRICING.AI_TOPUP_MIN_RUB).toBe(500);
+    expect(TRIAL_PERIOD_DAYS).toBe(14);
   });
 
   it('exports PERIOD_DISCOUNTS with expected tiers', () => {
@@ -44,5 +49,45 @@ describe('@voxly/shared exports', () => {
     expect(USER_ROLES).toEqual(['superadmin', 'owner', 'member']);
     expect(BOT_PROVISION_VIA).toEqual(['managed', 'manual']);
     expect(PRESET_GOALS).toContain('bot_start');
+    expect(PRESET_GOALS).toContain('promo_click');
+  });
+
+  it('builds voxly_{nick}_{nn}_bot usernames within Telegram limits', () => {
+    expect(buildVoxlyBotUsername('test2', 1)).toBe('voxly_test2_01_bot');
+    expect(buildVoxlyBotUsername('Test-Client!', 2)).toBe('voxly_testclient_02_bot');
+    expect(buildVoxlyBotUsername('a', 99).endsWith('_99_bot')).toBe(true);
+    expect(buildVoxlyBotUsername('x'.repeat(40), 1).length).toBeLessThanOrEqual(32);
+    expect(buildVoxlyBotUsername('x'.repeat(40), 1).endsWith('_01_bot')).toBe(true);
+  });
+});
+
+describe('Telegram client Markdown → MarkdownV2', () => {
+  it('converts bold, italic, strike, spoiler, code', () => {
+    const out = clientMdToMarkdownV2(
+      '**жирный** __курсив__ ~~зачёркнутый~~ ||скрытый|| `код`',
+    );
+    expect(out).toContain('*жирный*');
+    expect(out).toContain('_курсив_');
+    expect(out).toContain('~зачёркнутый~');
+    expect(out).toContain('||скрытый||');
+    expect(out).toContain('`код`');
+  });
+
+  it('converts fenced code blocks', () => {
+    const out = clientMdToMarkdownV2('до\n```\nline1\nline2\n```\nпосле');
+    expect(out).toContain('```\nline1\nline2\n```');
+  });
+
+  it('escapes MarkdownV2 special characters in plain text', () => {
+    expect(clientMdToMarkdownV2('цена 10.5!')).toBe('цена 10\\.5\\!');
+  });
+
+  it('parses nested markers into an AST', () => {
+    const nodes = parseTelegramClientMd('**a __b__**');
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].type).toBe('bold');
+    if (nodes[0].type === 'bold') {
+      expect(nodes[0].children.some((c) => c.type === 'italic')).toBe(true);
+    }
   });
 });

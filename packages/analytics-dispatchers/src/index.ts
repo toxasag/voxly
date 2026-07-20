@@ -10,6 +10,10 @@ export interface FireGoalParams {
   tenantId: string;
   goalName: string;
   subscriberId?: string;
+  /** Gift / AI bot that produced the goal (for admin funnel rollups) */
+  botInstanceId?: string;
+  /** GiftCampaignConfig id when the goal belongs to a gift funnel */
+  campaignId?: string;
   attribution?: {
     yclid?: string;
     ymUid?: string;
@@ -102,6 +106,8 @@ export async function fireGoal(params: FireGoalParams): Promise<PlatformResult[]
       tenantId: params.tenantId,
       goalName: params.goalName,
       subscriberId: params.subscriberId,
+      botInstanceId: params.botInstanceId,
+      campaignId: params.campaignId,
       platformsStatus,
       status: results.every((r) => r.status === 'sent')
         ? 'sent'

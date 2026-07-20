@@ -1,8 +1,8 @@
 # Voxly — Журнал прогресса
 
-> **Этот файл — единый источник правды о состоянии проекта.**
-> В каждом новом чате читай его первым, чтобы не пересканировать кодовую базу и не тратить токены.
-> После значимых изменений обновляй раздел «Текущее состояние» и чек-лист фаз.
+> **Этот файл — журнал прогресса и снимок сессии (§4).**
+> Перед ним агенты читают `docs/agent/README.md` → `CAPABILITIES.md` (что уже есть), затем §4 здесь.
+> После значимых изменений: WORKLOG + при необходимости CAPABILITIES/INCIDENTS; обновляй §3–§5.
 
 ---
 
@@ -47,6 +47,7 @@ twenty-app/voxly-platform/  Twenty App (BotSubscriber, Conversation, ChatMessage
 docker/                  docker-compose.yml + Traefik config
 graphify-out/            Knowledge graph (не коммитить)
 docs/ARCHITECTURE.md     Полная архитектурная документация
+docs/agent/              Lean-память агентов (capabilities, worklog, incidents)
 ```
 
 ---
@@ -87,6 +88,10 @@ docs/ARCHITECTURE.md     Полная архитектурная докумен�
 ---
 
 ## 3. История разработки (timeline)
+
+### 2026-07-18 — ui-ux-pro-max skill
+- Установлен Cursor skill: `uipro init --ai cursor` → `.cursor/skills/ui-ux-pro-max/` (+ design-system persist `design-system/voxly/`).
+- Portal polish: ProjectPicker / AppShell / Switch / bot settings — Twenty light сохранён.
 
 ### День 1 (14 июл 2026) — каркас и инфраструктура
 - Скоординирована архитектура SaaS поверх Twenty CRM.
@@ -131,16 +136,212 @@ docs/ARCHITECTURE.md     Полная архитектурная докумен�
 - Форма регистрации шлёт `companySlug` (не `workspaceName`); проверка пароля ≥8.
 - Регистрация через UI/прокси проверена: HTTP 201.
 - Фикс дашборда: `/api/auth/me` отдаёт flat `user.tenant` (subscription/addons/aiWallet/referralCode); убран невалидный HTML `pattern` в register.
+- Регистрация создаёт реальную подписку `crm_base` на 14 дней (`periodMonths=0`); существующие trial-tenant'ы локально backfill'нуты.
+- Дашборд показывает пробный период и дату окончания; trial завершается ровно через 14 дней без paid grace.
+- Локально подняты Twenty server + worker + PostgreSQL; CRM доступна на `http://localhost:3007`.
+- Исправлен Twenty 2.21 provisioning: `signUp` → workspace-agnostic token → `signUpInNewWorkspace`; повторный запуск возобновляется через `signIn`.
+- CRM-пароль генерируется отдельно, хранится AES-256-GCM; `/api/tenant/crm-login` выдаёт короткоживущую SSO-ссылку в конкретный workspace.
+- Workspace `test1` создан и SSO-кнопка проверена в браузере: переход на `test1.localhost:3007`.
+- Для новых Twenty workspace автоматически задаются `ru-RU`, 24-часовой формат и названия `Сделка`/`Сделки`; настройки применены к `test1` и `test2`.
+- Добавлен white-label образ Twenty с title `Voxly` и `lang="ru"`.
+- Исправлена SaaS superadmin-страница `/admin`: статистика и список tenant теперь соответствуют фактическому API.
+- Seed создаёт superadmin `admin@getvoxly.ru` с bcrypt-хешем (пароль из `SUPERADMIN_PASSWORD`, по умолчанию `changeme`).
+- Gift-бот Phase 2 (клиентский онбординг): trial 14 дней, Managed Bots provision, мастер `/dashboard/bots` (канал, линейная воронка, рассылки), `GiftSubscriber`, delayed jobs в gift-bot-worker, CRM Person+Сделка на `/start`, long-poll локально (`GIFT_BOT_USE_POLLING`).
+- Webhook Managed Bot выровнен на `/tg/{tenantId}/{botId}`; локально polling вместо public HTTPS.
+- Manager Bot локально: реальный токен в `.env`, username **`@VoxlyGiftbot`**, Bot Management Mode ON; `manager-bot-service` в long-poll (`MANAGER_USE_POLLING` / `GIFT_BOT_USE_POLLING`); `getMe` проверен.
+- **Чекпоинт перед E2E gift-бота (2026-07-15):** пользователь продолжает с test2 → `/dashboard/bots`. См. §4 «Снимок сессии».
+
+### День 2 (16 июл 2026) — gift Phase 2 доводка
+- Воронка: imageUrl + текст кнопки подписки; канал verify уже был.
+- Чат оператора в портале + `GET .../messages` + reply → Telegram + Conversation.mode=human; заметки на Person в Twenty (custom ChatMessage App не ставится).
+- Рассылки: отдельная страница `/dashboard/bots/broadcasts` (сегмент, медиа, schedule, история); worker шлёт mediaUrl.
+- test2: `@voxlycmrm0vuatmbot` + кампания готовы; ждём Start для Person/Сделка.
+- **UI:** Tailwind v4 + shadcn; тема Twenty (Inter, soft gray canvas, outline buttons, pastel KPI); `/dashboard` — 4 блока; боты = список → `/dashboard/bots/[botId]`; skills: refero / 21st-shadcn / karpathy.
+- **Пост акции в канале:** `GiftCampaignConfig.promoPost` (JSON); API `PUT/POST /api/bots/:id/promo[/publish]`; кнопка `Текст · N` + deep-link `?start=g_{campaignId}`; worker считает клики и обновляет markup; портал — редактор + Telegram-превью + публикация.
+- **Фикс:** polling страницы бота не затирает несохранённые правки воронки/поста (обновляет подписчиков и счётчик кликов).
+- **Дефолтная воронка:** тексты/тайминги из настроенной кампании test2 (`DEFAULT_GIFT_FUNNEL` в shared).
+- **Фикс «Я подписался»:** тип медиа по `file_id` (`AgAC`→photo, `BQAC`→document, …); BullMQ jobId без `:`; выдача до пометки gifted; fallback без MarkdownV2; логика напоминаний not_gifted / not_subscribed (см. сводку §3).
+- **Username gift-бота:** `voxly_{slug клиента}_{01}_bot` (вместо cuid/nanoid).
+- **Telegram Markdown (client):** `**жирный**`, `__курсив__`, `~~зачёркнутый~~`, `||спойлер||`, `` `код` ``, ```блоки```. Shared: `parseTelegramClientMd` + `clientMdToMarkdownV2`; превью в портале; publish/funnel send → `MarkdownV2`.
+
+### День 2 (16 июл 2026) — админ: результативность воронок
+- `ConversionEvent` дополнен `campaignId` + `botInstanceId`; `fireGoal` их сохраняет; gift-bot-worker передаёт на всех целях воронки.
+- `GET /api/admin/funnels` — агрегаты по всем tenant/кампаниям: клики поста, старты, проверки подписки, подписки, подарки + конверсии.
+- `/admin` — блок «Воронки gift-ботов» (итоги + таблица клиент → бот/канал → метрики).
+- Источники: `GiftSubscriber` (старты/подписки/подарки, backfill ок), `promoPost.clickCount` + `ConversionEvent` (клики/проверки; события без campaignId до деплоя не попадут в счётчик «Проверки»).
+- Tenant-facing funnel stats на `/dashboard/bots` — не делались (фокус на супер-админе).
+
+### День 2 (16 июл 2026) — медиа file_id + layout воронки
+- **Медиа без URL:** `POST /api/bots/:botId/media` (multipart) → upload в Telegram (DM владельца или канал + deleteMessage) → `{ fileId, mediaType }`. Promo/funnel хранят `telegramFileId` (+ legacy `mediaUrl`/`imageUrl`). UI: «Выбрать файл», ObjectURL-превью, без поля HTTPS.
+- Publish promo / funnel send / gift deliver — `sendPhoto`/`sendVideo`/`sendDocument` с `file_id`.
+- **Воронка layout:** снова `lg:grid-cols-2` как у поста акции — слева редакторы, справа один sticky `TelegramPreview` активного шага (чипы + focus/click). Убраны превью под каждым сообщением.
+
+### День 2–3 (16–17 июл 2026) — сводка доработок сессии (gift UX + CRM UX + Twenty)
+
+> Единая точка входа для следующего чата: всё ниже уже в незакоммиченном коде (см. git status). Не дублировать работу.
+
+**Пост акции (promo)**
+- `GiftCampaignConfig.promoPost` (JSON): текст, кнопка, клики, `telegramFileId`/`mediaType` (+ legacy URL).
+- API: `PUT/POST /api/bots/:id/promo[/publish]`; deep-link `?start=g_{campaignId}`; кнопка в канале `Текст · N`.
+- Портал: редактор + `TelegramPreview` + публикация; медиа через file picker → Telegram `file_id`.
+
+**Воронка UI + Markdown**
+- Layout: редакторы слева / один sticky `TelegramPreview` справа (`apps/saas-portal/.../bots/[botId]/page.tsx`).
+- Client Markdown: `**жирный**`, `__курсив__`, `~~зачёркнутый~~`, `||спойлер||`, код — `packages/shared/src/telegram-md.ts` → `MarkdownV2` при send/publish.
+- Понятные блоки «как бабушке»: заголовки + `hint` у шагов (`1. После Start`, `2. Нажал кнопку, но не в канале`, `После выдачи`, `Если подарок не забрали` и т.п.).
+
+**Админ: результативность воронок**
+- `GET /api/admin/funnels` + секция на `/admin` (клики/старты/проверки/подписки/подарки + %).
+
+**Багфиксы worker (`apps/gift-bot-worker`)**
+- Polling UI не затирает черновик воронки/поста (обновляет только подписчиков + clickCount).
+- Выдача подарка: `detectStoredMediaKind` по префиксу `file_id` — `AgAC`→`sendPhoto`, `BQAC`/`BQAD`/`CQAC`→`sendDocument`, `BAAC`→video (раньше photo/document путались → молчалие/ошибка).
+- BullMQ: custom `jobId` без `:`; sanitize через `safeId(...)`.
+- Напоминания: после `/start` → цепочка `not_gifted` (молчит, кнопку не жал); любое «Я подписался» → cancel `not_gifted`; если не в канале → `not_subscribed`; после выдачи → `after_gift`.
+
+**Дефолты и имена**
+- `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO` в `packages/shared` (тексты из настроенной кампании test2).
+- Username child-бота: `voxly_{slug}_{01}_bot` (`buildVoxlyBotUsername`).
+
+**CRM из кабинета**
+- «Открыть CRM»: `window.open('about:blank')` → SSO URL в новой вкладке; вкладка кабинета **не** уходит.
+- Подсказка на `/dashboard` + ошибка, если браузер блокирует popup.
+
+**Twenty CRM 2.21 → 2.22.0**
+- Образ `voxly-twenty:2.22.0` (`docker/twenty.Dockerfile` + compose); миграции 4 workspace ok; `:3007` healthy; branding `Voxly` / `lang=ru`.
+- Apps path для чата в карточке Сделки: GraphQL `syncApplication` / `installApplication` (не мёртвый `installApp`). Stub `twenty-app/voxly-platform` ещё не SDK.
+- **Next:** `npx create-twenty-app` → `yarn twenty remote:add --url http://localhost:3007` → tab на opportunity → `yarn twenty apply`. Scaffold отложен: Yarn 4 + CLI auth + replace stub vs new package.
+
+### День 3 (17 июл 2026) — Twenty CRM → v2.22.0
+- Образ: `twentycrm/twenty:v2.22.0` → `voxly-twenty:2.22.0` (`docker/twenty.Dockerfile` + compose).
+- Upgrade: 4 workspace(s) succeeded, 0 failed; server `Nest application successfully started`; HTTP `200` на `:3007`.
+- White-label сохранён: `<title>Voxly</title>`, `lang="ru"`, og/twitter `Voxly`.
+- Worker на том же образе, cron-очередь жива.
+
+### День 3 (17 июл 2026) — Apps path for deal-card chat
+- Re-verified healthy (no rebuild): server+worker Up, `/healthz` ok, image `voxly-twenty:2.22.0`.
+- Legacy `installApp` **still missing** on metadata GraphQL. New APIs present: `syncApplication(manifest: JSON!)` → `WorkspaceMigration`, `installApplication(universalIdentifier)`, `uninstallApplication`.
+- Repo: only stub `twenty-app/voxly-platform` (old `manifest.json` + `objects.ts`, not `twenty-sdk`/`defineApplication`). No front-components/page-layouts. Provisioning still calls dead `installApp` (warn+skip). Chat = portal + Person notes.
+- **Viable path:** `npx create-twenty-app` → `yarn twenty remote:add --url http://localhost:3007` (not scaffolder `:2020`) → front component + `definePageLayoutTab` on opportunity/Сделка → `yarn twenty dev|plan|apply`. Multi-tenant later via `installApplication` / API key sync.
+- **Scaffold deferred** pending: Yarn 4 (`corepack enable`; monorepo is pnpm), CLI auth (OAuth or API key), replace-vs-new-package for stub. Host Node `v26.4.0` already ≥24.5.
+
+### День 3 (17 июл 2026) — ADR: чат в карточке CRM (Twenty 2.22)
+
+**Решение (принято):** чат оператора в CRM = Twenty Apps SDK tab на **Opportunity / Сделка**, не custom ChatMessage-объекты и не прямой fetch из front в saas-api.
+
+| Вопрос | Выбор |
+|---|---|
+| Host UI | **Opportunity** (`STANDARD_PAGE_LAYOUT_UNIVERSAL_IDENTIFIERS.opportunityRecordPage`) через `definePageLayoutTab` + `defineFrontComponent`. Person — опционально тем же компонентом позже. |
+| Source of truth сообщений | **Control-plane Prisma** (`Conversation` / `ChatMessage` / `GiftSubscriber`) — уже работает для портала. |
+| Связка record→чат | `GiftSubscriber.twentyOpportunityId` (= `useSelectedRecordIds()`), fallback `twentyPersonId`. |
+| Транспорт из UI | Front (sandbox) → **logic function** (`RestApiClient` + `TWENTY_APP_ACCESS_TOKEN`) → `saas-api` с secret app var (`VOXLY_SERVICE_TOKEN`). Secrets в front не попадают. |
+| Notes на Person | Оставить как audit/mirror; не UI чата. |
+| Stub `twenty-app/voxly-platform` | **Заменить** пакетом `create-twenty-app` (twenty-sdk), не патчить старый manifest. |
+| Multi-tenant | После локального PoC: `syncApplication`/`installApplication` в provisioning вместо мёртвого `installApp`. |
+
+**Почему это стабильный путь в 2.22:** официальный Apps surface (`defineFrontComponent` + `definePageLayoutTab` на standard opportunity layout); live metadata API = `syncApplication`/`installApplication`; портальный chat API уже есть; sandbox docs явно требуют logic function для секретов.
+
+**Отклонено:** iframe/extension; только notes; marketplace `installApp`; forked Twenty UI; Twenty custom ChatMessage как SoT; прямой browser→saas-api из front.
+
+**Блокеры scaffold (на момент ADR):** Colima/Docker Twenty down (`:3007` недоступен); `yarn` не в PATH (нужен `corepack enable` → Yarn 4); CLI remote нужен API key workspace или OAuth. Scaffold **не** стартовал.
+
+**Next (ordered):** (1) поднять Twenty; (2) Yarn 4; (3) `npx create-twenty-app@latest voxly-platform` заменить stub; (4) `yarn twenty remote:add --url http://localhost:3007 --api-key …`; (5) front+tab+logicFunction proxy; (6) `GET/POST /api/crm/chat/*` в saas-api по opportunityId; (7) `yarn twenty apply`; (8) provisioning → sync/install.
+
+### День 3 (17 июл 2026, вечер) — Portal UI → Twenty light + motion/UX
+- Единый продукт-стиль Twenty: серый canvas, белые карточки, ink CTA, без indigo/dark inline.
+- Переписаны лендинг, login, register, admin на shadcn + токены `globals.css`.
+- Shared: `AppShell` (sticky nav), `Alert`, `PageHeader`, `CopyButton`, `LoadingState`.
+- Motion: `--duration-fast/default/slow`, `animate-in` / `stagger` / `animate-error`, `prefers-reduced-motion`, press `active:scale` на кнопках, hover на inputs.
+- Dashboard / bots / broadcasts / bot settings обёрнуты в shell; рефералка — копирование кода/ссылки; алерты вместо сырого текста ошибок.
+
+
+### День 4 (18 июл 2026) — design reference: Open WebUI
+- Для вдохновения по оформлению портала/сайта склонирован **shallow** clone Open WebUI (не зависимость монорепо, не в `apps/`/`packages/`).
+- Путь: `/Users/antonsagajdak/Desktop/open-webui` (sibling к `CRM-PLUS`).
+- Только reference: не подключать в pnpm/turbo/docker; не копировать UI wholesale в `saas-portal`.
+- Куда смотреть для стилей:
+  - `src/tailwind.css` — `@theme` токены gray (oklch), base fonts/borders
+  - `src/app.css` — шрифты, scale, утилиты типографики
+  - `tailwind.config.js` — darkMode class, plugins
+  - `src/lib/components/common/` — Modal, Drawer, Sidebar, Dropdown, Switch, Tooltip, Badge…
+  - `src/lib/components/layout/Sidebar/` + `Navbar/` — shell/nav паттерны
+  - `src/routes/auth/` — экраны логина/регистрации
+  - `src/routes/(app)/` — app shell layout
+
+### День 4 (18 июл 2026, ночь) — hotfix: landing/login/register contrast
+- **Проблема:** Docker `saas-portal` на `:3001` отдавал старый dark/purple inline UI (indigo gradient, white-on-white «Войти», ghost-поля на светлом фоне).
+- **Фикс:** лендинг/login/register на Twenty light (ink CTA, outline secondary, читаемые Input/Label); усилен контраст токенов (`muted-foreground` 38%, border 86%); убран `next/font/google` (ETIMEDOUT в Docker-сборке → system stack).
+- Образ пересобран: `docker compose --env-file ../.env up -d --build saas-portal`.
+
+### День 4 (18 июл 2026, ночь) — docs/agent: память агентов + worklog
+- Создан пакет `docs/agent/`: STACK, DATA, SERVICES, FLOWS, CAPABILITIES (anti-reimplementation), DECISIONS, OBS; журналы WORKLOG + INCIDENTS.
+- Cursor rule `project-state.mdc`: каскад начинается с `docs/agent/README` → CAPABILITIES → steps §4 → graphify; после работы — append WORKLOG, обновлять CAPABILITIES/INCIDENTS при необходимости.
+- Seed: инциденты Redis AOF, Telegram unreachable, stale portal image; worklog Twenty 2.22 / deal-chat ADR / portal UI / Colima.
+
+### День 5 (20 июл 2026) — Deal-card Telegram chat (interim)
+- API: `GET/POST /api/crm/chat/:opportunityId` (+ reply) по `GiftSubscriber.twentyOpportunityId`.
+- Auth: `crm-login` отдаёт `chatToken` → портал кладёт в hash → inject хранит в `localStorage`.
+- UI: `docker/twenty-deal-chat.js` — кнопка «Чат» на странице Opportunity; ответ → Telegram + Prisma.
+- Worker: reuse Person/Opportunity; лог `/start` + outbound bot → `ChatMessage`; phone из contact.
+- ADR-001: interim inject; SDK tab остаётся backlog.
+
 
 ---
 
 ## 4. Текущее состояние
 
-### Пайплайн (всё зелёное)
+### Снимок сессии (читать перед продолжением)
+
+**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
+
+**Design reference (вне монорепо):** Open WebUI → `/Users/antonsagajdak/Desktop/open-webui` (shallow clone; смотреть `src/tailwind.css`, `src/app.css`, `src/lib/components/common|layout`, `src/routes/auth`). Не runtime-зависимость.
+
+**UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
+
+**Статус кода:** CRM chat (inject на **сделке и контакте** + `/api/crm/chat`) + Person.`telegram` + gift multi-project + Twenty 2.22 / portal UI — в рабочей копии, **ещё не закоммичены**. Журнал обновлён 2026-07-20.
+
+**Локальные URL**
+- Портал: `http://localhost:3001`
+- API: `http://localhost:3002`
+- Gift-бот UI: `http://localhost:3001/dashboard/bots`
+- CRM: `http://localhost:3007` / `{slug}.localhost:3007` (SSO с дашборда, **новая вкладка**) — **Twenty v2.22.0** (образ готов; на момент ADR Colima/Docker были down — поднять перед scaffold)
+- Manager bot service: `:3003`, gift-bot-worker: `:3004`
+
+**Аккаунты**
+- Клиенты: `test1@test.ru`, `test2@test.ru` (и др. test*) — роль `member`; CRM workspace у test1/test2 есть; locale `ru-RU`, время `HOUR_24`, объект opportunity → «Сделки».
+- Супер-админ: `admin@getvoxly.ru` / `changeme` (или `SUPERADMIN_PASSWORD`) → `/admin` (+ блок «Воронки gift-ботов»).
+- Для E2E gift-бота выбран **test2** (test1 занят проверкой CRM).
+
+**Telegram Manager Bot**
+- Username: `@VoxlyGiftbot` (Manager Bot, не child gift-бот клиента).
+- Bot Management Mode: включён.
+- Token: в корневом `.env` (`TELEGRAM_MANAGER_BOT_TOKEN` + `TELEGRAM_MANAGER_BOT_USERNAME=VoxlyGiftbot`) — `getMe` ok.
+- Docker: `docker compose ... --env-file .env`.
+
+**Что уже в коде (gift + портал)** — ключевые файлы
+- API (`apps/saas-api`): trial, provision-link, campaign, channel/verify, promo draft/publish, `POST .../media`, broadcasts, subscribers, messages/reply; `GET /api/admin/funnels`; `GET /api/bots` → `subscriberCount` + `promoPost`.
+- Портал (`apps/saas-portal`): `/dashboard` (4 блока + CRM в новой вкладке + подсказка/popup-blocker); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг/login/register в Twenty light; `AppShell` + motion/UX (Alert, CopyButton, PageHeader).
+- Shared: `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO`, `buildVoxlyBotUsername`, `telegram-md.ts`, `resolveTelegramMedia`.
+- Worker (`apps/gift-bot-worker`): воронка + delays + broadcasts + promo clicks; `detectStoredMediaKind`; BullMQ `jobId` без `:`; напоминания `not_gifted` / `not_subscribed` / `after_gift` (см. сводку §3); Person/Opportunity + notes; `fireGoal` + `campaignId`/`botInstanceId`; MarkdownV2.
+- Username новых ботов: `voxly_{slug}_{01}_bot`.
+- Twenty App custom ChatMessage — не ставится; чат = портал + **deal/person-card inject** (`/api/crm/chat`) + notes. SDK tab — later.
+
+**E2E test2**
+- Бот `@voxlycmrm0vuatmbot` (legacy-имя; новые = `voxly_test2_01_bot`), кампания/канал/воронка ок.
+- Подписчиков может быть >0 после проверок; при сомнении — новый `/start` → Person/Сделка.
+- Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
+
+**Следующие шаги (приоритет)**
+1. Gift E2E: `/start` → Person/Сделка → кнопка «Чат» в карточке → ответ менеджера в Telegram.
+2. Ответ из кабинета портала → Telegram (`mode=human`) — уже было.
+3. Опционально: заменить inject на Twenty Apps SDK tab.
+4. Коммит незакоммиченных изменений, когда пользователь попросит.
+
+### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓
 - `pnpm typecheck` — 20/20 ✓
 - `pnpm build` — 13/13 ✓
-- `pnpm test` — 28/28 ✓ (billing 11, ai-core 5, shared 4, crypto 8)
+- `pnpm test` — 32/32 ✓ (billing 11, ai-core 5, shared 8+, crypto 8)
 - `pnpm --filter @voxly/db prisma:generate` ✓
 
 ### Чек-лист фаз
@@ -152,41 +353,53 @@ docs/ARCHITECTURE.md     Полная архитектурная докумен�
 | phase1-portal | Клиентский портал + супер-админка | ✅ DONE |
 | phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) | ✅ DONE |
 | phase1-manager-bot | Telegram Manager Bot (Managed Bots) | ✅ DONE |
-| phase1-twenty-app | Twenty App voxly-platform (объекты) | ✅ DONE |
-| phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки) | ✅ DONE |
+| phase1-twenty-app | Twenty App voxly-platform (объекты stub) | ✅ DONE (stub; SDK-чат в карточке — next) |
+| phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |
 | phase2-analytics | Сквозная аналитика (Метрика/GA4/FB/VK) | ✅ DONE |
 | phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | ⬜ PENDING |
 | phase3-ai-telegram | ai-telegram-worker (Business API, OpenAI, wallet) | ✅ DONE |
 | phase4-ai-whatsapp | ai-whatsapp-worker (Cloud API, ai-core) | ✅ DONE |
 | final-polish | Dockerfiles, тесты, сборка | ✅ DONE |
 | encryption | AES-256-GCM для секретов | ✅ DONE |
+| twenty-2.22 | Upgrade CRM 2.21 → 2.22.0 + white-label Voxly | ✅ DONE |
+| twenty-deal-chat | Чат в карточке Сделки (inject + `/api/crm/chat`) | ✅ DONE interim 20.07; SDK later |
 
-**Закрыто: 11/12 фаз.** Осталась 1 опциональная (GramJS bridge).
+**Закрыто: 13/14 отмеченных пунктов.** Открыт: GramJS (опц.). SDK-замена inject — backlog.
 
 ---
 
 ## 5. Что осталось сделать
 
-### Опциональное
-- **Phase 2b: GramJS bridge** — переписка с личного Telegram-аккаунта пользователя (не через Bot API). Опциональная фича.
+### Следующий крупный кусок
+- Gift E2E + проверка deal-chat: CRM из кабинета → Opportunity → «Чат» → reply.
+- Опционально: Twenty Apps SDK tab вместо inject (Yarn 4 + create-twenty-app).
 
-### Известные TODO-заглушки (не блокируют сборку, нужны перед продом)
-- `emailWorker` в `saas-api` — сейчас logging-stub, нужна реальная SMTP-отправка (nodemailer, настройки в .env.example).
-- `notifyHumanOperator` в AI-воркерах — не реализован (уведомление оператору при handoff).
-- `generateSecret` в `manager-bot-service` — использует `Math.random`, можно заменить на `@voxly/crypto` `generateSecret()`.
-- **Prisma migrations** — `prisma generate` работает, но миграции не созданы (нужны перед первым деплоем: `pnpm db:migrate`). Схема локально применена (`db push`), таблицы есть.
-- **Docker runtime** — локально подняты postgres/redis/saas-api/saas-portal (Colima); Twenty + воркеры ещё не запускались.
+### Опциональное
+- **Phase 2b: GramJS bridge** — переписка с личного Telegram-аккаунта (не Bot API).
+- Tenant UI метрик воронки на `/dashboard/bots` (сейчас только супер-админ `/admin`).
+
+### Известные TODO / пробелы
+- `emailWorker` в `saas-api` — logging-stub → SMTP (nodemailer + `.env.example`).
+- `notifyHumanOperator` в AI-воркерах — не реализован.
+- **Gift-бот E2E** — живой прогон на test2.
+- **Чат** — портал + deal-card inject + note на Person; SDK tab — backlog.
+- **Superadmin** — готов (`admin@getvoxly.ru`); воронки: `/admin` + `GET /api/admin/funnels`. Счётчик «Проверки» только из новых `ConversionEvent` с `campaignId`.
+- **Prisma migrations** — схема через `db push`; перед продом `pnpm db:migrate`. Есть `GiftSubscriber`, у `ConversionEvent` — `campaignId`/`botInstanceId`.
+- **Коммит** — большой набор незакоммиченных изменений — ждать явной просьбы.
+- **Docker runtime** — Colima; TG polling локально (`GIFT_BOT_USE_POLLING` / `MANAGER_USE_POLLING`).
 
 ### Перед продакшеном
-- Заполнить `.env` реальными кредами (Robokassa, Telegram Manager Bot, OpenAI, SMTP, ENCRYPTION_KEY через `openssl rand -hex 32`).
-- Купить домен `getvoxly.ru`, настроить wildcard DNS → сервер.
-- Получить `TELEGRAM_MANAGER_BOT_TOKEN` через @BotFather, включить Bot Management Mode.
-- Настроить Twenty CRM (`twentycrm/twenty` образ, `IS_MULTIWORKSPACE_ENABLED=true`).
-- Запустить `docker compose up -d` из `docker/`.
+- Заполнить `.env` реальными кредами (Robokassa, Telegram Manager Bot, OpenAI, SMTP, `ENCRYPTION_KEY` через `openssl rand -hex 32`).
+- Домен `getvoxly.ru`, wildcard DNS → сервер.
+- `TELEGRAM_MANAGER_BOT_TOKEN` + Bot Management Mode.
+- Twenty: образ 2.22+, `IS_MULTIWORKSPACE_ENABLED=true`.
+- `docker compose up -d` из `docker/`.
 
 ---
 
 ## 6. Команды разработки
+
+> Lean-доки и журналы агента: [`docs/agent/`](docs/agent/README.md) (стек, capabilities, WORKLOG, INCIDENTS).
 
 ```bash
 # Установка
@@ -199,7 +412,7 @@ pnpm --filter @voxly/saas-api dev     # отдельный сервис
 # Сборка и проверки
 pnpm typecheck                        # 20/20
 pnpm build                            # 13/13
-pnpm test                             # 28/28
+pnpm test                             # 32/32
 
 # БД
 pnpm db:generate                      # prisma generate
@@ -227,6 +440,7 @@ source $HOME/.local/bin/env && graphify query "<вопрос>"         # зап�
 6. **Сквозная аналитика как add-on** — 500 ₽/мес за платформу, server-side offline conversions (как tgtrack.ru).
 7. **AES-256-GCM** — единый `ENCRYPTION_KEY` для всех секретов at rest (токены ботов, credentials аналитики), auth-tag защищает от подделки.
 8. **Webhook idempotency** — критично для Robokassa (повторные webhook'и не должны активировать подписку дважды).
+9. **Чат в карточке Сделки (Twenty 2.22)** — Apps SDK: `defineFrontComponent` + `definePageLayoutTab` на `opportunityRecordPage`; сообщения остаются в control-plane Prisma; front зовёт только logic function (секреты не в sandbox); установка через `syncApplication`/`installApplication`, не legacy `installApp`.
 
 ---
 
@@ -234,11 +448,11 @@ source $HOME/.local/bin/env && graphify query "<вопрос>"         # зап�
 
 Чтобы не тратить токены на пересканирование кодовой базы, используется каскад:
 
-1. **`steps.md` (этот файл)** — состояние проекта, история, чек-лист фаз. Читается первым в каждом новом чате (правило `.cursor/rules/project-state.mdc`).
-2. **Graphify knowledge graph** (`graphify-out/`) — AST-граф кодовой базы. Перед исследованием кода: `graphify query/path/explain` вместо чтения сырых файлов (~71× меньше токенов на запрос). Правило `.cursor/rules/graphify.mdc` обязывает использовать граф первым.
-3. **Cursor Rules** (`.cursor/rules/*.mdc`) — постоянные инструкции, грузятся в каждый чат автоматически (graphify, project-state).
-4. **Context7 MCP** — актуальные доки библиотек по запросу, чтобы не опираться на устаревшие тренировочные данные.
-5. **`docs/ARCHITECTURE.md`** — полная архитектурная документация для глубокого погружения.
-6. **Agent transcripts** — прошлые чаты в JSONL (для цитирования, не для линейного чтения).
+1. **`docs/agent/`** — lean facts: `CAPABILITIES` (anti-reimplementation), `WORKLOG` / `INCIDENTS`, STACK/DATA/FLOWS/DECISIONS. Старт: `docs/agent/README.md`.
+2. **`steps.md` (этот файл)** — история, §4 снимок сессии, чек-лист фаз.
+3. **Graphify** (`graphify-out/`) — AST-граф; `query/path/explain` перед широким чтением кода (правило `graphify.mdc`).
+4. **`docs/ARCHITECTURE.md`** — глубокое погружение.
+5. **Context7 MCP** — актуальные доки библиотек.
+6. **Cursor Rules** (`.cursor/rules/*.mdc`) + agent transcripts (цитирование, не линейное чтение).
 
-> **Правило обновления:** после значимых изменений (новая фаза, фикс, смена архитектуры) обновляй раздел 4 «Текущее состояние» и чек-лист фаз, затем запускай `graphify . --code-only --update` для синхронизации графа.
+> **Правило обновления:** после значимых изменений — WORKLOG + при необходимости CAPABILITIES/INCIDENTS/DECISIONS; обновить §3–§5 этого файла; `graphify . --code-only --update`.

@@ -1,7 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert } from '@/components/portal/alert';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -25,7 +32,7 @@ export default function RegisterPage() {
       .replace(/^-+|-+$/g, '');
 
     if (!companySlug || companySlug.length < 2) {
-      setError('Название воркспейса: латиница, цифры или дефис (минимум 2 символа)');
+      setError('Slug воркспейса: латиница, цифры или дефис (минимум 2 символа)');
       setLoading(false);
       return;
     }
@@ -50,11 +57,11 @@ export default function RegisterPage() {
       });
 
       const text = await res.text();
-      let data: any = null;
+      let data: { token?: string; error?: unknown } | null = null;
       try {
         data = text ? JSON.parse(text) : null;
       } catch {
-        throw new Error(text || 'Registration failed');
+        throw new Error(text || 'Не удалось зарегистрироваться');
       }
 
       if (!res.ok) {
@@ -63,97 +70,122 @@ export default function RegisterPage() {
             ? data.error
             : data?.error
               ? JSON.stringify(data.error)
-              : 'Registration failed';
+              : 'Не удалось зарегистрироваться';
         throw new Error(errMsg);
       }
 
+      if (!data?.token) throw new Error('Нет токена в ответе');
       localStorage.setItem('voxly_token', data.token);
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Ошибка регистрации');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div style={{ width: '100%', maxWidth: 480 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 8 }}>Регистрация</h1>
-        <p style={{ color: '#a1a1aa', marginBottom: 32 }}>Создайте воркспейс Voxly за 1 минуту</p>
-
-        {error && (
-          <div style={{ padding: 16, background: 'rgba(239,68,68,0.1)', borderRadius: 12, marginBottom: 24, color: '#ef4444' }}>
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <input
-            type="text"
-            placeholder="Имя"
-            value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
-            required
-            style={inputStyle}
-          />
-          <input
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={inputStyle}
-          />
-          <input
-            type="password"
-            placeholder="Пароль"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={inputStyle}
-          />
-          <input
-            type="text"
-            placeholder="Slug воркспейса (например: my-company)"
-            value={workspaceName}
-            onChange={(e) => setWorkspaceName(e.target.value)}
-            required
-            minLength={2}
-            maxLength={50}
-            title="Только латиница, цифры и дефис"
-            style={inputStyle}
-          />
-          <input
-            type="text"
-            placeholder="Реферальный код (необязательно)"
-            value={refCode}
-            onChange={(e) => setRefCode(e.target.value)}
-            style={inputStyle}
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            style={{ padding: '16px 32px', background: '#6366f1', color: 'white', borderRadius: 12, fontSize: 18, fontWeight: 600, opacity: loading ? 0.5 : 1 }}
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
+      <div className="w-full max-w-md animate-in">
+        <div className="mb-8 text-center">
+          <Link
+            href="/"
+            className="rounded-sm text-lg font-semibold tracking-tight text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           >
-            {loading ? 'Создание...' : 'Создать аккаунт'}
-          </button>
-        </form>
-
-        <p style={{ marginTop: 24, textAlign: 'center', color: '#a1a1aa' }}>
-          Уже есть аккаунт? <a href="/login" style={{ color: '#6366f1' }}>Войти</a>
-        </p>
+            Voxly
+          </Link>
+        </div>
+        <Card>
+          <CardHeader className="text-center">
+            <CardTitle className="text-xl">Регистрация</CardTitle>
+            <CardDescription>Создайте воркспейс за минуту</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {error && (
+              <Alert className="mb-4" variant="error">
+                {error}
+              </Alert>
+            )}
+            <form onSubmit={handleSubmit} className="space-y-3.5">
+              <div className="space-y-1.5">
+                <Label htmlFor="firstName">Имя</Label>
+                <Input
+                  id="firstName"
+                  name="given-name"
+                  autoComplete="given-name"
+                  placeholder="Как к вам обращаться"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="you@company.ru"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="password">Пароль</Label>
+                <Input
+                  id="password"
+                  name="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Не меньше 8 символов"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={8}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="workspace">Slug воркспейса</Label>
+                <Input
+                  id="workspace"
+                  name="organization"
+                  value={workspaceName}
+                  onChange={(e) => setWorkspaceName(e.target.value)}
+                  placeholder="my-company"
+                  required
+                  minLength={2}
+                  maxLength={50}
+                  title="Только латиница, цифры и дефис"
+                />
+                <p className="text-xs text-muted-foreground">Латиница, цифры, дефис · станет адресом кабинета</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ref">Реферальный код</Label>
+                <Input
+                  id="ref"
+                  name="referral"
+                  value={refCode}
+                  onChange={(e) => setRefCode(e.target.value)}
+                  placeholder="необязательно"
+                />
+              </div>
+              <Button type="submit" variant="solid" className="mt-1 w-full" disabled={loading}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {loading ? 'Создание…' : 'Создать аккаунт'}
+              </Button>
+            </form>
+            <p className="mt-6 text-center text-sm text-muted-foreground">
+              Уже есть аккаунт?{' '}
+              <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
+                Войти
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
       </div>
     </main>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: '14px 16px',
-  background: 'rgba(255,255,255,0.05)',
-  borderRadius: 12,
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: 'white',
-  fontSize: 16,
-  outline: 'none',
-};
