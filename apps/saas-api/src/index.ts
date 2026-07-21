@@ -83,7 +83,48 @@ async function buildServer() {
   fastify.decorate('voxlyDomain', VOXLY_DOMAIN);
 
   // --- Auth decorator ---
+  // Portal JWT, short-lived crm-chat JWT, or Twenty app service token
+  // (Authorization: Bearer VOXLY_SERVICE_TOKEN + X-Twenty-Workspace-Id).
+  const serviceToken = process.env.VOXLY_SERVICE_TOKEN || '';
   fastify.decorate('authenticate', async (request: any, reply: any) => {
+    const authHeader = String(request.headers.authorization || '');
+    const bearer = authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : '';
+
+    if (serviceToken && bearer && bearer === serviceToken) {
+      const workspaceId = String(
+        request.headers['x-twenty-workspace-id'] || '',
+      ).trim();
+      if (!workspaceId) {
+        return reply.code(401).send({
+          error: 'Unauthorized',
+          detail: 'X-Twenty-Workspace-Id required for service token',
+        });
+      }
+      const tenant = await prisma.tenant.findFirst({
+        where: { twentyWorkspaceId: workspaceId },
+        select: { id: true, status: true },
+      });
+      if (!tenant) {
+        return reply.code(401).send({
+          error: 'Unauthorized',
+          detail: 'Unknown Twenty workspace',
+        });
+      }
+      if (tenant.status === 'suspended') {
+        return reply.code(403).send({ error: 'Tenant suspended' });
+      }
+      request.user = {
+        sub: 'twenty-app',
+        role: 'member',
+        tenantRole: 'owner',
+        tenantId: tenant.id,
+        purpose: 'crm-service',
+      };
+      return;
+    }
+
     try {
       await request.jwtVerify();
     } catch (err) {

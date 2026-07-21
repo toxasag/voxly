@@ -1,5 +1,8 @@
-/* Voxly: floating «Кабинет» link back to saas-portal (injected into Twenty front) */
+/* Voxly: floating «Кабинет» link (legacy inject). Prefer SDK sidebar «Кабинет Voxly». */
 (function () {
+  var DISABLE_FLOATING_CABINET = true;
+  if (DISABLE_FLOATING_CABINET) return;
+
   var HREF = '__VOXLY_CABINET_URL__';
   var ID = 'voxly-cabinet-link';
 

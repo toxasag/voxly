@@ -59,9 +59,12 @@ services:
       # Force localhost for local multiworkspace (ignore prod/lvh.me from .env).
       # SSO URLs: http://{slug}.localhost:3007 — Chromium resolves *.localhost.
       SERVER_URL: http://localhost:3007
+      # Apps SDK logic functions (/s/*) — production image defaults to DISABLED.
+      LOGIC_FUNCTION_TYPE: LOCAL
     ports:
       - "3007:3000"
 
   twenty-worker:
     environment:
       SERVER_URL: http://localhost:3007
+      LOGIC_FUNCTION_TYPE: LOCAL

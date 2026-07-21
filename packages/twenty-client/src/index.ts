@@ -109,6 +109,52 @@ const GET_PERSON_FIELD_WIDGET_VIEWS = gql`
   }
 `;
 
+const GET_OBJECT_VIEWS = gql`
+  query GetObjectViews($objectMetadataId: String!) {
+    getViews(objectMetadataId: $objectMetadataId) {
+      id
+      name
+      type
+      key
+      icon
+      mainGroupByFieldMetadataId
+      kanbanColumnWidth
+    }
+  }
+`;
+
+const GET_VIEW_GROUPS = gql`
+  query GetViewGroups($viewId: String!) {
+    getViewGroups(viewId: $viewId) {
+      id
+      fieldValue
+      position
+      isVisible
+    }
+  }
+`;
+
+const UPDATE_VIEW = gql`
+  mutation UpdateView($id: String!, $input: UpdateViewInput!) {
+    updateView(id: $id, input: $input) {
+      id
+      type
+      key
+      mainGroupByFieldMetadataId
+      kanbanColumnWidth
+    }
+  }
+`;
+
+const CREATE_VIEW_GROUP = gql`
+  mutation CreateViewGroup($input: CreateViewGroupInput!) {
+    createViewGroup(input: $input) {
+      id
+      fieldValue
+    }
+  }
+`;
+
 const GET_VIEW_FIELDS = gql`
   query GetViewFields($viewId: String!) {
     getViewFields(viewId: $viewId) {
@@ -116,6 +162,8 @@ const GET_VIEW_FIELDS = gql`
       fieldMetadataId
       viewFieldGroupId
       position
+      isVisible
+      size
     }
   }
 `;
@@ -126,10 +174,42 @@ const UPDATE_VIEW_FIELD = gql`
       id
       viewFieldGroupId
       position
+      isVisible
+      size
     }
   }
 `;
 
+const CREATE_VIEW_FIELD = gql`
+  mutation CreateViewField($input: CreateViewFieldInput!) {
+    createViewField(input: $input) {
+      id
+      fieldMetadataId
+      position
+      isVisible
+      size
+    }
+  }
+`;
+
+/** Default Opportunity kanban card fields (Voxly CRM board). */
+const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
+  name: string;
+  position: number;
+  size: number;
+}> = [
+  { name: 'name', position: 0, size: 150 },
+  { name: 'createdAt', position: 0.125, size: 100 },
+  { name: 'amount', position: 1, size: 150 },
+  { name: 'createdBy', position: 2, size: 150 },
+  { name: 'closeDate', position: 3, size: 150 },
+  { name: 'company', position: 4, size: 150 },
+  { name: 'pointOfContact', position: 5, size: 150 },
+  { name: 'taskTargets', position: 5.5, size: 100 },
+  { name: 'noteTargets', position: 6, size: 100 },
+];
+
+const DEFAULT_KANBAN_COLUMN_WIDTH = 320;
 const UPDATE_PERSON = gql`
   mutation UpdatePerson($id: UUID!, $data: PersonUpdateInput!) {
     updatePerson(id: $id, data: $data) {
@@ -451,6 +531,22 @@ export class TwentyClient {
           `Failed to rename opportunity object (got ${updated?.labelSingular}/${updated?.labelPlural})`,
         );
       }
+
+      const stageFieldId = opportunity.fieldsList?.find(
+        (field: { name: string }) => field.name === 'stage',
+      )?.id;
+      if (stageFieldId) {
+        try {
+          await this.ensureOpportunityKanbanDefault(
+            opportunity.id,
+            stageFieldId,
+            headers,
+            opportunity.fieldsList ?? [],
+          );
+        } catch {
+          // Optional: table INDEX remains usable; SQL script can promote By Stage.
+        }
+      }
     }
 
     const person = objects.find(
@@ -461,6 +557,17 @@ export class TwentyClient {
         await this.ensurePersonTelegramField(person.id, person.fieldsList ?? [], headers);
       } catch {
         // Optional: workspace still usable without Telegram field
+      }
+    }
+
+    const note = objects.find(
+      (object: { nameSingular: string }) => object.nameSingular === 'note',
+    );
+    if (note) {
+      try {
+        await this.ensureNoteBodyAsLabel(note.id, note.fieldsList ?? [], headers);
+      } catch {
+        // Optional: kanban may keep showing note title
       }
     }
   }
@@ -490,6 +597,245 @@ export class TwentyClient {
     );
     if (!person) return;
     await this.ensurePersonTelegramField(person.id, person.fieldsList ?? [], headers);
+  }
+
+  /**
+   * Make Opportunity default INDEX view a stage kanban with Voxly card defaults.
+   * Prefer existing «By Stage» board; GraphQL cannot set view.key, so we convert
+   * the seeded TABLE INDEX to KANBAN when needed. For promoting By Stage itself
+   * to key=INDEX, run docker/set-opportunity-kanban-default.sql.
+   */
+  private async ensureOpportunityKanbanDefault(
+    opportunityObjectId: string,
+    stageFieldId: string,
+    headers: Record<string, string>,
+    fieldsList: Array<{ id: string; name: string }> = [],
+  ): Promise<void> {
+    const viewsRes = await this.authClient.request(
+      GET_OBJECT_VIEWS,
+      { objectMetadataId: opportunityObjectId },
+      headers,
+    ) as {
+      getViews?: Array<{
+        id: string;
+        name?: string | null;
+        type?: string | null;
+        key?: string | null;
+        icon?: string | null;
+        mainGroupByFieldMetadataId?: string | null;
+        kanbanColumnWidth?: number | null;
+      }>;
+    };
+    const views = (viewsRes.getViews ?? []).filter(
+      (view) => view.type !== 'FIELDS_WIDGET' && view.type !== 'TABLE_WIDGET',
+    );
+    const indexView = views.find((view) => view.key === 'INDEX');
+    if (!indexView) return;
+
+    const byStage =
+      views.find(
+        (view) =>
+          view.type === 'KANBAN'
+          && (
+            /stage|этап/i.test(String(view.name || ''))
+            || view.mainGroupByFieldMetadataId === stageFieldId
+          ),
+      )
+      ?? views.find((view) => view.type === 'KANBAN');
+
+    const groupByFieldId =
+      byStage?.mainGroupByFieldMetadataId
+      ?? stageFieldId;
+
+    const needsKanbanType =
+      indexView.type !== 'KANBAN' || !indexView.mainGroupByFieldMetadataId;
+
+    if (needsKanbanType) {
+      await this.authClient.request(
+        UPDATE_VIEW,
+        {
+          id: indexView.id,
+          input: {
+            type: 'KANBAN',
+            icon: byStage?.icon || 'IconLayoutKanban',
+            mainGroupByFieldMetadataId: groupByFieldId,
+            kanbanColumnWidth: DEFAULT_KANBAN_COLUMN_WIDTH,
+          },
+        },
+        headers,
+      );
+
+      const existingGroupsRes = await this.authClient.request(
+        GET_VIEW_GROUPS,
+        { viewId: indexView.id },
+        headers,
+      ) as {
+        getViewGroups?: Array<{ fieldValue: string }>;
+      };
+      if ((existingGroupsRes.getViewGroups ?? []).length === 0) {
+        let sourceGroups: Array<{
+          fieldValue: string;
+          position?: number;
+          isVisible?: boolean;
+        }> = [];
+        if (byStage && byStage.id !== indexView.id) {
+          const sourceRes = await this.authClient.request(
+            GET_VIEW_GROUPS,
+            { viewId: byStage.id },
+            headers,
+          ) as {
+            getViewGroups?: Array<{
+              fieldValue: string;
+              position?: number;
+              isVisible?: boolean;
+            }>;
+          };
+          sourceGroups = sourceRes.getViewGroups ?? [];
+        }
+        if (sourceGroups.length === 0) {
+          sourceGroups = [
+            { fieldValue: 'NEW', position: 0 },
+            { fieldValue: 'SCREENING', position: 1 },
+            { fieldValue: 'MEETING', position: 2 },
+            { fieldValue: 'PROPOSAL', position: 3 },
+            { fieldValue: 'CUSTOMER', position: 4 },
+          ];
+        }
+
+        for (const group of sourceGroups) {
+          await this.authClient.request(
+            CREATE_VIEW_GROUP,
+            {
+              input: {
+                viewId: indexView.id,
+                fieldValue: group.fieldValue,
+                position: group.position ?? 0,
+                isVisible: group.isVisible ?? true,
+              },
+            },
+            headers,
+          );
+        }
+      }
+    } else if (
+      !indexView.kanbanColumnWidth
+      || indexView.kanbanColumnWidth !== DEFAULT_KANBAN_COLUMN_WIDTH
+    ) {
+      try {
+        await this.authClient.request(
+          UPDATE_VIEW,
+          {
+            id: indexView.id,
+            input: { kanbanColumnWidth: DEFAULT_KANBAN_COLUMN_WIDTH },
+          },
+          headers,
+        );
+      } catch {
+        // overrides may already hold width via SQL
+      }
+    }
+
+    try {
+      await this.ensureOpportunityKanbanCardFields(
+        indexView.id,
+        fieldsList,
+        headers,
+      );
+    } catch {
+      // Card field layout is best-effort
+    }
+  }
+
+  /** Visible fields + order/size on Opportunity INDEX kanban cards. */
+  private async ensureOpportunityKanbanCardFields(
+    viewId: string,
+    fieldsList: Array<{ id: string; name: string }>,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    const vfRes = await this.authClient.request(
+      GET_VIEW_FIELDS,
+      { viewId },
+      headers,
+    ) as {
+      getViewFields?: Array<{
+        id: string;
+        fieldMetadataId: string;
+        position?: number;
+        isVisible?: boolean;
+        size?: number;
+      }>;
+    };
+    const viewFields = vfRes.getViewFields ?? [];
+    const byFieldId = new Map(viewFields.map((vf) => [vf.fieldMetadataId, vf]));
+
+    for (const spec of OPPORTUNITY_KANBAN_CARD_FIELDS) {
+      const field = fieldsList.find((f) => f.name === spec.name);
+      if (!field) continue;
+      const existing = byFieldId.get(field.id);
+      if (!existing) {
+        try {
+          await this.authClient.request(
+            CREATE_VIEW_FIELD,
+            {
+              input: {
+                viewId,
+                fieldMetadataId: field.id,
+                isVisible: true,
+                position: spec.position,
+                size: spec.size,
+              },
+            },
+            headers,
+          );
+        } catch {
+          // may already exist under another id
+        }
+        continue;
+      }
+      const needsUpdate =
+        existing.isVisible !== true
+        || existing.position !== spec.position
+        || existing.size !== spec.size;
+      if (!needsUpdate) continue;
+      await this.authClient.request(
+        UPDATE_VIEW_FIELD,
+        {
+          input: {
+            id: existing.id,
+            update: {
+              isVisible: true,
+              position: spec.position,
+              size: spec.size,
+            },
+          },
+        },
+        headers,
+      );
+    }
+  }
+
+  /**
+   * Show note body (not title) as the label in relation chips / kanban cards.
+   */
+  private async ensureNoteBodyAsLabel(
+    noteObjectId: string,
+    fields: Array<{ id: string; name: string }>,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    const bodyField = fields.find((f) => f.name === 'bodyV2');
+    if (!bodyField?.id) return;
+    await this.authClient.request(
+      UPDATE_ONE_OBJECT_METADATA,
+      {
+        input: {
+          id: noteObjectId,
+          update: {
+            labelIdentifierFieldMetadataId: bodyField.id,
+          },
+        },
+      },
+      headers,
+    );
   }
 
   /** Ensure Person has custom TEXT field `telegram` (label Telegram) in Social group. */

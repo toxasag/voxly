@@ -285,6 +285,73 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Worker: reuse Person/Opportunity; лог `/start` + outbound bot → `ChatMessage`; phone из contact.
 - ADR-001: interim inject; SDK tab остаётся backlog.
 
+### День 5 (20 июл 2026, вечер) — Apps SDK tab «Чат»
+- App `twenty-app/voxly-crm-chat`: `definePageLayoutTab` Person + Opportunity; front ChatPanel; logic `get/reply-crm-chat` → saas-api.
+- Auth: `VOXLY_SERVICE_TOKEN` + `X-Twenty-Workspace-Id` (workspace из JWT app token).
+- Applied on test2 (`yarn twenty apply`); inject `DISABLE_FLOATING_CHAT=true` (hot-patch в контейнере).
+- Incident: Twenty DB без `applicationRegistration.logoFileId` до manual ALTER.
+
+### День 5 (20 июл 2026, вечер) — «Кабинет Voxly» в рабочей области
+- Sidebar LINK via SDK (`cabinet-voxly.ts`) → `http://localhost:3001/dashboard`.
+- Floating inject отключён (`DISABLE_FLOATING_CABINET=true` + hot-patch `/voxly-cabinet.js`).
+- Applied on test2; ADR-009 обновлён.
+
+### День 5 (20 июл 2026, вечер) — Chat tab workspace host (INC-011)
+- Bare `localhost:3007/s/crm-chat` → `WORKSPACE_NOT_FOUND`; initial fix tried absolute `WORKSPACE_ORIGIN` baseUrl.
+
+### День 5 (20 июл 2026, вечер) — Chat Failed to fetch (INC-012 → INC-013)
+- Absolute `WORKSPACE_ORIGIN` → sandbox `Failed to fetch`; production `LOGIC_FUNCTION_TYPE` was DISABLED.
+- Relative `/s/...` → Worker `Failed to parse URL`; bare localhost `/s` → WORKSPACE_NOT_FOUND; floating Кабинет returned after restart.
+- Fix: `LOGIC_FUNCTION_TYPE=LOCAL`; patch functionsBaseUrl → `{sub}.localhost/s`; absolute fetch + WORKSPACE_ORIGIN; cabinet DISABLE hot-patch; apply test2.
+
+### День 6 (21 июл 2026) — Chat photo preview in SDK tab
+- Bug: attachments showed as plain text (`[фото]`, filename) — panel only printed `fileName||type`.
+- Fix: logic `get-crm-chat-file` → saas-api `/file/:fileId` as `{ dataBase64, contentType }`; `chat-panel` `<img>` + download links; hide media placeholders when attachments exist.
+- Applied on test2 (`yarn twenty apply --force`).
+
+### День 6 (21 июл 2026) — Chat UX: format menu + multi-attach
+- ПКМ: `preventDefault` + dismiss (outside / Escape / blur / scroll / format / selection clear) — no hanging custom menu.
+- Layout: right column Прикрепить above Отправить; `input multiple` + remove chips; sequential `/reply` (API 1 file).
+- Applied test2 (`yarn twenty apply --remote test2 --force`).
+
+### День 6 (21 июл 2026) — Chat critical: toolbar + photo size cliff (INC-014)
+- ПКМ abandoned (Remote DOM): always-visible format toolbar; `_italic_` display.
+- Photos: Twenty `/s` empty-200 on large base64 → JPEG compress in `voxly-proxy` (`jpeg-js`); apply test2 front `e950923b…`.
+
+### День 6 (21 июл 2026) — Twenty shell UX: hide create-workspace + Сделки kanban
+- Inject `docker/twenty-shell-ux.js` (baked in Dockerfile + hot-patch) hides «Создать рабочее пространство».
+- SQL `docker/set-opportunity-kanban-default.sql`: Opportunity **By Stage** → `key=INDEX` (test1/test2); GraphQL cannot set `key`.
+- Provisioning: `ensureOpportunityKanbanDefault` in `applyWorkspaceDefaults` converts TABLE INDEX → KANBAN if needed.
+
+### День 6 (21 июл 2026) — Chat attach encode + Send unstick (INC-015)
+- Remote DOM File proxies: no `arrayBuffer()` → toast `t.arrayBuffer is not a function`; send mid-fail could leave composer stuck.
+- Fix: `FileReader.readAsDataURL` for `fileBase64`; `sending` cleared in `finally` before `load()`; draft cleared only after success.
+- Applied test2 front checksum `e7daa9b3…`.
+
+### День 6 (21 июл 2026) — Chat composer remount clear (INC-016)
+- After INC-015: text send OK but textarea still showed draft; Send gray (`!canSend` with empty React draft, not hung `sending`).
+- Root cause: Remote DOM ignores controlled `value=""` — need remount.
+- Fix: `composerKey` remount after success; `void load()` outside finally.
+- Applied test2 front checksum `6617426e…`.
+
+### День 6 (21 июл 2026) — Chat attach host base64 + sticky composer (INC-017)
+- FileReader/arrayBuffer fail: Remote DOM files are metadata stubs only (not Blobs).
+- Fix: `patch-twenty-file-base64.cjs` encodes on host → `dataBase64`; panel stores `PendingAttachment`; grid layout pins composer (messages scroll only).
+- Applied test2 (checksum in WORKLOG / apply output).
+
+### День 6 (21 июл 2026) — Composer pin + broken FrontComponent patch (INC-018/019)
+- «Неверная конфигурация»: missing `)` in file-base64 patch broke `FrontComponentRenderer` parse.
+- Composer still scrolled: outer `.page-layout-scroll-wrapper` grew with messages.
+- Fix: patch `}))).then`; shell-ux locks wrapper; panel absolute/flex; front `fa82b539…`.
+
+### День 6 (21 июл 2026) — Kanban/card/Chat defaults for all portals
+- Column width 320 + card field set + note label=bodyV2; Chat tab position 15 after Home.
+- Provisioning: `twenty-client.applyWorkspaceDefaults`; SQL scripts for existing workspaces.
+
+### День 6 (21 июл 2026) — Multi-file reply 500 (INC-020)
+- Nest JSON body limit 10MB → 500 `"request entity too large"` on large `fileBase64` (common with 2 photos).
+- Fix: host JPEG shrink in `patch-twenty-file-base64.cjs`; chat-panel top-level `event.files` + size preflight; front `c93f55cd…` on test2.
+
 
 ---
 
@@ -298,7 +365,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat (inject на **сделке и контакте** + `/api/crm/chat`) + Person.`telegram` + gift multi-project + Twenty 2.22 / portal UI — в рабочей копии, **ещё не закоммичены**. Журнал обновлён 2026-07-20.
+**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields + note **bodyV2** label; «Чат» tab **position 15** (after Home). Person.`telegram` + gift multi-project + portal UI — в рабочей копии, **ещё не закоммичены**. Журнал обновлён 2026-07-21.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -324,7 +391,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Shared: `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO`, `buildVoxlyBotUsername`, `telegram-md.ts`, `resolveTelegramMedia`.
 - Worker (`apps/gift-bot-worker`): воронка + delays + broadcasts + promo clicks; `detectStoredMediaKind`; BullMQ `jobId` без `:`; напоминания `not_gifted` / `not_subscribed` / `after_gift` (см. сводку §3); Person/Opportunity + notes; `fireGoal` + `campaignId`/`botInstanceId`; MarkdownV2.
 - Username новых ботов: `voxly_{slug}_{01}_bot`.
-- Twenty App custom ChatMessage — не ставится; чат = портал + **deal/person-card inject** (`/api/crm/chat`) + notes. SDK tab — later.
+- Twenty App custom ChatMessage — не ставится; чат = портал + **SDK tab «Чат»** (`twenty-app/voxly-crm-chat` → logic → `/api/crm/chat`) + notes. Inject файл сохранён для rollback.
 
 **E2E test2**
 - Бот `@voxlycmrm0vuatmbot` (legacy-имя; новые = `voxly_test2_01_bot`), кампания/канал/воронка ок.
@@ -332,10 +399,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-1. Gift E2E: `/start` → Person/Сделка → кнопка «Чат» в карточке → ответ менеджера в Telegram.
-2. Ответ из кабинета портала → Telegram (`mode=human`) — уже было.
-3. Опционально: заменить inject на Twenty Apps SDK tab.
-4. Коммит незакоммиченных изменений, когда пользователь попросит.
+1. UI smoke (user): hard-refresh test2 → Сделки kanban + «Чат» after Главная + note body on cards; attach 2 photos / png+docx.
+2. Gift E2E: `/start` → Person/Сделка → tab «Чат» → Telegram.
+3. Security follow-ups (medium): per-tenant service identity; bind `fileId` to conversation attachments.
+4. Rebuild Twenty image so shell-ux + file-base64 + `DISABLE_FLOATING_*` survive recreate.
 
 ### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓
@@ -353,7 +420,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | phase1-portal | Клиентский портал + супер-админка | ✅ DONE |
 | phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) | ✅ DONE |
 | phase1-manager-bot | Telegram Manager Bot (Managed Bots) | ✅ DONE |
-| phase1-twenty-app | Twenty App voxly-platform (объекты stub) | ✅ DONE (stub; SDK-чат в карточке — next) |
+| phase1-twenty-app | Twenty App voxly-platform (объекты stub) | ✅ DONE (stub archived; chat = voxly-crm-chat) |
 | phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |
 | phase2-analytics | Сквозная аналитика (Метрика/GA4/FB/VK) | ✅ DONE |
 | phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | ⬜ PENDING |
@@ -362,17 +429,17 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | final-polish | Dockerfiles, тесты, сборка | ✅ DONE |
 | encryption | AES-256-GCM для секретов | ✅ DONE |
 | twenty-2.22 | Upgrade CRM 2.21 → 2.22.0 + white-label Voxly | ✅ DONE |
-| twenty-deal-chat | Чат в карточке Сделки (inject + `/api/crm/chat`) | ✅ DONE interim 20.07; SDK later |
+| twenty-deal-chat | Чат в карточке (SDK tab + `/api/crm/chat`; inject off) | ✅ DONE 20.07 (test2) |
 
-**Закрыто: 13/14 отмеченных пунктов.** Открыт: GramJS (опц.). SDK-замена inject — backlog.
+**Закрыто: 13/14 отмеченных пунктов.** Открыт: GramJS (опц.).
 
 ---
 
 ## 5. Что осталось сделать
 
 ### Следующий крупный кусок
-- Gift E2E + проверка deal-chat: CRM из кабинета → Opportunity → «Чат» → reply.
-- Опционально: Twenty Apps SDK tab вместо inject (Yarn 4 + create-twenty-app).
+- Gift E2E + UI verify SDK tab: CRM → Opportunity/Person → «Чат» → photo preview + reply → Telegram.
+- Multi-tenant: install `voxly-crm-chat` в provisioning (сейчас PoC на test2).
 
 ### Опциональное
 - **Phase 2b: GramJS bridge** — переписка с личного Telegram-аккаунта (не Bot API).
@@ -382,7 +449,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - `emailWorker` в `saas-api` — logging-stub → SMTP (nodemailer + `.env.example`).
 - `notifyHumanOperator` в AI-воркерах — не реализован.
 - **Gift-бот E2E** — живой прогон на test2.
-- **Чат** — портал + deal-card inject + note на Person; SDK tab — backlog.
+- **Чат** — SDK tab «Чат» (test2) + портал + notes; inject off (rollback file kept).
 - **Superadmin** — готов (`admin@getvoxly.ru`); воронки: `/admin` + `GET /api/admin/funnels`. Счётчик «Проверки» только из новых `ConversionEvent` с `campaignId`.
 - **Prisma migrations** — схема через `db push`; перед продом `pnpm db:migrate`. Есть `GiftSubscriber`, у `ConversionEvent` — `campaignId`/`botInstanceId`.
 - **Коммит** — большой набор незакоммиченных изменений — ждать явной просьбы.

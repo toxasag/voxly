@@ -51,8 +51,19 @@ flowchart LR
 
 ## 4. Чат оператора (сейчас)
 
-Portal UI → `GET .../subscribers/:id/messages` → `POST .../reply` → Telegram + `Conversation.mode=human` + note на Person в Twenty.  
-SoT сообщений: Prisma `ChatMessage`. CRM deal chat: inject `twenty-deal-chat.js` → `/api/crm/chat/:opportunityId`.
+**Портал:** UI → `GET .../subscribers/:id/messages` → `POST .../reply` → Telegram + `Conversation.mode=human` + note на Person в Twenty.
+
+**CRM card (SDK) — UX contract (не регрессировать):**
+1. Вкладка «Чат» на Person и Opportunity.
+2. История из Prisma (`ChatMessage`), роли Клиент/Менеджер/Бот.
+3. Composer **pinned at bottom** (host `twenty-shell-ux.js` locks `.page-layout-scroll-wrapper` overflow + widget height; panel root absolute/flex fill; only message list `overflowY:auto` — INC-019). Textarea + right column **Прикрепить** (above) / **Отправить**; multi-file chips; Enter = send. Outbound: saas-api one file/reply → sequential `/reply` (caption on first). Clear draft/files only after success; remount textarea via `composerKey` (INC-016); `sending` cleared in `finally` then `void load()` (INC-015).
+4. Формат Telegram client-MD: **always-visible toolbar** above textarea (Жирный/Курсив/Зачёркнутый/Спойлер/Код) wraps selection; Remote DOM: **no ПКМ** (contextmenu preventDefault unreliable), без `.focus()` / `setSelectionRange`. Display also renders `_italic_`.
+5. Inbound media: **photo/sticker `<img>` preview** via `/s/crm-chat/.../file/...` → logic compresses JPEG ≤~48KB raw then `{ dataBase64, contentType: image/jpeg }` (INC-014 size cliff); other attachments = download link or 📎 fallback; hide `[фото]`/`[видео]`/… placeholders when attachments exist. Outbound: host patch encodes file → `dataBase64` on change (INC-017) **with JPEG shrink** so JSON stays under Nest 10MB (INC-020); front stores `PendingAttachment` (top-level `event.files`) and posts sequential JSON `fileBase64` (Remote DOM File stubs are **not** Blobs — no FileReader/arrayBuffer in worker); logic rebuilds multipart → saas-api.
+6. Reference implement: inject `docker/twenty-deal-chat.js` (rollback; real-DOM `FormData`+File — not usable in SDK front).
+
+Transport: RestApiClient `/s/crm-chat/:recordId` (+ `/reply`, `/file/:fileId`) → logic → saas-api. File route returns compressed `{ dataBase64, contentType }` (binary via service token). Inject floating UI off.
+
+**Кабинет:** сайдбар «Кабинет Voxly» (`NavigationMenuItemType.LINK` → portal `/dashboard`); floating inject `twenty-cabinet-link.js` отключён (`DISABLE_FLOATING_CABINET`).
 
 ## 5. Promo post в канале
 

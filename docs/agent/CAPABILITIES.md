@@ -18,7 +18,11 @@
 | `/dashboard/bots/broadcasts` | ✅ | `dashboard/bots/broadcasts/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки | `admin/page.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
-| Deal-card chat UI в Twenty | ✅ inject: format, attach, media; Person + Opportunity | `docker/twenty-deal-chat.js` |
+| Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar**, **📎 multi-attach** (host `dataBase64`+JPEG shrink INC-017/018/020), **pinned composer** (shell scroll lock + absolute flex, INC-019), remount clear (INC-016), **photo `<img>` preview** (JPEG compress), MarkdownV2 | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
+| Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/twenty-cabinet-link.js` rollback) |
+| Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
+| Сделки default = kanban By Stage | ✅ `key=INDEX` on By Stage; width **320**; card fields; note label=bodyV2 | SQL `set-opportunity-kanban-*.sql` + `twenty-client.applyWorkspaceDefaults` |
+| Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
 
 Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-preview.tsx`.
 
@@ -64,7 +68,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 | POST | `.../reply` | ✅ |
 | DELETE | `/:botId` | ✅ |
 | POST | `/webhook/:botId` | ✅ (prod webhook; local = poll) |
-| GET/POST | `/api/crm/chat/:recordId` (+ `/reply`, `/file/:fileId`) | ✅ Opportunity **или** Person id; text+media+MarkdownV2 |
+| GET/POST | `/api/crm/chat/:recordId` (+ `/reply`, `/file/:fileId`) | ✅ Opportunity **или** Person id; text+media+MarkdownV2; auth = portal/crm JWT **или** `VOXLY_SERVICE_TOKEN` + `X-Twenty-Workspace-Id` |
 
 ### Admin `/api/admin`
 | Method | Path | ✅ |
@@ -108,7 +112,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 | `emailWorker` SMTP | queues.ts | ❌ logging stub |
 | `notifyHumanOperator` | AI workers | ❌ |
 | GramJS bridge | — | ❌ pending |
-| Twenty App SDK deal chat | twenty-app + `/api/crm/chat` | ⬜ SDK later; inject ✅ |
+| Twenty App SDK deal chat | twenty-app/voxly-crm-chat + `/api/crm/chat` | ✅ tab + format toolbar + multi-📎 (INC-017/018/020 JPEG shrink) + pinned composer (INC-019) + remount (INC-016) + photo preview (INC-014); inject off |
 | `installApp` in provisioning | provisioning.ts | ❌ dead; use sync/install later |
 
 ---

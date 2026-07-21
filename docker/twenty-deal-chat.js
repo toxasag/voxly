@@ -1,5 +1,9 @@
 /* Voxly: Telegram chat panel on Twenty Opportunity (deal) and Person pages */
 (function () {
+  // Flip to false to restore inject UI (rollback). SDK tab «Чат» is the primary surface.
+  var DISABLE_FLOATING_CHAT = true;
+  if (DISABLE_FLOATING_CHAT) return;
+
   var API = '__VOXLY_API_URL__'.replace(/\/$/, '');
   var TOKEN_KEY = 'voxly_crm_chat_token';
   var ROOT_ID = 'voxly-deal-chat';

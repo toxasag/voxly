@@ -122,6 +122,8 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       # Auth
       AUTH_JWT_SECRET: ${TWENTY_JWT_SECRET:-change-twenty-jwt-secret}
+      # Apps SDK logic functions (production default is DISABLED)
+      LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
       # API
       API_BASE_PATH: "/rest"
       # Email (SMTP for invites)
@@ -167,6 +169,7 @@ services:
       REDIS_URL: redis://redis:6379
       SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
     networks:
       - voxly-net
 
@@ -203,6 +206,7 @@ services:
       SMTP_PASS: ${SMTP_PASS}
       AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
       AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
     labels:
       - "traefik.enable=true"
       # API on api.getvoxly.ru
