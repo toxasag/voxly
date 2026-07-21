@@ -230,23 +230,50 @@ function roleLabel(role: string): string {
   return role || '';
 }
 
-function formatContent(src: string): string {
-  let s = String(src || '')
+function escapeHtml(src: string): string {
+  return String(src || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** Inline client-MD → HTML (single line; newlines handled by the caller). */
+function formatInlineMarkdown(src: string): string {
+  let s = escapeHtml(src);
   s = s.replace(/```([\s\S]*?)```/g, (_m, code) => {
     return `<pre style="margin:4px 0;padding:6px;background:rgba(0,0,0,0.06);border-radius:6px;overflow:auto;font-size:12px">${code}</pre>`;
   });
-  s = s.replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,0.06);padding:1px 4px;border-radius:4px">$1</code>');
+  s = s.replace(
+    /`([^`]+)`/g,
+    '<code style="background:rgba(0,0,0,0.06);padding:1px 4px;border-radius:4px">$1</code>',
+  );
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // Telegram client-MD: __italic__ and _italic_ (apply __ first).
   s = s.replace(/__([^_]+)__/g, '<em>$1</em>');
   s = s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<s>$1</s>');
-  s = s.replace(/\|\|([^|]+)\|\|/g, '<span style="background:#333;color:#333;border-radius:3px;padding:0 2px">$1</span>');
-  return s.replace(/\n/g, '<br/>');
+  // Spoiler must stay readable in CRM (Telegram hides until tap; we hint with dashed bg).
+  s = s.replace(
+    /\|\|([^|]+)\|\|/g,
+    '<span style="background:rgba(0,0,0,0.12);border-bottom:1px dashed rgba(0,0,0,0.35);border-radius:3px;padding:0 2px">$1</span>',
+  );
+  return s;
+}
+
+/**
+ * Full message HTML. Remote DOM often drops bare `<br/>` / collapses newlines inside
+ * a single HTML blob — split lines into block rows instead (INC-023).
+ */
+function formatContent(src: string): string {
+  const raw = String(src || '');
+  if (!raw) return '';
+  return raw
+    .split('\n')
+    .map((line) => {
+      const html = formatInlineMarkdown(line);
+      return `<div style="min-height:1.2em">${html || '&nbsp;'}</div>`;
+    })
+    .join('');
 }
 
 function wrapSelection(
@@ -444,9 +471,16 @@ const ChatPanel = () => {
     }
   }, [messages.length]);
 
+  const readComposerText = (): string => {
+    // Remote DOM: host textarea value can diverge from React `draft` (INC-016).
+    const el = inputRef.current as { value?: string } | null;
+    if (el && typeof el.value === 'string') return el.value;
+    return draft;
+  };
+
   const send = async () => {
     if (!recordId || sending) return;
-    const text = draft.trim();
+    const text = readComposerText().trim();
     const files = [...pendingFiles];
     if (!text && files.length === 0) return;
     setSending(true);
@@ -502,7 +536,8 @@ const ChatPanel = () => {
 
   const applyFormat = (before: string, after: string) => {
     if (inputRef.current) syncSelection(inputRef.current);
-    const len = draft.length;
+    const value = readComposerText();
+    const len = value.length;
     let { start, end } = selRef.current;
     start = Math.max(0, Math.min(start, len));
     end = Math.max(0, Math.min(end, len));
@@ -511,12 +546,16 @@ const ChatPanel = () => {
       start = end;
       end = tmp;
     }
-    // Remote DOM often collapses selection before click; fall back to last word.
+    // Remote DOM often collapses selection before click; fall back to last word on the
+    // current line (not across newlines — otherwise strike wraps only the last line).
     if (start === end) {
-      const match = /(\S+)$/u.exec(draft.slice(0, end || len));
+      const beforeCursor = value.slice(0, end || len);
+      const lineStart = beforeCursor.lastIndexOf('\n') + 1;
+      const line = beforeCursor.slice(lineStart);
+      const match = /(\S+)$/u.exec(line);
       if (match && match.index != null) {
-        start = match.index;
-        end = match.index + match[1].length;
+        start = lineStart + match.index;
+        end = lineStart + match.index + match[1].length;
       }
     }
     if (start === end) {
@@ -526,7 +565,7 @@ const ChatPanel = () => {
       });
       return;
     }
-    const next = wrapSelection(draft, start, end, before, after);
+    const next = wrapSelection(value, start, end, before, after);
     setDraft(next.text);
     selRef.current = { start: next.nextStart, end: next.nextEnd };
     // Never call focus/setSelectionRange — Remote DOM throws (Fl.focus is not a function).
@@ -820,12 +859,14 @@ const ChatPanel = () => {
               noteSelection(e.target as HTMLTextAreaElement);
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Enter = newline (multiline replies). Cmd/Ctrl+Enter = send.
+              // Plain Enter previously sent immediately → only the first line went out (INC-022).
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 void send();
               }
             }}
-            placeholder="Ответ в Telegram…"
+            placeholder="Ответ в Telegram… (⌘/Ctrl+Enter — отправить)"
             rows={3}
             style={{
               flex: 1,

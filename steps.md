@@ -348,6 +348,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Column width 320 + card field set + note label=bodyV2; Chat tab position 15 after Home.
 - Provisioning: `twenty-client.applyWorkspaceDefaults`; SQL scripts for existing workspaces.
 
+### День 6 (21 июл 2026) — Kanban note chip `[object Object]` (INC-021)
+- Root cause: Note `labelIdentifier=bodyV2` (RICH_TEXT) stringifies to `[object Object]` on relation chips.
+- Fix: label=`title` + sync title←body markdown (SQL trigger/backfill) + latest note via noteTarget.position; twenty-client `ensureNoteTitleAsLabel`.
+
 ### День 6 (21 июл 2026) — Multi-file reply 500 (INC-020)
 - Nest JSON body limit 10MB → 500 `"request entity too large"` on large `fileBase64` (common with 2 photos).
 - Fix: host JPEG shrink in `patch-twenty-file-base64.cjs`; chat-panel top-level `event.files` + size preflight; front `c93f55cd…` on test2.
@@ -365,7 +369,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields + note **bodyV2** label; «Чат» tab **position 15** (after Home). Checkpoint **закоммичен** `371a4ac` на `feature/twenty-crm-chat-tab` (2026-07-21); `.cursor/skills/` не в git. Security: 0 critical/high, 2 medium → SEC-001.
+**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields; note chip = **body via title sync** (INC-021, not bodyV2 label); «Чат» tab **position 15** (after Home). Checkpoint **закоммичен** `371a4ac` на `feature/twenty-crm-chat-tab` (2026-07-21); `.cursor/skills/` не в git. Security: 0 critical/high, 2 medium → SEC-001.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -452,7 +456,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - **Чат** — SDK tab «Чат» (test2) + портал + notes; inject off (rollback file kept).
 - **Superadmin** — готов (`admin@getvoxly.ru`); воронки: `/admin` + `GET /api/admin/funnels`. Счётчик «Проверки» только из новых `ConversionEvent` с `campaignId`.
 - **Prisma migrations** — схема через `db push`; перед продом `pnpm db:migrate`. Есть `GiftSubscriber`, у `ConversionEvent` — `campaignId`/`botInstanceId`.
-- **Коммит** — большой набор незакоммиченных изменений — ждать явной просьбы.
+- **Коммит** — checkpoint `371a4ac` (chat/shell/kanban); непушить без просьбы.
 - **Docker runtime** — Colima; TG polling локально (`GIFT_BOT_USE_POLLING` / `MANAGER_USE_POLLING`).
 
 ### Перед продакшеном

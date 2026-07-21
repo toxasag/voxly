@@ -21,7 +21,7 @@
 | Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar**, **📎 multi-attach** (host `dataBase64`+JPEG shrink INC-017/018/020), **pinned composer** (shell scroll lock + absolute flex, INC-019), remount clear (INC-016), **photo `<img>` preview** (JPEG compress), MarkdownV2 | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/twenty-cabinet-link.js` rollback) |
 | Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
-| Сделки default = kanban By Stage | ✅ `key=INDEX` on By Stage; width **320**; card fields; note label=bodyV2 | SQL `set-opportunity-kanban-*.sql` + `twenty-client.applyWorkspaceDefaults` |
+| Сделки default = kanban By Stage | ✅ `key=INDEX` on By Stage; width **320**; card fields; note chip = body via title sync | SQL `set-opportunity-kanban-*.sql` + `twenty-client.applyWorkspaceDefaults` |
 | Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
 
 Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-preview.tsx`.

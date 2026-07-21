@@ -17,6 +17,51 @@
 
 ---
 
+### 2026-07-21 — INC-023 chat multiline was sent but UI hid line 2
+- Goal: user still saw only first line after INC-022.
+- Changes: DB confirmed full content (`~~…~~\n||…||`); fix `formatContent` → per-line `<div>` + visible spoiler. Apply `05c28f90…`.
+- Verify: hard-refresh «Чат» → old multiline messages show both lines; spoiler readable.
+- Next: user confirm in CRM + Telegram.
+
+### 2026-07-21 — INC-022 chat Enter sent first line only
+- Goal: multiline reply (strike line1 + line2) must send full text.
+- Changes: `chat-panel.tsx` — Enter=newline, Cmd/Ctrl+Enter=send; DOM `readComposerText`; line-local format fallback. Applied test2 front `5ca88013…`. INC-022.
+- Verify: hard-refresh «Чат» → two lines + format → full message in Telegram.
+- Next: user verify.
+
+### 2026-07-21 — Kanban note chip title≠body (first line only)
+- Goal: chip showed short title («ПОЗДНЯЯ заметка») while body had full text.
+- Changes: trigger `BEFORE INSERT OR UPDATE` (any col) forces title←bodyV2Markdown; backfill; SQL file updated.
+- Verify: sample note title now = «ПОЗДНЯЯ заметка — должна быть текст».
+- Next: user hard-refresh Сделки.
+
+### 2026-07-21 — Note chip showed only «П» (avatar)
+- Goal: full latest note body on kanban, not avatar initial.
+- Changes: shell-ux CSS — do not `-webkit-box` the chip (broke flex → only «П»); clamp text node only; STYLE_ID v2; noteTargets size 100→280 (SQL + twenty-client).
+- Verify: user hard-refresh → chip shows «ПОЗДНЯЯ заметка…» multiline.
+- Next: user confirm.
+
+### 2026-07-21 — INC-021 Redis stale label (still `[object Object]`)
+- Goal: chips still showed `[object Object]` after SQL title sync — fix live display + latest-only.
+- Changes:
+  - Flushed Redis `object-metadata` / `ObjectMetadataItems` for test1+test2 (cache had bodyV2 id while PG had title).
+  - Restarted twenty-server; verified cache label id = title `94a308d4…`.
+  - `docker/twenty-shell-ux.js` — hide 2nd+ note chips on board; SQL comment about Redis flush.
+  - INC-021 updated.
+- Verify: Redis MATCH title; Twenty http 200; shell-ux served with `note-extra` hide.
+- Broken / blockers: user must hard-refresh (Cmd+Shift+R) — browser may keep old Apollo metadata.
+- Next: user verify chip = «ПОЗДНЯЯ заметка…» (one chip).
+
+### 2026-07-21 — Kanban note chip `[object Object]` (INC-021)
+- Goal: show latest note **body** text on Opportunity kanban chips (not title, not `[object Object]`).
+- Changes:
+  - `docker/set-opportunity-kanban-card-defaults.sql` — labelIdentifier=`title`; backfill title←bodyV2Markdown; triggers sync title + latest-first noteTarget.position.
+  - `packages/twenty-client` — `ensureNoteTitleAsLabel` (was bodyV2); `createNoteForPerson` title=body.
+  - Docs: INC-021, DECISIONS/CAPABILITIES/steps.
+- Verify: test2 note `87e26ed5…` title=body string; label=title/TEXT on test1+test2; 42/42 notes synced; latest note position=0 on sample opportunity; saas-api rebuilt with twenty-client fix.
+- Broken / blockers: browser MCP unavailable for visual check — user hard-refresh CRM; new workspaces need SQL re-run for triggers.
+- Next: hard-refresh test2 Сделки → chip shows body; multi-note shows latest first.
+
 ### 2026-07-21 — Checkpoint commit: CRM chat tab + defaults + security note
 - Goal: persist working test2 CRM state (chat UX, kanban defaults, multi-file) and record security review.
 - Changes: commit branch `feature/twenty-crm-chat-tab` (voxly-crm-chat app, docker patches/SQL/shell-ux, twenty-client defaults, saas-api service-token, agent docs). Exclude `.cursor/skills/`.

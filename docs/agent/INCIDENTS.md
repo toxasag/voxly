@@ -5,6 +5,25 @@
 
 ---
 
+### INC-023 — Chat UI looked like only the first line was sent
+- **Симптом:** multiline reply (e.g. `~~111~~` + `||222||`) appeared as a single struck line in CRM «Чат»; user thought only line 1 was sent.
+- **Причина:** (1) `ChatMessage.content` in DB already had full multiline — send path OK. (2) Display used `<br/>` + spoiler `color:#333;background:#333` → second line invisible; Remote DOM may also collapse/`br` poorly.
+- **Фикс:** render each line as a `<div>` row; spoiler = dashed readable hint (not black-on-black). Keep Cmd/Ctrl+Enter send (INC-022).
+- **Дата:** 2026-07-21.
+
+### INC-022 — Chat multiline: Enter sent only the first line
+- **Симптом:** CRM «Чат»: первая строка + зачёркнутый, вторая строка → в Telegram уходит только первая.
+- **Причина:** `onKeyDown` treated plain **Enter** as send (`!shiftKey`). User pressed Enter for a new line → message sent immediately with only line 1. Shift+Enter was required for newline (undocumented).
+- **Фикс:** Enter inserts newline; **Cmd/Ctrl+Enter** sends. `readComposerText()` prefers textarea DOM value (Remote DOM vs React draft). Format fallback wraps last word on the **current line** only. Placeholder hint.
+- **Дата:** 2026-07-21.
+
+### INC-021 — Kanban note chip shows `[object Object]`
+- **Симптом:** Сделки kanban (test2): chip `noteTargets` = literal `[object Object]` instead of note body (e.g. «Тестовая заметка…»). After SQL fix still two `[object Object]` chips until Redis flushed.
+- **Причина:** (1) `labelIdentifier` was set to Note.`bodyV2` (RICH_TEXT) → stringify = `[object Object]`. (2) Postgres update alone is **not enough** — Redis flat-map `object-metadata` kept stale `bodyV2` id (`143cedd1…`) while DB already had `title` (`94a308d4…`).
+- **Диагностика:** Compare `objectMetadata.labelIdentifierFieldMetadataId` in PG vs Redis `engine:workspace:flat-maps:object-metadata:<workspaceId>:data`; note rows already had correct TEXT `title` ← `bodyV2Markdown`.
+- **Фикс:** labelIdentifier → `title`; sync `title ← bodyV2Markdown` on **every** INSERT/UPDATE (not only body column — Twenty often overwrites title with first line after body save); latest note first via `noteTarget.position`; **flush Redis object-metadata**; shell-ux hide 2nd+ chips + widen noteTargets 280. `ensureNoteTitleAsLabel` in twenty-client.
+- **Дата:** 2026-07-21.
+
 ### SEC-001 — Global service token + unbound fileId (review 2026-07-21)
 - **Severity:** Medium (not shipping-blockers for local PoC).
 - **Findings:** (1) `VOXLY_SERVICE_TOKEN` + caller `X-Twenty-Workspace-Id` can reach any tenant if token leaks. (2) `GET /api/crm/chat/:recordId/file/:fileId` does not verify `fileId` belongs to that conversation’s attachments (in-tenant IDOR).

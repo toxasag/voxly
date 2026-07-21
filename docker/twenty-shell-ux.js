@@ -1,13 +1,13 @@
 /* Voxly: Twenty shell UX tweaks (multiworkspace + CRM defaults).
  * - Hide «+ Создать рабочее пространство» / Create workspace in profile ⋯ menu
  * - Pin CRM «Чат» canvas: disable page-layout outer scroll so composer stays fixed
- * - Kanban note chips: show ≥5 lines of note body text
+ * - Kanban note chips: body text via title label; ≥5 lines; only latest note visible
  * Workspaces are provisioned by Voxly control plane, not from CRM UI.
  */
 (function () {
   var MARKER = 'data-voxly-shell-ux';
   var CHAT_PIN = 'data-voxly-chat-pinned';
-  var STYLE_ID = 'voxly-shell-ux-css';
+  var STYLE_ID = 'voxly-shell-ux-css-v2';
   var HIDE_RE =
     /^\s*\+?\s*(создать\s+рабочее\s+пространство|create(\s+a)?\s+workspace|create\s+your\s+workspace)\s*$/i;
 
@@ -15,21 +15,38 @@
     if (document.getElementById(STYLE_ID)) return;
     var style = document.createElement('style');
     style.id = STYLE_ID;
-    // Note relation on board cards: allow ~5 lines of body (labelIdentifier=bodyV2).
+    // Note chips: keep chip as inline-flex (do NOT webkit-box the chip — that
+    // collapses to the avatar initial «П»). Wrap only the label text.
     style.textContent = [
-      '[data-testid="record-board-card"] [data-testid*="note"],',
-      '.record-board-card [class*="Note"],',
-      '[class*="RecordBoardCard"] [class*="note"],',
-      '[class*="RecordBoardCard"] [class*="Note"] {',
+      '[id^="record-board-card-"][id*="-noteTargets"] {',
+      '  max-width: 100% !important;',
+      '  width: 100% !important;',
+      '  min-width: 0 !important;',
+      '}',
+      '[id^="record-board-card-"][id*="-noteTargets"] [class*="_chip"] {',
+      '  max-width: 100% !important;',
+      '  width: auto !important;',
+      '  height: auto !important;',
+      '  min-height: 0 !important;',
+      '  align-items: flex-start !important;',
+      '  white-space: normal !important;',
+      '  overflow: hidden !important;',
+      '}',
+      '[id^="record-board-card-"][id*="-noteTargets"] [class*="_overflowingText"] {',
       '  white-space: pre-wrap !important;',
       '  display: -webkit-box !important;',
       '  -webkit-box-orient: vertical !important;',
       '  -webkit-line-clamp: 5 !important;',
       '  line-clamp: 5 !important;',
       '  overflow: hidden !important;',
+      '  text-overflow: unset !important;',
+      '  max-width: 100% !important;',
       '  max-height: 7.5em !important;',
       '  line-height: 1.35 !important;',
       '  word-break: break-word !important;',
+      '}',
+      '[id^="record-board-card-"][id*="-noteTargets"] [data-voxly-shell-ux="note-extra"] {',
+      '  display: none !important;',
       '}',
     ].join('\n');
     document.documentElement.appendChild(style);
@@ -166,11 +183,43 @@
     }
   }
 
+  /** Keep only the first (latest via noteTarget.position) chip on board cards. */
+  function hideExtraKanbanNotes() {
+    var fields = document.querySelectorAll(
+      '[id^="record-board-card-"][id*="-noteTargets"]',
+    );
+    for (var f = 0; f < fields.length; f++) {
+      var field = fields[f];
+      // Prefer per-chip link containers; never climb to the shared field root.
+      var links = field.querySelectorAll('a');
+      for (var i = 0; i < links.length; i++) {
+        var link = links[i];
+        var wrap =
+          (link.closest && link.closest('[class*="linkContainer"]')) ||
+          (link.parentElement && link.parentElement !== field
+            ? link.parentElement
+            : link);
+        // Bail if wrap is the field itself (would hide all chips).
+        if (wrap === field) wrap = link;
+        if (i === 0) {
+          if (wrap.getAttribute(MARKER) === 'note-extra') {
+            wrap.removeAttribute(MARKER);
+            wrap.style.removeProperty('display');
+          }
+          continue;
+        }
+        wrap.setAttribute(MARKER, 'note-extra');
+        wrap.style.setProperty('display', 'none', 'important');
+      }
+    }
+  }
+
   function tick() {
     ensureCss();
     hideCreateWorkspaceNodes(document);
     pinChatCanvasScroll();
     expandKanbanNoteLines();
+    hideExtraKanbanNotes();
   }
 
   function start() {

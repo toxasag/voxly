@@ -206,7 +206,7 @@ const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
   { name: 'company', position: 4, size: 150 },
   { name: 'pointOfContact', position: 5, size: 150 },
   { name: 'taskTargets', position: 5.5, size: 100 },
-  { name: 'noteTargets', position: 6, size: 100 },
+  { name: 'noteTargets', position: 6, size: 280 },
 ];
 
 const DEFAULT_KANBAN_COLUMN_WIDTH = 320;
@@ -565,9 +565,9 @@ export class TwentyClient {
     );
     if (note) {
       try {
-        await this.ensureNoteBodyAsLabel(note.id, note.fieldsList ?? [], headers);
+        await this.ensureNoteTitleAsLabel(note.id, note.fieldsList ?? [], headers);
       } catch {
-        // Optional: kanban may keep showing note title
+        // Optional: kanban may keep a wrong labelIdentifier until SQL re-run
       }
     }
   }
@@ -815,22 +815,25 @@ export class TwentyClient {
   }
 
   /**
-   * Show note body (not title) as the label in relation chips / kanban cards.
+   * Kanban/relation chips use labelIdentifier as a string. Note.bodyV2 is RICH_TEXT
+   * (object) and becomes "[object Object]" — keep label on TEXT `title`.
+   * Body text is mirrored into title by docker/set-opportunity-kanban-card-defaults.sql
+   * (trigger + backfill) and by createNoteForPerson below.
    */
-  private async ensureNoteBodyAsLabel(
+  private async ensureNoteTitleAsLabel(
     noteObjectId: string,
     fields: Array<{ id: string; name: string }>,
     headers: Record<string, string>,
   ): Promise<void> {
-    const bodyField = fields.find((f) => f.name === 'bodyV2');
-    if (!bodyField?.id) return;
+    const titleField = fields.find((f) => f.name === 'title');
+    if (!titleField?.id) return;
     await this.authClient.request(
       UPDATE_ONE_OBJECT_METADATA,
       {
         input: {
           id: noteObjectId,
           update: {
-            labelIdentifierFieldMetadataId: bodyField.id,
+            labelIdentifierFieldMetadataId: titleField.id,
           },
         },
       },
@@ -1173,12 +1176,14 @@ export class TwentyClient {
     title: string;
     body: string;
   }): Promise<{ id: string } | null> {
+    // Chip label = title (TEXT). Prefer body text so kanban shows note content.
+    const chipTitle = (input.body || input.title || '').slice(0, 2000);
     try {
       const result = await this.client.request(
         CREATE_NOTE,
         {
           data: {
-            title: input.title,
+            title: chipTitle,
             bodyV2: { markdown: input.body },
             noteTargets: [{ personId: input.personId }],
           },
@@ -1193,7 +1198,7 @@ export class TwentyClient {
           CREATE_NOTE,
           {
             data: {
-              title: `${input.title} · person:${input.personId}`,
+              title: chipTitle || `${input.title} · person:${input.personId}`,
               bodyV2: { markdown: input.body },
             },
           },

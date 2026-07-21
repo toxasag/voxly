@@ -50,9 +50,9 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 | Default Opportunities view | Seeded TABLE `key=INDEX` → promote existing **By Stage** KANBAN to `key=INDEX` via SQL (`docker/set-opportunity-kanban-default.sql`). GraphQL `updateView` cannot set `key`. |
 | Kanban column width | **320** via `view.kanbanColumnWidth` + `overrides.kanbanColumnWidth` (`docker/set-opportunity-kanban-card-defaults.sql` + `ensureOpportunityKanbanDefault`). |
 | Kanban card fields | name, createdAt, amount, createdBy, closeDate, company, pointOfContact, taskTargets, noteTargets — positions/sizes in `OPPORTUNITY_KANBAN_CARD_FIELDS` (`twenty-client`). |
-| Note on kanban card | Note `labelIdentifier` = **bodyV2** (текст заметки, не title); shell-ux clamps ≈5 lines. |
+| Note on kanban card | Note `labelIdentifier` = **title** (TEXT). `bodyV2` is RICH_TEXT → `[object Object]` if used as label (INC-021). Body mirrored into `title` via SQL trigger + backfill; `createNoteForPerson` sets title←body. Latest note first via `noteTarget.position` (ASC). Shell-ux clamps ≈5 lines. |
 | «Чат» tab order | `position: 15` (after Home=10, before Timeline=20) in `page-layout-tabs/*-chat.page-layout-tab.ts` + `docker/set-chat-tab-position.sql`. |
-| New workspace provisioning | `applyWorkspaceDefaults` → kanban type/groups + column width + card fields + note body label. |
+| New workspace provisioning | `applyWorkspaceDefaults` → kanban type/groups + column width + card fields + note **title** label. Re-run `set-opportunity-kanban-card-defaults.sql` so new schemas get title-sync + latest-first triggers. |
 | Persistence | Scripts baked in `docker/twenty.Dockerfile`; hot-patch survives until container recreate — then rebuild image or re-copy + re-sed `index.html`. |
 
 **Re-apply after Twenty recreate:**
