@@ -352,6 +352,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Root cause: Note `labelIdentifier=bodyV2` (RICH_TEXT) stringifies to `[object Object]` on relation chips.
 - Fix: label=`title` + sync title←body markdown (SQL trigger/backfill) + latest note via noteTarget.position; twenty-client `ensureNoteTitleAsLabel`.
 
+### День 7 (22 июл 2026) — Bot funnel photos in CRM chat (INC-024)
+- Root cause: `logBotOutbound` stored text only → CRM «Чат» no `<img>` for `/start` photo.
+- Fix: persist `attachments` from sendPhoto/Video/Document; backfill test2 start rows; phone→Person sync finished.
+- P1 (seats / chat-install / defaults) still ADR-011 TODO.
+
 ### День 6 (21 июл 2026) — Multi-file reply 500 (INC-020)
 - Nest JSON body limit 10MB → 500 `"request entity too large"` on large `fileBase64` (common with 2 photos).
 - Fix: host JPEG shrink in `patch-twenty-file-base64.cjs`; chat-panel top-level `event.files` + size preflight; front `c93f55cd…` on test2.
@@ -369,7 +374,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields; note chip = **body via title sync** (INC-021, not bodyV2 label); «Чат» tab **position 15** (after Home). Checkpoint **закоммичен** `371a4ac` на `feature/twenty-crm-chat-tab` (2026-07-21); `.cursor/skills/` не в git. Security: 0 critical/high, 2 medium → SEC-001.
+**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). **Bot funnel photos** now logged with `attachments.fileId` (INC-024; gift-bot-worker rebuilt 2026-07-22). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields; note chip = **body via title sync** (INC-021, not bodyV2 label); «Чат» tab **position 15** (after Home). Checkpoint **закоммичен** `371a4ac` на `feature/twenty-crm-chat-tab` (2026-07-21); uncommitted: INC-024 + phone sync. `.cursor/skills/` не в git. Security: 0 critical/high, 2 medium → SEC-001.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -403,10 +408,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-1. UI smoke (user): hard-refresh test2 → Сделки kanban + «Чат» after Главная + note body on cards; attach 2 photos / png+docx.
-2. Gift E2E: `/start` → Person/Сделка → tab «Чат» → Telegram.
-3. Security follow-ups (medium): per-tenant service identity; bind `fileId` to conversation attachments.
-4. Rebuild Twenty image so shell-ux + file-base64 + `DISABLE_FLOATING_*` survive recreate.
+1. **Seats = CRM users:** portal 1/10 + limit must track Twenty workspace members (not only Voxly `/invite`) — ADR-011.
+2. **Install `voxly-crm-chat` on gift-bot activation** (parity with test2 chat tab) — ADR-011 / INC-006 syncApplication.
+3. **Provisioning = test2 defaults:** auto-run note title-sync SQL triggers for new workspace schema — ADR-010/011.
+4. Security follow-ups (medium): per-tenant service identity; bind `fileId` to conversation attachments.
+5. Rebuild Twenty image so shell-ux + file-base64 + `DISABLE_FLOATING_*` survive recreate.
 
 ### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓

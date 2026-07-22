@@ -105,7 +105,8 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 | Media via Telegram `file_id` | bots media + worker send | ✅ |
 | Client Markdown → MarkdownV2 | `packages/shared/src/telegram-md.ts` | ✅ |
 | Broadcasts | gift-bot-worker | ✅ |
-| CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ + custom Person.`telegram` (`@username`) |
+| CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ + custom Person.`telegram` (`@username`); phone → Person.phones when contact shared |
+| Bot outbound media in CRM chat | gift-bot-worker `logBotOutbound` | ✅ photo/video/document `attachments.fileId` (INC-024); same preview path as inbound |
 | fireGoal + campaignId/botInstanceId | gift-bot-worker → ConversionEvent | ✅ |
 | Username `voxly_{slug}_{NN}_bot` | `buildVoxlyBotUsername` | ✅ |
 | AI Telegram / WhatsApp workers | apps/ai-* | ✅ код есть; E2E не фокус |

@@ -1092,6 +1092,35 @@ export class TwentyClient {
     }
   }
 
+  /** Set Person primary phone (Twenty phones composite). Best-effort. */
+  async updatePersonPhone(personId: string, phone: string): Promise<void> {
+    const number = String(phone || '').trim();
+    if (!number) return;
+    const headers = this.getAuthHeaders();
+    const data = { phones: { primaryPhoneNumber: number } };
+    try {
+      await this.client.request(UPDATE_PERSON, { id: personId, data }, headers);
+      return;
+    } catch {
+      /* try alternate */
+    }
+    try {
+      await this.client.request(
+        gql`
+          mutation UpdateOnePerson($id: UUID!, $data: PersonUpdateInput!) {
+            updatePerson(id: $id, data: $data) {
+              id
+            }
+          }
+        `,
+        { id: personId, data },
+        headers,
+      );
+    } catch {
+      /* schema may differ */
+    }
+  }
+
   /**
    * Find an existing Person by lastName / username hint (dedupe before create)
    */

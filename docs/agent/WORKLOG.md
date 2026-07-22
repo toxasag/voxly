@@ -17,6 +17,19 @@
 
 ---
 
+### 2026-07-22 — INC-024 bot funnel photos in CRM chat + phone sync finish
+- Goal: bot `/start` photo visible in CRM «Чат»; finish interrupted phone→Person sync; document P1/P2 status.
+- Changes: `gift-bot-worker` `logBotOutbound` + `attachmentFromSendResult` on sendPhoto/Video/Document; `syncPhoneToCrmPerson` + `TwentyClient.updatePersonPhone`; test2 SQL backfill start `attachments` from funnel `telegramFileId`; INC-024; ADR-011 remains TODO for seats/chat-install/defaults.
+- Verify: DB assistant «После /start» now has `attachments[].fileId`; `getFile` OK for that id; rebuild `gift-bot-worker`. Hard-refresh CRM «Чат». New `/start` also stores attachments.
+- Broken / blockers: Colima was down at session start (restarted). P1 not implemented (ADR-011).
+- Next: ADR-011 seats=CRM members; install `voxly-crm-chat` on gift activate; auto SQL triggers for new workspaces.
+
+### 2026-07-21 — Product intent: seats/chat/defaults + phone→CRM
+- Goal: capture ADR-011 (seats=CRM members; chat app on gift activate; new WS = test2 defaults). Answer TG field limits; sync shared contact phone → Person.phones.
+- Changes: `DECISIONS` ADR-011; `updatePersonPhone` + `syncPhoneToCrmPerson`; createPerson can set phone from GiftSubscriber; CAPABILITIES/steps next.
+- Verify: funnel «поделиться контактом» → Person Phones filled; email/ДР still N/A via Bot API.
+- Next: implement ADR-011 items 1–3.
+
 ### 2026-07-21 — INC-023 chat multiline was sent but UI hid line 2
 - Goal: user still saw only first line after INC-022.
 - Changes: DB confirmed full content (`~~…~~\n||…||`); fix `formatContent` → per-line `<div>` + visible spoiler. Apply `05c28f90…`.

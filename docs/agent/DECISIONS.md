@@ -16,7 +16,7 @@
 | API | `GET/POST /api/crm/chat/:recordId` (+ `/reply`, `/file/:fileId`) |
 | Media | inbound TG `file_id` preview; outbound **multi-📎** → sequential multipart `/reply` (API limit 1 file) |
 | Format | client Markdown → MarkdownV2; UI: **always-visible format toolbar** (ПКМ abandoned — Remote DOM); без `.focus()` |
-| Composer | format toolbar + textarea + right stack Прикрепить→Отправить; multi-file chips; Enter send, Shift+Enter newline |
+| Composer | format toolbar + textarea + right stack Прикрепить→Отправить; multi-file chips; **Enter = newline**, **⌘/Ctrl+Enter = send** (INC-022) |
 | Media preview | logic JPEG compress before base64 (INC-014); photo/sticker `<img>` |
 | SoT UX reference | parity with inject `docker/twenty-deal-chat.js` (format + attach + media preview) |
 | CRM create | Twenty 2.22: `createPerson(data:)` / `createOpportunity(data:)` |
@@ -52,7 +52,7 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 | Kanban card fields | name, createdAt, amount, createdBy, closeDate, company, pointOfContact, taskTargets, noteTargets — positions/sizes in `OPPORTUNITY_KANBAN_CARD_FIELDS` (`twenty-client`). |
 | Note on kanban card | Note `labelIdentifier` = **title** (TEXT). `bodyV2` is RICH_TEXT → `[object Object]` if used as label (INC-021). Body mirrored into `title` via SQL trigger + backfill; `createNoteForPerson` sets title←body. Latest note first via `noteTarget.position` (ASC). Shell-ux clamps ≈5 lines. |
 | «Чат» tab order | `position: 15` (after Home=10, before Timeline=20) in `page-layout-tabs/*-chat.page-layout-tab.ts` + `docker/set-chat-tab-position.sql`. |
-| New workspace provisioning | `applyWorkspaceDefaults` → kanban type/groups + column width + card fields + note **title** label. Re-run `set-opportunity-kanban-card-defaults.sql` so new schemas get title-sync + latest-first triggers. |
+| New workspace provisioning | **Target = parity with test2.** `applyWorkspaceDefaults` (kanban + card fields + note title label) runs on provision. **Still TODO:** (1) run note title-sync + latest-first SQL triggers for new schema; (2) install `voxly-crm-chat` on gift-bot activation; (3) seats counter = Twenty CRM workspace members (not only Voxly TenantMember). |
 | Persistence | Scripts baked in `docker/twenty.Dockerfile`; hot-patch survives until container recreate — then rebuild image or re-copy + re-sed `index.html`. |
 
 **Re-apply after Twenty recreate:**
@@ -124,3 +124,19 @@ Webhook path prod: `/tg/{tenantId}/{botId}` (gift), manager labels на Traefik.
 - Bare `/start` → единственный активный проект бота.
 - Сделка в CRM: `@user · {проект} · @{bot} · @{channel}`.
 - UI: блок «Проекты» на `/dashboard/bots/[botId]`; API `POST/PATCH .../campaigns`.
+
+---
+
+## ADR-011 — Product parity gaps (accepted intent 2026-07-21)
+
+**Статус:** ⬜ TODO (intent fixed; implementation pending)
+
+| Требование | Сейчас | Нужно |
+|---|---|---|
+| Seats 1/10 | Считает `TenantMember` (Voxly `/invite`). Twenty «Пригласить пользователя» **не** учитывается. | Счётчик и лимит = **участники CRM workspace** (Twenty). Extra seat = доп. CRM user (300 ₽). Инвайт из CRM должен отражаться в портале / блочить на 10. |
+| «Чат» app | PoC apply на test2; `installApp` dead (INC-006). | При **активации gift-бота** (trial/provision) — sync/install `voxly-crm-chat` в workspace тенанта. |
+| Defaults = test2 | `applyWorkspaceDefaults` частично; SQL triggers только после ручного SQL. | Каждый новый workspace сразу: kanban/notes/shell + **title←body triggers** без ручного SQL. |
+
+**Telegram → Person fields (visibility):** Bot API **не** отдаёт email/ДР из профиля. Телефон — только если пользователь нажал «поделиться контактом» (воронка `collect_phone`); пишем в `GiftSubscriber.phone` + `Person.phones` (`syncPhoneToCrmPerson` / `updatePersonPhone`, done 2026-07-22). Email/ДР → только ручной ввод в CRM или GramJS (pending).
+
+**Bot outbound media in CRM chat:** fixed INC-024 (2026-07-22) — `logBotOutbound` stores `attachments`.

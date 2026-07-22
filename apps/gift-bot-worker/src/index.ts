@@ -230,9 +230,14 @@ async function handleTelegramUpdate(update: any, tenantId: string, botId: string
     await storeInboundMessage(tenantId, botId, update);
     if (update.message?.contact?.phone_number) {
       const telegramId = String(update.message.from.id);
+      const phone = String(update.message.contact.phone_number);
       await prisma.giftSubscriber.updateMany({
         where: { tenantId, botInstanceId: botId, telegramId },
-        data: { phone: String(update.message.contact.phone_number) },
+        data: { phone },
+      });
+      // Push into Twenty Person.phones when linked (Bot API only has phone if user shares contact).
+      void syncPhoneToCrmPerson(tenantId, botId, telegramId, phone).catch(() => {
+        /* best-effort */
       });
     }
   }
@@ -809,6 +814,48 @@ async function fillExistingPersonTelegram(
   await client.updatePersonTelegram(personId, username);
 }
 
+/** Push shared Telegram contact phone → Twenty Person.phones (best-effort). */
+async function syncPhoneToCrmPerson(
+  tenantId: string,
+  botId: string,
+  telegramId: string,
+  phone: string,
+): Promise<void> {
+  const sub = await prisma.giftSubscriber.findFirst({
+    where: {
+      tenantId,
+      botInstanceId: botId,
+      telegramId,
+      twentyPersonId: { not: null },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  const personId = sub?.twentyPersonId;
+  if (!personId) return;
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (
+    !tenant?.twentyWorkspaceId ||
+    !tenant.twentyOwnerPasswordEncrypted ||
+    !owner?.user?.email
+  ) {
+    return;
+  }
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  await client.authenticateWorkspace(
+    owner.user.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+  await client.updatePersonPhone(personId, phone);
+}
+
 async function syncSubscriberToCRM(
   tenantId: string,
   botId: string,
@@ -908,6 +955,7 @@ async function syncSubscriberToCRM(
           ? `@${person.username.replace(/^@/, '')}`
           : person.telegramId,
         telegram: person.username,
+        phone: existingSub?.phone || undefined,
       });
       personId = createdPerson?.id;
     } else if (person.username) {
@@ -1207,19 +1255,63 @@ function parseAttributionFromStart(payload?: string) {
 
 type SendCtx = { tenantId: string; botId: string; telegramId: string };
 
-async function logBotOutbound(ctx: SendCtx, text: string) {
+async function logBotOutbound(
+  ctx: SendCtx,
+  text: string,
+  attachments?: TgAttachment[],
+) {
   try {
     const conversation = await ensureConversation(ctx.tenantId, ctx.botId, ctx.telegramId);
+    const atts = attachments?.filter((a) => a?.fileId) || [];
     await prisma.chatMessage.create({
       data: {
         conversationId: conversation.id,
         role: 'assistant',
-        content: text,
+        content: text || (atts[0] ? attachmentPlaceholder(atts[0]) : ''),
+        attachments: atts.length ? atts : undefined,
       },
     });
   } catch (err) {
     console.error('[gift-bot] logBotOutbound failed:', err);
   }
+}
+
+/** Prefer file_id from Telegram send* result; fall back to the media we sent. */
+function attachmentFromSendResult(
+  type: TgAttachment['type'],
+  media: string,
+  result: any,
+): TgAttachment {
+  if (type === 'photo' && Array.isArray(result?.photo) && result.photo.length > 0) {
+    const best = result.photo[result.photo.length - 1];
+    return {
+      type: 'photo',
+      fileId: best.file_id || media,
+      fileUniqueId: best.file_unique_id,
+      fileSize: best.file_size,
+    };
+  }
+  if (type === 'video' && result?.video?.file_id) {
+    return {
+      type: 'video',
+      fileId: result.video.file_id,
+      fileUniqueId: result.video.file_unique_id,
+      mimeType: result.video.mime_type,
+      fileName: result.video.file_name,
+      fileSize: result.video.file_size,
+    };
+  }
+  if (type === 'document' && result?.document?.file_id) {
+    return {
+      type: 'document',
+      fileId: result.document.file_id,
+      fileUniqueId: result.document.file_unique_id,
+      mimeType: result.document.mime_type,
+      fileName: result.document.file_name,
+      fileSize: result.document.file_size,
+    };
+  }
+  return { type, fileId: media };
 }
 
 async function sendBotMessage(
@@ -1277,7 +1369,10 @@ async function sendBotDocument(
   });
   const json = (await res.json()) as any;
   if (!json.ok) throw new Error(json.description || 'sendDocument failed');
-  if (ctx) await logBotOutbound(ctx, caption || '[документ]');
+  if (ctx) {
+    const att = attachmentFromSendResult('document', media, json.result);
+    await logBotOutbound(ctx, caption || '[документ]', [att]);
+  }
 }
 
 async function sendBotVideo(
@@ -1301,7 +1396,10 @@ async function sendBotVideo(
   });
   const json = (await res.json()) as any;
   if (!json.ok) throw new Error(json.description || 'sendVideo failed');
-  if (ctx) await logBotOutbound(ctx, caption || '[видео]');
+  if (ctx) {
+    const att = attachmentFromSendResult('video', media, json.result);
+    await logBotOutbound(ctx, caption || '[видео]', [att]);
+  }
 }
 
 async function sendBotPhoto(
@@ -1324,6 +1422,7 @@ async function sendBotPhoto(
     }),
   });
   const json = (await res.json()) as any;
+  let result = json.result;
   if (!json.ok) {
     // Retry without MarkdownV2 (emoji/caption edge cases)
     const plain = await fetch(`${botApi}/sendPhoto`, {
@@ -1338,8 +1437,12 @@ async function sendBotPhoto(
     });
     const plainJson = (await plain.json()) as any;
     if (!plainJson.ok) throw new Error(plainJson.description || json.description || 'sendPhoto failed');
+    result = plainJson.result;
   }
-  if (ctx) await logBotOutbound(ctx, caption || '[фото]');
+  if (ctx) {
+    const att = attachmentFromSendResult('photo', media, result);
+    await logBotOutbound(ctx, caption || '[фото]', [att]);
+  }
 }
 
 function sleep(ms: number) {

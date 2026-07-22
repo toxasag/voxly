@@ -5,6 +5,13 @@
 
 ---
 
+### INC-024 — CRM «Чат» missing photos on bot funnel messages
+- **Симптом:** after `/start`, Telegram shows photo+caption; CRM tab «Чат» shows text only (e.g. «После /start»), no `<img>`.
+- **Причина:** `logBotOutbound` wrote `ChatMessage` with `content` only — never `attachments`. Inbound/`operator` replies already stored `{ type, fileId }`. UI (`chat-panel`) and `GET /api/crm/chat/.../file/:fileId` were fine.
+- **Диагностика:** `ChatMessage` role=`assistant` → `attachments IS NULL`; operator photo rows had `fileId`. Funnel `start.telegramFileId` present in `GiftCampaignConfig.funnelJson`.
+- **Фикс:** `sendBotPhoto`/`Video`/`Document` → `attachmentFromSendResult` + `logBotOutbound(..., [att])`. Optional one-off SQL backfill for existing start rows from funnel `telegramFileId`.
+- **Дата:** 2026-07-22.
+
 ### INC-023 — Chat UI looked like only the first line was sent
 - **Симптом:** multiline reply (e.g. `~~111~~` + `||222||`) appeared as a single struck line in CRM «Чат»; user thought only line 1 was sent.
 - **Причина:** (1) `ChatMessage.content` in DB already had full multiline — send path OK. (2) Display used `<br/>` + spoiler `color:#333;background:#333` → second line invisible; Remote DOM may also collapse/`br` poorly.
