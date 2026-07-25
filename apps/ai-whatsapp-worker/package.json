@@ -15,6 +15,7 @@
     "@voxly/crypto": "workspace:*",
     "@voxly/db": "workspace:*",
     "@voxly/shared": "workspace:*",
+    "@voxly/twenty-client": "workspace:*",
     "openai": "^4.77.0"
   },
   "devDependencies": {

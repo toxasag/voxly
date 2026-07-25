@@ -8,7 +8,8 @@
 | **saas-portal** | `apps/saas-portal` | 3001 | Лендинг, login/register, dashboard, bots UI, `/admin` | saas-api (`/api` rewrite) |
 | **manager-bot-service** | `apps/manager-bot-service` | 3003 | Managed Bots: provision link, `getManagedBotToken`, encrypt token | PG-control, Redis, TG Manager Bot |
 | **gift-bot-worker** | `apps/gift-bot-worker` | 3004 | Воронка, подписка, gift, promo clicks, broadcasts, CRM sync, fireGoal | PG-control, Redis, Twenty, bot tokens |
-| **ai-telegram-worker** | `apps/ai-telegram-worker` | 3005 | AI Telegram Business + wallet | PG-control, Redis, OpenAI, Twenty |
+| **ai-telegram-worker** | `apps/ai-telegram-worker` | 3005 | AI Telegram Business + OpenRouter + ASR/vision + `/internal/inbound` | PG-control, OpenRouter, Twenty |
+| **gramjs-bridge** | `apps/gramjs-bridge` | 3008 | Personal TG QR session (profile `gramjs`) → AI worker | PG-control, Telegram api_id/hash, ai-telegram-worker |
 | **ai-whatsapp-worker** | `apps/ai-whatsapp-worker` | 3006 | AI WhatsApp Cloud API | PG-control, Redis, OpenAI, Twenty |
 
 ## Инфра (docker/)

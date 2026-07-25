@@ -16,8 +16,13 @@ export function startScheduledJobs() {
   const aiInterval = setInterval(checkAiWalletAlerts, 6 * 60 * 60 * 1000);
   intervals.push(aiInterval);
 
+  // Gift project schedules: start/stop by window (every minute)
+  const giftScheduleInterval = setInterval(syncGiftCampaignSchedules, 60 * 1000);
+  intervals.push(giftScheduleInterval);
+
   // Run initial check after 10 seconds
   setTimeout(checkExpiredSubscriptions, 10_000);
+  setTimeout(syncGiftCampaignSchedules, 15_000);
 }
 
 export function stopScheduledJobs() {
@@ -113,6 +118,61 @@ async function checkAiWalletAlerts() {
     if (owner) {
       console.log(`[scheduler] Low AI balance alert for ${owner.email} (${wallet.balanceRub}₽)`);
       // TODO: send email notification
+    }
+  }
+}
+
+/** Flip GiftCampaignConfig.isActive from scheduledStartAt / scheduledEndAt. */
+async function syncGiftCampaignSchedules() {
+  const { prisma } = await import('@voxly/db');
+  const now = new Date();
+
+  const campaigns = await prisma.giftCampaignConfig.findMany({
+    where: {
+      OR: [{ scheduledStartAt: { not: null } }, { scheduledEndAt: { not: null } }],
+    },
+    select: {
+      id: true,
+      tenantId: true,
+      botInstanceId: true,
+      isActive: true,
+      scheduledStartAt: true,
+      scheduledEndAt: true,
+      name: true,
+    },
+  });
+
+  for (const c of campaigns) {
+    const afterStart = !c.scheduledStartAt || now.getTime() >= c.scheduledStartAt.getTime();
+    const beforeEnd = !c.scheduledEndAt || now.getTime() < c.scheduledEndAt.getTime();
+    const desired = afterStart && beforeEnd;
+    if (c.isActive === desired) continue;
+
+    if (desired) {
+      await prisma.giftCampaignConfig.updateMany({
+        where: {
+          botInstanceId: c.botInstanceId,
+          tenantId: c.tenantId,
+          isActive: true,
+          NOT: { id: c.id },
+        },
+        data: { isActive: false },
+      });
+      await prisma.giftCampaignConfig.update({
+        where: { id: c.id },
+        data: { isActive: true },
+      });
+      console.log(
+        `[scheduler] Gift project «${c.name}» (${c.id}) auto-ON by schedule`,
+      );
+    } else {
+      await prisma.giftCampaignConfig.update({
+        where: { id: c.id },
+        data: { isActive: false },
+      });
+      console.log(
+        `[scheduler] Gift project «${c.name}» (${c.id}) auto-OFF by schedule`,
+      );
     }
   }
 }

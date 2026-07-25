@@ -5,16 +5,20 @@
 ## Порядок чтения (каждый новый чат)
 
 1. **Этот файл** → сразу `CAPABILITIES.md` (что уже есть — anti-reimplementation).
-2. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
-3. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
-4. При дебаге runtime → **сначала** `INCIDENTS.md`.
-5. Graphify (`graphify query/path/explain`) → затем код.
-6. Глубокий контекст: `docs/ARCHITECTURE.md`. Доки библиотек: Context7 MCP.
+2. Протокол `apps/.cursorrules`: **`docs/ai/FEATURES.md`** + **`docs/ai/ARCHITECTURE.md`** (фичи и паттерны; обновлять после значимой работы).
+3. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
+4. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
+5. При дебаге runtime → **сначала** `INCIDENTS.md`.
+6. При выкладке на prod → **`DEPLOY.md`** + **`ENVIRONMENTS.md`** + `./scripts/prod-deploy.sh` (не ad-hoc rsync).
+7. Graphify (`graphify query/path/explain`) → затем код.
+8. Глубокий контекст: `docs/ARCHITECTURE.md`. Доки библиотек: Context7 MCP.
 
 ## Карта файлов
 
 | Файл | Зачем |
 |---|---|
+| `../ai/FEATURES.md` | Журнал фич (шаблон из `apps/.cursorrules`) |
+| `../ai/ARCHITECTURE.md` | Короткая карта слоёв/паттернов для агента |
 | `STACK.md` | Стек, порты, как поднять (без секретов) |
 | `DATA.md` | PG×2, Redis, ключевые Prisma-модели, кто R/W |
 | `SERVICES.md` | Apps/workers: роль, порт, deps |
@@ -24,6 +28,9 @@
 | `WORKLOG.md` | Журнал значимых сессий агента (append-only) |
 | `INCIDENTS.md` | Известные runtime-сбои и диагностика |
 | `OBS.md` | `docker logs`, health URL, логирование |
+| `DEPLOY.md` | Безопасный prod deploy (`scripts/prod-deploy.sh`) |
+| `ENVIRONMENTS.md` | Local vs prod; last verified code drift |
+| `../specs/AI-AGENTS-TZ.md` | Черновик ТЗ AI (TG Business + GramJS + WA) |
 
 ## После значимой работы
 
@@ -35,7 +42,7 @@
 
 ## Каскад памяти (токены)
 
-1. `docs/agent/` — CAPABILITIES + WORKLOG/INCIDENTS (+ релевантные STACK/DATA/FLOWS)
+1. `docs/agent/` — CAPABILITIES + WORKLOG/INCIDENTS (+ DEPLOY/ENVIRONMENTS при выкладке) (+ релевантные STACK/DATA/FLOWS)
 2. `steps.md` §4
 3. Graphify
 4. `docs/ARCHITECTURE.md`

@@ -36,7 +36,8 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('voxly_token', data.token);
-      router.push('/dashboard');
+      // Superadmin has no tenant — /dashboard shows «Нет воркспейса»
+      router.push(data.user?.role === 'superadmin' ? '/admin' : '/dashboard');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка входа');
     } finally {

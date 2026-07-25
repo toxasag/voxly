@@ -35,7 +35,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { email, password, firstName, lastName, companySlug, referralCode } = parsed.data;
+    const { password, firstName, lastName, companySlug, referralCode } = parsed.data;
+    const email = parsed.data.email.trim().toLowerCase();
     const prisma = fastify.prisma;
     const voxlyDomain = fastify.voxlyDomain;
 

@@ -4,7 +4,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { decrypt } from '@voxly/crypto';
+import { decrypt, encrypt } from '@voxly/crypto';
+import { randomBytes } from 'node:crypto';
 import { TwentyClient } from '@voxly/twenty-client';
 import {
   DEFAULT_GIFT_FUNNEL,
@@ -17,6 +18,7 @@ import {
   PRICING,
   PRODUCT_CODES,
   TRIAL_PERIOD_DAYS,
+  AI_HANDOFF_PAUSE_MS,
   type GiftFunnelConfig,
   type GiftPromoPost,
 } from '@voxly/shared';
@@ -26,7 +28,7 @@ function canManageTenant(user: { role?: string; tenantRole?: string }): boolean 
 }
 
 const provisionSchema = z.object({
-  botType: z.enum(['gift', 'ai_tg', 'ai_wa']).default('gift'),
+  botType: z.enum(['gift', 'ai_wa']).default('gift'),
   suggestedUsername: z.string().min(5).max(32).optional(),
   suggestedName: z.string().min(1).max(64).optional(),
 });
@@ -67,20 +69,21 @@ const campaignSchema = z.object({
       })
       .superRefine((gift, ctx) => {
         const hasUrl = Boolean(gift.url && gift.url.length > 0);
-        const hasFile = Boolean(gift.telegramFileId && gift.telegramFileId.length > 0);
         if (gift.type === 'link') {
           if (!hasUrl) {
             ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Укажите ссылку на подарок', path: ['url'] });
           } else if (!/^https?:\/\//i.test(gift.url!)) {
             ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Ссылка должна быть http(s)', path: ['url'] });
           }
-        } else if (!hasUrl && !hasFile) {
+        } else if (hasUrl && !/^https?:\/\//i.test(gift.url!) && !gift.telegramFileId) {
+          // Optional draft: file/video may be empty until uploaded; if URL set, must be http(s)
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'Загрузите файл или укажите URL',
-            path: ['telegramFileId'],
+            message: 'URL подарка должен быть http(s) или загрузите файл',
+            path: ['url'],
           });
         }
+        // file/video without media: allowed as draft (worker sends caption-only until upload)
       }),
     afterGift: z.array(funnelMessageSchema).max(10),
     notGifted: z.array(funnelMessageSchema).max(10),
@@ -120,6 +123,9 @@ const createCampaignSchema = z.object({
 const patchCampaignSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   isActive: z.boolean().optional(),
+  /** ISO datetime or null to clear */
+  scheduledStartAt: z.union([z.string().datetime(), z.null()]).optional(),
+  scheduledEndAt: z.union([z.string().datetime(), z.null()]).optional(),
 });
 
 function readPromoPost(raw: unknown): GiftPromoPost {
@@ -148,6 +154,8 @@ function serializeCampaign(c: {
   funnelJson: unknown;
   promoPost: unknown;
   isActive: boolean;
+  scheduledStartAt?: Date | null;
+  scheduledEndAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -160,6 +168,8 @@ function serializeCampaign(c: {
     funnelJson: c.funnelJson,
     promoPost: readPromoPost(c.promoPost),
     isActive: c.isActive,
+    scheduledStartAt: c.scheduledStartAt ? c.scheduledStartAt.toISOString() : null,
+    scheduledEndAt: c.scheduledEndAt ? c.scheduledEndAt.toISOString() : null,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -281,8 +291,10 @@ function detectUploadKind(mimeType: string, filename: string): UploadedMediaKind
 }
 
 function normalizeChannelUsername(raw: string): string {
-  return raw
-    .trim()
+  const trimmed = raw.trim();
+  // Numeric / -100… chat ids (private groups/channels without @username)
+  if (/^-?\d+$/.test(trimmed)) return trimmed;
+  return trimmed
     .replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '')
     .replace(/^@/, '')
     .split(/[/?#]/)[0];
@@ -341,6 +353,174 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
+  // --- Start 14-day AI Telegram Business bot trial ---
+  fastify.post('/ai/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can start AI bot trial' });
+    }
+
+    const prisma = fastify.prisma;
+    const now = new Date();
+    const activeUntil = new Date(now);
+    activeUntil.setDate(activeUntil.getDate() + TRIAL_PERIOD_DAYS);
+
+    const addon = await prisma.addon.upsert({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
+      create: {
+        tenantId,
+        type: PRODUCT_CODES.AI_TELEGRAM,
+        config: { trial: true, maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS },
+        activeUntil,
+        status: 'active',
+      },
+      update: {
+        status: 'active',
+        activeUntil,
+        config: { trial: true, maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS },
+      },
+    });
+
+    return reply.send({
+      addon: {
+        id: addon.id,
+        type: addon.type,
+        status: addon.status,
+        activeUntil: addon.activeUntil,
+        isTrial: true,
+      },
+    });
+  });
+
+  // --- Connect AI Telegram Business bot by BotFather token (manual) ---
+  fastify.post('/ai/connect', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can connect AI bots' });
+    }
+
+    const parsed = z
+      .object({
+        token: z.string().min(20).max(200),
+        username: z.string().min(3).max(64).optional(),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    const prisma = fastify.prisma;
+    const addon = await prisma.addon.findUnique({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
+    });
+    if (!addon || addon.status !== 'active' || addon.activeUntil < new Date()) {
+      return reply.code(402).send({
+        error: 'Сначала активируйте пробный период или оплатите AI-бота (Автоматизация чатов)',
+      });
+    }
+
+    const token = parsed.data.token.trim();
+    const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const meJson = (await meRes.json()) as {
+      ok?: boolean;
+      description?: string;
+      result?: {
+        id: number;
+        is_bot?: boolean;
+        username?: string;
+        first_name?: string;
+        can_connect_to_business?: boolean;
+      };
+    };
+    if (!meJson.ok || !meJson.result?.is_bot) {
+      return reply.code(400).send({
+        error: 'Неверный токен бота',
+        hint: meJson.description || 'Проверьте токен из @BotFather → /token',
+      });
+    }
+
+    const tgUser = meJson.result;
+    const username = (tgUser.username || parsed.data.username || '')
+      .replace(/^@/, '')
+      .trim();
+    if (!username) {
+      return reply.code(400).send({
+        error: 'У бота нет @username',
+        hint: 'Задайте username в @BotFather и повторите',
+      });
+    }
+    if (parsed.data.username) {
+      const want = parsed.data.username.replace(/^@/, '').trim().toLowerCase();
+      if (want && want !== username.toLowerCase()) {
+        return reply.code(400).send({
+          error: `Токен принадлежит @${username}, а не @${want}`,
+        });
+      }
+    }
+
+    const existingSame = await prisma.botInstance.findFirst({
+      where: {
+        OR: [
+          { managedBotUserId: BigInt(tgUser.id) },
+          { botUsername: username, botType: 'ai_tg' },
+        ],
+      },
+    });
+    if (existingSame && existingSame.tenantId !== tenantId) {
+      return reply.code(409).send({
+        error: 'Этот бот уже подключён к другому кабинету',
+      });
+    }
+
+    const botData = {
+      botUsername: username,
+      displayName: tgUser.first_name || username,
+      botTokenEncrypted: encrypt(token),
+      managedBotUserId: BigInt(tgUser.id),
+      provisionedVia: 'manual' as const,
+      botType: 'ai_tg',
+      status: 'active',
+      addonId: addon.id,
+    };
+
+    const bot = existingSame
+      ? await prisma.botInstance.update({
+          where: { id: existingSame.id },
+          data: botData,
+        })
+      : await prisma.botInstance.create({
+          data: { tenantId, ...botData },
+        });
+
+    const webhook = await registerAiTgWebhook(token, tenantId, bot.id);
+    if (webhook.secret) {
+      await prisma.botInstance.update({
+        where: { id: bot.id },
+        data: { webhookSecret: webhook.secret },
+      });
+    }
+
+    const businessWarning = tgUser.can_connect_to_business
+      ? null
+      : 'В @BotFather включите Business Mode (Режим секретаря) для этого бота — иначе Telegram не даст подключить его в «Автоматизация чатов».';
+
+    return reply.send({
+      ok: true,
+      bot: {
+        id: bot.id,
+        botUsername: username,
+        botType: 'ai_tg',
+        status: bot.status,
+        canConnectToBusiness: Boolean(tgUser.can_connect_to_business),
+      },
+      webhookOk: webhook.ok,
+      webhookError: webhook.error,
+      businessWarning,
+    });
+  });
+
   // --- Generate Managed Bots provisioning link ---
   fastify.post('/provision-link', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const parsed = provisionSchema.safeParse(request.body);
@@ -351,6 +531,14 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const { botType, suggestedUsername, suggestedName } = parsed.data;
     const { tenantId } = (request as any).user;
     const prisma = fastify.prisma;
+
+    // Legacy clients may still POST botType=ai_tg — reject before zod enum if raw body has it
+    if ((request.body as { botType?: string })?.botType === 'ai_tg') {
+      return reply.code(400).send({
+        error: 'AI Telegram Business подключается вручную: токен из @BotFather',
+        hint: 'Откройте /dashboard/ai и вставьте username + token',
+      });
+    }
 
     if (botType === 'gift') {
       const addon = await prisma.addon.findUnique({
@@ -409,19 +597,22 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
 
+    const defaultName =
+      botType === 'ai_wa' ? 'Voxly WhatsApp' : 'Voxly Gift Bot';
+
     const provisionReq = await prisma.botProvisionRequest.create({
       data: {
         tenantId,
         nonce,
         suggestedUsername: username,
-        suggestedName: suggestedName || 'Voxly Gift Bot',
+        suggestedName: suggestedName || defaultName,
         botType,
         expiresAt: new Date(Date.now() + 30 * 60 * 1000),
       },
     });
 
     const params = new URLSearchParams();
-    params.set('name', suggestedName || provisionReq.suggestedName || 'Voxly Gift Bot');
+    params.set('name', suggestedName || provisionReq.suggestedName || defaultName);
 
     // Prefer opening inside Telegram app; https://t.me works when Telegram handles the link
     const deepLink = `https://t.me/newbot/${managerUsername}/${username}?${params}`;
@@ -463,43 +654,107 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId, sub: userId } = (request as any).user;
     const prisma = fastify.prisma;
 
-    const [bots, addon, user, subCounts] = await Promise.all([
-      prisma.botInstance.findMany({
-        where: { tenantId },
-        include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.addon.findUnique({
-        where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
-      }),
-      prisma.user.findUnique({
-        where: { id: userId },
-        select: { telegramUserId: true },
-      }),
-      prisma.giftSubscriber.groupBy({
-        by: ['botInstanceId'],
-        where: { tenantId },
-        _count: { _all: true },
-      }),
-    ]);
+    const [bots, addon, aiAddon, gramjsAddon, waAddon, user, subCounts, conversationCounts, businessAccountGroups, businessConnGroups] =
+      await Promise.all([
+        prisma.botInstance.findMany({
+          where: { tenantId },
+          include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
+          orderBy: { createdAt: 'desc' },
+        }),
+        prisma.addon.findUnique({
+          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
+        }),
+        prisma.addon.findUnique({
+          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
+        }),
+        prisma.addon.findUnique({
+          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
+        }),
+        prisma.addon.findUnique({
+          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_WHATSAPP } },
+        }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { telegramUserId: true },
+        }),
+        prisma.giftSubscriber.groupBy({
+          by: ['botInstanceId'],
+          where: { tenantId },
+          _count: { _all: true },
+        }),
+        prisma.conversation.groupBy({
+          by: ['botInstanceId'],
+          where: { tenantId, botInstanceId: { not: null } },
+          _count: { _all: true },
+        }),
+        // Preferred: registry rows from business_connection updates
+        prisma.conversation.groupBy({
+          by: ['botInstanceId'],
+          where: {
+            tenantId,
+            botInstanceId: { not: null },
+            channel: 'telegram_business_account',
+            status: { not: 'closed' },
+          },
+          _count: { _all: true },
+        }),
+        // Fallback: distinct connection ids on customer dialogs (pre-registry)
+        prisma.conversation.groupBy({
+          by: ['botInstanceId', 'businessConnectionId'],
+          where: {
+            tenantId,
+            botInstanceId: { not: null },
+            businessConnectionId: { not: null },
+            status: { not: 'closed' },
+            channel: { not: 'telegram_business_account' },
+          },
+          _count: { _all: true },
+        }),
+      ]);
 
     const subscribersByBot = new Map(
       subCounts.map((row) => [row.botInstanceId, row._count._all]),
     );
+    const conversationsByBot = new Map(
+      conversationCounts.map((row) => [row.botInstanceId, row._count._all]),
+    );
+    const businessConnectionsByBot = new Map<string, number>();
+    for (const row of businessAccountGroups) {
+      if (!row.botInstanceId) continue;
+      businessConnectionsByBot.set(row.botInstanceId, row._count._all);
+    }
+    for (const row of businessConnGroups) {
+      if (!row.botInstanceId) continue;
+      if (businessConnectionsByBot.has(row.botInstanceId)) continue;
+      businessConnectionsByBot.set(
+        row.botInstanceId,
+        (businessConnectionsByBot.get(row.botInstanceId) || 0) + 1,
+      );
+    }
+
+    const serializeAddon = (a: typeof addon) =>
+      a
+        ? {
+            id: a.id,
+            status: a.status,
+            activeUntil: a.activeUntil,
+            isTrial: Boolean((a.config as any)?.trial),
+            isActive: a.status === 'active' && a.activeUntil > new Date(),
+          }
+        : null;
 
     return reply.send({
       telegramLinked: Boolean(user?.telegramUserId),
       managerBot: `@${process.env.TELEGRAM_MANAGER_BOT_USERNAME || 'VoxlyGiftbot'}`,
       giftBotPriceMonthly: PRICING.GIFT_BOT_MONTHLY,
-      giftAddon: addon
-        ? {
-            id: addon.id,
-            status: addon.status,
-            activeUntil: addon.activeUntil,
-            isTrial: Boolean((addon.config as any)?.trial),
-            isActive: addon.status === 'active' && addon.activeUntil > new Date(),
-          }
-        : null,
+      aiBotPriceMonthly: PRICING.AI_TELEGRAM_MONTHLY,
+      gramjsPriceMonthly: PRICING.AI_GRAMJS_MONTHLY,
+      waPriceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+      maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+      giftAddon: serializeAddon(addon),
+      aiAddon: serializeAddon(aiAddon),
+      gramjsAddon: serializeAddon(gramjsAddon),
+      waAddon: serializeAddon(waAddon),
       bots: await Promise.all(
         bots.map(async (b) => {
         const activeCount = b.giftCampaigns.filter((c) => c.isActive).length;
@@ -517,12 +772,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         return {
           id: b.id,
           botUsername: b.botUsername,
+          displayName: b.displayName,
           botType: b.botType,
           provisionedVia: b.provisionedVia,
           status: b.status,
           createdAt: b.createdAt,
+          defaultAiAgentId: b.defaultAiAgentId,
+          telegramDescription: b.telegramDescription ?? null,
+          telegramShortDescription: b.telegramShortDescription ?? null,
           hasGiftCampaign: campaigns.length > 0,
           subscriberCount: subscribersByBot.get(b.id) ?? 0,
+          conversationCount: conversationsByBot.get(b.id) ?? 0,
+          businessConnectionCount: businessConnectionsByBot.get(b.id) ?? 0,
           campaigns: campaigns.map(serializeCampaign),
           /** Active/newest project (compat for older UI) */
           campaign: campaign ? serializeCampaign(campaign) : null,
@@ -533,6 +794,83 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       defaultFunnel: DEFAULT_GIFT_FUNNEL,
     });
   });
+
+  // --- Telegram bot description (shown when opening t.me/bot before /start) ---
+  const telegramProfileSchema = z.object({
+    description: z.string().max(512),
+    shortDescription: z.string().max(120).optional().nullable(),
+  });
+
+  fastify.put(
+    '/:botId/telegram-profile',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can edit bot profile' });
+      }
+      const parsed = telegramProfileSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.flatten() });
+      }
+
+      const prisma = fastify.prisma;
+      const bot = await prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'gift' },
+      });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const description = parsed.data.description.trim();
+      const shortDescription =
+        typeof parsed.data.shortDescription === 'string'
+          ? parsed.data.shortDescription.trim()
+          : description.slice(0, 120);
+
+      const descRes = await fetch(`${botApi}/setMyDescription`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description }),
+      });
+      const descJson = (await descRes.json()) as { ok?: boolean; description?: string };
+      if (!descJson.ok) {
+        return reply.code(400).send({
+          error: descJson.description || 'Не удалось сохранить описание бота в Telegram',
+        });
+      }
+
+      const shortRes = await fetch(`${botApi}/setMyShortDescription`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ short_description: shortDescription }),
+      });
+      const shortJson = (await shortRes.json()) as { ok?: boolean; description?: string };
+      if (!shortJson.ok) {
+        return reply.code(400).send({
+          error: shortJson.description || 'Не удалось сохранить короткое описание',
+        });
+      }
+
+      const updated = await prisma.botInstance.update({
+        where: { id: botId },
+        data: {
+          telegramDescription: description || null,
+          telegramShortDescription: shortDescription || null,
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        telegramDescription: updated.telegramDescription,
+        telegramShortDescription: updated.telegramShortDescription,
+      });
+    },
+  );
 
   // --- Save / update gift campaign ---
   fastify.put('/:botId/campaign', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -558,7 +896,9 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const channelUsername = normalizeChannelUsername(parsed.data.channelUsername);
     const funnel = sanitizeFunnel(parsed.data.funnel);
     const giftFileUrl = parsed.data.giftFileUrl || funnel.gift.url;
-    const channelId = parsed.data.channelId || `@${channelUsername}`;
+    const channelId =
+      parsed.data.channelId
+      || (/^-?\d+$/.test(channelUsername) ? channelUsername : `@${channelUsername}`);
     const name = parsed.data.name?.trim();
 
     const existing = pickCampaign(bot.giftCampaigns, parsed.data.campaignId);
@@ -666,8 +1006,15 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       if (!parsed.success) {
         return reply.code(400).send({ error: parsed.error.flatten() });
       }
-      if (parsed.data.name === undefined && parsed.data.isActive === undefined) {
-        return reply.code(400).send({ error: 'Укажите name и/или isActive' });
+      if (
+        parsed.data.name === undefined &&
+        parsed.data.isActive === undefined &&
+        parsed.data.scheduledStartAt === undefined &&
+        parsed.data.scheduledEndAt === undefined
+      ) {
+        return reply.code(400).send({
+          error: 'Укажите name, isActive и/или расписание (scheduledStartAt / scheduledEndAt)',
+        });
       }
 
       const prisma = fastify.prisma;
@@ -688,6 +1035,22 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           ...(parsed.data.name !== undefined ? { name: parsed.data.name.trim() } : {}),
           ...(parsed.data.isActive !== undefined ? { isActive: parsed.data.isActive } : {}),
+          ...(parsed.data.scheduledStartAt !== undefined
+            ? {
+                scheduledStartAt:
+                  parsed.data.scheduledStartAt === null
+                    ? null
+                    : new Date(parsed.data.scheduledStartAt),
+              }
+            : {}),
+          ...(parsed.data.scheduledEndAt !== undefined
+            ? {
+                scheduledEndAt:
+                  parsed.data.scheduledEndAt === null
+                    ? null
+                    : new Date(parsed.data.scheduledEndAt),
+              }
+            : {}),
         },
       });
 
@@ -965,7 +1328,11 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId } = (request as any).user;
     const { botId } = request.params as { botId: string };
     const body = z
-      .object({ channelUsername: z.string().min(1) })
+      .object({
+        channelUsername: z.string().min(1),
+        /** Persist to this project when admin check passes */
+        campaignId: z.string().cuid().optional(),
+      })
       .safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send({ error: body.error.flatten() });
@@ -981,7 +1348,21 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
     const token = decrypt(bot.botTokenEncrypted);
     const channel = normalizeChannelUsername(body.data.channelUsername);
-    const chatRef = channel.startsWith('-') ? channel : `@${channel}`;
+    if (!channel) {
+      return reply.code(400).send({
+        ok: false,
+        error: 'Укажите @username канала или числовой chat id (−100…)',
+      });
+    }
+    // Invite links (+…) cannot be resolved via Bot API without a prior update
+    if (channel.startsWith('+') || channel.toLowerCase().startsWith('joinchat')) {
+      return reply.code(400).send({
+        ok: false,
+        error:
+          'Нужен публичный @username канала/группы или числовой id (−100…). Invite-ссылка t.me/+… не подходит.',
+      });
+    }
+    const chatRef = channel.startsWith('-') || /^-?\d+$/.test(channel) ? channel : `@${channel}`;
 
     try {
       const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
@@ -997,15 +1378,28 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const member = (await memberRes.json()) as any;
       if (!member.ok) {
+        const tg = String(member.description || '');
+        let hint = 'Добавьте бота администратором канала/группы.';
+        if (/chat not found/i.test(tg)) {
+          hint =
+            'Telegram не находит чат по этому имени. Нужен публичный @username (не название) или id −100…; бот должен быть уже добавлен в чат.';
+        } else if (/bot is not a member/i.test(tg)) {
+          hint = 'Бот ещё не в чате. Добавьте его админом, затем нажмите проверку снова.';
+        }
         return reply.code(400).send({
           ok: false,
-          error: member.description || 'Бот не видит канал. Добавьте бота администратором.',
+          error: tg ? `${tg}. ${hint}` : hint,
         });
       }
 
       const status = member.result?.status as string;
       const isAdmin = status === 'administrator' || status === 'creator';
+      const canPost =
+        status === 'creator'
+        || Boolean(member.result?.can_post_messages)
+        || Boolean(member.result?.can_manage_chat);
       let channelId = chatRef;
+      let chatType: string | undefined;
       try {
         const chatRes = await fetch(`https://api.telegram.org/bot${token}/getChat`, {
           method: 'POST',
@@ -1014,18 +1408,53 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         });
         const chat = (await chatRes.json()) as any;
         if (chat.ok && chat.result?.id) channelId = String(chat.result.id);
+        chatType = chat.result?.type;
       } catch {
-        // keep @username as channelId fallback
+        // keep chatRef as channelId fallback
+      }
+
+      if (isAdmin && body.data.campaignId) {
+        const campaign = await prisma.giftCampaignConfig.findFirst({
+          where: { id: body.data.campaignId, botInstanceId: botId, tenantId },
+        });
+        if (campaign) {
+          await prisma.giftCampaignConfig.update({
+            where: { id: campaign.id },
+            data: {
+              channelId,
+              channelUsername: /^-?\d+$/.test(channel) ? channel : channel.replace(/^@/, ''),
+            },
+          });
+        }
+      } else if (isAdmin) {
+        // Persist to active/newest project so verify is not lost on refresh
+        const campaign = await prisma.giftCampaignConfig.findFirst({
+          where: { botInstanceId: botId, tenantId },
+          orderBy: [{ isActive: 'desc' }, { updatedAt: 'desc' }],
+        });
+        if (campaign) {
+          await prisma.giftCampaignConfig.update({
+            where: { id: campaign.id },
+            data: {
+              channelId,
+              channelUsername: /^-?\d+$/.test(channel) ? channel : channel.replace(/^@/, ''),
+            },
+          });
+        }
       }
 
       return reply.send({
         ok: isAdmin,
         status,
+        canPost,
+        chatType,
         channelId,
-        channelUsername: channel,
+        channelUsername: /^-?\d+$/.test(channel) ? channel : channel.replace(/^@/, ''),
         message: isAdmin
-          ? 'Бот — администратор канала. Можно сохранять кампанию.'
-          : 'Бот в канале, но не админ. Назначьте администратором (права: видеть участников).',
+          ? canPost || chatType === 'supergroup' || chatType === 'group'
+            ? 'Бот — администратор. Канал сохранён в проект.'
+            : 'Бот — админ, но без права публиковать. Включите «Публикация сообщений».'
+          : 'Бот в канале, но не админ. Назначьте администратором (права: видеть участников и публиковать).',
       });
     } catch (err) {
       return reply.code(500).send({
@@ -1262,7 +1691,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
     await prisma.conversation.update({
       where: { id: conversationId },
-      data: { mode: 'human' },
+      data: {
+        mode: 'human',
+        pausedUntil: new Date(Date.now() + AI_HANDOFF_PAUSE_MS),
+      },
     });
 
     // Best-effort note on Person in Twenty (App ChatMessage objects not installed in 2.21)
@@ -1296,7 +1728,275 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({ ok: true });
   });
 
-  // --- Deactivate bot ---
+  // --- List AI conversations for a bot ---
+  fastify.get(
+    '/:botId/conversations',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { botId } = request.params as { botId: string };
+      const prisma = fastify.prisma;
+
+      const bot = await prisma.botInstance.findFirst({
+        where: { id: botId, tenantId },
+        select: { id: true, botType: true },
+      });
+      if (!bot) return reply.code(404).send({ error: 'Bot not found' });
+
+      const conversations = await prisma.conversation.findMany({
+        where: {
+          tenantId,
+          botInstanceId: botId,
+          channel: { not: 'telegram_business_account' },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+        include: {
+          aiAgent: { select: { id: true, name: true, status: true } },
+          messages: {
+            orderBy: { sentAt: 'desc' },
+            take: 1,
+            select: { id: true, role: true, content: true, sentAt: true },
+          },
+        },
+      });
+
+      const businessAccounts = await prisma.conversation.findMany({
+        where: {
+          tenantId,
+          botInstanceId: botId,
+          channel: 'telegram_business_account',
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          platformUserId: true,
+          platformUsername: true,
+          platformFirstName: true,
+          businessConnectionId: true,
+          status: true,
+          updatedAt: true,
+          createdAt: true,
+        },
+      });
+
+      const botDefault = await prisma.botInstance.findFirst({
+        where: { id: botId, tenantId },
+        select: {
+          defaultAiAgentId: true,
+          defaultAiAgent: { select: { id: true, name: true, status: true } },
+        },
+      });
+
+      return reply.send({
+        defaultAiAgentId: botDefault?.defaultAiAgentId ?? null,
+        defaultAiAgent: botDefault?.defaultAiAgent ?? null,
+        businessAccounts: businessAccounts.map((a) => ({
+          id: a.id,
+          ownerTelegramId: a.platformUserId,
+          ownerUsername: a.platformUsername,
+          ownerFirstName: a.platformFirstName,
+          businessConnectionId: a.businessConnectionId,
+          status: a.status,
+          connected: a.status !== 'closed',
+          canReply: a.status !== 'limited' && a.status !== 'closed',
+          updatedAt: a.updatedAt,
+          createdAt: a.createdAt,
+        })),
+        conversations: conversations.map((c) => ({
+          id: c.id,
+          platformUserId: c.platformUserId,
+          platformUsername: c.platformUsername,
+          platformFirstName: c.platformFirstName,
+          status: c.status,
+          mode: c.mode,
+          aiDisabled: c.aiDisabled,
+          pausedUntil: c.pausedUntil,
+          channel: c.channel,
+          businessConnectionId: c.businessConnectionId,
+          aiAgentId: c.aiAgentId,
+          aiAgent: c.aiAgent,
+          effectiveAiAgent: c.aiAgent || botDefault?.defaultAiAgent || null,
+          twentyPersonId: c.twentyPersonId,
+          twentyOpportunityId: c.twentyOpportunityId,
+          needsReview: c.needsReview,
+          lastAiMessageAt: c.lastAiMessageAt,
+          updatedAt: c.updatedAt,
+          createdAt: c.createdAt,
+          lastMessage: c.messages[0]
+            ? {
+                id: c.messages[0].id,
+                role: c.messages[0].role,
+                content: c.messages[0].content.slice(0, 200),
+                sentAt: c.messages[0].sentAt,
+              }
+            : null,
+        })),
+      });
+    },
+  );
+
+  // --- Messages for one conversation ---
+  fastify.get(
+    '/:botId/conversations/:conversationId/messages',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { botId, conversationId } = request.params as {
+        botId: string;
+        conversationId: string;
+      };
+      const prisma = fastify.prisma;
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, tenantId, botInstanceId: botId },
+      });
+      if (!conversation) return reply.code(404).send({ error: 'Not found' });
+
+      const messages = await prisma.chatMessage.findMany({
+        where: { conversationId },
+        orderBy: { sentAt: 'asc' },
+        take: 200,
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          sentAt: true,
+          attachments: true,
+        },
+      });
+
+      return reply.send({
+        conversation: {
+          id: conversation.id,
+          mode: conversation.mode,
+          aiDisabled: conversation.aiDisabled,
+          pausedUntil: conversation.pausedUntil,
+          status: conversation.status,
+          needsReview: conversation.needsReview,
+          twentyPersonId: conversation.twentyPersonId,
+          twentyOpportunityId: conversation.twentyOpportunityId,
+          platformUsername: conversation.platformUsername,
+          platformFirstName: conversation.platformFirstName,
+          platformUserId: conversation.platformUserId,
+          channel: conversation.channel,
+        },
+        messages,
+      });
+    },
+  );
+
+  // --- AI handoff controls (mode / pause / disable) ---
+  fastify.patch(
+    '/:botId/conversations/:conversationId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId, conversationId } = request.params as {
+        botId: string;
+        conversationId: string;
+      };
+      const body = z
+        .object({
+          mode: z.enum(['ai', 'human', 'bot']).optional(),
+          aiDisabled: z.boolean().optional(),
+          /** true → pause AI_HANDOFF_PAUSE_MS; false → clear pause */
+          pause: z.boolean().optional(),
+          pausedUntil: z.string().datetime().nullable().optional(),
+          needsReview: z.boolean().optional(),
+          /** null clears chat override (falls back to bot default); omit = no change */
+          aiAgentId: z.string().nullable().optional(),
+        })
+        .safeParse(request.body);
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+      if (!canManageTenant(user) && user.tenantRole !== 'member' && user.role !== 'member') {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+
+      const prisma = fastify.prisma;
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, tenantId, botInstanceId: botId },
+      });
+      if (!conversation) return reply.code(404).send({ error: 'Not found' });
+
+      if (body.data.aiAgentId) {
+        const agent = await prisma.aiAgent.findFirst({
+          where: { id: body.data.aiAgentId, tenantId, status: 'active' },
+        });
+        if (!agent) return reply.code(404).send({ error: 'Agent not found' });
+      }
+
+      const data: {
+        mode?: string;
+        aiDisabled?: boolean;
+        pausedUntil?: Date | null;
+        status?: string;
+        needsReview?: boolean;
+        aiAgentId?: string | null;
+      } = {};
+
+      if (body.data.mode !== undefined) {
+        data.mode = body.data.mode === 'bot' ? 'ai' : body.data.mode;
+        data.status = data.mode === 'human' ? 'waiting_for_human' : 'open';
+      }
+      if (body.data.aiDisabled !== undefined) {
+        data.aiDisabled = body.data.aiDisabled;
+        if (body.data.aiDisabled) {
+          data.mode = 'human';
+          data.status = 'waiting_for_human';
+        } else {
+          data.mode = data.mode || 'ai';
+          data.status = 'open';
+          data.pausedUntil = null;
+        }
+      }
+      if (body.data.pause === true) {
+        data.pausedUntil = new Date(Date.now() + AI_HANDOFF_PAUSE_MS);
+      } else if (body.data.pause === false) {
+        data.pausedUntil = null;
+      }
+      if (body.data.pausedUntil !== undefined) {
+        data.pausedUntil = body.data.pausedUntil
+          ? new Date(body.data.pausedUntil)
+          : null;
+      }
+      if (body.data.needsReview !== undefined) {
+        data.needsReview = body.data.needsReview;
+      }
+      if (body.data.aiAgentId !== undefined) {
+        data.aiAgentId = body.data.aiAgentId;
+        // Assigning an agent implies AI ready (unless explicitly disabled in same request).
+        if (body.data.aiAgentId && body.data.aiDisabled !== true) {
+          data.mode = data.mode || 'ai';
+          data.status = data.status || 'open';
+          if (body.data.aiDisabled === undefined) {
+            data.aiDisabled = false;
+          }
+        }
+      }
+
+      const updated = await prisma.conversation.update({
+        where: { id: conversationId },
+        data,
+        include: { aiAgent: { select: { id: true, name: true, status: true } } },
+      });
+
+      return reply.send({
+        id: updated.id,
+        mode: updated.mode,
+        aiDisabled: updated.aiDisabled,
+        pausedUntil: updated.pausedUntil,
+        status: updated.status,
+        needsReview: updated.needsReview,
+        aiAgentId: updated.aiAgentId,
+        aiAgent: updated.aiAgent,
+      });
+    },
+  );
+
+  // --- Deactivate / remove bot ---
   fastify.delete('/:botId', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;
@@ -1312,6 +2012,40 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
     if (!bot) return reply.code(404).send({ error: 'Bot not found' });
 
+    // AI Telegram Business: drop webhook + remove from portal (hard delete when possible)
+    if (bot.botType === 'ai_tg') {
+      if (bot.botTokenEncrypted) {
+        try {
+          const token = decrypt(bot.botTokenEncrypted);
+          await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ drop_pending_updates: false }),
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      await prisma.conversation.updateMany({
+        where: { botInstanceId: botId },
+        data: { botInstanceId: null },
+      });
+      try {
+        await prisma.botInstance.delete({ where: { id: botId } });
+        return reply.send({ ok: true, botId, deleted: true });
+      } catch {
+        await prisma.botInstance.update({
+          where: { id: botId },
+          data: {
+            status: 'inactive',
+            botTokenEncrypted: null,
+            managedBotUserId: null,
+          },
+        });
+        return reply.send({ ok: true, botId, softDeleted: true });
+      }
+    }
+
     await prisma.botInstance.update({
       where: { id: botId },
       data: { status: 'inactive' },
@@ -1326,6 +2060,50 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({ ok: true, botId });
   });
 };
+
+async function registerAiTgWebhook(
+  botToken: string,
+  tenantId: string,
+  botId: string,
+): Promise<{ ok: boolean; secret: string; error?: string }> {
+  const secret = randomBytes(24).toString('hex');
+  const publicBase =
+    process.env.GIFT_BOT_WEBHOOK_BASE_URL ||
+    process.env.BOT_WEBHOOK_BASE_URL ||
+    `https://api.${process.env.VOXLY_DOMAIN || 'getvoxly.ru'}`;
+  const webhookUrl = `${publicBase.replace(/\/+$/, '')}/tg/${tenantId}/${botId}`;
+
+  if (process.env.GIFT_BOT_USE_POLLING === 'true' || webhookUrl.includes('localhost')) {
+    return { ok: true, secret };
+  }
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: webhookUrl,
+        secret_token: secret,
+        allowed_updates: [
+          'message',
+          'callback_query',
+          'business_connection',
+          'business_message',
+          'edited_business_message',
+          'deleted_business_messages',
+        ],
+        drop_pending_updates: true,
+      }),
+    });
+    const json = (await res.json()) as { ok?: boolean; description?: string };
+    if (!json.ok) {
+      return { ok: false, secret, error: json.description || 'setWebhook failed' };
+    }
+    return { ok: true, secret };
+  } catch (err) {
+    return { ok: false, secret, error: String((err as Error)?.message || err) };
+  }
+}
 
 function sanitizeFunnel(input: z.infer<typeof campaignSchema>['funnel']): GiftFunnelConfig {
   const mapMsg = (m: z.infer<typeof funnelMessageSchema>) => {

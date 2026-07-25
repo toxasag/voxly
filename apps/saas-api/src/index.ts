@@ -15,6 +15,10 @@ import { tenantRoutes } from './routes/tenant.js';
 import { adminRoutes } from './routes/admin.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
+import { gramjsRoutes } from './routes/gramjs.js';
+import { whatsappRoutes } from './routes/whatsapp.js';
+import { aiAgentRoutes } from './routes/ai-agents.js';
+import { audienceRoutes } from './routes/audience.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
@@ -153,6 +157,10 @@ async function buildServer() {
   await fastify.register(adminRoutes, { prefix: '/api/admin' });
   await fastify.register(referralRoutes, { prefix: '/api/referrals' });
   await fastify.register(botRoutes, { prefix: '/api/bots' });
+  await fastify.register(gramjsRoutes, { prefix: '/api/bots/gramjs' });
+  await fastify.register(whatsappRoutes, { prefix: '/api/bots/whatsapp' });
+  await fastify.register(aiAgentRoutes, { prefix: '/api/ai/agents' });
+  await fastify.register(audienceRoutes, { prefix: '/api/audience' });
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
   await fastify.register(crmChatRoutes, { prefix: '/api/crm/chat' });
 

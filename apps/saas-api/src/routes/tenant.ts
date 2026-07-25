@@ -4,21 +4,32 @@ import type { FastifyPluginAsync } from 'fastify';
 import { decrypt } from '@voxly/crypto';
 
 /**
- * Twenty multiworkspace SSO: `http://{slug}.localhost:3007/verify?...`.
- * Keep `*.localhost` — Chromium resolves it to 127.0.0.1 (RFC 6761).
- * Do NOT rewrite to bare localhost (→ /welcome) or lvh.me (blank page in browsers).
+ * Twenty multiworkspace SSO URL → browser host.
+ * Local: `http://{slug}.localhost:3007/verify?...` (RFC 6761).
+ * Prod: Twenty returns `{slug}.app.getvoxly.ru` (no DNS under single-label wildcard);
+ * rewrite to `{slug}-crm.getvoxly.ru` via tenant.crmSubdomain + VOXLY_DOMAIN.
  */
-function toBrowserCrmUrl(ssoUrl: string): string {
+function toBrowserCrmUrl(ssoUrl: string, crmSubdomain?: string | null): string {
   try {
     const u = new URL(ssoUrl);
+    const publicBase = process.env.TWENTY_SERVER_URL?.trim() || 'http://localhost:3007';
+    const base = new URL(publicBase);
+    const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
+    const isLocal = /^(localhost|127\.0\.0\.1|.*\.localhost|.*\.lvh\.me)$/i.test(base.hostname);
+
     if (u.hostname === 'twenty-server' || u.hostname.endsWith('.twenty-server')) {
-      const publicBase = process.env.TWENTY_SERVER_URL?.trim() || 'http://localhost:3007';
-      const base = new URL(publicBase);
-      // Preserve workspace subdomain if present on internal URL (rare).
       const sub = u.hostname.replace(/\.?twenty-server$/, '');
       u.protocol = base.protocol;
       u.hostname = sub && sub !== 'twenty-server' ? `${sub}.${base.hostname}` : base.hostname;
       u.port = base.port;
+      return u.toString();
+    }
+
+    // Prod CRM host: antontest-crm.getvoxly.ru (not antontest.app.getvoxly.ru)
+    if (!isLocal && crmSubdomain) {
+      u.protocol = 'https:';
+      u.hostname = `${crmSubdomain}.${voxlyDomain}`;
+      u.port = '';
       return u.toString();
     }
   } catch {
@@ -53,7 +64,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         password,
         tenant.twentyWorkspaceId,
       );
-      const url = toBrowserCrmUrl(rawUrl);
+      const url = toBrowserCrmUrl(rawUrl, tenant.crmSubdomain);
       // Token for deal-card chat inject inside Twenty (same claims as portal JWT)
       const member = await fastify.prisma.tenantMember.findFirst({
         where: { tenantId, userId },

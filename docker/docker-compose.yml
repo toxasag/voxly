@@ -124,6 +124,9 @@ services:
       AUTH_JWT_SECRET: ${TWENTY_JWT_SECRET:-change-twenty-jwt-secret}
       # Apps SDK logic functions (production default is DISABLED)
       LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
+      # Injected into LOCAL logic functions (voxly-crm-chat → saas-api)
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      VOXLY_API_URL: ${VOXLY_API_URL:-http://saas-api:3002}
       # API
       API_BASE_PATH: "/rest"
       # Email (SMTP for invites)
@@ -137,6 +140,9 @@ services:
       FRONT_BASE_URL: https://app.getvoxly.ru
       # Disable signup if managed by control plane
       IS_SIGN_UP_DISABLED: "false"
+    volumes:
+      # Front-component + logic-function bundles (wiped on recreate without this — INC-029)
+      - twenty-storage:/app/packages/twenty-server/.local-storage
     labels:
       - "traefik.enable=true"
       # Dashboard / API on app.getvoxly.ru (default subdomain)
@@ -170,6 +176,10 @@ services:
       SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      VOXLY_API_URL: ${VOXLY_API_URL:-http://saas-api:3002}
+    volumes:
+      - twenty-storage:/app/packages/twenty-server/.local-storage
     networks:
       - voxly-net
 
@@ -178,9 +188,13 @@ services:
     build:
       context: ..
       dockerfile: apps/saas-api/Dockerfile
+      args:
+        VOXLY_CABINET_URL: ${VOXLY_CABINET_URL:-https://getvoxly.ru/dashboard}
     restart: unless-stopped
     depends_on:
       postgres-control:
+        condition: service_healthy
+      postgres-twenty:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -191,6 +205,7 @@ services:
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       TWENTY_SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
+      TWENTY_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
       JWT_SECRET: ${JWT_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ROBOKASSA_LOGIN: ${ROBOKASSA_LOGIN}
@@ -207,6 +222,11 @@ services:
       AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
       AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      VOXLY_CHAT_API_URL: ${VOXLY_CHAT_API_URL:-http://saas-api:3002}
+      VOXLY_CRM_CHAT_TARBALL: ${VOXLY_CRM_CHAT_TARBALL:-/voxly/assets/voxly-crm-chat.tgz}
+      # Internal only — never expose gramjs-bridge / Evolution publicly
+      GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
+      AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
     labels:
       - "traefik.enable=true"
       # API on api.getvoxly.ru
@@ -303,6 +323,15 @@ services:
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      AI_TELEGRAM_WORKER_URL: ${AI_TELEGRAM_WORKER_URL:-http://ai-telegram-worker:3005}
+    labels:
+      - "traefik.enable=true"
+      # Child bot webhooks: /tg/{tenantId}/{botId}
+      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/tg`)"
+      - "traefik.http.routers.gift-bot.entrypoints=websecure"
+      - "traefik.http.routers.gift-bot.service=gift-bot-worker"
+      - "traefik.http.services.gift-bot-worker.loadbalancer.server.port=3004"
+      - "traefik.http.routers.gift-bot.priority=30"
     networks:
       - voxly-net
 
@@ -322,14 +351,83 @@ services:
       DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-google/gemini-2.5-flash}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      AI_ASR_MODEL: ${AI_ASR_MODEL:-openai/whisper-1}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
     networks:
       - voxly-net
 
-  # --- AI WhatsApp Worker (AI agent for WhatsApp Cloud API) ---
+  # --- GramJS bridge (personal TG account; optional profile) ---
+  gramjs-bridge:
+    profiles: ["gramjs"]
+    build:
+      context: ..
+      dockerfile: apps/gramjs-bridge/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      ai-telegram-worker:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
+      AI_TELEGRAM_WORKER_URL: ${AI_TELEGRAM_WORKER_URL:-http://ai-telegram-worker:3005}
+      GRAMJS_BRIDGE_PORT: 3008
+    networks:
+      - voxly-net
+
+  # --- Evolution API (WhatsApp Baileys; profile whatsapp) ---
+  evolution-api:
+    profiles: ["whatsapp"]
+    # Stock v2.2.3 rejects @lid peers (exists:false). Dockerfile applies PR #2544 bypass.
+    image: voxly-evolution-api:v2.2.3-lid
+    build:
+      context: ..
+      dockerfile: docker/evolution-api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://evolution-api:8080}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_voxly
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      LOG_LEVEL: ERROR,WARN,INFO
+      DEL_INSTANCE: "false"
+      CONFIG_SESSION_PHONE_CLIENT: Voxly
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      # WhatsApp Web version for Baileys QR. Stale defaults (e.g. 2.3000.1015901307)
+      # return qrcode:{count:0} forever — bump when WA blocks QR (wppconnect versions).
+      CONFIG_SESSION_PHONE_VERSION: ${CONFIG_SESSION_PHONE_VERSION:-2.3000.1043705293}
+      QRCODE_LIMIT: 30
+    volumes:
+      - evolution-instances:/evolution/instances
+    networks:
+      - voxly-net
+
+  # --- AI WhatsApp Worker (Evolution channel → CRM / optional AI) ---
   ai-whatsapp-worker:
     build:
       context: ..
@@ -345,9 +443,16 @@ services:
       DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      WHATSAPP_API_VERSION: v20.0
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      TWENTY_API_URL: http://twenty-server:3000/graphql
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      AI_WHATSAPP_WEBHOOK_URL: ${AI_WHATSAPP_WEBHOOK_URL:-http://ai-whatsapp-worker:3006/webhook/evolution}
+      AI_WHATSAPP_PORT: 3006
     networks:
       - voxly-net
 
@@ -356,6 +461,8 @@ volumes:
   postgres-control-data:
   postgres-twenty-data:
   redis-data:
+  twenty-storage:
+  evolution-instances:
 
 networks:
   voxly-net:

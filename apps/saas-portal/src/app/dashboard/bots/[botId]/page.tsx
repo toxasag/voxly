@@ -67,6 +67,8 @@ interface CampaignRow {
   funnelJson: GiftFunnelConfig;
   promoPost?: GiftPromoPost;
   isActive: boolean;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -78,6 +80,8 @@ interface BotRow {
   status: string;
   botLink: string | null;
   hasGiftCampaign: boolean;
+  telegramDescription?: string | null;
+  telegramShortDescription?: string | null;
   campaigns?: CampaignRow[];
   campaign: CampaignRow | null;
 }
@@ -113,6 +117,31 @@ function authTokenOnly(): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
+/** Flatten Zod / Fastify error payloads into a short Russian message. */
+function formatApiError(error: unknown): string {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  if (typeof error !== 'object') return String(error);
+  const e = error as {
+    formErrors?: string[];
+    fieldErrors?: Record<string, string[] | undefined>;
+    message?: string;
+  };
+  const fieldMsgs = e.fieldErrors
+    ? Object.entries(e.fieldErrors).flatMap(([field, msgs]) =>
+        (msgs || []).map((m) => (field === 'funnel' ? m : `${field}: ${m}`)),
+      )
+    : [];
+  const parts = [...(e.formErrors || []), ...fieldMsgs].filter(Boolean);
+  if (parts.length) return parts.join(' · ');
+  if (e.message) return e.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Ошибка запроса';
+  }
+}
+
 export default function BotSettingsPage() {
   const { botId } = useParams<{ botId: string }>();
   const router = useRouter();
@@ -130,6 +159,8 @@ export default function BotSettingsPage() {
   const [funnel, setFunnel] = useState<GiftFunnelConfig | null>(null);
   const [promo, setPromo] = useState<GiftPromoPost>(DEFAULT_PROMO);
   const [promoLocalPreview, setPromoLocalPreview] = useState<string | undefined>();
+  const [botDescription, setBotDescription] = useState('');
+  const [botShortDescription, setBotShortDescription] = useState('');
   const [funnelLocalPreviews, setFunnelLocalPreviews] = useState<Record<string, string>>({});
   const [funnelPreviewKey, setFunnelPreviewKey] = useState<FunnelPreviewKey>('start');
   const [subscribers, setSubscribers] = useState<any[]>([]);
@@ -174,6 +205,10 @@ export default function BotSettingsPage() {
       const row = (json.bots as BotRow[]).find((b) => b.id === botId);
       if (!row) throw new Error('Бот не найден');
       setBot(row);
+      if (refreshForm) {
+        setBotDescription(row.telegramDescription || '');
+        setBotShortDescription(row.telegramShortDescription || '');
+      }
       const list = row.campaigns?.length
         ? row.campaigns
         : row.campaign
@@ -267,15 +302,29 @@ export default function BotSettingsPage() {
       const res = await fetch(`/api/bots/${botId}/channel/verify`, {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ channelUsername }),
+        body: JSON.stringify({
+          channelUsername,
+          campaignId: campaignId || undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.ok) {
-        setError(json.error || json.message || 'Проверка не прошла');
+        const errMsg =
+          typeof json.error === 'string'
+            ? json.error
+            : json.message || 'Проверка не прошла';
+        setError(errMsg);
         return;
       }
       setChannelId(json.channelId);
-      setOk(json.message);
+      if (json.channelUsername) {
+        setChannelUsername(
+          /^-?\d+$/.test(json.channelUsername)
+            ? json.channelUsername
+            : `@${String(json.channelUsername).replace(/^@/, '')}`,
+        );
+      }
+      setOk(json.message || 'Канал подтверждён и сохранён');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
     } finally {
@@ -287,6 +336,7 @@ export default function BotSettingsPage() {
     if (!funnel) return;
     setBusy('save');
     setError('');
+    setOk('');
     try {
       const res = await fetch(`/api/bots/${botId}/campaign`, {
         method: 'PUT',
@@ -301,12 +351,23 @@ export default function BotSettingsPage() {
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(JSON.stringify(json.error) || 'Не сохранено');
+      if (!res.ok) {
+        throw new Error(formatApiError(json.error) || 'Не сохранено');
+      }
       if (json.campaign?.id) {
         setCampaignId(json.campaign.id);
         campaignIdRef.current = json.campaign.id;
       }
-      setOk('Проект и воронка сохранены');
+      const giftReady = Boolean(
+        funnel.gift.telegramFileId
+        || (funnel.gift.type === 'link' && funnel.gift.url)
+        || (funnel.gift.url && /^https?:\/\//i.test(funnel.gift.url)),
+      );
+      setOk(
+        giftReady
+          ? 'Проект и воронка сохранены'
+          : 'Сообщения сохранены. Загрузите файл подарка в блоке «Подарок», когда будете готовы.',
+      );
       await load({ refreshForm: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
@@ -342,6 +403,40 @@ export default function BotSettingsPage() {
     }
   };
 
+  const saveBotDescription = async () => {
+    setBusy('bot-desc');
+    setError('');
+    setOk('');
+    try {
+      const res = await fetch(`/api/bots/${botId}/telegram-profile`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          description: botDescription,
+          shortDescription: botShortDescription || botDescription.slice(0, 120),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(formatApiError(json.error) || 'Не сохранено');
+      setBotDescription(json.telegramDescription || botDescription);
+      setBotShortDescription(json.telegramShortDescription || botShortDescription);
+      setBot((prev) =>
+        prev
+          ? {
+              ...prev,
+              telegramDescription: json.telegramDescription,
+              telegramShortDescription: json.telegramShortDescription,
+            }
+          : prev,
+      );
+      setOk('Первое сообщение бота сохранено в Telegram');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const toggleProject = async (id: string, isActive: boolean) => {
     setBusy(`toggle-${id}`);
     setError('');
@@ -365,6 +460,41 @@ export default function BotSettingsPage() {
           isActive: isActive ? c.id === id : c.id === id ? false : c.isActive,
         })),
       );
+      await load({ refreshForm: false });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const saveProjectSchedule = async (
+    id: string,
+    scheduledStartAt: string | null,
+    scheduledEndAt: string | null,
+  ) => {
+    setBusy(`schedule-${id}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/bots/${botId}/campaigns/${id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ scheduledStartAt, scheduledEndAt }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Расписание не сохранено');
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                scheduledStartAt: json.campaign?.scheduledStartAt ?? scheduledStartAt,
+                scheduledEndAt: json.campaign?.scheduledEndAt ?? scheduledEndAt,
+              }
+            : c,
+        ),
+      );
+      setOk('Расписание проекта сохранено');
       await load({ refreshForm: false });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
@@ -572,9 +702,9 @@ export default function BotSettingsPage() {
         <CardHeader className="border-b border-border/80 bg-secondary/25">
           <CardTitle>Проекты</CardTitle>
           <CardDescription>
-            Несколько акций на одном боте. Одновременно активен только один — он принимает лидов и
-            отвечает на кнопки в канале. Клик по карточке — редактирование; переключатель — кто
-            активен.
+            Несколько акций на одном боте. Одновременно активен только один. Можно задать расписание
+            старта/стопа (день 1 / день 2…). Клик по карточке — редактирование; переключатель —
+            вручную вкл/выкл.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-5">
@@ -589,17 +719,19 @@ export default function BotSettingsPage() {
             onProjectNameChange={setProjectName}
             onNewProjectNameChange={setNewProjectName}
             onCreate={createProject}
+            onSaveSchedule={saveProjectSchedule}
           />
         </CardContent>
       </Card>
 
-      {/* 1. Channel */}
+      {/* 1.1 Channel */}
       <Card>
         <CardHeader>
-          <CardTitle>1. Канал</CardTitle>
+          <CardTitle>1.1 Канал</CardTitle>
           <CardDescription>
-            Добавьте @{bot.botUsername} админом канала (права: видеть участников и публиковать сообщения).
-            Канал привязан к выбранному проекту.
+            Добавьте @{bot.botUsername} админом канала или супергруппы (права: видеть участников и
+            публиковать сообщения). Укажите публичный @username — не название чата и не invite-ссылку
+            t.me/+…
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -615,6 +747,168 @@ export default function BotSettingsPage() {
           <Button variant="outline" onClick={verifyChannel} disabled={busy === 'verify' || !channelUsername}>
             {busy === 'verify' ? '…' : 'Проверить админа'}
           </Button>
+          {channelId ? (
+            <p className="text-sm text-emerald-700">
+              Канал привязан · id {channelId}
+              {channelUsername ? ` · ${channelUsername}` : ''}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              После проверки канал сохранится в выбранный проект автоматически.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 1.2 First message — Telegram bot description before /start */}
+      <Card>
+        <CardHeader>
+          <CardTitle>1.2 Первое сообщение бота</CardTitle>
+          <CardDescription>
+            Текст на экране Telegram, когда человек перешёл по ссылке на бота, но ещё не нажал
+            «Старт» / «Перезапустить». Это описание профиля бота (не сообщение в чате).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <Label>Текст описания (до 512 символов)</Label>
+            <Textarea
+              className="mt-1.5"
+              rows={5}
+              maxLength={512}
+              value={botDescription}
+              onChange={(e) => setBotDescription(e.target.value)}
+              placeholder={`${bot.botUsername || 'Бот'} готов!\n\nНажмите Старт, чтобы получить подарок.`}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">{botDescription.length}/512</p>
+          </div>
+          <div>
+            <Label>Короткое описание (до 120 символов, опционально)</Label>
+            <Input
+              className="mt-1.5"
+              maxLength={120}
+              value={botShortDescription}
+              onChange={(e) => setBotShortDescription(e.target.value)}
+              placeholder="Кратко в профиле и при шаринге"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              {botShortDescription.length}/120 · если пусто — возьмём начало длинного текста
+            </p>
+          </div>
+          <Button variant="outline" onClick={saveBotDescription} disabled={busy === 'bot-desc'}>
+            {busy === 'bot-desc' ? '…' : 'Сохранить в Telegram'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* 1.3 Start message — after /start in chat */}
+      <Card>
+        <CardHeader>
+          <CardTitle>1.3 Стартовое сообщение бота</CardTitle>
+          <CardDescription>
+            Что бот напишет в чат сразу после /start. Обычно тут просят подписаться на канал и
+            нажать кнопку ниже. Настройте до массового запуска.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div
+              className="space-y-3"
+              onFocusCapture={() => setFunnelPreviewKey('start')}
+              onClick={() => setFunnelPreviewKey('start')}
+            >
+              <div>
+                <Label>Текст (Markdown: {TELEGRAM_CLIENT_MD_HINT})</Label>
+                <Textarea
+                  className="mt-1.5"
+                  rows={5}
+                  value={funnel.start.text}
+                  onChange={(e) =>
+                    setFunnel({ ...funnel, start: { ...funnel.start, text: e.target.value } })
+                  }
+                />
+              </div>
+              <MediaPicker
+                label="Медиа"
+                accept="image/*,video/*"
+                busy={busy === 'funnel-start-media'}
+                hasFile={Boolean(
+                  funnel.start.telegramFileId || funnelLocalPreviews.start || funnel.start.imageUrl,
+                )}
+                fileHint={funnel.start.telegramFileId ? 'Файл в Telegram' : undefined}
+                onPick={async (file) => {
+                  setBusy('funnel-start-media');
+                  setError('');
+                  setFunnelLocal('start', URL.createObjectURL(file));
+                  try {
+                    const uploaded = await uploadMedia(file);
+                    setFunnel({
+                      ...funnel,
+                      start: {
+                        ...funnel.start,
+                        telegramFileId: uploaded.fileId,
+                        mediaType: uploaded.mediaType,
+                        imageUrl: undefined,
+                      },
+                    });
+                    setOk('Медиа /start загружено');
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Ошибка загрузки');
+                  } finally {
+                    setBusy('');
+                  }
+                }}
+                onClear={() => {
+                  setFunnelLocal('start');
+                  setFunnel({
+                    ...funnel,
+                    start: {
+                      ...funnel.start,
+                      telegramFileId: undefined,
+                      mediaType: undefined,
+                      imageUrl: undefined,
+                    },
+                  });
+                }}
+              />
+              <div>
+                <Label>Текст на кнопке</Label>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Эту кнопку человек нажимает, когда уже подписался на канал.
+                </p>
+                <Input
+                  className="mt-1.5"
+                  value={funnel.subscribeButton?.confirmLabel || 'Я подписался ✅'}
+                  onChange={(e) =>
+                    setFunnel({
+                      ...funnel,
+                      subscribeButton: { confirmLabel: e.target.value || 'Я подписался ✅' },
+                    })
+                  }
+                />
+              </div>
+              <Button variant="outline" onClick={saveCampaign} disabled={busy === 'save'}>
+                {busy === 'save' ? '…' : 'Сохранить стартовое сообщение'}
+              </Button>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Превью в чате после /start
+              </p>
+              <TelegramPreview
+                botName={`@${bot.botUsername || 'bot'}`}
+                text={funnel.start.text}
+                mediaType={funnel.start.mediaType === 'video' ? 'video' : 'photo'}
+                mediaUrl={funnelLocalPreviews.start || funnel.start.imageUrl}
+                mediaPlaceholder={
+                  Boolean(funnel.start.telegramFileId) &&
+                  !funnelLocalPreviews.start &&
+                  !funnel.start.imageUrl
+                }
+                buttonLabel={subscribeLabel}
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -714,7 +1008,7 @@ export default function BotSettingsPage() {
                 </Button>
               </div>
               {!channelId && (
-                <p className="text-xs text-amber-700">Сначала проверьте канал в блоке 1.</p>
+                <p className="text-xs text-amber-700">Сначала проверьте канал в блоке 1.1.</p>
               )}
             </div>
             <div>
@@ -732,24 +1026,19 @@ export default function BotSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* 3. Funnel / warmup — side-by-side like promo */}
+      {/* 3. Funnel / warmup — remaining steps (start is in 1.2) */}
       <Card>
         <CardHeader>
-          <CardTitle>3. Сообщения бота</CardTitle>
+          <CardTitle>3. Дальнейшие сообщения бота</CardTitle>
           <CardDescription>
-            Здесь вы пишете, что бот говорит человеку на каждом шаге. Справа видно, как это будет
-            выглядеть в Telegram. Можно украсить текст: {TELEGRAM_CLIENT_MD_HINT}
+            Что бот пишет после /start: напоминания, подарок, follow-up. Стартовое сообщение — в блоке
+            1.2. Справа — превью в Telegram. Текст: {TELEGRAM_CLIENT_MD_HINT}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-5">
               <div className="flex flex-wrap gap-1.5">
-                <PreviewChip
-                  active={funnelPreviewKey === 'start'}
-                  onClick={() => setFunnelPreviewKey('start')}
-                  label="Старт"
-                />
                 {funnel.notSubscribed.map((_, i) => (
                   <PreviewChip
                     key={`ns-${i}`}
@@ -781,86 +1070,8 @@ export default function BotSettingsPage() {
                 ))}
               </div>
 
-              <div
-                className={`space-y-2 rounded-lg border p-3 ${funnelPreviewKey === 'start' ? 'border-foreground/30' : 'border-border/60'}`}
-                onFocusCapture={() => setFunnelPreviewKey('start')}
-                onClick={() => setFunnelPreviewKey('start')}
-              >
-                <div>
-                  <Label>1. Первое сообщение</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Бот пишет это сразу, когда человек нажал Start в Telegram. Обычно тут просят
-                    подписаться на канал и нажать кнопку ниже.
-                  </p>
-                </div>
-                <Textarea
-                  className="mt-1.5"
-                  rows={3}
-                  value={funnel.start.text}
-                  onChange={(e) => setFunnel({ ...funnel, start: { ...funnel.start, text: e.target.value } })}
-                />
-                <MediaPicker
-                  accept="image/*,video/*"
-                  busy={busy === 'funnel-start-media'}
-                  hasFile={Boolean(
-                    funnel.start.telegramFileId || funnelLocalPreviews.start || funnel.start.imageUrl,
-                  )}
-                  fileHint={funnel.start.telegramFileId ? 'Файл в Telegram' : undefined}
-                  onPick={async (file) => {
-                    setBusy('funnel-start-media');
-                    setError('');
-                    setFunnelLocal('start', URL.createObjectURL(file));
-                    try {
-                      const uploaded = await uploadMedia(file);
-                      setFunnel({
-                        ...funnel,
-                        start: {
-                          ...funnel.start,
-                          telegramFileId: uploaded.fileId,
-                          mediaType: uploaded.mediaType,
-                          imageUrl: undefined,
-                        },
-                      });
-                      setOk('Медиа /start загружено');
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : 'Ошибка загрузки');
-                    } finally {
-                      setBusy('');
-                    }
-                  }}
-                  onClear={() => {
-                    setFunnelLocal('start');
-                    setFunnel({
-                      ...funnel,
-                      start: {
-                        ...funnel.start,
-                        telegramFileId: undefined,
-                        mediaType: undefined,
-                        imageUrl: undefined,
-                      },
-                    });
-                  }}
-                />
-                <div>
-                  <Label className="text-xs text-muted-foreground">Текст на кнопке</Label>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Эту кнопку человек нажимает, когда уже подписался на канал.
-                  </p>
-                  <Input
-                    className="mt-1"
-                    value={funnel.subscribeButton?.confirmLabel || 'Я подписался ✅'}
-                    onChange={(e) =>
-                      setFunnel({
-                        ...funnel,
-                        subscribeButton: { confirmLabel: e.target.value || 'Я подписался ✅' },
-                      })
-                    }
-                  />
-                </div>
-              </div>
-
               <MessageList
-                title="2. Нажал кнопку, но не в канале"
+                title="3.1 Нажал кнопку, но не в канале"
                 hint="Человек нажал «Я подписался», а в канале его нет. Через указанное время бот напомнит подписаться."
                 messages={funnel.notSubscribed}
                 previewBucket="notSubscribed"
@@ -911,7 +1122,7 @@ export default function BotSettingsPage() {
                 onClick={() => setFunnelPreviewKey('gift')}
               >
                 <div>
-                  <Label>3. Сам подарок</Label>
+                  <Label>3.2 Сам подарок</Label>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Это бот отправит, когда человек реально подписался на канал и нажал кнопку.
                     Можно файл, картинку, видео или ссылку.
@@ -995,7 +1206,7 @@ export default function BotSettingsPage() {
               </div>
 
               <MessageList
-                title="4. После того как подарок уже отдали"
+                title="3.3 После того как подарок уже отдали"
                 hint="Человек получил подарок. Через указанное время бот может написать ещё раз — спросить, как материал, предложить помощь."
                 messages={funnel.afterGift}
                 previewBucket="afterGift"
@@ -1040,7 +1251,7 @@ export default function BotSettingsPage() {
                 }}
               />
               <MessageList
-                title="5. Запустил бота и молчит"
+                title="3.4 Запустил бота и молчит"
                 hint="Человек нажал Start и больше ничего не сделал — не нажимал «Я подписался». Через время бот напомнит забрать подарок."
                 messages={funnel.notGifted}
                 previewBucket="notGifted"

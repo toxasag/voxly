@@ -51,6 +51,8 @@ async function main() {
   }
 
   const http = await import('node:http');
+  const AI_TELEGRAM_WORKER_URL =
+    process.env.AI_TELEGRAM_WORKER_URL || 'http://ai-telegram-worker:3005';
   const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url?.startsWith('/tg/')) {
       const parts = req.url.split('/').filter(Boolean);
@@ -59,6 +61,23 @@ async function main() {
       let body = '';
       for await (const chunk of req) body += chunk;
       try {
+        // Public Traefik route hits gift-bot; forward AI bots to ai-telegram-worker.
+        const botMeta = await prisma.botInstance.findFirst({
+          where: { id: botId, tenantId },
+          select: { botType: true },
+        });
+        if (botMeta?.botType === 'ai_tg') {
+          const upstream = await fetch(`${AI_TELEGRAM_WORKER_URL}${req.url}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          });
+          const text = await upstream.text();
+          res.writeHead(upstream.status, { 'Content-Type': 'text/plain' });
+          res.end(text);
+          return;
+        }
+
         const update = JSON.parse(body);
         await handleTelegramUpdate(update, tenantId, botId);
         res.writeHead(200);
@@ -969,6 +988,48 @@ async function syncSubscriberToCRM(
     }
 
     let opportunityId = existingSub?.twentyOpportunityId || undefined;
+    if (
+      opportunityId &&
+      !(await client.opportunityExists(opportunityId))
+    ) {
+      opportunityId = undefined;
+    }
+
+    // Reuse open deal for this Person (AI/GramJS/WA/other gift) — anti-dupe leads.
+    if (!opportunityId && personId) {
+      const fromGift = await prisma.giftSubscriber.findFirst({
+        where: {
+          tenantId,
+          twentyPersonId: personId,
+          twentyOpportunityId: { not: null },
+          NOT: existingSub?.id ? { id: existingSub.id } : undefined,
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (
+        fromGift?.twentyOpportunityId &&
+        (await client.opportunityExists(fromGift.twentyOpportunityId))
+      ) {
+        opportunityId = fromGift.twentyOpportunityId;
+      }
+    }
+    if (!opportunityId && personId) {
+      const fromConv = await prisma.conversation.findFirst({
+        where: {
+          tenantId,
+          twentyPersonId: personId,
+          twentyOpportunityId: { not: null },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (
+        fromConv?.twentyOpportunityId &&
+        (await client.opportunityExists(fromConv.twentyOpportunityId))
+      ) {
+        opportunityId = fromConv.twentyOpportunityId;
+      }
+    }
+
     if (!opportunityId && personId) {
       const who = person.username
         ? `@${person.username.replace(/^@/, '')}`

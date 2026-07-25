@@ -61,7 +61,7 @@ flowchart LR
 5. Inbound media: **photo/sticker `<img>` preview** via `/s/crm-chat/.../file/...` → logic compresses JPEG ≤~48KB raw then `{ dataBase64, contentType: image/jpeg }` (INC-014 size cliff); other attachments = download link or 📎 fallback; hide `[фото]`/`[видео]`/… placeholders when attachments exist. Outbound: host patch encodes file → `dataBase64` on change (INC-017) **with JPEG shrink** so JSON stays under Nest 10MB (INC-020); front stores `PendingAttachment` (top-level `event.files`) and posts sequential JSON `fileBase64` (Remote DOM File stubs are **not** Blobs — no FileReader/arrayBuffer in worker); logic rebuilds multipart → saas-api.
 6. Reference implement: inject `docker/twenty-deal-chat.js` (rollback; real-DOM `FormData`+File — not usable in SDK front).
 
-Transport: RestApiClient `/s/crm-chat/:recordId` (+ `/reply`, `/file/:fileId`) → logic → saas-api. File route returns compressed `{ dataBase64, contentType }` (binary via service token). Inject floating UI off.
+Transport: RestApiClient `/s/crm-chat/:recordId` (+ `/reply`, `/file/:fileId`) → logic → saas-api. File route returns compressed `{ dataBase64, contentType }` (binary via service token). Inject floating UI off. saas-api resolves chat via **GiftSubscriber** (gift) **or** **Conversation** CRM ids (`ai_tg` / `ai_gramjs` / `ai_wa`); GET may return `threads[]` for multi-channel switch (`?conversationId=`); GramJS outbound → bridge `POST /messages/send`; WA outbound → ai-whatsapp-worker (INC-032/037).
 
 **Кабинет:** сайдбар «Кабинет Voxly» (`NavigationMenuItemType.LINK` → portal `/dashboard`); floating inject `twenty-cabinet-link.js` отключён (`DISABLE_FLOATING_CABINET`).
 

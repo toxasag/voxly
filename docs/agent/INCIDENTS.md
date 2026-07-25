@@ -5,6 +5,208 @@
 
 ---
 
+### INC-051 — Gift bots list 500 after saas-api deploy (missing columns)
+- **Симптом:** `/dashboard/bots` → «Не удалось загрузить ботов»; `GET /api/bots` 500.
+- **Причина:** Prisma schema + client уже с `BotInstance.telegramDescription` / `telegramShortDescription`, migration `20260724183000_bot_telegram_description` **не** применена на prod control PG (deploy не делает migrate).
+- **Фикс:** `ALTER TABLE … ADD COLUMN IF NOT EXISTS` + запись в `_prisma_migrations`.
+- **Verify:** `GET /api/bots` 200; страница ботов грузится.
+- **Дата:** 2026-07-24.
+- **Prevention:** after shipping Prisma fields, always run migration on prod explicitly (deploy reminder).
+
+### INC-050 — CRM Chat: URLs not clickable + `nbsp;` garbage
+- **Симптом:** в вкладке «Чат» `https://…` как обычный текст (не ссылка); между абзацами видно `nbsp;`.
+- **Причина:** `formatContent` / `formatInlineMarkdown` не linkify’или URL; пустые строки рендерились как `&nbsp;`, Remote DOM мог съесть `&` → литерал `nbsp;`.
+- **Фикс:** linkify `http(s)://` в text-нодах после MD; нормализация `&nbsp;`/`nbsp;`; пустые строки без entity (только `min-height`). `voxly-crm-chat` **0.1.3**; parity в `docker/twenty-deal-chat.js`.
+- **Verify:** hard-refresh CRM «Чат» → URL синие/кликабельны (`target=_blank`); пустые строки без `nbsp;`.
+- **Дата:** 2026-07-24.
+- **Prevention:** any chat HTML renderer: linkify after escape; never rely on `&nbsp;` in Remote DOM.
+
+### INC-049 — Gift bot creates second Opportunity for same Person
+- **Симптом:** канбан New: `@toxasagmsk · AI · @voxly_AI_Agent_bot` и дубль `@toxasagmsk · den · @voxly_john_01_bot` (один контакт).
+- **Причина:** gift `syncSubscriberToCRM` находил Person (`findPersonByHint` / prior gift), но **не** искал существующую Opportunity на Conversation/других gift — всегда `createOpportunity`.
+- **Фикс:** reuse Opportunity by `twentyPersonId` from GiftSubscriber + Conversation (как AI worker); prod delete dupe opp + retarget gift sub.
+- **Verify:** one live Opportunity for Person; new gift start on known TG user attaches same deal.
+- **Дата:** 2026-07-24.
+- **Prevention:** any channel sync: Person first, then Opportunity-by-Person before create.
+
+### INC-048 — CRM Chat: no live message / missed left toast
+- **Симптом:** входящее в Business/WA есть в БД и после F5 в «Чат», но пока вкладка открыта сообщение не появляется; left toast иногда нет.
+- **Причина:** Remote DOM chat **без** `setInterval` (только open/send/«Обновить»). Toast poll пустыми ответами двигал `toastSince` с skew **2s** → при drift часов DB/Node сообщение могло выпасть из окна `sentAt > since`.
+- **Фикс:** shell-ux кликает «Обновить» при toast на открытую карточку + soft-refresh ~4.5s пока открыт Chat canvas; skew пустого poll **15s**.
+- **Verify:** hard-refresh CRM → Network `/s/crm-chat/inbound-toasts`; открыть «Чат» → inbound ≤5s в ленте без F5; toast слева снизу.
+- **Дата:** 2026-07-24.
+- **Prevention:** never rely on Remote DOM timers for live inbox; host shell-ux owns poll + refresh click.
+
+### INC-047 — Business bot linked but no CRM deal / empty account list
+- **Симптом:** `@voxly_AI_Agent_bot` in Business automation; portal shows only `Business-аккаунты 1/10` without names; no Opportunity; AI «выкл».
+- **Причина:** (1) `business_connection` not persisted as listable registry; (2) only owner outbound «Рр» stored — `pauseOnHumanOutbound` did not call `syncLeadToCrm`; (3) Telegram `getBusinessConnection` → **`can_reply=false`, `rights={}`** so customer `business_message` never arrived; (4) no `AiAgent` assigned (`defaultAiAgentId` null = AI off by ADR-014).
+- **Фикс:** registry Conversations `telegram_business_account`; API/portal list; CRM sync on outbound + Business label on Opportunity; status `limited` + UI warning when no reply rights; backfill john deal.
+- **Verify:** bot page lists `@toxasagmsk` with «нет прав ответа»; CRM has Opportunity `… · Business @toxasagmsk`; after granting rights + agent assign, inbound creates/updates deal and AI can reply.
+- **Дата:** 2026-07-24.
+- **Prevention:** on connect, surface `can_reply`; never count registry rows as customer dialogs; agent assign is on bot (all Business accounts).
+
+### INC-046 — AI Business bot created in Telegram but missing from portal
+- **Симптом:** «Подключить бота» → создали `@voxly_AI_Agent_bot` в Telegram → кабинет john всё ещё «Пока нет AI-ботов» / dashboard BUSINESS=0.
+- **Причина:** (1) `User.telegramUserId` создателя был привязан к **другому** tenant (antontest), а `BotProvisionRequest` — к **john**; (2) кастомный @username ≠ `suggestedUsername` (`voxly_john_0N_bot`); (3) matcher сначала брал linked tenant → «No pending provision»; (4) UI после клика оставлял empty-state, provision-карточка легко терялась при refresh.
+- **Фикс:** `resolveProvisionForManagedBot` — username → pending linked tenant → unique pending tenant/ai_tg; `assignTelegramToTenantOwner` (unique move); portal waiting UI; replay ManagedBotUpdated → `@voxly_AI_Agent_bot` на john.
+- **Verify:** john `BotInstance` ai_tg active `@voxly_AI_Agent_bot`; telegramUserId on john owner; manager log «linked to tenant».
+- **Дата:** 2026-07-24.
+- **Prevention:** always «Привязать Telegram» (nonce) before create when portal shows unlinked; never assume linked TG tenant == current portal tenant.
+
+### INC-045 — Opportunity picker shows second fake kanban «All Сделки»
+- **Симптом:** view picker: **Канбан** (ok) + **All Сделки** with kanban icon — both look like boards; no real list view.
+- **Причина:** GraphQL `updateView` wrote `type=KANBAN` / `IconLayoutKanban` into `view.overrides` on the seeded TABLE; columns stayed TABLE/`IconList`, but UI trusted overrides. Converting INDEX→KANBAN in-place when a separate board exists made this worse after SQL demoted key.
+- **Фикс:** SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` → secondary **Списком** TABLE/`IconList`, strip kanban keys from `overrides`; `ensureOpportunityKanbanDefault` skips in-place convert when another board exists; `ensureOpportunityListView` renames secondary.
+- **Verify:** john = `Канбан` KANBAN INDEX + `Списком` TABLE IconList; antontest/lexx same; hard-refresh picker.
+- **Дата:** 2026-07-24.
+- **Prevention:** never GraphQL-convert INDEX to KANBAN when a separate board exists; after `updateView` type/icon, verify `overrides` or clear via SQL.
+
+### INC-044 — TG/WA create duplicate Person for same phone
+- **Симптом:** WhatsApp lead `+7915…` уже Person; inbound GramJS/Business с тем же номером создаёт **второго** Person; toast/чат не на том контакте; threads switcher не объединяет.
+- **Причина:** TG `syncLeadToCrm` dedupe только platformUserId / gift / `findPersonByHint` (username) — **без** phone. WA sync писал phones/whatsapp, но не искал существующего TG Person по номеру.
+- **Фикс:** `@voxly/twenty-client` `findPersonByPhone` (phones.primaryPhoneNumber variants + `whatsapp` eq); GramJS передаёт `User.phone`; TG/WA sync merge before create; ambiguous → `needsReview`; Opportunity reuse по Person.
+- **Verify (prod):** WA Person with `whatsapp=+7915…` → TG inbound from account with visible same phone → **same** `twentyPersonId` on both Conversations; toast opens that Person; no phone → new Person; two conflicting matches → `needsReview=true`.
+- **Дата:** 2026-07-24.
+- **Prevention:** always search phone/whatsapp before createPerson when E.164 known; keep INC-042 stale-id checks.
+
+### INC-043 — WA Person phones/whatsapp empty (LID webhook, no senderPn)
+- **Симптом:** inbound WA → toast + Chat OK; Person «Антон» Phones и social **WhatsApp** пустые. Header «Пишем от: WhatsApp · ремонт тоя».
+- **Причина:** Evolution `messages.upsert` for Android peers often has only `@lid` in `key.remoteJid` — **no** `remoteJidAlt`/`senderPn` in stored Message or webhook. INC-039 extract path never got E.164 → `syncLeadToCrm` skipped `updatePersonPhone` / `updatePersonWhatsapp`. Phone **was** visible in Evolution Contact book as separate `7915…@s.whatsapp.net` row (same profilePic / unique pushName).
+- **Фикс:** `ai-whatsapp-worker` `resolvePhoneFromEvolutionContacts` (findContacts → match profilePic fingerprint, else unique pushName); call on inbound when LID+no PN; `POST /internal/crm/backfill-phones`; composer placeholder channel-aware (`voxly-crm-chat` **0.1.2**).
+- **Verify:** backfill john → both WA Persons `phones=+7 9150946944`, `whatsapp=+79150946944`; Conversations `platformUsername=+79150946944`; deploy backup `20260724-121355`.
+- **Дата:** 2026-07-24.
+- **Prevention:** when webhook is LID-only, always consult Evolution Contact book before leaving CRM phone empty; unique pushName is best-effort (can collide).
+
+### INC-042 — WA inbound after CRM wipe: toast OK, Person/Opportunity missing
+- **Симптом:** john: удалили всех People+Opportunities в Twenty → inbound WA → left toast есть, Person/Opportunity не создаются; клик по toast не открывает Чат.
+- **Причина:** Twenty soft-delete (`deletedAt`); `Conversation.twentyPersonId` / `twentyOpportunityId` остались на trashed uuid. `syncLeadToCrm` early-return при обоих id → create пропускается (updatePerson* может трогать trash). Toast строится по ChatMessage без проверки существования Person → клик на мёртвый `/object/person/<stale>` или no-op.
+- **Диагностика:** control PG john WA: msgs>0 + CRM ids NOT NULL; Twenty `person.deletedAt` set; GraphQL `people(id=…)` → empty; worker без `syncLeadToCrm failed` (silent skip).
+- **Фикс:** `@voxly/twenty-client` `personExists` / `opportunityExists`; WA (+ TG) sync: validate → clear stale → recreate Person+Opportunity; sync на каждый inbound; toast без CRM ids не навигирует.
+- **Verify:** backfill john 2 WA → live Person+Opportunity; service-token GET chat 200 (WhatsApp, msgs present); backup `20260724-115625`.
+- **Дата:** 2026-07-24.
+- **Prevention:** never trust stored Twenty ids without existence check after CRM delete/wipe; keep sync on every inbound.
+
+### INC-041 — CRM inbound left toasts never appear (shell-ux sed)
+- **Симптом:** john-crm: inbound ChatMessages есть (WA «Прррр»/«Ппррр»), `GET /api/crm/chat/inbound-toasts` с service token → `items[]`, но left toasts не показываются. Poll в Network отсутствует.
+- **Причина:** `twenty.Dockerfile` `sed` заменяет **все** `__VOXLY_API_URL__`, включая guard `API.indexOf('__VOXLY_API_URL__') !== -1` → после bake условие всегда true → `pollInboundToasts` сразу `return`. Вторично: poll ходил только с portal `#voxlyChatToken` (bookmark/hard-refresh без Open CRM = silent).
+- **Диагностика:** curl `john-crm…/voxly-shell-ux.js` → `API.indexOf('https://api.getvoxly.ru')`; control PG 2× `role=user` за 10 мин; saas-api service-token → 2 items; CORS preflight OK.
+- **Фикс:** shell-ux `apiUrlReady()` = `API.indexOf('__') === -1`; prefer same-origin `GET /s/crm-chat/inbound-toasts` via Twenty `tokenPairState.accessOrWorkspaceAgnosticToken` + logic `get-inbound-toasts`; fallback portal JWT → api host.
+- **Verify:** hard-refresh john-crm (logged in, no portal hop) → Network `/s/crm-chat/inbound-toasts` 200; send inbound → toast ≤10s; baked JS must not contain `indexOf('https://api.getvoxly.ru')`.
+- **Дата:** 2026-07-24.
+- **Prevention:** never put Dockerfile sed placeholders inside runtime string-equality checks; use split/`indexOf('__')` or a one-shot assignment.
+
+### INC-040 — GramJS CRM reply 400: peer not found (deleted/spam)
+- **Симптом:** `john-crm` «Чат» Person `c787d312-…` → reply → `/s/crm-chat/…/reply` **400**; toast только `Request to … failed with status 400`. Contact in CRM (Meeting), not visible in Telegram dialogs.
+- **Причина:** Conversation `telegram_gramjs`, `platformUserId=8471608447` (Лариса). Inbound spam-like «🥰 Подаришь мне улыбку? ✨». GramJS `getEntity` → `peer not found: Could not find the input entity for PeerUser`. UI `replyErrorMessage` extracted `body.error` but **returned `err.message`** (status string).
+- **Фикс:** saas-api `humanizeCrmChatSendError` → «Аккаунт удалён или недоступен» (+ privacy / WA exists:false); chat-panel prefers API `error` over status toast; re-ensure crm-chat tarball on john.
+- **Verify:** service-token reply → `{"error":"Аккаунт удалён или недоступен"}` **400**; hard-refresh CRM toast shows Russian (not status 400).
+- **Дата:** 2026-07-24.
+- **Prevention:** map TG/GramJS/Evolution peer-gone errors before CRM UI; always surface `body.error` in snackbar.
+
+### INC-039 — WA Person name ends with LID digits; phone empty
+- **Симптом:** Twenty Person «Антон 165274770739447»; phones пустые, хотя в WA виден реальный номер. CRM media reply → 400 «вложения не поддерживаются».
+- **Причина:** (1) `syncLeadToCrm` писал `lastName = platformUserId` (часто Linked ID, 14–16 цифр) → UI склеивает first+last. (2) Phone брался только из `platformUserId`; при `@lid` без отдельного E.164 из `remoteJidAlt`/`senderPn` поле phones не заполнялось. (3) saas-api явно блокировал WA multipart из CRM.
+- **Фикс:** extract E.164 из Evolution alt/PN fields; `firstName` = pushName/«WhatsApp», lastName без LID; `platformUserId` остаётся LID для send; Evolution `sendMedia` + CRM attachments; presence/read на GET/reply.
+- **Verify:** новый inbound → Person с `+E.164` когда alt есть; имя без 14–16-значного хвоста; media reply → 200; открытие чата шлёт composing (best-effort).
+- **Дата:** 2026-07-24.
+- **Prevention:** never put WA LID into Twenty name/phone; store LID only on Conversation.platformUserId; prefer remoteJidAlt/senderPn for phones.
+
+### INC-038 — CRM Chat reply 400 for WhatsApp LID peers
+- **Симптом:** `john-crm` «Чат» → reply → `/s/crm-chat/<opportunityId>/reply` **400**. History loads. saas-api: `CRM chat reply send failed` / `Bad Request` via `sendViaWhatsappWorker`; `botType=ai_wa`, `chatId` like `122372778684449`.
+- **Причина:** Conversation.`platformUserId` is WhatsApp **Linked ID** (`@lid`), not E.164. Worker sent digits-only → Evolution maps to `@s.whatsapp.net` → `onWhatsApp` `exists:false` → HTTP 400. Even with `digits@lid`, stock **Evolution v2.2.3** rejects LID in `sendMessageWithTyping` (no `@lid` bypass; PR #2544). tsup duplicates that check across ~132 dist chunks — patching only `whatsapp.baileys.service.js` is not enough.
+- **Фикс:** `ai-whatsapp-worker` formats LID as `digits@lid`, prefers inbound `remoteJidAlt`, tighter E.164 heuristic; `docker/evolution-api.Dockerfile` FROM v2.2.3 patches **all** dist JS copies (`@broadcast` + `@lid` bypass); compose image `voxly-evolution-api:v2.2.3-lid`; `prod-deploy.sh` service `evolution-api` + `--profile whatsapp`.
+- **Verify:** Evolution `sendText` `@lid` → **201**; worker `/internal/messages/send` → **200**; service-token `POST /api/crm/chat/1a0beec2-…/reply` + `X-Twenty-Workspace-Id` → **200** + operator `ChatMessage`. GramJS/gift untouched.
+- **Дата:** 2026-07-24.
+- **Prevention:** always send WA LID with `@lid` suffix; when patching Evolution, patch every tsup chunk (or upgrade past PR #2544); prefer `remoteJidAlt` on inbound when present.
+
+### INC-037 — WhatsApp inbound silent in CRM Chat (no Person/Opportunity)
+- **Симптом:** messages to connected WA appear nowhere in CRM «Чат»; Telegram threads still show. Worker may restart-loop.
+- **Причина:** Evolution webhook + ChatMessage OK; `syncLeadToCrm` called `createPerson({ phone: WA lid/digits })`. Twenty rejects phone without calling code / invalid LID (`Provided phone number is invalid`); `createPerson` fallback rethrew flat `firstName` error; **unhandled rejection crashed** `ai-whatsapp-worker` → Conversation never got `twentyPersonId` → `findCrmChatTarget` could not resolve CRM record.
+- **Фикс:** `createPerson` retries nested **without** phones; WA worker skips non-E.164 phones, wraps sync in try/catch; CRM GET returns `threads[]` + `?conversationId=` switcher; WA identity = `displayName` / `+phone`. Backfilled existing WA convs on john.
+- **Verify:** service-token GET `/api/crm/chat/<personId>` → `channelLabel=WhatsApp`, messages present; worker Restarts=0 after inbound; GramJS GET still `Telegram · личный аккаунт`.
+- **Дата:** 2026-07-23.
+- **Prevention:** never pass WA `@lid` / device ids as Twenty `phones`; always catch CRM sync so webhook path stays up.
+
+### INC-036 — WhatsApp UI shows Evolution hash slug instead of typed name
+- **Симптом:** after Cyrillic connect («ремонт тоя») portal list shows `n1oufrdm` (or earlier `__________`); failed QR leaves inactive junk rows.
+- **Причина:** `sanitizeName` writes ascii/hash into `BotInstance.botUsername` and API exposed that as `name`; no separate human label; no delete/prune for stubs.
+- **Фикс:** `BotInstance.displayName`; worker persists label vs slug; accounts API returns display name; DELETE account + underscore stub prune; portal delete button.
+- **Verify:** john prod → one active WA with `displayName=ремонт тоя`, phone `79918829870`; junk deleted.
+- **Дата:** 2026-07-23.
+- **Prevention:** never put user-facing Cyrillic into Evolution instance id; always store display label separately.
+
+### INC-035 — WhatsApp QR stuck «Подготовка…» (Evolution `qrcode.count:0`)
+- **Симптом:** portal `/dashboard/ai/whatsapp` → «Показать QR» → badge «Подготовка…», QR never appears (soft billing OK; INC-034 column present).
+- **Причина:** Evolution Baileys default `CONFIG_SESSION_PHONE_VERSION` (=`2.3000.1015901307`) no longer generates QR — create/connect return `{count:0}` without `base64` while state stays `connecting`. Secondary: Cyrillic display names (`ремонт тоя`) sanitized to `__________` → ugly/colliding Evolution instance ids.
+- **Фикс:** set `CONFIG_SESSION_PHONE_VERSION=2.3000.1043705293` (wppconnect current) on prod `.env` + compose default; recreate `evolution-api` (no `-v`); worker `sanitizeName` → ascii hash slug when no alnum left; QR wait/retry; portal polls sanitized `name` from start.
+- **Verify:** Evolution create returns `qrcode.base64` (~13k); worker `POST /internal/auth/qr/start` with Cyrillic → `status:qr_ready` + `hasQr`; portal/API smoke **200**.
+- **Дата:** 2026-07-23.
+- **Prevention:** when WA QR dies again, bump `CONFIG_SESSION_PHONE_VERSION` (do not wipe volumes); keep version in `.env.example`.
+
+### INC-034 — WhatsApp connect 500: missing `BotInstance.defaultAiAgentId` (prod)
+- **Симптом:** portal WhatsApp connect / accounts → Prisma error `The column BotInstance.defaultAiAgentId does not exist in the current database` (soft billing warning still OK).
+- **Причина:** ADR-014 migration `20260723180000_ai_agent_assignment` (+ `20260723163000_telegram_audience_graph`) never applied on **prod** control Postgres. Prod schema was historically brought up with `prisma db push` → no `_prisma_migrations`; later code assumed AiAgent columns/tables.
+- **Фикс:** backup control DB → idempotent SQL create `AiAgent` / audience tables + `ADD COLUMN IF NOT EXISTS` `defaultAiAgentId` / `aiAgentId` → `prisma migrate resolve --applied` for all four dated migrations.
+- **Verify:** column present; Prisma findFirst with `defaultAiAgentId` OK; `/api/bots/whatsapp/accounts` → 401 Unauthorized (not 500).
+- **Дата:** 2026-07-23.
+- **Prevention:** after any control schema change, run `migrate deploy` (or resolve) on prod; do not rely on `db push` alone for prod history.
+
+### INC-033 — CRM Chat reply 400 for GramJS (after INC-032)
+- **Симптом:** после фикса 404 reply → `.../s/crm-chat/<id>/reply failed with status 400`. История грузится.
+- **Причина (диагностика):** saas-api + gramjs `POST /messages/send` для этого Conversation **работают** (service-token reply → 200, сообщение в TG). UI 400 чаще из-за пустого body / вложения (GramJS attachments → 400) или кратковременного сбоя сессии; toast не всегда показывал `error` из JSON.
+- **Фикс:** GET chat отдаёт `channelLabel` / `identityLabel` / `supportsAttachments`; chat-panel показывает «Пишем от: …»; для GramJS скрыт «Прикрепить»; composer не даёт пустой `el.value` перебить `draft`; reply принимает `message`/`content` aliases; warn-лог на send fail. Tarball пересобран, app re-ensured на john workspace.
+- **Verify:** hard-refresh `john-crm…` → Чат → текст без вложения → в Telegram; шапка «Telegram · личный аккаунт · @bot».
+
+### INC-032 — CRM Chat reply 404 for GramJS / AI leads (`/s/crm-chat/.../reply`)
+- **Симптом:** на `{slug}-crm.getvoxly.ru` вкладка «Чат» → reply → `request to https://{slug}-crm…/s/crm-chat/<id>/reply failed with status 404`. Person+Opportunity из GramJS создались ОК.
+- **Причина:** URL на CRM host `/s/crm-chat` **корректен** (Twenty logic → saas-api; curl без токена → Missing authentication token, не WORKSPACE_NOT_FOUND). saas-api `POST /api/crm/chat/:id/reply` искал только `GiftSubscriber` по `twentyPersonId`/`twentyOpportunityId`. AI/GramJS пишут CRM ids в `Conversation`, не в GiftSubscriber → 404 `No Telegram chat linked…`. Плюс GramJS не шлётся через Bot API (сессия в `botTokenEncrypted`).
+- **Фикс:** `crm-chat.ts` — `findCrmChatTarget` (GiftSubscriber **или** Conversation); reply: gift/`ai_tg` → Bot API (+ `business_connection_id`); `ai_gramjs` → `gramjs-bridge` `POST /messages/send`. History/GET тоже через Conversation.
+- **Verify:** curl `{slug}-crm…/s/crm-chat/<id>` без токена → auth missing; после deploy — reply text из CRM доходит в Telegram; история показывает inbound.
+- **Дата:** 2026-07-23.
+
+### INC-031 — New tenant CRM opens `app.app.getvoxly.ru` / auth fails on `{slug}-crm`
+- **Симптом:** после регистрации Open CRM → `https://app.app.getvoxly.ru/welcome` (не резолвится) или `{slug}-crm…/verify` → ошибка auth → снова `app.app…`.
+- **Причина:** (1) GraphQL `updateWorkspace(customDomain)` требует `CLOUDFLARE_API_KEY` (Twenty Cloud DNS); без него `customDomain` пустой. (2) Twenty `DEFAULT_SUBDOMAIN=app` + `SERVER_URL=https://app.getvoxly.ru` → fallback URL `app.app.getvoxly.ru`. (3) Portal `toBrowserCrmUrl` уже писал на `{slug}-crm`, но Host не матчил workspace без customDomain.
+- **Фикс:** SQL `customDomain` + `isCustomDomainEnabled` через `TWENTY_DATABASE_URL` в provisioning (`ensureTwentyCustomDomain`); antontest3 patched; chat install duplicate/upload hardened.
+- **Дата:** 2026-07-22.
+
+### INC-030 — Chat `/s/crm-chat` 404 WORKSPACE_NOT_FOUND on custom CRM domain
+- **Симптом:** вкладка «Чат» → `Request to https://app.getvoxly.ru/s/crm-chat/<id> failed with status 404` (`WORKSPACE_NOT_FOUND`).
+- **Причина:** тот же класс, что INC-011/029: logic-function base URL = `SERVER_URL` (`app.*`). На `app.getvoxly.ru` workspace по custom domain не находится; на `{slug}-crm` маршрут есть (без токена → auth error, не workspace-missing).
+- **Фикс:** (1) `docker/patch-twenty-functions-url.cjs` v2 → `location.origin+"/s"` (+ localhost subdomain fallback); вшит в `twenty.Dockerfile`. (2) `chat-panel` `workspaceAwareFetch` переписывает `/s/*` с origin `SERVER_URL`/`TWENTY_API_URL` → `WORKSPACE_ORIGIN`. Prod: rebuild twenty + `yarn twenty apply` antontest; vars `WORKSPACE_ORIGIN`/`VOXLY_API_URL` restored.
+- **Verify:** `curl antontest-crm.../s/crm-chat/<id>` → Missing authentication token (не WORKSPACE_NOT_FOUND); `app.getvoxly.ru` тот же path → по-прежнему 404 workspace.
+- **Дата:** 2026-07-22.
+
+### INC-029 — FrontComponent chat 404/Failed to fetch on custom CRM domain
+- **Симптом:** вкладка «Чат» → `Failed to fetch https://app.getvoxly.ru/rest/front-components/…/*.js` (404/403).
+- **Причина:** Twenty `FrontComponentRenderer` строит URL от `SERVER_URL` (`app.getvoxly.ru`). Сессия на `{slug}-crm.getvoxly.ru` → куки не уходят на `app.*` → без auth 403/404.
+- **Фикс:** `docker/patch-twenty-front-component-url.cjs` — URL = `location.origin/rest/front-components/...`; вшит в `twenty.Dockerfile`.
+- **Дата:** 2026-07-22.
+
+### INC-028 — Channel verify: Telegram OK but portal «не видит»
+- **Симптом:** бот админ `@voxlytest111`, «Проверить админа» кажется бесполезным; канал не в проекте.
+- **Причина:** `getChatMember` уже возвращал `administrator`, но verify только писал в React state — без автосохранения в `GiftCampaignConfig` (channelId оставался `pending`). У групп без публичного @username / invite `t.me/+` Telegram даёт `chat not found`.
+- **Фикс:** verify сохраняет `channelId`/`channelUsername` в проект; UI показывает «Канал привязан»; понятные ошибки; поддержка числового id.
+- **Дата:** 2026-07-22.
+
+### INC-027 — Gift bot created in Telegram but missing from portal list
+- **Симптом:** `@voxly_antontest_01_bot` создан через Manager; кабинет «Боты подарков» = 0.
+- **Причина:** (1) Traefik слал `POST /bots/manager/webhook` в manager-bot, а сервис слушал только `/webhook` → Telegram `404 Not Found`, `ManagedBotUpdated` не доставлялся; (2) `User.telegramUserId` был NULL — даже при доставке линковка по creator падала; (3) `/tg/...` child webhooks не были в Traefik.
+- **Фикс:** manager принимает `/bots/manager/webhook`; match pending provision by username + auto-link telegram; Traefik labels for gift-bot `/tg`; redelivered pending updates → `BotInstance` active.
+- **Дата:** 2026-07-22.
+
+### INC-026 — Prod CRM «Чат» logic functions: missing VOXLY_SERVICE_TOKEN
+- **Симптом:** вкладка «Чат» на prod (antontest) после apply → proxy 500 / «VOXLY_SERVICE_TOKEN is not configured».
+- **Причина:** `VOXLY_SERVICE_TOKEN` был только на `saas-api`; twenty-server/worker (LOCAL logic functions) читают `process.env.VOXLY_SERVICE_TOKEN` и не получали секрет.
+- **Фикс:** compose env на `twenty-server` + `twenty-worker`; recreate без `-v`. App vars `WORKSPACE_ORIGIN`/`VOXLY_API_URL` через `updateOneApplicationVariable`.
+- **Дата:** 2026-07-22.
+
+### INC-025 — Prod CRM open: «Could not open CRM workspace»
+- **Симптом:** новый аккаунт (`antonTEST@deploy.com`) на `getvoxly.ru/dashboard` → Open CRM → 502 / «Could not open CRM workspace».
+- **Причина:** (1) Twenty `signIn` case-sensitive: portal email `antonTEST@…`, Twenty user `antontest@…` → `USER_NOT_FOUND`. (2) Twenty SSO URL `https://{slug}.app.getvoxly.ru` не резолвится (wildcard DNS = один label); нужен `{slug}-crm.getvoxly.ru`. (3) Workspace оставался `PENDING_CREATION` без schema до `activateWorkspace`.
+- **Фикс:** `normalizeEmail` в `@voxly/twenty-client`; register lowercases email; `toBrowserCrmUrl(..., crmSubdomain)`; provisioning `activateWorkspace` + `customDomain={slug}-crm.{VOXLY_DOMAIN}`; prod: activate + customDomain для antontest, rebuild `saas-api`.
+- **Дата:** 2026-07-22.
+
 ### INC-024 — CRM «Чат» missing photos on bot funnel messages
 - **Симптом:** after `/start`, Telegram shows photo+caption; CRM tab «Чат» shows text only (e.g. «После /start»), no `<img>`.
 - **Причина:** `logBotOutbound` wrote `ChatMessage` with `content` only — never `attachments`. Inbound/`operator` replies already stored `{ type, fileId }`. UI (`chat-panel`) and `GET /api/crm/chat/.../file/:fileId` were fine.

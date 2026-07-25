@@ -6,6 +6,8 @@ import { proxyToVoxlyApi, recordIdFromEvent } from 'src/logic-functions/voxly-pr
 
 type ReplyBody = {
   text?: string;
+  conversationId?: string;
+  giftSubscriberId?: string;
   /** Base64 file payload (SDK front → logic; forwarded as multipart to saas-api). */
   fileBase64?: string;
   fileName?: string;
@@ -20,6 +22,12 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
     return new Response({ error: 'Invalid CRM record id' }, { status: 400 });
   }
   const text = typeof event.body?.text === 'string' ? event.body.text.trim() : '';
+  const conversationId =
+    typeof event.body?.conversationId === 'string' ? event.body.conversationId.trim() : '';
+  const giftSubscriberId =
+    typeof event.body?.giftSubscriberId === 'string'
+      ? event.body.giftSubscriberId.trim()
+      : '';
   const fileBase64 =
     typeof event.body?.fileBase64 === 'string' ? event.body.fileBase64.trim() : '';
   const fileName =
@@ -53,6 +61,8 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
     }
     const form = new FormData();
     if (text) form.append('text', text);
+    if (conversationId) form.append('conversationId', conversationId);
+    if (giftSubscriberId) form.append('giftSubscriberId', giftSubscriberId);
     form.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), fileName);
     return proxyToVoxlyApi({
       method: 'POST',
@@ -61,10 +71,13 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
     });
   }
 
+  const body: Record<string, string> = { text };
+  if (conversationId) body.conversationId = conversationId;
+  if (giftSubscriberId) body.giftSubscriberId = giftSubscriberId;
   return proxyToVoxlyApi({
     method: 'POST',
     path: `/api/crm/chat/${encodeURIComponent(recordId)}/reply`,
-    body: { text },
+    body,
   });
 };
 

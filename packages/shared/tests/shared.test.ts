@@ -22,6 +22,7 @@ describe('@voxly/shared exports', () => {
     expect(PRODUCT_CODES.EXTRA_SEAT).toBe('extra_seat');
     expect(PRODUCT_CODES.GIFT_BOT).toBe('gift_bot');
     expect(PRODUCT_CODES.AI_TELEGRAM).toBe('ai_tg');
+    expect(PRODUCT_CODES.AI_GRAMJS).toBe('ai_gramjs');
     expect(PRODUCT_CODES.AI_WHATSAPP).toBe('ai_wa');
   });
 
@@ -31,6 +32,7 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.SEATS_INCLUDED).toBe(10);
     expect(PRICING.AI_MARKUP_PERCENT_DEFAULT).toBe(50);
     expect(PRICING.AI_TOPUP_MIN_RUB).toBe(500);
+    expect(PRICING.AI_GRAMJS_MONTHLY).toBe(500);
     expect(TRIAL_PERIOD_DAYS).toBe(14);
   });
 
@@ -43,6 +45,7 @@ describe('@voxly/shared exports', () => {
   it('exports the canonical const arrays', () => {
     expect(ADDON_TYPES).toContain('gift_bot');
     expect(ADDON_TYPES).toContain('ai_tg');
+    expect(ADDON_TYPES).toContain('ai_gramjs');
     expect(ANALYTICS_PLATFORMS).toEqual(['metrika', 'ga4', 'facebook', 'vk']);
     expect(REFERRAL_RULE_TYPES).toContain('percent_recurring');
     expect(TENANT_STATUS).toContain('active');

@@ -5,6 +5,8 @@ export const PRODUCT_CODES = {
   EXTRA_SEAT: 'extra_seat',
   GIFT_BOT: 'gift_bot',
   AI_TELEGRAM: 'ai_tg',
+  /** Personal Telegram account via GramJS (500₽/mo + AI wallet) */
+  AI_GRAMJS: 'ai_gramjs',
   AI_WHATSAPP: 'ai_wa',
   ANALYTICS_METRIKA: 'analytics_metrika',
   ANALYTICS_GA4: 'analytics_ga4',
@@ -19,7 +21,12 @@ export const PRICING = {
   EXTRA_SEAT_MONTHLY: 300,
   GIFT_BOT_MONTHLY: 500,
   AI_TELEGRAM_MONTHLY: 1000,
-  AI_WHATSAPP_MONTHLY: 1000,
+  /** Up to 10 Telegram Business accounts per managed AI bot */
+  AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS: 10,
+  /** Personal TG account (GramJS) fixed fee */
+  AI_GRAMJS_MONTHLY: 500,
+  /** WhatsApp account (Evolution) fixed fee — TZ Phase 2 */
+  AI_WHATSAPP_MONTHLY: 500,
   ANALYTICS_PLATFORM_MONTHLY: 500,
   AI_TOPUP_MIN_RUB: 500,
   AI_MARKUP_PERCENT_DEFAULT: 50,
@@ -41,6 +48,7 @@ export const REFERRAL_COOKIE_DAYS = 30;
 export const ADDON_TYPES = [
   'gift_bot',
   'ai_tg',
+  'ai_gramjs',
   'ai_wa',
   'analytics_metrika',
   'analytics_ga4',
@@ -71,8 +79,35 @@ export type UserRole = (typeof USER_ROLES)[keyof typeof USER_ROLES];
 export const BOT_PROVISION_VIA = ['managed', 'manual'] as const;
 export type BotProvisionVia = (typeof BOT_PROVISION_VIA)[keyof typeof BOT_PROVISION_VIA];
 
-export const CONVERSATION_MODES = ['bot', 'human'] as const;
-export type ConversationMode = (typeof CONVERSATION_MODES)[keyof typeof CONVERSATION_MODES];
+/** Preferred: ai | human. `bot` is a legacy alias for ai (gift / older portal). */
+export const CONVERSATION_MODES = ['ai', 'human', 'bot'] as const;
+export type ConversationMode = (typeof CONVERSATION_MODES)[number];
+
+/** True when AI should be considered the active conversation mode (ai or legacy bot). */
+export function isAiConversationMode(mode: string | null | undefined): boolean {
+  return mode === 'ai' || mode === 'bot' || !mode;
+}
+
+/** Default auto/manual pause duration for AI handoff (1 hour). */
+export const AI_HANDOFF_PAUSE_MS = 60 * 60 * 1000;
+
+export const AI_CHANNELS = [
+  'telegram_business',
+  'telegram_private',
+  'telegram_gramjs',
+  'whatsapp',
+] as const;
+export type AiChannel = (typeof AI_CHANNELS)[number];
+
+/** OpenRouter model defaults (TZ v0.3.1) */
+export const AI_MODEL_DEFAULTS = {
+  chat: 'google/gemini-2.5-flash',
+  chatEconomy: 'openai/gpt-4o-mini',
+  chatEconomyAlt: 'google/gemini-2.5-flash-lite',
+  chatPremium: 'openai/gpt-4o',
+  embedding: 'openai/text-embedding-3-small',
+  asr: 'openai/whisper-1',
+} as const;
 
 export const PRESET_GOALS = [
   'bot_start',

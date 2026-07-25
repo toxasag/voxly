@@ -52,6 +52,7 @@ interface BotRow {
   botType: string;
   status: string;
   subscriberCount?: number;
+  conversationCount?: number;
   campaign: { channelUsername: string | null } | null;
 }
 
@@ -86,7 +87,13 @@ export default function DashboardPage() {
   const [user, setUser] = useState<UserData | null>(null);
   const [referral, setReferral] = useState<ReferralStats | null>(null);
   const [bots, setBots] = useState<BotRow[]>([]);
+  const [aiBots, setAiBots] = useState<BotRow[]>([]);
+  const [gramjsBots, setGramjsBots] = useState<BotRow[]>([]);
+  const [waBots, setWaBots] = useState<BotRow[]>([]);
   const [giftPrice, setGiftPrice] = useState(500);
+  const [aiPrice, setAiPrice] = useState(1000);
+  const [gramjsPrice, setGramjsPrice] = useState(500);
+  const [waPrice, setWaPrice] = useState(500);
   const [loading, setLoading] = useState(true);
   const [crmOpening, setCrmOpening] = useState(false);
   const [crmError, setCrmError] = useState('');
@@ -114,9 +121,22 @@ export default function DashboardPage() {
 
       if (botsRes.ok) {
         const botsJson = await botsRes.json();
-        setBots((botsJson.bots || []).filter((b: BotRow) => b.botType === 'gift'));
+        const all = (botsJson.bots || []) as BotRow[];
+        setBots(all.filter((b) => b.botType === 'gift'));
+        setAiBots(all.filter((b) => b.botType === 'ai_tg'));
+        setGramjsBots(all.filter((b) => b.botType === 'ai_gramjs'));
+        setWaBots(all.filter((b) => b.botType === 'ai_wa'));
         if (typeof botsJson.giftBotPriceMonthly === 'number') {
           setGiftPrice(botsJson.giftBotPriceMonthly);
+        }
+        if (typeof botsJson.aiBotPriceMonthly === 'number') {
+          setAiPrice(botsJson.aiBotPriceMonthly);
+        }
+        if (typeof botsJson.gramjsPriceMonthly === 'number') {
+          setGramjsPrice(botsJson.gramjsPriceMonthly);
+        }
+        if (typeof botsJson.waPriceMonthly === 'number') {
+          setWaPrice(botsJson.waPriceMonthly);
         }
       }
 
@@ -203,6 +223,21 @@ export default function DashboardPage() {
   if (!user) return null;
 
   if (!user.tenant) {
+    if (user.role === 'superadmin') {
+      return (
+        <AppShell showNav={false} maxWidth="2xl">
+          <div className="py-16 text-center">
+            <h1 className="text-xl font-semibold">Супер-админ</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              У платформенного админа нет клиентского воркспейса — откройте админку.
+            </p>
+            <Button asChild variant="solid" className="mt-6">
+              <Link href="/admin">Открыть /admin</Link>
+            </Button>
+          </div>
+        </AppShell>
+      );
+    }
     return (
       <AppShell showNav={false} maxWidth="2xl">
         <div className="py-16 text-center">
@@ -441,23 +476,124 @@ export default function DashboardPage() {
         <Card className="md:col-span-2">
           <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
             <div>
-              <CardTitle className="text-lg">AI-агент</CardTitle>
+              <CardTitle className="text-lg">Автоматизация чатов</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Баланс на AI-ответы в мессенджерах
+                Business-бот · до 10 аккаунтов Telegram Business ·{' '}
+                {aiPrice.toLocaleString('ru-RU')} ₽/мес. AI подключается отдельно через агентов.
               </p>
             </div>
-            <Button variant="outline" size="sm">
-              Пополнить
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/ai">Настроить</Link>
             </Button>
           </CardHeader>
-          <CardContent>
-            <div className="max-w-xs">
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Kpi label="Business-ботов" value={String(aiBots.length)} accent="peach" />
               <Kpi
-                label="Баланс"
-                value={`${(tenant.aiWallet?.balanceRub || 0).toLocaleString('ru-RU')} ₽`}
-                accent="blue"
+                label="Диалогов"
+                value={String(aiBots.reduce((s, b) => s + (b.conversationCount ?? 0), 0))}
+                accent="sage"
               />
             </div>
+            {aiBots.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Создайте managed-бота и добавьте его в Telegram → Бизнес → Автоматизация чатов.
+              </p>
+            ) : (
+              <ul className="overflow-hidden rounded-lg border border-border">
+                {aiBots.map((bot, i) => (
+                  <li key={bot.id} className={cn(i > 0 && 'border-t border-border')}>
+                    <Link
+                      href={`/dashboard/ai/${bot.id}`}
+                      className="flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-[var(--duration-fast)] hover:bg-secondary/70"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          @{bot.botUsername || '…'}
+                        </p>
+                        <p className="truncate text-sm text-muted-foreground">Business-бот</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <Badge variant={bot.status === 'active' ? 'success' : 'warning'}>
+                          {bot.status}
+                        </Badge>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="text-lg">Подключение аккаунтов</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Личный Telegram и WhatsApp в CRM. Без AI, пока не назначите агента.
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/ai/gramjs">Telegram</Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Link
+              href="/dashboard/ai/gramjs"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3.5 transition-colors hover:bg-secondary/70"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Telegram</p>
+                <p className="text-sm text-muted-foreground">
+                  {gramjsBots.length > 0
+                    ? `${gramjsBots.length} акк. · ${gramjsPrice.toLocaleString('ru-RU')} ₽/мес`
+                    : `QR-вход · ${gramjsPrice.toLocaleString('ru-RU')} ₽/мес`}
+                </p>
+              </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </Link>
+            <Link
+              href="/dashboard/ai/whatsapp"
+              className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3.5 transition-colors hover:bg-secondary/70"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium">WhatsApp</p>
+                <p className="text-sm text-muted-foreground">
+                  {waBots.length > 0
+                    ? `${waBots.length} акк. · ${waPrice.toLocaleString('ru-RU')} ₽/мес`
+                    : `QR-вход · ${waPrice.toLocaleString('ru-RU')} ₽/мес`}
+                </p>
+              </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
+            <div>
+              <CardTitle className="text-lg">AI-агенты</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Промпты, назначение на аккаунт/чат и баланс ответов. Без агента AI молчит.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href="/dashboard/ai/agents">Открыть</Link>
+              </Button>
+              <Button variant="secondary" size="sm">
+                Пополнить
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Kpi
+              label="Баланс AI"
+              value={`${(tenant.aiWallet?.balanceRub || 0).toLocaleString('ru-RU')} ₽`}
+              accent="blue"
+            />
           </CardContent>
         </Card>
       </div>

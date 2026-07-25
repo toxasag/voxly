@@ -3,9 +3,12 @@
 
 import { Queue, Worker, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
+import { readFile } from 'node:fs/promises';
 import { prisma } from '@voxly/db';
-import { TwentyClient } from '@voxly/twenty-client';
+import { TwentyClient, workspaceUrlToOrigin } from '@voxly/twenty-client';
 import { decrypt } from '@voxly/crypto';
+import { ensureTwentyCustomDomain } from '../services/twenty-custom-domain.js';
+import { ensureOpportunityRuDefaults } from '../services/twenty-opportunity-ru-defaults.js';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 
@@ -53,23 +56,66 @@ export const provisioningWorker = new Worker<ProvisioningJobData>(
     console.log(`[provisioning] Starting for tenant ${tenantId}`);
 
     // 1. Create workspace in Twenty CRM
+    const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
+    const customDomainHost = `${slug}-crm.${voxlyDomain}`;
     const workspace = await twentyClient.provisionWorkspace({
       workspaceName,
       ownerEmail,
       ownerPassword: decrypt(ownerPasswordEncrypted),
       ownerFirstName,
       subdomain: slug,
+      // GraphQL path needs Cloudflare; SQL fallback below is the prod path (INC-031).
+      customDomain: customDomainHost,
     });
 
-    // 2. Install voxly-platform app
+    // GraphQL updateWorkspace(customDomain) fails without CLOUDFLARE_API_KEY —
+    // set via Twenty Postgres so Host `{slug}-crm.{domain}` resolves the workspace.
+    await ensureTwentyCustomDomain(workspace.workspaceId, customDomainHost);
+    // Standard-object isLabelSyncedWithName + INDEX view name need SQL (GraphQL blocked).
+    await ensureOpportunityRuDefaults(workspace.workspaceId);
+
+    // 2. Install voxly-crm-chat from private server registry (upload tarball if needed)
+    const publicBase = process.env.TWENTY_SERVER_URL?.trim() || '';
+    const isLocal =
+      /localhost|127\.0\.0\.1|\.lvh\.me/i.test(publicBase) ||
+      /^(localhost|lvh\.me)$/i.test(voxlyDomain);
+    const workspaceOrigin = isLocal
+      ? workspaceUrlToOrigin(workspace.workspaceUrl)
+      : `https://${customDomainHost}`;
+    // Logic functions run inside twenty-server → must use docker DNS, not browser URL.
+    const voxlyApiUrl = (
+      process.env.VOXLY_CHAT_API_URL?.trim() ||
+      'http://saas-api:3002'
+    ).replace(/\/+$/, '');
     try {
-      await twentyClient.installApp('voxly-platform');
+      const tarballPath = process.env.VOXLY_CRM_CHAT_TARBALL?.trim();
+      const tarball = tarballPath
+        ? new Uint8Array(await readFile(tarballPath))
+        : undefined;
+      await twentyClient.ensureCrmChatAppInstalled({
+        workspaceOrigin,
+        voxlyApiUrl,
+        tarball,
+        tarballPath,
+      });
+      console.log(
+        `[provisioning] CRM chat installed for ${tenantId} (origin=${workspaceOrigin})`,
+      );
     } catch (error) {
-      console.warn(
-        `[provisioning] Workspace created, but app installation was skipped: ${
+      // Do not fail the whole provision — workspace already exists; retrying the job
+      // would risk creating a second Twenty workspace.
+      console.error(
+        `[provisioning] Workspace created, but chat app install failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
+    }
+
+    // Marketplace install can re-surface /install-apps; dismiss again after chat install.
+    try {
+      await twentyClient.skipInstallAppsOnboarding();
+    } catch {
+      // optional
     }
 
     // 3. Update tenant with workspace ID

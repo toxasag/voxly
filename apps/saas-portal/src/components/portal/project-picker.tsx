@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { FolderPlus, Loader2, Plus, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,40 @@ export interface ProjectItem {
   name: string;
   channelUsername: string | null;
   isActive: boolean;
+  scheduledStartAt?: string | null;
+  scheduledEndAt?: string | null;
+}
+
+/** HTML datetime-local value from ISO (browser local tz). */
+export function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function datetimeLocalToIso(value: string): string | null {
+  if (!value.trim()) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function formatScheduleHint(p: ProjectItem): string | null {
+  const start = p.scheduledStartAt ? new Date(p.scheduledStartAt) : null;
+  const end = p.scheduledEndAt ? new Date(p.scheduledEndAt) : null;
+  if (!start && !end) return null;
+  const fmt = (d: Date) =>
+    d.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  if (start && end) return `${fmt(start)} → ${fmt(end)}`;
+  if (start) return `с ${fmt(start)}`;
+  return `до ${fmt(end!)}`;
 }
 
 export function ProjectPicker({
@@ -25,6 +60,7 @@ export function ProjectPicker({
   onProjectNameChange,
   onNewProjectNameChange,
   onCreate,
+  onSaveSchedule,
 }: {
   projects: ProjectItem[];
   selectedId: string | null;
@@ -36,7 +72,10 @@ export function ProjectPicker({
   onProjectNameChange: (name: string) => void;
   onNewProjectNameChange: (name: string) => void;
   onCreate: () => void;
+  onSaveSchedule?: (id: string, startIso: string | null, endIso: string | null) => void;
 }) {
+  const selected = projects.find((p) => p.id === selectedId) || null;
+
   return (
     <div className="space-y-5">
       {projects.length === 0 ? (
@@ -52,15 +91,16 @@ export function ProjectPicker({
       ) : (
         <ul className="grid gap-2.5" role="list" aria-label="Проекты бота">
           {projects.map((p) => {
-            const selected = p.id === selectedId;
+            const isSelected = p.id === selectedId;
             const toggling = busy === `toggle-${p.id}`;
+            const scheduleHint = formatScheduleHint(p);
             return (
               <li key={p.id}>
                 <div
                   role="button"
                   tabIndex={0}
-                  aria-pressed={selected}
-                  aria-current={selected ? 'true' : undefined}
+                  aria-pressed={isSelected}
+                  aria-current={isSelected ? 'true' : undefined}
                   onClick={() => onSelect(p.id)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
@@ -73,18 +113,17 @@ export function ProjectPicker({
                     'transition-[border-color,box-shadow,background-color] duration-[var(--duration-default)] ease-[var(--ease-out)]',
                     'hover:border-foreground/20 hover:shadow-[var(--elevation-1)]',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
-                    selected
+                    isSelected
                       ? 'border-foreground/25 shadow-[var(--elevation-1)] ring-1 ring-foreground/10'
                       : 'border-border',
-                    !p.isActive && !selected && 'opacity-90',
+                    !p.isActive && !isSelected && 'opacity-90',
                   )}
                 >
-                  {/* Status rail — active vs paused (skill: clear status without color-only) */}
                   <span
                     aria-hidden
                     className={cn(
                       'absolute inset-y-0 left-0 w-[3px] transition-colors duration-[var(--duration-default)]',
-                      p.isActive ? 'bg-emerald-600' : selected ? 'bg-foreground/35' : 'bg-transparent',
+                      p.isActive ? 'bg-emerald-600' : isSelected ? 'bg-foreground/35' : 'bg-transparent',
                     )}
                   />
 
@@ -92,7 +131,7 @@ export function ProjectPicker({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-[15px] font-semibold tracking-tight">{p.name}</p>
-                        {selected && (
+                        {isSelected && (
                           <span className="rounded-md bg-foreground px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-background">
                             редактируется
                           </span>
@@ -125,6 +164,11 @@ export function ProjectPicker({
                           <span>на паузе</span>
                         )}
                       </p>
+                      {scheduleHint && (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Расписание: {scheduleHint}
+                        </p>
+                      )}
                     </div>
 
                     <div
@@ -167,6 +211,15 @@ export function ProjectPicker({
         </ul>
       )}
 
+      {selected && onSaveSchedule && (
+        <ScheduleEditor
+          key={selected.id}
+          project={selected}
+          busy={busy === `schedule-${selected.id}`}
+          onSave={onSaveSchedule}
+        />
+      )}
+
       <div className="rounded-xl border border-border bg-secondary/25 p-4">
         <Label
           htmlFor="new-project-name"
@@ -177,52 +230,110 @@ export function ProjectPicker({
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
           <Input
             id="new-project-name"
-            placeholder="Подарок август"
             value={newProjectName}
             onChange={(e) => onNewProjectNameChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newProjectName.trim()) {
-                e.preventDefault();
-                onCreate();
-              }
-            }}
-            className="bg-card"
-            disabled={busy === 'create-project'}
+            placeholder="Название проекта"
+            className="sm:flex-1"
           />
           <Button
             type="button"
-            variant="solid"
             onClick={onCreate}
             disabled={busy === 'create-project' || !newProjectName.trim()}
-            className="shrink-0"
           >
             {busy === 'create-project' ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Plus className="h-4 w-4" aria-hidden />
+              <Plus className="h-4 w-4" />
             )}
-            {busy === 'create-project' ? 'Создаём…' : 'Создать'}
+            Создать
           </Button>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Новый проект сразу станет активным; текущий активный уйдёт на паузу.
-        </p>
       </div>
 
       {selectedId && (
         <div>
-          <Label htmlFor="selected-project-name">Название выбранного проекта</Label>
+          <Label htmlFor="project-name-edit">Имя выбранного проекта</Label>
           <Input
-            id="selected-project-name"
+            id="project-name-edit"
             className="mt-1.5"
             value={projectName}
             onChange={(e) => onProjectNameChange(e.target.value)}
           />
-          <p className="mt-1 text-xs text-muted-foreground">
-            Сохраняется с воронкой. Попадает в название сделки в CRM.
-          </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function ScheduleEditor({
+  project,
+  busy,
+  onSave,
+}: {
+  project: ProjectItem;
+  busy: boolean;
+  onSave: (id: string, startIso: string | null, endIso: string | null) => void;
+}) {
+  const [startLocal, setStartLocal] = useState(isoToDatetimeLocal(project.scheduledStartAt));
+  const [endLocal, setEndLocal] = useState(isoToDatetimeLocal(project.scheduledEndAt));
+
+  return (
+    <div
+      className="rounded-xl border border-border bg-card p-4"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <p className="text-sm font-semibold">Расписание «{project.name}»</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Автозапуск и остановка: день 1 — один проект, день 2 — другой. Пустые поля = только ручной
+        переключатель. Одновременно активен один проект на бота.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <Label htmlFor={`sched-start-${project.id}`}>Старт</Label>
+          <Input
+            id={`sched-start-${project.id}`}
+            type="datetime-local"
+            className="mt-1.5"
+            value={startLocal}
+            onChange={(e) => setStartLocal(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`sched-end-${project.id}`}>Стоп</Label>
+          <Input
+            id={`sched-end-${project.id}`}
+            type="datetime-local"
+            className="mt-1.5"
+            value={endLocal}
+            onChange={(e) => setEndLocal(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            onSave(project.id, datetimeLocalToIso(startLocal), datetimeLocalToIso(endLocal))
+          }
+        >
+          {busy ? '…' : 'Сохранить расписание'}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            setStartLocal('');
+            setEndLocal('');
+            onSave(project.id, null, null);
+          }}
+        >
+          Сбросить
+        </Button>
+      </div>
     </div>
   );
 }

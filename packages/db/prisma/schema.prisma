@@ -51,6 +51,7 @@ model Tenant {
   broadcasts        Broadcast[]
   conversations     Conversation[]
   aiUsageLog        AiUsageLog[]
+  aiAgents          AiAgent[]
 
   @@index([status])
 }
@@ -145,7 +146,7 @@ model Addon {
   id          String    @id @default(cuid())
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  type        String    // gift_bot, ai_tg, ai_wa, analytics_metrika, analytics_ga4, analytics_facebook, analytics_vk
+  type        String    // gift_bot, ai_tg, ai_gramjs, ai_wa, analytics_*
   config      Json      // platform-specific config
   activeUntil DateTime
   status      String    @default("active") // active, expired, suspended
@@ -196,6 +197,27 @@ model AiUsageLog {
   @@index([tenantId])
   @@index([aiWalletId])
   @@index([createdAt])
+}
+
+/// Tenant-scoped AI agent (prompt/settings). Orthogonal to channels.
+/// Null assignment on bot/conversation = AI OFF (ADR-014).
+model AiAgent {
+  id           String   @id @default(cuid())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String
+  name         String
+  systemPrompt String?
+  settings     Json?
+  /// active | archived
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  defaultForBots BotInstance[]  @relation("BotDefaultAiAgent")
+  conversations  Conversation[]
+
+  @@index([tenantId])
+  @@index([status])
 }
 
 // ============================================================
@@ -250,15 +272,23 @@ model BotInstance {
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId          String
   managedBotUserId  BigInt?           @unique // telegram user_id of managed bot creator
-  botUsername       String?
-  botTokenEncrypted String?           // AES-256 encrypted token
+  botUsername       String?           // TG @username OR WA Evolution slug (ascii)
+  displayName       String?           // Human label (WA Cyrillic OK); UI prefers this over botUsername
+  botTokenEncrypted String?           // AES-256: bot token OR GramJS StringSession
   webhookSecret     String            @default(cuid())
   provisionedVia    BotProvisionVia   @default(managed)
-  botType           String            @default("gift") // gift, ai_tg, ai_wa
+  botType           String            @default("gift") // gift, ai_tg, ai_gramjs, ai_wa
   status            String            @default("active") // active, inactive, suspended
+  /// Telegram setMyDescription — shown when user opens bot link before /start (max 512)
+  telegramDescription String?
+  /// Telegram setMyShortDescription — profile / share blurb (max 120)
+  telegramShortDescription String?
   addon             Addon?            @relation(fields: [addonId], references: [id])
   addonId           String?
-  phoneNumberId     String?           // WhatsApp Cloud API phone_number_id
+  phoneNumberId     String?           // WhatsApp phone_number_id OR GramJS telegram user id
+  /// Account-level default AI agent (nullable = AI off until conversation override or assign).
+  defaultAiAgent    AiAgent?          @relation("BotDefaultAiAgent", fields: [defaultAiAgentId], references: [id], onDelete: SetNull)
+  defaultAiAgentId  String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -267,6 +297,7 @@ model BotInstance {
 
   @@index([tenantId])
   @@index([status])
+  @@index([defaultAiAgentId])
 }
 
 model BotProvisionRequest {
@@ -454,6 +485,9 @@ model GiftCampaignConfig {
   analyticsConfig Json?      // goal mappings per platform
   /// Off = paused: no new /start via bare link; deep-link g_{id} also requires isActive
   isActive      Boolean      @default(true)
+  /// Optional window: scheduler flips isActive (and enforces one active project per bot)
+  scheduledStartAt DateTime?
+  scheduledEndAt   DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -461,6 +495,8 @@ model GiftCampaignConfig {
 
   @@index([tenantId])
   @@index([botInstanceId, isActive])
+  @@index([scheduledStartAt])
+  @@index([scheduledEndAt])
 }
 
 /// Subscriber state for gift-bot funnels / broadcasts (synced to Twenty CRM)
@@ -525,7 +561,24 @@ model Conversation {
   platformUsername String?
   platformFirstName String?
   status          String   @default("open") // open, waiting_for_human, resolved, closed
-  mode            String   @default("ai") // ai, human
+  /// Preferred: ai | human. Legacy gift/portal may use bot (= ai).
+  /// Mode alone does NOT enable AI — requires AiAgent assignment (ADR-014).
+  mode            String   @default("ai")
+  /// Auto or manual pause: AI silent until this time (unless aiDisabled).
+  pausedUntil     DateTime?
+  /// Full disable until manually re-enabled (no auto-resume).
+  aiDisabled      Boolean  @default(false)
+  /// e.g. telegram_business, telegram_private, telegram_gramjs, whatsapp
+  channel         String?
+  businessConnectionId String?
+  /// Chat-level agent override; null → fall back to BotInstance.defaultAiAgentId; both null = AI off.
+  aiAgent         AiAgent? @relation(fields: [aiAgentId], references: [id], onDelete: SetNull)
+  aiAgentId       String?
+  /// Twenty CRM Person / Opportunity linked on first inbound (AI leads)
+  twentyPersonId       String?
+  twentyOpportunityId  String?
+  /// Ambiguous Person dedupe → manual review in portal
+  needsReview          Boolean  @default(false)
   lastAiMessageAt DateTime?
   assignedToUserId String?
   createdAt       DateTime @default(now())
@@ -537,6 +590,11 @@ model Conversation {
   @@index([botInstanceId])
   @@index([status])
   @@index([platformUserId])
+  @@index([businessConnectionId])
+  @@index([aiDisabled])
+  @@index([needsReview])
+  @@index([twentyPersonId])
+  @@index([aiAgentId])
 }
 
 model ChatMessage {
@@ -557,6 +615,46 @@ model ChatMessage {
 
   @@index([conversationId])
   @@index([role])
+}
+
+// ============================================================
+// Shared Telegram audience / overlap graph (platform SoT)
+// See docs/specs/TG-AUDIENCE-GRAPH-TZ.md — no message text stored.
+// ============================================================
+
+model TelegramPeer {
+  id        String   @id @default(cuid())
+  /// Telegram peer id as string (channel / chat / user / bot)
+  peerId    String   @unique
+  /// channel | group | bot | user
+  peerType  String
+  username  String?
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([peerType])
+  @@index([username])
+}
+
+model TelegramSighting {
+  id                   String   @id @default(cuid())
+  telegramUserId       String
+  peerId               String
+  /// member | seen_in | admin
+  relation             String
+  firstSeenAt          DateTime @default(now())
+  lastSeenAt           DateTime @default(now())
+  sourceTenantId       String
+  sourceBotInstanceId  String?
+  confidence           Float?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([telegramUserId, peerId, relation])
+  @@index([telegramUserId])
+  @@index([peerId])
+  @@index([sourceTenantId])
 }
 
 // ============================================================

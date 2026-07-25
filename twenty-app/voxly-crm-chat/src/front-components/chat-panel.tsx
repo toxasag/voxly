@@ -30,6 +30,28 @@ type ChatPayload = {
   firstName?: string | null;
   formatHint?: string;
   error?: string;
+  /** Soft empty-state (no linked Telegram lead yet) — not a hard failure. */
+  info?: string;
+  channel?: string | null;
+  channelLabel?: string | null;
+  identityLabel?: string | null;
+  peerLabel?: string | null;
+  botType?: string | null;
+  supportsAttachments?: boolean;
+  mode?: string | null;
+  conversationId?: string | null;
+  subscriberId?: string | null;
+  threads?: ChatThread[];
+};
+
+type ChatThread = {
+  id: string;
+  source: string;
+  conversationId?: string | null;
+  giftSubscriberId?: string | null;
+  channelLabel: string;
+  identityLabel: string;
+  peerLabel: string;
 };
 
 type FilePayload = {
@@ -157,15 +179,23 @@ function ChatAttachmentView({
 
 /**
  * Worker fetch requires absolute URLs (relative → "Failed to parse URL").
- * hostFetch allowlists only TWENTY_API_URL / TWENTY_FUNCTIONS_URL origins.
- * Local multiworkspace needs `{slug}.localhost` Host — set WORKSPACE_ORIGIN app var
- * and keep Twenty functionsBaseUrl patched to the same origin (see docker/patch-twenty-functions-url.cjs).
+ * hostFetch allowlists TWENTY_API_URL / TWENTY_FUNCTIONS_URL origins.
+ * Prefer WORKSPACE_ORIGIN (custom CRM host). Rewrite bare localhost and the
+ * SERVER_URL host (app.getvoxly.ru) → workspace origin for /s/* (INC-011/029).
  */
 function resolveWorkspaceOrigin(): string | null {
   const fromVar = (getApplicationVariable('WORKSPACE_ORIGIN') || '')
     .trim()
     .replace(/\/+$/, '');
   if (fromVar) return fromVar;
+
+  try {
+    if (typeof location !== 'undefined' && location?.origin) {
+      return location.origin.replace(/\/+$/, '');
+    }
+  } catch {
+    // Worker / sandbox may lack location
+  }
 
   const functionsUrl = (process.env.TWENTY_FUNCTIONS_URL || '').trim();
   if (functionsUrl) {
@@ -174,6 +204,23 @@ function resolveWorkspaceOrigin(): string | null {
       if (u.hostname.includes('.localhost') || (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1')) {
         return u.origin;
       }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function serverUrlOrigin(): string | null {
+  for (const raw of [
+    process.env.TWENTY_API_URL,
+    process.env.TWENTY_FUNCTIONS_URL,
+    process.env.REACT_APP_SERVER_BASE_URL,
+  ]) {
+    const v = (raw || '').trim();
+    if (!v) continue;
+    try {
+      return new URL(v).origin;
     } catch {
       // ignore
     }
@@ -204,15 +251,20 @@ function workspaceAwareFetch(
 
     const url = new URL(absolute);
     const workspaceOrigin = resolveWorkspaceOrigin();
-    if (
-      workspaceOrigin &&
-      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
-    ) {
+    if (workspaceOrigin) {
       const ws = new URL(workspaceOrigin);
-      url.protocol = ws.protocol;
-      url.hostname = ws.hostname;
-      url.port = ws.port;
-      absolute = url.toString();
+      const serverOrigin = serverUrlOrigin();
+      const isLocalHost =
+        url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+      const isServerUrlHost =
+        Boolean(serverOrigin) && url.origin === serverOrigin && url.origin !== ws.origin;
+      const isLogicPath = url.pathname.startsWith('/s/');
+      if (isLocalHost || (isLogicPath && isServerUrlHost)) {
+        url.protocol = ws.protocol;
+        url.hostname = ws.hostname;
+        url.port = ws.port;
+        absolute = url.toString();
+      }
     }
   } catch {
     return impl(input as RequestInfo, init);
@@ -238,6 +290,37 @@ function escapeHtml(src: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** Normalize pasted/TG HTML leftovers before escape (INC-050). */
+function normalizeMessageText(src: string): string {
+  return String(src || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/nbsp;/gi, ' ');
+}
+
+/**
+ * Turn bare http(s) URLs into links. Only touch text nodes (skip tags / already-linked).
+ */
+function linkifyHtml(html: string): string {
+  return html
+    .split(/(<[^>]+>)/g)
+    .map((part) => {
+      if (!part || part.startsWith('<')) return part;
+      return part.replace(/(https?:\/\/[^\s<]+)/g, (rawUrl) => {
+        let url = rawUrl;
+        let trail = '';
+        while (url.length > 0 && /[.,);:!?\]}'"]/.test(url.slice(-1))) {
+          trail = url.slice(-1) + trail;
+          url = url.slice(0, -1);
+        }
+        if (!/^https?:\/\//i.test(url)) return rawUrl;
+        const href = escapeHtml(url);
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#1961ed;text-decoration:underline;word-break:break-all">${href}</a>${trail}`;
+      });
+    })
+    .join('');
+}
+
 /** Inline client-MD → HTML (single line; newlines handled by the caller). */
 function formatInlineMarkdown(src: string): string {
   let s = escapeHtml(src);
@@ -257,21 +340,22 @@ function formatInlineMarkdown(src: string): string {
     /\|\|([^|]+)\|\|/g,
     '<span style="background:rgba(0,0,0,0.12);border-bottom:1px dashed rgba(0,0,0,0.35);border-radius:3px;padding:0 2px">$1</span>',
   );
-  return s;
+  return linkifyHtml(s);
 }
 
 /**
  * Full message HTML. Remote DOM often drops bare `<br/>` / collapses newlines inside
  * a single HTML blob — split lines into block rows instead (INC-023).
+ * Empty rows use min-height only (not `&nbsp;`) — Remote DOM can strip `&` and show `nbsp;` (INC-050).
  */
 function formatContent(src: string): string {
-  const raw = String(src || '');
+  const raw = normalizeMessageText(src);
   if (!raw) return '';
   return raw
     .split('\n')
     .map((line) => {
       const html = formatInlineMarkdown(line);
-      return `<div style="min-height:1.2em">${html || '&nbsp;'}</div>`;
+      return `<div style="min-height:1.2em">${html}</div>`;
     })
     .join('');
 }
@@ -362,6 +446,7 @@ function extractPendingAttachments(event: unknown): {
 
 function replyErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Не удалось отправить';
+  // RestApiClientError attaches parsed JSON on `.body` ({ error: string }).
   const body = (err as Error & { body?: unknown }).body;
   const bodyText =
     typeof body === 'string'
@@ -369,11 +454,17 @@ function replyErrorMessage(err: unknown): string {
       : body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
         : '';
+  const raw = bodyText || err.message;
   if (
-    /request entity too large/i.test(err.message) ||
-    /request entity too large/i.test(bodyText)
+    /request entity too large/i.test(raw) ||
+    /request entity too large/i.test(err.message)
   ) {
     return 'Файл слишком большой для отправки (лимит ~7 МБ). Сожмите изображение или отправьте по одному.';
+  }
+  // Prefer API `error` string over generic "Request to … failed with status 400".
+  if (bodyText) return bodyText;
+  if (/failed with status\s*\d+/i.test(err.message)) {
+    return 'Не удалось отправить сообщение';
   }
   return err.message;
 }
@@ -387,16 +478,32 @@ const ChatPanel = () => {
   const colorScheme = useColorScheme();
   const dark = colorScheme === 'dark';
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [meta, setMeta] = useState<{ title: string; hint: string }>({
+  const [meta, setMeta] = useState<{
+    title: string;
+    hint: string;
+    channelLabel: string;
+    identityLabel: string;
+    supportsAttachments: boolean;
+    conversationId: string;
+    giftSubscriberId: string;
+  }>({
     title: 'Чат',
     hint: '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+    channelLabel: '',
+    identityLabel: '',
+    supportsAttachments: true,
+    conversationId: '',
+    giftSubscriberId: '',
   });
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [draft, setDraft] = useState('');
   /** Remount composer after send — Remote DOM often ignores controlled `value=""` (INC-016). */
   const [composerKey, setComposerKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -404,6 +511,10 @@ const ChatPanel = () => {
   const lastSig = useRef('');
   /** Selection must live in a ref — button click clears DOM selection before onClick. */
   const selRef = useRef({ start: 0, end: 0 });
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
 
   const syncSelection = (t: {
     selectionStart: number | null;
@@ -423,42 +534,84 @@ const ChatPanel = () => {
     selRef.current = { start, end };
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (threadOverride?: ChatThread | null) => {
     if (!recordId) return;
-    setLoading(true);
+    // Soft host refresh (shell-ux) reuses this button — skip spinner if we already have a list.
+    const initialLoad = !lastSig.current;
+    if (initialLoad) setLoading(true);
     try {
-      const data = await api.get<ChatPayload>(`/s/crm-chat/${recordId}`);
+      const preferred =
+        threadOverride ||
+        threadsRef.current.find((t) => t.id === activeThreadIdRef.current) ||
+        null;
+      const qs = new URLSearchParams();
+      if (preferred?.conversationId) qs.set('conversationId', preferred.conversationId);
+      if (preferred?.giftSubscriberId) qs.set('giftSubscriberId', preferred.giftSubscriberId);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      const data = await api.get<ChatPayload>(`/s/crm-chat/${recordId}${suffix}`);
       if (data.error && !data.messages?.length) {
         setError(data.error);
+        setInfo(null);
         setMessages([]);
         lastSig.current = '';
         return;
       }
       setError(null);
+      setInfo(data.info || null);
+      const nextThreads = data.threads || [];
+      setThreads(nextThreads);
+      const currentId =
+        (preferred && nextThreads.find((t) => t.id === preferred.id)?.id) ||
+        (data.conversationId
+          ? nextThreads.find((t) => t.conversationId === data.conversationId)?.id
+          : '') ||
+        (data.subscriberId
+          ? nextThreads.find((t) => t.giftSubscriberId === data.subscriberId)?.id
+          : '') ||
+        nextThreads[0]?.id ||
+        '';
+      if (currentId) setActiveThreadId(currentId);
       const next = data.messages || [];
-      const sig = next.map((m) => m.id).join(',');
+      const sig = `${currentId}:${next.map((m) => m.id).join(',')}`;
       if (sig !== lastSig.current) {
         lastSig.current = sig;
         setMessages(next);
       }
-      const who = data.username
-        ? `@${data.username}`
-        : data.firstName || 'Telegram';
-      setMeta((prev) => ({
+      const who =
+        data.peerLabel ||
+        (data.username ? `@${data.username}` : data.firstName || 'Клиент');
+      setMeta({
         title: who,
-        hint: data.formatHint || prev.hint,
-      }));
+        hint: data.formatHint || '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+        channelLabel: data.channelLabel || '',
+        identityLabel: data.identityLabel || '',
+        supportsAttachments:
+          typeof data.supportsAttachments === 'boolean' ? data.supportsAttachments : true,
+        conversationId: data.conversationId || '',
+        giftSubscriberId: data.subscriberId || '',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось загрузить чат');
+      const msg = err instanceof Error ? err.message : 'Не удалось загрузить чат';
+      if (/status 404/i.test(msg) || /No (Telegram )?chat linked/i.test(msg)) {
+        setError(null);
+        setInfo(
+          'Нет чата для этой записи. Напишите клиенту в Telegram / WhatsApp или дождитесь входящего сообщения.',
+        );
+        setMessages([]);
+        lastSig.current = '';
+      } else {
+        setInfo(null);
+        setError(msg);
+      }
     } finally {
-      setLoading(false);
+      if (initialLoad) setLoading(false);
     }
   }, [recordId]);
 
   // Remote DOM sandbox: no window.setInterval / requestAnimationFrame.
-  // Refresh on open, after send, and via «Обновить».
+  // Refresh on open, after send, «Обновить», and host soft-click (~4.5s while Chat open).
   useEffect(() => {
-    void load();
+    void load(null);
   }, [load]);
 
   useEffect(() => {
@@ -473,22 +626,40 @@ const ChatPanel = () => {
 
   const readComposerText = (): string => {
     // Remote DOM: host textarea value can diverge from React `draft` (INC-016).
+    // Prefer non-empty host value; otherwise fall back to draft (empty "" must NOT win).
     const el = inputRef.current as { value?: string } | null;
-    if (el && typeof el.value === 'string') return el.value;
+    const fromEl = el && typeof el.value === 'string' ? el.value : '';
+    if (fromEl.trim()) return fromEl;
     return draft;
   };
 
   const send = async () => {
     if (!recordId || sending) return;
     const text = readComposerText().trim();
-    const files = [...pendingFiles];
-    if (!text && files.length === 0) return;
+    const files = meta.supportsAttachments ? [...pendingFiles] : [];
+    if (!meta.supportsAttachments && pendingFiles.length > 0) {
+      await enqueueSnackbar({
+        message: 'Вложения из CRM для этого канала пока не поддерживаются — отправьте текст',
+        variant: 'error',
+      });
+      return;
+    }
+    if (!text && files.length === 0) {
+      await enqueueSnackbar({
+        message: 'Введите текст сообщения',
+        variant: 'error',
+      });
+      return;
+    }
     setSending(true);
     try {
+      const threadKeys: Record<string, string> = {};
+      if (meta.conversationId) threadKeys.conversationId = meta.conversationId;
+      if (meta.giftSubscriberId) threadKeys.giftSubscriberId = meta.giftSubscriberId;
       // saas-api accepts one file per /reply — send sequentially (caption on first).
       // dataBase64 already encoded on host file-change (INC-017); never FileReader here.
       if (files.length === 0) {
-        await api.post(`/s/crm-chat/${recordId}/reply`, { text });
+        await api.post(`/s/crm-chat/${recordId}/reply`, { text, ...threadKeys });
       } else {
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
@@ -505,6 +676,7 @@ const ChatPanel = () => {
             fileBase64: file.dataBase64,
             fileName: file.name,
             mimeType: file.type || 'application/octet-stream',
+            ...threadKeys,
           });
         }
       }
@@ -591,6 +763,7 @@ const ChatPanel = () => {
   const ink = dark ? '#f3f3f3' : '#1a1a1a';
   const muted = dark ? '#a0a0a0' : '#666666';
   const border = dark ? '#333' : '#e6e6e6';
+  const accent = dark ? '#60a5fa' : '#2563eb';
   const bubbleIn = dark ? '#2e2e2e' : '#ececec';
   const bubbleOut = dark ? '#1f3a2e' : '#e8f5ee';
 
@@ -635,12 +808,55 @@ const ChatPanel = () => {
       >
         <div>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.title}</div>
+          {(meta.channelLabel || meta.identityLabel) && (
+            <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+              Пишем от: {meta.channelLabel}
+              {meta.identityLabel ? ` · ${meta.identityLabel}` : ''}
+            </div>
+          )}
+          {threads.length > 1 && (
+            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {threads.map((t) => {
+                const active = t.id === activeThreadId;
+                const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveThreadId(t.id);
+                      lastSig.current = '';
+                      void load(t);
+                    }}
+                    style={{
+                      border: `1px solid ${active ? accent : border}`,
+                      background: active ? (dark ? '#1e293b' : '#eff6ff') : panel,
+                      color: ink,
+                      borderRadius: 8,
+                      padding: '4px 8px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      maxWidth: 220,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={`${label} → ${t.peerLabel}`}
+                  >
+                    {label}
+                    {t.peerLabel ? ` → ${t.peerLabel}` : ''}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
             Формат: {meta.hint}
           </div>
         </div>
         <button
           type="button"
+          data-voxly-chat-refresh="1"
           onClick={() => void load()}
           style={{
             border: `1px solid ${border}`,
@@ -675,7 +891,10 @@ const ChatPanel = () => {
         {error && (
           <div style={{ color: '#b42318', fontSize: 13 }}>{error}</div>
         )}
-        {!error && !loading && messages.length === 0 && (
+        {!error && info && !loading && messages.length === 0 && (
+          <div style={{ color: muted, fontSize: 13, lineHeight: 1.45 }}>{info}</div>
+        )}
+        {!error && !info && !loading && messages.length === 0 && (
           <div style={{ color: muted, fontSize: 13 }}>
             Нет сообщений по этой записи.
           </div>
@@ -866,7 +1085,11 @@ const ChatPanel = () => {
                 void send();
               }
             }}
-            placeholder="Ответ в Telegram… (⌘/Ctrl+Enter — отправить)"
+            placeholder={`Ответ в ${
+              meta.channelLabel?.trim()
+                ? meta.channelLabel.split('·')[0].trim()
+                : 'чат'
+            }… (⌘/Ctrl+Enter — отправить)`}
             rows={3}
             style={{
               flex: 1,
@@ -891,6 +1114,7 @@ const ChatPanel = () => {
               alignItems: 'stretch',
             }}
           >
+            {meta.supportsAttachments ? (
             <label
               style={{
                 border: `1px solid ${border}`,
@@ -949,6 +1173,7 @@ const ChatPanel = () => {
                 }}
               />
             </label>
+            ) : null}
             <button
               type="button"
               disabled={sending || !canSend}

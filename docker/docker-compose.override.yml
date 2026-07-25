@@ -7,10 +7,18 @@ services:
   saas-api:
     ports:
       - "3002:3002"
+    build:
+      args:
+        VOXLY_CABINET_URL: http://localhost:3001/dashboard
     environment:
       TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
       # Local SSO must use *.localhost (not lvh.me / bare host)
       TWENTY_SERVER_URL: http://localhost:3007
+      VOXLY_CHAT_API_URL: http://saas-api:3002
+      VOXLY_CRM_CHAT_TARBALL: /voxly/assets/voxly-crm-chat.tgz
+    volumes:
+      # Prefer host-built tarball so chat updates don't require full saas-api image rebuild.
+      - ../twenty-app/voxly-crm-chat/.twenty/output/voxly-crm-chat-0.1.0.tgz:/voxly/assets/voxly-crm-chat.tgz:ro
 
   saas-portal:
     build:
@@ -45,6 +53,10 @@ services:
   ai-telegram-worker:
     ports:
       - "3005:3005"
+
+  gramjs-bridge:
+    ports:
+      - "3008:3008"
 
   ai-whatsapp-worker:
     ports:

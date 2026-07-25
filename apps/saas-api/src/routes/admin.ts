@@ -3,6 +3,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { TenantStatus } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
+import { ensureOpportunityRuDefaults } from '../services/twenty-opportunity-ru-defaults.js';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.requireSuperadmin);
@@ -161,6 +162,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         password,
         tenant.twentyWorkspaceId,
       );
+      await ensureOpportunityRuDefaults(tenant.twentyWorkspaceId);
       return reply.send({ ok: true, slug: tenant.slug });
     } catch (error) {
       fastify.log.error({ err: error, tenantId: id }, 'Failed to reapply CRM defaults');
@@ -412,7 +414,7 @@ function getMonthlyPriceForProduct(productCode: string): number {
     extra_seat: 300,
     gift_bot: 500,
     ai_tg: 1000,
-    ai_wa: 1000,
+    ai_wa: 500,
     analytics_metrika: 500,
     analytics_ga4: 500,
     analytics_facebook: 500,
