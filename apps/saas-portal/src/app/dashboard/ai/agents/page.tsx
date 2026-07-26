@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { cn, selectClassName } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Bot, Loader2, Plus, Trash2, Upload, RefreshCw } from 'lucide-react';
@@ -19,6 +20,9 @@ interface AgentRow {
   name: string;
   systemPrompt: string | null;
   status: string;
+  model?: string | null;
+  effectiveModel?: string;
+  defaultModel?: string;
   conversationCount?: number;
   botDefaultCount?: number;
   knowledgeFileCount?: number;
@@ -68,9 +72,27 @@ interface UsageResponse {
   byAgent: UsageByAgent[];
 }
 
+const MODEL_OPTIONS = [
+  { value: '', label: 'По умолчанию платформы' },
+  { value: 'google/gemini-2.5-flash', label: 'google/gemini-2.5-flash (быстрая)' },
+  { value: 'google/gemini-2.5-flash-lite', label: 'google/gemini-2.5-flash-lite' },
+  { value: 'openai/gpt-4o-mini', label: 'openai/gpt-4o-mini' },
+  { value: 'openai/gpt-4o', label: 'openai/gpt-4o (premium)' },
+] as const;
+
+function wonStagesLabel(stages?: string[]): string {
+  if (!stages?.length) return 'Успешная сделка';
+  return stages
+    .map((s) =>
+      s === 'USPESHNAYA_SDELKA' || s === 'CUSTOMER' ? 'Успешная сделка' : s,
+    )
+    .join(', ');
+}
+
 export default function AiAgentsPage() {
   const router = useRouter();
   const [agents, setAgents] = useState<AgentRow[]>([]);
+  const [defaultChatModel, setDefaultChatModel] = useState('google/gemini-2.5-flash');
   const [bots, setBots] = useState<BotRow[]>([]);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -79,6 +101,9 @@ export default function AiAgentsPage() {
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPrompt, setEditPrompt] = useState('');
+  const [editModel, setEditModel] = useState('');
   const [filesByAgent, setFilesByAgent] = useState<Record<string, KnowledgeFile[]>>({});
   const [examplesByAgent, setExamplesByAgent] = useState<Record<string, SalesExample[]>>({});
 
@@ -97,6 +122,9 @@ export default function AiAgentsPage() {
       if (!agentsRes.ok) throw new Error('Не удалось загрузить агентов');
       const agentsJson = await agentsRes.json();
       setAgents(agentsJson.agents || []);
+      if (typeof agentsJson.defaultChatModel === 'string' && agentsJson.defaultChatModel) {
+        setDefaultChatModel(agentsJson.defaultChatModel);
+      }
       if (botsRes.ok) {
         const botsJson = await botsRes.json();
         setBots(
@@ -119,6 +147,41 @@ export default function AiAgentsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const beginEdit = (agent: AgentRow) => {
+    setExpandedId(agent.id);
+    setEditName(agent.name);
+    setEditPrompt(agent.systemPrompt || '');
+    setEditModel(agent.model || '');
+    void loadAgentExtras(agent.id);
+  };
+
+  const saveAgent = async (agentId: string) => {
+    if (!editName.trim()) {
+      setError('Укажите имя агента');
+      return;
+    }
+    setBusy(`save-${agentId}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/ai/agents/${agentId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          name: editName.trim(),
+          systemPrompt: editPrompt.trim() || null,
+          model: editModel.trim() || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось сохранить');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка');
+    } finally {
+      setBusy('');
+    }
+  };
 
   const createAgent = async () => {
     if (!name.trim()) {
@@ -185,13 +248,12 @@ export default function AiAgentsPage() {
     }
   };
 
-  const toggleExpand = async (agentId: string) => {
-    if (expandedId === agentId) {
+  const toggleExpand = async (agent: AgentRow) => {
+    if (expandedId === agent.id) {
       setExpandedId(null);
       return;
     }
-    setExpandedId(agentId);
-    await loadAgentExtras(agentId);
+    beginEdit(agent);
   };
 
   const uploadKnowledge = async (agentId: string, file: File) => {
@@ -419,18 +481,75 @@ export default function AiAgentsPage() {
                         {a.systemPrompt || 'Без своего prompt · platform default'}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
+                        Модель:{' '}
+                        <span className="font-medium text-foreground">
+                          {a.effectiveModel || a.model || defaultChatModel}
+                        </span>
+                        {!a.model ? ' · платформенный дефолт' : ''}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
                         Дефолт на {a.botDefaultCount ?? 0} акк. · {a.conversationCount ?? 0}{' '}
                         чатов · файлов {a.knowledgeFileCount ?? 0} · примеров продаж{' '}
                         {a.salesExampleCount ?? 0}
                       </p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => void toggleExpand(a.id)}>
-                      {open ? 'Свернуть' : 'База знаний'}
+                    <Button variant="outline" size="sm" onClick={() => void toggleExpand(a)}>
+                      {open ? 'Свернуть' : 'Изменить'}
                     </Button>
                   </div>
 
                   {open && (
                     <div className="space-y-4 border-t border-border pt-4">
+                      <div className="space-y-3">
+                        <p className="text-sm font-medium">Имя, модель и system prompt</p>
+                        <Input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          placeholder="Имя агента"
+                        />
+                        <div>
+                          <label className="mb-1 block text-xs text-muted-foreground">
+                            Модель (OpenRouter)
+                          </label>
+                          <select
+                            className={selectClassName}
+                            value={editModel}
+                            onChange={(e) => setEditModel(e.target.value)}
+                          >
+                            {MODEL_OPTIONS.map((opt) => (
+                              <option key={opt.value || 'default'} value={opt.value}>
+                                {opt.value === ''
+                                  ? `По умолчанию (${defaultChatModel})`
+                                  : opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Сейчас для ответов:{' '}
+                            <span className="font-medium text-foreground">
+                              {editModel || defaultChatModel}
+                            </span>
+                          </p>
+                        </div>
+                        <textarea
+                          className="min-h-[140px] w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                          placeholder="System prompt"
+                          value={editPrompt}
+                          onChange={(e) => setEditPrompt(e.target.value)}
+                        />
+                        <Button
+                          variant="solid"
+                          size="sm"
+                          disabled={busy === `save-${a.id}`}
+                          onClick={() => void saveAgent(a.id)}
+                        >
+                          {busy === `save-${a.id}` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : null}
+                          Сохранить
+                        </Button>
+                      </div>
+
                       <label className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -438,7 +557,7 @@ export default function AiAgentsPage() {
                           disabled={busy === `learn-${a.id}`}
                           onChange={(e) => void toggleLearn(a, e.target.checked)}
                         />
-                        Учиться на успешных сделках (этап CUSTOMER)
+                        Учиться на успешных сделках ({wonStagesLabel(a.wonStages)})
                       </label>
 
                       <div>
@@ -507,8 +626,8 @@ export default function AiAgentsPage() {
                         </div>
                         {examples.length === 0 ? (
                           <p className="text-xs text-muted-foreground">
-                            Пока нет примеров. Закройте сделку в CRM на этап CUSTOMER и
-                            нажмите «Обновить обучение».
+                            Пока нет примеров. Закройте сделку в CRM на этап «Успешная
+                            сделка» и нажмите «Обновить обучение».
                           </p>
                         ) : (
                           <ul className="space-y-2">
@@ -590,7 +709,7 @@ export default function AiAgentsPage() {
                   </p>
                 </div>
                 <select
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                  className={cn(selectClassName, "h-8 w-auto")}
                   value={b.defaultAiAgentId || ''}
                   disabled={busy === `bot-${b.id}` || agents.length === 0}
                   onChange={(e) =>

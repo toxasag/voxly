@@ -85,9 +85,9 @@ function formatPct(value: number | null | undefined): string {
 
 function StatCard({ label, value }: { label: string; value: string; accent?: string }) {
   return (
-    <div className="rounded-[24px] border border-hairline bg-paper px-4 py-3 shadow-[var(--shadow-subtle)]">
-      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">{label}</p>
-      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-ink">{value}</p>
+    <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-subtle)]">
+      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-foreground">{value}</p>
     </div>
   );
 }
@@ -284,9 +284,9 @@ export default function AdminPage() {
                 key={c.id}
                 className={cn(
                   'rounded-md border px-3 py-2 text-sm',
-                  c.status === 'fail' && 'border-ember/40 bg-paper',
-                  c.status === 'warn' && 'border-hairline bg-canvas',
-                  c.status === 'ok' && 'border-hairline bg-paper',
+                  c.status === 'fail' && 'border-destructive/40 bg-card',
+                  c.status === 'warn' && 'border-border bg-muted',
+                  c.status === 'ok' && 'border-border bg-card',
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -390,7 +390,7 @@ export default function AdminPage() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="border-ember/40 text-ember hover:bg-ember/10"
+                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
                       disabled={purgeBusy === t.id}
                       onClick={() => void purgeTenant(t.id, t.slug)}
                     >

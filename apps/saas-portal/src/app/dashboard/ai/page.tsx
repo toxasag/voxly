@@ -224,7 +224,7 @@ export default function AiBotsListPage() {
       {!data?.aiAddon?.isActive && aiBots.length === 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Старт за 14 дней бесплатно</CardTitle>
+            <CardTitle>Старт за 7 дней бесплатно</CardTitle>
             <CardDescription>
               Бот-секретарь для «Автоматизация чатов». Дальше —{' '}
               {price.toLocaleString('ru-RU')} ₽/мес (до {maxConn} аккаунтов) + баланс AI.

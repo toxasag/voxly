@@ -7,6 +7,7 @@ import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert } from '@/components/portal/alert';
 
@@ -17,6 +18,7 @@ export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
   const [refCode, setRefCode] = useState('');
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -39,6 +41,12 @@ export default function RegisterPage() {
 
     if (password.length < 8) {
       setError('Пароль должен быть не короче 8 символов');
+      setLoading(false);
+      return;
+    }
+
+    if (!acceptedLegal) {
+      setError('Примите оферту и согласие на обработку персональных данных');
       setLoading(false);
       return;
     }
@@ -85,16 +93,16 @@ export default function RegisterPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-canvas px-6 py-16">
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
       <div className="w-full max-w-md animate-in">
         <div className="mb-8 text-center">
           <Link
             href="/"
-            className="text-[24px] font-semibold tracking-[-0.025em] text-ink transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-hairline"
+            className="text-[24px] font-semibold tracking-[-0.025em] text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
             Voxly
           </Link>
-          <p className="mt-2 text-sm text-mid-gray">Новый воркспейс</p>
+          <p className="mt-2 text-sm text-muted-foreground">Новый воркспейс</p>
         </div>
         <Card>
           <CardHeader className="text-center">
@@ -161,7 +169,7 @@ export default function RegisterPage() {
                   maxLength={50}
                   title="Только латиница, цифры и дефис"
                 />
-                <p className="text-xs text-mid-gray">Латиница, цифры, дефис · станет адресом кабинета</p>
+                <p className="text-xs text-muted-foreground">Латиница, цифры, дефис · станет адресом кабинета</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ref">Реферальный код</Label>
@@ -173,14 +181,47 @@ export default function RegisterPage() {
                   placeholder="необязательно"
                 />
               </div>
-              <Button type="submit" variant="solid" className="mt-1 w-full" disabled={loading}>
+              <div className="flex items-start gap-2.5">
+                <Checkbox
+                  id="legal"
+                  checked={acceptedLegal}
+                  onCheckedChange={(v) => setAcceptedLegal(v === true)}
+                  className="mt-0.5"
+                  aria-required="true"
+                />
+                <Label htmlFor="legal" className="text-sm font-normal leading-snug text-muted-foreground">
+                  Принимаю{' '}
+                  <Link href="/terms" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
+                    оферту
+                  </Link>{' '}
+                  и{' '}
+                  <Link href="/consent" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
+                    согласие на обработку персональных данных
+                  </Link>
+                  . Ознакомлен с{' '}
+                  <Link href="/privacy" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
+                    политикой конфиденциальности
+                  </Link>{' '}
+                  и{' '}
+                  <Link href="/refund" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
+                    правилами возврата
+                  </Link>
+                  .
+                </Label>
+              </div>
+              <Button
+                type="submit"
+                variant="solid"
+                className="mt-1 w-full"
+                disabled={loading || !acceptedLegal}
+              >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {loading ? 'Создание…' : 'Создать аккаунт'}
               </Button>
             </form>
-            <p className="mt-6 text-center text-sm text-mid-gray">
+            <p className="mt-6 text-center text-sm text-muted-foreground">
               Уже есть аккаунт?{' '}
-              <Link href="/login" className="font-medium text-ink underline-offset-4 hover:underline">
+              <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
                 Войти
               </Link>
             </p>

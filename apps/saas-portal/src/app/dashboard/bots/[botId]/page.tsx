@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { selectClassName } from '@/lib/utils';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Megaphone, Trash2, Upload } from 'lucide-react';
@@ -688,7 +689,7 @@ export default function BotSettingsPage() {
           </div>
         </div>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/dashboard/bots/broadcasts">
+          <Link href="/dashboard/mailing/bot">
             <Megaphone className="h-4 w-4" /> Рассылки
           </Link>
         </Button>
@@ -1129,7 +1130,7 @@ export default function BotSettingsPage() {
                   </p>
                 </div>
                 <select
-                  className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm"
+                  className={selectClassName}
                   value={funnel.gift.type}
                   onChange={(e) =>
                     setFunnel({

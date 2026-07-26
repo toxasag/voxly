@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { selectClassName } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2, Upload } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +15,12 @@ import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
+import { TelegramPreview } from '@/components/telegram-preview';
+import { MailingBillingBanner } from '@/components/portal/mailing-billing-banner';
+
+type Segment = 'gifted' | 'not_gifted' | 'all';
+type FunnelPhase = 'started' | 'awaiting_sub' | 'gifted' | 'not_gifted';
+type MediaType = 'photo' | 'video';
 
 interface BotRow {
   id: string;
@@ -29,23 +36,120 @@ interface BroadcastRow {
   scheduledAt: string | null;
   sentCount: number;
   totalCount: number;
-  segment?: string;
+  segment?: Segment;
+  funnelPhase?: FunnelPhase | null;
+  text?: string;
+  mediaUrl?: string | null;
+  telegramFileId?: string | null;
+  mediaType?: MediaType | null;
   createdAt: string;
+}
+
+function authTokenOnly(): HeadersInit {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('voxly_token') : null;
+  return { Authorization: `Bearer ${token}` };
+}
+
+function toLocalInputValue(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function MediaPicker({
+  label,
+  accept,
+  busy,
+  hasFile,
+  fileHint,
+  onPick,
+  onClear,
+}: {
+  label?: string;
+  accept: string;
+  busy?: boolean;
+  hasFile: boolean;
+  fileHint?: string;
+  onPick: (file: File) => void | Promise<void>;
+  onClear: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="space-y-1.5">
+      {label && <Label>{label}</Label>}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void onPick(file);
+        }}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={Boolean(busy)}
+          onClick={() => inputRef.current?.click()}
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {busy ? 'Загрузка…' : 'Выбрать файл'}
+        </Button>
+        {hasFile && (
+          <Button type="button" variant="ghost" size="sm" onClick={onClear} disabled={Boolean(busy)}>
+            <Trash2 className="h-4 w-4" /> Убрать
+          </Button>
+        )}
+      </div>
+      {fileHint && <p className="text-xs text-muted-foreground">{fileHint}</p>}
+      {!fileHint && !hasFile && (
+        <p className="text-xs text-muted-foreground">С компьютера → Telegram file_id</p>
+      )}
+    </div>
+  );
 }
 
 export default function BroadcastsPage() {
   const router = useRouter();
   const [bots, setBots] = useState<BotRow[]>([]);
   const [botId, setBotId] = useState('');
-  const [segment, setSegment] = useState<'gifted' | 'not_gifted' | 'all'>('not_gifted');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [segment, setSegment] = useState<Segment>('not_gifted');
+  const [funnelPhase, setFunnelPhase] = useState<FunnelPhase | ''>('');
   const [text, setText] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
+  const [telegramFileId, setTelegramFileId] = useState('');
+  const [mediaType, setMediaType] = useState<MediaType | ''>('');
+  const [localPreview, setLocalPreview] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
   const [history, setHistory] = useState<BroadcastRow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
+  const [billingOk, setBillingOk] = useState(false);
+
+  const resetForm = useCallback(() => {
+    setEditingId(null);
+    setSegment('not_gifted');
+    setFunnelPhase('');
+    setText('');
+    setMediaUrl('');
+    setTelegramFileId('');
+    setMediaType('');
+    setScheduledAt('');
+    setLocalPreview((prev) => {
+      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return '';
+    });
+  }, []);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
@@ -78,32 +182,115 @@ export default function BroadcastsPage() {
   }, [load]);
 
   useEffect(() => {
-    if (botId) loadHistory(botId);
-  }, [botId, loadHistory]);
+    if (botId) {
+      resetForm();
+      void loadHistory(botId);
+    }
+  }, [botId, loadHistory, resetForm]);
 
-  const send = async () => {
+  useEffect(() => {
+    return () => {
+      if (localPreview.startsWith('blob:')) URL.revokeObjectURL(localPreview);
+    };
+  }, [localPreview]);
+
+  const selectedBot = bots.find((b) => b.id === botId);
+
+  const uploadMedia = async (file: File) => {
+    if (!botId) return;
+    setUploading(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`/api/bots/${botId}/media`, {
+        method: 'POST',
+        headers: authTokenOnly(),
+        body: fd,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Не удалось загрузить файл');
+      const preview = URL.createObjectURL(file);
+      setLocalPreview((prev) => {
+        if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return preview;
+      });
+      setTelegramFileId(json.fileId as string);
+      setMediaType((json.mediaType as MediaType) || (json.kind === 'video' ? 'video' : 'photo'));
+      setMediaUrl('');
+      setOk('Медиа загружено в Telegram');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const startEdit = (row: BroadcastRow) => {
+    if (row.status !== 'scheduled') return;
+    setEditingId(row.id);
+    setSegment(row.segment || 'all');
+    setFunnelPhase(row.funnelPhase || '');
+    setText(row.text || '');
+    setTelegramFileId(row.telegramFileId || '');
+    setMediaUrl(row.telegramFileId ? '' : row.mediaUrl || '');
+    setMediaType(row.mediaType || '');
+    setScheduledAt(toLocalInputValue(row.scheduledAt));
+    setLocalPreview((prev) => {
+      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+      return '';
+    });
+    setOk(`Редактирование запланированной рассылки`);
+    setError('');
+  };
+
+  const submit = async () => {
     if (!botId || !text.trim()) return;
     setBusy(true);
     setError('');
     setOk('');
     try {
-      const body: Record<string, unknown> = { segment, text: text.trim() };
-      if (mediaUrl.trim()) body.mediaUrl = mediaUrl.trim();
+      const body: Record<string, unknown> = {
+        segment,
+        text: text.trim(),
+      };
+      if (funnelPhase) body.funnelPhase = funnelPhase;
+      if (telegramFileId) {
+        body.telegramFileId = telegramFileId;
+        if (mediaType) body.mediaType = mediaType;
+      } else if (mediaUrl.trim()) {
+        body.mediaUrl = mediaUrl.trim();
+        if (mediaType) body.mediaType = mediaType;
+      }
       if (scheduledAt) body.scheduledAt = new Date(scheduledAt).toISOString();
-      const res = await fetch(`/api/bots/${botId}/broadcasts`, {
-        method: 'POST',
+
+      const url = editingId
+        ? `/api/bots/${botId}/broadcasts/${editingId}`
+        : `/api/bots/${botId}/broadcasts`;
+      const res = await fetch(url, {
+        method: editingId ? 'PATCH' : 'POST',
         headers: authHeaders(),
-        body: JSON.stringify(body),
+        body: JSON.stringify(
+          editingId
+            ? {
+                ...body,
+                funnelPhase: funnelPhase || null,
+                telegramFileId: telegramFileId || null,
+                mediaUrl: telegramFileId ? null : mediaUrl.trim() || null,
+                mediaType: mediaType || null,
+              }
+            : body,
+        ),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Не создано');
-      setText('');
-      setMediaUrl('');
-      setScheduledAt('');
+      if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : 'Не сохранено');
+      resetForm();
       setOk(
-        scheduledAt
-          ? `Запланировано на ${new Date(scheduledAt).toLocaleString('ru-RU')} (${json.queued})`
-          : `В очереди: ${json.queued} чел.`,
+        editingId
+          ? `Обновлено (${json.queued} чел.)`
+          : scheduledAt
+            ? `Запланировано на ${new Date(scheduledAt).toLocaleString('ru-RU')} (${json.queued})`
+            : `В очереди: ${json.queued} чел.`,
       );
       await loadHistory(botId);
     } catch (e) {
@@ -121,17 +308,22 @@ export default function BroadcastsPage() {
     );
   }
 
+  const previewMedia = localPreview || mediaUrl || undefined;
+  const hasMedia = Boolean(telegramFileId || mediaUrl || localPreview);
+
   return (
     <AppShell maxWidth="2xl" className="space-y-5">
       <PageHeader
-        title="Рассылки"
-        description="Сообщения сегментам подписчиков gift-бота"
-        backHref="/dashboard/bots"
-        backLabel="Боты"
+        title="Рассылка сообщений ботом"
+        description="Сегменты gift-подписчиков: подарок, этап воронки, расписание, медиа"
+        backHref="/dashboard/mailing"
+        backLabel="Рассылка"
       />
 
       {error && <Alert variant="error">{error}</Alert>}
       {ok && <Alert variant="success">{ok}</Alert>}
+
+      <MailingBillingBanner product="mailing_bot" onActiveChange={setBillingOk} />
 
       {!bots.length ? (
         <Card>
@@ -143,73 +335,141 @@ export default function BroadcastsPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>Новая рассылка</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="bot">Бот</Label>
-              <select
-                id="bot"
-                className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm transition-[border-color,box-shadow] duration-[var(--duration-fast)] hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                value={botId}
-                onChange={(e) => setBotId(e.target.value)}
-              >
-                {bots.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    @{b.botUsername || b.id}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="segment">Сегмент</Label>
-              <select
-                id="segment"
-                className="flex h-9 w-full rounded-md border border-input bg-card px-3 text-sm transition-[border-color,box-shadow] duration-[var(--duration-fast)] hover:border-foreground/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
-                value={segment}
-                onChange={(e) => setSegment(e.target.value as typeof segment)}
-              >
-                <option value="not_gifted">Не получили подарок</option>
-                <option value="gifted">Получили подарок</option>
-                <option value="all">Все</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="text">Текст</Label>
-              <Textarea
-                id="text"
-                rows={4}
-                value={text}
-                onChange={(e) => setText(e.target.value)}
+        <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
+              <CardTitle>{editingId ? 'Редактировать рассылку' : 'Новая рассылка'}</CardTitle>
+              {editingId ? (
+                <Button type="button" variant="ghost" size="sm" onClick={resetForm}>
+                  Отмена
+                </Button>
+              ) : null}
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="bot">Бот</Label>
+                <select
+                  id="bot"
+                  className={selectClassName}
+                  value={botId}
+                  disabled={Boolean(editingId)}
+                  onChange={(e) => setBotId(e.target.value)}
+                >
+                  {bots.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      @{b.botUsername || b.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="segment">Подарок</Label>
+                  <select
+                    id="segment"
+                    className={selectClassName}
+                    value={segment}
+                    onChange={(e) => setSegment(e.target.value as Segment)}
+                  >
+                    <option value="not_gifted">Не получили подарок</option>
+                    <option value="gifted">Получили подарок</option>
+                    <option value="all">Все</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="funnelPhase">Этап воронки</Label>
+                  <select
+                    id="funnelPhase"
+                    className={selectClassName}
+                    value={funnelPhase}
+                    onChange={(e) => setFunnelPhase(e.target.value as FunnelPhase | '')}
+                  >
+                    <option value="">Любой</option>
+                    <option value="started">Старт (/start)</option>
+                    <option value="awaiting_sub">Ждёт подписку</option>
+                    <option value="gifted">Получил подарок</option>
+                    <option value="not_gifted">Не получил подарок</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="text">Текст</Label>
+                <Textarea
+                  id="text"
+                  rows={4}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </div>
+              <MediaPicker
+                label="Медиа"
+                accept="image/*,video/*"
+                busy={uploading}
+                hasFile={hasMedia}
+                fileHint={
+                  telegramFileId
+                    ? 'Файл в Telegram (file_id)'
+                    : mediaUrl
+                      ? 'HTTPS URL'
+                      : undefined
+                }
+                onPick={uploadMedia}
+                onClear={() => {
+                  setTelegramFileId('');
+                  setMediaUrl('');
+                  setMediaType('');
+                  setLocalPreview((prev) => {
+                    if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+                    return '';
+                  });
+                }}
               />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="media">Медиа URL</Label>
-              <Input
-                id="media"
-                value={mediaUrl}
-                onChange={(e) => setMediaUrl(e.target.value)}
-                placeholder="https://..."
-                inputMode="url"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="when">Отложить</Label>
-              <Input
-                id="when"
-                type="datetime-local"
-                value={scheduledAt}
-                onChange={(e) => setScheduledAt(e.target.value)}
-              />
-            </div>
-            <Button variant="solid" onClick={send} disabled={busy || !text.trim()}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {scheduledAt ? 'Запланировать' : 'Отправить сейчас'}
-            </Button>
-          </CardContent>
-        </Card>
+              {!telegramFileId && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="media">Или медиа URL</Label>
+                  <Input
+                    id="media"
+                    value={mediaUrl}
+                    onChange={(e) => {
+                      setMediaUrl(e.target.value);
+                      if (e.target.value.trim()) setTelegramFileId('');
+                    }}
+                    placeholder="https://..."
+                    inputMode="url"
+                  />
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="when">Отложить</Label>
+                <Input
+                  id="when"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                />
+              </div>
+              <Button variant="solid" onClick={submit} disabled={busy || uploading || !billingOk || !text.trim()}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {editingId
+                  ? 'Сохранить'
+                  : scheduledAt
+                    ? 'Запланировать'
+                    : 'Отправить сейчас'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">Превью</p>
+            <TelegramPreview
+              text={text || 'Текст рассылки…'}
+              mediaUrl={previewMedia}
+              mediaType={mediaType === 'video' ? 'video' : 'photo'}
+              mediaPlaceholder={Boolean(telegramFileId) && !previewMedia}
+              botName={selectedBot?.botUsername ? `@${selectedBot.botUsername}` : undefined}
+            />
+          </div>
+        </div>
       )}
 
       {history.length > 0 && (
@@ -223,8 +483,10 @@ export default function BroadcastsPage() {
                 <tr className="text-left text-muted-foreground">
                   <th className="pb-2 font-medium">Когда</th>
                   <th className="pb-2 font-medium">Сегмент</th>
+                  <th className="pb-2 font-medium">Этап</th>
                   <th className="pb-2 font-medium">Статус</th>
                   <th className="pb-2 font-medium">Отправлено</th>
+                  <th className="pb-2 font-medium" />
                 </tr>
               </thead>
               <tbody>
@@ -236,11 +498,19 @@ export default function BroadcastsPage() {
                         : new Date(b.createdAt).toLocaleString('ru-RU')}
                     </td>
                     <td className="py-2.5">{b.segment || '—'}</td>
+                    <td className="py-2.5">{b.funnelPhase || '—'}</td>
                     <td className="py-2.5">
                       <Badge variant="secondary">{b.status}</Badge>
                     </td>
                     <td className="py-2.5">
                       {b.sentCount}/{b.totalCount}
+                    </td>
+                    <td className="py-2.5 text-right">
+                      {b.status === 'scheduled' ? (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => startEdit(b)}>
+                          Изменить
+                        </Button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

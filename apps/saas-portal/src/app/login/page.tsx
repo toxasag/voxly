@@ -45,16 +45,16 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-canvas px-6 py-16">
+    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
       <div className="w-full max-w-md animate-in">
         <div className="mb-8 text-center">
           <Link
             href="/"
-            className="text-[24px] font-semibold tracking-[-0.025em] text-ink transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-hairline"
+            className="text-[24px] font-semibold tracking-[-0.025em] text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
             Voxly
           </Link>
-          <p className="mt-2 text-sm text-mid-gray">Воркспейс</p>
+          <p className="mt-2 text-sm text-muted-foreground">Воркспейс</p>
         </div>
         <Card>
           <CardHeader className="text-center">
@@ -100,9 +100,9 @@ export default function LoginPage() {
                 {loading ? 'Вход…' : 'Войти'}
               </Button>
             </form>
-            <p className="mt-6 text-center text-sm text-mid-gray">
+            <p className="mt-6 text-center text-sm text-muted-foreground">
               Нет аккаунта?{' '}
-              <Link href="/register" className="font-medium text-ink underline-offset-4 hover:underline">
+              <Link href="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
                 Зарегистрироваться
               </Link>
             </p>

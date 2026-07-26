@@ -156,7 +156,7 @@ export default function GiftBotsListPage() {
         actions={
           <>
             <Button variant="secondary" asChild>
-              <Link href="/dashboard/bots/broadcasts">
+              <Link href="/dashboard/mailing/bot">
                 <Megaphone className="h-4 w-4" /> Рассылки
               </Link>
             </Button>
@@ -177,7 +177,7 @@ export default function GiftBotsListPage() {
       {!data?.giftAddon?.isActive && giftBots.length === 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Старт за 14 дней бесплатно</CardTitle>
+            <CardTitle>Старт за 7 дней бесплатно</CardTitle>
             <CardDescription>
               Подключите первый gift-бот к каналу. Дальше — 500 ₽/мес за каждый канал.
             </CardDescription>

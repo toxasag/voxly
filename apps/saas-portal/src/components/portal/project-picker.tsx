@@ -123,7 +123,7 @@ export function ProjectPicker({
                     aria-hidden
                     className={cn(
                       'absolute inset-y-0 left-0 w-[3px] transition-colors duration-[var(--duration-default)]',
-                      p.isActive ? 'bg-ink' : isSelected ? 'bg-ink/35' : 'bg-transparent',
+                      p.isActive ? 'bg-primary' : isSelected ? 'bg-primary/35' : 'bg-transparent',
                     )}
                   />
 
@@ -137,7 +137,7 @@ export function ProjectPicker({
                           </span>
                         )}
                         {p.isActive && (
-                          <span className="rounded-[18px] bg-canvas px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-ink-soft">
+                          <span className="rounded-lg bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-primary">
                             активен
                           </span>
                         )}
@@ -146,7 +146,7 @@ export function ProjectPicker({
                         <Radio
                           className={cn(
                             'h-3 w-3 shrink-0',
-                            p.isActive ? 'text-ink' : 'text-mid-gray',
+                            p.isActive ? 'text-foreground' : 'text-muted-foreground',
                           )}
                           aria-hidden
                         />
@@ -155,11 +155,11 @@ export function ProjectPicker({
                             ? `@${p.channelUsername.replace(/^@/, '')}`
                             : 'канал не задан'}
                         </span>
-                        <span className="text-hairline" aria-hidden>
+                        <span className="text-border" aria-hidden>
                           ·
                         </span>
                         {p.isActive ? (
-                          <span className="font-medium text-ink">принимает лидов</span>
+                          <span className="font-medium text-foreground">принимает лидов</span>
                         ) : (
                           <span>на паузе</span>
                         )}

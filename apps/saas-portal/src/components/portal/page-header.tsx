@@ -23,7 +23,7 @@ export function PageHeader({
         {backHref && (
           <Link
             href={backHref}
-            className="inline-flex items-center gap-1 rounded-[6px] text-sm text-mid-gray transition-colors duration-[var(--duration-fast)] hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-hairline"
+            className="inline-flex items-center gap-1 rounded-md text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ArrowLeft className="h-4 w-4" />
             {backLabel || 'Назад'}
@@ -31,13 +31,13 @@ export function PageHeader({
         )}
         <h1
           className={cn(
-            'text-[30px] font-semibold tracking-[-0.025em] text-ink',
+            'text-3xl font-bold tracking-tight text-foreground',
             backHref ? 'mt-2' : '',
           )}
         >
           {title}
         </h1>
-        {description && <div className="mt-1 text-sm text-mid-gray">{description}</div>}
+        {description && <div className="mt-1.5 text-sm text-muted-foreground">{description}</div>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>

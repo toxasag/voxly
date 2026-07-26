@@ -303,7 +303,7 @@ export default function GramjsPage() {
       {!data?.gramjsAddon?.isActive && data?.trialAvailable !== false && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="text-base">Старт за 14 дней бесплатно</CardTitle>
+            <CardTitle className="text-base">Старт за 7 дней бесплатно</CardTitle>
             <CardDescription>
               Подключите личный Telegram через QR. Потом —{' '}
               {price.toLocaleString('ru-RU')} ₽/мес + баланс AI.

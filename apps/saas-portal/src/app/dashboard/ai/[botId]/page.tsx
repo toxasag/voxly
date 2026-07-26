@@ -12,7 +12,7 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
 import { CopyButton } from '@/components/portal/copy-button';
-import { cn } from '@/lib/utils';
+import { cn, selectClassName } from '@/lib/utils';
 import { startCheckout } from '@/lib/checkout';
 
 interface BotRow {
@@ -348,7 +348,7 @@ export default function AiBotDetailPage() {
         </CardHeader>
         <CardContent>
           <select
-            className="w-full max-w-md rounded-md border border-border bg-background px-2 py-2 text-sm"
+            className={cn(selectClassName, "max-w-md")}
             value={defaultAiAgentId || ''}
             disabled={busy === 'default-agent' || agents.length === 0}
             onChange={async (e) => {
@@ -447,7 +447,7 @@ export default function AiBotDetailPage() {
                         : ''}
                     </p>
                     {a.status === 'limited' && (
-                      <p className="mt-1 text-xs text-mid-gray">
+                      <p className="mt-1 text-xs text-muted-foreground">
                         В Telegram → Бизнес → Автоматизация чатов выдайте боту права читать и
                         отвечать — иначе входящие и сделки в CRM не появятся.
                       </p>
@@ -604,7 +604,7 @@ export default function AiBotDetailPage() {
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-muted-foreground">Агент для этого чата</p>
                   <select
-                    className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                    className={selectClassName}
                     value={active.aiAgentId || ''}
                     disabled={busy !== '' || agents.length === 0}
                     onChange={(e) =>
@@ -710,8 +710,8 @@ export default function AiBotDetailPage() {
                         className={cn(
                           'rounded-md px-3 py-2 text-sm',
                           m.role === 'user' && 'bg-secondary/70',
-                          m.role === 'assistant' && 'bg-canvas',
-                          m.role === 'operator' && 'bg-surface-alt',
+                          m.role === 'assistant' && 'bg-muted',
+                          m.role === 'operator' && 'bg-sidebar',
                           m.role === 'system' && 'bg-muted text-muted-foreground',
                         )}
                       >

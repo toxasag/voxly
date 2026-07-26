@@ -9,6 +9,7 @@ import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
@@ -49,6 +50,24 @@ interface DashboardOverview {
       activeUntil: string | null;
     };
     whatsapp: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+    };
+    mailingBot: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+    };
+    mailingAccounts: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+    };
+    mailingStories: {
       isActive: boolean;
       isTrial: boolean;
       trialAvailable?: boolean;
@@ -98,10 +117,10 @@ function formatTokens(n: number | undefined | null): string {
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-[24px] border border-hairline bg-paper px-4 py-3 shadow-[var(--shadow-subtle)]">
-      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">{label}</p>
-      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-ink">{value}</p>
-      {hint ? <p className="mt-1 text-xs text-mid-gray">{hint}</p> : null}
+    <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-[var(--shadow-subtle)]">
+      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-foreground">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -124,15 +143,15 @@ function ProductRow({
   return (
     <Link
       href={href}
-      className="flex items-center justify-between gap-3 rounded-[18px] border border-hairline bg-paper px-4 py-3 transition-colors hover:bg-canvas"
+      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-muted"
     >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-ink">{title}</p>
-        {detail ? <p className="mt-0.5 text-xs text-mid-gray">{detail}</p> : null}
+        <p className="truncate text-sm font-medium text-foreground">{title}</p>
+        {detail ? <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {until && active ? (
-          <span className="hidden text-xs text-mid-gray sm:inline">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
             до {new Date(until).toLocaleDateString('ru-RU')}
           </span>
         ) : null}
@@ -230,6 +249,27 @@ export default function DashboardPage() {
     }
   };
 
+  const startMailingTrial = async (
+    type: 'mailing_bot' | 'mailing_accounts' | 'mailing_stories',
+  ) => {
+    setTrialBusy(type);
+    setError('');
+    try {
+      const res = await fetch('/api/bots/mailing/start-trial', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ type }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось активировать trial');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка trial');
+    } finally {
+      setTrialBusy('');
+    }
+  };
+
   const openCrm = async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) return router.push('/login');
@@ -293,7 +333,7 @@ export default function DashboardPage() {
       <AppShell showNav={false} maxWidth="2xl">
         <div className="py-16 text-center">
           <h1 className="text-[30px] font-semibold tracking-[-0.025em]">Супер-админ</h1>
-          <p className="mt-2 text-sm text-mid-gray">Платформенная админка, без клиентского воркспейса.</p>
+          <p className="mt-2 text-sm text-muted-foreground">Платформенная админка, без клиентского воркспейса.</p>
           <Button asChild variant="solid" className="mt-6">
             <Link href="/admin">Открыть /admin</Link>
           </Button>
@@ -346,6 +386,8 @@ export default function DashboardPage() {
           </div>
         }
       />
+
+      <Separator className="mb-8" />
 
       {crmError && (
         <Alert className="mb-4" variant="error">
@@ -442,6 +484,30 @@ export default function DashboardPage() {
               detail={`${data.accounts.gramjs} акк.`}
             />
             <ProductRow
+              title="Рассылка ботом"
+              href="/dashboard/mailing/bot"
+              active={p.mailingBot?.isActive ?? false}
+              trial={p.mailingBot?.isTrial}
+              until={p.mailingBot?.activeUntil}
+              detail="500 ₽/мес"
+            />
+            <ProductRow
+              title="Рассылка с аккаунтов"
+              href="/dashboard/mailing"
+              active={p.mailingAccounts?.isActive ?? false}
+              trial={p.mailingAccounts?.isTrial}
+              until={p.mailingAccounts?.activeUntil}
+              detail="GramJS + WhatsApp · 500 ₽/мес"
+            />
+            <ProductRow
+              title="Постинг сторис"
+              href="/dashboard/mailing/stories"
+              active={p.mailingStories?.isActive ?? false}
+              trial={p.mailingStories?.isTrial}
+              until={p.mailingStories?.activeUntil}
+              detail="1000 ₽/мес"
+            />
+            <ProductRow
               title="AI-агенты"
               href="/dashboard/ai/agents"
               active={data.accounts.agents > 0}
@@ -485,17 +551,17 @@ export default function DashboardPage() {
                 }`}
               />
             </div>
-            <div className="rounded-[18px] border border-hairline bg-canvas px-4 py-3">
-              <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">
+            <div className="rounded-lg border border-border bg-muted px-4 py-3">
+              <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-muted-foreground">
                 Рефералка
               </p>
-              <p className="mt-1 text-sm text-ink">
+              <p className="mt-1 text-sm text-foreground">
                 Баланс {Math.round(data.money.referralBalanceRub).toLocaleString('ru-RU')} ₽ · заработано{' '}
                 {Math.round(data.money.referralEarnedRub).toLocaleString('ru-RU')} ₽
               </p>
               {data.money.referralCode && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                  <code className="rounded-[10px] bg-paper px-2 py-1 text-xs">{data.money.referralCode}</code>
+                  <code className="rounded-md bg-card px-2 py-1 text-xs">{data.money.referralCode}</code>
                   {refLink && <CopyButton value={refLink} label="Ссылка" />}
                 </div>
               )}
@@ -510,7 +576,7 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent>
           {phaseEntries.length === 0 ? (
-            <p className="text-sm text-mid-gray">Пока нет подписчиков в gift-ботах.</p>
+            <p className="text-sm text-muted-foreground">Пока нет подписчиков в gift-ботах.</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {phaseEntries.map(([phase, count]) => (
@@ -554,6 +620,39 @@ export default function DashboardPage() {
           <Button asChild variant="secondary" size="sm">
             <Link href="/dashboard/bots">Настроить подарок</Link>
           </Button>
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/dashboard/mailing">Открыть рассылки</Link>
+          </Button>
+          {!p.mailingBot?.isActive && p.mailingBot?.trialAvailable !== false && (
+            <Button
+              variant="solid"
+              size="sm"
+              disabled={trialBusy === 'mailing_bot'}
+              onClick={() => void startMailingTrial('mailing_bot')}
+            >
+              Trial · Рассылка ботом
+            </Button>
+          )}
+          {!p.mailingAccounts?.isActive && p.mailingAccounts?.trialAvailable !== false && (
+            <Button
+              variant="solid"
+              size="sm"
+              disabled={trialBusy === 'mailing_accounts'}
+              onClick={() => void startMailingTrial('mailing_accounts')}
+            >
+              Trial · Рассылка с аккаунтов
+            </Button>
+          )}
+          {!p.mailingStories?.isActive && p.mailingStories?.trialAvailable !== false && (
+            <Button
+              variant="solid"
+              size="sm"
+              disabled={trialBusy === 'mailing_stories'}
+              onClick={() => void startMailingTrial('mailing_stories')}
+            >
+              Trial · Сторис
+            </Button>
+          )}
           <Button asChild variant="secondary" size="sm">
             <Link href="/dashboard/ai">Подключить Business</Link>
           </Button>

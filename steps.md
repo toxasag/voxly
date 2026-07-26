@@ -89,6 +89,18 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-26** — Prod: «Рассылка» (`saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-tg/wa,compose`); CRM LINKs absolute → `getvoxly.ru/dashboard/mailing/*`; refresh-crm-chat; backup `20260726-192410`; hub+4 routes **200**.
+- **2026-07-26** — Prod deploy `saas-portal` (legal `/terms|/privacy|/consent|/refund` + реквизиты); backup `20260726-190018`; smoke 200. Conflict recreate saas-api fixed; AI workers restarted.
+- **2026-07-26** — Portal **indigo shadcn** theme + dashboard big-bang (branch `ui/indigo-shadcn-dashboard`; ADR-020; deploy pending).
+- **2026-07-26** — Portal shadcn expand: landing Table/Accordion; AppShell Sheet; register Checkbox; typecheck+build OK (deploy portal pending).
+- **2026-07-26** — Robokassa legal surface: `/terms|/privacy|/consent|/refund` + реквизиты ИП на лендинге + checkbox на `/register` (local; deploy portal pending).
+- **2026-07-26** — INC-063: regular video ASR (TG/GramJS/WA) — tags `[видео]:`; caps 8MB/90s; deploy workers+gramjs-bridge.
+- **2026-07-26** — INC-063 reopen: Fastify media token `maxParamLength` 404 + video_note AI tagging/fallback — CRM Chat **0.1.15**; deploy `saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`; backup `20260726-192410`; refresh-crm-chat; media 206 video/mp4 verified.
+- **2026-07-26** — Prod: INC-063 media playback MIME sniff/Range + video_note ASR — CRM Chat **0.1.13** (`saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-185249`; refresh-crm-chat; smoke 200.
+- **2026-07-26** — Prod: media signed-url CRM chat **0.1.11** + unread badges (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); migrate `lastOperatorReadAt`; backup `20260726-182032`; smoke 200.
+- **2026-07-26** — INC-065 unread badges UX + media 0.1.13 workers shipped prod (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-190111`.
+- **2026-07-26** — Prod: INC-063 media + INC-064 prompt filter → `saas-api` (crm-chat 0.1.9), `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`; backup `20260726-022902`; smoke 200.
+
 ### 2026-07-26 — INC-059 WA LID→PN (Evolution v2.3.7-lid shipped)
 - WA UI can show phone without address book; avatar invent OFF. Prod Evolution upgraded to **v2.3.7-lid** (backup `20260726-002454`); session restored without QR; webhook + `PRESENCE_UPDATE` re-applied. Next: confirm LID inbound fills Person via `remoteJidAlt`/`senderPn`.
 
@@ -244,8 +256,8 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Форма регистрации шлёт `companySlug` (не `workspaceName`); проверка пароля ≥8.
 - Регистрация через UI/прокси проверена: HTTP 201.
 - Фикс дашборда: `/api/auth/me` отдаёт flat `user.tenant` (subscription/addons/aiWallet/referralCode); убран невалидный HTML `pattern` в register.
-- Регистрация создаёт реальную подписку `crm_base` на 14 дней (`periodMonths=0`); существующие trial-tenant'ы локально backfill'нуты.
-- Дашборд показывает пробный период и дату окончания; trial завершается ровно через 14 дней без paid grace.
+- Регистрация создаёт реальную подписку `crm_base` на 7 дней (`periodMonths=0`); существующие trial-tenant'ы локально backfill'нуты.
+- Дашборд показывает пробный период и дату окончания; trial завершается ровно через 7 дней без paid grace.
 - Локально подняты Twenty server + worker + PostgreSQL; CRM доступна на `http://localhost:3007`.
 - Исправлен Twenty 2.21 provisioning: `signUp` → workspace-agnostic token → `signUpInNewWorkspace`; повторный запуск возобновляется через `signIn`.
 - CRM-пароль генерируется отдельно, хранится AES-256-GCM; `/api/tenant/crm-login` выдаёт короткоживущую SSO-ссылку в конкретный workspace.
@@ -254,7 +266,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Добавлен white-label образ Twenty с title `Voxly` и `lang="ru"`.
 - Исправлена SaaS superadmin-страница `/admin`: статистика и список tenant теперь соответствуют фактическому API.
 - Seed создаёт superadmin `admin@getvoxly.ru` с bcrypt-хешем (пароль из `SUPERADMIN_PASSWORD`, по умолчанию `changeme`).
-- Gift-бот Phase 2 (клиентский онбординг): trial 14 дней, Managed Bots provision, мастер `/dashboard/bots` (канал, линейная воронка, рассылки), `GiftSubscriber`, delayed jobs в gift-bot-worker, CRM Person+Сделка на `/start`, long-poll локально (`GIFT_BOT_USE_POLLING`).
+- Gift-бот Phase 2 (клиентский онбординг): trial 7 дней, Managed Bots provision, мастер `/dashboard/bots` (канал, линейная воронка, рассылки), `GiftSubscriber`, delayed jobs в gift-bot-worker, CRM Person+Сделка на `/start`, long-poll локально (`GIFT_BOT_USE_POLLING`).
 - Webhook Managed Bot выровнен на `/tg/{tenantId}/{botId}`; локально polling вместо public HTTPS.
 - Manager Bot локально: реальный токен в `.env`, username **`@VoxlyGiftbot`**, Bot Management Mode ON; `manager-bot-service` в long-poll (`MANAGER_USE_POLLING` / `GIFT_BOT_USE_POLLING`); `getMe` проверен.
 - **Чекпоинт перед E2E gift-бота (2026-07-15):** пользователь продолжает с test2 → `/dashboard/bots`. См. §4 «Снимок сессии».
@@ -264,7 +276,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Чат оператора в портале + `GET .../messages` + reply → Telegram + Conversation.mode=human; заметки на Person в Twenty (custom ChatMessage App не ставится).
 - Рассылки: отдельная страница `/dashboard/bots/broadcasts` (сегмент, медиа, schedule, история); worker шлёт mediaUrl.
 - test2: `@voxlycmrm0vuatmbot` + кампания готовы; ждём Start для Person/Сделка.
-- **UI:** Tailwind v4 + shadcn; тема Twenty (Inter, soft gray canvas, outline buttons, pastel KPI); `/dashboard` — 4 блока; боты = список → `/dashboard/bots/[botId]`; skills: refero / 21st-shadcn / karpathy.
+- **UI:** Tailwind v4 + shadcn **indigo** (ADR-020); `/dashboard` — 4 блока; боты = список → `/dashboard/bots/[botId]`; skills: refero / 21st-shadcn / karpathy.
 - **Пост акции в канале:** `GiftCampaignConfig.promoPost` (JSON); API `PUT/POST /api/bots/:id/promo[/publish]`; кнопка `Текст · N` + deep-link `?start=g_{campaignId}`; worker считает клики и обновляет markup; портал — редактор + Telegram-превью + публикация.
 - **Фикс:** polling страницы бота не затирает несохранённые правки воронки/поста (обновляет подписчиков и счётчик кликов).
 - **Дефолтная воронка:** тексты/тайминги из настроенной кампании test2 (`DEFAULT_GIFT_FUNNEL` в shared).
@@ -482,7 +494,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/062**. **2026-07-26** WA chat golden path documented (`CHAT.md`); Evolution `v2.3.7-lid`; debounce 10s + typing `sendText(delay)`; business email+website (INC-062 soft-delete free); CRM Chat **0.1.8**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: TG typing parity with WA; rotate root SSH; monitor disk.
+**Статус кода:** CRM chat + INC-024…**/065**. **2026-07-26** inbound media CRM+AI (GramJS/TG/WA — INC-063); **signed URL** + **MIME sniff/Range** + **maxParamLength/media/** — CRM Chat **0.1.15** (prod); **regular video ASR v2** (`[видео]:`, ffmpeg demux, ≤20MB/180s) + **PDF/DOCX extract** (`[документ PDF|DOCX]:`) + `MEDIA_INBOUND_HINT`; unread badges + **INC-065** (prod); WA chat golden path (`CHAT.md`); **Opportunity board = john-crm** (ADR-017). Evolution `v2.3.7-lid`. **Portal:** shadcn **indigo** theme (ADR-020, branch `ui/indigo-shadcn-dashboard`) — local typecheck OK, **deploy/PR pending**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; TG typing parity; **rotate root SSH** (password used in deploy chat).
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -508,7 +520,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Что уже в коде (gift + портал)** — ключевые файлы
 - API (`apps/saas-api`): trial, provision-link, campaign, channel/verify, promo draft/publish, `POST .../media`, broadcasts, subscribers, messages/reply; `GET /api/admin/funnels`; `GET /api/bots` → `subscriberCount` + `promoPost`.
-- Портал (`apps/saas-portal`): `/dashboard` (4 блока + CRM в новой вкладке + подсказка/popup-blocker); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг/login/register в Twenty light; `AppShell` + motion/UX (Alert, CopyButton, PageHeader).
+- Портал (`apps/saas-portal`): `/dashboard` (4 блока + CRM в новой вкладке + подсказка/popup-blocker); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг/login/register/legal + dashboard на shadcn **indigo**; `AppShell` (Sheet mobile) + motion/UX (Alert, CopyButton, PageHeader).
 - Shared: `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO`, `buildVoxlyBotUsername`, `telegram-md.ts`, `resolveTelegramMedia`.
 - Worker (`apps/gift-bot-worker`): воронка + delays + broadcasts + promo clicks; `detectStoredMediaKind`; BullMQ `jobId` без `:`; напоминания `not_gifted` / `not_subscribed` / `after_gift` (см. сводку §3); Person/Opportunity + notes; `fireGoal` + `campaignId`/`botInstanceId`; MarkdownV2.
 - Username новых ботов: `voxly_{slug}_{01}_bot`.
@@ -520,6 +532,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
+0. **Robokassa store activation:** legal pages **на prod** (`https://getvoxly.ru/terms` …). Подать заявку в ЛК Robokassa → после одобрения прописать боевые ключи в prod `.env`. **Сменить root SSH пароль** (светился в чате).
+0b. **Mailing Phase 1–2 local:** sidebar «Рассылка» (crm-chat 0.1.12) + bot funnel/edit/preview/media; GramJS/WA/stories stubs. Phase 3–6 + trial 7d pending. **Не деплоить** mailing без команды.
+
+
 1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).
 2. Superadmin `/admin` → «Удалить» tenant `john` (confirm slug) → зарегистрироваться заново → проверить CRM Chat кнопки AI + создание сделок.
 3. Telegram Business: включить «Отвечать на сообщения» для AI-бота (`can_reply=true`) — иначе ответы не уходят в TG (INC-056).

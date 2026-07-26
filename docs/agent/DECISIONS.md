@@ -29,6 +29,39 @@
 
 ---
 
+## ADR-019 — Stories mailing (GramJS send; WA/Business explicit unsupported)
+
+**Статус:** 2026-07-26  
+
+| Вопрос | Выбор |
+|---|---|
+| Storage | Same `Broadcast` with `messageJson.channel='story'` + `storyVia` |
+| GramJS | Bridge `POST /stories/send` → uploadFile + `stories.SendStory` (InputPeerSelf, AllowAll) |
+| WhatsApp / ai_tg | Schedule/edit/preview OK; worker marks `failed` + `stories_unsupported_*` until Evolution/Bot API exists |
+| Billing | Addon `mailing_stories` 1000₽/мес + one-shot trial (`TRIAL_PERIOD_DAYS`) |
+
+---
+
+## ADR-018 — «Рассылка» в Twenty CRM (portal LINK, reuse gift broadcast)
+
+**Статус:** Phase 1–6 (2026-07-26)  
+
+| Вопрос | Выбор |
+|---|---|
+| CRM UI | Top-level `LINK`s → portal `https://getvoxly.ru/dashboard/mailing/*` (не front-component). **Не** nest under `FOLDER`: Twenty 2.22 `FolderSubItem` does `navigate(url)` → CRM 404 for external https |
+| Bot mailing | Reuse `Broadcast` + gift-bot-worker `processBroadcast` + portal page (не rewrite) |
+| Audience (bot) | `GiftSubscriber`; filters `segment` (giftDelivered) + optional `funnelPhase` |
+| Edit scheduled | `PATCH /api/bots/:botId/broadcasts/:id` while `status=scheduled` (scanner queues only when due) |
+| Media | Persist `telegramFileId`/`mediaType` in `messageJson` (schema already accepted; worker uses `resolveTelegramMedia`) |
+| messageJson | Backward compatible: missing `funnelPhase`/`telegramFileId` OK for already-scheduled |
+| GramJS/WA/Stories | Channel broadcasts Phase 3; Stories ADR-019 |
+| Billing / trial | Add-ons mailing_*; one-shot trial like channels; global `TRIAL_PERIOD_DAYS=7` |
+| Attribution | `lastMailingBroadcastId` + CRM note on inbound (48h) |
+
+**Отклонено:** rewrite `processBroadcast`; embed full mailing UI as Twenty front-component (higher Remote DOM risk).
+
+---
+
 ## ADR-009 — «Кабинет Voxly» в сайдбаре Twenty
 
 **Статус:** обновлено 2026-07-20  
@@ -36,7 +69,8 @@
 В Twenty нет native «назад в Voxly».  
 **Сейчас:** Twenty Apps SDK `defineNavigationMenuItem` (`NavigationMenuItemType.LINK`) — пункт «Кабинет Voxly» в «Рабочая область» → portal `/dashboard` (`cabinet-voxly.ts`).  
 **Legacy inject:** `docker/twenty-cabinet-link.js` → `/voxly-cabinet.js` отключён (`DISABLE_FLOATING_CABINET=true`); файл оставлен для rollback / rebuild.  
-URL в манифесте локальный (`http://localhost:3001/dashboard`); для prod менять `link` перед apply.
+URL в манифесте локальный (`http://localhost:3001/dashboard`); для prod менять `link` перед apply.  
+**Related:** ADR-018 — folder «Рассылка» + portal LINKs (`VOXLY_CABINET_URL` → portal base).
 
 ---
 
@@ -53,6 +87,7 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 | Note on kanban card | Note `labelIdentifier` = **title** (TEXT). `bodyV2` is RICH_TEXT → `[object Object]` if used as label (INC-021). Body mirrored into `title` via SQL trigger + backfill; `createNoteForPerson` sets title←body. Latest note first via `noteTarget.position` (ASC). Shell-ux clamps ≈5 lines. |
 | Person social fields | `ensureSocialFields` in `applyWorkspaceDefaults`: Telegram + WhatsApp + OK + VK + Instagram + Facebook + Threads (TEXT) next to LinkedIn. WA sync fills `whatsapp` (+phones). Opportunity: no social group → skip. |
 | Inbound left toast | Host `twenty-shell-ux.js` polls `GET /api/crm/chat/inbound-toasts` with `voxlyChatToken` (~4s). Not true push (Remote DOM has no host timers for front components). |
+| Unread chat badges | **Unread** = `ChatMessage.role=user` with `sentAt > Conversation.lastOperatorReadAt` (null = never opened in CRM Chat). Mark-read on `GET /api/crm/chat/:recordId` for **all** conversations linked to the Person/Opportunity (not only the active thread). Counts aggregated by `twentyPersonId` / `twentyOpportunityId` (+ gift links). Shell-ux polls `GET /unread-badges` (~8s) and paints **one** overlay badge per card/row (board title host; no nested field/chip duplicates) + «Чат» tab — no Twenty custom NUMBER field. Existing conversations backfilled `lastOperatorReadAt` on migrate so deploy does not flood historical counts. |
 | «Кабинет Voxly» once | SDK `cabinet-voxly.ts` + shell dedupe + `docker/dedupe-cabinet-nav.sql`. Floating inject stays off. |
 | «Чат» tab order | `position: 15` (after Home=10, before Timeline=20) in `page-layout-tabs/*-chat.page-layout-tab.ts` + `docker/set-chat-tab-position.sql`. |
 | New workspace provisioning | **Target = parity with test2/john.** `applyWorkspaceDefaults` (kanban + card fields + note title label + **social fields**) runs on provision. **Still TODO:** (1) run note title-sync + latest-first SQL triggers for new schema automatically; (2) seats counter = Twenty CRM workspace members (not only Voxly TenantMember). |
@@ -259,10 +294,56 @@ Shared helper: `@voxly/ai-core` `resolveProviderCostRub`. No hardcoded model pri
 - Portal upload/delete; storage volume `ai-knowledge-data`.
 
 ### Learning
-- **Only successful CRM deals**: Conversation linked Opportunity stage ∈ `wonStages` (default `CUSTOMER`).
+- **Only successful CRM deals**: Conversation linked Opportunity stage ∈ `wonStages` (default `USPESHNAYA_SDELKA` + legacy `CUSTOMER`).
 - Extract `user`→`operator` pairs (not AI assistant turns) → `AiSalesExample`.
 - Scheduler ~10 min + portal «Обновить обучение».
 - Not every operator reply; not fine-tune.
 
 ### Runtime
 `retrieveAgentContext` + `formatRagPromptBlock` injected into TG/WA system prompt before LLM.
+
+---
+
+## ADR-017 — Opportunity board golden path = john-crm (2026-07-26)
+
+**Статус:** ✅ locked (заказчик: john-crm Сделки view)
+
+### SoT
+`https://john-crm.getvoxly.ru/objects/opportunities` INDEX view **Канбан** (`viewId` example `26f24648-…`).
+
+### Must match on every new workspace (provision + `reapply-crm-defaults`)
+| Setting | Value |
+|---|---|
+| Object labels | Сделка / Сделки, `isLabelSyncedWithName=false` |
+| INDEX view | name **Канбан**, type KANBAN, IconLayoutKanban, key INDEX |
+| Secondary view | **Списком**, TABLE, IconList |
+| openRecordIn | SIDE_PANEL |
+| kanbanColumnWidth | 320 (overrides) |
+| Card fields | name, createdAt, amount, createdBy, closeDate, company, pointOfContact, taskTargets, noteTargets (sizes as `OPPORTUNITY_KANBAN_CARD_FIELDS`) |
+| Stages | **Locked:** Новый лид `NOVYY_LID`, Успешная сделка `USPESHNAYA_SDELKA`, Сделка провалена `SDELKA_PROVALENA` (PG trigger restores if Settings edits). **Editable:** Screening / Meeting / Proposal + any custom middle stages |
+
+### Implementation
+- SQL/TS: `ensureOpportunityRuDefaults` (PG enum RENAME/ADD + merge locked options + `viewGroup`) + trigger `trg_voxly_lock_opportunity_stage_options` + `docker/set-opportunity-kanban-default.sql`
+- GraphQL: `applyWorkspaceDefaults` / `ensureOpportunityKanbanDefault` (card fields + list rename)
+- Won-learn default stages: `USPESHNAYA_SDELKA` (+ `CUSTOMER` legacy)
+
+### Chat defaults on new portals
+- **Yes (product UX):** `voxly-crm-chat` auto-install on provision (tab «Чат», composer, AI bar, presence) — latest tarball.
+- **Yes (runtime):** WA/TG debounce, typing, CRM sync — code defaults in workers (`CHAT.md`), not per-tenant CRM settings.
+- **No (tenant content):** john’s AI agents / prompts / channel bindings are **not** copied — each tenant configures agents (ADR-014 default OFF).
+---
+
+## ADR-020 — Portal UI = shadcn indigo (2026-07-26)
+
+**Статус:** ✅ (branch `ui/indigo-shadcn-dashboard`)
+
+| Вопрос | Выбор |
+|---|---|
+| Theme | shadcn classic **indigo** primary (`226.5 70.7% 40.2%`) on zinc neutrals in `globals.css` |
+| Radius | `--radius: 0.5rem` (demo-like), not Twenty 18px pills |
+| CTAs | `Button` default/solid → `bg-primary` indigo |
+| Legacy tokens | `ink/canvas/paper/hairline/mid-gray/ember` aliased → semantic for gradual cleanup |
+| Shell | Sidebar tokens + indigo accent active; mobile `Sheet` |
+| Scope | Landing + auth/legal + all `dashboard/*` + admin + portal components |
+
+**Отклонено:** Twenty-light ink CTAs as long-term SoT.

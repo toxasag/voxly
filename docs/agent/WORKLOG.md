@@ -1,3 +1,297 @@
+### 2026-07-26 — INC-063: video ASR LLM ignore + PDF/DOCX extract
+
+- Goal: Fix user smoke — regular video «not recognized» + PDF/DOCX unread by AI on TG Business (also GramJS/WA).
+- Root cause: ASR often already stored `[видео]: …` but LLM few-shot from bare `[видео]` replied «Это видео.»; PDF/DOCX were filename placeholders only. Caps 8MB/90s + raw-mp4 Whisper fragile for real clips.
+- Changes:
+  - `@voxly/ai-core`: `extractAudioFromVideo` (ffmpeg), `extractDocumentText` (pdf-parse/mammoth), `MEDIA_INBOUND_HINT`, caps helpers.
+  - `ai-telegram-worker` / `ai-whatsapp-worker`: video caps **20MB / 180s**, ffmpeg→Whisper, PDF/DOCX extract → `[документ PDF|DOCX]:`; Dockerfiles install `ffmpeg`.
+  - `gramjs-bridge`: download `document` + video up to 20MB for AI path.
+- Deploy: backup `/opt/voxly/backups/20260726-195511/`; rsync via `prod-deploy.sh`; compose rebuild completed manually after SSH auth flake on heredoc step (`ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge` up).
+- Verify: short spoken video → ChatMessage `[видео]: …` and AI answers content; PDF/DOCX → `[документ …]:` with text; oversize/fail → RU fallback.
+- Broken: legacy `.doc` (not docx) still unsupported; >20MB / >180s video still skip.
+- Next: user smoke TG Business; **rotate root SSH password**.
+
+### 2026-07-26 — Portal indigo shadcn theme (big-bang dashboard)
+
+- Goal: Switch portal from Twenty-light ink to **shadcn indigo demo** theme; restyle all dashboard surfaces in one branch.
+- Changes:
+  - `globals.css`: classic indigo primary + sidebar tokens; legacy ink/canvas aliases → semantic.
+  - Primitives: Button/Badge/Card/Input/Textarea/Switch → demo-like radius/primary.
+  - `AppShell` sidebar indigo accent; all `dashboard/*` + admin + auth/legal class tokens migrated; `selectClassName` on native selects.
+  - ADR-020.
+- Branch: `ui/indigo-shadcn-dashboard`. Verify: portal typecheck OK.
+- Broken: none expected; dark `.dark` vars present but no theme toggle yet.
+- Next: create PR / deploy `saas-portal` when approved; optional next-themes toggle.
+
+### 2026-07-26 — Portal shadcn rollout (landing + shell)
+
+- Goal: Expand shadcn/ui on saas-portal without breaking Twenty-light tokens / `globals.css`.
+- Changes:
+  - Added: separator, accordion, tabs, table, navigation-menu, sheet, dropdown-menu, avatar, tooltip, alert, checkbox, scroll-area under `components/ui/`.
+  - Landing `/` on Table/Accordion/Alert/Card/Badge/Button; legal shell Separator+Card; register Checkbox; root `TooltipProvider`.
+  - `AppShell`: mobile nav → Sheet + ScrollArea (desktop aside unchanged).
+  - Dashboard: Separator under header.
+- Verify: `pnpm --filter @voxly/saas-portal typecheck` + `build` OK.
+- Broken: none expected; portal Alert (`components/portal/alert.tsx`) ≠ shadcn `ui/alert`.
+- Next: deploy `saas-portal` when ready; further dashboard form selects → shadcn Select optional.
+
+
+- Goal: AI understands inbound **regular video** (TG Bot / GramJS / WA) like video_note — ASR transcript tagged `[видео]: …`, clear fail fallback.
+- Changes:
+  - `ai-telegram-worker`: `asrTelegramVideo` for `message.video` + document `video/*`; GramJS inbound distinguishes video vs video_note tags; caps **8MB / 90s**; 45s ASR abort reused.
+  - `gramjs-bridge`: download `type=video` (not only videoNote) for AI; doc-video mime → video; download-fail → RU fallback text.
+  - `ai-whatsapp-worker`: `videoMessage` + doc-video `needsAsr: true`; enrich tags `[видео]:` / fail fallback; WA ASR 45s abort.
+- Deploy: `./scripts/prod-deploy.sh ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`; backup `/opt/voxly/backups/20260726-193733/`; smoke portal/api **200**.
+- Verify: send short video with speech → ChatMessage `[видео]: …` → AI references content; silent/oversized → «не удалось разобрать».
+- Broken: none expected; animation/GIF still placeholder-only.
+- Next: user smoke TG Business + GramJS + WA; **rotate root SSH password**.
+
+### 2026-07-26 — Fix mailing CRM 404 (Twenty FolderSubItem navigate)
+
+- Goal: Sidebar «Рассылка» opened Twenty NotFound («страница удалена…») instead of portal.
+- Root cause: Twenty 2.22 `NavigationMenuItemFolderSubItem` calls `navigate(https://…)` for nested LINK; React Router → CRM 404. Top-level LINK uses `window.open`.
+- Changes: crm-chat **0.1.16** — hub + 4 mailing items as **top-level LINK** (no FOLDER nest); ADR-018 note; `prod-deploy.sh saas-api`; refresh-crm-chat john/lexx/antontest/antontest3; DB confirms `folderId` null + absolute URLs.
+- Verify: hard-refresh john-crm → click «Рассылка» / bot → new tab `getvoxly.ru/dashboard/mailing…`.
+- Next: user smoke; rotate root SSH if still pending.
+
+### 2026-07-26 — Mailing prod ship + CRM LINK absolute URLs
+
+- Goal: Ship «Рассылка» to prod; fix CRM sidebar opening `john-crm/…/mailing/*` (relative LINK → same-host SPA).
+- Changes:
+  - `voxlyCabinetUrl()` guard: LINKs must be absolute `https://getvoxly.ru/dashboard/mailing/*` (Twenty prepends `https://` to `/dashboard/…` → current CRM host).
+  - `./scripts/prod-deploy.sh saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-telegram-worker,ai-whatsapp-worker,compose`
+  - Backup `/opt/voxly/backups/20260726-192410/` (shared window with INC-063 rebuild); initial smoke portal **502** then **200**.
+  - Tarball in image **0.1.15** with absolute mailing URLs; `refresh-crm-chat` john/lexx/antontest/antontest3 → `{ok:true}`.
+  - Attribution columns already on control DB (`lastMailingAt` / `lastMailingBroadcastId`).
+- Verify: `getvoxly.ru/dashboard/mailing{,/bot,/gramjs,/whatsapp,/stories}` → **200**; api `/health` **200**.
+- Broken: none for this ship. Hard-refresh CRM after sidebar click should open portal in new tab.
+- Next: user smoke john sidebar «Рассылка» → portal; trial + schedule one bot broadcast.
+
+### 2026-07-26 — INC-063 reopen: media token 404 + video_note AI
+
+- Goal: Fix CRM кружочек download-only + AI stuck after «Секунду…» (TG Business ~22:16).
+- Changes:
+  - Root cause: Fastify `maxParamLength` default 100 → `GET /api/crm/chat/media/<long-token>` **404**; signed-url JSON OK → `<video onError>` → «Кружочек · скачать».
+  - `saas-api`: `maxParamLength: 8192`; media route `/media/*`; crm-chat **0.1.15** (src on `<video>`, video_note mis-tag harden).
+  - `ai-telegram-worker`: always `[кружочек]:` / ASR-fail fallback text; typing instead of «Секунду…»; ASR 45s abort; force mp4 for video_note.
+  - `ai-whatsapp-worker` + `gramjs-bridge`: same ASR tagging / videoNote-before-audio.
+  - Deploy: `./scripts/prod-deploy.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`; backup `/opt/voxly/backups/20260726-192410/`; refresh-crm-chat john/lexx/antontest/antontest3 → app **0.1.15**.
+- Verify: media Range → **206** `video/mp4` + `ftypisom`; smoke portal/api **200**; Twenty `application.version=0.1.15`.
+- Broken: none. **Rotate root SSH password** (used in session).
+- Next: user hard-refresh CRM → send new кружочек → circular player + AI reply with `[кружочек]: …` context.
+
+### 2026-07-26 — Prod deploy: media 0.1.13 + unread shell-ux + workers ASR
+
+- Goal: Ship pending local fixes — CRM media players (signed URLs / mime+Range / crm-chat **0.1.13**), unread badge UX (twenty-shell-ux + mark-all-threads), WA/TG/GramJS video_note ASR workers.
+- Changes:
+  - `./scripts/prod-diff.sh saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` — pre-deploy drift on worker/bridge `index.ts` only (API/Twenty hot files already matched)
+  - `./scripts/prod-deploy.sh saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` — first attempt: backup + build OK, then Docker recreate error `No such container: …_docker-saas-api-1` (saas-api / TG / WA left `Created`)
+  - Retry: `./scripts/prod-deploy.sh --skip-backup saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` → containers Up; script smoke **200**
+  - Backup (from first attempt): `/opt/voxly/backups/20260726-190111/` (`voxly_control.dump`, `twenty.dump`)
+  - Control DB: `Conversation.lastOperatorReadAt` already present (`20260726210000`); applied pending `20260726220000_mailing_attribution` (nullable mailing columns only; mailing UI still not product-shipped)
+  - `POST /api/admin/tenants/:id/refresh-crm-chat` → antontest, antontest3, john, lexx all `{ok:true, versionHint:"0.1.10+"}`; saas-api tarball **0.1.13**
+- Verify:
+  - Smoke: portal + API health + app healthz **200**; gramjs `/health` → `ok`; media bad token **401**
+  - `prod-diff` post-deploy: **All compared paths match**
+  - Containers Up: saas-api, twenty-server, twenty-worker, ai-telegram-worker, ai-whatsapp-worker, gramjs-bridge
+- Broken / blockers: none after retry. First compose recreate hit transient Docker name conflict; recovered with `--skip-backup` (backup already taken).
+- Next: user hard-refresh CRM — verify media players + single unread badge clears on open Chat.
+
+### 2026-07-26 — Deploy twenty unread badge UX
+- Goal: Ship one-badge-per-card + optimistic clear (INC-065 shell-ux) after media 0.1.13.
+- Changes: `./scripts/prod-deploy.sh twenty`. Backup `/opt/voxly/backups/20260726-190116/`. `lastOperatorReadAt` already on control DB; saas-api mark-all-read from prior media deploy.
+- Verify: hard-refresh CRM → one badge on deal/person card; open «Чат» → clears. `app.getvoxly.ru/healthz` → 200 after boot.
+- Broken: smoke briefly 502 while Twenty finished Nest boot/upgrade (normal).
+- Next: user verify badges + media; **сменить root SSH пароль** (светился в чате).
+
+### 2026-07-26 — Mailing Phase 4–6 (stories + attribution + billing + trial 7d)
+- Goal: stories schedule/send, effectiveness attribution, add-ons 500/500/1000, global trial 14→7, one-shot mailing trials.
+- Changes:
+  - ADR-019: GramJS `POST /stories/send`; WA/Business story jobs → `failed` + `stories_unsupported_*`.
+  - Attribution: `lastMailingBroadcastId|At` on GiftSubscriber/Conversation; inbound CRM note + `mailing_reply` (48h).
+  - SKUs `mailing_bot` / `mailing_accounts` / `mailing_stories`; checkout+webhook; `/api/bots/mailing/billing|start-trial`; soft-gate 402.
+  - `TRIAL_PERIOD_DAYS=7`; migration `20260726220000_mailing_attribution`.
+- Verify: shared tests ✓; tsc api/workers/bridge ✓. Local: migrate + rebuild gift/gramjs/ai workers + portal.
+- Broken: WA/ai_tg story send unsupported by design.
+- Next: **prod not deployed** until explicit command.
+
+### 2026-07-26 — Prod deploy saas-api (Robokassa signature fix)
+- Goal: выложить billing подписи по pay-interface.
+- Changes: `./scripts/prod-deploy.sh saas-api`; backup `20260726-193452`. Smoke `/health` сначала 404 (cold start), затем **200**.
+- Verify: `saas-api` Up; `https://api.getvoxly.ru/health` → `{"status":"ok"}`.
+- Next: в ЛК Robokassa URL + SHA256 + боевые ключи в prod `.env` (`ROBOKASSA_IS_TEST=0`).
+
+### 2026-07-26 — Robokassa signatures align with pay-interface docs
+- Goal: подпись платежа/Result/Success и Receipt по docs.robokassa.ru.
+- Changes (`packages/billing`):
+  - Payment sig: `Receipt` в подписи через `encodeURIComponent`; `payment_method=full_payment`.
+  - ResultURL: `OutSum:InvId:Password#2:shp_*` без MerchantLogin; raw OutSum (6 знаков в бою).
+  - SuccessURL: без MerchantLogin; Description ≤100.
+  - `apps/saas-api` checkout → `full_payment`.
+- Verify: `pnpm --filter @voxly/billing test` 13✓; billing+saas-api typecheck ✓.
+- Next: deploy `saas-api` before live Robokassa; в ЛК алгоритм SHA256.
+
+### 2026-07-26 — Prod deploy landing (trial ×3 cheaper)
+- Goal: выложить рыночный лендинг на getvoxly.ru.
+- Changes: `./scripts/prod-deploy.sh saas-portal`; backup `20260726-192309`. После conflict recreate `saas-api` — rm orphans + `up -d --no-build saas-api saas-portal`.
+- Verify: `/` 200, copy «7 дней бесплатно» / «в 3 раза» / Salebot; `/terms` `/register` 200; api health 200.
+- Next: заявка Robokassa; сменить root SSH пароль если ещё не сменён.
+
+### 2026-07-26 — Landing: market vs trial positioning
+- Goal: лендинг вокруг оффера «7 дней бесплатно → потом ~в 3 раза дешевле рынка».
+- Changes: `page.tsx` — hero, баннер рынок/Voxly/×3, таблица сравнения (Salebot/BotHelp/7sales/Botseller/Wazzup/amo), пример сборки 8–15k vs 1.5–2k, CTA trial; `layout.tsx` metadata; `design-system/voxly/pages/landing.md`.
+- Research anchors: Salebot ~2999, BotHelp ~1599, 7sales ~3990, Botseller Start ~4900, Wazzup/Pact/Chat2Desk WA connectors, amo seats.
+- Verify: CTA copy = trial; compare table + legal block intact.
+- Next: deploy `saas-portal` по запросу.
+
+### 2026-07-26 — Landing rewrite (conversion)
+- Goal: продающая главная getvoxly.ru — желание сразу зарегистрироваться.
+- Changes: `apps/saas-portal/src/app/page.tsx` — hero с benefit H1 + превью чата в сделке; pain / pillars / 3 шага; тарифы CRM Base + список модулей; финальный CTA; реквизиты сохранены. Metadata в `layout.tsx`. Rules: `design-system/voxly/pages/landing.md`.
+- Verify: локально `/` — CTA → `/register`; якоря `#product|#how|#pricing`; юр. блок на месте.
+- Broken: none.
+- Next: deploy `saas-portal` по запросу.
+
+### 2026-07-26 — Prod deploy saas-portal (Robokassa legal pages)
+- Goal: выложить публичные юр. страницы + реквизиты на getvoxly.ru для заявки Robokassa.
+- Changes: `./scripts/prod-deploy.sh saas-portal` (rsync + build). Backup `/opt/voxly/backups/20260726-190018/`. После конфликта имени `saas-api` при recreate — `docker rm` orphan Created + `up -d --no-build saas-api saas-portal` (+ restart AI workers stuck in Created).
+- Verify: `https://getvoxly.ru/` `/terms` `/privacy` `/consent` `/refund` → 200; на главной ИНН `505030516451` + ссылки Оферта/Конфиденциальность; `api.getvoxly.ru/health` → 200.
+- Broken: none after recovery. Compose briefly tried rebuild saas-api as dependency during portal deploy.
+- Next: подать заявку на активацию магазина Robokassa; **сменить root SSH пароль** (был передан в чате).
+
+### 2026-07-26 — Robokassa store legal surface (public pages)
+- Goal: публичный ресурс getvoxly.ru соответствует требованиям активации магазина Robokassa (контакты, цены, реквизиты, оферта, возврат, ПДн).
+- Changes:
+  - `apps/saas-portal/src/lib/legal.ts` — единые реквизиты ИП Сагайдак А.Г.
+  - Публичные страницы `/terms` (оферта из docx), `/privacy`, `/consent`, `/refund`.
+  - Лендинг: блок контактов/реквизитов, футер-ссылки, тариф «Доп. пользователь» 300 ₽.
+  - `/register`: обязательный checkbox акцепта оферты + согласия на ПДн.
+- Verify: без авторизации открываются `/terms|/privacy|/consent|/refund`; на `/` видны ИНН/телефон/email и тарифы; регистрация без галочки блокируется.
+- Broken: none expected. Тексты адаптированы с оферты Voxly + структуры wpblocks — не замена юр. консультации.
+- Next: deploy `saas-portal` → подать заявку на активацию магазина Robokassa; после одобрения — боевые ключи в prod `.env`.
+
+### 2026-07-26 — INC-063 reopen: black video / `[кружочек]` text (mime + ASR)
+- Goal: CRM video plays; кружочек shows player (not text alone); voice/audio play; AI ASR on video_note where feasible.
+- Changes:
+  - `saas-api` crm-chat: `sniffMediaContentType` + stored mime hint; Range/206; signed-url returns `contentType`.
+  - `voxly-crm-chat` **0.1.13**: `<source type>`, circular video_note, download on error; file-url logic.
+  - `ai-telegram-worker` / `gramjs-bridge` / `ai-whatsapp-worker`: video_note/ptv ASR; gift-bot placeholder `[кружочек]`.
+- Verify: send **new** video + кружочек + voice on TG Business / GramJS / WA → player plays or download works; AI transcript for circle when ASR ok; hard-refresh CRM after refresh-crm-chat.
+- Broken: full video vision still N/A (ASR/placeholder only); old stub-only `[кружочек]` messages stay text until resend.
+- Deploy status (2026-07-26): **shipped** — `./scripts/prod-deploy.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`; backup `/opt/voxly/backups/20260726-185249/`; refresh-crm-chat john/lexx/antontest/antontest3 `{ok:true}`; smoke portal/api/app **200**; media invalid token **401**.
+
+### 2026-07-26 — INC-065 unread badges UX (dedupe + mark-all-threads)
+- Goal: one unread badge per deal/contact card; clear after opening «Чат».
+- Changes:
+  - `docker/twenty-shell-ux.js`: paint once on board card root (prefer name field); skip nested object links inside board cards; optimistic clear while Chat canvas open.
+  - `apps/saas-api/.../crm-chat.ts`: on Chat GET, `lastOperatorReadAt` for **all** linked conversationIds (not only active thread); await update.
+- Verify: kanban card shows single top badge; open Chat → badge gone within ~8s poll; multi-channel deal clears fully.
+- Broken: none expected.
+- Next: deploy `twenty` + `saas-api`; hard-refresh CRM.
+- Deploy status (2026-07-26): **blocked** — `SSHPASS` unset; `./scripts/prod-diff.sh twenty,saas-api` → SSH `Permission denied (publickey,password)` to `root@150.241.98.135`. Code ready locally; re-run with `export SSHPASS=…` then `./scripts/prod-deploy.sh twenty,saas-api`.
+
+### 2026-07-26 — Mailing («Рассылка») Phase 1–2
+- Goal: Twenty sidebar «Рассылка» + 4 sub-items; reuse gift bot mailing with funnelPhase / edit scheduled / preview / media.
+- Changes:
+  - ADR-018: CRM UI = FOLDER+LINK → portal (not front-component).
+  - `voxly-crm-chat` **0.1.12**: `mailing-folder` + bot/gramjs/whatsapp/stories LINK nav (`folderUniversalIdentifier`).
+  - Portal: `/dashboard/mailing/bot` (reuse broadcasts UI), stubs gramjs/whatsapp/stories; AppShell nav «Рассылка».
+  - API: `funnelPhase` on POST; persist `telegramFileId`/`mediaType`; `PATCH …/broadcasts/:id` for `scheduled`.
+  - gift-bot-worker: audience `funnelPhase`; send via `resolveTelegramMedia` + photo/video (no rewrite of queue/scanner).
+- Verify: create scheduled broadcast with funnelPhase + file_id → edit before due → scanner sends; CRM sidebar after refresh-crm-chat 0.1.12.
+- Broken: none expected for gift funnel/chat. GramJS/WA/stories mailing = stubs. Billing/attribution/trial-7d not in this phase.
+- Next: Phase 3 channel parity; Phase 5 attribution; Phase 6 SKUs + trial 7d (await decision: paywall vs one-shot trial). **Prod not deployed** this session.
+- Note: CRM media signed-url (0.1.11) + unread badges already shipped earlier same day (`/opt/voxly/backups/20260726-182032/`); mailing changes are local-only until explicit deploy.
+
+### 2026-07-26 — Unread chat badges on deals + contacts
+- Goal: show unread inbound message count badges on Opportunity (kanban/list) and Person records in Twenty CRM.
+- Changes:
+  - `Conversation.lastOperatorReadAt` + migration `20260726210000` (backfill existing = `updatedAt`).
+  - `GET /api/crm/chat/unread-badges`; mark-read on Chat `GET /:recordId`.
+  - Logic `get-unread-badges`; CRM chat app **0.1.10**; shell-ux overlay badges (poll ~8s).
+- Verify: inbound while board open → red count on card; open «Чат» → count clears on next poll; Person list same.
+- Broken: none expected; badges need shell-ux + api + (for `/s/` proxy) refreshed Twenty app.
+- Next: deploy `saas-api` + `twenty` + `prisma migrate deploy`; refresh CRM chat on workspaces still <0.1.10.
+- Deploy status (2026-07-26): **shipped** — see entry «Prod deploy: media 0.1.11 + unread badges»; backup `/opt/voxly/backups/20260726-182032/`.
+
+### 2026-07-26 — Prod deploy: media 0.1.11 + unread badges
+
+- Goal: Ship CRM chat media players (signed URLs) + unread chat badges (shell-ux + lastOperatorReadAt) after prior SSH Permission denied blockers.
+- Changes:
+  - `./scripts/prod-diff.sh saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` (drift on crm-chat, chat-panel, WA worker, gramjs-bridge)
+  - `./scripts/prod-deploy.sh saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`
+  - Backup: `/opt/voxly/backups/20260726-182032/` (`voxly_control.dump`, `twenty.dump`); earlier aborted attempt also left `20260726-181912` / `20260726-181742`
+  - Control DB: `prisma migrate deploy` applied pending `20260724180000_gift_campaign_schedule`, `20260725220000_ai_agent_knowledge_and_sales`, `20260726210000_conversation_last_operator_read` (`Conversation.lastOperatorReadAt`)
+  - `POST /api/admin/tenants/:id/refresh-crm-chat` → antontest, antontest3, lexx, john all `{ok:true, versionHint:"0.1.10+"}` (saas-api tarball **0.1.11**)
+- Verify:
+  - Smoke: portal + API health + app healthz **200** (healthz briefly 502 ~75s after twenty recreate, then OK)
+  - Containers recreated: saas-api, twenty-server, twenty-worker, ai-telegram-worker, ai-whatsapp-worker, gramjs-bridge
+- Broken / blockers: none for this ship. First rsync attempt mid-run hit transient `Permission denied (publickey,password)`; retry succeeded with same SSHPASS.
+- Next: user hard-refresh CRM; verify media players (WA/TG/GramJS video/voice/circle) + unread badges on deal list / chat tab.
+
+### 2026-07-26 — INC-063 reopen: CRM video/audio via signed URL (Twenty /s size cap)
+- Goal: video, voice, audio, кружочек show/play in CRM chat (photo already worked); keep AI vision/ASR where bytes exist.
+- Cause: Twenty Apps `/s/*` logic JSON ~96KB — non-JPEG media got 413; WA default `convertToMp4` on audio hurt ASR; GramJS CRM download shared 8MB AI cap.
+- Changes:
+  - saas-api: HMAC `GET /api/crm/chat/media/:token` + `…/file/:fileId/signed-url`
+  - voxly-crm-chat **0.1.11**: logic `get-crm-chat-file-url`; chat-panel `<video>`/`<audio>` via signed URL; photos stay base64; `[кружочек]` placeholder hide
+  - ai-whatsapp-worker: `convertToMp4` only for video attachments
+  - gramjs-bridge: CRM media download max 20MB
+- Verify: send video/voice/circle on WA + GramJS + TG Business → bubble shows player; voice → AI transcript; hard-refresh CRM / refresh-crm-chat for 0.1.11
+- Next: user hard-refresh CRM; verify media players + unread badges (deployed 2026-07-26 `/opt/voxly/backups/20260726-182032/`).
+- Broken: GramJS outbound media still text-only; video AI stays placeholder (no multimodal video)
+- Deploy status (2026-07-26): **shipped** with unread badges — see «Prod deploy: media 0.1.11 + unread badges»; backup `/opt/voxly/backups/20260726-182032/`.
+
+### 2026-07-26 — Prod deploy: INC-063 media + INC-064 stale system prompt
+- Goal: ship inbound media (GramJS/TG/WA) + CRM chat 0.1.9 video preview + agent prompt history filter to prod.
+- Changes:
+  - Deployed via `./scripts/prod-deploy.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` (CRM chat tarball baked into saas-api).
+  - Backup: `/opt/voxly/backups/20260726-022902/` (`voxly_control.dump`, `twenty.dump`).
+  - Commands:
+    - `./scripts/prod-diff.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` (SSH was required)
+    - `./scripts/prod-deploy.sh --dry-run saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`
+    - `./scripts/prod-deploy.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`
+- Verify:
+  - Smoke: `https://getvoxly.ru/` **200**, `https://api.getvoxly.ru/health` **200**, `https://app.getvoxly.ru/healthz` **200**.
+  - Containers up: saas-api, ai-telegram-worker, ai-whatsapp-worker, gramjs-bridge; gramjs `/health` → `ok`.
+  - saas-api image includes `voxly-crm-chat` **0.1.9**.
+- Broken: none observed on smoke; GramJS outbound media still text-only (known).
+- Next: hard-refresh CRM (or re-apply Twenty app on workspaces still on older chat) to pick up 0.1.9; spot-check photo/sticker/voice + prompt edit mid-chat on john.
+
+### 2026-07-26 — INC-064 agent prompt edit ignored mid-chat
+- Goal: after portal PATCH of AiAgent.systemPrompt, next inbound uses the new prompt.
+- Cause: not an in-memory config cache — ~20 prior assistant turns few-shot old persona over the new system prompt.
+- Changes: fresh agent load by id + `updatedAt`; `filterHistoryAfterAgentUpdate` in ai-core; priority hint; TG/WA (+ GramJS via telegram worker).
+- Verify: PATCH distinctive prompt → send message on assigned channel → reply follows new prompt without worker restart.
+- Next: deploy `ai-core` consumers: ai-telegram-worker, ai-whatsapp-worker (GramJS via telegram worker).
+- Broken: none expected.
+
+### 2026-07-26 — INC-063 inbound media CRM + AI (GramJS / TG / WA)
+- Goal: photos, videos, video notes, stickers, voice show in CRM chat and feed AI (vision/ASR) on all channels.
+- Cause: GramJS skipped non-text; crm-chat blocked gramjs/WA file preview; TG Business stub attachments; WA dropped captionless media.
+- Changes: gramjs-bridge inbound + `/messages/media`; ai-telegram-worker attachments+vision/ASR (+Bot API file_id); ai-whatsapp-worker classify/store + Evolution getBase64 + `/internal/messages/media`; saas-api file proxy; chat-panel video preview 0.1.9; gift-bot video_note.
+- Verify: send photo-only / sticker / кружочек / voice on each channel → ChatMessage.attachments → CRM preview; AI reply references media.
+- Next: deploy gramjs-bridge + ai-telegram-worker + ai-whatsapp-worker + saas-api + refresh CRM chat app; GramJS outbound media still text-only.
+- Broken: none expected for text path.
+
+### 2026-07-26 — AI agents: edit name/prompt/model in portal
+- Goal: edit agent name + system prompt; show OpenRouter model on card.
+- Changes: portal agents edit form; PATCH `model` → settings; serialize effectiveModel; TG/WA use agent.settings.model then `AI_CHAT_MODEL` / `google/gemini-2.5-flash`.
+- Verify: deploy portal+api+workers; Изменить → save; card shows model.
+- Next: none.
+
+### 2026-07-26 — Lock system Opportunity stages (ADR-017)
+- Goal: forbid renaming/deleting Новый лид / Успешная сделка / Сделка провалена; allow editing middle stages.
+- Changes: PG trigger `trg_voxly_lock_opportunity_stage_options` + `voxly_merge_locked_opportunity_stages`; ensure merges locked into options; docs chat-defaults clarification.
+- Verify: deploy saas-api; edit stage label in Settings → locked names restore; Screening rename sticks.
+- Next: none.
+
+### 2026-07-26 — Opportunity defaults = john-crm board (ADR-017)
+- Goal: new Voxly CRM portals match john Сделки kanban (stages, SIDE_PANEL, card fields, Канбан/Списком).
+- Cause: provision had RU labels/views but English NEW…CUSTOMER stages; no lost-deal column.
+- Changes: `ensureOpportunityRuDefaults` enum+options+viewGroups; SQL script; twenty-client card hide + RU groups; `DEFAULT_WON_STAGES` includes `USPESHNAYA_SDELKA`; ADR-017.
+- Verify: deploy saas-api; reapply on antontest3 → stages match john; new register smoke.
+- Next: optional reapply other existing tenants.
+
 ### 2026-07-26 — Document CRM/AI chat golden path + push
 - Goal: lock WA/TG/GramJS/AI agent chat behavior so agents never regress the working chat.
 - Changes: new `docs/agent/CHAT.md`; wire README + FLOWS §4 + CAPABILITIES; commit INC-062 worker/compose + docs; push `feature/twenty-crm-chat-tab`.
