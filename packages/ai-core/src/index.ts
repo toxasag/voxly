@@ -2,8 +2,38 @@
 
 import { prisma } from '@voxly/db';
 import { applyMarkup } from './markup.js';
-
-export { applyMarkup };
+export {
+  applyMarkup,
+};
+export {
+  costUsdFromOpenRouter,
+  resolveProviderCostRub,
+  usdToProviderCostRub,
+  getUsdRubRate,
+  loadOpenRouterModelPricing,
+  resetOpenRouterPricingCache,
+  type CostSource,
+  type OpenRouterUsageLike,
+  type ModelTokenPricing,
+} from './openrouter-cost.js';
+export {
+  chunkText,
+  cosineSimilarity,
+  embedTexts,
+  embedAndCharge,
+  retrieveAgentContext,
+  formatRagPromptBlock,
+  parseAgentLearnSettings,
+  DEFAULT_WON_STAGES,
+  type AgentLearnSettings,
+} from './rag.js';
+export {
+  createInboundDebouncer,
+  humanBubbleGapMs,
+  normalizeAiBubbles,
+  DEFAULT_INBOUND_DEBOUNCE_MS,
+  type InboundDebouncer,
+} from './inbound-debounce.js';
 
 export interface ChargeAiUsageParams {
   tenantId: string;
@@ -12,6 +42,7 @@ export interface ChargeAiUsageParams {
   model: string;
   requestType: 'text' | 'transcribe' | 'vision';
   addonId?: string;
+  aiAgentId?: string | null;
 }
 
 export interface ChargeResult {
@@ -72,6 +103,7 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
       data: {
         tenantId: params.tenantId,
         addonId: params.addonId,
+        aiAgentId: params.aiAgentId || undefined,
         aiWalletId: wallet.id,
         model: params.model,
         tokens: params.tokens,

@@ -4,7 +4,18 @@
 
 import { prisma } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
-import { chargeAiUsage, hasAiBalance } from '@voxly/ai-core';
+import {
+  chargeAiUsage,
+  hasAiBalance,
+  resolveProviderCostRub,
+  retrieveAgentContext,
+  formatRagPromptBlock,
+  createInboundDebouncer,
+  humanBubbleGapMs,
+  normalizeAiBubbles,
+  DEFAULT_INBOUND_DEBOUNCE_MS,
+  type OpenRouterUsageLike,
+} from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
 import { TwentyClient } from '@voxly/twenty-client';
 import {
@@ -22,6 +33,11 @@ const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const CONTEXT_WINDOW = 20;
 const AI_WORKER_URL = process.env.AI_TELEGRAM_WORKER_URL || '';
+const AI_INBOUND_DEBOUNCE_MS = Math.max(
+  500,
+  Number(process.env.AI_INBOUND_DEBOUNCE_MS || DEFAULT_INBOUND_DEBOUNCE_MS) ||
+    DEFAULT_INBOUND_DEBOUNCE_MS,
+);
 
 if (!OPENROUTER_API_KEY) {
   console.warn(
@@ -41,20 +57,48 @@ const openai = new OpenAI({
 /** business_connection_id → owner telegram user id */
 const businessOwnerByConnection = new Map<string, number>();
 
-const DEFAULT_SYSTEM_PROMPT = `Ты — дружелюбный ассистент-продавец. Отвечай на русском, коротко и по-человечески.
+type TgAiPending = {
+  botApi: string;
+  tenantId: string;
+  botId: string;
+  chatId: number;
+  telegramId: number;
+  businessConnectionId?: string;
+  displayText: string;
+  messageId?: string;
+};
 
-КРИТИЧЕСКИ ВАЖНО: ответ — ТОЛЬКО JSON-объект (без markdown и без текста вне JSON), начиная с { и заканчивая }:
+const inboundAiDebouncer = createInboundDebouncer<TgAiPending>({
+  settleMs: AI_INBOUND_DEBOUNCE_MS,
+  onFlush: async (_key, items) => {
+    const last = items[items.length - 1];
+    if (!last) return;
+    const messageIds = items
+      .map((i) => i.messageId)
+      .filter((id): id is string => Boolean(id));
+    await flushTelegramAiReply(last, messageIds);
+  },
+});
+
+const DEFAULT_SYSTEM_PROMPT = `Ты — живой менеджер в мессенджере. Пиши по-русски, коротко, как человек в чате.
+
+КРИТИЧЕСКИ ВАЖНО: ответ — ТОЛЬКО JSON (без markdown, без текста вне JSON):
 {
-  "message1": "текст первого сообщения",
-  "message2": "текст второго сообщения",
+  "message1": "короткая фраза",
+  "message2": "следующая мысль",
   "message3": "",
   "message4": ""
 }
-Используй 1–4 коротких пузыря. Пустые поля оставь "". Без эмодзи, без переносов внутри строк.`;
+Правила пузырей:
+- почти всегда 2–4 коротких сообщения (не один длинный абзац);
+- 1 пузырь только если ответ в одно короткое предложение;
+- каждое message — одна мысль, до ~120 символов;
+- пустые поля оставь "";
+- без эмодзи, без переносов внутри строк.`;
 
 const JSON_FORMAT_HINT = `
 
-Ответь ТОЛЬКО JSON с полями message1…message4 как указано в system prompt.`;
+Ответь ТОЛЬКО JSON с message1…message4. Обычно заполни 2–4 пузыря, не склеивай всё в message1.`;
 
 async function main() {
   const http = await import('node:http');
@@ -125,6 +169,8 @@ type InternalInboundPayload = {
   phone?: string;
   externalMessageId?: string;
   channel?: string;
+  /** When true (or sender is a TG bot), skip AI entirely. */
+  isBot?: boolean;
 };
 
 /** Shared AI turn for GramJS (and other non-Bot-API channels). Does not send Telegram. */
@@ -143,6 +189,10 @@ async function handleInternalInbound(
   } = payload;
   if (!tenantId || !botId || !platformUserId || !text?.trim()) {
     return { ok: false, error: 'tenantId, botId, platformUserId, text required' };
+  }
+
+  if (payload.isBot === true) {
+    return { ok: true, skipped: 'from_bot', bubbles: [] };
   }
 
   const bot = await prisma.botInstance.findFirst({
@@ -184,7 +234,24 @@ async function handleInternalInbound(
       externalMessageId: externalMessageId || undefined,
     },
   });
+  const storedAt = new Date();
 
+  if (!(await shouldAiReply(conversation.id))) {
+    return { ok: true, skipped: 'ai_silent', bubbles: [] };
+  }
+
+  // Debounce: wait quiet window; only the last inbound in the burst generates.
+  await sleep(AI_INBOUND_DEBOUNCE_MS);
+  const newer = await prisma.chatMessage.count({
+    where: {
+      conversationId: conversation.id,
+      role: 'user',
+      createdAt: { gt: storedAt },
+    },
+  });
+  if (newer > 0) {
+    return { ok: true, skipped: 'debounced', bubbles: [] };
+  }
   if (!(await shouldAiReply(conversation.id))) {
     return { ok: true, skipped: 'ai_silent', bubbles: [] };
   }
@@ -201,12 +268,19 @@ async function handleInternalInbound(
     conversationId: conversation.id,
     displayText: text,
   });
-  return { ok: true, bubbles };
+  return { ok: true, bubbles: normalizeAiBubbles(bubbles, 4) };
 }
 
 type TgMessage = {
   message_id: number;
-  chat: { id: number; type?: string };
+  chat: {
+    id: number;
+    type?: string;
+    first_name?: string;
+    last_name?: string;
+    username?: string;
+    title?: string;
+  };
   from?: { id: number; first_name?: string; username?: string; is_bot?: boolean };
   text?: string;
   caption?: string;
@@ -355,11 +429,37 @@ async function upsertBusinessAccountLink(opts: {
     },
   });
   // status: closed = disconnected; limited = connected but no reply rights; open = OK
-  const status = !opts.enabled
+  let status = !opts.enabled
     ? 'closed'
     : opts.canReply === false
       ? 'limited'
       : 'open';
+
+  if (!existing && status !== 'closed') {
+    const { getAiTgBusinessCapacity, PRODUCT_CODES } = await import('@voxly/shared');
+    const addon = await prisma.addon.findUnique({
+      where: {
+        tenantId_type: { tenantId: opts.tenantId, type: PRODUCT_CODES.AI_TELEGRAM },
+      },
+      select: { config: true },
+    });
+    const capacity = getAiTgBusinessCapacity(addon?.config);
+    const activeCount = await prisma.conversation.count({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: opts.botId,
+        channel: 'telegram_business_account',
+        status: { not: 'closed' },
+      },
+    });
+    if (activeCount >= capacity) {
+      console.warn(
+        `[ai-telegram] Business capacity full (${activeCount}/${capacity}) for bot ${opts.botId}; refusing new connection ${opts.connectionId}`,
+      );
+      return;
+    }
+  }
+
   const data = {
     platformUserId: String(opts.ownerId),
     platformUsername: opts.ownerUsername?.replace(/^@/, '') || null,
@@ -419,6 +519,14 @@ async function handleInboundMessage(
   const from = message.from;
   if (!from) return;
 
+  // Never reply to / converse with Telegram bots (is_bot from Bot API).
+  if (from.is_bot === true) {
+    console.log(
+      `[ai-telegram] skip inbound from bot id=${from.id} @${from.username || '-'}`,
+    );
+    return;
+  }
+
   const businessConnectionId = message.business_connection_id;
   const channel = isBusiness || businessConnectionId ? 'telegram_business' : 'telegram_private';
 
@@ -426,6 +534,11 @@ async function handleInboundMessage(
   if (isBusiness && businessConnectionId) {
     const ownerId = await resolveBusinessOwnerId(botApi, businessConnectionId);
     if (ownerId && from.id === ownerId) {
+      // Peer is chat.*, not from.* (from is the business owner).
+      const peerFirst =
+        [message.chat.first_name, message.chat.last_name].filter(Boolean).join(' ') ||
+        message.chat.title ||
+        undefined;
       await pauseOnHumanOutbound({
         tenantId,
         botId,
@@ -433,8 +546,8 @@ async function handleInboundMessage(
         businessConnectionId,
         content: message.text || message.caption || '[media]',
         externalMessageId: String(message.message_id),
-        firstName: from.first_name,
-        username: from.username,
+        firstName: peerFirst,
+        username: message.chat.username,
       });
       return;
     }
@@ -443,7 +556,7 @@ async function handleInboundMessage(
   const needsMediaPipeline =
     !!(message.voice || message.audio || (message.photo?.length && !message.caption));
   if (needsMediaPipeline && OPENROUTER_API_KEY) {
-    void sendHumanLike(botApi, chatId, ['Секунду…'], businessConnectionId).catch(() => {});
+    void sendHumanLike({ botApi, chatId, bubbles: ['Секунду…'], businessConnectionId }).catch(() => {});
   }
 
   const textOrMedia = await extractInboundText(message, botApi, tenantId);
@@ -464,7 +577,7 @@ async function handleInboundMessage(
       : undefined;
 
   if (text === '/start') {
-    await sendHumanLike(botApi, chatId, ['Привет! Чем могу помочь?'], businessConnectionId);
+    await sendHumanLike({ botApi, chatId, bubbles: ['Привет! Чем могу помочь?'], businessConnectionId });
     await fireGoal({
       tenantId,
       goalName: 'ai_bot_start',
@@ -490,23 +603,23 @@ async function handleInboundMessage(
 
   if (text === '/pause') {
     await pauseConversation(tenantId, botId, String(telegramId), AI_HANDOFF_PAUSE_MS);
-    await sendHumanLike(
+    await sendHumanLike({
       botApi,
       chatId,
-      ['AI на паузе примерно на час. /ai — снова включить.'],
+      bubbles: ['AI на паузе примерно на час. /ai — снова включить.'],
       businessConnectionId,
-    );
+    });
     return;
   }
 
   if (text === '/off') {
     await setAiDisabled(tenantId, botId, String(telegramId), true);
-    await sendHumanLike(
+    await sendHumanLike({
       botApi,
       chatId,
-      ['AI выключен. /ai — включить снова.'],
+      bubbles: ['AI выключен. /ai — включить снова.'],
       businessConnectionId,
-    );
+    });
     return;
   }
 
@@ -556,48 +669,161 @@ async function handleInboundMessage(
     return;
   }
 
-  const hasBalance = await hasAiBalance(tenantId, 1);
-  if (!hasBalance) {
-    await sendHumanLike(
+  // Debounce AI: wait for quiet period after burst of short messages.
+  // Mark read immediately (like a person opening the chat), then wait to reply.
+  if (businessConnectionId && message.message_id) {
+    void markTelegramRead(
       botApi,
       chatId,
-      [
+      [String(message.message_id)],
+      businessConnectionId,
+    );
+  }
+  inboundAiDebouncer.push(conversation.id, {
+    botApi,
+    tenantId,
+    botId,
+    chatId,
+    telegramId,
+    businessConnectionId,
+    displayText,
+    messageId: String(message.message_id),
+  });
+}
+
+async function flushTelegramAiReply(pending: TgAiPending, messageIds: string[] = []) {
+  const {
+    botApi,
+    tenantId,
+    botId,
+    chatId,
+    telegramId,
+    businessConnectionId,
+    displayText,
+  } = pending;
+
+  const conversation = await prisma.conversation.findFirst({
+    where: {
+      tenantId,
+      botInstanceId: botId,
+      platformUserId: String(telegramId),
+      status: { in: ['open', 'waiting_for_human'] },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (!conversation || !(await shouldAiReply(conversation.id))) return;
+
+  const hasBalance = await hasAiBalance(tenantId, 1);
+  if (!hasBalance) {
+    await sendHumanLike({
+      botApi,
+      chatId,
+      bubbles: [
         'Баланс AI исчерпан. Пополните в кабинете. Переключаю на оператора.',
       ],
       businessConnectionId,
-    );
+    });
     await switchToHuman(botApi, chatId, tenantId, telegramId, businessConnectionId);
     return;
   }
 
   if (!OPENROUTER_API_KEY) {
-    await sendHumanLike(
+    await sendHumanLike({
       botApi,
       chatId,
-      ['AI временно недоступен (нет ключа OpenRouter).'],
+      bubbles: ['AI временно недоступен (нет ключа OpenRouter).'],
       businessConnectionId,
-    );
+    });
     return;
   }
 
+  if (businessConnectionId) {
+    const canReply = await businessConnectionCanReply(botApi, businessConnectionId);
+    if (!canReply) {
+      console.warn(
+        `[ai-telegram] skip AI send conv=${conversation.id}: business can_reply=false`,
+      );
+      await prisma.conversation.updateMany({
+        where: {
+          tenantId,
+          botInstanceId: botId,
+          channel: 'telegram_business_account',
+          businessConnectionId,
+        },
+        data: { status: 'limited' },
+      });
+      await prisma.chatMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: 'assistant',
+          content:
+            '⚠️ Ответ не отправлен в Telegram: у Business-бота нет права «Отвечать на сообщения». Telegram → Настройки → Business → Чат-боты → включите ответы, затем напишите клиенту ещё раз.',
+        },
+      });
+      return;
+    }
+  }
+
   try {
+    const ids =
+      messageIds.length > 0
+        ? messageIds
+        : pending.messageId
+          ? [pending.messageId]
+          : [];
+    await markTelegramRead(botApi, chatId, ids, businessConnectionId);
     await sendChatAction(botApi, chatId, 'typing', businessConnectionId);
 
+    const sendStartedAt = new Date();
     const { bubbles, chargeResult } = await generateAiBubbles({
       tenantId,
       conversationId: conversation.id,
       displayText,
+      persist: false,
     });
 
-    await sendHumanLike(botApi, chatId, bubbles, businessConnectionId);
+    const sendResult = await sendHumanLike({
+      botApi,
+      chatId,
+      bubbles,
+      businessConnectionId,
+      conversationId: conversation.id,
+      sendStartedAt,
+    });
+
+    if (sendResult.aborted) {
+      console.log(
+        `[ai-telegram] outbound aborted conv=${conversation.id} (new user msg) — newer inbound will reply`,
+      );
+      return;
+    }
+
+    await prisma.chatMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'assistant',
+        content:
+          sendResult.failed > 0
+            ? `⚠️ Не доставлено в Telegram (${sendResult.lastError || 'send failed'}):\n\n${bubbles.join('\n\n')}`
+            : bubbles.join('\n\n'),
+        tokensUsed: chargeResult.tokensCharged ?? undefined,
+        modelUsed: chargeResult.modelUsed,
+        providerCostRub: chargeResult.providerCostRub,
+        chargedRub: chargeResult.chargedRub,
+      },
+    });
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastAiMessageAt: new Date() },
+    });
 
     if (chargeResult.remainingBalance < 50 && chargeResult.remainingBalance > 0) {
-      await sendHumanLike(
+      await sendHumanLike({
         botApi,
         chatId,
-        ['Баланс AI скоро закончится — пополните в кабинете.'],
+        bubbles: ['Баланс AI скоро закончится — пополните в кабинете.'],
         businessConnectionId,
-      );
+      });
     }
 
     await fireGoal({
@@ -611,25 +837,32 @@ async function handleInboundMessage(
     }
   } catch (err) {
     console.error('[ai-telegram] OpenRouter error:', err);
-    await sendHumanLike(
+    await sendHumanLike({
       botApi,
       chatId,
-      ['Произошла ошибка. Попробуйте позже или /handoff'],
+      bubbles: ['Произошла ошибка. Попробуйте позже или /handoff'],
       businessConnectionId,
-    );
+    });
   }
 }
 
-/** Build history → OpenRouter → charge → store assistant bubbles. */
+/** Build history → OpenRouter → charge → optionally store assistant bubbles. */
 async function generateAiBubbles(opts: {
   tenantId: string;
   conversationId: string;
   displayText: string;
+  /** When false, caller stores the message after Telegram delivery (Business send). */
+  persist?: boolean;
 }): Promise<{
   bubbles: string[];
-  chargeResult: Awaited<ReturnType<typeof chargeAiUsage>>;
+  chargeResult: Awaited<ReturnType<typeof chargeAiUsage>> & {
+    modelUsed: string;
+    providerCostRub: number;
+    tokensCharged: number;
+  };
 }> {
   const { tenantId, conversationId, displayText } = opts;
+  const persist = opts.persist !== false;
   const aiConfig = await getTenantAiConfig(tenantId);
   const assigned = await resolveAssignedAgent(conversationId);
   const historyDesc = await prisma.chatMessage.findMany({
@@ -641,7 +874,19 @@ async function generateAiBubbles(opts: {
 
   const basePrompt =
     assigned?.systemPrompt || aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  const systemPrompt = basePrompt + JSON_FORMAT_HINT;
+  let systemPrompt = basePrompt + JSON_FORMAT_HINT;
+  try {
+    if (assigned?.id) {
+      const rag = await retrieveAgentContext({
+        aiAgentId: assigned.id,
+        query: displayText,
+        tenantId,
+      });
+      systemPrompt += formatRagPromptBlock(rag);
+    }
+  } catch (err) {
+    console.warn('[ai-telegram] RAG retrieve failed', err);
+  }
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
   ];
@@ -655,44 +900,72 @@ async function generateAiBubbles(opts: {
   messages.push({ role: 'user', content: displayText });
 
   const model = aiConfig.model || AI_MODEL_DEFAULTS.chat;
-  const completion = await openai.chat.completions.create({
-    model,
-    messages,
-    temperature: aiConfig.temperature ?? 0.7,
-    max_tokens: aiConfig.maxTokens ?? 1000,
-  });
+  let completion;
+  try {
+    completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: aiConfig.temperature ?? 0.7,
+      max_tokens: aiConfig.maxTokens ?? 1000,
+      response_format: { type: 'json_object' },
+    });
+  } catch {
+    completion = await openai.chat.completions.create({
+      model,
+      messages,
+      temperature: aiConfig.temperature ?? 0.7,
+      max_tokens: aiConfig.maxTokens ?? 1000,
+    });
+  }
 
   const raw = completion.choices[0]?.message?.content || 'Извините, не удалось ответить.';
-  const bubbles = parseAiBubbles(raw);
-  const tokensUsed = completion.usage?.total_tokens || 0;
-  const providerCost = calculateProviderCost(model, tokensUsed);
+  const bubbles = normalizeAiBubbles(parseAiBubbles(raw), 4);
+  const usage = completion.usage as OpenRouterUsageLike | undefined;
+  const cost = await resolveProviderCostRub({
+    model,
+    usage,
+    apiKey: OPENROUTER_API_KEY,
+    baseUrl: OPENROUTER_BASE_URL,
+  });
+  const tokensUsed = cost.tokens || usage?.total_tokens || 0;
 
   const chargeResult = await chargeAiUsage({
     tenantId,
-    providerCostRub: providerCost,
+    providerCostRub: cost.providerCostRub,
     tokens: tokensUsed,
     model,
     requestType: 'text',
+    aiAgentId: assigned?.id,
   });
 
-  await prisma.chatMessage.create({
-    data: {
-      conversationId,
-      role: 'assistant',
-      content: bubbles.join('\n\n'),
-      tokensUsed,
+  if (persist) {
+    await prisma.chatMessage.create({
+      data: {
+        conversationId,
+        role: 'assistant',
+        content: bubbles.join('\n\n'),
+        tokensUsed,
+        modelUsed: model,
+        providerCostRub: cost.providerCostRub,
+        chargedRub: chargeResult.chargedRub,
+      },
+    });
+
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lastAiMessageAt: new Date() },
+    });
+  }
+
+  return {
+    bubbles,
+    chargeResult: {
+      ...chargeResult,
       modelUsed: model,
-      providerCostRub: providerCost,
-      chargedRub: chargeResult.chargedRub,
+      providerCostRub: cost.providerCostRub,
+      tokensCharged: tokensUsed,
     },
-  });
-
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { lastAiMessageAt: new Date() },
-  });
-
-  return { bubbles, chargeResult };
+  };
 }
 
 async function extractInboundText(
@@ -723,21 +996,31 @@ async function extractInboundText(
         };
       }
       const format = audioFormatFromPath(file.filePath);
-      const transcript = await transcribeAudio(file.buffer, format, asrModel);
-      if (transcript) {
+      const asr = await transcribeAudio(file.buffer, format, asrModel);
+      if (asr?.text) {
         if (tenantId) {
-          void chargeAiUsage({
-            tenantId,
-            providerCostRub: Math.max(0.01, calculateProviderCost(asrModel, 500)),
-            tokens: Math.ceil(transcript.length / 4),
+          const estTokens = Math.max(1, Math.ceil(asr.text.length / 4));
+          void resolveProviderCostRub({
             model: asrModel,
-            requestType: 'transcribe',
-          }).catch((err) => console.warn('[ai-telegram] ASR charge failed', err));
+            usage: asr.usage || { total_tokens: estTokens },
+            apiKey: OPENROUTER_API_KEY,
+            baseUrl: OPENROUTER_BASE_URL,
+          })
+            .then((cost) =>
+              chargeAiUsage({
+                tenantId,
+                providerCostRub: cost.providerCostRub,
+                tokens: cost.tokens || estTokens,
+                model: asrModel,
+                requestType: 'transcribe',
+              }),
+            )
+            .catch((err) => console.warn('[ai-telegram] ASR charge failed', err));
         }
         return {
           text: message.caption
-            ? `${message.caption}\n\n[голос]: ${transcript}`
-            : transcript,
+            ? `${message.caption}\n\n[голос]: ${asr.text}`
+            : asr.text,
         };
       }
       return {
@@ -765,21 +1048,36 @@ async function extractInboundText(
       }
       const visionModel =
         process.env.AI_CHAT_MODEL || AI_MODEL_DEFAULTS.chat;
-      const description = await describeImage(file.buffer, 'image/jpeg', message.caption, visionModel);
-      if (description) {
+      const vision = await describeImage(
+        file.buffer,
+        'image/jpeg',
+        message.caption,
+        visionModel,
+      );
+      if (vision?.text) {
         if (tenantId) {
-          void chargeAiUsage({
-            tenantId,
-            providerCostRub: Math.max(0.01, calculateProviderCost(visionModel, 800)),
-            tokens: Math.ceil(description.length / 4),
+          const estTokens = Math.max(1, Math.ceil(vision.text.length / 4));
+          void resolveProviderCostRub({
             model: visionModel,
-            requestType: 'vision',
-          }).catch((err) => console.warn('[ai-telegram] vision charge failed', err));
+            usage: vision.usage || { total_tokens: estTokens },
+            apiKey: OPENROUTER_API_KEY,
+            baseUrl: OPENROUTER_BASE_URL,
+          })
+            .then((cost) =>
+              chargeAiUsage({
+                tenantId,
+                providerCostRub: cost.providerCostRub,
+                tokens: cost.tokens || estTokens,
+                model: visionModel,
+                requestType: 'vision',
+              }),
+            )
+            .catch((err) => console.warn('[ai-telegram] vision charge failed', err));
         }
         return {
           text: message.caption
-            ? `${message.caption}\n\n[фото]: ${description}`
-            : `[фото]: ${description}`,
+            ? `${message.caption}\n\n[фото]: ${vision.text}`
+            : `[фото]: ${vision.text}`,
         };
       }
       return {
@@ -851,7 +1149,7 @@ async function transcribeAudio(
   buffer: Buffer,
   format: string,
   model: string,
-): Promise<string | null> {
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
   if (!OPENROUTER_API_KEY) return null;
   const res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
     method: 'POST',
@@ -875,9 +1173,13 @@ async function transcribeAudio(
     console.error('[ai-telegram] transcription HTTP', res.status, errText.slice(0, 400));
     return null;
   }
-  const data = (await res.json()) as { text?: string };
+  const data = (await res.json()) as {
+    text?: string;
+    usage?: OpenRouterUsageLike;
+  };
   const text = data.text?.trim();
-  return text || null;
+  if (!text) return null;
+  return { text, usage: data.usage };
 }
 
 /** Multimodal chat (Gemini Flash etc.) → short RU image description. */
@@ -886,7 +1188,7 @@ async function describeImage(
   mime: string,
   caption: string | undefined,
   model: string,
-): Promise<string | null> {
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
   if (!OPENROUTER_API_KEY) return null;
   const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
   const prompt =
@@ -907,7 +1209,8 @@ async function describeImage(
     temperature: 0.2,
   });
   const text = completion.choices[0]?.message?.content?.trim();
-  return text || null;
+  if (!text) return null;
+  return { text, usage: completion.usage as OpenRouterUsageLike | undefined };
 }
 
 async function getAsrModel(): Promise<string> {
@@ -1445,6 +1748,7 @@ async function pauseOnHumanOutbound(opts: {
   });
 
   // Owner replied from phone — still create/update CRM lead for this peer.
+  // Do NOT auto-pause AI (manual /pause /off / CRM buttons only).
   const businessAccountLabel = await resolveBusinessAccountLabel(
     opts.tenantId,
     opts.botId,
@@ -1459,22 +1763,6 @@ async function pauseOnHumanOutbound(opts: {
     firstName: opts.firstName,
     businessAccountLabel: businessAccountLabel || undefined,
   }).catch((err) => console.warn('[ai-telegram] CRM sync on human outbound failed', err));
-
-  if (!conversation.aiDisabled) {
-    const agent = await resolveAssignedAgent(conversation.id);
-    if (agent) {
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: {
-          pausedUntil: new Date(Date.now() + AI_HANDOFF_PAUSE_MS),
-          updatedAt: new Date(),
-        },
-      });
-      console.log(
-        `[ai-telegram] auto-pause 1h conv=${conversation.id} (human business outbound)`,
-      );
-    }
-  }
 }
 
 async function pauseConversation(
@@ -1514,6 +1802,11 @@ async function setAiDisabled(
 }
 
 async function handleCallback(update: any, botApi: string, tenantId: string, botId: string) {
+  const from = update.callback_query?.from;
+  if (from?.is_bot === true) {
+    console.log(`[ai-telegram] skip callback from bot id=${from.id}`);
+    return;
+  }
   const callbackData = update.callback_query.data;
   const chatId = update.callback_query.message.chat.id;
   const telegramId = update.callback_query.from.id;
@@ -1581,7 +1874,7 @@ async function switchToAi(
       pausedUntil: null,
     },
   });
-  await sendHumanLike(botApi, chatId, ['Режим AI включён.'], businessConnectionId);
+  await sendHumanLike({ botApi, chatId, bubbles: ['Режим AI включён.'], businessConnectionId });
 }
 
 async function switchToHuman(
@@ -1600,12 +1893,12 @@ async function switchToHuman(
     data: { mode: 'human', status: 'waiting_for_human' },
   });
 
-  await sendHumanLike(
+  await sendHumanLike({
     botApi,
     chatId,
-    ['Режим оператора. Ожидайте ответа. Вернуться к AI: /ai'],
+    bubbles: ['Режим оператора. Ожидайте ответа. Вернуться к AI: /ai'],
     businessConnectionId,
-  );
+  });
 
   await fireGoal({
     tenantId,
@@ -1656,21 +1949,6 @@ async function getTenantAiConfig(tenantId: string) {
   };
 }
 
-function calculateProviderCost(model: string, tokens: number): number {
-  const pricingPer1M: Record<string, { input: number; output: number }> = {
-    'google/gemini-2.5-flash': { input: 0.15, output: 0.6 },
-    'google/gemini-2.5-flash-lite': { input: 0.05, output: 0.2 },
-    'openai/gpt-4o': { input: 2.5, output: 10 },
-    'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
-    'gpt-4o': { input: 2.5, output: 10 },
-    'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  };
-
-  const rates = pricingPer1M[model] || pricingPer1M['openai/gpt-4o-mini'];
-  const avgCostUsd = ((rates.input + rates.output) / 2 / 1_000_000) * tokens;
-  return Math.round(avgCostUsd * 100 * 100) / 100;
-}
-
 /** Parse n8n-style multi-bubble JSON; fallback to single bubble. */
 function parseAiBubbles(raw: string): string[] {
   const trimmed = raw.trim();
@@ -1702,13 +1980,59 @@ function parseAiBubbles(raw: string): string[] {
 }
 
 function typingDelayMs(text: string): number {
-  const base = 600;
-  const perChar = 25;
-  return Math.min(4500, Math.max(400, base + text.length * perChar));
+  const base = 800;
+  const perChar = 30;
+  return Math.min(5000, Math.max(600, base + text.length * perChar));
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function hasNewerUserMessage(conversationId: string, since: Date): Promise<boolean> {
+  const n = await prisma.chatMessage.count({
+    where: {
+      conversationId,
+      role: 'user',
+      createdAt: { gt: since },
+    },
+  });
+  return n > 0;
+}
+
+async function markTelegramRead(
+  botApi: string,
+  chatId: number,
+  messageIds: string[],
+  businessConnectionId?: string,
+) {
+  const ids = messageIds.map((id) => String(id || '').trim()).filter(Boolean);
+  if (!ids.length) return;
+
+  if (businessConnectionId) {
+    for (const messageId of ids) {
+      await fetch(`${botApi}/readBusinessMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_connection_id: businessConnectionId,
+          chat_id: chatId,
+          message_id: Number(messageId),
+        }),
+      }).catch(() => undefined);
+    }
+    return;
+  }
+
+  // Private bot chats: best-effort (Bot API has no universal read receipt).
+  const maxId = Math.max(...ids.map((id) => Number(id) || 0));
+  if (maxId > 0) {
+    await fetch(`${botApi}/readChatHistory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, max_id: maxId }),
+    }).catch(() => undefined);
+  }
 }
 
 async function sendChatAction(
@@ -1728,24 +2052,72 @@ async function sendChatAction(
   }).catch(() => undefined);
 }
 
-async function sendHumanLike(
+async function businessConnectionCanReply(
   botApi: string,
-  chatId: number,
-  bubbles: string[],
-  businessConnectionId?: string,
-) {
-  const parts = bubbles.filter((b) => b && b.trim());
-  if (!parts.length) return;
+  businessConnectionId: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `${botApi}/getBusinessConnection?business_connection_id=${encodeURIComponent(businessConnectionId)}`,
+    );
+    const json = (await res.json()) as {
+      ok?: boolean;
+      result?: { can_reply?: boolean; is_enabled?: boolean };
+    };
+    return json.ok === true && json.result?.is_enabled !== false && json.result?.can_reply === true;
+  } catch {
+    return false;
+  }
+}
 
+async function sendHumanLike(opts: {
+  botApi: string;
+  chatId: number;
+  bubbles: string[];
+  businessConnectionId?: string;
+  conversationId?: string;
+  sendStartedAt?: Date;
+}): Promise<{ sent: number; failed: number; lastError?: string; aborted?: boolean }> {
+  const parts = opts.bubbles.filter((b) => b && b.trim()).slice(0, 4);
+  if (!parts.length) return { sent: 0, failed: 0 };
+
+  let sent = 0;
+  let failed = 0;
+  let lastError: string | undefined;
   for (let i = 0; i < parts.length; i += 1) {
+    if (
+      opts.conversationId &&
+      opts.sendStartedAt &&
+      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+    ) {
+      return { sent, failed, lastError, aborted: true };
+    }
     const text = parts[i];
-    await sendChatAction(botApi, chatId, 'typing', businessConnectionId);
+    await sendChatAction(opts.botApi, opts.chatId, 'typing', opts.businessConnectionId);
     await sleep(typingDelayMs(text));
-    await sendBotMessage(botApi, chatId, text, businessConnectionId);
+    if (
+      opts.conversationId &&
+      opts.sendStartedAt &&
+      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+    ) {
+      return { sent, failed, lastError, aborted: true };
+    }
+    const ok = await sendBotMessage(
+      opts.botApi,
+      opts.chatId,
+      text,
+      opts.businessConnectionId,
+    );
+    if (ok) sent += 1;
+    else {
+      failed += 1;
+      lastError = 'BUSINESS_PEER_INVALID or Telegram send failed';
+    }
     if (i < parts.length - 1) {
-      await sleep(300 + Math.floor(Math.random() * 500));
+      await sleep(humanBubbleGapMs());
     }
   }
+  return { sent, failed, lastError };
 }
 
 async function sendBotMessage(
@@ -1753,7 +2125,7 @@ async function sendBotMessage(
   chatId: number,
   text: string,
   businessConnectionId?: string,
-) {
+): Promise<boolean> {
   const res = await fetch(`${botApi}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1766,7 +2138,9 @@ async function sendBotMessage(
   const data = (await res.json()) as any;
   if (!data.ok) {
     console.warn('[ai-telegram] sendMessage failed:', data);
+    return false;
   }
+  return true;
 }
 
 main().catch(console.error);

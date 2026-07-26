@@ -22,13 +22,19 @@ type ChatMessage = {
   content: string;
   attachments?: ChatAttachment[];
   sentAt: string;
+  senderLabel?: string | null;
+};
+
+type ChatPresence = {
+  online?: boolean;
+  lastSeenAt?: string | null;
+  approx?: 'recently' | 'last_week' | 'last_month' | null;
 };
 
 type ChatPayload = {
   messages?: ChatMessage[];
   username?: string | null;
   firstName?: string | null;
-  formatHint?: string;
   error?: string;
   /** Soft empty-state (no linked Telegram lead yet) — not a hard failure. */
   info?: string;
@@ -36,12 +42,19 @@ type ChatPayload = {
   channelLabel?: string | null;
   identityLabel?: string | null;
   peerLabel?: string | null;
+  contactName?: string | null;
+  botAgentLabel?: string | null;
+  operatorName?: string | null;
   botType?: string | null;
   supportsAttachments?: boolean;
   mode?: string | null;
+  aiDisabled?: boolean;
+  pausedUntil?: string | null;
+  aiControls?: boolean;
   conversationId?: string | null;
   subscriberId?: string | null;
   threads?: ChatThread[];
+  presence?: ChatPresence | null;
 };
 
 type ChatThread = {
@@ -275,10 +288,22 @@ function workspaceAwareFetch(
 
 const api = new RestApiClient({ fetch: workspaceAwareFetch });
 
-function roleLabel(role: string): string {
-  if (role === 'user') return 'Клиент';
-  if (role === 'operator') return 'Менеджер';
-  if (role === 'assistant' || role === 'bot') return 'Бот';
+function roleLabel(
+  role: string,
+  opts?: {
+    contactName?: string | null;
+    botAgentLabel?: string | null;
+    operatorName?: string | null;
+    senderLabel?: string | null;
+  },
+): string {
+  if (role === 'user') return opts?.contactName || 'Клиент';
+  if (role === 'operator') {
+    return opts?.senderLabel || opts?.operatorName || 'Менеджер';
+  }
+  if (role === 'assistant' || role === 'bot') {
+    return opts?.botAgentLabel || 'Бот';
+  }
   return role || '';
 }
 
@@ -288,6 +313,58 @@ function escapeHtml(src: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function sameCalendarDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** Russian relative/absolute last-seen for CRM chat header. */
+function formatRuLastSeen(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs < 60_000) return 'только что';
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `${mins} мин. назад`;
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (sameCalendarDay(d, now)) return `сегодня в ${time}`;
+  const yest = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+  if (sameCalendarDay(d, yest)) return `вчера в ${time}`;
+  if (diffMs < 7 * 86_400_000) {
+    const days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    return `${days[d.getDay()]} в ${time}`;
+  }
+  return d.toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Hide when unknown — never invent status. */
+function formatPresenceLine(presence?: ChatPresence | null): string | null {
+  if (!presence) return null;
+  if (presence.online) return 'онлайн';
+  if (presence.approx === 'recently') return 'был(а) недавно';
+  if (presence.approx === 'last_week') return 'был(а) на этой неделе';
+  if (presence.approx === 'last_month') return 'был(а) в этом месяце';
+  if (presence.lastSeenAt) {
+    const when = formatRuLastSeen(presence.lastSeenAt);
+    return when ? `был(а) в сети ${when}` : null;
+  }
+  return null;
 }
 
 /** Normalize pasted/TG HTML leftovers before escape (INC-050). */
@@ -480,21 +557,36 @@ const ChatPanel = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [meta, setMeta] = useState<{
     title: string;
-    hint: string;
+    presenceLine: string | null;
     channelLabel: string;
     identityLabel: string;
     supportsAttachments: boolean;
     conversationId: string;
     giftSubscriberId: string;
+    aiControls: boolean;
+    mode: string;
+    aiDisabled: boolean;
+    pausedUntil: string | null;
+    contactName: string;
+    botAgentLabel: string;
+    operatorName: string;
   }>({
     title: 'Чат',
-    hint: '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+    presenceLine: null,
     channelLabel: '',
     identityLabel: '',
     supportsAttachments: true,
     conversationId: '',
     giftSubscriberId: '',
+    aiControls: false,
+    mode: 'ai',
+    aiDisabled: false,
+    pausedUntil: null,
+    contactName: 'Клиент',
+    botAgentLabel: 'Бот',
+    operatorName: 'Менеджер',
   });
+  const [aiBusy, setAiBusy] = useState(false);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [draft, setDraft] = useState('');
@@ -578,17 +670,25 @@ const ChatPanel = () => {
         setMessages(next);
       }
       const who =
+        data.contactName ||
         data.peerLabel ||
         (data.username ? `@${data.username}` : data.firstName || 'Клиент');
       setMeta({
         title: who,
-        hint: data.formatHint || '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+        presenceLine: formatPresenceLine(data.presence),
         channelLabel: data.channelLabel || '',
         identityLabel: data.identityLabel || '',
         supportsAttachments:
           typeof data.supportsAttachments === 'boolean' ? data.supportsAttachments : true,
         conversationId: data.conversationId || '',
         giftSubscriberId: data.subscriberId || '',
+        aiControls: data.aiControls === true,
+        mode: data.mode || 'ai',
+        aiDisabled: data.aiDisabled === true,
+        pausedUntil: data.pausedUntil || null,
+        contactName: who,
+        botAgentLabel: data.botAgentLabel || data.identityLabel || 'Бот',
+        operatorName: data.operatorName || 'Менеджер',
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Не удалось загрузить чат';
@@ -607,6 +707,35 @@ const ChatPanel = () => {
       if (initialLoad) setLoading(false);
     }
   }, [recordId]);
+
+  const setAiAction = async (action: 'enable' | 'pause' | 'disable') => {
+    if (!recordId || !meta.conversationId || aiBusy) return;
+    setAiBusy(true);
+    try {
+      await api.post(`/s/crm-chat/${recordId}/ai`, {
+        conversationId: meta.conversationId,
+        action,
+      });
+      await enqueueSnackbar({
+        message:
+          action === 'enable'
+            ? 'AI включён'
+            : action === 'pause'
+              ? 'AI на паузе ~1 час'
+              : 'AI отключён',
+        variant: 'success',
+      });
+      lastSig.current = '';
+      await load();
+    } catch (err) {
+      await enqueueSnackbar({
+        message: err instanceof Error ? err.message : 'Не удалось изменить AI',
+        variant: 'error',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   // Remote DOM sandbox: no window.setInterval / requestAnimationFrame.
   // Refresh on open, after send, «Обновить», and host soft-click (~4.5s while Chat open).
@@ -777,6 +906,7 @@ const ChatPanel = () => {
 
   return (
     <div
+      data-voxly-crm-chat="1"
       style={{
         // Fill the host widget box; never grow with messages (outer scroll-wrapper
         // would then move the composer — pin via absolute + host CSS in shell-ux).
@@ -850,9 +980,11 @@ const ChatPanel = () => {
               })}
             </div>
           )}
-          <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-            Формат: {meta.hint}
-          </div>
+          {meta.presenceLine ? (
+            <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+              {meta.presenceLine}
+            </div>
+          ) : null}
         </div>
         <button
           type="button"
@@ -871,6 +1003,66 @@ const ChatPanel = () => {
           Обновить
         </button>
       </div>
+
+      {meta.aiControls && meta.conversationId ? (
+        <div
+          data-voxly-ai-controls="1"
+          style={{
+            flexShrink: 0,
+            padding: '8px 16px',
+            borderBottom: `1px solid ${border}`,
+            background: dark ? '#0f172a' : '#f8fafc',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            alignItems: 'center',
+          }}
+        >
+          {(() => {
+            const paused =
+              Boolean(meta.pausedUntil) &&
+              new Date(meta.pausedUntil!).getTime() > Date.now();
+            const status = meta.aiDisabled
+              ? 'AI выкл'
+              : paused
+                ? 'AI пауза'
+                : meta.mode === 'human'
+                  ? 'AI пауза'
+                  : 'AI вкл';
+            return (
+              <span style={{ fontSize: 12, color: muted, marginRight: 4, fontWeight: 600 }}>
+                {status}
+              </span>
+            );
+          })()}
+          {(
+            [
+              { action: 'enable' as const, label: 'Вкл AI' },
+              { action: 'pause' as const, label: 'Пауза' },
+              { action: 'disable' as const, label: 'Выкл AI' },
+            ] as const
+          ).map((btn) => (
+            <button
+              key={btn.action}
+              type="button"
+              disabled={aiBusy || sending}
+              onClick={() => void setAiAction(btn.action)}
+              style={{
+                border: `1px solid ${border}`,
+                background: panel,
+                color: ink,
+                borderRadius: 8,
+                padding: '5px 10px',
+                cursor: aiBusy ? 'wait' : 'pointer',
+                fontSize: 12,
+                opacity: aiBusy ? 0.6 : 1,
+              }}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div
         ref={listRef}
@@ -916,7 +1108,13 @@ const ChatPanel = () => {
               }}
             >
               <div style={{ fontSize: 11, color: muted, marginBottom: 4 }}>
-                {roleLabel(m.role)} · {new Date(m.sentAt).toLocaleString()}
+                {roleLabel(m.role, {
+                  contactName: meta.contactName,
+                  botAgentLabel: meta.botAgentLabel,
+                  operatorName: meta.operatorName,
+                  senderLabel: m.senderLabel,
+                })}{' '}
+                · {new Date(m.sentAt).toLocaleString()}
               </div>
               {!hidePlaceholder && m.content ? (
                 <div

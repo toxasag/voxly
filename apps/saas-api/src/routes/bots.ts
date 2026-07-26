@@ -1789,9 +1789,24 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      const aiAddon = await prisma.addon.findUnique({
+        where: { tenantId_type: { tenantId, type: 'ai_tg' } },
+      });
+      const { getAiTgBusinessCapacity, getAiTgExtraSlots, PRICING } = await import('@voxly/shared');
+      const extraSlots = getAiTgExtraSlots(aiAddon?.config);
+      const capacity = getAiTgBusinessCapacity(aiAddon?.config);
+      const activeBusiness = businessAccounts.filter((a) => a.status !== 'closed').length;
+
       return reply.send({
         defaultAiAgentId: botDefault?.defaultAiAgentId ?? null,
         defaultAiAgent: botDefault?.defaultAiAgent ?? null,
+        businessCapacity: {
+          included: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+          extraSlots,
+          capacity,
+          active: activeBusiness,
+          extraPriceMonthly: PRICING.AI_TG_EXTRA_CONN_MONTHLY,
+        },
         businessAccounts: businessAccounts.map((a) => ({
           id: a.id,
           ownerTelegramId: a.platformUserId,
@@ -1834,6 +1849,34 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             : null,
         })),
       });
+    },
+  );
+
+  // Soft-unlink Business account → frees a slot (swap)
+  fastify.delete(
+    '/:botId/business-accounts/:accountId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId, accountId } = request.params as { botId: string; accountId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can unlink Business accounts' });
+      }
+      const row = await fastify.prisma.conversation.findFirst({
+        where: {
+          id: accountId,
+          tenantId,
+          botInstanceId: botId,
+          channel: 'telegram_business_account',
+        },
+      });
+      if (!row) return reply.code(404).send({ error: 'Account not found' });
+      await fastify.prisma.conversation.update({
+        where: { id: row.id },
+        data: { status: 'closed' },
+      });
+      return reply.send({ ok: true, id: row.id, status: 'closed' });
     },
   );
 

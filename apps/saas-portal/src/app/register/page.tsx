@@ -85,19 +85,20 @@ export default function RegisterPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
+    <main className="flex min-h-screen items-center justify-center bg-canvas px-6 py-16">
       <div className="w-full max-w-md animate-in">
         <div className="mb-8 text-center">
           <Link
             href="/"
-            className="rounded-sm text-lg font-semibold tracking-tight text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="text-[24px] font-semibold tracking-[-0.025em] text-ink transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-hairline"
           >
             Voxly
           </Link>
+          <p className="mt-2 text-sm text-mid-gray">Новый воркспейс</p>
         </div>
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-xl">Регистрация</CardTitle>
+            <CardTitle className="text-[24px] tracking-[-0.025em]">Регистрация</CardTitle>
             <CardDescription>Создайте воркспейс за минуту</CardDescription>
           </CardHeader>
           <CardContent>
@@ -160,7 +161,7 @@ export default function RegisterPage() {
                   maxLength={50}
                   title="Только латиница, цифры и дефис"
                 />
-                <p className="text-xs text-muted-foreground">Латиница, цифры, дефис · станет адресом кабинета</p>
+                <p className="text-xs text-mid-gray">Латиница, цифры, дефис · станет адресом кабинета</p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ref">Реферальный код</Label>
@@ -177,9 +178,9 @@ export default function RegisterPage() {
                 {loading ? 'Создание…' : 'Создать аккаунт'}
               </Button>
             </form>
-            <p className="mt-6 text-center text-sm text-muted-foreground">
+            <p className="mt-6 text-center text-sm text-mid-gray">
               Уже есть аккаунт?{' '}
-              <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
+              <Link href="/login" className="font-medium text-ink underline-offset-4 hover:underline">
                 Войти
               </Link>
             </p>

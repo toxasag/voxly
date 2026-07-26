@@ -13,6 +13,7 @@ import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
 import { CopyButton } from '@/components/portal/copy-button';
 import { cn } from '@/lib/utils';
+import { startCheckout } from '@/lib/checkout';
 
 interface BotRow {
   id: string;
@@ -93,6 +94,13 @@ export default function AiBotDetailPage() {
   const [maxConn, setMaxConn] = useState(10);
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [businessAccounts, setBusinessAccounts] = useState<BusinessAccountRow[]>([]);
+  const [bizCapacity, setBizCapacity] = useState<{
+    included: number;
+    extraSlots: number;
+    capacity: number;
+    active: number;
+    extraPriceMonthly: number;
+  } | null>(null);
   const [agents, setAgents] = useState<AgentRef[]>([]);
   const [defaultAiAgentId, setDefaultAiAgentId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -125,6 +133,10 @@ export default function AiBotDetailPage() {
         const convJson = await convRes.json();
         setConversations(convJson.conversations || []);
         setBusinessAccounts(convJson.businessAccounts || []);
+        if (convJson.businessCapacity) {
+          setBizCapacity(convJson.businessCapacity);
+          setMaxConn(convJson.businessCapacity.capacity);
+        }
         if (convJson.defaultAiAgentId !== undefined) {
           setDefaultAiAgentId(convJson.defaultAiAgentId);
         }
@@ -303,11 +315,17 @@ export default function AiBotDetailPage() {
               Business-аккаунты
             </p>
             <p className="mt-2 text-xl font-semibold">
-              {businessAccounts.filter((a) => a.connected).length ||
-                bot.businessConnectionCount ||
+              {bizCapacity?.active ??
+                businessAccounts.filter((a) => a.connected).length ??
+                bot.businessConnectionCount ??
                 0}
-              /{maxConn}
+              /{bizCapacity?.capacity ?? maxConn}
             </p>
+            {bizCapacity && bizCapacity.extraSlots > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                +{bizCapacity.extraSlots} доп. слотов
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -377,11 +395,34 @@ export default function AiBotDetailPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Подключённые Business-аккаунты</CardTitle>
           <CardDescription>
-            Аккаунты, где бот добавлен в «Автоматизация чатов». При бане подключайте бота к другому
-            аккаунту — он появится здесь.
+            В тарифе {bizCapacity?.included ?? 10} слотов. Можно отключить старый и подключить новый.
+            Сверх лимита — {bizCapacity?.extraPriceMonthly ?? 200} ₽/мес за аккаунт.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy === 'buy-slot'}
+              onClick={async () => {
+                setBusy('buy-slot');
+                setError('');
+                try {
+                  await startCheckout({
+                    productCode: 'ai_tg_extra_conn',
+                    periodMonths: 1,
+                    quantity: 1,
+                  });
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+                  setBusy('');
+                }
+              }}
+            >
+              Купить слот +1 ({bizCapacity?.extraPriceMonthly ?? 200} ₽/мес)
+            </Button>
+          </div>
           {businessAccounts.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Пока нет. Telegram → Настройки → Бизнес → Автоматизация чатов → @{bot.botUsername}.
@@ -406,27 +447,57 @@ export default function AiBotDetailPage() {
                         : ''}
                     </p>
                     {a.status === 'limited' && (
-                      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                      <p className="mt-1 text-xs text-mid-gray">
                         В Telegram → Бизнес → Автоматизация чатов выдайте боту права читать и
                         отвечать — иначе входящие и сделки в CRM не появятся.
                       </p>
                     )}
                   </div>
-                  <Badge
-                    variant={
-                      a.status === 'closed'
-                        ? 'secondary'
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge
+                      variant={
+                        a.status === 'closed'
+                          ? 'secondary'
+                          : a.status === 'limited'
+                            ? 'warning'
+                            : 'default'
+                      }
+                    >
+                      {a.status === 'closed'
+                        ? 'отключён'
                         : a.status === 'limited'
-                          ? 'warning'
-                          : 'default'
-                    }
-                  >
-                    {a.status === 'closed'
-                      ? 'отключён'
-                      : a.status === 'limited'
-                        ? 'нет прав ответа'
-                        : 'подключён'}
-                  </Badge>
+                          ? 'нет прав ответа'
+                          : 'подключён'}
+                    </Badge>
+                    {a.status !== 'closed' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy === `unlink-${a.id}`}
+                        onClick={async () => {
+                          setBusy(`unlink-${a.id}`);
+                          setError('');
+                          try {
+                            const res = await fetch(
+                              `/api/bots/${botId}/business-accounts/${a.id}`,
+                              { method: 'DELETE', headers: authHeaders() },
+                            );
+                            if (!res.ok) {
+                              const j = await res.json().catch(() => ({}));
+                              throw new Error(j.error || 'Не удалось отключить');
+                            }
+                            await load();
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : 'Ошибка');
+                          } finally {
+                            setBusy('');
+                          }
+                        }}
+                      >
+                        Отключить
+                      </Button>
+                    )}
+                  </div>
                 </div>
               );
             })
@@ -639,8 +710,8 @@ export default function AiBotDetailPage() {
                         className={cn(
                           'rounded-md px-3 py-2 text-sm',
                           m.role === 'user' && 'bg-secondary/70',
-                          m.role === 'assistant' && 'bg-[#f0f4fb]',
-                          m.role === 'operator' && 'bg-[#f3f7f2]',
+                          m.role === 'assistant' && 'bg-canvas',
+                          m.role === 'operator' && 'bg-surface-alt',
                           m.role === 'system' && 'bg-muted text-muted-foreground',
                         )}
                       >

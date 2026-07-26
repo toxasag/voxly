@@ -4,9 +4,21 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { TenantStatus } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import { ensureOpportunityRuDefaults } from '../services/twenty-opportunity-ru-defaults.js';
+import { collectPlatformHealth } from '../services/admin-health.js';
+import {
+  purgeTenantFully,
+  refreshCrmChatAppForTenant,
+} from '../services/purge-tenant.js';
+import { z } from 'zod';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.requireSuperadmin);
+
+  // --- Live system health (predictive ops) ---
+  fastify.get('/health', async (_request, reply) => {
+    const report = await collectPlatformHealth(fastify.prisma);
+    return reply.send(report);
+  });
 
   // --- Dashboard stats ---
   fastify.get('/stats', async (_request, reply) => {
@@ -71,6 +83,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           users: { include: { user: true }, take: 1 },
           subscriptions: { where: { status: 'active' }, take: 1 },
           referralReceived: true,
+          aiWallet: { select: { balanceRub: true } },
         },
         skip: (page - 1) * limit,
         take: limit,
@@ -92,6 +105,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         owner: t.users[0]?.user
           ? { email: t.users[0].user.email, name: `${t.users[0].user.firstName || ''} ${t.users[0].user.lastName || ''}`.trim() }
           : null,
+        aiBalanceRub: t.aiWallet ? Number(t.aiWallet.balanceRub) : 0,
         activeSubscription: t.subscriptions[0]
           ? { productCode: t.subscriptions[0].productCode, endsAt: t.subscriptions[0].endsAt }
           : null,
@@ -163,10 +177,61 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         tenant.twentyWorkspaceId,
       );
       await ensureOpportunityRuDefaults(tenant.twentyWorkspaceId);
+      try {
+        await refreshCrmChatAppForTenant({ tenantId: id, db: fastify.prisma });
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'CRM chat refresh after defaults failed');
+      }
       return reply.send({ ok: true, slug: tenant.slug });
     } catch (error) {
       fastify.log.error({ err: error, tenantId: id }, 'Failed to reapply CRM defaults');
       return reply.code(502).send({ error: 'Could not apply CRM defaults' });
+    }
+  });
+
+  // --- Force-refresh Voxly CRM Chat app (AI buttons, etc.) ---
+  fastify.post('/tenants/:id/refresh-crm-chat', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const result = await refreshCrmChatAppForTenant({
+        tenantId: id,
+        db: fastify.prisma,
+      });
+      return reply.send(result);
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode || 502;
+      return reply
+        .code(status)
+        .send({ error: error instanceof Error ? error.message : 'refresh failed' });
+    }
+  });
+
+  // --- Irreversible full tenant wipe (portal + CRM + bots + chats) ---
+  fastify.delete('/tenants/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { userId } = (request as any).user;
+    const body = z
+      .object({ confirmSlug: z.string().min(1) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send({ error: 'Body must include confirmSlug matching the tenant slug' });
+    }
+    try {
+      const result = await purgeTenantFully({
+        tenantId: id,
+        confirmSlug: body.data.confirmSlug,
+        actorUserId: userId,
+        db: fastify.prisma,
+      });
+      return reply.send(result);
+    } catch (error) {
+      const status = (error as { statusCode?: number }).statusCode || 500;
+      fastify.log.error({ err: error, tenantId: id }, 'purge tenant failed');
+      return reply
+        .code(status)
+        .send({ error: error instanceof Error ? error.message : 'purge failed' });
     }
   });
 
@@ -259,6 +324,51 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     return reply.send({ message: 'Credit added', amountRub });
+  });
+
+  // --- Manual AI wallet top-up ---
+  fastify.post('/tenants/:id/ai-credit', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { amountRub?: number; note?: string };
+    const amountRub = Number(body.amountRub);
+
+    if (!Number.isFinite(amountRub) || amountRub <= 0) {
+      return reply.code(400).send({ error: 'amountRub must be a positive number' });
+    }
+    if (amountRub > 1_000_000) {
+      return reply.code(400).send({ error: 'amountRub too large' });
+    }
+
+    const prisma = fastify.prisma;
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+      select: { id: true, slug: true },
+    });
+    if (!tenant) {
+      return reply.code(404).send({ error: 'Tenant not found' });
+    }
+
+    const wallet = await prisma.aiWallet.upsert({
+      where: { tenantId: id },
+      create: { tenantId: id, balanceRub: amountRub },
+      update: { balanceRub: { increment: amountRub } },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        tenantId: id,
+        actorUserId: (request as any).user.userId,
+        action: 'manual_ai_credit',
+        payload: { amountRub, note: body.note || null, balanceRub: Number(wallet.balanceRub) },
+      },
+    });
+
+    return reply.send({
+      message: 'AI credit added',
+      amountRub,
+      balanceRub: Number(wallet.balanceRub),
+      slug: tenant.slug,
+    });
   });
 
   // --- Gift funnel effectiveness across all tenants ---

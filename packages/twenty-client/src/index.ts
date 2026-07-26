@@ -17,6 +17,11 @@ export interface EnsureCrmChatAppOptions {
   tarball?: Uint8Array;
   /** Path hint for callers; saas-api reads the file and passes `tarball`. */
   tarballPath?: string;
+  /**
+   * Uninstall then reinstall so front-components pick up a new tarball.
+   * Private apps have no upgradeApplication — required after registry refresh.
+   */
+  forceReinstall?: boolean;
 }
 
 function formatTelegramHandle(raw?: string | null): string | undefined {
@@ -133,6 +138,36 @@ const GET_WORKSPACE_DEFAULTS_CONTEXT = gql`
           }
         }
       }
+    }
+  }
+`;
+
+const GET_OPPORTUNITY_STAGE_FIELD = gql`
+  query GetOpportunityStageField {
+    objects(paging: { first: 200 }, filter: { nameSingular: { eq: "opportunity" } }) {
+      edges {
+        node {
+          id
+          nameSingular
+          fieldsList {
+            id
+            name
+            options
+          }
+        }
+      }
+    }
+  }
+`;
+
+/** Twenty seed option id for the first Opportunity stage (label/value may be renamed). */
+export const OPPORTUNITY_NEW_STAGE_OPTION_ID =
+  '20202020-8e01-4afd-9c39-d2063097587a';
+
+const DELETE_CURRENT_WORKSPACE = gql`
+  mutation DeleteCurrentWorkspace {
+    deleteCurrentWorkspace {
+      id
     }
   }
 `;
@@ -400,6 +435,12 @@ const INSTALL_APPLICATION = gql`
   }
 `;
 
+const UNINSTALL_APPLICATION = gql`
+  mutation UninstallApplication($universalIdentifier: String!) {
+    uninstallApplication(universalIdentifier: $universalIdentifier)
+  }
+`;
+
 const FIND_MANY_APPLICATIONS = gql`
   query FindManyApplications {
     findManyApplications {
@@ -445,6 +486,10 @@ function isAlreadyInstalledError(err: unknown): boolean {
   return /already installed|already exists|APP_ALREADY_INSTALLED/i.test(errorMessage(err));
 }
 
+function isNotInstalledError(err: unknown): boolean {
+  return /not installed|not found|APP_NOT_INSTALLED|does not exist/i.test(errorMessage(err));
+}
+
 /** Browser origin from a Twenty workspace URL (custom or subdomain). */
 export function workspaceUrlToOrigin(workspaceUrl: string): string {
   try {
@@ -479,6 +524,14 @@ const CREATE_OPPORTUNITY = gql`
   }
 `;
 
+const UPDATE_OPPORTUNITY = gql`
+  mutation UpdateOpportunity($id: UUID!, $data: OpportunityUpdateInput!) {
+    updateOpportunity(id: $id, data: $data) {
+      id
+    }
+  }
+`;
+
 const FIND_PEOPLE = gql`
   query FindPeople($filter: PersonFilterInput) {
     people(filter: $filter, first: 5) {
@@ -497,6 +550,8 @@ const FIND_OPPORTUNITIES = gql`
       edges {
         node {
           id
+          stage
+          name
         }
       }
     }
@@ -1404,6 +1459,26 @@ export class TwentyClient {
     );
   }
 
+  /** Remove CRM chat (or other) app from the current workspace. Idempotent. */
+  async uninstallApp(universalIdentifier: string = VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER): Promise<void> {
+    if (!this.authTokens) {
+      throw new Error('Must authenticate before uninstalling apps');
+    }
+    const id =
+      universalIdentifier === 'voxly-platform' || universalIdentifier === 'voxly-crm-chat'
+        ? VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER
+        : universalIdentifier;
+    try {
+      await this.authClient.request(
+        UNINSTALL_APPLICATION,
+        { universalIdentifier: id },
+        { Authorization: `Bearer ${this.authTokens.accessToken}` },
+      );
+    } catch (err) {
+      if (!isNotInstalledError(err)) throw err;
+    }
+  }
+
   /**
    * Publish (or refresh) a private app tarball into the Twenty server registry.
    * Built via `yarn twenty dev:build --tarball`.
@@ -1504,6 +1579,7 @@ export class TwentyClient {
     const tarball = options.tarball;
     const workspaceOrigin = options.workspaceOrigin.replace(/\/+$/, '');
     const voxlyApiUrl = (options.voxlyApiUrl || 'http://saas-api:3002').replace(/\/+$/, '');
+    const forceReinstall = options.forceReinstall === true;
 
     if (tarball && tarball.byteLength > 0) {
       try {
@@ -1516,11 +1592,21 @@ export class TwentyClient {
       }
     }
 
+    const existingId = await this.findCrmChatApplicationId();
+    if (forceReinstall && existingId) {
+      await this.uninstallApp(VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER);
+    }
+
     try {
       await this.installApp(VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER);
     } catch (err) {
       if (!isAlreadyInstalledError(err)) {
         throw err;
+      }
+      if (forceReinstall) {
+        // Already installed after failed uninstall — last resort: try again after uninstall
+        await this.uninstallApp(VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER);
+        await this.installApp(VOXLY_CRM_CHAT_UNIVERSAL_IDENTIFIER);
       }
     }
 
@@ -1631,6 +1717,22 @@ export class TwentyClient {
       );
     } catch {
       /* field may not exist yet */
+    }
+  }
+
+  /** Set Person primary email. Best-effort. */
+  async updatePersonEmail(personId: string, email: string): Promise<void> {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) return;
+    const headers = this.getAuthHeaders();
+    try {
+      await this.client.request(
+        UPDATE_PERSON,
+        { id: personId, data: { emails: { primaryEmail: normalized } } },
+        headers,
+      );
+    } catch {
+      /* ignore — composite / permission */
     }
   }
 
@@ -1846,8 +1948,75 @@ export class TwentyClient {
     return { id: ids[0], ids };
   }
 
+  /** Read Opportunity.stage by id (won = typically CUSTOMER). */
+  async getOpportunityStage(opportunityId: string): Promise<string | null> {
+    const headers = this.getAuthHeaders();
+    const result = await this.client.request(
+      FIND_OPPORTUNITIES,
+      { filter: { id: { eq: opportunityId } } },
+      headers,
+    );
+    const node = (result as any)?.opportunities?.edges?.[0]?.node;
+    return node?.stage ? String(node.stage) : null;
+  }
+
   /**
-   * Create an Opportunity (deal) in the workspace CRM
+   * Resolve the current GraphQL enum *value* for the first Opportunity stage.
+   * Binds to Twenty's stable seed option id (survives label/value renames by the client).
+   */
+  async resolveDefaultOpportunityStage(): Promise<string> {
+    const headers = this.getAuthHeaders();
+    try {
+      const result = (await this.authClient.request(
+        GET_OPPORTUNITY_STAGE_FIELD,
+        {},
+        headers,
+      )) as {
+        objects?: {
+          edges?: Array<{
+            node?: {
+              fieldsList?: Array<{
+                name?: string;
+                options?: Array<{
+                  id?: string;
+                  value?: string;
+                  position?: number;
+                }> | null;
+              }>;
+            };
+          }>;
+        };
+      };
+      const fields =
+        result.objects?.edges?.[0]?.node?.fieldsList ||
+        result.objects?.edges?.find((e) => e.node?.fieldsList)?.node?.fieldsList ||
+        [];
+      const stageField = fields.find((f) => f.name === 'stage');
+      const options = Array.isArray(stageField?.options) ? stageField!.options! : [];
+      const byId = options.find((o) => o.id === OPPORTUNITY_NEW_STAGE_OPTION_ID);
+      if (byId?.value) return String(byId.value);
+      const sorted = [...options].sort(
+        (a, b) => (a.position ?? 999) - (b.position ?? 999),
+      );
+      if (sorted[0]?.value) return String(sorted[0].value);
+    } catch (err) {
+      console.warn(
+        '[twenty-client] resolveDefaultOpportunityStage failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return 'NEW';
+  }
+
+  /** Soft-delete current workspace (Settings → Delete). Follow with SQL hard-drop if needed. */
+  async deleteCurrentWorkspace(): Promise<void> {
+    const headers = this.getAuthHeaders();
+    await this.authClient.request(DELETE_CURRENT_WORKSPACE, {}, headers);
+  }
+
+  /**
+   * Create an Opportunity (deal) in the workspace CRM.
+   * Stage is resolved via stable option id when omitted (client may rename labels/values).
    */
   async createOpportunity(input: {
     name: string;
@@ -1856,24 +2025,175 @@ export class TwentyClient {
     stage?: string;
   }): Promise<{ id: string }> {
     const headers = this.getAuthHeaders();
-    const data: Record<string, unknown> = {
-      name: input.name,
+    const preferredStage =
+      !input.stage || input.stage === 'NEW'
+        ? await this.resolveDefaultOpportunityStage()
+        : input.stage;
+
+    const buildData = (stage: string | undefined, useConnect: boolean) => {
+      const data: Record<string, unknown> = { name: input.name };
+      if (stage) data.stage = stage;
+      if (input.amount != null) {
+        data.amount = {
+          amountMicros: Math.round(input.amount * 1_000_000),
+          currencyCode: 'RUB',
+        };
+      }
+      if (input.personId) {
+        if (useConnect) {
+          data.pointOfContact = { connect: { id: input.personId } };
+        } else {
+          data.pointOfContactId = input.personId;
+        }
+      }
+      return data;
     };
-    if (input.stage) data.stage = input.stage;
-    if (input.amount != null) data.amount = { amountMicros: Math.round(input.amount * 1_000_000), currencyCode: 'RUB' };
-    if (input.personId) data.pointOfContactId = input.personId;
+
+    const tryCreate = async (stage: string | undefined, useConnect: boolean) => {
+      const result = await this.client.request(
+        CREATE_OPPORTUNITY,
+        { data: buildData(stage, useConnect) },
+        headers,
+      );
+      return (result as any).createOpportunity as { id: string };
+    };
+
+    const linkPerson = async (opportunityId: string, personId: string) => {
+      const attempts: Array<{ label: string; data: Record<string, unknown> }> = [
+        { label: 'connect', data: { pointOfContact: { connect: { id: personId } } } },
+        { label: 'pointOfContactId', data: { pointOfContactId: personId } },
+        { label: 'nestedId', data: { pointOfContact: { id: personId } } },
+      ];
+      const mutations: Array<{ label: string; doc: ReturnType<typeof gql>; vars: (d: Record<string, unknown>) => Record<string, unknown> }> = [
+        {
+          label: 'updateOpportunity(id,data)',
+          doc: UPDATE_OPPORTUNITY,
+          vars: (data) => ({ id: opportunityId, data }),
+        },
+        {
+          label: 'updateOpportunity UUID alias',
+          doc: gql`
+            mutation UpdateOpportunityLink($idToUpdate: UUID!, $data: OpportunityUpdateInput!) {
+              updateOpportunity(id: $idToUpdate, data: $data) {
+                id
+              }
+            }
+          `,
+          vars: (data) => ({ idToUpdate: opportunityId, data }),
+        },
+      ];
+      for (const attempt of attempts) {
+        for (const mut of mutations) {
+          try {
+            await this.client.request(mut.doc, mut.vars(attempt.data), headers);
+            console.log(
+              `[twenty-client] linked opportunity ${opportunityId} → person ${personId} via ${attempt.label}/${mut.label}`,
+            );
+            return;
+          } catch (err) {
+            console.warn(
+              `[twenty-client] link attempt failed ${attempt.label}/${mut.label}:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+      }
+      console.warn(
+        `[twenty-client] could not link opportunity ${opportunityId} → person ${personId}`,
+      );
+    };
+
+    const parseValidStages = (err: unknown): string[] => {
+      const chunks: string[] = [];
+      if (err instanceof Error) chunks.push(err.message);
+      chunks.push(String(err || ''));
+      try {
+        const anyErr = err as {
+          response?: { errors?: Array<{ message?: string }>; body?: string };
+        };
+        for (const e of anyErr?.response?.errors || []) {
+          if (e?.message) chunks.push(e.message);
+        }
+        if (typeof anyErr?.response?.body === 'string') chunks.push(anyErr.response.body);
+      } catch {
+        /* ignore */
+      }
+      for (const msg of chunks) {
+        const m = msg.match(/Valid values are:\s*([A-Za-z0-9_,\s]+)/i);
+        if (!m?.[1]) continue;
+        const list = m[1]
+          .split(/[,\s]+/)
+          .map((s) => s.trim())
+          .filter((s) => /^[A-Z][A-Z0-9_]*$/i.test(s))
+          .map((s) => s.toUpperCase());
+        if (list.length) return list;
+      }
+      return [];
+    };
+
+    const pickStage = (valid: string[], preferred: string): string => {
+      if (valid.includes(preferred)) return preferred;
+      const resolvedPreferred = preferred.toUpperCase();
+      if (valid.includes(resolvedPreferred)) return resolvedPreferred;
+      for (const candidate of [preferred, 'NOVYY_LID', 'NEW', valid[0]]) {
+        if (candidate && valid.includes(candidate)) return candidate;
+      }
+      return valid[0];
+    };
+
+    /** Prefer connect; fall back to scalar id; always re-link via update after create. */
+    const createAndLink = async (stage: string | undefined) => {
+      let created: { id: string };
+      if (input.personId) {
+        try {
+          created = await tryCreate(stage, true);
+        } catch {
+          try {
+            created = await tryCreate(stage, false);
+          } catch (errId) {
+            const data: Record<string, unknown> = { name: input.name };
+            if (stage) data.stage = stage;
+            if (input.amount != null) {
+              data.amount = {
+                amountMicros: Math.round(input.amount * 1_000_000),
+                currencyCode: 'RUB',
+              };
+            }
+            try {
+              const result = await this.client.request(
+                CREATE_OPPORTUNITY,
+                { data },
+                headers,
+              );
+              created = (result as any).createOpportunity as { id: string };
+            } catch {
+              throw errId;
+            }
+          }
+        }
+      } else {
+        created = await tryCreate(stage, false);
+      }
+      if (input.personId && created?.id) {
+        await linkPerson(created.id, input.personId);
+      }
+      return created;
+    };
 
     try {
-      const result = await this.client.request(CREATE_OPPORTUNITY, { data }, headers);
-      return (result as any).createOpportunity;
+      return await createAndLink(preferredStage);
     } catch (err) {
-      // Relation connect form
-      if (input.personId) {
-        const alt = { ...data };
-        delete alt.pointOfContactId;
-        alt.pointOfContact = { connect: { id: input.personId } };
-        const result = await this.client.request(CREATE_OPPORTUNITY, { data: alt }, headers);
-        return (result as any).createOpportunity;
+      const valid = parseValidStages(err);
+      const stage =
+        valid.length > 0 ? pickStage(valid, preferredStage) : preferredStage;
+
+      if (valid.length > 0 && stage !== preferredStage) {
+        return await createAndLink(stage);
+      }
+
+      const fresh = await this.resolveDefaultOpportunityStage();
+      if (fresh && fresh !== preferredStage && fresh !== stage) {
+        return await createAndLink(fresh);
       }
       throw err;
     }

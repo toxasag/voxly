@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
@@ -35,6 +36,7 @@ interface AdminTenant {
   twentyWorkspaceId: string | null;
   owner: { email: string; name: string } | null;
   activeSubscription: { productCode: string; endsAt: string } | null;
+  aiBalanceRub: number;
 }
 
 interface FunnelRates {
@@ -81,19 +83,11 @@ function formatPct(value: number | null | undefined): string {
   return `${value}%`;
 }
 
-function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function StatCard({ label, value }: { label: string; value: string; accent?: string }) {
   return (
-    <div
-      className={cn(
-        'rounded-lg border border-border/80 px-4 py-3',
-        accent === 'sage' && 'bg-[#f3f7f2]',
-        accent === 'blue' && 'bg-[#f0f4fb]',
-        accent === 'peach' && 'bg-[#fbf3ee]',
-        !accent && 'bg-secondary/50',
-      )}
-    >
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1.5 text-2xl font-semibold tracking-tight">{value}</p>
+    <div className="rounded-[24px] border border-hairline bg-paper px-4 py-3 shadow-[var(--shadow-subtle)]">
+      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">{label}</p>
+      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-ink">{value}</p>
     </div>
   );
 }
@@ -103,8 +97,93 @@ export default function AdminPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [tenants, setTenants] = useState<AdminTenant[]>([]);
   const [funnels, setFunnels] = useState<FunnelResponse | null>(null);
+  const [health, setHealth] = useState<{
+    overall: string;
+    checkedAt: string;
+    summary: { ok: number; warn: number; fail: number };
+    checks: { id: string; name: string; status: string; detail: string; latencyMs?: number }[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [aiCreditDraft, setAiCreditDraft] = useState<Record<string, string>>({});
+  const [aiCreditBusy, setAiCreditBusy] = useState<string | null>(null);
+  const [aiCreditMsg, setAiCreditMsg] = useState('');
+  const [purgeBusy, setPurgeBusy] = useState<string | null>(null);
+
+  const purgeTenant = async (tenantId: string, slug: string) => {
+    const token = localStorage.getItem('voxly_token');
+    if (!token) return;
+    const typed = window.prompt(
+      `Удалить аккаунт «${slug}» ПОЛНОСТЬЮ (ЛК, CRM, боты, чаты)?\n\nВведите slug для подтверждения:`,
+      '',
+    );
+    if (typed == null) return;
+    if (typed.trim() !== slug) {
+      setAiCreditMsg('Удаление отменено: slug не совпал');
+      return;
+    }
+    if (!window.confirm(`Точно удалить ${slug}? Это необратимо.`)) return;
+    setPurgeBusy(tenantId);
+    setAiCreditMsg('');
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenantId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ confirmSlug: slug }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Не удалось удалить');
+      setTenants((prev) => prev.filter((t) => t.id !== tenantId));
+      setAiCreditMsg(`Удалён аккаунт ${slug}`);
+    } catch (e) {
+      setAiCreditMsg(e instanceof Error ? e.message : 'Ошибка удаления');
+    } finally {
+      setPurgeBusy(null);
+    }
+  };
+
+  const creditAiWallet = async (tenantId: string, slug: string) => {
+    const token = localStorage.getItem('voxly_token');
+    if (!token) return;
+    const amountRub = Number(aiCreditDraft[tenantId] || '100');
+    if (!Number.isFinite(amountRub) || amountRub <= 0) {
+      setAiCreditMsg('Укажите сумму > 0');
+      return;
+    }
+    setAiCreditBusy(tenantId);
+    setAiCreditMsg('');
+    try {
+      const res = await fetch(`/api/admin/tenants/${tenantId}/ai-credit`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amountRub,
+          note: `manual admin top-up for ${slug}`,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Не удалось начислить');
+      }
+      setTenants((prev) =>
+        prev.map((t) =>
+          t.id === tenantId ? { ...t, aiBalanceRub: Number(data.balanceRub) } : t,
+        ),
+      );
+      setAiCreditDraft((prev) => ({ ...prev, [tenantId]: '' }));
+      setAiCreditMsg(`Начислено ${amountRub} ₽ → ${slug}, баланс ${data.balanceRub} ₽`);
+    } catch (e) {
+      setAiCreditMsg(e instanceof Error ? e.message : 'Ошибка начисления');
+    } finally {
+      setAiCreditBusy(null);
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('voxly_token');
@@ -127,11 +206,13 @@ export default function AdminPage() {
       getJson('/api/admin/stats'),
       getJson('/api/admin/tenants'),
       getJson('/api/admin/funnels'),
+      getJson('/api/admin/health'),
     ])
-      .then(([s, t, f]) => {
+      .then(([s, t, f, h]) => {
         setStats(s);
         setTenants(t.tenants || []);
         setFunnels(f);
+        setHealth(h);
       })
       .catch((requestError) =>
         setError(requestError instanceof Error ? requestError.message : 'Ошибка загрузки'),
@@ -166,10 +247,61 @@ export default function AdminPage() {
     <AppShell maxWidth="6xl" className="space-y-8">
       <PageHeader
         title="Супер-админка"
-        description="Клиенты, MRR и эффективность gift-воронок"
+        description="Клиенты, MRR, здоровье системы и gift-воронки"
         backHref="/dashboard"
         backLabel="Кабинет"
       />
+
+      {health && (
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <div>
+              <CardTitle>Работоспособность системы</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Проверено {new Date(health.checkedAt).toLocaleString('ru-RU')} · ok{' '}
+                {health.summary.ok} · warn {health.summary.warn} · fail {health.summary.fail}
+              </p>
+            </div>
+            <Badge
+              variant={
+                health.overall === 'fail'
+                  ? 'warning'
+                  : health.overall === 'warn'
+                    ? 'secondary'
+                    : 'success'
+              }
+            >
+              {health.overall === 'fail'
+                ? 'Есть сбои'
+                : health.overall === 'warn'
+                  ? 'Есть предупреждения'
+                  : 'Всё стабильно'}
+            </Badge>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {health.checks.map((c) => (
+              <div
+                key={c.id}
+                className={cn(
+                  'rounded-md border px-3 py-2 text-sm',
+                  c.status === 'fail' && 'border-ember/40 bg-paper',
+                  c.status === 'warn' && 'border-hairline bg-canvas',
+                  c.status === 'ok' && 'border-hairline bg-paper',
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{c.name}</span>
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {c.status}
+                    {c.latencyMs != null ? ` · ${c.latencyMs}ms` : ''}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{c.detail}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Клиентов" value={String(stats.tenants.total)} />
@@ -183,16 +315,26 @@ export default function AdminPage() {
       <Card>
         <CardHeader>
           <CardTitle>Клиенты</CardTitle>
+          {aiCreditMsg ? (
+            <p className="mt-1 text-sm text-muted-foreground">{aiCreditMsg}</p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              AI-баланс — сумма и «+». «Удалить» — полный wipe ЛК+CRM (необратимо).
+            </p>
+          )}
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[780px] text-sm">
             <thead>
               <tr className="border-y border-border bg-secondary/40 text-left text-muted-foreground">
                 <th className="px-5 py-3 font-medium">Клиент</th>
                 <th className="px-5 py-3 font-medium">Статус</th>
                 <th className="px-5 py-3 font-medium">Подписка</th>
                 <th className="px-5 py-3 font-medium">CRM</th>
+                <th className="px-5 py-3 font-medium">AI баланс</th>
+                <th className="px-5 py-3 font-medium">Начислить AI</th>
                 <th className="px-5 py-3 font-medium">Создан</th>
+                <th className="px-5 py-3 font-medium">Удалить</th>
               </tr>
             </thead>
             <tbody>
@@ -213,8 +355,47 @@ export default function AdminPage() {
                       <Badge variant="secondary">Ожидает</Badge>
                     )}
                   </td>
+                  <td className="px-5 py-3 font-medium tabular-nums">
+                    {Number(t.aiBalanceRub || 0).toFixed(2)} ₽
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        placeholder="100"
+                        className="h-8 w-24"
+                        value={aiCreditDraft[t.id] ?? ''}
+                        onChange={(e) =>
+                          setAiCreditDraft((prev) => ({ ...prev, [t.id]: e.target.value }))
+                        }
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={aiCreditBusy === t.id}
+                        onClick={() => void creditAiWallet(t.id, t.slug)}
+                      >
+                        {aiCreditBusy === t.id ? '…' : '+'}
+                      </Button>
+                    </div>
+                  </td>
                   <td className="px-5 py-3 text-muted-foreground">
                     {new Date(t.createdAt).toLocaleString('ru-RU')}
+                  </td>
+                  <td className="px-5 py-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-ember/40 text-ember hover:bg-ember/10"
+                      disabled={purgeBusy === t.id}
+                      onClick={() => void purgeTenant(t.id, t.slug)}
+                    >
+                      {purgeBusy === t.id ? '…' : 'Удалить'}
+                    </Button>
                   </td>
                 </tr>
               ))}

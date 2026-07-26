@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Loader2, QrCode, Smartphone, CheckCircle2, RefreshCw, Trash2 } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
+import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,10 @@ interface GramjsAccount {
 interface AccountsResponse {
   ok?: boolean;
   priceMonthly?: number;
+  trialDays?: number;
   billingWarning?: string | null;
+  requiresPayment?: boolean;
+  trialAvailable?: boolean;
   gramjsAddon?: { isActive: boolean; activeUntil: string; isTrial: boolean } | null;
   accounts: GramjsAccount[];
   error?: string;
@@ -227,6 +231,17 @@ export default function GramjsPage() {
     }
   };
 
+  const paySubscription = async () => {
+    setBusy('pay');
+    setError('');
+    try {
+      await startCheckout({ productCode: 'ai_gramjs', periodMonths: 1 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy('');
+    }
+  };
+
   const deleteAccount = async (account: GramjsAccount) => {
     if (
       !window.confirm(
@@ -285,6 +300,28 @@ export default function GramjsPage() {
       {error && <Alert variant="error" className="mb-4">{error}</Alert>}
       {data?.billingWarning && <Alert className="mb-4">{data.billingWarning}</Alert>}
 
+      {!data?.gramjsAddon?.isActive && data?.trialAvailable !== false && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base">Старт за 14 дней бесплатно</CardTitle>
+            <CardDescription>
+              Подключите личный Telegram через QR. Потом —{' '}
+              {price.toLocaleString('ru-RU')} ₽/мес + баланс AI.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            <Button variant="solid" disabled={busy === 'trial'} onClick={() => void startTrial()}>
+              {busy === 'trial' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Активировать trial
+            </Button>
+            <Button variant="outline" disabled={busy === 'pay'} onClick={() => void paySubscription()}>
+              {busy === 'pay' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Оплатить {price.toLocaleString('ru-RU')} ₽/мес
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -298,17 +335,26 @@ export default function GramjsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!data?.gramjsAddon?.isActive && (
-              <Button
-                variant="secondary"
-                disabled={busy === 'trial'}
-                onClick={() => void startTrial()}
-              >
-                {busy === 'trial' ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : null}
-                Пробный период 14 дней
-              </Button>
+            {!data?.gramjsAddon?.isActive && data?.trialAvailable === false && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="solid"
+                  disabled={busy === 'pay'}
+                  onClick={() => void paySubscription()}
+                >
+                  {busy === 'pay' ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Оплатить {price.toLocaleString('ru-RU')} ₽/мес
+                </Button>
+              </div>
+            )}
+            {data?.requiresPayment && (
+              <Alert variant="error">
+                {data.trialAvailable
+                  ? 'Сначала активируйте trial выше — или оплатите тариф.'
+                  : 'Подписка неактивна — QR недоступен. Оплатите тариф.'}
+              </Alert>
             )}
             <div className="flex flex-wrap gap-2">
               <Input
@@ -317,7 +363,10 @@ export default function GramjsPage() {
                 placeholder="Имя аккаунта (напр. default)"
                 className="max-w-[240px]"
               />
-              <Button disabled={busy === 'qr'} onClick={() => void startQr()}>
+              <Button
+                disabled={busy === 'qr' || Boolean(data?.requiresPayment)}
+                onClick={() => void startQr()}
+              >
                 {busy === 'qr' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (

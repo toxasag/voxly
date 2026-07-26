@@ -11,7 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@voxly/db": "workspace:*"
+    "@voxly/db": "workspace:*",
+    "@voxly/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

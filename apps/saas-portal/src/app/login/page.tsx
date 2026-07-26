@@ -36,7 +36,6 @@ export default function LoginPage() {
       }
 
       localStorage.setItem('voxly_token', data.token);
-      // Superadmin has no tenant — /dashboard shows «Нет воркспейса»
       router.push(data.user?.role === 'superadmin' ? '/admin' : '/dashboard');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка входа');
@@ -46,20 +45,21 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
+    <main className="flex min-h-screen items-center justify-center bg-canvas px-6 py-16">
       <div className="w-full max-w-md animate-in">
         <div className="mb-8 text-center">
           <Link
             href="/"
-            className="rounded-sm text-lg font-semibold tracking-tight text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="text-[24px] font-semibold tracking-[-0.025em] text-ink transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-hairline"
           >
             Voxly
           </Link>
+          <p className="mt-2 text-sm text-mid-gray">Воркспейс</p>
         </div>
         <Card>
           <CardHeader className="text-center">
-            <CardTitle className="text-xl">Вход</CardTitle>
-            <CardDescription>Войдите в воркспейс Voxly</CardDescription>
+            <CardTitle className="text-[24px] tracking-[-0.025em]">Вход</CardTitle>
+            <CardDescription>Email и пароль аккаунта</CardDescription>
           </CardHeader>
           <CardContent>
             {error && (
@@ -100,9 +100,9 @@ export default function LoginPage() {
                 {loading ? 'Вход…' : 'Войти'}
               </Button>
             </form>
-            <p className="mt-6 text-center text-sm text-muted-foreground">
+            <p className="mt-6 text-center text-sm text-mid-gray">
               Нет аккаунта?{' '}
-              <Link href="/register" className="font-medium text-foreground underline-offset-4 hover:underline">
+              <Link href="/register" className="font-medium text-ink underline-offset-4 hover:underline">
                 Зарегистрироваться
               </Link>
             </p>

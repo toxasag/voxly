@@ -37,7 +37,7 @@ export function CopyButton({
       className={cn(className)}
       aria-label={copied ? 'Скопировано' : label}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check className="h-3.5 w-3.5 text-ink" /> : <Copy className="h-3.5 w-3.5" />}
       {size !== 'icon' && (copied ? 'Скопировано' : label)}
     </Button>
   );

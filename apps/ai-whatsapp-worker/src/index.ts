@@ -3,7 +3,18 @@
 
 import { prisma } from '@voxly/db';
 import { decrypt, encrypt } from '@voxly/crypto';
-import { chargeAiUsage, hasAiBalance } from '@voxly/ai-core';
+import {
+  chargeAiUsage,
+  hasAiBalance,
+  resolveProviderCostRub,
+  retrieveAgentContext,
+  formatRagPromptBlock,
+  createInboundDebouncer,
+  humanBubbleGapMs,
+  normalizeAiBubbles,
+  DEFAULT_INBOUND_DEBOUNCE_MS,
+  type OpenRouterUsageLike,
+} from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
 import { isAiConversationMode, PRODUCT_CODES } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
@@ -12,6 +23,13 @@ import OpenAI from 'openai';
 const PORT = Number(process.env.AI_WHATSAPP_PORT || 3006);
 const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+/**
+ * Dangerous opt-in: map LID→phone by matching Contact profilePic CDN fingerprint.
+ * Known wrong: avatar twin attached stranger's E.164 (7915… vs real 7985…).
+ * Default OFF — WhatsApp UI can show PN without Contacts; Evolution 2.2.3 still
+ * omits remoteJidAlt/senderPn until Baileys lidMapping (Evolution ≥2.3.6/2.3.7).
+ */
+const ALLOW_AVATAR_PHONE_MATCH = process.env.WA_LID_AVATAR_PHONE_MATCH === '1';
 const WEBHOOK_PUBLIC_URL =
   (process.env.AI_WHATSAPP_WEBHOOK_URL || `http://ai-whatsapp-worker:${PORT}/webhook/evolution`).replace(
     /\/$/,
@@ -23,13 +41,148 @@ const OPENROUTER_API_KEY =
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const CONTEXT_WINDOW = 20;
-const DEFAULT_SYSTEM_PROMPT = `Ты — дружелюбный ассистент, который помогает клиентам.
-Отвечай кратко, по делу и на русском языке.`;
+const AI_INBOUND_DEBOUNCE_MS = Math.max(
+  500,
+  Number(process.env.AI_INBOUND_DEBOUNCE_MS || DEFAULT_INBOUND_DEBOUNCE_MS) ||
+    DEFAULT_INBOUND_DEBOUNCE_MS,
+);
+const DEFAULT_SYSTEM_PROMPT = `Ты — живой менеджер в WhatsApp. Пиши по-русски, коротко, как человек в чате.
+
+КРИТИЧЕСКИ ВАЖНО: ответ — ТОЛЬКО JSON (без markdown, без текста вне JSON):
+{
+  "message1": "короткая фраза",
+  "message2": "следующая мысль",
+  "message3": "",
+  "message4": ""
+}
+Правила пузырей:
+- почти всегда 2–4 коротких сообщения (не один длинный абзац);
+- 1 пузырь только если ответ в одно короткое предложение;
+- каждое message — одна мысль, до ~120 символов;
+- пустые поля оставь "";
+- без эмодзи, без переносов внутри строк.`;
+const JSON_FORMAT_HINT = `
+
+Ответь ТОЛЬКО JSON с message1…message4. Обычно заполни 2–4 пузыря, не склеивай всё в message1.`;
 
 type SessionPayload = {
   instanceName: string;
   instanceHash?: string;
 };
+
+type WaAiPending = {
+  instanceName: string;
+  from: string;
+  conversationId: string;
+  tenantId: string;
+  botId: string;
+  text: string;
+  messageId?: string;
+  /** Exact webhook remoteJid for blue-tick markRead. */
+  remoteJid?: string;
+  addonId?: string | null;
+};
+
+const inboundAiDebouncer = createInboundDebouncer<WaAiPending>({
+  settleMs: AI_INBOUND_DEBOUNCE_MS,
+  onFlush: async (_key, items) => {
+    if (!items.length) return;
+    await flushWhatsAppAiReply(items);
+  },
+});
+
+/** Soft contact presence from Evolution PRESENCE_UPDATE (no on-demand GET). */
+type CachedWaPresence = {
+  online: boolean;
+  lastSeenAt: string | null;
+  updatedAt: number;
+};
+const waPresenceByKey = new Map<string, CachedWaPresence>();
+const WA_PRESENCE_TTL_MS = 30 * 60 * 1000;
+const WA_WEBHOOK_EVENTS = [
+  'QRCODE_UPDATED',
+  'CONNECTION_UPDATE',
+  'MESSAGES_UPSERT',
+  'PRESENCE_UPDATE',
+] as const;
+
+function waPresenceCacheKey(instanceName: string, peer: string): string {
+  return `${instanceName}:${normalizeWaNumber(peer) || peer}`;
+}
+
+function rememberWaPresence(
+  instanceName: string,
+  peerRaw: string,
+  online: boolean,
+  lastSeenAt: string | null,
+): void {
+  const peer = normalizeWaNumber(peerRaw) || String(peerRaw || '').replace(/\D/g, '');
+  if (!instanceName || !peer) return;
+  waPresenceByKey.set(waPresenceCacheKey(instanceName, peer), {
+    online,
+    lastSeenAt,
+    updatedAt: Date.now(),
+  });
+}
+
+function getCachedWaPresence(
+  instanceName: string,
+  peerRaw: string,
+): CachedWaPresence | null {
+  const peer = normalizeWaNumber(peerRaw) || String(peerRaw || '').replace(/\D/g, '');
+  if (!instanceName || !peer) return null;
+  const hit = waPresenceByKey.get(waPresenceCacheKey(instanceName, peer));
+  if (!hit) return null;
+  if (Date.now() - hit.updatedAt > WA_PRESENCE_TTL_MS) {
+    waPresenceByKey.delete(waPresenceCacheKey(instanceName, peer));
+    return null;
+  }
+  return hit;
+}
+
+function parsePresenceUpdatePayload(payload: any): void {
+  const instanceName = String(
+    payload?.instance || payload?.instanceName || payload?.data?.instanceName || '',
+  ).trim();
+  if (!instanceName) return;
+  const data = payload?.data || payload;
+  const presences = data?.presences;
+  if (presences && typeof presences === 'object') {
+    for (const [jid, info] of Object.entries(presences as Record<string, any>)) {
+      const lastKnown = String(
+        info?.lastKnownPresence || info?.presence || info?.status || '',
+      ).toLowerCase();
+      const online =
+        lastKnown === 'available' ||
+        lastKnown === 'composing' ||
+        lastKnown === 'recording' ||
+        lastKnown === 'paused';
+      let lastSeenAt: string | null = null;
+      const rawSeen = info?.lastSeen ?? info?.lastSeenAt ?? data?.lastSeen;
+      if (typeof rawSeen === 'number' && Number.isFinite(rawSeen)) {
+        const ms = rawSeen > 1e12 ? rawSeen : rawSeen * 1000;
+        lastSeenAt = new Date(ms).toISOString();
+      } else if (typeof rawSeen === 'string' && rawSeen) {
+        const d = new Date(rawSeen);
+        if (!Number.isNaN(d.getTime())) lastSeenAt = d.toISOString();
+      }
+      rememberWaPresence(instanceName, jid, online, online ? null : lastSeenAt);
+    }
+    return;
+  }
+  const jid = String(data?.id || data?.remoteJid || data?.from || '').trim();
+  if (!jid) return;
+  const lastKnown = String(
+    data?.lastKnownPresence || data?.presence || data?.status || '',
+  ).toLowerCase();
+  if (!lastKnown) return;
+  const online =
+    lastKnown === 'available' ||
+    lastKnown === 'composing' ||
+    lastKnown === 'recording' ||
+    lastKnown === 'paused';
+  rememberWaPresence(instanceName, jid, online, null);
+}
 
 const openai = new OpenAI({
   apiKey: OPENROUTER_API_KEY || 'missing',
@@ -169,7 +322,33 @@ function extractText(message: any): string | null {
   }
   if (message.audioMessage) return '[аудио]';
   if (message.stickerMessage) return '[стикер]';
+  if (message.contactMessage || message.contactsArrayMessage) {
+    return '[контакт]';
+  }
   return null;
+}
+
+/** Phone from shared WA contact card / vCard (when peer shares contact). */
+function extractPhoneFromWaContactMessage(message: any): string | undefined {
+  const cards: any[] = [];
+  if (message?.contactMessage) cards.push(message.contactMessage);
+  const arr = message?.contactsArrayMessage?.contacts;
+  if (Array.isArray(arr)) cards.push(...arr);
+  for (const card of cards) {
+    const vcard = String(card?.vcard || card?.vCard || '');
+    const fromVcard = vcard.match(/TEL[^:]*:([+\d\s()-]+)/i);
+    if (fromVcard?.[1]) {
+      const digits = extractWaPhoneE164(fromVcard[1]);
+      if (digits) return digits;
+    }
+    const direct = extractWaPhoneE164(
+      card?.phoneNumber,
+      card?.phone,
+      card?.displayName,
+    );
+    if (direct) return direct;
+  }
+  return undefined;
 }
 
 function normalizeWaNumber(jidOrNumber: string): string {
@@ -240,27 +419,64 @@ function evolutionErrorMessage(json: any, fallback: string): string {
 /** Collect candidate JIDs/PNs from Evolution upsert payloads (field names vary by version). */
 function waInboundIdentityCandidates(item: any): string[] {
   const key = item?.key || {};
+  const ctx = item?.message?.messageContextInfo || {};
+  const contact = item?.contact || item?.senderContact || {};
   return [
+    // Baileys / Evolution 2.3+: PN twin when remoteJid is @lid
     key.remoteJidAlt,
     item?.remoteJidAlt,
+    key.participantAlt,
+    item?.participantAlt,
     item?.senderPn,
     key.senderPn,
     item?.participantPn,
     key.participantPn,
     item?.sender_pn,
     key.sender_pn,
-    key.participantAlt,
-    item?.participantAlt,
+    item?.participant_pn,
+    key.participant_pn,
+    // Addressing / enriched contact (newer Evolution)
+    item?.addressingMode === 'pn' ? key.remoteJid : undefined,
+    contact?.remoteJidAlt,
+    contact?.remoteJid,
+    contact?.id,
+    contact?.phoneNumber,
+    contact?.phone,
+    contact?.number,
+    item?.phoneNumber,
+    item?.phone,
+    item?.number,
+    // Nested context
+    ctx.remoteJidAlt,
+    ctx.participantAlt,
+    ctx.participant,
+    ctx.remoteJid,
+    // LID itself last — extractWaPhoneE164 skips @lid
     item?.senderLid,
     key.senderLid,
-    // Some Baileys builds nest PN under messageContextInfo / enriched contact
-    item?.message?.messageContextInfo?.remoteJidAlt,
-    item?.message?.messageContextInfo?.participant,
     item?.remoteJid,
     key.remoteJid,
   ]
     .map((v) => String(v || '').trim())
     .filter(Boolean);
+}
+
+/** Explicit PN-ish fields on an Evolution Contact/Chat row (never invent from avatar). */
+function extractPhoneFromEvoRow(row: any): string | undefined {
+  if (!row || typeof row !== 'object') return undefined;
+  return extractWaPhoneE164(
+    row.remoteJidAlt,
+    row.senderPn,
+    row.participantPn,
+    row.participantAlt,
+    row.phone,
+    row.phoneNumber,
+    row.number,
+    row.owner,
+    // Only accept id/remoteJid when they are already @s.whatsapp.net / bare E.164
+    String(row.remoteJid || '').toLowerCase().includes('@lid') ? undefined : row.remoteJid,
+    String(row.id || '').toLowerCase().includes('@lid') ? undefined : row.id,
+  );
 }
 
 /** Stable fingerprint from WA CDN avatar URL (query params rotate). */
@@ -284,16 +500,94 @@ type EvoContactRow = {
   profilePicUrl?: string | null;
 };
 
+type LidPnSource =
+  | 'webhook'
+  | 'vcard'
+  | 'contact_row'
+  | 'chat_row'
+  | 'avatar_twin'
+  | 'cached'
+  | 'none';
+
+/** E.164 digits from Conversation.platformUsername (+7985… / 7985…). */
+function phoneFromPlatformUsername(username?: string | null): string | undefined {
+  const raw = String(username || '').trim();
+  if (!raw) return undefined;
+  return extractWaPhoneE164(raw);
+}
+
+/**
+ * Reuse a previously discovered LID→PN mapping stored on Conversation.platformUsername
+ * (manual backfill, shared vCard, or older webhook that had remoteJidAlt).
+ */
+async function resolvePhoneFromConversationCache(opts: {
+  tenantId: string;
+  botId: string;
+  platformUserId: string;
+  conversationId?: string;
+  platformUsername?: string | null;
+}): Promise<{ phone?: string; source: LidPnSource }> {
+  const fromSelf = phoneFromPlatformUsername(opts.platformUsername);
+  if (fromSelf) return { phone: fromSelf, source: 'cached' };
+
+  const prior = await prisma.conversation.findFirst({
+    where: {
+      tenantId: opts.tenantId,
+      platform: 'whatsapp',
+      platformUserId: opts.platformUserId,
+      platformUsername: { not: null },
+      ...(opts.conversationId ? { NOT: { id: opts.conversationId } } : {}),
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: { platformUsername: true },
+  });
+  const fromPrior = phoneFromPlatformUsername(prior?.platformUsername);
+  if (fromPrior) {
+    console.log(
+      `[ai-whatsapp] LID→phone via cached platformUsername lid=${opts.platformUserId} phone=+${fromPrior}`,
+    );
+    return { phone: fromPrior, source: 'cached' };
+  }
+  return { source: 'none' };
+}
+
+/** Business WA profile for @lid — often has email/address, never phone on Evolution 2.2.3. */
+async function fetchWaBusinessProfile(
+  instanceName: string,
+  lidOrNumber: string,
+): Promise<{ email?: string; address?: string; description?: string } | null> {
+  const digits = normalizeWaNumber(lidOrNumber);
+  if (!instanceName || !digits) return null;
+  const number = isWhatsAppLid(lidOrNumber) ? `${digits}@lid` : digits;
+  const res = await evoFetch(`/chat/fetchBusinessProfile/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    body: JSON.stringify({ number }),
+  });
+  if (!res.ok || !res.json?.isBusiness) return null;
+  const email = String(res.json.email || '').trim().toLowerCase();
+  const address = String(res.json.address || '').trim();
+  const description = String(res.json.description || '').trim();
+  return {
+    email: email.includes('@') ? email : undefined,
+    address: address || undefined,
+    description: description || undefined,
+  };
+}
+
 /**
  * When webhook is LID-only (no senderPn/remoteJidAlt), try Evolution Contact book.
- * Match LID contact → phone @s.whatsapp.net via profilePic fingerprint, else unique pushName.
+ * Prefer explicit PN fields on the LID row. Avatar twin matching is opt-in only
+ * (WA_LID_AVATAR_PHONE_MATCH=1) — default OFF after wrong-number incidents.
+ * Never map by pushName (INC-055).
  */
 async function resolvePhoneFromEvolutionContacts(
   instanceName: string,
   lidDigits: string,
   hints?: { pushName?: string | null; profilePicUrl?: string | null },
-): Promise<string | undefined> {
-  if (!instanceName || !lidDigits || !isWhatsAppLid(lidDigits)) return undefined;
+): Promise<{ phone?: string; source: LidPnSource }> {
+  if (!instanceName || !lidDigits || !isWhatsAppLid(lidDigits)) {
+    return { source: 'none' };
+  }
   const res = await evoFetch(`/chat/findContacts/${encodeURIComponent(instanceName)}`, {
     method: 'POST',
     body: JSON.stringify({ where: {} }),
@@ -302,65 +596,90 @@ async function resolvePhoneFromEvolutionContacts(
     console.warn(
       `[ai-whatsapp] findContacts failed instance=${instanceName} status=${res.status}`,
     );
-    return undefined;
+    return { source: 'none' };
   }
   const rows: EvoContactRow[] = Array.isArray(res.json)
     ? res.json
     : Array.isArray(res.json?.contacts)
       ? res.json.contacts
       : [];
-  if (!rows.length) return undefined;
+  if (!rows.length) return { source: 'none' };
 
   const lidJid = `${normalizeWaNumber(lidDigits)}@lid`.toLowerCase();
   const lidRow = rows.find(
     (c) => String(c.remoteJid || '').toLowerCase() === lidJid,
   );
-  const picFp =
-    profilePicFingerprint(hints?.profilePicUrl) ||
-    profilePicFingerprint(lidRow?.profilePicUrl);
   const pushName = String(hints?.pushName || lidRow?.pushName || '')
     .trim()
     .toLowerCase();
+  const picFp =
+    profilePicFingerprint(hints?.profilePicUrl) ||
+    profilePicFingerprint(lidRow?.profilePicUrl);
 
-  const phoneRows = rows.filter((c) => {
-    const jid = String(c.remoteJid || '').toLowerCase();
-    return jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@g.us');
-  });
+  // 1) Explicit fields on the LID Contact row (Evolution 2.3+ may store remoteJidAlt).
+  const fromRow = extractPhoneFromEvoRow(lidRow);
+  if (fromRow) {
+    console.log(
+      `[ai-whatsapp] LID→phone via contact_row lid=${lidDigits} phone=+${fromRow}`,
+    );
+    return { phone: fromRow, source: 'contact_row' };
+  }
 
-  if (picFp) {
+  // 2) Opt-in avatar twin — OFF by default (wrong E.164 risk).
+  if (ALLOW_AVATAR_PHONE_MATCH && picFp) {
+    const phoneRows = rows.filter((c) => {
+      const jid = String(c.remoteJid || '').toLowerCase();
+      return jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@g.us');
+    });
     const byPic = phoneRows.filter(
       (c) => profilePicFingerprint(c.profilePicUrl) === picFp,
     );
     if (byPic.length === 1) {
       const digits = extractWaPhoneE164(byPic[0].remoteJid);
       if (digits) {
-        console.log(
-          `[ai-whatsapp] LID→phone via profilePic lid=${lidDigits} phone=+${digits}`,
+        console.warn(
+          `[ai-whatsapp] LID→phone via avatar_twin (WA_LID_AVATAR_PHONE_MATCH=1) lid=${lidDigits} phone=+${digits} — verify manually`,
         );
-        return digits;
-      }
-    }
-  }
-
-  if (pushName && pushName !== 'whatsapp') {
-    const byName = phoneRows.filter(
-      (c) => String(c.pushName || '').trim().toLowerCase() === pushName,
-    );
-    if (byName.length === 1) {
-      const digits = extractWaPhoneE164(byName[0].remoteJid);
-      if (digits) {
-        console.log(
-          `[ai-whatsapp] LID→phone via unique pushName lid=${lidDigits} phone=+${digits}`,
-        );
-        return digits;
+        return { phone: digits, source: 'avatar_twin' };
       }
     }
   }
 
   console.warn(
-    `[ai-whatsapp] LID-only peer unresolved lid=${lidDigits} pushName=${pushName || '-'} pic=${picFp || '-'}`,
+    `[ai-whatsapp] LID-only peer unresolved lid=${lidDigits} pushName=${pushName || '-'} pic=${picFp ? 'yes' : 'no'} avatarMatch=${ALLOW_AVATAR_PHONE_MATCH ? 'on' : 'off'} — webhook/Contact lack E.164; WhatsApp UI may still show PN via lidMapping (needs Evolution ≥2.3.7 Baileys mapping, not address-book alone)`,
   );
-  return undefined;
+  return { source: 'none' };
+}
+
+/**
+ * Read phone from Evolution Chat row when webhook is LID-only.
+ * Prefer exact LID row fields; never invent from pushName/avatar.
+ */
+async function resolvePhoneFromEvolutionDb(
+  instanceName: string,
+  lidDigits: string,
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const chats = await evoFetch(`/chat/findChats/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    body: JSON.stringify({ where: {} }),
+  });
+  if (!chats.ok) return { source: 'none' };
+  const rows: any[] = Array.isArray(chats.json)
+    ? chats.json
+    : Array.isArray(chats.json?.chats)
+      ? chats.json.chats
+      : [];
+  const lidJid = `${normalizeWaNumber(lidDigits)}@lid`.toLowerCase();
+  const hit = rows.find((c) => String(c.remoteJid || '').toLowerCase() === lidJid);
+  if (!hit) return { source: 'none' };
+  const phone = extractPhoneFromEvoRow(hit);
+  if (phone) {
+    console.log(
+      `[ai-whatsapp] LID→phone via chat_row lid=${lidDigits} phone=+${phone}`,
+    );
+    return { phone, source: 'chat_row' };
+  }
+  return { source: 'none' };
 }
 
 /** E.164 digits only — never WA @lid / device ids (INC-037). */
@@ -378,7 +697,17 @@ function extractWaPhoneE164(...candidates: Array<string | null | undefined>): st
 }
 
 function extractPhoneFromInboundItem(item: any): string | undefined {
-  return extractWaPhoneE164(...waInboundIdentityCandidates(item));
+  return (
+    extractWaPhoneE164(...waInboundIdentityCandidates(item)) ||
+    extractPhoneFromWaContactMessage(item?.message)
+  );
+}
+
+/** Source tag when phone came from shared contact card (for logs). */
+function inboundPhoneSource(item: any): LidPnSource | undefined {
+  if (extractWaPhoneE164(...waInboundIdentityCandidates(item))) return 'webhook';
+  if (extractPhoneFromWaContactMessage(item?.message)) return 'vcard';
+  return undefined;
 }
 
 function extractProfilePicFromInboundItem(item: any): string | undefined {
@@ -435,11 +764,136 @@ function typingDelayMs(text: string): number {
   return Math.min(4500, Math.max(400, base + String(text || '').length * perChar));
 }
 
+/** Parse n8n-style multi-bubble JSON; fallback to paragraph / single bubble. */
+function parseAiBubbles(raw: string): string[] {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return [];
+  const withoutFence = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try {
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      const parsed = JSON.parse(withoutFence.slice(start, end + 1)) as Record<
+        string,
+        unknown
+      >;
+      const bubbles: string[] = [];
+      for (let i = 1; i <= 8; i += 1) {
+        const v = parsed[`message${i}`];
+        if (typeof v === 'string' && v.trim()) bubbles.push(v.trim());
+      }
+      if (bubbles.length) return bubbles;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  const paras = trimmed
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (paras.length > 1 && paras.length <= 6) return paras;
+  return [trimmed];
+}
+
 function waRemoteJidForRead(to: string): string {
   const formatted = formatWaSendRecipient(to);
   if (!formatted) return '';
   if (formatted.includes('@')) return formatted;
   return `${formatted}@s.whatsapp.net`;
+}
+
+function waRemoteJidCandidates(to: string): string[] {
+  const raw = String(to || '').trim();
+  const out: string[] = [];
+  const push = (v: string) => {
+    const s = v.trim();
+    if (s && !out.includes(s)) out.push(s);
+  };
+  if (!raw) return out;
+  if (raw.includes('@')) {
+    push(raw.replace(/:\d+(?=@)/, ''));
+  }
+  const digits = normalizeWaNumber(raw);
+  if (digits) {
+    if (isWhatsAppLid(digits) || raw.toLowerCase().includes('@lid')) {
+      push(`${digits}@lid`);
+    } else {
+      push(`${digits}@s.whatsapp.net`);
+      push(digits);
+    }
+  }
+  const primary = waRemoteJidForRead(to);
+  if (primary) push(primary);
+  return out;
+}
+
+function normalizeWaMessageIds(ids: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of ids) {
+    let id = String(raw || '').trim();
+    if (!id) continue;
+    // Strip common prefixes / full keys like "true_7916...@s.whatsapp.net_ABCDEF"
+    if (id.includes('_')) {
+      const parts = id.split('_');
+      const last = parts[parts.length - 1];
+      if (last && last.length >= 8) id = last;
+    }
+    if (!out.includes(id)) out.push(id);
+  }
+  return out.slice(0, 20);
+}
+
+/** Best-effort mark inbound messages as read (blue ticks). */
+async function markWhatsAppRead(
+  instanceName: string,
+  to: string,
+  messageIds: string[],
+  preferredRemoteJid?: string,
+): Promise<void> {
+  const ids = normalizeWaMessageIds(messageIds);
+  const rawIds = messageIds.map((id) => String(id || '').trim()).filter(Boolean);
+  const allIds = [...new Set([...ids, ...rawIds])].slice(0, 20);
+  const jids = [
+    ...(preferredRemoteJid ? [preferredRemoteJid.replace(/:\d+(?=@)/, '')] : []),
+    ...waRemoteJidCandidates(to),
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
+  if (!jids.length || !allIds.length) {
+    console.warn(
+      `[ai-whatsapp] markRead skip: jids=${jids.length} ids=${allIds.length} to=${to}`,
+    );
+    return;
+  }
+  for (const remoteJid of jids) {
+    for (const idSet of [allIds, ids, rawIds]) {
+      const unique = [...new Set(idSet)].filter(Boolean).slice(0, 20);
+      if (!unique.length) continue;
+      const res = await evoFetch(`/chat/markMessageAsRead/${encodeURIComponent(instanceName)}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          readMessages: unique.map((id) => ({ remoteJid, fromMe: false, id })),
+        }),
+      }).catch(() => null);
+      if (res?.ok || res?.status === 201) {
+        console.log(
+          `[ai-whatsapp] markRead ok jid=${remoteJid} ids=${unique.slice(0, 3).join(',')}`,
+        );
+        return;
+      }
+      if (res && !res.ok) {
+        console.warn(
+          '[ai-whatsapp] markMessageAsRead failed',
+          res.status,
+          evolutionErrorMessage(res.json, ''),
+          { remoteJid, ids: unique.slice(0, 3) },
+        );
+      }
+    }
+  }
 }
 
 function mediaTypeForMime(
@@ -516,7 +970,7 @@ async function createOrConnectEvolution(botId: string, instanceName: string) {
         url: webhookUrl,
         byEvents: false,
         base64: false,
-        events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE', 'MESSAGES_UPSERT'],
+        events: [...WA_WEBHOOK_EVENTS],
       },
     }),
   });
@@ -548,7 +1002,7 @@ async function createOrConnectEvolution(botId: string, instanceName: string) {
         url: webhookUrl,
         byEvents: false,
         base64: false,
-        events: ['QRCODE_UPDATED', 'CONNECTION_UPDATE', 'MESSAGES_UPSERT'],
+        events: [...WA_WEBHOOK_EVENTS],
       },
     }),
   });
@@ -826,30 +1280,68 @@ async function sendWhatsAppTyping(
   const number = formatWaSendRecipient(to);
   if (!number) return;
   const delay = Math.max(400, Math.min(8000, Math.floor(delayMs)));
-  await evoFetch(`/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
+  // Doc: options.number required alongside delay/presence.
+  const res = await evoFetch(`/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
     method: 'POST',
     body: JSON.stringify({
       number,
       options: { delay, presence: 'composing', number },
     }),
-  }).catch(() => undefined);
+  }).catch(() => null);
+  if (res && !res.ok) {
+    console.warn(
+      '[ai-whatsapp] sendPresence failed',
+      res.status,
+      evolutionErrorMessage(res.json, ''),
+    );
+  }
 }
 
-/** Best-effort mark inbound messages as read. */
-async function markWhatsAppRead(
+async function sendWhatsAppHumanLike(
   instanceName: string,
   to: string,
-  messageIds: string[],
-): Promise<void> {
-  const remoteJid = waRemoteJidForRead(to);
-  const ids = messageIds.map((id) => String(id || '').trim()).filter(Boolean).slice(0, 20);
-  if (!remoteJid || !ids.length) return;
-  await evoFetch(`/chat/markMessageAsRead/${encodeURIComponent(instanceName)}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      readMessages: ids.map((id) => ({ remoteJid, fromMe: false, id })),
-    }),
-  }).catch(() => undefined);
+  bubbles: string[],
+  opts?: { conversationId?: string; sendStartedAt?: Date },
+): Promise<{ aborted?: boolean; sent: number }> {
+  const parts = bubbles.map((b) => b.trim()).filter(Boolean).slice(0, 4);
+  let sent = 0;
+  for (let i = 0; i < parts.length; i += 1) {
+    if (
+      opts?.conversationId &&
+      opts.sendStartedAt &&
+      (await prisma.chatMessage.count({
+        where: {
+          conversationId: opts.conversationId,
+          role: 'user',
+          createdAt: { gt: opts.sendStartedAt },
+        },
+      })) > 0
+    ) {
+      return { aborted: true, sent };
+    }
+    const text = parts[i];
+    await sendWhatsAppTyping(instanceName, to, typingDelayMs(text));
+    await sleep(Math.min(2200, typingDelayMs(text)));
+    if (
+      opts?.conversationId &&
+      opts.sendStartedAt &&
+      (await prisma.chatMessage.count({
+        where: {
+          conversationId: opts.conversationId,
+          role: 'user',
+          createdAt: { gt: opts.sendStartedAt },
+        },
+      })) > 0
+    ) {
+      return { aborted: true, sent };
+    }
+    await sendWhatsAppText(instanceName, to, text);
+    sent += 1;
+    if (i < parts.length - 1) {
+      await sleep(humanBubbleGapMs());
+    }
+  }
+  return { sent };
 }
 
 async function resolveAssignedAgent(conversationId: string) {
@@ -894,6 +1386,8 @@ async function syncLeadToCrm(opts: {
   contactName?: string;
   /** Real E.164 digits when known (remoteJidAlt / senderPn); never LID. */
   phoneE164?: string;
+  /** Optional email from WA business profile (LID peers often lack phone). */
+  email?: string;
   /** Optional Telegram @username for cross-channel hint merge. */
   telegramUsername?: string;
 }): Promise<void> {
@@ -1045,11 +1539,15 @@ async function syncLeadToCrm(opts: {
       }
     }
 
+    const emailForCrm =
+      opts.email && opts.email.includes('@') ? opts.email.trim().toLowerCase() : undefined;
+
     if (!personId) {
       const created = await client.createPerson({
         firstName: displayName,
         // Never put LID / platformUserId into lastName (shows as «Антон 165…», INC-039).
         lastName: undefined,
+        email: emailForCrm,
         // Only pass real phones — WA @lid ids crash Twenty phone validation (INC-037).
         phone: whatsappValue,
         whatsapp: whatsappValue,
@@ -1067,6 +1565,13 @@ async function syncLeadToCrm(opts: {
           /* ignore */
         }
       }
+      if (personId && emailForCrm) {
+        try {
+          await client.updatePersonEmail(personId, emailForCrm);
+        } catch {
+          /* ignore */
+        }
+      }
     } else if (phoneForCrm) {
       // Backfill phone on existing Person when LID→PN mapping appears later / TG merge.
       try {
@@ -1079,6 +1584,13 @@ async function syncLeadToCrm(opts: {
       } catch {
         /* ignore */
       }
+      if (emailForCrm) {
+        try {
+          await client.updatePersonEmail(personId, emailForCrm);
+        } catch {
+          /* ignore */
+        }
+      }
       // Clear LID-looking lastName left by older sync (INC-039).
       try {
         await client.updatePersonName(personId, {
@@ -1088,14 +1600,23 @@ async function syncLeadToCrm(opts: {
       } catch {
         /* ignore */
       }
-    } else if (displayName !== 'WhatsApp') {
-      try {
-        await client.updatePersonName(personId, {
-          firstName: displayName,
-          lastName: '',
-        });
-      } catch {
-        /* ignore */
+    } else {
+      if (emailForCrm) {
+        try {
+          await client.updatePersonEmail(personId, emailForCrm);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (displayName !== 'WhatsApp') {
+        try {
+          await client.updatePersonName(personId, {
+            firstName: displayName,
+            lastName: '',
+          });
+        } catch {
+          /* ignore */
+        }
       }
     }
 
@@ -1198,17 +1719,6 @@ async function syncLeadToCrm(opts: {
   }
 }
 
-function calculateProviderCost(model: string, tokens: number): number {
-  const pricingPer1M: Record<string, { input: number; output: number }> = {
-    'openai/gpt-4o': { input: 2.5, output: 10 },
-    'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
-    'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  };
-  const rates = pricingPer1M[model] || pricingPer1M['openai/gpt-4o-mini'];
-  const avgCostUsd = ((rates.input + rates.output) / 2 / 1_000_000) * tokens;
-  return Math.round(avgCostUsd * 100 * 100) / 100;
-}
-
 async function handleInboundMessage(opts: {
   instanceName: string;
   from: string;
@@ -1217,7 +1727,10 @@ async function handleInboundMessage(opts: {
   contactName?: string;
   pushName?: string;
   phoneE164?: string;
+  /** How phoneE164 was obtained when already known from webhook. */
+  phoneSource?: LidPnSource;
   profilePicUrl?: string;
+  remoteJid?: string;
 }) {
   // MVP: decrypt session payloads (tenant WA count is small).
   const candidates = await prisma.botInstance.findMany({
@@ -1237,14 +1750,26 @@ async function handleInboundMessage(opts: {
   let phoneE164 =
     (opts.phoneE164 && isLikelyE164Phone(opts.phoneE164) ? opts.phoneE164 : undefined) ||
     (isLikelyE164Phone(from) ? from : undefined);
-  // LID-only webhooks: resolve E.164 via Evolution Contact book (profilePic / unique name).
+  let phoneSource: LidPnSource = phoneE164
+    ? opts.phoneSource || 'webhook'
+    : 'none';
+  // LID-only webhooks: resolve E.164 via Evolution Contact/Chat explicit fields only.
   if (!phoneE164 && isWhatsAppLid(from)) {
-    phoneE164 = await resolvePhoneFromEvolutionContacts(opts.instanceName, from, {
+    const fromContacts = await resolvePhoneFromEvolutionContacts(opts.instanceName, from, {
       pushName: opts.contactName || opts.pushName,
       profilePicUrl: opts.profilePicUrl,
     });
+    if (fromContacts.phone) {
+      phoneE164 = fromContacts.phone;
+      phoneSource = fromContacts.source;
+    } else {
+      const fromChats = await resolvePhoneFromEvolutionDb(opts.instanceName, from);
+      if (fromChats.phone) {
+        phoneE164 = fromChats.phone;
+        phoneSource = fromChats.source;
+      }
+    }
   }
-  const displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
 
   if (resolved.status !== 'active') {
     await prisma.botInstance.update({
@@ -1265,6 +1790,47 @@ async function handleInboundMessage(opts: {
       messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
     },
   });
+
+  // Reuse stored Conversation.platformUsername (+E.164) for LID peers (manual/vCard cache).
+  if (!phoneE164 && isWhatsAppLid(from)) {
+    const cached = await resolvePhoneFromConversationCache({
+      tenantId: resolved.tenantId,
+      botId: resolved.id,
+      platformUserId: from,
+      conversationId: conversation?.id,
+      platformUsername: conversation?.platformUsername,
+    });
+    if (cached.phone) {
+      phoneE164 = cached.phone;
+      phoneSource = cached.source;
+    } else if (phoneSource === 'none') {
+      console.warn(
+        `[ai-whatsapp] no PN for LID chat instance=${opts.instanceName} lid=${from} sources=webhook,contact_row,chat_row,cached — CRM phone left empty (Evolution 2.2.3-lid has no lidMapping; upgrade ≥2.3.7)`,
+      );
+    }
+  }
+  if (phoneE164) {
+    console.log(
+      `[ai-whatsapp] phone resolved source=${phoneSource} lidOrFrom=${from} e164=+${phoneE164}`,
+    );
+  }
+  const displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
+
+  // Business profile: email when phone missing (never invent phone from it).
+  let businessEmail: string | undefined;
+  if (isWhatsAppLid(from)) {
+    try {
+      const biz = await fetchWaBusinessProfile(opts.instanceName, from);
+      businessEmail = biz?.email;
+      if (businessEmail) {
+        console.log(
+          `[ai-whatsapp] business profile email for lid=${from} email=${businessEmail}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[ai-whatsapp] fetchBusinessProfile failed', err);
+    }
+  }
 
   if (!conversation) {
     const created = await prisma.conversation.create({
@@ -1321,22 +1887,76 @@ async function handleInboundMessage(opts: {
     platformUserId: from,
     contactName: displayName !== 'WhatsApp' ? displayName : undefined,
     phoneE164,
+    email: businessEmail,
   }).catch((err) => {
     console.error('[ai-whatsapp] syncLeadToCrm unhandled', err);
   });
 
   if (!(await shouldAiReply(conversation.id))) {
-    console.log(`[ai-whatsapp] AI off for conv=${conversation.id} (no agent / paused)`);
+    const c = await prisma.conversation.findUnique({
+      where: { id: conversation.id },
+      select: {
+        mode: true,
+        aiDisabled: true,
+        pausedUntil: true,
+        status: true,
+        aiAgentId: true,
+        botInstance: { select: { defaultAiAgentId: true } },
+      },
+    });
+    console.log(
+      `[ai-whatsapp] AI off for conv=${conversation.id}`,
+      JSON.stringify({
+        mode: c?.mode,
+        aiDisabled: c?.aiDisabled,
+        pausedUntil: c?.pausedUntil?.toISOString() ?? null,
+        status: c?.status,
+        aiAgentId: c?.aiAgentId ?? null,
+        defaultAiAgentId: c?.botInstance?.defaultAiAgentId ?? null,
+      }),
+    );
     return;
   }
 
   const session = decodeSession(resolved.botTokenEncrypted);
   if (!session?.instanceName) return;
 
-  const hasBalance = await hasAiBalance(resolved.tenantId, 1);
+  // Mark read as soon as we accept the message (human-like).
+  if (opts.messageId) {
+    void markWhatsAppRead(
+      session.instanceName,
+      from,
+      [opts.messageId],
+      opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
+    );
+  }
+
+  inboundAiDebouncer.push(conversation.id, {
+    instanceName: session.instanceName,
+    from,
+    conversationId: conversation.id,
+    tenantId: resolved.tenantId,
+    botId: resolved.id,
+    text: opts.text,
+    messageId: opts.messageId,
+    remoteJid: opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
+    addonId: resolved.addonId,
+  });
+}
+
+async function flushWhatsAppAiReply(items: WaAiPending[]) {
+  const last = items[items.length - 1];
+  if (!last) return;
+  const { instanceName, from, conversationId, tenantId, addonId } = last;
+  const messageIds = items.map((i) => i.messageId).filter(Boolean) as string[];
+  const burstText = items.map((i) => i.text).filter(Boolean).join('\n');
+
+  if (!(await shouldAiReply(conversationId))) return;
+
+  const hasBalance = await hasAiBalance(tenantId, 1);
   if (!hasBalance) {
     await sendWhatsAppText(
-      session.instanceName,
+      instanceName,
       from,
       '⚠️ Баланс AI-ассистента исчерпан. Пополните баланс в личном кабинете.',
     );
@@ -1345,63 +1965,115 @@ async function handleInboundMessage(opts: {
 
   if (!OPENROUTER_API_KEY) return;
 
-  const agent = await resolveAssignedAgent(conversation.id);
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    include: {
+      messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+    },
+  });
+  if (!conversation) return;
+
+  const agent = await resolveAssignedAgent(conversationId);
   const model =
     (agent?.settings as any)?.model ||
     process.env.AI_DEFAULT_MODEL ||
     'openai/gpt-4o-mini';
-  const systemPrompt = agent?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  let systemPrompt = (agent?.systemPrompt || DEFAULT_SYSTEM_PROMPT) + JSON_FORMAT_HINT;
+  try {
+    if (agent?.id) {
+      const rag = await retrieveAgentContext({
+        aiAgentId: agent.id,
+        query: burstText || last.text,
+        tenantId,
+      });
+      systemPrompt += formatRagPromptBlock(rag);
+    }
+  } catch (err) {
+    console.warn('[ai-whatsapp] RAG retrieve failed', err);
+  }
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
   ];
+  // History already includes all burst user messages; do not re-append last text.
   for (const msg of [...conversation.messages].reverse()) {
     messages.push({
       role: msg.role === 'user' ? 'user' : 'assistant',
       content: msg.content,
     });
   }
-  messages.push({ role: 'user', content: opts.text });
 
   try {
-    void sendWhatsAppTyping(session.instanceName, from, 4000);
-    const completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: 0.7,
-      max_tokens: 1000,
-    });
-    const aiResponse =
+    const preferredJid =
+      items.map((i) => i.remoteJid).find(Boolean) || last.remoteJid || undefined;
+    await markWhatsAppRead(instanceName, from, messageIds, preferredJid);
+    await sendWhatsAppTyping(instanceName, from, 4000);
+    const sendStartedAt = new Date();
+    let completion;
+    try {
+      completion = await openai.chat.completions.create({
+        model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
+      });
+    } catch {
+      completion = await openai.chat.completions.create({
+        model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1000,
+      });
+    }
+    const raw =
       completion.choices[0]?.message?.content || 'Извините, я не смог сформировать ответ.';
-    const tokensUsed = completion.usage?.total_tokens || 0;
-    const providerCost = calculateProviderCost(model, tokensUsed);
+    const bubbles = normalizeAiBubbles(parseAiBubbles(raw), 4);
+    const usage = completion.usage as OpenRouterUsageLike | undefined;
+    const cost = await resolveProviderCostRub({
+      model,
+      usage,
+      apiKey: OPENROUTER_API_KEY,
+      baseUrl: OPENROUTER_BASE_URL,
+    });
+    const tokensUsed = cost.tokens || usage?.total_tokens || 0;
     const chargeResult = await chargeAiUsage({
-      tenantId: resolved.tenantId,
-      providerCostRub: providerCost,
+      tenantId,
+      providerCostRub: cost.providerCostRub,
       tokens: tokensUsed,
       model,
       requestType: 'text',
-      addonId: resolved.addonId || undefined,
+      addonId: addonId || undefined,
+      aiAgentId: agent?.id,
     });
+
+    const sendResult = await sendWhatsAppHumanLike(instanceName, from, bubbles, {
+      conversationId,
+      sendStartedAt,
+    });
+
+    if (sendResult.aborted) {
+      console.log(
+        `[ai-whatsapp] outbound aborted conv=${conversationId} — newer inbound will reply`,
+      );
+      return;
+    }
 
     await prisma.chatMessage.create({
       data: {
-        conversationId: conversation.id,
+        conversationId,
         role: 'assistant',
-        content: aiResponse,
+        content: bubbles.join('\n\n'),
         tokensUsed,
         modelUsed: model,
-        providerCostRub: providerCost,
+        providerCostRub: cost.providerCostRub,
         chargedRub: chargeResult.chargedRub,
       },
     });
     await prisma.conversation.update({
-      where: { id: conversation.id },
+      where: { id: conversationId },
       data: { lastAiMessageAt: new Date() },
     });
-    await sendWhatsAppTyping(session.instanceName, from, typingDelayMs(aiResponse));
-    await sleep(Math.min(1200, typingDelayMs(aiResponse)));
-    await sendWhatsAppText(session.instanceName, from, aiResponse);
   } catch (err) {
     console.error('[ai-whatsapp] AI reply error:', err);
   }
@@ -1415,6 +2087,11 @@ async function handleEvolutionWebhook(payload: any) {
     payload?.data?.instanceName ||
     payload?.sender ||
     '';
+
+  if (event.includes('presence') || String(payload?.event || '').includes('PRESENCE')) {
+    parsePresenceUpdatePayload(payload);
+    return;
+  }
 
   if (event.includes('connection') || event === 'connection.update') {
     const state = String(
@@ -1454,14 +2131,28 @@ async function handleEvolutionWebhook(payload: any) {
     if (item?.key?.fromMe) continue;
     const remoteJid = resolveInboundWaJid(item);
     if (!remoteJid || String(remoteJid).endsWith('@g.us')) continue; // skip groups for MVP
+    // Skip WhatsApp status / newsletters / broadcast lists (not human 1:1)
+    const jid = String(remoteJid);
+    if (
+      jid === 'status@broadcast' ||
+      jid.endsWith('@newsletter') ||
+      jid.endsWith('@broadcast')
+    ) {
+      continue;
+    }
     const text = extractText(item?.message);
     if (!text) continue;
     const phoneE164 = extractPhoneFromInboundItem(item);
     const profilePicUrl = extractProfilePicFromInboundItem(item);
+    const key = item?.key || {};
+    const webhookPnSource = phoneE164 ? inboundPhoneSource(item) : undefined;
     if (!phoneE164 && isWhatsAppLid(remoteJid)) {
-      const key = item?.key || {};
       console.warn(
-        `[ai-whatsapp] inbound LID without PN in payload instance=${instanceName} remoteJid=${key.remoteJid || remoteJid} alt=${key.remoteJidAlt || item?.remoteJidAlt || '-'} senderPn=${key.senderPn || item?.senderPn || '-'} — will try Contact book`,
+        `[ai-whatsapp] inbound LID without PN in payload instance=${instanceName} remoteJid=${key.remoteJid || remoteJid} alt=${key.remoteJidAlt || item?.remoteJidAlt || '-'} senderPn=${key.senderPn || item?.senderPn || '-'} participantAlt=${key.participantAlt || '-'} — trying Contact/Chat explicit fields next`,
+      );
+    } else if (phoneE164) {
+      console.log(
+        `[ai-whatsapp] inbound PN from ${webhookPnSource || 'webhook'} instance=${instanceName} e164=+${phoneE164} remoteJid=${key.remoteJid || remoteJid}`,
       );
     }
     await handleInboundMessage({
@@ -1472,7 +2163,9 @@ async function handleEvolutionWebhook(payload: any) {
       pushName: item?.pushName,
       contactName: item?.pushName,
       phoneE164,
+      phoneSource: webhookPnSource,
       profilePicUrl,
+      remoteJid: String(remoteJid),
     });
   }
 }
@@ -1531,11 +2224,19 @@ async function backfillWaPhonesFromEvolution(opts?: {
         unresolved.push(`${conv.id}:not-lid`);
         continue;
       }
-      const phone = await resolvePhoneFromEvolutionContacts(
+      const contactHit = await resolvePhoneFromEvolutionContacts(
         session.instanceName,
         conv.platformUserId,
         { pushName: conv.platformFirstName },
       );
+      let phone = contactHit.phone;
+      if (!phone) {
+        const fromChat = await resolvePhoneFromEvolutionDb(
+          session.instanceName,
+          conv.platformUserId,
+        );
+        phone = fromChat.phone;
+      }
       if (!phone) {
         unresolved.push(`${conv.id}:lid=${conv.platformUserId}`);
         continue;
@@ -1635,18 +2336,41 @@ async function main() {
           return sendJson(res, 400, { ok: false, error: 'WhatsApp session missing' });
         }
 
-        if (body.typing !== false) {
-          await sendWhatsAppTyping(
-            session.instanceName,
-            to,
-            mediaBase64 ? 1500 : typingDelayMs(text),
-          );
+        // Mark recent inbound as read before operator/CRM outbound.
+        if (body.markRead !== false) {
+          const peer = normalizeWaNumber(to);
+          const convForRead = await prisma.conversation.findFirst({
+            where: {
+              botInstanceId: bot.id,
+              platformUserId: peer,
+              status: { in: ['open', 'waiting_for_human'] },
+            },
+          });
+          if (convForRead) {
+            const recent = await prisma.chatMessage.findMany({
+              where: {
+                conversationId: convForRead.id,
+                role: 'user',
+                externalMessageId: { not: null },
+              },
+              orderBy: { sentAt: 'desc' },
+              take: 10,
+              select: { externalMessageId: true },
+            });
+            const ids = recent
+              .map((m) => m.externalMessageId)
+              .filter((id): id is string => Boolean(id));
+            if (ids.length) await markWhatsAppRead(session.instanceName, to, ids);
+          }
         }
 
         let attachment:
           | { type: 'photo' | 'video' | 'document'; fileId: string; fileName: string; mimeType: string }
           | undefined;
         if (mediaBase64) {
+          if (body.typing !== false) {
+            await sendWhatsAppTyping(session.instanceName, to, 1500);
+          }
           attachment = await sendWhatsAppMedia({
             instanceName: session.instanceName,
             to,
@@ -1656,27 +2380,12 @@ async function main() {
             caption: text || undefined,
           });
         } else {
-          await sendWhatsAppText(session.instanceName, to, text);
+          // Multi-bubble like Telegram (JSON message1..n or paragraphs).
+          const bubbles = parseAiBubbles(text);
+          await sendWhatsAppHumanLike(session.instanceName, to, bubbles);
         }
 
-        // Human outbound → pause AI 1h when conversation exists
-        const peer = normalizeWaNumber(to);
-        const conv = await prisma.conversation.findFirst({
-          where: {
-            botInstanceId: bot.id,
-            platformUserId: peer,
-            status: { in: ['open', 'waiting_for_human'] },
-          },
-        });
-        if (conv && !conv.aiDisabled) {
-          await prisma.conversation.update({
-            where: { id: conv.id },
-            data: {
-              mode: 'human',
-              pausedUntil: new Date(Date.now() + 60 * 60 * 1000),
-            },
-          });
-        }
+        // Human outbound — store already done by CRM; do not auto-pause AI.
         return sendJson(res, 200, { ok: true, attachment: attachment || null });
       }
 
@@ -1746,6 +2455,34 @@ async function main() {
         }
         await markWhatsAppRead(session.instanceName, to, ids);
         return sendJson(res, 200, { ok: true, marked: ids.length });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/internal/chat/presence') {
+        const botId = String(url.searchParams.get('botId') || '').trim();
+        const to = String(url.searchParams.get('to') || url.searchParams.get('peerUserId') || '').trim();
+        if (!botId || !to) {
+          return sendJson(res, 400, { ok: false, error: 'botId, to required' });
+        }
+        const bot = await prisma.botInstance.findFirst({
+          where: { id: botId, botType: 'ai_wa' },
+        });
+        if (!bot) return sendJson(res, 404, { ok: false, error: 'account not found' });
+        const session = decodeSession(bot.botTokenEncrypted);
+        if (!session?.instanceName) {
+          return sendJson(res, 200, { ok: true, presence: null });
+        }
+        const cached = getCachedWaPresence(session.instanceName, to);
+        if (!cached) {
+          return sendJson(res, 200, { ok: true, presence: null });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          presence: {
+            online: cached.online,
+            lastSeenAt: cached.lastSeenAt,
+            approx: null,
+          },
+        });
       }
 
       if (req.method === 'POST' && url.pathname === '/internal/crm/backfill-phones') {

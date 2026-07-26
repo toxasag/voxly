@@ -7,10 +7,13 @@ import {
   ADDON_TYPES,
   ANALYTICS_PLATFORMS,
   REFERRAL_RULE_TYPES,
+  REFERRAL_EXCLUDED_PRODUCTS,
   TENANT_STATUS,
   USER_ROLES,
   BOT_PROVISION_VIA,
   PRESET_GOALS,
+  getAiTgExtraSlots,
+  getAiTgBusinessCapacity,
   clientMdToMarkdownV2,
   parseTelegramClientMd,
   buildVoxlyBotUsername,
@@ -22,8 +25,10 @@ describe('@voxly/shared exports', () => {
     expect(PRODUCT_CODES.EXTRA_SEAT).toBe('extra_seat');
     expect(PRODUCT_CODES.GIFT_BOT).toBe('gift_bot');
     expect(PRODUCT_CODES.AI_TELEGRAM).toBe('ai_tg');
+    expect(PRODUCT_CODES.AI_TG_EXTRA_CONN).toBe('ai_tg_extra_conn');
     expect(PRODUCT_CODES.AI_GRAMJS).toBe('ai_gramjs');
     expect(PRODUCT_CODES.AI_WHATSAPP).toBe('ai_wa');
+    expect(PRODUCT_CODES.AI_TOPUP).toBe('ai_topup');
   });
 
   it('exports PRICING constants', () => {
@@ -31,9 +36,20 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.EXTRA_SEAT_MONTHLY).toBe(300);
     expect(PRICING.SEATS_INCLUDED).toBe(10);
     expect(PRICING.AI_MARKUP_PERCENT_DEFAULT).toBe(50);
+    expect(PRICING.USD_RUB_RATE_DEFAULT).toBe(90);
     expect(PRICING.AI_TOPUP_MIN_RUB).toBe(500);
     expect(PRICING.AI_GRAMJS_MONTHLY).toBe(500);
+    expect(PRICING.AI_TG_EXTRA_CONN_MONTHLY).toBe(200);
+    expect(PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS).toBe(10);
+    expect(PRICING.REFERRAL_PERCENT_DEFAULT).toBe(20);
     expect(TRIAL_PERIOD_DAYS).toBe(14);
+  });
+
+  it('computes Business capacity from addon config', () => {
+    expect(getAiTgExtraSlots(null)).toBe(0);
+    expect(getAiTgExtraSlots({ extraSlots: 3 })).toBe(3);
+    expect(getAiTgBusinessCapacity({ extraSlots: 2 })).toBe(12);
+    expect(REFERRAL_EXCLUDED_PRODUCTS.has(PRODUCT_CODES.AI_TOPUP)).toBe(true);
   });
 
   it('exports PERIOD_DISCOUNTS with expected tiers', () => {

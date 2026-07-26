@@ -10,7 +10,7 @@ import { StringSession } from 'telegram/sessions/index.js';
 import { NewMessage } from 'telegram/events/index.js';
 import { prisma } from '@voxly/db';
 import { encrypt, decrypt } from '@voxly/crypto';
-import { PRODUCT_CODES, PRICING, AI_HANDOFF_PAUSE_MS } from '@voxly/shared';
+import { PRODUCT_CODES, PRICING } from '@voxly/shared';
 
 const PORT = Number(process.env.GRAMJS_BRIDGE_PORT || 3008);
 const API_ID = Number(process.env.TELEGRAM_API_ID || process.env.API_ID || 0);
@@ -118,29 +118,7 @@ async function pauseOnHumanOutbound(opts: {
       externalMessageId: opts.externalMessageId,
     },
   });
-
-  if (!conversation.aiDisabled) {
-    const hasAgent =
-      conversation.aiAgentId ||
-      (
-        await prisma.botInstance.findUnique({
-          where: { id: opts.botId },
-          select: { defaultAiAgentId: true },
-        })
-      )?.defaultAiAgentId;
-    if (hasAgent) {
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: {
-          pausedUntil: new Date(Date.now() + AI_HANDOFF_PAUSE_MS),
-          updatedAt: new Date(),
-        },
-      });
-      console.log(
-        `[gramjs] auto-pause 1h conv=${conversation.id} (human outbound)`,
-      );
-    }
-  }
+  // Do NOT auto-pause AI (manual pause/off only).
 }
 
 function rememberAiSent(botId: string, messageId: number) {
@@ -486,7 +464,12 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
       }
 
       const sender = await msg.getSender();
-      if (!sender || !(sender instanceof Api.User) || sender.bot) return;
+      if (!sender || !(sender instanceof Api.User) || sender.bot) {
+        if (sender instanceof Api.User && sender.bot) {
+          console.log(`[gramjs] skip inbound from bot id=${sender.id}`);
+        }
+        return;
+      }
 
       try {
         const chat = await msg.getChat();
@@ -507,6 +490,18 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         return;
       }
 
+      // Mark inbound as read immediately (blue ticks / read status).
+      try {
+        await client.invoke(
+          new Api.messages.ReadHistory({
+            peer: sender,
+            maxId: msg.id,
+          }),
+        );
+      } catch (err) {
+        console.warn('[gramjs] ReadHistory on inbound failed', err);
+      }
+
       // Api.User.phone is visible when peer is in contacts / shared number (no leading +).
       const phoneRaw =
         typeof sender.phone === 'string' && sender.phone.trim()
@@ -522,13 +517,51 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         username: sender.username,
         phone: phoneRaw,
         externalMessageId: String(msg.id),
+        isBot: Boolean(sender.bot),
       });
 
-      for (const bubble of bubbles) {
+      const sendStartedAt = new Date();
+      for (const bubble of bubbles.slice(0, 4)) {
         if (!bubble.trim()) continue;
+        // If client wrote again while we were sending — stop and re-ask AI.
+        const conv = await prisma.conversation.findFirst({
+          where: {
+            tenantId,
+            botInstanceId: botId,
+            platformUserId: String(sender.id),
+          },
+          orderBy: { updatedAt: 'desc' },
+          select: { id: true },
+        });
+        if (conv) {
+          const newer = await prisma.chatMessage.count({
+            where: {
+              conversationId: conv.id,
+              role: 'user',
+              createdAt: { gt: sendStartedAt },
+            },
+          });
+          if (newer > 0) {
+            console.log(
+              `[gramjs] outbound aborted peer=${sender.id} — newer inbound will reply`,
+            );
+            return;
+          }
+        }
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({
+              peer: sender,
+              action: new Api.SendMessageTypingAction(),
+            }),
+          );
+        } catch {
+          /* best-effort */
+        }
+        await sleep(Math.min(4500, Math.max(800, 600 + bubble.length * 25)));
         const sent = await client.sendMessage(sender, { message: bubble });
         if (sent?.id != null) rememberAiSent(botId, Number(sent.id));
-        await sleep(400 + Math.floor(Math.random() * 800));
+        await sleep(3000 + Math.floor(Math.random() * 1000));
       }
     } catch (err) {
       console.error('[gramjs] inbound handler error:', err);
@@ -546,6 +579,7 @@ async function askAiWorker(payload: {
   /** Digits from Api.User.phone when session can see it. */
   phone?: string;
   externalMessageId?: string;
+  isBot?: boolean;
 }): Promise<string[]> {
   const res = await fetch(`${AI_WORKER_URL}/internal/inbound`, {
     method: 'POST',
@@ -569,6 +603,56 @@ async function askAiWorker(payload: {
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function resolvePeerEntity(client: TelegramClient, peerUserId: string) {
+  try {
+    return await client.getEntity(peerUserId);
+  } catch {
+    try {
+      return await client.getEntity(Number(peerUserId));
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** Contact online / last-seen from MTProto User.status (privacy-respecting). */
+function serializeUserPresence(entity: unknown): {
+  online: boolean;
+  lastSeenAt: string | null;
+  approx: 'recently' | 'last_week' | 'last_month' | null;
+} | null {
+  if (!(entity instanceof Api.User) || entity.bot) return null;
+  const status = entity.status;
+  if (!status) return null;
+  if (status instanceof Api.UserStatusOnline) {
+    return { online: true, lastSeenAt: null, approx: null };
+  }
+  if (status instanceof Api.UserStatusOffline) {
+    const raw = status.wasOnline as unknown;
+    let ms: number | null = null;
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      ms = raw > 1e12 ? raw : raw * 1000;
+    } else if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+      ms = raw.getTime();
+    }
+    return {
+      online: false,
+      lastSeenAt: ms != null ? new Date(ms).toISOString() : null,
+      approx: null,
+    };
+  }
+  if (status instanceof Api.UserStatusRecently) {
+    return { online: false, lastSeenAt: null, approx: 'recently' };
+  }
+  if (status instanceof Api.UserStatusLastWeek) {
+    return { online: false, lastSeenAt: null, approx: 'last_week' };
+  }
+  if (status instanceof Api.UserStatusLastMonth) {
+    return { online: false, lastSeenAt: null, approx: 'last_month' };
+  }
+  return null;
 }
 
 async function startQrLogin(
@@ -958,6 +1042,17 @@ async function main() {
             return;
           }
         }
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({
+              peer: entity,
+              action: new Api.SendMessageTypingAction(),
+            }),
+          );
+        } catch {
+          /* best-effort */
+        }
+        await sleep(400 + Math.floor(Math.random() * 600));
         const sent = await client.sendMessage(entity, { message: text });
         if (sent?.id != null) rememberAiSent(botId, Number(sent.id));
         sendJson(res, 200, {
@@ -966,6 +1061,89 @@ async function main() {
           peerUserId,
           messageId: sent?.id != null ? String(sent.id) : null,
         });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/messages/typing') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        const peerUserId = String(body.peerUserId || '').trim();
+        if (!botId || !peerUserId) {
+          sendJson(res, 400, { ok: false, error: 'botId and peerUserId required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const entity = await resolvePeerEntity(client, peerUserId);
+        if (!entity) {
+          sendJson(res, 404, { ok: false, error: 'peer not found' });
+          return;
+        }
+        await client.invoke(
+          new Api.messages.SetTyping({
+            peer: entity,
+            action: new Api.SendMessageTypingAction(),
+          }),
+        );
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/messages/read') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        const peerUserId = String(body.peerUserId || '').trim();
+        if (!botId || !peerUserId) {
+          sendJson(res, 400, { ok: false, error: 'botId and peerUserId required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const entity = await resolvePeerEntity(client, peerUserId);
+        if (!entity) {
+          sendJson(res, 404, { ok: false, error: 'peer not found' });
+          return;
+        }
+        try {
+          await client.invoke(
+            new Api.messages.ReadHistory({
+              peer: entity,
+              maxId: 0,
+            }),
+          );
+        } catch (err) {
+          console.warn('[gramjs] ReadHistory failed', err);
+        }
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/messages/peer-status') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        const peerUserId = String(body.peerUserId || '').trim();
+        if (!botId || !peerUserId) {
+          sendJson(res, 400, { ok: false, error: 'botId and peerUserId required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const entity = await resolvePeerEntity(client, peerUserId);
+        if (!entity) {
+          sendJson(res, 404, { ok: false, error: 'peer not found' });
+          return;
+        }
+        const presence = serializeUserPresence(entity);
+        sendJson(res, 200, { ok: true, presence });
         return;
       }
 

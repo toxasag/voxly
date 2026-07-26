@@ -168,9 +168,9 @@ async function listCrmChatTargets(
 
   targets.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
-  // One pill per channel identity (gift bot / Business connection / peer account).
-  // Multiple Conversation rows for the same Person+Business connection (bad merges)
-  // must not spam identical «Business-бот» chips.
+  // One pill per channel identity (gift bot / Business peer / WA·GramJS peer).
+  // Business must include peer id — collapsing by connection alone hid other
+  // customers' threads behind one empty chip (INC-055).
   const seen = new Set<string>();
   const deduped: CrmChatTarget[] = [];
   for (const t of targets) {
@@ -178,7 +178,7 @@ async function listCrmChatTargets(
     if (t.source === 'gift_subscriber') {
       key = `gift:${t.botInstanceId}`;
     } else if (t.businessConnectionId) {
-      key = `biz:${t.botInstanceId}:${t.businessConnectionId}`;
+      key = `biz:${t.botInstanceId}:${t.businessConnectionId}:${t.telegramId}`;
     } else {
       key = `peer:${t.botInstanceId}:${t.telegramId}`;
     }
@@ -231,6 +231,7 @@ function detectUploadKind(
 function mapAttachment(att: unknown): ChatAttachment | null {
   if (!att || typeof att !== 'object') return null;
   const a = att as Record<string, unknown>;
+  if (a.type === 'sender_meta') return null;
   if (typeof a.fileId !== 'string' || typeof a.type !== 'string') return null;
   return {
     type: a.type as ChatAttachment['type'],
@@ -240,6 +241,59 @@ function mapAttachment(att: unknown): ChatAttachment | null {
     mimeType: typeof a.mimeType === 'string' ? a.mimeType : undefined,
     fileSize: typeof a.fileSize === 'number' ? a.fileSize : undefined,
   };
+}
+
+function extractSenderLabel(attachments: unknown): string | null {
+  if (!Array.isArray(attachments)) return null;
+  for (const att of attachments) {
+    if (!att || typeof att !== 'object') continue;
+    const a = att as Record<string, unknown>;
+    if (a.type === 'sender_meta' && typeof a.label === 'string' && a.label.trim()) {
+      return a.label.trim();
+    }
+  }
+  return null;
+}
+
+function formatOperatorName(user: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+}): string {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  if (name) return name;
+  const email = String(user.email || '').trim();
+  if (email.includes('@')) return email.split('@')[0] || email;
+  return email || 'Менеджер';
+}
+
+function formatBotAgentLabel(opts: {
+  botType: string | null;
+  botUsername: string | null;
+  displayName: string | null;
+  phoneNumberId?: string | null;
+  agentName?: string | null;
+}): string {
+  let botPart = '';
+  if (opts.botType === 'ai_wa') {
+    botPart =
+      opts.displayName ||
+      (opts.phoneNumberId ? `WA ${opts.phoneNumberId}` : null) ||
+      opts.botUsername ||
+      'WhatsApp';
+  } else if (opts.botType === 'ai_gramjs') {
+    botPart =
+      opts.displayName ||
+      (opts.botUsername ? `@${opts.botUsername.replace(/^@/, '')}` : null) ||
+      'Личный Telegram';
+  } else {
+    botPart =
+      (opts.botUsername ? `@${opts.botUsername.replace(/^@/, '')}` : null) ||
+      opts.displayName ||
+      'Бот';
+  }
+  if (opts.agentName?.trim()) return `${botPart} · ${opts.agentName.trim()}`;
+  return botPart;
 }
 
 /**
@@ -281,6 +335,14 @@ function humanizeCrmChatSendError(raw: string): string {
     )
   ) {
     return 'Номер не найден в WhatsApp';
+  }
+
+  if (
+    /BUSINESS_PEER_INVALID|BUSINESS_CONNECTION_INVALID|BUSINESS_PEER_USAGE_MISSING|can_reply|нет права отвечать/i.test(
+      msg,
+    )
+  ) {
+    return 'У Business-бота нет права отвечать. В Telegram: Настройки → Telegram Business → Чат-боты → ваш бот → включите «Отвечать на сообщения», затем попросите клиента написать ещё раз.';
   }
 
   if (/^bad request$/i.test(msg)) {
@@ -415,6 +477,108 @@ function fireWhatsappPresence(opts: {
   }).catch(() => undefined);
 }
 
+/** Best-effort GramJS typing / read via MTProto bridge. */
+function fireGramjsPresence(opts: {
+  botId: string;
+  peerUserId: string;
+  kind: 'typing' | 'read';
+}): void {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) return;
+  const path =
+    opts.kind === 'typing' ? '/messages/typing' : '/messages/read';
+  void fetch(`${gramjsBridgeBase()}${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      peerUserId: opts.peerUserId,
+    }),
+  }).catch(() => undefined);
+}
+
+type CrmChatPresence = {
+  online: boolean;
+  lastSeenAt: string | null;
+  approx: 'recently' | 'last_week' | 'last_month' | null;
+};
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  ms = 2500,
+): Promise<Response | null> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/** Contact online / last-seen for CRM chat header — never blocks/fails the GET. */
+async function fetchContactPresence(opts: {
+  botType: string | null;
+  botId: string;
+  peerUserId: string;
+}): Promise<CrmChatPresence | null> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token || !opts.botId || !opts.peerUserId) return null;
+
+  if (opts.botType === 'ai_gramjs') {
+    const res = await fetchWithTimeout(`${gramjsBridgeBase()}/messages/peer-status`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ botId: opts.botId, peerUserId: opts.peerUserId }),
+    });
+    if (!res?.ok) return null;
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      presence?: CrmChatPresence | null;
+    } | null;
+    return usablePresence(json?.presence || null);
+  }
+
+  if (opts.botType === 'ai_wa') {
+    const qs = new URLSearchParams({
+      botId: opts.botId,
+      to: opts.peerUserId,
+    });
+    const res = await fetchWithTimeout(
+      `${whatsappWorkerBase()}/internal/chat/presence?${qs.toString()}`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+    if (!res?.ok) return null;
+    const json = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      presence?: CrmChatPresence | null;
+    } | null;
+    return usablePresence(json?.presence || null);
+  }
+
+  // Bot API (Business / gift) does not expose contact last-seen.
+  return null;
+}
+
+function usablePresence(p: CrmChatPresence | null): CrmChatPresence | null {
+  if (!p) return null;
+  if (p.online) return p;
+  if (p.lastSeenAt || p.approx) return p;
+  return null;
+}
+
 async function sendTelegramTyping(
   botApi: string,
   chatId: string,
@@ -428,6 +592,27 @@ async function sendTelegramTyping(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, action: 'typing', ...withBiz }),
   }).catch(() => undefined);
+}
+
+/** Live-check Telegram Business connection can_reply before CRM outbound. */
+async function assertBusinessCanReply(botApi: string, businessConnectionId: string): Promise<void> {
+  const res = await fetch(
+    `${botApi}/getBusinessConnection?business_connection_id=${encodeURIComponent(businessConnectionId)}`,
+  );
+  const json = (await res.json()) as {
+    ok?: boolean;
+    description?: string;
+    result?: { can_reply?: boolean; is_enabled?: boolean };
+  };
+  if (!json.ok) {
+    throw new Error(json.description || 'BUSINESS_CONNECTION_INVALID');
+  }
+  if (json.result?.is_enabled === false) {
+    throw new Error('BUSINESS_CONNECTION_INVALID');
+  }
+  if (json.result?.can_reply !== true) {
+    throw new Error('can_reply=false');
+  }
 }
 
 /** TG Business read receipts (n8n human-imitation port). Best-effort. */
@@ -737,12 +922,51 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       let conversationId = target.conversationId;
       let mode = 'bot';
       let channel: string | null = null;
+      let aiDisabled = false;
+      let pausedUntil: string | null = null;
+      let aiAgentId: string | null = null;
+      let agentName: string | null = null;
       if (conversationId) {
         const conversation = await prisma.conversation.findFirst({
           where: { id: conversationId, tenantId },
+          select: {
+            mode: true,
+            channel: true,
+            aiDisabled: true,
+            pausedUntil: true,
+            aiAgentId: true,
+            aiAgent: { select: { name: true, status: true } },
+            botInstance: {
+              select: {
+                defaultAiAgent: { select: { name: true, status: true } },
+              },
+            },
+          },
         });
         mode = conversation?.mode || 'bot';
         channel = conversation?.channel || null;
+        aiDisabled = conversation?.aiDisabled === true;
+        pausedUntil = conversation?.pausedUntil
+          ? conversation.pausedUntil.toISOString()
+          : null;
+        aiAgentId = conversation?.aiAgentId || null;
+        const agent =
+          (conversation?.aiAgent?.status === 'active' ? conversation.aiAgent : null) ||
+          (conversation?.botInstance?.defaultAiAgent?.status === 'active'
+            ? conversation.botInstance.defaultAiAgent
+            : null);
+        agentName = agent?.name || null;
+      }
+
+      const jwtUser = (request as any).user as { sub?: string; email?: string };
+      let operatorName = 'Менеджер';
+      if (jwtUser?.sub) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: jwtUser.sub },
+          select: { firstName: true, lastName: true, email: true },
+        });
+        if (dbUser) operatorName = formatOperatorName(dbUser);
+        else if (jwtUser.email) operatorName = formatOperatorName({ email: jwtUser.email });
       }
 
       const botIds = [...new Set(allTargets.map((t) => t.botInstanceId))];
@@ -806,13 +1030,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           })
         : [];
 
-      // Operator opened chat → typing + mark inbound as read (best-effort).
+      // Operator opened chat → mark inbound as read (best-effort). Typing only on send.
       if (botType === 'ai_wa') {
-        fireWhatsappPresence({
-          botId: target.botInstanceId,
-          peerUserId: target.telegramId,
-          kind: 'typing',
-        });
         const inboundIds = messages
           .filter((m) => m.role === 'user' && m.externalMessageId)
           .slice(-10)
@@ -822,6 +1041,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           peerUserId: target.telegramId,
           kind: 'read',
           messageIds: inboundIds,
+        });
+      } else if (botType === 'ai_gramjs') {
+        fireGramjsPresence({
+          botId: target.botInstanceId,
+          peerUserId: target.telegramId,
+          kind: 'read',
         });
       } else if (
         (botType === 'ai_tg' || botType === 'gift') &&
@@ -848,6 +1073,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const presence = await fetchContactPresence({
+        botType,
+        botId: target.botInstanceId,
+        peerUserId: target.telegramId,
+      });
+
       return reply.send({
         recordId,
         opportunityId: target.twentyOpportunityId,
@@ -860,23 +1091,136 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         source: target.source,
         conversationId,
         mode,
+        aiDisabled,
+        pausedUntil,
+        aiAgentId,
+        aiControls:
+          Boolean(conversationId) &&
+          (botType === 'ai_tg' ||
+            botType === 'ai_wa' ||
+            botType === 'ai_gramjs'),
         channel: meta.channelKind,
         channelLabel: meta.channelLabel,
         identityLabel: meta.identityLabel,
         peerLabel: meta.peerLabel,
+        contactName:
+          meta.peerLabel ||
+          target.firstName ||
+          (target.username ? `@${target.username}` : null) ||
+          'Клиент',
+        botAgentLabel: formatBotAgentLabel({
+          botType,
+          botUsername: bot?.botUsername || null,
+          displayName: bot?.displayName || null,
+          phoneNumberId: bot?.phoneNumberId || null,
+          agentName,
+        }),
+        operatorName,
         botType,
         supportsAttachments: botType !== 'ai_gramjs',
-        formatHint: '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+        presence,
         threads,
         messages: messages.map((m) => ({
           id: m.id,
           role: m.role,
           content: m.content,
+          senderLabel: extractSenderLabel(m.attachments),
           attachments: Array.isArray(m.attachments)
-            ? (m.attachments as unknown[]).map(mapAttachment).filter(Boolean)
+            ? (m.attachments as unknown[])
+                .map(mapAttachment)
+                .filter((a): a is ChatAttachment => Boolean(a))
             : [],
           sentAt: m.sentAt,
         })),
+      });
+    },
+  );
+
+  /** Enable / pause (~1h) / disable AI for the active CRM chat thread. */
+  fastify.post(
+    '/:recordId/ai',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canReply(user)) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+      const { recordId } = request.params as { recordId: string };
+      const body = z
+        .object({
+          conversationId: z.string().min(1),
+          action: z.enum(['enable', 'pause', 'disable']),
+        })
+        .safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: body.error.flatten() });
+      }
+
+      const prisma = fastify.prisma;
+      const target = await findCrmChatTarget(prisma, tenantId, recordId, {
+        conversationId: body.data.conversationId,
+      });
+      if (!target?.conversationId) {
+        return reply.code(404).send({ error: 'No chat linked to this CRM record' });
+      }
+      if (target.conversationId !== body.data.conversationId) {
+        return reply.code(404).send({ error: 'Conversation not linked to this record' });
+      }
+
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: body.data.conversationId,
+          tenantId,
+          botInstanceId: target.botInstanceId,
+        },
+      });
+      if (!conversation) return reply.code(404).send({ error: 'Not found' });
+
+      const data: {
+        mode?: string;
+        aiDisabled?: boolean;
+        pausedUntil?: Date | null;
+        status?: string;
+      } = {};
+
+      if (body.data.action === 'enable') {
+        data.mode = 'ai';
+        data.aiDisabled = false;
+        data.pausedUntil = null;
+        data.status = 'open';
+      } else if (body.data.action === 'pause') {
+        data.pausedUntil = new Date(Date.now() + AI_HANDOFF_PAUSE_MS);
+        if (!conversation.aiDisabled) {
+          data.mode = 'ai';
+          data.status = 'open';
+        }
+      } else {
+        data.aiDisabled = true;
+        data.mode = 'human';
+        data.status = 'waiting_for_human';
+        data.pausedUntil = null;
+      }
+
+      const updated = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data,
+        select: {
+          id: true,
+          mode: true,
+          aiDisabled: true,
+          pausedUntil: true,
+          status: true,
+        },
+      });
+
+      return reply.send({
+        conversationId: updated.id,
+        mode: updated.mode,
+        aiDisabled: updated.aiDisabled,
+        pausedUntil: updated.pausedUntil ? updated.pausedUntil.toISOString() : null,
+        status: updated.status,
+        action: body.data.action,
       });
     },
   );
@@ -1050,22 +1394,23 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       let attachments: ChatAttachment[] = [];
       try {
         if (isGramjs) {
+          fireGramjsPresence({
+            botId: bot.id,
+            peerUserId: chatId,
+            kind: 'read',
+          });
+          fireGramjsPresence({
+            botId: bot.id,
+            peerUserId: chatId,
+            kind: 'typing',
+          });
           await sendViaGramjsBridge({
             botId: bot.id,
             peerUserId: chatId,
             text: text || '[файл]',
           });
         } else if (isWhatsapp) {
-          fireWhatsappPresence({
-            botId: bot.id,
-            peerUserId: chatId,
-            kind: 'typing',
-          });
-          fireWhatsappPresence({
-            botId: bot.id,
-            peerUserId: chatId,
-            kind: 'read',
-          });
+          // Worker marks read + types + may split multi-bubble text.
           if (fileBuffer?.length) {
             const kind = detectUploadKind(mimeType, filename);
             const sent = await sendViaWhatsappWorker({
@@ -1097,6 +1442,25 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         } else {
           const token = decrypt(bot.botTokenEncrypted!);
           const botApi = `https://api.telegram.org/bot${token}`;
+          if (bizId) {
+            // Fast fail with RU copy when Telegram Business lacks reply rights (INC-054).
+            const link = await prisma.conversation.findFirst({
+              where: {
+                tenantId,
+                botInstanceId: bot.id,
+                channel: 'telegram_business_account',
+                businessConnectionId: bizId,
+              },
+              select: { status: true },
+            });
+            if (link?.status === 'closed') {
+              throw new Error('BUSINESS_CONNECTION_INVALID');
+            }
+            if (link?.status === 'limited') {
+              throw new Error('can_reply=false');
+            }
+            await assertBusinessCanReply(botApi, bizId);
+          }
           void sendTelegramTyping(botApi, chatId, bizId);
           if (bizId && target.conversationId) {
             const recentInbound = await prisma.chatMessage.findMany({
@@ -1164,7 +1528,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             platformUsername: target.username,
             platformFirstName: target.firstName,
             status: 'open',
-            mode: 'human',
+            // Keep AI mode; CRM reply only pauses via pausedUntil (ADR-014 handoff).
+            mode: 'ai',
             channel: isGramjs
               ? 'telegram_gramjs'
               : isWhatsapp
@@ -1186,21 +1551,32 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const operatorUser = user?.sub
+        ? await prisma.user.findUnique({
+            where: { id: user.sub },
+            select: { firstName: true, lastName: true, email: true },
+          })
+        : null;
+      const operatorLabel = formatOperatorName(
+        operatorUser || { email: user?.email || null },
+      );
+      const storedAttachments = [
+        ...attachments,
+        { type: 'sender_meta', label: operatorLabel },
+      ];
+
       const message = await prisma.chatMessage.create({
         data: {
           conversationId,
           role: 'operator',
           content: text,
-          attachments: attachments.length ? attachments : undefined,
+          attachments: storedAttachments,
         },
       });
+      // AI stays on until manual pause/off (CRM buttons / /pause / /off).
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: {
-          mode: 'human',
-          pausedUntil: new Date(Date.now() + AI_HANDOFF_PAUSE_MS),
-          updatedAt: new Date(),
-        },
+        data: { updatedAt: new Date() },
       });
       if (target.giftSubscriberId) {
         await prisma.giftSubscriber.update({

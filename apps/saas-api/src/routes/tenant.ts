@@ -2,6 +2,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { decrypt } from '@voxly/crypto';
+import { getAiTgExtraSlots, PRICING } from '@voxly/shared';
 
 /**
  * Twenty multiworkspace SSO URL → browser host.
@@ -82,6 +83,240 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.log.error({ err: error, tenantId }, 'Failed to create Twenty SSO URL');
       return reply.code(502).send({ error: 'Could not open CRM workspace' });
     }
+  });
+
+  // --- Dashboard overview (stats for /dashboard) ---
+  fastify.get('/dashboard', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const prisma = fastify.prisma;
+    const now = new Date();
+    const since7 = new Date(now);
+    since7.setDate(since7.getDate() - 7);
+    const since30 = new Date(now);
+    since30.setDate(since30.getDate() - 30);
+
+    const [
+      tenant,
+      subscriptions,
+      addons,
+      bots,
+      aiWallet,
+      tenantBalance,
+      giftSubscribers,
+      giftByPhase,
+      conversationsOpen,
+      conversationsTotal,
+      messages7d,
+      messages30d,
+      inbound7d,
+      aiSpend30,
+      businessOpen,
+      businessLimited,
+      agentsActive,
+      referralCode,
+      referralEarnings,
+    ] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          id: true,
+          slug: true,
+          status: true,
+          twentyWorkspaceId: true,
+        },
+      }),
+      prisma.subscription.findMany({
+        where: { tenantId, status: 'active' },
+        orderBy: { endsAt: 'desc' },
+      }),
+      prisma.addon.findMany({ where: { tenantId } }),
+      prisma.botInstance.findMany({
+        where: { tenantId },
+        select: {
+          id: true,
+          botType: true,
+          botUsername: true,
+          displayName: true,
+          status: true,
+        },
+      }),
+      prisma.aiWallet.findUnique({ where: { tenantId } }),
+      prisma.tenantBalance.findUnique({ where: { tenantId } }),
+      prisma.giftSubscriber.count({ where: { tenantId } }),
+      prisma.giftSubscriber.groupBy({
+        by: ['funnelPhase'],
+        where: { tenantId },
+        _count: true,
+      }),
+      prisma.conversation.count({
+        where: {
+          tenantId,
+          status: { in: ['open', 'waiting_for_human'] },
+          channel: { not: 'telegram_business_account' },
+        },
+      }),
+      prisma.conversation.count({
+        where: {
+          tenantId,
+          channel: { not: 'telegram_business_account' },
+        },
+      }),
+      prisma.chatMessage.count({
+        where: {
+          sentAt: { gte: since7 },
+          conversation: { tenantId },
+        },
+      }),
+      prisma.chatMessage.count({
+        where: {
+          sentAt: { gte: since30 },
+          conversation: { tenantId },
+        },
+      }),
+      prisma.chatMessage.count({
+        where: {
+          role: 'user',
+          sentAt: { gte: since7 },
+          conversation: { tenantId },
+        },
+      }),
+      prisma.aiUsageLog.aggregate({
+        where: { tenantId, createdAt: { gte: since30 } },
+        _sum: { chargedRub: true, providerCostRub: true, tokens: true },
+        _count: true,
+      }),
+      prisma.conversation.count({
+        where: {
+          tenantId,
+          channel: 'telegram_business_account',
+          status: { not: 'closed' },
+        },
+      }),
+      prisma.conversation.count({
+        where: {
+          tenantId,
+          channel: 'telegram_business_account',
+          status: 'limited',
+        },
+      }),
+      prisma.aiAgent.count({ where: { tenantId, status: 'active' } }),
+      prisma.referralCode.findUnique({ where: { tenantId } }),
+      prisma.referralEarning.aggregate({
+        where: { tenantId },
+        _sum: { amountRub: true },
+      }),
+    ]);
+
+    if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
+
+    const addonActive = (type: string) => {
+      const a = addons.find((x) => x.type === type);
+      if (!a) {
+        return {
+          isActive: false,
+          isTrial: false,
+          trialAvailable: true,
+          activeUntil: null as string | null,
+        };
+      }
+      const cfg = (a.config as { trial?: boolean; trialConsumed?: boolean } | null) || {};
+      const isActive = a.status === 'active' && a.activeUntil >= now;
+      return {
+        isActive,
+        isTrial: Boolean(cfg.trial) && isActive,
+        trialAvailable: !isActive && !cfg.trialConsumed,
+        activeUntil: a.activeUntil.toISOString(),
+        extraSlots: type === 'ai_tg' ? getAiTgExtraSlots(a.config) : undefined,
+      };
+    };
+
+    const crmSub = subscriptions.find((s) => s.productCode === 'crm_base') || subscriptions[0] || null;
+    const byType = (t: string) => bots.filter((b) => b.botType === t && b.status !== 'deleted');
+
+    const giftPhases = Object.fromEntries(
+      giftByPhase.map((r) => [r.funnelPhase, r._count]),
+    ) as Record<string, number>;
+
+    const opportunitiesLinked = await prisma.conversation.count({
+      where: {
+        tenantId,
+        twentyOpportunityId: { not: null },
+        channel: { not: 'telegram_business_account' },
+      },
+    });
+    const giftOpportunities = await prisma.giftSubscriber.count({
+      where: { tenantId, twentyOpportunityId: { not: null } },
+    });
+
+    return reply.send({
+      tenant: {
+        id: tenant.id,
+        slug: tenant.slug,
+        name: tenant.slug,
+        status: tenant.status,
+        crmReady: Boolean(tenant.twentyWorkspaceId),
+      },
+      subscription: crmSub
+        ? {
+            productCode: crmSub.productCode,
+            status: crmSub.status,
+            isTrial: false,
+            startsAt: crmSub.startsAt,
+            endsAt: crmSub.endsAt,
+            seatsIncluded: crmSub.seatsIncluded,
+            extraSeats: crmSub.extraSeats,
+          }
+        : null,
+      products: {
+        crm: {
+          isActive: Boolean(crmSub && crmSub.endsAt >= now),
+          activeUntil: crmSub?.endsAt?.toISOString() ?? null,
+        },
+        gift: addonActive('gift_bot'),
+        aiBusiness: {
+          ...addonActive('ai_tg'),
+          includedSlots: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+          activeAccounts: businessOpen,
+          limitedAccounts: businessLimited,
+        },
+        gramjs: addonActive('ai_gramjs'),
+        whatsapp: addonActive('ai_wa'),
+      },
+      accounts: {
+        giftBots: byType('gift').length,
+        aiBusinessBots: byType('ai_tg').length,
+        gramjs: byType('ai_gramjs').length,
+        whatsapp: byType('ai_wa').length,
+        agents: agentsActive,
+      },
+      traffic: {
+        messages7d,
+        messages30d,
+        inbound7d,
+        conversationsOpen,
+        conversationsTotal,
+        giftSubscribers,
+        giftPhases,
+        opportunitiesApprox: opportunitiesLinked + giftOpportunities,
+      },
+      money: {
+        aiWalletRub: aiWallet ? Number(aiWallet.balanceRub) : 0,
+        aiSpent30dRub: Number(aiSpend30._sum.chargedRub || 0),
+        aiProviderCost30dRub: Number(aiSpend30._sum.providerCostRub || 0),
+        aiTokens30d: Number(aiSpend30._sum.tokens || 0),
+        aiRequests30d: aiSpend30._count,
+        referralBalanceRub: tenantBalance ? Number(tenantBalance.balanceRub) : 0,
+        referralEarnedRub: Number(referralEarnings._sum.amountRub || 0),
+        referralCode: referralCode?.code ?? null,
+      },
+      bots: bots.map((b) => ({
+        id: b.id,
+        botType: b.botType,
+        botUsername: b.botUsername,
+        displayName: b.displayName,
+        status: b.status,
+      })),
+    });
   });
 
   // --- Get tenant info ---

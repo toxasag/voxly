@@ -218,3 +218,51 @@ Webhook path prod: `/tg/{tenantId}/{botId}` (gift), manager labels на Traefik.
 ### WhatsApp transport (2026-07-23)
 
 **ONE stack:** Evolution API (Baileys QR) via `evolution-api` compose profile `whatsapp` + `ai-whatsapp-worker`. Meta Cloud API path retired (do not dual-run). Env: `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`, `AI_WHATSAPP_WORKER_URL`, `AI_WHATSAPP_WEBHOOK_URL`.
+
+### WhatsApp LID → E.164 (2026-07-26, INC-059)
+
+**Prod today (2026-07-26):** `voxly-evolution-api:v2.3.7-lid` (`FROM evoapicloud/evolution-api:v2.3.7` + PR #2544 `@lid` bypass on ~150 dist chunks). Expect `remoteJidAlt`/`senderPn` on newer inbound; WhatsApp **client** lidMapping is still separate from phone address book. Avoid `v2.4.0` until licensing accepted.
+
+**Worker policy:** accept PN only from webhook fields / shared vCard / explicit Contact|Chat row fields. Do **not** invent via avatar/pushName (default). Opt-in only: `WA_LID_AVATAR_PHONE_MATCH=1`.
+
+**Upgrade (required for reliable phones):**
+1. Target image `evoapicloud/evolution-api:v2.3.7` (stable; Baileys LID mapping + remoteJidAlt). Re-apply `@lid` send bypass in Dockerfile if still needed (native in 2.4.0-rc2).
+2. Avoid `v2.4.0` until Evolution Foundation **licensing** activation is accepted.
+3. Deploy: backup → change Dockerfile `FROM` / compose tag → `./scripts/prod-deploy.sh evolution-api,ai-whatsapp-worker` (**no** `-v`). Risk: Baileys session may need QR re-scan; Postgres volumes must persist.
+4. After upgrade: smoke inbound LID chat → log `phone resolved source=webhook` with `remoteJidAlt`/`senderPn`.
+
+---
+
+## ADR-015 — AI provider cost from OpenRouter (2026-07-25)
+
+**Статус:** ✅ locked
+
+### Was
+Hardcoded USD/1M table in workers + average input/output × `total_tokens` × fake `×100` FX.
+
+### Now
+1. Prefer OpenRouter response `usage.cost` (credits ≈ USD).
+2. Else cache `GET /api/v1/models` (~1h) → `prompt_tokens × pricing.prompt + completion_tokens × pricing.completion`.
+3. USD→RUB: env `USD_RUB_RATE` > platformSetting `usd_rub_rate` > 90.
+4. Then existing markup (`ai_markup_percent` / tenant override) → `AiWallet` + `AiUsageLog`.
+
+Shared helper: `@voxly/ai-core` `resolveProviderCostRub`. No hardcoded model price lists in workers.
+
+---
+
+## ADR-016 — Agent knowledge base + learn from won deals (2026-07-25)
+
+**Статус:** ✅ locked
+
+### Knowledge
+- Per-agent files: `.txt` / `.md` / `.pdf` ≤10 МБ → extract → chunk → OpenRouter embeddings → `AiKnowledgeChunk`.
+- Portal upload/delete; storage volume `ai-knowledge-data`.
+
+### Learning
+- **Only successful CRM deals**: Conversation linked Opportunity stage ∈ `wonStages` (default `CUSTOMER`).
+- Extract `user`→`operator` pairs (not AI assistant turns) → `AiSalesExample`.
+- Scheduler ~10 min + portal «Обновить обучение».
+- Not every operator reply; not fine-tune.
+
+### Runtime
+`retrieveAgentContext` + `formatRagPromptBlock` injected into TG/WA system prompt before LLM.

@@ -92,11 +92,38 @@ export const provisioningWorker = new Worker<ProvisioningJobData>(
       const tarball = tarballPath
         ? new Uint8Array(await readFile(tarballPath))
         : undefined;
+      // Drop stale private-registry row so upload can publish the baked tarball.
+      if (tarballPath && tarball?.byteLength) {
+        const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+        if (connectionString) {
+          const { default: pg } = await import('pg');
+          const pgClient = new pg.Client({ connectionString });
+          await pgClient.connect();
+          try {
+            await pgClient.query(
+              `DELETE FROM core."applicationRegistrationVariable"
+               WHERE "applicationRegistrationId" IN (
+                 SELECT id FROM core."applicationRegistration"
+                 WHERE "universalIdentifier" = $1
+               )`,
+              ['b5c92442-f0ae-4090-8a31-88fd51785c25'],
+            );
+            await pgClient.query(
+              `DELETE FROM core."applicationRegistration" WHERE "universalIdentifier" = $1`,
+              ['b5c92442-f0ae-4090-8a31-88fd51785c25'],
+            );
+          } finally {
+            await pgClient.end();
+          }
+        }
+      }
       await twentyClient.ensureCrmChatAppInstalled({
         workspaceOrigin,
         voxlyApiUrl,
         tarball,
         tarballPath,
+        // Always reinstall from baked tarball so new tenants get latest UI (AI buttons, etc.).
+        forceReinstall: true,
       });
       console.log(
         `[provisioning] CRM chat installed for ${tenantId} (origin=${workspaceOrigin})`,

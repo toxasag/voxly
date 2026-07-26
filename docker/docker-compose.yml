@@ -227,6 +227,12 @@ services:
       # Internal only — never expose gramjs-bridge / Evolution publicly
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
       AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      USD_RUB_RATE: ${USD_RUB_RATE:-90}
+      AI_KNOWLEDGE_DIR: /voxly/data/ai-knowledge
+    volumes:
+      - ai-knowledge-data:/voxly/data/ai-knowledge
     labels:
       - "traefik.enable=true"
       # API on api.getvoxly.ru
@@ -392,8 +398,8 @@ services:
   # --- Evolution API (WhatsApp Baileys; profile whatsapp) ---
   evolution-api:
     profiles: ["whatsapp"]
-    # Stock v2.2.3 rejects @lid peers (exists:false). Dockerfile applies PR #2544 bypass.
-    image: voxly-evolution-api:v2.2.3-lid
+    # ≥2.3.7 for LID→E.164 (remoteJidAlt). Dockerfile re-applies PR #2544 @lid bypass if needed.
+    image: voxly-evolution-api:v2.3.7-lid
     build:
       context: ..
       dockerfile: docker/evolution-api.Dockerfile
@@ -463,6 +469,7 @@ volumes:
   redis-data:
   twenty-storage:
   evolution-instances:
+  ai-knowledge-data:
 
 networks:
   voxly-net:

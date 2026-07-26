@@ -3,6 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -79,23 +80,29 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
       }),
     ]);
 
-    const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
+    const meta = trialMeta(addon);
+    const addonActive = meta.isActive;
 
     return reply.send({
       ok: true,
       priceMonthly: PRICING.AI_GRAMJS_MONTHLY,
+      trialDays: 14,
       bridgeConfigured: Boolean(serviceToken()),
       gramjsAddon: addon
         ? {
             status: addon.status,
             activeUntil: addon.activeUntil,
             isActive: addonActive,
-            isTrial: Boolean((addon.config as any)?.trial),
+            isTrial: meta.isTrial,
           }
         : null,
+      trialAvailable: meta.trialAvailable,
       billingWarning: addonActive
         ? null
-        : `Тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) ещё не оплачен — soft-режим.`,
+        : meta.trialAvailable
+          ? `Доступен пробный период 14 дней, затем ${PRICING.AI_GRAMJS_MONTHLY} ₽/мес.`
+          : `Тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
+      requiresPayment: !addonActive,
       accounts: bots.map((b) => ({
         id: b.id,
         name: b.botUsername || 'default',
@@ -108,7 +115,7 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // --- Soft trial for ai_gramjs (no Robokassa yet) ---
+  // --- One-shot 14-day trial for ai_gramjs ---
   fastify.post('/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;
@@ -116,34 +123,19 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can start GramJS trial' });
     }
 
-    const prisma = fastify.prisma;
-    const now = new Date();
-    const activeUntil = new Date(now);
-    activeUntil.setDate(activeUntil.getDate() + 14);
-
-    const addon = await prisma.addon.upsert({
-      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
-      create: {
-        tenantId,
-        type: PRODUCT_CODES.AI_GRAMJS,
-        config: { trial: true },
-        activeUntil,
-        status: 'active',
-      },
-      update: {
-        status: 'active',
-        activeUntil,
-        config: { trial: true },
-      },
-    });
+    const result = await startChannelTrial(fastify.prisma, tenantId, PRODUCT_CODES.AI_GRAMJS);
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error });
+    }
 
     return reply.send({
       ok: true,
       addon: {
-        type: addon.type,
-        status: addon.status,
-        activeUntil: addon.activeUntil,
+        type: result.addon.type,
+        status: result.addon.status,
+        activeUntil: result.addon.activeUntil,
         isTrial: true,
+        days: result.days,
       },
     });
   });
@@ -153,6 +145,18 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId } = user;
     if (!canManageTenant(user)) {
       return reply.code(403).send({ error: 'Only owners can connect Telegram' });
+    }
+    const addon = await fastify.prisma.addon.findUnique({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
+    });
+    const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
+    if (!addonActive) {
+      return reply.code(402).send({
+        error: 'payment_required',
+        message: `Оплатите тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) или запустите trial`,
+        productCode: PRODUCT_CODES.AI_GRAMJS,
+        priceMonthly: PRICING.AI_GRAMJS_MONTHLY,
+      });
     }
     const body = (request.body || {}) as { name?: string };
     const name = String(body.name || 'default').trim() || 'default';

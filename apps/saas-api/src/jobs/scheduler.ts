@@ -16,6 +16,14 @@ export function startScheduledJobs() {
   const aiInterval = setInterval(checkAiWalletAlerts, 6 * 60 * 60 * 1000);
   intervals.push(aiInterval);
 
+  // Won-deal sales learning for AI agents (~10 min)
+  const salesLearnInterval = setInterval(() => {
+    void import('../services/ai-sales-learn.js')
+      .then((m) => m.ingestWonDealsAllTenants())
+      .catch((err) => console.warn('[scheduler] sales learn failed', err));
+  }, 10 * 60 * 1000);
+  intervals.push(salesLearnInterval);
+
   // Gift project schedules: start/stop by window (every minute)
   const giftScheduleInterval = setInterval(syncGiftCampaignSchedules, 60 * 1000);
   intervals.push(giftScheduleInterval);
@@ -23,6 +31,11 @@ export function startScheduledJobs() {
   // Run initial check after 10 seconds
   setTimeout(checkExpiredSubscriptions, 10_000);
   setTimeout(syncGiftCampaignSchedules, 15_000);
+  setTimeout(() => {
+    void import('../services/ai-sales-learn.js')
+      .then((m) => m.ingestWonDealsAllTenants())
+      .catch((err) => console.warn('[scheduler] sales learn failed', err));
+  }, 45_000);
 }
 
 export function stopScheduledJobs() {

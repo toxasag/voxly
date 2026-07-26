@@ -5,6 +5,55 @@
 
 ---
 
+### INC-058 — Opportunity without Person + AI auto-pause + inbound burst
+- **Симптом:** deal+contact создаются, Person не на Opportunity; после ответа из CRM AI молчит (~1h / «Вкл AI»); несколько коротких inbound → мгновенный ответ на каждое; GramJS composer едет со скроллом; WA без синих галочек.
+- **Причина:** `createOpportunity` мог успеть без connect; auto-`pausedUntil` на CRM/human outbound; нет debounce; shell-ux искал только «Ответ в Telegram»+Прикрепить; markRead один jid/id.
+- **Фикс:** connect+update link; убран auto-pause; inbound debounce + bubble gaps; shell-ux «Ответ в»; multi-jid markRead.
+- **Verify:** deploy workers+api+twenty shell; wipe deals → new msgs all channels.
+
+### INC-057 — CRM Chat AI buttons missing after re-register; dashboard AI spend 0₽
+- **Симптом:** чат работает, но нет Вкл/Пауза/Выкл AI; на дашборде «14 запросов / 0 ₽».
+- **Причина:** (1) `uploadAppTarball` duplicate → workspace ставит старый фронт без кнопок; `installApplication` не обновляет UI без uninstall. (2) OpenRouter часто отдаёт `usage.cost:0` — мы списывали 0; `Math.round` прятал копейки.
+- **Фикс:** clear registry + `forceReinstall` (uninstall→install) на provision/refresh; voxly-crm-chat **0.1.5**; cost fallthrough при cost=0; dashboard formatRub + токены.
+- **Дата:** 2026-07-26.
+
+### INC-056 — Business AI visible in CRM but not in Telegram
+- **Симптом:** в CRM чате есть ответ «Бот», в Telegram Business-чат клиенту ничего не пришло. GramJS/WA ок.
+- **Причина:** `getBusinessConnection.can_reply=false` — Telegram отклоняет `sendMessage` от Business-бота; ранее ответ всё равно писался в ChatMessage как успешный.
+- **Фикс:** ai-telegram-worker pre-check `can_reply`; при false — registry `limited` + предупреждение в CRM, без генерации/отправки; после send — persist с ⚠️ если fail; generateAiBubbles `persist:false` до доставки.
+- **Клиент:** Telegram → Настройки → Business → Чат-боты → включить «Отвечать на сообщения» для бота → написать ещё раз.
+- **См.:** INC-054.
+- **Дата:** 2026-07-26.
+
+### INC-055 — No Opportunity (stage NEW invalid) + WA wrong deal + empty Business chat
+- **Симптом:** toast OK; Person may exist; Opportunity not created (`stage: NEW` rejected — workspace has `NOVYY_LID`…); CRM chat empty for new Business peer; WA «другой номер» via LID→pushName прилип к чужой сделке; дубль WhatsApp chips; AI silent (`mode=human`).
+- **Причина:** (1) `createOpportunity({ stage:'NEW' })` throws after RU stage rename; sync aborts before linking Conversation. (2) CRM thread dedupe `biz:bot:connection` collapsed all Business peers into one chip. (3) LID→phone by unique pushName false-positive. (4) stuck `mode=human`.
+- **Фикс:** twenty-client `resolveDefaultOpportunityStage()` по seed option id `20202020-8e01-4afd-9c39-d2063097587a` (+ retry по Valid values); biz dedupe includes peer id; drop pushName LID map; CRM AI enable/pause/disable (voxly-crm-chat 0.1.4); backfill DanMSK opp; unlink wrong WA LID.
+- **Дата:** 2026-07-25 / 2026-07-26 (option id).
+
+### INC-054 — CRM reply BUSINESS_PEER_INVALID (Business can_reply=false)
+- **Симптом:** ответ из CRM «Telegram · Business-бот» → `Bad Request: BUSINESS_PEER_INVALID`.
+- **Причина:** `getBusinessConnection` → `can_reply:false`, `rights:{}`; registry row `telegram_business_account` status=`limited`. Telegram не даёт боту писать от имени Business без права «Отвечать на сообщения».
+- **Фикс (код):** crm-chat pre-check registry + live `getBusinessConnection`; humanize RU; worker stores peer from `chat.*` on owner outbound (not owner `from.*`).
+- **Фикс (пользователь):** Telegram → Business → Чат-боты → @voxly_AI_Agent_bot → включить ответ/чтение; клиент пишет снова; затем ответ из CRM.
+- **Дата:** 2026-07-25.
+
+### INC-053 — AI silent after CRM / phone reply (mode=human stuck)
+- **Симптом:** agent assigned + balance OK; inbound stored; log `AI off (no agent / paused)`; no reply. CRM toast missing when testing from business owner phone.
+- **Причина:** (1) CRM chat + WA outbound set `Conversation.mode='human'` + `pausedUntil`; after pause expired `shouldAiReply` still false forever (`isAiConversationMode`). TG business owner outbound only set `pausedUntil` (correct). (2) Writing *as* business owner → role=operator, auto-pause, no inbound toast.
+- **Фикс:** pause paths only set `pausedUntil` (keep mode ai); reset stuck john convs; deploy saas-api + ai-whatsapp-worker.
+- **Verify:** customer inbound on WA after CRM reply → AI replies after pause OR immediately if pause cleared; toast for `role=user` only.
+- **Дата:** 2026-07-25.
+- **Prevention:** never flip `mode` to human for temporary handoff; use `pausedUntil` only. Explicit `/human` may still set mode.
+
+### INC-052 — Prod disk full → Postgres panic mid-deploy
+- **Симптом:** deploy recreate stuck; `postgres-control` unhealthy; logs `PANIC: No space left on device`; `df` 100% on `/`.
+- **Причина:** ~80GB Docker images reclaimable (old builds), not volume growth.
+- **Фикс:** `docker image prune -af` (~66GB) + `journalctl --vacuum-size=200M` (~3.8GB). **No** `down -v`. Restart postgres → healthy; start app containers.
+- **Verify:** `df` ~27% used; api/portal 200; control PG queries OK.
+- **Дата:** 2026-07-25.
+- **Prevention:** prune unused images periodically; keep ≥15GB free before big rebuilds.
+
 ### INC-051 — Gift bots list 500 after saas-api deploy (missing columns)
 - **Симптом:** `/dashboard/bots` → «Не удалось загрузить ботов»; `GET /api/bots` 500.
 - **Причина:** Prisma schema + client уже с `BotInstance.telegramDescription` / `telegramShortDescription`, migration `20260724183000_bot_telegram_description` **не** применена на prod control PG (deploy не делает migrate).
@@ -71,11 +120,18 @@
 
 ### INC-043 — WA Person phones/whatsapp empty (LID webhook, no senderPn)
 - **Симптом:** inbound WA → toast + Chat OK; Person «Антон» Phones и social **WhatsApp** пустые. Header «Пишем от: WhatsApp · ремонт тоя».
-- **Причина:** Evolution `messages.upsert` for Android peers often has only `@lid` in `key.remoteJid` — **no** `remoteJidAlt`/`senderPn` in stored Message or webhook. INC-039 extract path never got E.164 → `syncLeadToCrm` skipped `updatePersonPhone` / `updatePersonWhatsapp`. Phone **was** visible in Evolution Contact book as separate `7915…@s.whatsapp.net` row (same profilePic / unique pushName).
-- **Фикс:** `ai-whatsapp-worker` `resolvePhoneFromEvolutionContacts` (findContacts → match profilePic fingerprint, else unique pushName); call on inbound when LID+no PN; `POST /internal/crm/backfill-phones`; composer placeholder channel-aware (`voxly-crm-chat` **0.1.2**).
-- **Verify:** backfill john → both WA Persons `phones=+7 9150946944`, `whatsapp=+79150946944`; Conversations `platformUsername=+79150946944`; deploy backup `20260724-121355`.
-- **Дата:** 2026-07-24.
-- **Prevention:** when webhook is LID-only, always consult Evolution Contact book before leaving CRM phone empty; unique pushName is best-effort (can collide).
+- **Причина:** Evolution `messages.upsert` for Android peers often has only `@lid` in `key.remoteJid` — **no** `remoteJidAlt`/`senderPn` in stored Message or webhook. INC-039 extract path never got E.164 → `syncLeadToCrm` skipped `updatePersonPhone` / `updatePersonWhatsapp`.
+- **Фикс (частичный):** parse webhook `remoteJidAlt`/`senderPn`/vCard; Contact/Chat **explicit** PN fields; `POST /internal/crm/backfill-phones`. Avatar/pushName twin matching **disabled by default** (see INC-059).
+- **Verify:** Evolution prod upgraded to **v2.3.7-lid** (2026-07-26, backup `20260726-002454`); session restored without QR. Next inbound LID chat should log phone `source=webhook` when `remoteJidAlt`/`senderPn` present; else still manual/`contactMessage`/`platformUsername` cache.
+- **Дата:** 2026-07-24 / уточнено 2026-07-26.
+- **Prevention:** never invent E.164 from avatar/pushName; upgrade Evolution for Baileys lidMapping.
+
+### INC-059 — WA wrong phone from avatar twin (LID→Contact profilePic)
+- **Симптом:** WhatsApp chat list/header shows real PN (e.g. +7 985…), CRM Person got wrong number (e.g. 7915…) or empty. Number is **not** only from phone address book — WA UI has lidMapping.
+- **Причина:** Evolution `voxly-evolution-api:v2.2.3-lid` Message.key: **0** rows with `remoteJidAlt`/`senderPn`; `IsOnWhatsapp` has no `@lid` map. Worker INC-043 matched LID Contact → `@s.whatsapp.net` twin by **profilePic fingerprint** → stranger's E.164.
+- **Фикс:** disable avatar twin by default (`WA_LID_AVATAR_PHONE_MATCH=1` opt-in only); keep webhook/vCard/explicit Contact|Chat fields; reuse `Conversation.platformUsername` E.164 cache; `fetchBusinessProfile(@lid)` → Person email (no phone); log `source=` + LID-without-PN; document Evolution upgrade → **v2.3.7** (Baileys LID mapping; avoid 2.4 licensing until decided).
+- **Дата:** 2026-07-26.
+- **Prevention:** empty phone > wrong phone; upgrade Evolution for real lidMapping.
 
 ### INC-042 — WA inbound after CRM wipe: toast OK, Person/Opportunity missing
 - **Симптом:** john: удалили всех People+Opportunities в Twenty → inbound WA → left toast есть, Person/Opportunity не создаются; клик по toast не открывает Чат.

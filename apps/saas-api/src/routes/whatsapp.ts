@@ -3,6 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -143,12 +144,14 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
       workerFetch('/internal/config'),
     ]);
 
-    const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
+    const meta = trialMeta(addon);
+    const addonActive = meta.isActive;
     const evolutionConfigured = Boolean(cfg.json?.evolutionConfigured);
 
     return reply.send({
       ok: true,
       priceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+      trialDays: 14,
       workerConfigured: Boolean(serviceToken()),
       evolutionConfigured,
       evolutionHint: cfg.json?.hint || null,
@@ -158,12 +161,16 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
             status: addon.status,
             activeUntil: addon.activeUntil,
             isActive: addonActive,
-            isTrial: Boolean((addon.config as any)?.trial),
+            isTrial: meta.isTrial,
           }
         : null,
+      trialAvailable: meta.trialAvailable,
       billingWarning: addonActive
         ? null
-        : `Тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) ещё не оплачен — soft-режим.`,
+        : meta.trialAvailable
+          ? `Доступен пробный период 14 дней, затем ${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес.`
+          : `Тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
+      requiresPayment: !addonActive,
       accounts: bots.map((b) => ({
         id: b.id,
         name: accountLabel(b),
@@ -185,34 +192,19 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can start WhatsApp trial' });
     }
 
-    const prisma = fastify.prisma;
-    const now = new Date();
-    const activeUntil = new Date(now);
-    activeUntil.setDate(activeUntil.getDate() + 14);
-
-    const addon = await prisma.addon.upsert({
-      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_WHATSAPP } },
-      create: {
-        tenantId,
-        type: PRODUCT_CODES.AI_WHATSAPP,
-        config: { trial: true },
-        activeUntil,
-        status: 'active',
-      },
-      update: {
-        status: 'active',
-        activeUntil,
-        config: { trial: true },
-      },
-    });
+    const result = await startChannelTrial(fastify.prisma, tenantId, PRODUCT_CODES.AI_WHATSAPP);
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error });
+    }
 
     return reply.send({
       ok: true,
       addon: {
-        type: addon.type,
-        status: addon.status,
-        activeUntil: addon.activeUntil,
+        type: result.addon.type,
+        status: result.addon.status,
+        activeUntil: result.addon.activeUntil,
         isTrial: true,
+        days: result.days,
       },
     });
   });
@@ -222,6 +214,18 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId } = user;
     if (!canManageTenant(user)) {
       return reply.code(403).send({ error: 'Only owners can connect WhatsApp' });
+    }
+    const addon = await fastify.prisma.addon.findUnique({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_WHATSAPP } },
+    });
+    const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
+    if (!addonActive) {
+      return reply.code(402).send({
+        error: 'payment_required',
+        message: `Оплатите тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) или запустите trial`,
+        productCode: PRODUCT_CODES.AI_WHATSAPP,
+        priceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+      });
     }
     const body = (request.body || {}) as { name?: string };
     const name = String(body.name || 'default').trim() || 'default';

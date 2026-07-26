@@ -61,6 +61,19 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Backup `/opt/voxly/backups/20260724-121355/`.
 - Smoke: portal + API health **200**; john Persons backfilled `+79150946944`.
 
+### Deploy 2026-07-26 (CRM presence 0.1.8)
+
+- Services: `saas-api`, `gramjs-bridge`, `ai-whatsapp-worker` (not `evolution-api`).
+- Backup `/opt/voxly/backups/20260726-000817/`.
+- Smoke: portal + API health **200**; john crm-chat **0.1.8+**.
+
+### Deploy 2026-07-26 (Evolution v2.3.7-lid + WA worker)
+
+- Services: `evolution-api`, `ai-whatsapp-worker`.
+- Backup `/opt/voxly/backups/20260726-002454/`.
+- Image: `voxly-evolution-api:v2.3.7-lid` (LID patch 150 files). Session restored without QR; webhook includes `PRESENCE_UPDATE`.
+- Smoke: portal + API health **200**.
+
 ### Deploy 2026-07-24 (INC-039 WA media/typing/LID + INC-040 error map)
 
 - Services: `saas-api`, `ai-whatsapp-worker` (crm-chat tarball via saas-api).

@@ -16,10 +16,10 @@ export function Alert({
     <div
       role={variant === 'error' ? 'alert' : 'status'}
       className={cn(
-        'flex items-start gap-2.5 rounded-lg border px-3.5 py-3 text-sm animate-error',
-        variant === 'error' && 'border-red-200 bg-red-50 text-red-800',
-        variant === 'success' && 'border-emerald-200 bg-emerald-50 text-emerald-800 animate-fade',
-        variant === 'info' && 'border-border bg-secondary/60 text-foreground animate-fade',
+        'flex items-start gap-2.5 rounded-[18px] border px-3.5 py-3 text-sm',
+        variant === 'error' && 'border-ember/30 bg-paper text-ember animate-error',
+        variant === 'success' && 'border-hairline bg-canvas text-ink animate-fade',
+        variant === 'info' && 'border-hairline bg-canvas text-ink animate-fade',
         className,
       )}
     >

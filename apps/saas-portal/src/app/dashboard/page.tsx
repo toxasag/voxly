@@ -3,98 +3,165 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ChevronRight } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
+import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
-import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/portal/page-header';
 
-interface UserData {
-  id: string;
-  email: string;
-  firstName: string;
-  role: string;
+interface DashboardOverview {
   tenant: {
     id: string;
     slug: string;
     name: string;
     status: string;
-    twentyWorkspaceId: string | null;
-    subscription: {
-      status: string;
-      plan: string;
-      isTrial: boolean;
-      startsAt: string;
-      expiresAt: string | null;
-      seatsUsed: number;
-      seatsIncluded: number;
-    } | null;
-    aiWallet: { balanceRub: number } | null;
-    referralCode: { code: string } | null;
+    crmReady: boolean;
+  };
+  subscription: {
+    productCode: string;
+    status: string;
+    endsAt: string;
+    seatsIncluded: number;
+    extraSeats: number;
   } | null;
+  products: {
+    crm: { isActive: boolean; activeUntil: string | null };
+    gift: { isActive: boolean; isTrial: boolean; trialAvailable?: boolean; activeUntil: string | null };
+    aiBusiness: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+      includedSlots: number;
+      extraSlots?: number;
+      activeAccounts: number;
+      limitedAccounts: number;
+    };
+    gramjs: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+    };
+    whatsapp: {
+      isActive: boolean;
+      isTrial: boolean;
+      trialAvailable?: boolean;
+      activeUntil: string | null;
+    };
+  };
+  accounts: {
+    giftBots: number;
+    aiBusinessBots: number;
+    gramjs: number;
+    whatsapp: number;
+    agents: number;
+  };
+  traffic: {
+    messages7d: number;
+    messages30d: number;
+    inbound7d: number;
+    conversationsOpen: number;
+    conversationsTotal: number;
+    giftSubscribers: number;
+    giftPhases: Record<string, number>;
+    opportunitiesApprox: number;
+  };
+  money: {
+    aiWalletRub: number;
+    aiSpent30dRub: number;
+    aiProviderCost30dRub?: number;
+    aiTokens30d?: number;
+    aiRequests30d: number;
+    referralBalanceRub: number;
+    referralEarnedRub: number;
+    referralCode: string | null;
+  };
 }
 
-interface ReferralStats {
-  code: string;
-  link: string;
-  referrals: unknown[];
-  totalEarnings: string;
-  balance: string;
+function formatRub(n: number | undefined | null): string {
+  const v = Number(n) || 0;
+  return v.toLocaleString('ru-RU', {
+    minimumFractionDigits: v > 0 && v < 1 ? 2 : 0,
+    maximumFractionDigits: 2,
+  });
 }
 
-interface BotRow {
-  id: string;
-  botUsername: string | null;
-  botType: string;
-  status: string;
-  subscriberCount?: number;
-  conversationCount?: number;
-  campaign: { channelUsername: string | null } | null;
+function formatTokens(n: number | undefined | null): string {
+  return Math.round(Number(n) || 0).toLocaleString('ru-RU');
 }
 
-function Kpi({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: 'sage' | 'blue' | 'peach' | 'pink' | 'neutral';
-}) {
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div
-      className={cn(
-        'rounded-lg border border-border/80 px-4 py-3 transition-colors duration-[var(--duration-fast)]',
-        accent === 'sage' && 'bg-[#f3f7f2]',
-        accent === 'blue' && 'bg-[#f0f4fb]',
-        accent === 'peach' && 'bg-[#fbf3ee]',
-        accent === 'pink' && 'bg-[#faf0f3]',
-        (!accent || accent === 'neutral') && 'bg-secondary/50',
-      )}
-    >
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1.5 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+    <div className="rounded-[24px] border border-hairline bg-paper px-4 py-3 shadow-[var(--shadow-subtle)]">
+      <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">{label}</p>
+      <p className="mt-1.5 text-[30px] font-semibold tracking-[-0.025em] text-ink">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-mid-gray">{hint}</p> : null}
     </div>
   );
 }
 
+function ProductRow({
+  title,
+  href,
+  active,
+  trial,
+  until,
+  detail,
+}: {
+  title: string;
+  href: string;
+  active: boolean;
+  trial?: boolean;
+  until?: string | null;
+  detail?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center justify-between gap-3 rounded-[18px] border border-hairline bg-paper px-4 py-3 transition-colors hover:bg-canvas"
+    >
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-ink">{title}</p>
+        {detail ? <p className="mt-0.5 text-xs text-mid-gray">{detail}</p> : null}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {until && active ? (
+          <span className="hidden text-xs text-mid-gray sm:inline">
+            до {new Date(until).toLocaleDateString('ru-RU')}
+          </span>
+        ) : null}
+        <Badge variant={active ? 'default' : 'secondary'}>
+          {!active ? 'выкл' : trial ? 'trial' : 'активен'}
+        </Badge>
+      </div>
+    </Link>
+  );
+}
+
+function phaseLabel(key: string): string {
+  const map: Record<string, string> = {
+    started: 'Старт',
+    awaiting_sub: 'Ждут подписку',
+    gifted: 'Получили подарок',
+    not_gifted: 'Без подарка',
+  };
+  return map[key] || key;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<UserData | null>(null);
-  const [referral, setReferral] = useState<ReferralStats | null>(null);
-  const [bots, setBots] = useState<BotRow[]>([]);
-  const [aiBots, setAiBots] = useState<BotRow[]>([]);
-  const [gramjsBots, setGramjsBots] = useState<BotRow[]>([]);
-  const [waBots, setWaBots] = useState<BotRow[]>([]);
-  const [giftPrice, setGiftPrice] = useState(500);
-  const [aiPrice, setAiPrice] = useState(1000);
-  const [gramjsPrice, setGramjsPrice] = useState(500);
-  const [waPrice, setWaPrice] = useState(500);
+  const [data, setData] = useState<DashboardOverview | null>(null);
+  const [role, setRole] = useState('');
+  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [trialBusy, setTrialBusy] = useState('');
   const [crmOpening, setCrmOpening] = useState(false);
   const [crmError, setCrmError] = useState('');
   const [crmFallbackUrl, setCrmFallbackUrl] = useState('');
@@ -105,65 +172,70 @@ export default function DashboardPage() {
       router.push('/login');
       return;
     }
-
     try {
-      const [meRes, refRes, botsRes] = await Promise.all([
+      const [meRes, dashRes] = await Promise.all([
         fetch('/api/auth/me', { headers: authHeaders() }),
-        fetch('/api/referrals', { headers: authHeaders() }),
-        fetch('/api/bots', { headers: authHeaders() }),
+        fetch('/api/tenant/dashboard', { headers: authHeaders() }),
       ]);
-
       if (!meRes.ok) throw new Error('Unauthorized');
-      const me = (await meRes.json()) as UserData;
-      setUser(me);
+      const me = await meRes.json();
+      setRole(me.role || '');
+      setEmail(me.email || '');
 
-      if (refRes.ok) setReferral(await refRes.json());
-
-      if (botsRes.ok) {
-        const botsJson = await botsRes.json();
-        const all = (botsJson.bots || []) as BotRow[];
-        setBots(all.filter((b) => b.botType === 'gift'));
-        setAiBots(all.filter((b) => b.botType === 'ai_tg'));
-        setGramjsBots(all.filter((b) => b.botType === 'ai_gramjs'));
-        setWaBots(all.filter((b) => b.botType === 'ai_wa'));
-        if (typeof botsJson.giftBotPriceMonthly === 'number') {
-          setGiftPrice(botsJson.giftBotPriceMonthly);
+      if (!me.tenant) {
+        if (me.role === 'superadmin') {
+          setData(null);
+          setLoading(false);
+          return;
         }
-        if (typeof botsJson.aiBotPriceMonthly === 'number') {
-          setAiPrice(botsJson.aiBotPriceMonthly);
-        }
-        if (typeof botsJson.gramjsPriceMonthly === 'number') {
-          setGramjsPrice(botsJson.gramjsPriceMonthly);
-        }
-        if (typeof botsJson.waPriceMonthly === 'number') {
-          setWaPrice(botsJson.waPriceMonthly);
-        }
+        throw new Error('Нет воркспейса');
       }
 
-      if (me.tenant && !me.tenant.twentyWorkspaceId) {
-        setTimeout(() => load(), 3000);
+      if (!dashRes.ok) throw new Error('Не удалось загрузить дашборд');
+      setData((await dashRes.json()) as DashboardOverview);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'Unauthorized') {
+        localStorage.removeItem('voxly_token');
+        router.push('/login');
+        return;
       }
-    } catch {
-      localStorage.removeItem('voxly_token');
-      router.push('/login');
+      setError(e instanceof Error ? e.message : 'Ошибка');
     } finally {
       setLoading(false);
     }
   }, [router]);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
+
+  const startChannelTrial = async (channel: 'gramjs' | 'whatsapp') => {
+    setTrialBusy(channel);
+    setError('');
+    try {
+      const path =
+        channel === 'gramjs' ? '/api/bots/gramjs/start-trial' : '/api/bots/whatsapp/start-trial';
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: '{}',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось активировать trial');
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка trial');
+    } finally {
+      setTrialBusy('');
+    }
+  };
 
   const openCrm = async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) return router.push('/login');
-
     setCrmOpening(true);
     setCrmError('');
     setCrmFallbackUrl('');
-
-    // Named window keeps a reference (Chrome `_blank` + noopener often returns null).
     const popup = window.open('about:blank', 'voxly_crm');
     if (popup) {
       try {
@@ -175,21 +247,17 @@ export default function DashboardPage() {
         /* ignore */
       }
     }
-
     try {
       const res = await fetch('/api/tenant/crm-login', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
-      if (!res.ok || !data.url) throw new Error(data.error || 'Не удалось открыть CRM');
+      const json = await res.json();
+      if (!res.ok || !json.url) throw new Error(json.error || 'Не удалось открыть CRM');
       const crmUrl =
-        data.chatToken && typeof data.chatToken === 'string'
-          ? `${data.url}${data.url.includes('#') ? '&' : '#'}voxlyChatToken=${encodeURIComponent(data.chatToken)}`
-          : data.url;
-
+        json.chatToken && typeof json.chatToken === 'string'
+          ? `${json.url}${json.url.includes('#') ? '&' : '#'}voxlyChatToken=${encodeURIComponent(json.chatToken)}`
+          : json.url;
       setCrmFallbackUrl(crmUrl);
-
-      // Re-open same named window with the real SSO URL (more reliable than location.replace).
       const navigated = window.open(crmUrl, 'voxly_crm');
       if (!navigated && !(popup && !popup.closed)) {
         setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
@@ -200,13 +268,13 @@ export default function DashboardPage() {
           setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
         }
       }
-    } catch (error) {
+    } catch (err) {
       try {
         popup?.close();
       } catch {
         /* ignore */
       }
-      setCrmError(error instanceof Error ? error.message : 'Не удалось открыть CRM');
+      setCrmError(err instanceof Error ? err.message : 'Не удалось открыть CRM');
     } finally {
       setCrmOpening(false);
     }
@@ -214,389 +282,289 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <AppShell>
+      <AppShell maxWidth="6xl">
         <LoadingState />
       </AppShell>
     );
   }
 
-  if (!user) return null;
-
-  if (!user.tenant) {
-    if (user.role === 'superadmin') {
-      return (
-        <AppShell showNav={false} maxWidth="2xl">
-          <div className="py-16 text-center">
-            <h1 className="text-xl font-semibold">Супер-админ</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              У платформенного админа нет клиентского воркспейса — откройте админку.
-            </p>
-            <Button asChild variant="solid" className="mt-6">
-              <Link href="/admin">Открыть /admin</Link>
-            </Button>
-          </div>
-        </AppShell>
-      );
-    }
+  if (!data && role === 'superadmin') {
     return (
       <AppShell showNav={false} maxWidth="2xl">
         <div className="py-16 text-center">
-          <h1 className="text-xl font-semibold">Нет воркспейса</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Аккаунт есть, но tenant ещё не привязан.</p>
-          <Button asChild variant="outline" className="mt-6">
-            <Link href="/register">Создать воркспейс</Link>
+          <h1 className="text-[30px] font-semibold tracking-[-0.025em]">Супер-админ</h1>
+          <p className="mt-2 text-sm text-mid-gray">Платформенная админка, без клиентского воркспейса.</p>
+          <Button asChild variant="solid" className="mt-6">
+            <Link href="/admin">Открыть /admin</Link>
           </Button>
         </div>
       </AppShell>
     );
   }
 
-  const tenant = user.tenant;
-  const sub = tenant.subscription;
-  const isTrial = sub?.isTrial === true;
-  const isSuperadmin = user.role === 'superadmin';
-  const crmReady = Boolean(tenant.twentyWorkspaceId);
-  const referralCount = referral?.referrals?.length ?? 0;
-  const earnedRub = Number(referral?.totalEarnings ?? 0);
-  const refCode = referral?.code || tenant.referralCode?.code || '—';
-  const refLink =
-    referral?.link ||
-    (tenant.referralCode?.code ? `https://getvoxly.ru/r/${tenant.referralCode.code}` : null);
-  const totalSubscribers = bots.reduce((sum, b) => sum + (b.subscriberCount ?? 0), 0);
+  if (error || !data) {
+    return (
+      <AppShell maxWidth="6xl">
+        <Alert variant="error">{error || 'Нет данных'}</Alert>
+      </AppShell>
+    );
+  }
+
+  const p = data.products;
+  const bizCap =
+    (p.aiBusiness.includedSlots || 10) + (p.aiBusiness.extraSlots || 0);
+  const phaseEntries = Object.entries(data.traffic.giftPhases || {});
+  const refLink = data.money.referralCode
+    ? `https://getvoxly.ru/r/${data.money.referralCode}`
+    : null;
 
   return (
-    <AppShell>
-      <header className="mb-10 flex items-end justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Кабинет
-          </p>
-          <h1 className="mt-1 text-[28px] font-semibold tracking-tight text-foreground">
-            {tenant.name || tenant.slug}
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">{user.email}</p>
-        </div>
-        <div className="flex gap-2">
-          {isSuperadmin && (
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/admin">Админка</Link>
-            </Button>
-          )}
-        </div>
-      </header>
-
-      <div className="stagger grid gap-4 md:grid-cols-2">
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
-            <div>
-              <CardTitle className="text-lg">Подписка</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {sub?.status === 'active'
-                  ? isTrial
-                    ? 'Пробный период CRM'
-                    : sub.plan
-                  : 'Подписка не активна'}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm">
-                {isTrial || sub?.status !== 'active' ? 'Выбрать тариф' : 'Продлить'}
+    <AppShell maxWidth="6xl">
+      <PageHeader
+        title={data.tenant.name || data.tenant.slug}
+        description={
+          <>
+            {email || 'Воркспейс'} · сводка по каналам, сообщениям, тарифам и расходам
+          </>
+        }
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {role === 'superadmin' && (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/admin">Админка</Link>
               </Button>
-              <Button variant="solid" size="sm" onClick={openCrm} disabled={!crmReady || crmOpening}>
-                {crmOpening ? 'Открываем…' : crmReady ? 'Открыть CRM' : 'CRM создаётся…'}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <p className="mb-3 text-xs text-muted-foreground">
-              CRM открывается в новой вкладке. Кабинет остаётся открытым — вернитесь к нему в браузере.
-            </p>
-            {crmError && (
-              <Alert className="mb-3" variant="error">
-                <div className="space-y-2">
-                  <p>{crmError}</p>
-                  {crmFallbackUrl ? (
-                    <a
-                      href={crmFallbackUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex text-sm font-semibold underline underline-offset-2"
-                    >
-                      Открыть CRM в новой вкладке →
-                    </a>
-                  ) : null}
-                </div>
-              </Alert>
             )}
-            {!crmError && crmFallbackUrl ? (
-              <p className="mb-3 text-xs text-muted-foreground">
-                Если вкладка пустая —{' '}
-                <a
-                  href={crmFallbackUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-semibold underline underline-offset-2"
-                >
-                  откройте CRM по ссылке
-                </a>
-                .
-              </p>
+            <Button
+              variant="solid"
+              size="sm"
+              onClick={() => void openCrm()}
+              disabled={!data.tenant.crmReady || crmOpening}
+            >
+              {crmOpening ? 'Открываем…' : data.tenant.crmReady ? 'Открыть CRM' : 'CRM создаётся…'}
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        }
+      />
+
+      {crmError && (
+        <Alert className="mb-4" variant="error">
+          <div className="space-y-2">
+            <p>{crmError}</p>
+            {crmFallbackUrl ? (
+              <a
+                href={crmFallbackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex text-sm font-semibold underline underline-offset-2"
+              >
+                Открыть CRM в новой вкладке →
+              </a>
             ) : null}
-            {sub?.status === 'active' ? (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Kpi label="Статус" value={isTrial ? 'Пробный' : 'Активна'} accent="sage" />
-                <Kpi
-                  label="Действует до"
-                  value={sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString('ru-RU') : '—'}
-                  accent="blue"
-                />
-                <Kpi
-                  label="Пользователи"
-                  value={`${sub.seatsUsed} / ${sub.seatsIncluded}`}
-                  accent="peach"
-                />
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Оформите подписку, чтобы пользоваться CRM.</p>
-            )}
-          </CardContent>
-        </Card>
+          </div>
+        </Alert>
+      )}
 
-        <Card className="md:col-span-2">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Реферальная программа</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">Код и ссылка для приглашений</p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Kpi label="Рефералов" value={String(referralCount)} accent="blue" />
-              <Kpi
-                label="Заработано"
-                value={`${earnedRub.toLocaleString('ru-RU')} ₽`}
-                accent="sage"
-              />
-            </div>
-            <div className="overflow-hidden rounded-lg border border-border">
-              <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Код
-                  </p>
-                  <p className="mt-0.5 text-sm font-medium">{refCode}</p>
-                </div>
-                {refCode !== '—' && <CopyButton value={refCode} label="Код" />}
-              </div>
-              <div className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Ссылка
-                  </p>
-                  {refLink ? (
-                    <a
-                      href={refLink}
-                      className="mt-0.5 block truncate text-sm font-medium text-foreground hover:underline"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {refLink.replace(/^https?:\/\//, '')}
-                    </a>
-                  ) : (
-                    <p className="mt-0.5 text-sm">—</p>
-                  )}
-                </div>
-                {refLink && <CopyButton value={refLink} label="Ссылку" />}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <section className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat
+          label="Сообщения · 7 дн."
+          value={String(data.traffic.messages7d)}
+          hint={`входящих ${data.traffic.inbound7d}`}
+        />
+        <Stat
+          label="Открытые диалоги"
+          value={String(data.traffic.conversationsOpen)}
+          hint={`всего ${data.traffic.conversationsTotal}`}
+        />
+        <Stat
+          label="Заявки / лиды"
+          value={String(data.traffic.opportunitiesApprox)}
+          hint={`gift-подписчики ${data.traffic.giftSubscribers}`}
+        />
+        <Stat
+          label="AI расход · 30 дн."
+          value={`${formatRub(data.money.aiSpent30dRub)} ₽`}
+          hint={`${data.money.aiRequests30d} запр. · ${formatTokens(data.money.aiTokens30d)} ток. · баланс ${formatRub(data.money.aiWalletRub)} ₽`}
+        />
+      </section>
 
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
-            <div>
-              <CardTitle className="text-lg">Бот выдачи подарков</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {giftPrice.toLocaleString('ru-RU')} ₽/мес за канал
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href="/dashboard/bots">Создать бота</Link>
-              </Button>
-              <Button asChild variant="secondary" size="sm">
-                <Link href="/dashboard/bots/broadcasts">Рассылка</Link>
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Kpi label="Ботов" value={String(bots.length)} accent="peach" />
-              <Kpi label="Подписчиков" value={String(totalSubscribers)} accent="pink" />
-            </div>
-
-            {bots.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Пока нет подключённых ботов. Создайте бота и привяжите канал.
-              </p>
-            ) : (
-              <ul className="overflow-hidden rounded-lg border border-border">
-                {bots.map((bot, i) => {
-                  const channel = bot.campaign?.channelUsername
-                    ? `@${bot.campaign.channelUsername.replace(/^@/, '')}`
-                    : 'Канал не настроен';
-                  return (
-                    <li key={bot.id} className={cn(i > 0 && 'border-t border-border')}>
-                      <Link
-                        href={`/dashboard/bots/${bot.id}`}
-                        className="flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-[var(--duration-fast)] hover:bg-secondary/70"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-foreground">{channel}</p>
-                          <p className="truncate text-sm text-muted-foreground">
-                            @{bot.botUsername || '…'}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-3">
-                          <span className="text-sm text-muted-foreground">
-                            {bot.subscriberCount ?? 0} подп.
-                          </span>
-                          <Badge variant={bot.status === 'active' ? 'success' : 'warning'}>
-                            {bot.status}
-                          </Badge>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
-            <div>
-              <CardTitle className="text-lg">Автоматизация чатов</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Business-бот · до 10 аккаунтов Telegram Business ·{' '}
-                {aiPrice.toLocaleString('ru-RU')} ₽/мес. AI подключается отдельно через агентов.
-              </p>
-            </div>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/dashboard/ai">Настроить</Link>
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Kpi label="Business-ботов" value={String(aiBots.length)} accent="peach" />
-              <Kpi
-                label="Диалогов"
-                value={String(aiBots.reduce((s, b) => s + (b.conversationCount ?? 0), 0))}
-                accent="sage"
-              />
-            </div>
-            {aiBots.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Создайте managed-бота и добавьте его в Telegram → Бизнес → Автоматизация чатов.
-              </p>
-            ) : (
-              <ul className="overflow-hidden rounded-lg border border-border">
-                {aiBots.map((bot, i) => (
-                  <li key={bot.id} className={cn(i > 0 && 'border-t border-border')}>
-                    <Link
-                      href={`/dashboard/ai/${bot.id}`}
-                      className="flex items-center justify-between gap-3 px-4 py-3.5 transition-colors duration-[var(--duration-fast)] hover:bg-secondary/70"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          @{bot.botUsername || '…'}
-                        </p>
-                        <p className="truncate text-sm text-muted-foreground">Business-бот</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3">
-                        <Badge variant={bot.status === 'active' ? 'success' : 'warning'}>
-                          {bot.status}
-                        </Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
+      <div className="mb-8 grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
-            <div>
-              <CardTitle className="text-lg">Подключение аккаунтов</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Личный Telegram и WhatsApp в CRM. Без AI, пока не назначите агента.
-              </p>
-            </div>
-            <Button asChild variant="outline" size="sm">
-              <Link href="/dashboard/ai/gramjs">Telegram</Link>
-            </Button>
+          <CardHeader>
+            <CardTitle className="text-base">Тарифы и статусы</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Link
-              href="/dashboard/ai/gramjs"
-              className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3.5 transition-colors hover:bg-secondary/70"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">Telegram</p>
-                <p className="text-sm text-muted-foreground">
-                  {gramjsBots.length > 0
-                    ? `${gramjsBots.length} акк. · ${gramjsPrice.toLocaleString('ru-RU')} ₽/мес`
-                    : `QR-вход · ${gramjsPrice.toLocaleString('ru-RU')} ₽/мес`}
-                </p>
-              </div>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-            </Link>
-            <Link
+          <CardContent className="space-y-2">
+            <ProductRow
+              title="CRM Base"
+              href="/dashboard"
+              active={p.crm.isActive}
+              until={p.crm.activeUntil}
+              detail={
+                data.subscription
+                  ? `${data.subscription.seatsIncluded + data.subscription.extraSeats} мест`
+                  : undefined
+              }
+            />
+            <ProductRow
+              title="Gift-боты"
+              href="/dashboard/bots"
+              active={p.gift.isActive}
+              trial={p.gift.isTrial}
+              until={p.gift.activeUntil}
+              detail={`${data.accounts.giftBots} бот.`}
+            />
+            <ProductRow
+              title="Telegram Business"
+              href="/dashboard/ai"
+              active={p.aiBusiness.isActive}
+              trial={p.aiBusiness.isTrial}
+              until={p.aiBusiness.activeUntil}
+              detail={`${p.aiBusiness.activeAccounts}/${bizCap} аккаунтов${
+                p.aiBusiness.limitedAccounts
+                  ? ` · ${p.aiBusiness.limitedAccounts} без прав`
+                  : ''
+              }`}
+            />
+            <ProductRow
+              title="WhatsApp"
               href="/dashboard/ai/whatsapp"
-              className="flex items-center justify-between gap-3 rounded-lg border border-border px-4 py-3.5 transition-colors hover:bg-secondary/70"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">WhatsApp</p>
-                <p className="text-sm text-muted-foreground">
-                  {waBots.length > 0
-                    ? `${waBots.length} акк. · ${waPrice.toLocaleString('ru-RU')} ₽/мес`
-                    : `QR-вход · ${waPrice.toLocaleString('ru-RU')} ₽/мес`}
-                </p>
-              </div>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-4">
-            <div>
-              <CardTitle className="text-lg">AI-агенты</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Промпты, назначение на аккаунт/чат и баланс ответов. Без агента AI молчит.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="outline" size="sm">
-                <Link href="/dashboard/ai/agents">Открыть</Link>
-              </Button>
-              <Button variant="secondary" size="sm">
-                Пополнить
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Kpi
-              label="Баланс AI"
-              value={`${(tenant.aiWallet?.balanceRub || 0).toLocaleString('ru-RU')} ₽`}
-              accent="blue"
+              active={p.whatsapp.isActive}
+              trial={p.whatsapp.isTrial}
+              until={p.whatsapp.activeUntil}
+              detail={`${data.accounts.whatsapp} акк.`}
+            />
+            <ProductRow
+              title="Личный Telegram"
+              href="/dashboard/ai/gramjs"
+              active={p.gramjs.isActive}
+              trial={p.gramjs.isTrial}
+              until={p.gramjs.activeUntil}
+              detail={`${data.accounts.gramjs} акк.`}
+            />
+            <ProductRow
+              title="AI-агенты"
+              href="/dashboard/ai/agents"
+              active={data.accounts.agents > 0}
+              detail={`${data.accounts.agents} активных · ответы с баланса`}
             />
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+            <CardTitle className="text-base">Деньги</CardTitle>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                const raw = window.prompt('Сумма пополнения AI (₽, мин. 500)', '1000');
+                if (!raw) return;
+                const amountRub = Math.round(Number(raw.replace(/\s/g, '').replace(',', '.')));
+                if (!Number.isFinite(amountRub) || amountRub < 500) {
+                  window.alert('Минимум 500 ₽');
+                  return;
+                }
+                void startCheckout({ productCode: 'ai_topup', amountRub }).catch((e) => {
+                  window.alert(e instanceof Error ? e.message : 'Ошибка оплаты');
+                });
+              }}
+            >
+              Пополнить AI
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <Stat label="Баланс AI" value={`${formatRub(data.money.aiWalletRub)} ₽`} />
+              <Stat
+                label="Списано · 30 дн."
+                value={`${formatRub(data.money.aiSpent30dRub)} ₽`}
+                hint={`${data.money.aiRequests30d} запр. · ${formatTokens(data.money.aiTokens30d)} ток.${
+                  data.money.aiProviderCost30dRub != null
+                    ? ` · себест. ${formatRub(data.money.aiProviderCost30dRub)} ₽`
+                    : ''
+                }`}
+              />
+            </div>
+            <div className="rounded-[18px] border border-hairline bg-canvas px-4 py-3">
+              <p className="text-[12px] font-medium uppercase tracking-[0.05em] text-mid-gray">
+                Рефералка
+              </p>
+              <p className="mt-1 text-sm text-ink">
+                Баланс {Math.round(data.money.referralBalanceRub).toLocaleString('ru-RU')} ₽ · заработано{' '}
+                {Math.round(data.money.referralEarnedRub).toLocaleString('ru-RU')} ₽
+              </p>
+              {data.money.referralCode && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                  <code className="rounded-[10px] bg-paper px-2 py-1 text-xs">{data.money.referralCode}</code>
+                  {refLink && <CopyButton value={refLink} label="Ссылка" />}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="text-base">Воронка Gift</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {phaseEntries.length === 0 ? (
+            <p className="text-sm text-mid-gray">Пока нет подписчиков в gift-ботах.</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {phaseEntries.map(([phase, count]) => (
+                <Stat key={phase} label={phaseLabel(phase)} value={String(count)} />
+              ))}
+            </div>
+          )}
+          <div className="mt-4">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/bots">Открыть Gift-боты</Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Быстрые действия</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          {!p.gramjs.isActive && p.gramjs.trialAvailable !== false && (
+            <Button
+              variant="solid"
+              size="sm"
+              disabled={trialBusy === 'gramjs'}
+              onClick={() => void startChannelTrial('gramjs')}
+            >
+              Trial · Личный Telegram
+            </Button>
+          )}
+          {!p.whatsapp.isActive && p.whatsapp.trialAvailable !== false && (
+            <Button
+              variant="solid"
+              size="sm"
+              disabled={trialBusy === 'whatsapp'}
+              onClick={() => void startChannelTrial('whatsapp')}
+            >
+              Trial · WhatsApp
+            </Button>
+          )}
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/dashboard/bots">Настроить подарок</Link>
+          </Button>
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/dashboard/ai">Подключить Business</Link>
+          </Button>
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/dashboard/ai/whatsapp">Подключить WhatsApp</Link>
+          </Button>
+          <Button asChild variant="secondary" size="sm">
+            <Link href="/dashboard/ai/agents">Настроить AI-агента</Link>
+          </Button>
+        </CardContent>
+      </Card>
     </AppShell>
   );
 }

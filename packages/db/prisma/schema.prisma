@@ -52,6 +52,9 @@ model Tenant {
   conversations     Conversation[]
   aiUsageLog        AiUsageLog[]
   aiAgents          AiAgent[]
+  knowledgeFiles    AiKnowledgeFile[]
+  knowledgeChunks   AiKnowledgeChunk[]
+  salesExamples     AiSalesExample[]
 
   @@index([status])
 }
@@ -184,6 +187,8 @@ model AiUsageLog {
   tenantId        String
   addon           Addon?   @relation(fields: [addonId], references: [id])
   addonId         String?
+  aiAgent         AiAgent? @relation(fields: [aiAgentId], references: [id], onDelete: SetNull)
+  aiAgentId       String?
   aiWallet        AiWallet @relation(fields: [aiWalletId], references: [id])
   aiWalletId      String
   model           String   // gpt-4o, gpt-4o-mini, etc.
@@ -196,6 +201,7 @@ model AiUsageLog {
 
   @@index([tenantId])
   @@index([aiWalletId])
+  @@index([aiAgentId])
   @@index([createdAt])
 }
 
@@ -213,11 +219,81 @@ model AiAgent {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  defaultForBots BotInstance[]  @relation("BotDefaultAiAgent")
-  conversations  Conversation[]
+  defaultForBots   BotInstance[]       @relation("BotDefaultAiAgent")
+  conversations    Conversation[]
+  aiUsageLog       AiUsageLog[]
+  knowledgeFiles   AiKnowledgeFile[]
+  knowledgeChunks  AiKnowledgeChunk[]
+  salesExamples    AiSalesExample[]
 
   @@index([tenantId])
   @@index([status])
+}
+
+/// Uploaded knowledge file for an agent (txt/md/pdf).
+model AiKnowledgeFile {
+  id             String   @id @default(cuid())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId       String
+  aiAgent        AiAgent  @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId      String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  storagePath    String
+  extractedChars Int      @default(0)
+  /// processing | ready | failed
+  status         String   @default("processing")
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  chunks AiKnowledgeChunk[]
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([status])
+}
+
+/// Embedded chunk of a knowledge file.
+model AiKnowledgeChunk {
+  id            String          @id @default(cuid())
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId      String
+  aiAgent       AiAgent         @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId     String
+  file          AiKnowledgeFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  fileId        String
+  ordinal       Int
+  content       String
+  /// float[] embedding as JSON
+  embedding     Json
+  tokenEstimate Int             @default(0)
+  createdAt     DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([fileId])
+}
+
+/// Operator↔user pairs from successfully closed CRM deals (won stage).
+model AiSalesExample {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  aiAgent         AiAgent  @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId       String
+  conversationId  String?
+  opportunityId   String?
+  userText        String
+  operatorText    String
+  embedding       Json
+  sourceMessageId String   @unique
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([opportunityId])
 }
 
 // ============================================================
@@ -579,6 +655,8 @@ model Conversation {
   twentyOpportunityId  String?
   /// Ambiguous Person dedupe → manual review in portal
   needsReview          Boolean  @default(false)
+  /// Set after won-deal sales examples were ingested for this conversation
+  salesLearnedAt       DateTime?
   lastAiMessageAt DateTime?
   assignedToUserId String?
   createdAt       DateTime @default(now())

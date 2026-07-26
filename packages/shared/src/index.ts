@@ -5,9 +5,13 @@ export const PRODUCT_CODES = {
   EXTRA_SEAT: 'extra_seat',
   GIFT_BOT: 'gift_bot',
   AI_TELEGRAM: 'ai_tg',
+  /** +1 Business account slot beyond included 10 (200₽/mo) */
+  AI_TG_EXTRA_CONN: 'ai_tg_extra_conn',
   /** Personal Telegram account via GramJS (500₽/mo + AI wallet) */
   AI_GRAMJS: 'ai_gramjs',
   AI_WHATSAPP: 'ai_wa',
+  /** One-shot AI wallet top-up (not a subscription; excluded from referral) */
+  AI_TOPUP: 'ai_topup',
   ANALYTICS_METRIKA: 'analytics_metrika',
   ANALYTICS_GA4: 'analytics_ga4',
   ANALYTICS_FACEBOOK: 'analytics_facebook',
@@ -16,20 +20,29 @@ export const PRODUCT_CODES = {
 
 export type ProductCode = (typeof PRODUCT_CODES)[keyof typeof PRODUCT_CODES];
 
+/** Products that never earn referral commission */
+export const REFERRAL_EXCLUDED_PRODUCTS = new Set<string>([PRODUCT_CODES.AI_TOPUP]);
+
 export const PRICING = {
   CRM_BASE_MONTHLY: 500,
   EXTRA_SEAT_MONTHLY: 300,
   GIFT_BOT_MONTHLY: 500,
   AI_TELEGRAM_MONTHLY: 1000,
-  /** Up to 10 Telegram Business accounts per managed AI bot */
+  /** Up to 10 Telegram Business accounts included in AI_TELEGRAM */
   AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS: 10,
+  /** Each active Business account beyond included 10 */
+  AI_TG_EXTRA_CONN_MONTHLY: 200,
   /** Personal TG account (GramJS) fixed fee */
   AI_GRAMJS_MONTHLY: 500,
-  /** WhatsApp account (Evolution) fixed fee — TZ Phase 2 */
+  /** WhatsApp account (Evolution) fixed fee */
   AI_WHATSAPP_MONTHLY: 500,
   ANALYTICS_PLATFORM_MONTHLY: 500,
   AI_TOPUP_MIN_RUB: 500,
   AI_MARKUP_PERCENT_DEFAULT: 50,
+  /** Default USD→RUB for OpenRouter cost (env USD_RUB_RATE / platformSetting usd_rub_rate win) */
+  USD_RUB_RATE_DEFAULT: 90,
+  /** Default referral % of paid subscriptions/addons (not AI top-up) */
+  REFERRAL_PERCENT_DEFAULT: 20,
   SEATS_INCLUDED: 10,
 } as const;
 
@@ -55,6 +68,17 @@ export const ADDON_TYPES = [
   'analytics_facebook',
   'analytics_vk',
 ] as const;
+
+/** Read purchased extra Business slots from ai_tg addon.config */
+export function getAiTgExtraSlots(config: unknown): number {
+  if (!config || typeof config !== 'object') return 0;
+  const n = Number((config as { extraSlots?: unknown }).extraSlots);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+export function getAiTgBusinessCapacity(config: unknown): number {
+  return PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS + getAiTgExtraSlots(config);
+}
 
 export type AddonType = (typeof ADDON_TYPES)[number];
 

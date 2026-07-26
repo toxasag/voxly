@@ -89,6 +89,9 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+### 2026-07-26 — INC-059 WA LID→PN (Evolution v2.3.7-lid shipped)
+- WA UI can show phone without address book; avatar invent OFF. Prod Evolution upgraded to **v2.3.7-lid** (backup `20260726-002454`); session restored without QR; webhook + `PRESENCE_UPDATE` re-applied. Next: confirm LID inbound fills Person via `remoteJidAlt`/`senderPn`.
+
 ### 2026-07-24 — INC-050 CRM chat links + gift 1.2/1.3
 - Chat: clickable http(s) in «Чат»; no `nbsp;` garbage (app **0.1.3** on john).
 - Gift setup: **1.2** Telegram description / **1.3** /start funnel (code; gift deploy still pending).
@@ -124,6 +127,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 ### 2026-07-23 — INC-032 CRM Chat GramJS reply
 - Root cause: saas-api looked only at GiftSubscriber; GramJS CRM ids on Conversation → `/reply` 404. Host `/s/crm-chat` was correct.
 - Fix + prod deploy `saas-api,gramjs-bridge` (backup `20260723-132306`).
+
+### 2026-07-25 — Billing close + admin health
+- Business: capacity + unlink + `ai_tg_extra_conn` 200₽/slot; GramJS/WA hard pay + QR 402; `ai_topup`; usage-by-agent; referral 20% excl. top-up; `GET /api/admin/health`.
+- Portal wired; shared tests green. Prod migrate+deploy pending.
 
 ### 2026-07-23 — WhatsApp QR INC-035 (prod)
 - Evolution `CONFIG_SESSION_PHONE_VERSION` bump → QR base64 returns; Cyrillic name → ascii hash slug.
@@ -475,7 +482,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» + `/api/crm/chat`; INC-024…**/050**. **2026-07-24** Business accounts + INC-047; gift Opportunity dedupe INC-049; CRM live refresh INC-048; project schedule; **INC-050 clickable links** (john app 0.1.3); gift **1.2/1.3** code ready (portal deploy pending). **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: hard Robokassa `ai_gramjs`/`ai_wa`; rotate root SSH + `SUPERADMIN_PASSWORD`.
+**Статус кода:** CRM chat + INC-024…**/059**. **2026-07-26** Person↔Opportunity link + no auto-pause + inbound debounce; stage-by-option-id; admin purge; Business `can_reply`; CRM Chat **0.1.8** (presence deployed); **Evolution `v2.3.7-lid` on prod** (INC-059 LID→PN). **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: confirm LID inbound phone fill; rotate root SSH; monitor disk.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -513,11 +520,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-1. Apply AiAgent migration (local+prod); create agent → assign → smoke AI reply.
-2. Smoke prod QR login on `/dashboard/ai/gramjs` (tenant account).
-2. Local: smoke QR; E2E voice/photo via OpenRouter (key already on prod).
-3. E2E Business: voice → transcript; photo without caption → vision.
-4. Hard Robokassa `ai_tg` / `ai_gramjs` later; FAQ embeddings; rotate VPS root SSH + `SUPERADMIN_PASSWORD`.
+1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).
+2. Superadmin `/admin` → «Удалить» tenant `john` (confirm slug) → зарегистрироваться заново → проверить CRM Chat кнопки AI + создание сделок.
+3. Telegram Business: включить «Отвечать на сообщения» для AI-бота (`can_reply=true`) — иначе ответы не уходят в TG (INC-056).
+4. Smoke prod QR login on `/dashboard/ai/gramjs` (tenant account).
+5. Rotate VPS root SSH + `SUPERADMIN_PASSWORD`.
 
 ### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓

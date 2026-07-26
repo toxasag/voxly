@@ -12,6 +12,7 @@ async function main() {
   // =====================================
   const settings = [
     { key: 'ai_markup_percent', value: '50', description: 'AI token markup percentage (default 50%)' },
+    { key: 'usd_rub_rate', value: '90', description: 'USD→RUB rate for OpenRouter provider cost (override via USD_RUB_RATE env)' },
     // OpenRouter model matrix (TZ v0.3.1) — upsert updates value so re-seed picks new defaults
     { key: 'ai_default_model', value: 'google/gemini-2.5-flash', description: 'Default OpenRouter chat model' },
     { key: 'ai_chat_model', value: 'google/gemini-2.5-flash', description: 'Primary chat model (OpenRouter id)' },
@@ -50,15 +51,21 @@ async function main() {
     where: { id: 'default' },
     create: {
       id: 'default',
-      type: 'credit',
-      value: 500,
-      productScope: 'all',
+      type: 'percent_recurring',
+      value: 20,
+      productScope: 'subscriptions',
       isDefault: true,
       isActive: true,
     },
-    update: {},
+    update: {
+      type: 'percent_recurring',
+      value: 20,
+      productScope: 'subscriptions',
+      isDefault: true,
+      isActive: true,
+    },
   });
-  console.log('✓ Seeded default referral rule');
+  console.log('✓ Seeded default referral rule (20% recurring, excl. AI top-up)');
 
   // =====================================
   // Super-admin user

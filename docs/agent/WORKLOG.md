@@ -1,4 +1,189 @@
-### 2026-07-24 — INC-051 bots list 500 (missing telegramDescription cols)
+### 2026-07-26 — Evolution → v2.3.7-lid (INC-059 LID→PN)
+- Goal: ship Baileys lidMapping / `remoteJidAlt` so CRM can get phones WA UI already shows.
+- Changes: `docker/evolution-api.Dockerfile` `FROM evoapicloud/evolution-api:v2.3.7` + resilient `@lid` bypass (150 chunks patched); compose image `voxly-evolution-api:v2.3.7-lid`; `./scripts/prod-deploy.sh evolution-api,ai-whatsapp-worker`. Webhook re-applied for john WA instance with `PRESENCE_UPDATE`.
+- Verify: backup `/opt/voxly/backups/20260726-002454/`; Evolution **v2.3.7** Up, instance auto-reconnect **CONNECTED TO WHATSAPP** (no QR); worker `evolution=yes`; smoke getvoxly.ru + api `/health` **200**.
+- Broken / blockers: none on reconnect. Confirm next LID inbound fills Person phone via `remoteJidAlt`/`senderPn`.
+- Next: user sends a test WA message from LID peer; check worker logs `source=webhook`.
+
+### 2026-07-26 — WA LID: cache PN + business email (still need Evolution ≥2.3.7)
+- Goal: after user correction — WA UI shows PN via lidMapping (not address book); finish worker-side mitigations without inventing phones.
+- Cause: Evolution `v2.2.3-lid` never exposes `remoteJidAlt`/`senderPn`; `fetchBusinessProfile(@lid)` returns email/address only (no phone); `whatsappNumbers(LID)` exists:false.
+- Changes: `ai-whatsapp-worker` — reuse `Conversation.platformUsername` E.164 cache; `fetchBusinessProfile` → Person email; `twenty-client.updatePersonEmail`. Avatar invent stays OFF (INC-059).
+- Verify: `pnpm --filter @voxly/twenty-client build` + WA worker typecheck.
+- Next: deploy `ai-whatsapp-worker` (and twenty-client via image build); plan Evolution → **v2.3.7** for real LID→PN (may need QR re-scan).
+
+- Goal: ship presence line (voxly-crm-chat **0.1.8**) + GramJS peer-status + WA presence cache to prod.
+- Changes: `./scripts/prod-deploy.sh saas-api,gramjs-bridge,ai-whatsapp-worker` (no `evolution-api`). Admin `POST …/refresh-crm-chat` for tenant **john** → `{ok:true, versionHint:"0.1.8+"}`.
+- Verify: backup `/opt/voxly/backups/20260726-000817/` (`voxly_control.dump`, `twenty.dump`); containers saas-api / gramjs-bridge / ai-whatsapp-worker recreated Up; smoke getvoxly.ru + api `/health` **200**; `prod-diff` hot files **OK** for the three services. Evolution left Up (unchanged, 38h).
+- Broken / blockers: none for deploy. WA `PRESENCE_UPDATE` only lands on Evolution webhook set at create/connect — existing instances still need webhook re-apply (next QR/connect or safe `/webhook/set`); not run this pass.
+- Next: hard-refresh CRM Chat on john; optional Evolution webhook re-apply for existing WA (not an Evolution image upgrade).
+
+### 2026-07-26 — CRM chat: presence line instead of format cheat-sheet
+- Goal: remove gray «Формат: **жирный**…» under channel header; show contact online / last seen.
+- Changes: `voxly-crm-chat` **0.1.8** presence line (hide if unknown); `crm-chat` GET `presence`; GramJS `POST /messages/peer-status`; WA `PRESENCE_UPDATE` in-memory cache + `GET /internal/chat/presence`; TG Business/gift omit (Bot API); `versionHint` 0.1.8+.
+- Verify: no `Формат:` in chat-panel; GramJS chat shows «онлайн» / «был(а) в сети …»; WA only after presence webhook; Business line hidden.
+- Next: done — deployed 2026-07-26 (`20260726-000817`); john crm-chat refreshed to 0.1.8+. Remaining: hard-refresh CRM; WA webhook re-apply for existing instances.
+
+### 2026-07-26 — WA LID→PN: no invent phones; Evolution upgrade needed (INC-059)
+- Goal: CRM Person phone when WA UI shows number but webhook is `@lid` only; stop wrong avatar twins.
+- Cause: Evolution 2.2.3-lid never stores `remoteJidAlt`/`senderPn` (0 msgs); IsOnWhatsapp has no LID map. WA client shows PN via lidMapping — not address-book-only. Avatar Contact twin invented wrong E.164 (7915… vs real 7985…).
+- Changes: `ai-whatsapp-worker` — avatar match OFF unless `WA_LID_AVATAR_PHONE_MATCH=1`; broader webhook/Contact/Chat field parse; `source=` logs when LID has no PN; Dockerfile + `.env.example` upgrade notes → **v2.3.7**; ADR in DECISIONS; INC-059.
+- Verify: `pnpm --filter @voxly/ai-whatsapp-worker typecheck`. Deploy not run this session.
+- Next: `./scripts/prod-deploy.sh ai-whatsapp-worker` then plan Evolution → v2.3.7 (`evolution-api,ai-whatsapp-worker`); expect possible QR re-scan.
+
+### 2026-07-26 — WA phone empty: LID webhook, no E.164 in Evolution
+- Goal: explain/fix missing `+7 985 501 4040` on Person.
+- Cause: Evolution Message.key never has `remoteJidAlt`/`senderPn` (0/58 msgs); Contact has LID rows + separate `79150946944@s.whatsapp.net` (same avatar as one LID). Number `79855014040` **absent** from Evolution DB — **correction:** WA chat UI can show PN without address book (lidMapping); earlier «address book only» was wrong.
+- Changes: parse WA `contactMessage` vCard; findChats fallback; backfill Person `e51b8ae7…` → `9855014040` / `+7` + Conversation `platformUsername=+79855014040`.
+- Verify: CRM Person Антон shows phone; next shared contact fills automatically.
+- Next: superseded by INC-059 (disable avatar invent + Evolution upgrade).
+
+### 2026-07-26 — Inbound debounce + multi-bubble + read receipts
+- Goal: wait 5–6s quiet; 2–4 bubbles with 3–4s gaps; stop if client writes mid-send; blue ticks / read.
+- Changes: debounce default **6s**; `humanBubbleGapMs` 3–4s; `normalizeAiBubbles` + json_object; abort outbound on newer user msg; TG `readBusinessMessage`; GramJS `ReadHistory` on inbound; WA markRead on receive + preferred remoteJid.
+- Verify: deploy TG/WA/gramjs workers; retest burst + mid-send interrupt.
+- Next: user retest all 3 channels.
+
+### 2026-07-26 — Deploy debounce/link + GramJS composer pin (placeholder bug)
+- Goal: user retest failed on undeployed code; GramJS composer still scrolled.
+- Cause: (1) prod had no `inboundAiDebouncer` / `createAndLink`. (2) shell-ux matched placeholder «Ответ в…» — placeholders are **not** in `textContent`; GramJS has no «Прикрепить».
+- Changes: detect pin via `Отправить`+`Жирный` / `data-voxly-crm-chat`; chat-panel `data-voxly-crm-chat=1` **0.1.7**; debounce default **5s**; linkPerson multi-shape + logs; deployed `saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge,twenty`; refreshed john crm-chat.
+- Verify: containers dist contain `inboundAiDebouncer`/`createAndLink`; shell-ux has `deepHasAttr`; app healthz 200.
+- Next: user wipe deals → WA/TG/GramJS burst «Привет»+«Я Антон» → one AI reply after ~5s; Opportunity shows Person; GramJS composer pinned after hard-refresh CRM.
+
+### 2026-07-26 — Person↔Opportunity link + no auto-pause + inbound debounce
+- Goal: contact attached to deal; AI stays on until manual pause/off; n8n-like inbound debounce + bubble gaps; GramJS composer pin; WA blue ticks.
+- Changes:
+  - `twenty-client` `createOpportunity`: connect-first + explicit `updateOpportunity` link (`pointOfContact` / `pointOfContactId`).
+  - Removed auto-`pausedUntil` on CRM reply (`crm-chat`), TG Business/GramJS human outbound, WA `/internal/messages/send`. Manual `/pause` `/off` / CRM AI buttons kept.
+  - `@voxly/ai-core` `createInboundDebouncer` + `humanBubbleGapMs`; TG/WA workers debounce ~4s (`AI_INBOUND_DEBOUNCE_MS`); GramJS internal inbound quiet-wait; inter-bubble 1–3s.
+  - `twenty-shell-ux.js`: pin composer for «Ответ в…» (GramJS placeholder).
+  - WA `markWhatsAppRead`: multi-jid + message-id normalize + logging.
+- Verify: build ai-core/twenty-client; tsc workers + saas-api + gramjs-bridge. Deploy: `saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge,twenty` (shell-ux). Retest john: new inbound → Person on Opportunity; burst msgs → one AI reply; CRM reply does not mute AI; GramJS composer fixed; WA ticks.
+- Next: prod deploy + user retest.
+
+- Goal: WA read/typing/split; GramJS presence; CRM labels contact/bot+agent/manager.
+- Changes: WA parseAiBubbles+humanLike send; markRead on open/send; GramJS SetTyping/ReadHistory; crm-chat contactName/botAgentLabel/operatorName + sender_meta; crm-chat **0.1.6**.
+- Verify: deploy saas-api,ai-whatsapp-worker,gramjs-bridge; refresh-crm-chat; hard-refresh CRM.
+- Note: after CRM reply AI pauses ~1h (pausedUntil) — press «Вкл AI» to resume.
+- Next: user retest WA/GramJS on phone.
+
+### 2026-07-26 — CRM AI buttons missing + dashboard spend 0₽
+- Goal: show Вкл/Пауза/Выкл AI in CRM chat; show real AI spend on dashboard.
+- Cause: (1) private tarball registry duplicate → install kept old front without AI UI; no uninstall/reinstall. (2) OpenRouter `usage.cost:0` trusted → chargedRub=0; Math.round hid kopecks.
+- Changes: uninstall+forceReinstall on provision/refresh; crm-chat **0.1.5** AI bar; cost fallthrough when cost=0; dashboard formatRub + tokens/себестоимость.
+- Verify: deploy saas-api/portal/TG/WA; refresh-crm-chat for tenant; hard-refresh CRM Chat → AI bar; new AI reply → spend > 0.
+- Next: user hard-refresh CRM; enable Business reply rights if still limited.
+
+### 2026-07-26 — Stage by option id + admin purge + Business send honesty + CRM AI buttons
+- Goal: renamed stages; full admin account wipe; TG Business AI not reaching Telegram; missing CRM AI controls.
+- Changes: twenty-client `resolveDefaultOpportunityStage` via seed option id; `purgeTenantFully` + admin DELETE + portal «Удалить»; TG worker `can_reply` gate + persist-after-send; voxly-crm-chat 0.1.4 AI buttons + `refreshCrmChatAppForTenant`.
+- Verify: deployed `saas-api,saas-portal,ai-telegram-worker,ai-whatsapp-worker,gift-bot-worker`; smoke api/portal 200 after boot; backup under `/opt/voxly/backups/`.
+- Broken / blockers: Business still needs Telegram «Отвечать на сообщения» (`can_reply=true`); CRM Chat on existing workspaces needs refresh or re-register after purge.
+- Next: user purge `john` in `/admin` → re-register → E2E; enable Business reply rights.
+
+### 2026-07-25 — Deal stage NOVYY_LID + CRM AI controls + chat thread fixes
+- Goal: DanMSK toast without deal; empty chat; WA wrong deal/dup chip; AI controls in CRM chat.
+- Cause: createOpportunity `stage:NEW` invalid after RU defaults; biz chip dedupe hid peers; WA pushName LID merge; mode=human stuck.
+- Changes: twenty-client stage fallback; crm-chat peer dedupe + POST /ai; voxly-crm-chat 0.1.4 AI buttons; drop pushName LID map; backfill DanMSK opp `a38b7211-…`.
+- Verify: deploy saas-api + TG/WA/gift workers; hard-refresh CRM Chat → AI buttons; new inbound creates Opportunity.
+- Next: user retest DanMSK deal + new WA number.
+
+
+### 2026-07-25 — CRM Business reply BUSINESS_PEER_INVALID
+- Goal: explain/fix CRM send error on Business-бот.
+- Cause: Telegram `can_reply=false` (registry `limited`); not a bad chat_id alone.
+- Changes: crm-chat assert + RU humanize; TG worker peer labels from `chat.*`.
+- Verify: deploy saas-api,ai-telegram-worker; user enables reply rights in TG Business → CRM send works.
+- Next: user re-enable «Отвечать на сообщения» for @voxly_AI_Agent_bot.
+
+
+### 2026-07-25 — AI silent after CRM reply (mode=human stuck)
+- Goal: john assigned agent; WA/TG no AI reply; no CRM toast on test.
+- Cause: (1) CRM/WA outbound set `mode=human` + `pausedUntil`; after pause expired mode stayed human → `shouldAiReply` false forever. (2) TG test text «Чем вы занимаетесь?» was **operator** (wrote from business phone) → auto-pause 1h, no inbound toast.
+- Changes: crm-chat + WA worker pause = only `pausedUntil` (keep mode ai); better WA AI-off log; prod reset john WA+TG convs to mode=ai, pausedUntil=null.
+- Verify: deploy saas-api,ai-whatsapp-worker; write as **customer** to WA / business bot → AI replies; toast for role=user.
+- Broken / blockers: none.
+- Next: user retest from second phone (not as business owner).
+
+
+### 2026-07-25 — Fix AI agent assign 404 (unclosed /usage handler)
+- Goal: assigning agent on `/dashboard/ai/agents` returned Fastify «Not Found».
+- Changes: close `GET /usage` in `ai-agents.ts` — assign/patch/knowledge/sales routes were nested after `return` and never registered.
+- Verify: deploy `saas-api` (backup `20260725-203628`); `/health` 200 after boot; unauth `PATCH …/assign/bot/:id` → 401 (not route 404).
+- Broken / blockers: deploy smoke raced boot (404 → then 200).
+- Next: user retest assign in portal.
+
+
+### 2026-07-25 — AI never replies to / creates CRM for bots
+- Goal: bot senders → no AI, no Conversation/messages, no CRM Opportunity.
+- Changes: TG `from.is_bot` early return before CRM; GramJS `User.bot` (+ `isBot` to `/internal/inbound`); WA skip status/newsletter/broadcast; CAPABILITIES note.
+- Verify: deployed `ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` (--skip-backup); smoke portal/api 200; containers grep `is_bot` / `sender.bot` / newsletter.
+- Broken / blockers: none.
+- Next: none.
+
+
+### 2026-07-25 — Agent KB + won-deal sales RAG (ADR-016)
+- Goal: knowledge files + learn only from successfully closed CRM deals.
+- Changes: Prisma AiKnowledge*/AiSalesExample + `salesLearnedAt`; ai-core RAG; saas-api upload/sync; TG/WA prompt inject; agents portal UI; compose volume `ai-knowledge-data` + OpenRouter on saas-api.
+- Verify: migrate `20260725220000` on prod; api/portal 200; tables AiKnowledge* / AiSalesExample; `rag.js` in image.
+- Broken / blockers: mid-deploy disk **100%** (INC-052); pruned unused images (~66GB) + journals; volumes untouched; services restarted.
+- Next: create/configure john agent + upload KB + assign bots.
+
+
+### 2026-07-25 — Deploy OpenRouter cost + admin AI credit; john +100₽
+- Goal: ship live OpenRouter AI cost; admin manual AI top-up; credit john.
+- Changes: deploy `saas-api,saas-portal,ai-telegram-worker,ai-whatsapp-worker` (backup `20260725-185017`); `POST /api/admin/tenants/:id/ai-credit` + admin UI column; prod `usd_rub_rate=90` + `USD_RUB_RATE=90`; john `AiWallet` → **100.00**.
+- Verify: api/portal smoke 200 (after boot); workers have `openrouter-cost.js`; admin route has `ai-credit`.
+- Broken / blockers: first smoke 502 during boot only.
+- Next: create/configure AiAgent for john + assign to bots.
+
+
+### 2026-07-25 — OpenRouter live AI cost (usage.cost + /models)
+- Goal: bill AI from OpenRouter prices, not hardcoded worker tables.
+- Changes: `@voxly/ai-core` `resolveProviderCostRub` (prefer `usage.cost`, else cached `/models` pricing, USD→RUB via `USD_RUB_RATE`/`usd_rub_rate`); TG+WA workers wired; seed + `.env.example`; ADR-015.
+- Verify: `pnpm --filter @voxly/ai-core test` + build; typecheck ai-telegram/whatsapp workers.
+- Broken / blockers: not deployed; set `USD_RUB_RATE` (or seed `usd_rub_rate`) on prod.
+- Next: deploy `ai-telegram-worker,ai-whatsapp-worker` (+ rebuild ai-core in images); optional upsert `usd_rub_rate` on control PG.
+
+
+### 2026-07-25 — One-shot trial for personal TG + WhatsApp
+- Goal: clear 14-day trial for GramJS and WhatsApp accounts.
+- Changes: `channel-trial.ts` one-shot trial; gramjs/whatsapp start-trial + `trialAvailable`; portal trial cards + dashboard CTAs; paid webhook sets `trialConsumed`.
+- Verify: `/dashboard/ai/gramjs` and `/whatsapp` → «Активировать trial»; QR after trial.
+- Broken / blockers: none.
+- Next: none.
+
+
+- Goal: clear cabinet IA — sidebar menu; `/dashboard` = overview stats only; products in separate items.
+- Changes: `AppShell` left nav (Дашборд, Gift, Business, WA, AI-агенты, Личный TG); `GET /api/tenant/dashboard`; rewritten dashboard page (messages, dialogs, leads, tariffs, money, gift funnel); CRM button kept.
+- Verify: deploy saas-api + saas-portal; open `/dashboard` — sidebar + KPIs.
+- Broken / blockers: CRM deal-stage breakdown still approximate (linked Opportunity ids), not full Twenty stage groupBy.
+- Next: optional Twenty stage counts when user needs exact pipeline.
+
+
+- Goal: apply `20260725190000`, deploy billing services, restyle portal to DESIGN.md clinical blueprint.
+- Changes:
+  - Control PG backup `20260725-204140-pre-ai-usage-mig` + migration applied (`AiUsageLog.aiAgentId`, referral 20%).
+  - Deploy backup `20260725-174330`; rebuilt saas-api, saas-portal, ai-telegram-worker, ai-whatsapp-worker.
+  - Portal tokens/components: canvas/paper/ink, 18px pills / 24px cards, monochrome; landing mock UI + login/register.
+- Verify: `https://api.getvoxly.ru/health` 200; `https://getvoxly.ru/` 200 (smoke may 404 while Next boots — recheck).
+- Broken / blockers: first smoke raced portal start; password SSH still in use — rotate.
+- Next: hard-refresh portal; optional third portal sync for late polish; rotate root SSH.
+
+
+- Goal: close product gaps — Business >10 @ 200₽, Robokassa for GramJS/WA/top-up, spend by agent, referral 20% excl. AI top-up, admin health.
+- Changes:
+  - Shared: `ai_tg_extra_conn`, `ai_topup`, `REFERRAL_EXCLUDED_PRODUCTS`, capacity helpers; seed/migration referral `percent_recurring` 20%.
+  - Billing checkout/webhook: extras, channel addons, wallet top-up, referral skip `ai_topup`.
+  - API: Business capacity + unlink; GramJS/WA `requiresPayment` + 402 QR; `GET /api/ai/agents/usage`; `GET /api/admin/health`.
+  - Portal: buy slot/unlink; pay buttons GramJS/WA; usage + top-up; admin health card.
+  - Workers: capacity gate; `chargeAiUsage({ aiAgentId })`.
+- Verify: apply migration `20260725190000_…` on control PG; deploy `saas-api,saas-portal,ai-telegram-worker,ai-whatsapp-worker`; smoke checkout + health.
+- Broken / blockers: not deployed this session.
+- Next: `./scripts/prod-deploy.sh` + migrate; smoke Robokassa sandbox/prod.
+
+
 - Goal: restore `/dashboard/bots` after saas-api deploy.
 - Changes: applied `20260724183000_bot_telegram_description` on prod control PG.
 - Verify: refresh Боты → list loads.

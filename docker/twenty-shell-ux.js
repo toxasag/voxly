@@ -195,15 +195,36 @@
     }
   }
 
+  function deepHasAttr(root, attr, value) {
+    if (!root) return false;
+    var stack = [root];
+    while (stack.length) {
+      var node = stack.pop();
+      if (!node || node.nodeType !== 1) continue;
+      try {
+        if (node.getAttribute && node.getAttribute(attr) === value) return true;
+      } catch (e) {}
+      if (node.shadowRoot) stack.push(node.shadowRoot);
+      var kids = node.children || [];
+      for (var i = 0; i < kids.length; i++) stack.push(kids[i]);
+    }
+    return false;
+  }
+
   function isVoxlyChatCanvas(wrapper) {
-    if (!wrapper || !wrapper.textContent) return false;
-    var t = wrapper.textContent;
-    // Composer chrome from twenty-app/voxly-crm-chat chat-panel
+    if (!wrapper) return false;
+    // Reliable marker from chat-panel (works across GramJS/WA/Business).
+    if (deepHasAttr(wrapper, 'data-voxly-crm-chat', '1')) return true;
+    if (deepHasAttr(wrapper, 'data-voxly-ai-controls', '1')) return true;
+    var t = wrapper.textContent || '';
+    // Format toolbar + send are always visible text.
+    // Do NOT rely on textarea placeholder («Ответ в…») — placeholders are not in textContent.
+    // «Прикрепить» is missing on GramJS (supportsAttachments=false).
+    if (t.indexOf('Отправить') !== -1 && t.indexOf('Жирный') !== -1) return true;
     return (
-      t.indexOf('Ответ в Telegram') !== -1 ||
-      (t.indexOf('Прикрепить') !== -1 &&
-        t.indexOf('Отправить') !== -1 &&
-        t.indexOf('Жирный') !== -1)
+      t.indexOf('Прикрепить') !== -1 &&
+      t.indexOf('Отправить') !== -1 &&
+      t.indexOf('Жирный') !== -1
     );
   }
 
