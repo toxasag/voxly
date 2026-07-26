@@ -1215,14 +1215,26 @@ async function handleQrStatus(tenantId: string, nameRaw: string) {
   };
 }
 
-async function sendWhatsAppText(instanceName: string, to: string, text: string) {
+async function sendWhatsAppText(
+  instanceName: string,
+  to: string,
+  text: string,
+  opts?: { delayMs?: number },
+) {
   const number = formatWaSendRecipient(to);
   if (!number) {
     throw new Error('WhatsApp recipient is empty');
   }
+  const delay =
+    opts?.delayMs != null
+      ? Math.max(0, Math.min(12000, Math.floor(opts.delayMs)))
+      : undefined;
+  const body: Record<string, unknown> = { number, text };
+  // Evolution `delay` shows «печатает…» for N ms then sends (HTTP blocks until done).
+  if (delay && delay > 0) body.delay = delay;
   const res = await evoFetch(`/message/sendText/${encodeURIComponent(instanceName)}`, {
     method: 'POST',
-    body: JSON.stringify({ number, text }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(
@@ -1314,41 +1326,30 @@ async function sendWhatsAppHumanLike(
     if (
       opts?.conversationId &&
       opts.sendStartedAt &&
-      (await prisma.chatMessage.count({
-        where: {
-          conversationId: opts.conversationId,
-          role: 'user',
-          createdAt: { gt: opts.sendStartedAt },
-        },
-      })) > 0
+      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
     ) {
       return { aborted: true, sent };
     }
     const text = parts[i];
-    // Presence is fire-and-forget on Evolution 2.3 — local sleep is the real pacing.
     const thinkMs = typingDelayMs(text);
-    await sendWhatsAppTyping(instanceName, to, thinkMs);
-    await sleep(thinkMs);
-    if (
-      opts?.conversationId &&
-      opts.sendStartedAt &&
-      (await prisma.chatMessage.count({
-        where: {
-          conversationId: opts.conversationId,
-          role: 'user',
-          createdAt: { gt: opts.sendStartedAt },
-        },
-      })) > 0
-    ) {
-      return { aborted: true, sent };
-    }
-    await sendWhatsAppText(instanceName, to, text);
+    // Presence-only is unreliable on Evolution 2.3 (returns immediately). Typing that
+    // users actually see comes from sendText `delay` (composing for N ms, then send).
+    await sendWhatsAppText(instanceName, to, text, { delayMs: thinkMs });
     sent += 1;
     if (i < parts.length - 1) {
+      if (
+        opts?.conversationId &&
+        opts.sendStartedAt &&
+        (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+      ) {
+        return { aborted: true, sent };
+      }
       const gap = humanBubbleGapMs();
       console.log(
         `[ai-whatsapp] human gap ${gap}ms before bubble ${i + 2}/${parts.length}`,
       );
+      // Keep composing visible during the quiet gap between bubbles.
+      void sendWhatsAppTyping(instanceName, to, gap);
       await sleep(gap);
     }
   }
@@ -1567,11 +1568,13 @@ async function syncLeadToCrm(opts: {
     const emailForCrm = emailForCrmEarly;
 
     if (!personId) {
+      // Create without email first — soft-deleted Persons often still hold unique emails
+      // in Twenty (IDX on emailsPrimaryEmail includes trash). Attach email after create.
       const created = await client.createPerson({
         firstName: displayName,
         // Never put LID / platformUserId into lastName (shows as «Антон 165…», INC-039).
         lastName: undefined,
-        email: emailForCrm,
+        email: undefined,
         // Only pass real phones — WA @lid ids crash Twenty phone validation (INC-037).
         phone: whatsappValue,
         whatsapp: whatsappValue,
@@ -1590,10 +1593,11 @@ async function syncLeadToCrm(opts: {
         }
       }
       if (personId && emailForCrm) {
-        try {
-          await client.updatePersonEmail(personId, emailForCrm);
-        } catch {
-          /* ignore */
+        const ok = await client.updatePersonEmail(personId, emailForCrm);
+        if (!ok) {
+          console.warn(
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+          );
         }
       }
     } else if (phoneForCrm) {
@@ -1609,10 +1613,11 @@ async function syncLeadToCrm(opts: {
         /* ignore */
       }
       if (emailForCrm) {
-        try {
-          await client.updatePersonEmail(personId, emailForCrm);
-        } catch {
-          /* ignore */
+        const ok = await client.updatePersonEmail(personId, emailForCrm);
+        if (!ok) {
+          console.warn(
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+          );
         }
       }
       // Clear LID-looking lastName left by older sync (INC-039).
@@ -1626,10 +1631,11 @@ async function syncLeadToCrm(opts: {
       }
     } else {
       if (emailForCrm) {
-        try {
-          await client.updatePersonEmail(personId, emailForCrm);
-        } catch {
-          /* ignore */
+        const ok = await client.updatePersonEmail(personId, emailForCrm);
+        if (!ok) {
+          console.warn(
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+          );
         }
       }
       if (displayName !== 'WhatsApp') {
@@ -1646,10 +1652,11 @@ async function syncLeadToCrm(opts: {
 
     if (personId && opportunityId && !clearedStale) {
       if (emailForCrm) {
-        try {
-          await client.updatePersonEmail(personId, emailForCrm);
-        } catch {
-          /* ignore */
+        const ok = await client.updatePersonEmail(personId, emailForCrm);
+        if (!ok) {
+          console.warn(
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+          );
         }
       }
       if (phoneForCrm || displayName !== 'WhatsApp' || needsReview || emailForCrm) {

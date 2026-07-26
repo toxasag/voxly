@@ -1798,10 +1798,10 @@ export class TwentyClient {
     }
   }
 
-  /** Set Person primary email. Best-effort. */
-  async updatePersonEmail(personId: string, email: string): Promise<void> {
+  /** Set Person primary email. Returns false if Twenty rejected (e.g. unique on soft-deleted). */
+  async updatePersonEmail(personId: string, email: string): Promise<boolean> {
     const normalized = String(email || '').trim().toLowerCase();
-    if (!normalized || !normalized.includes('@')) return;
+    if (!normalized || !normalized.includes('@')) return false;
     const headers = this.getAuthHeaders();
     try {
       await this.client.request(
@@ -1809,8 +1809,12 @@ export class TwentyClient {
         { id: personId, data: { emails: { primaryEmail: normalized } } },
         headers,
       );
-    } catch {
-      /* ignore — composite / permission */
+      return true;
+    } catch (err) {
+      console.warn(
+        `[twenty-client] updatePersonEmail failed person=${personId}: ${errorMessage(err)}`,
+      );
+      return false;
     }
   }
 

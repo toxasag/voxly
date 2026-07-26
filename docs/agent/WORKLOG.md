@@ -1,3 +1,10 @@
+### 2026-07-26 — WA typing via sendText delay + email stuck in Twenty trash
+- Goal: real «печатает…» before each bubble; Person email from business profile.
+- Cause: sendPresence returns immediately (no visible typing); soft-deleted Person still held unique `emailsPrimaryEmail=anton@genadich.com`.
+- Changes: `sendText({ delay })` for composing; create Person without email then update; log unique failures; prod freed trash email → active Антон.
+- Verify: typecheck; deploy worker; CRM shows email; typing visible during delay before each bubble.
+- Next: deploy.
+
 ### 2026-07-26 — INC-061 WA CRM duplicate email + parallel debounce flushes
 - Goal: recreate Person/Opportunity after CRM wipe; one AI reply per burst.
 - Cause: createPerson unique on email; 6s debounce fired before next msg (~7s) → two parallel humanLike.
