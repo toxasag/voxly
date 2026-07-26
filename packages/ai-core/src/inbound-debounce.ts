@@ -1,6 +1,10 @@
 /**
  * Debounce inbound user bursts so AI replies once after a quiet period
  * (n8n-style: wait until the client finishes sending short messages).
+ *
+ * While a flush is in-flight for a key, further pushes are queued and one
+ * follow-up flush is scheduled after the current one finishes (avoids parallel
+ * multi-bubble storms when the user pauses just longer than settleMs).
  */
 
 export type InboundDebouncer<T> = {
@@ -9,42 +13,83 @@ export type InboundDebouncer<T> = {
   clear: (key?: string) => void;
 };
 
-/** Default quiet window after last user message (5–6s target → 6s). */
-export const DEFAULT_INBOUND_DEBOUNCE_MS = 6000;
+/** Default quiet window after last user message (10s — short pauses still coalesce). */
+export const DEFAULT_INBOUND_DEBOUNCE_MS = 10_000;
 
 export function createInboundDebouncer<T>(opts: {
-  /** Quiet window after last message before flush (default 6s). */
+  /** Quiet window after last message before flush (default 10s). */
   settleMs?: number;
   onFlush: (key: string, items: T[]) => void | Promise<void>;
 }): InboundDebouncer<T> {
   const settleMs = Math.max(500, opts.settleMs ?? DEFAULT_INBOUND_DEBOUNCE_MS);
   const pending = new Map<string, { items: T[]; timer: ReturnType<typeof setTimeout> }>();
+  const inFlight = new Map<string, Promise<void>>();
+  const queuedDuringFlight = new Map<string, T[]>();
+
+  const schedule = (key: string, items: T[]) => {
+    const cur = pending.get(key);
+    if (cur) clearTimeout(cur.timer);
+    const timer = setTimeout(() => {
+      pending.delete(key);
+      void startFlush(key, items);
+    }, settleMs);
+    pending.set(key, { items, timer });
+  };
+
+  const startFlush = async (key: string, items: T[]) => {
+    if (inFlight.has(key)) {
+      const q = queuedDuringFlight.get(key) || [];
+      queuedDuringFlight.set(key, [...q, ...items]);
+      return;
+    }
+
+    const job = (async () => {
+      try {
+        await opts.onFlush(key, items);
+      } catch (err) {
+        console.error('[inbound-debounce] onFlush failed', key, err);
+      } finally {
+        inFlight.delete(key);
+        const queued = queuedDuringFlight.get(key);
+        queuedDuringFlight.delete(key);
+        if (queued?.length) {
+          schedule(key, queued);
+        }
+      }
+    })();
+
+    inFlight.set(key, job);
+    await job;
+  };
 
   return {
     push(key: string, item: T) {
+      if (inFlight.has(key)) {
+        const q = queuedDuringFlight.get(key) || [];
+        queuedDuringFlight.set(key, [...q, item]);
+        return;
+      }
       const cur = pending.get(key);
       if (cur) clearTimeout(cur.timer);
       const items = cur ? [...cur.items, item] : [item];
-      const timer = setTimeout(() => {
-        pending.delete(key);
-        void Promise.resolve(opts.onFlush(key, items)).catch((err) => {
-          console.error('[inbound-debounce] onFlush failed', key, err);
-        });
-      }, settleMs);
-      pending.set(key, { items, timer });
+      schedule(key, items);
     },
     pendingCount(key: string) {
-      return pending.get(key)?.items.length ?? 0;
+      const pendingCount = pending.get(key)?.items.length ?? 0;
+      const queued = queuedDuringFlight.get(key)?.length ?? 0;
+      return pendingCount + queued;
     },
     clear(key?: string) {
       if (key) {
         const cur = pending.get(key);
         if (cur) clearTimeout(cur.timer);
         pending.delete(key);
+        queuedDuringFlight.delete(key);
         return;
       }
       for (const [, cur] of pending) clearTimeout(cur.timer);
       pending.clear();
+      queuedDuringFlight.clear();
     },
   };
 }

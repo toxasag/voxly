@@ -5,6 +5,13 @@
 
 ---
 
+### INC-061 — WA no CRM lead after wipe + parallel AI storms
+- **Симптом:** удалили Person/Opportunity → новое WA сообщение: сделки нет; ИИ шлёт 2×4 пузыря на паузу ~7с между сообщениями.
+- **Причина:** (1) `createPerson` с `anton@…` → Twenty unique «duplicate entry» (email ещё занят / soft-delete); sync abort. (2) debounce 6с: «Привет» flush стартовал, следующее сообщение через ~7с → второй параллельный flush.
+- **Фикс:** `findPersonByEmail` + reuse/name-only on duplicate; debounce default **10s** + serialize in-flight (queue mid-flight); abort checks before/after OpenRouter; `sendStartedAt` at flush start.
+- **Verify:** wipe → one WA burst with 7–9с gaps → one Person+Opportunity; one AI reply series; log no parallel `human gap` pairs.
+- **Дата:** 2026-07-26.
+
 ### INC-060 — WA creates 2 deals + 2 contacts for one message
 - **Симптом:** одно входящее WA → сделки `+20034505 · WA · …` (контакт «WhatsApp») и `Антон · WA · …` (телефон `+7985…`) одновременно.
 - **Причина:** Evolution шлёт twin webhook (`7985…@s.whatsapp.net` + `…@lid`). Для LID `extractPhoneFromEvoRow` брал Contact **`id` (CUID)** `cmrxq2epw003jt45it0gun5tz` → digits `20034505` (проходило `isLikelyE164Phone` min=8) → второй Person/Opportunity. Разные `platformUserId` (PN vs LID) → два Conversation.

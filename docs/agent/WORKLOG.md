@@ -1,3 +1,10 @@
+### 2026-07-26 — INC-061 WA CRM duplicate email + parallel debounce flushes
+- Goal: recreate Person/Opportunity after CRM wipe; one AI reply per burst.
+- Cause: createPerson unique on email; 6s debounce fired before next msg (~7s) → two parallel humanLike.
+- Changes: findPersonByEmail + duplicate recovery; debounce 10s + in-flight queue; early abort stamps.
+- Verify: typecheck; deploy worker; close orphan LID conv on john.
+- Next: deploy.
+
 ### 2026-07-26 — WA pacing + business email on PN peers
 - Goal: visible delays between AI bubbles; fill Person email from WA business profile.
 - Cause: Evolution 2.3 `sendPresence` needs top-level `presence`/`delay` (nested options → 400); local sleep capped at 2.2s; business profile fetched only for `@lid` after INC-060 PN identity; multi-bubble normalize did not hard-cap length.

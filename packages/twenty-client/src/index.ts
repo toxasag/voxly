@@ -1656,6 +1656,33 @@ export class TwentyClient {
       const result = await this.client.request(CREATE_PERSON, { data: flat }, headers);
       return (result as any).createPerson;
     } catch (flatErr) {
+      // Unique email/phone: reuse existing Person instead of failing the whole lead sync.
+      const dupMsg = errorMessage(flatErr);
+      if (/duplicate|already exists|уже существует/i.test(dupMsg)) {
+        if (input.email) {
+          const byEmail = await this.findPersonByEmail(input.email);
+          if (byEmail?.id) return byEmail;
+        }
+        if (input.phone || input.whatsapp) {
+          const byPhone = await this.findPersonByPhone(
+            String(input.phone || input.whatsapp || ''),
+          );
+          if (byPhone?.id) return { id: byPhone.id };
+        }
+        // Soft-deleted / hidden unique hit: create without email/phone composites.
+        try {
+          const nameOnly = {
+            name: {
+              firstName: input.firstName || '',
+              lastName: input.lastName || '',
+            },
+          };
+          const result = await this.client.request(CREATE_PERSON_NAME, { data: nameOnly }, headers);
+          return (result as any).createPerson;
+        } catch {
+          /* fall through to nested retries */
+        }
+      }
       // Twenty composites: name { firstName, lastName }. Phone alone often fails
       // validation (calling code required / LID not E.164) — retry without phones.
       const withPhone: Record<string, unknown> = { ...nestedBase };
@@ -1663,11 +1690,62 @@ export class TwentyClient {
       try {
         const result = await this.client.request(CREATE_PERSON_NAME, { data: withPhone }, headers);
         return (result as any).createPerson;
-      } catch {
+      } catch (withPhoneErr) {
+        const dupMsg = errorMessage(withPhoneErr);
+        if (/duplicate|already exists|уже существует/i.test(dupMsg)) {
+          if (input.email) {
+            const byEmail = await this.findPersonByEmail(input.email);
+            if (byEmail?.id) return byEmail;
+          }
+          if (input.phone || input.whatsapp) {
+            const byPhone = await this.findPersonByPhone(
+              String(input.phone || input.whatsapp || ''),
+            );
+            if (byPhone?.id) return { id: byPhone.id };
+          }
+          // Unique on soft-deleted email: create name-only, attach phone later.
+          try {
+            const nameOnly = {
+              name: {
+                firstName: input.firstName || 'WhatsApp',
+                lastName: input.lastName || '',
+              },
+            };
+            const result = await this.client.request(
+              CREATE_PERSON_NAME,
+              { data: nameOnly },
+              headers,
+            );
+            return (result as any).createPerson;
+          } catch {
+            /* continue */
+          }
+        }
         try {
           const result = await this.client.request(CREATE_PERSON_NAME, { data: nestedBase }, headers);
           return (result as any).createPerson;
-        } catch {
+        } catch (nestedErr) {
+          const nestedDup = errorMessage(nestedErr);
+          if (/duplicate|already exists|уже существует/i.test(nestedDup) && input.email) {
+            const byEmail = await this.findPersonByEmail(input.email);
+            if (byEmail?.id) return byEmail;
+            try {
+              const nameOnly = {
+                name: {
+                  firstName: input.firstName || 'WhatsApp',
+                  lastName: input.lastName || '',
+                },
+              };
+              const result = await this.client.request(
+                CREATE_PERSON_NAME,
+                { data: nameOnly },
+                headers,
+              );
+              return (result as any).createPerson;
+            } catch {
+              /* fall through */
+            }
+          }
           if (telegram || whatsapp) {
             delete flat.telegram;
             delete flat.whatsapp;
@@ -1894,6 +1972,29 @@ export class TwentyClient {
         } catch {
           /* continue */
         }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find Person by primary email (dedupe when createPerson hits unique on emails).
+   */
+  async findPersonByEmail(email: string): Promise<{ id: string } | null> {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) return null;
+    const headers = this.getAuthHeaders();
+    const filters: Record<string, unknown>[] = [
+      { emails: { primaryEmail: { eq: normalized } } },
+      { emails: { primaryEmail: { eq: String(email || '').trim() } } },
+    ];
+    for (const filter of filters) {
+      try {
+        const result = await this.client.request(FIND_PEOPLE, { filter }, headers);
+        const id = (result as any).people?.edges?.[0]?.node?.id as string | undefined;
+        if (id) return { id };
+      } catch {
+        /* filter shape may differ */
       }
     }
     return null;

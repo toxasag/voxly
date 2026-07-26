@@ -1482,8 +1482,22 @@ async function syncLeadToCrm(opts: {
     }
 
     // Cross-channel merge: reuse TG/gift Person by phone (and optional TG username hint).
+    const emailForCrmEarly =
+      opts.email && opts.email.includes('@') ? opts.email.trim().toLowerCase() : undefined;
     if (!personId) {
       const candidateIds = new Set<string>();
+
+      if (emailForCrmEarly) {
+        try {
+          const byEmail = await client.findPersonByEmail(emailForCrmEarly);
+          if (byEmail?.id) {
+            const ok = await client.personExists(byEmail.id);
+            if (ok) candidateIds.add(byEmail.id);
+          }
+        } catch (err) {
+          console.warn('[ai-whatsapp] findPersonByEmail failed', err);
+        }
+      }
 
       if (phoneForCrm) {
         try {
@@ -1550,8 +1564,7 @@ async function syncLeadToCrm(opts: {
       }
     }
 
-    const emailForCrm =
-      opts.email && opts.email.includes('@') ? opts.email.trim().toLowerCase() : undefined;
+    const emailForCrm = emailForCrmEarly;
 
     if (!personId) {
       const created = await client.createPerson({
@@ -2058,12 +2071,25 @@ async function handleInboundMessage(opts: {
   });
 }
 
+async function hasNewerUserMessage(conversationId: string, since: Date): Promise<boolean> {
+  const n = await prisma.chatMessage.count({
+    where: {
+      conversationId,
+      role: 'user',
+      createdAt: { gt: since },
+    },
+  });
+  return n > 0;
+}
+
 async function flushWhatsAppAiReply(items: WaAiPending[]) {
   const last = items[items.length - 1];
   if (!last) return;
   const { instanceName, from, conversationId, tenantId, addonId } = last;
   const messageIds = items.map((i) => i.messageId).filter(Boolean) as string[];
   const burstText = items.map((i) => i.text).filter(Boolean).join('\n');
+  // Stamp before OpenRouter so mid-flight inbound aborts this reply (INC-061).
+  const sendStartedAt = new Date();
 
   if (!(await shouldAiReply(conversationId))) return;
 
@@ -2078,6 +2104,13 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
   }
 
   if (!OPENROUTER_API_KEY) return;
+
+  if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+    console.log(
+      `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound before generate`,
+    );
+    return;
+  }
 
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
@@ -2122,7 +2155,12 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       items.map((i) => i.remoteJid).find(Boolean) || last.remoteJid || undefined;
     await markWhatsAppRead(instanceName, from, messageIds, preferredJid);
     await sendWhatsAppTyping(instanceName, from, 4000);
-    const sendStartedAt = new Date();
+    if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+      console.log(
+        `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound before OpenRouter`,
+      );
+      return;
+    }
     let completion;
     try {
       completion = await openai.chat.completions.create({
@@ -2139,6 +2177,12 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
         temperature: 0.7,
         max_tokens: 1000,
       });
+    }
+    if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+      console.log(
+        `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound after OpenRouter`,
+      );
+      return;
     }
     const raw =
       completion.choices[0]?.message?.content || 'Извините, я не смог сформировать ответ.';
