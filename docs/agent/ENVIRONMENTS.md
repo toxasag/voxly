@@ -61,6 +61,19 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Backup `/opt/voxly/backups/20260724-121355/`.
 - Smoke: portal + API health **200**; john Persons backfilled `+79150946944`.
 
+### Deploy 2026-07-26 (INC-063 media + INC-064 prompt filter)
+
+- Services: `saas-api` (crm-chat **0.1.9**), `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`.
+- Backup `/opt/voxly/backups/20260726-022902/`.
+- Smoke: portal + API health + app healthz **200**; gramjs `/health` ok.
+
+### Deploy 2026-07-26 (portal indigo shadcn ADR-020)
+
+- Services: `saas-portal` (also restarted `saas-api` as compose dep).
+- Backup `/opt/voxly/backups/20260726-200859/`.
+- Theme: classic indigo primary `226.5 70.7% 40.2%`; dashboard/auth/legal restyle.
+- Smoke: first script pass 404/502 (cold); then portal + API **200**; CSS contains indigo HSL.
+
 ### Deploy 2026-07-26 (CRM presence 0.1.8)
 
 - Services: `saas-api`, `gramjs-bridge`, `ai-whatsapp-worker` (not `evolution-api`).
@@ -73,6 +86,33 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Backup `/opt/voxly/backups/20260726-002454/`.
 - Image: `voxly-evolution-api:v2.3.7-lid` (LID patch 150 files). Session restored without QR; webhook includes `PRESENCE_UPDATE`.
 - Smoke: portal + API health **200**.
+
+### Deploy 2026-07-26 (INC-063 media token maxParamLength + video_note AI)
+
+- Services: `saas-api`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge` (crm-chat tarball **0.1.15**).
+- Backup `/opt/voxly/backups/20260726-192410/`.
+- Fix: Fastify `maxParamLength` + `/media/*`; ASR tagging/fallback; no «Секунду…» bubble.
+- Smoke: portal + API health **200**; media Range **206** `video/mp4`; refresh-crm-chat → app **0.1.15**.
+
+### Deploy 2026-07-26 (media 0.1.13 + unread shell-ux + workers)
+
+- Services: `saas-api`, `twenty`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge` (crm-chat tarball **0.1.13**).
+- Backup `/opt/voxly/backups/20260726-190111/`.
+- Control migrate: `lastOperatorReadAt` already applied; `mailing_attribution` applied (schema only).
+- Smoke: portal + API health + app healthz **200**; prod-diff match; refresh-crm-chat john/lexx/antontest/antontest3.
+
+### Deploy 2026-07-26 (media 0.1.13 playback mime/Range)
+
+- Services: `saas-api`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge` (tarball **0.1.13**).
+- Backup `/opt/voxly/backups/20260726-185249/`.
+- Smoke: portal + API health + app healthz **200**; media bad token **401**; john/lexx/antontest/antontest3 crm-chat refreshed.
+
+### Deploy 2026-07-26 (media 0.1.11 + unread badges)
+
+- Services: `saas-api`, `twenty`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`.
+- Backup `/opt/voxly/backups/20260726-182032/`.
+- Control migrate: `conversation_last_operator_read` (+ 2 previously pending).
+- Smoke: portal + API health + app healthz **200**; john/lexx/antontest/antontest3 crm-chat refreshed (tarball 0.1.11).
 
 ### Deploy 2026-07-24 (INC-039 WA media/typing/LID + INC-040 error map)
 

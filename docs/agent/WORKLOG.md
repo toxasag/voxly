@@ -1,3 +1,24 @@
+### 2026-07-26 — Portal indigo shadcn theme live (prod)
+
+- Goal: Ship shadcn indigo theme + dashboard big-bang to prod; open PR.
+- Changes: branch `ui/indigo-shadcn-dashboard` commit `08699d2` (ADR-020); portal primitives + all dashboard/auth/legal.
+- Deploy: `./scripts/prod-deploy.sh saas-portal`; backup `/opt/voxly/backups/20260726-200859/`; first smoke 404/502 (cold start), then **200** portal + api; CSS confirms `--primary: 226.5 70.7% 40.2%`.
+- Verify: `https://getvoxly.ru/` 200 indigo CTAs; `/login` 200; `api.getvoxly.ru/health` 200.
+- Broken: `gh` not authenticated — PR create link: https://github.com/toxasag/voxly/pull/new/ui/indigo-shadcn-dashboard (branch already pushed).
+- Next: user opens PR (`gh auth login` once); rotate root SSH if still pending.
+
+### 2026-07-26 — Media parity: WA/GramJS/Gift = Business (+ platform default)
+
+- Goal: Same media/document understanding on WhatsApp, GramJS, gift-bot as TG Business; default for all new portals (no per-tenant flag).
+- Changes:
+  - Confirmed Business/GramJS/WA already share `@voxly/ai-core` video ASR (ffmpeg) + PDF/DOCX + `MEDIA_INBOUND_HINT`.
+  - **Gift:** `enrichGiftInboundMedia` (voice/кружочек/video ASR, vision, PDF/DOCX); fix missing `video_note` inbound; Dockerfile `ffmpeg`; compose `OPENROUTER_*` / `AI_*`; soft AI wallet charge.
+  - ADR-021; CAPABILITIES / CHAT / FLOWS / DATA / INC-063 / steps.
+- Deploy: `./scripts/prod-deploy.sh` (dry-run then) `ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge,gift-bot-worker,saas-api,compose` (+ refresh-crm-chat).
+- Verify: parity matrix in CHAT.md; smoke portal/api; gift CRM shows `[кружочек]:` / `[документ PDF]:` on inbound.
+- Broken: GramJS outbound media still N/A; gift has no sales LLM (by design); legacy `.doc` unsupported.
+- Next: user smoke gift + WA + GramJS media; **rotate root SSH password**.
+
 ### 2026-07-26 — INC-063: video ASR LLM ignore + PDF/DOCX extract
 
 - Goal: Fix user smoke — regular video «not recognized» + PDF/DOCX unread by AI on TG Business (also GramJS/WA).
@@ -45,6 +66,13 @@
 - Verify: send short video with speech → ChatMessage `[видео]: …` → AI references content; silent/oversized → «не удалось разобрать».
 - Broken: none expected; animation/GIF still placeholder-only.
 - Next: user smoke TG Business + GramJS + WA; **rotate root SSH password**.
+
+### 2026-07-26 — Redeploy mailing for john training workspace
+
+- Goal: User trains on `john-crm.getvoxly.ru` — ensure portal + CRM sidebar LINKs live.
+- Changes: rsync `saas-api` / `saas-portal` / `voxly-crm-chat` + compose rebuild; backup window earlier `20260726-195313`; `refresh-crm-chat` **john** `{ok:true}`; tarball **0.1.16**; john nav = top-level LINK → `getvoxly.ru/dashboard/mailing*`.
+- Verify: portal `/` + `/dashboard/mailing` + `/mailing/bot` **200**; api health **200**.
+- Next: hard-refresh john-crm → click «Рассылка» opens portal tab.
 
 ### 2026-07-26 — Fix mailing CRM 404 (Twenty FolderSubItem navigate)
 

@@ -89,9 +89,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-26** — Media parity E2E: Business = GramJS = WA = Gift CRM enrich (ADR-021); gift `video_note` + OpenRouter/ffmpeg; docs + deploy workers/`gift-bot-worker`/`saas-api`/compose; **rotate root SSH password**.
 - **2026-07-26** — Prod: «Рассылка» (`saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-tg/wa,compose`); CRM LINKs absolute → `getvoxly.ru/dashboard/mailing/*`; refresh-crm-chat; backup `20260726-192410`; hub+4 routes **200**.
 - **2026-07-26** — Prod deploy `saas-portal` (legal `/terms|/privacy|/consent|/refund` + реквизиты); backup `20260726-190018`; smoke 200. Conflict recreate saas-api fixed; AI workers restarted.
-- **2026-07-26** — Portal **indigo shadcn** theme + dashboard big-bang (branch `ui/indigo-shadcn-dashboard`; ADR-020; deploy pending).
+- **2026-07-26** — Portal **indigo shadcn** theme + dashboard big-bang (branch `ui/indigo-shadcn-dashboard`; ADR-020; **prod** backup `20260726-200859`; PR link pending `gh auth`).
 - **2026-07-26** — Portal shadcn expand: landing Table/Accordion; AppShell Sheet; register Checkbox; typecheck+build OK (deploy portal pending).
 - **2026-07-26** — Robokassa legal surface: `/terms|/privacy|/consent|/refund` + реквизиты ИП на лендинге + checkbox на `/register` (local; deploy portal pending).
 - **2026-07-26** — INC-063: regular video ASR (TG/GramJS/WA) — tags `[видео]:`; caps 8MB/90s; deploy workers+gramjs-bridge.
@@ -494,7 +495,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/065**. **2026-07-26** inbound media CRM+AI (GramJS/TG/WA — INC-063); **signed URL** + **MIME sniff/Range** + **maxParamLength/media/** — CRM Chat **0.1.15** (prod); **regular video ASR v2** (`[видео]:`, ffmpeg demux, ≤20MB/180s) + **PDF/DOCX extract** (`[документ PDF|DOCX]:`) + `MEDIA_INBOUND_HINT`; unread badges + **INC-065** (prod); WA chat golden path (`CHAT.md`); **Opportunity board = john-crm** (ADR-017). Evolution `v2.3.7-lid`. **Portal:** shadcn **indigo** theme (ADR-020, branch `ui/indigo-shadcn-dashboard`) — local typecheck OK, **deploy/PR pending**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; TG typing parity; **rotate root SSH** (password used in deploy chat).
+**Статус кода:** CRM chat + INC-024…**/065**. **2026-07-26** inbound media CRM+AI parity (**ADR-021**): Business = GramJS = WA = **Gift CRM enrich** (INC-063); **signed URL** + **MIME sniff/Range** + **maxParamLength/media/** — CRM Chat **0.1.15** (prod); **regular video ASR v2** (`[видео]:`, ffmpeg demux, ≤20MB/180s) + **PDF/DOCX extract** + `MEDIA_INBOUND_HINT`; **platform default** (no per-tenant flag; provision forceReinstall crm-chat). Unread badges + **INC-065** (prod); WA chat golden path (`CHAT.md`); **Opportunity board = john-crm** (ADR-017). Evolution `v2.3.7-lid`. **Portal:** shadcn **indigo** theme (ADR-020) **live on prod** (backup `20260726-200859`); branch `ui/indigo-shadcn-dashboard` pushed — open PR: https://github.com/toxasag/voxly/pull/new/ui/indigo-shadcn-dashboard. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; TG typing parity; gift no sales LLM (by design); **rotate root SSH password**; `gh auth login` for CLI PRs.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -587,13 +588,13 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 ### Известные TODO / пробелы
 - `emailWorker` в `saas-api` — logging-stub → SMTP (nodemailer + `.env.example`).
 - `notifyHumanOperator` в AI-воркерах — не реализован.
-- **AI Phase 1** — prod Business AI shipped 2026-07-23; local GramJS QR smoke; E2E voice/photo; optional prod `--profile gramjs`.
-- **Gift-бот E2E** — живой прогон на test2.
+- **AI Phase 1** — prod Business AI shipped 2026-07-23; media parity ADR-021 ✅; optional prod `--profile gramjs` already used.
+- **Gift-бот E2E** — живой прогон media enrich + funnel на test2.
 - **Чат** — SDK tab «Чат» (test2) + портал + notes; inject off (rollback file kept).
 - **Superadmin** — готов (`admin@getvoxly.ru`); воронки: `/admin` + `GET /api/admin/funnels`. Счётчик «Проверки» только из новых `ConversionEvent` с `campaignId`.
 - **Prisma migrations** — схема через `db push`; перед продом `pnpm db:migrate`. Есть `GiftSubscriber`, у `ConversionEvent` — `campaignId`/`botInstanceId`.
-- **Коммит** — checkpoint `371a4ac` (chat/shell/kanban); непушить без просьбы.
 - **Docker runtime** — Colima; TG polling локально (`GIFT_BOT_USE_POLLING` / `MANAGER_USE_POLLING`).
+- **GramJS outbound media** — still text-only from CRM.
 
 ### Перед продакшеном
 - Заполнить `.env` реальными кредами (Robokassa, Telegram Manager Bot, OpenAI, SMTP, `ENCRYPTION_KEY` через `openssl rand -hex 32`).
