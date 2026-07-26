@@ -5,6 +5,13 @@
 
 ---
 
+### INC-060 — WA creates 2 deals + 2 contacts for one message
+- **Симптом:** одно входящее WA → сделки `+20034505 · WA · …` (контакт «WhatsApp») и `Антон · WA · …` (телефон `+7985…`) одновременно.
+- **Причина:** Evolution шлёт twin webhook (`7985…@s.whatsapp.net` + `…@lid`). Для LID `extractPhoneFromEvoRow` брал Contact **`id` (CUID)** `cmrxq2epw003jt45it0gun5tz` → digits `20034505` (проходило `isLikelyE164Phone` min=8) → второй Person/Opportunity. Разные `platformUserId` (PN vs LID) → два Conversation.
+- **Фикс:** не читать `row.id` как телефон; E.164 min length **10**; skip duplicate `externalMessageId` (twin) + enrich phone; merge open threads by E.164; prefer phone as `platformUserId` when known.
+- **Verify:** wipe deals/contacts → one WA msg → one Person + one Opportunity; worker log `skip duplicate webhook messageId=…` on twin; no `contact_row … +20034505`.
+- **Дата:** 2026-07-26.
+
 ### INC-058 — Opportunity without Person + AI auto-pause + inbound burst
 - **Симптом:** deal+contact создаются, Person не на Opportunity; после ответа из CRM AI молчит (~1h / «Вкл AI»); несколько коротких inbound → мгновенный ответ на каждое; GramJS composer едет со скроллом; WA без синих галочек.
 - **Причина:** `createOpportunity` мог успеть без connect; auto-`pausedUntil` на CRM/human outbound; нет debounce; shell-ux искал только «Ответ в Telegram»+Прикрепить; markRead один jid/id.

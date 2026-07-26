@@ -1,3 +1,10 @@
+### 2026-07-26 — INC-060 WA duplicate deal from CUID-as-phone + LID/PN twin
+- Goal: one WA message → one Person + one Opportunity (user saw `+20034505` + `Антон`).
+- Cause: Contact CUID digits → fake E.164; Evolution twin LID+PN webhooks → two Conversations.
+- Changes: `ai-whatsapp-worker` — drop `row.id` from phone extract; E.164 min 10; messageId twin skip+enrich; merge by phone; prefer E.164 platformUserId.
+- Verify: typecheck OK; deploy `ai-whatsapp-worker` (backup under `/opt/voxly/backups/` latest); smoke 200.
+- Next: user wipe deals/contacts → one WA msg → expect single Person+Opportunity; log may show `skip duplicate webhook`.
+
 ### 2026-07-26 — Evolution → v2.3.7-lid (INC-059 LID→PN)
 - Goal: ship Baileys lidMapping / `remoteJidAlt` so CRM can get phones WA UI already shows.
 - Changes: `docker/evolution-api.Dockerfile` `FROM evoapicloud/evolution-api:v2.3.7` + resilient `@lid` bypass (150 chunks patched); compose image `voxly-evolution-api:v2.3.7-lid`; `./scripts/prod-deploy.sh evolution-api,ai-whatsapp-worker`. Webhook re-applied for john WA instance with `PRESENCE_UPDATE`.

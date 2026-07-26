@@ -360,8 +360,9 @@ function normalizeWaNumber(jidOrNumber: string): string {
 /** True E.164-ish digits for Twenty Person.phones (skip WA @lid / device ids). */
 function isLikelyE164Phone(digits: string): boolean {
   const n = String(digits || '').replace(/\D/g, '');
-  // WA Linked IDs are typically 14–16 digits; real mobiles with country code are usually ≤13.
-  return n.length >= 8 && n.length <= 13;
+  // WA Linked IDs are typically 14–16 digits; real mobiles with country code are usually 10–13.
+  // Min 10 rejects CUID digit scraps (e.g. cmrx…003…45…0…5 → "20034505", INC-060).
+  return n.length >= 10 && n.length <= 13;
 }
 
 /** WhatsApp Linked ID (@lid) — not a dialable phone; Evolution must receive `digits@lid`. */
@@ -464,6 +465,8 @@ function waInboundIdentityCandidates(item: any): string[] {
 /** Explicit PN-ish fields on an Evolution Contact/Chat row (never invent from avatar). */
 function extractPhoneFromEvoRow(row: any): string | undefined {
   if (!row || typeof row !== 'object') return undefined;
+  // Never pass row.id — Evolution Contact ids are CUIDs; stripping non-digits yields
+  // garbage like "20034505" from "cmrxq2epw003jt45it0gun5tz" (INC-060).
   return extractWaPhoneE164(
     row.remoteJidAlt,
     row.senderPn,
@@ -473,9 +476,8 @@ function extractPhoneFromEvoRow(row: any): string | undefined {
     row.phoneNumber,
     row.number,
     row.owner,
-    // Only accept id/remoteJid when they are already @s.whatsapp.net / bare E.164
+    // Only accept remoteJid when it is already @s.whatsapp.net / bare E.164 (not @lid).
     String(row.remoteJid || '').toLowerCase().includes('@lid') ? undefined : row.remoteJid,
-    String(row.id || '').toLowerCase().includes('@lid') ? undefined : row.id,
   );
 }
 
@@ -1747,6 +1749,67 @@ async function handleInboundMessage(opts: {
 
   const from = normalizeWaNumber(opts.from);
   if (!from) return;
+
+  // Same WA message often arrives twice (PN @s.whatsapp.net + twin @lid). Skip the twin
+  // but enrich the existing thread with E.164 when this event carries it.
+  if (opts.messageId) {
+    const already = await prisma.chatMessage.findFirst({
+      where: {
+        externalMessageId: opts.messageId,
+        conversation: {
+          botInstanceId: resolved.id,
+          platform: 'whatsapp',
+        },
+      },
+      select: {
+        id: true,
+        conversationId: true,
+        conversation: {
+          select: {
+            id: true,
+            platformUserId: true,
+            platformUsername: true,
+            platformFirstName: true,
+            tenantId: true,
+          },
+        },
+      },
+    });
+    if (already?.conversation) {
+      const twinPhone =
+        (opts.phoneE164 && isLikelyE164Phone(opts.phoneE164) ? opts.phoneE164 : undefined) ||
+        (isLikelyE164Phone(from) ? from : undefined);
+      const conv = already.conversation;
+      if (twinPhone && conv.platformUsername !== `+${twinPhone}`) {
+        const preferPnId =
+          isWhatsAppLid(conv.platformUserId) && isLikelyE164Phone(twinPhone)
+            ? twinPhone
+            : conv.platformUserId;
+        await prisma.conversation.update({
+          where: { id: conv.id },
+          data: {
+            platformUsername: `+${twinPhone}`,
+            platformUserId: preferPnId,
+          },
+        });
+        void syncLeadToCrm({
+          tenantId: conv.tenantId,
+          botId: resolved.id,
+          conversationId: conv.id,
+          platformUserId: preferPnId,
+          contactName: conv.platformFirstName || opts.contactName || opts.pushName || undefined,
+          phoneE164: twinPhone,
+        }).catch((err) => {
+          console.error('[ai-whatsapp] syncLeadToCrm twin enrich failed', err);
+        });
+      }
+      console.log(
+        `[ai-whatsapp] skip duplicate webhook messageId=${opts.messageId} from=${from} existingConv=${already.conversationId}`,
+      );
+      return;
+    }
+  }
+
   let phoneE164 =
     (opts.phoneE164 && isLikelyE164Phone(opts.phoneE164) ? opts.phoneE164 : undefined) ||
     (isLikelyE164Phone(from) ? from : undefined);
@@ -1778,6 +1841,7 @@ async function handleInboundMessage(opts: {
     });
   }
 
+  // Prefer existing open thread: exact platformUserId, or same E.164 (LID↔PN merge).
   let conversation = await prisma.conversation.findFirst({
     where: {
       tenantId: resolved.tenantId,
@@ -1790,6 +1854,29 @@ async function handleInboundMessage(opts: {
       messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
     },
   });
+  if (!conversation && phoneE164) {
+    conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: resolved.tenantId,
+        botInstanceId: resolved.id,
+        platform: 'whatsapp',
+        status: { in: ['open', 'waiting_for_human'] },
+        OR: [
+          { platformUserId: phoneE164 },
+          { platformUsername: `+${phoneE164}` },
+          { platformUsername: phoneE164 },
+        ],
+      },
+      include: {
+        messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+      },
+    });
+    if (conversation) {
+      console.log(
+        `[ai-whatsapp] merge inbound into existing phone thread conv=${conversation.id} from=${from} phone=+${phoneE164}`,
+      );
+    }
+  }
 
   // Reuse stored Conversation.platformUsername (+E.164) for LID peers (manual/vCard cache).
   if (!phoneE164 && isWhatsAppLid(from)) {
@@ -1833,12 +1920,14 @@ async function handleInboundMessage(opts: {
   }
 
   if (!conversation) {
+    // Prefer dialable E.164 as platformUserId when known so LID/PN twins share one thread.
+    const platformUserId = phoneE164 && isLikelyE164Phone(phoneE164) ? phoneE164 : from;
     const created = await prisma.conversation.create({
       data: {
         tenantId: resolved.tenantId,
         botInstanceId: resolved.id,
         platform: 'whatsapp',
-        platformUserId: from,
+        platformUserId,
         platformUsername: phoneE164
           ? `+${phoneE164}`
           : displayName !== 'WhatsApp'
@@ -1854,12 +1943,15 @@ async function handleInboundMessage(opts: {
     await fireGoal({
       tenantId: resolved.tenantId,
       goalName: 'whatsapp_conversation_started',
-      subscriberId: from,
+      subscriberId: platformUserId,
       botInstanceId: resolved.id,
     });
   } else if (
     (displayName !== 'WhatsApp' && conversation.platformFirstName !== displayName) ||
-    (phoneE164 && conversation.platformUsername !== `+${phoneE164}`)
+    (phoneE164 && conversation.platformUsername !== `+${phoneE164}`) ||
+    (phoneE164 &&
+      isWhatsAppLid(conversation.platformUserId) &&
+      conversation.platformUserId !== phoneE164)
   ) {
     await prisma.conversation.update({
       where: { id: conversation.id },
@@ -1867,8 +1959,15 @@ async function handleInboundMessage(opts: {
         platformFirstName:
           displayName !== 'WhatsApp' ? displayName : conversation.platformFirstName,
         platformUsername: phoneE164 ? `+${phoneE164}` : conversation.platformUsername,
+        platformUserId:
+          phoneE164 && isWhatsAppLid(conversation.platformUserId)
+            ? phoneE164
+            : conversation.platformUserId,
       },
     });
+    if (phoneE164 && isWhatsAppLid(conversation.platformUserId)) {
+      conversation = { ...conversation, platformUserId: phoneE164 };
+    }
   }
 
   await prisma.chatMessage.create({
@@ -1884,7 +1983,7 @@ async function handleInboundMessage(opts: {
     tenantId: resolved.tenantId,
     botId: resolved.id,
     conversationId: conversation.id,
-    platformUserId: from,
+    platformUserId: conversation.platformUserId || from,
     contactName: displayName !== 'WhatsApp' ? displayName : undefined,
     phoneE164,
     email: businessEmail,
