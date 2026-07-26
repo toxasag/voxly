@@ -163,7 +163,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Bot outbound media in CRM chat | gift-bot-worker `logBotOutbound` | ✅ photo/video/document `attachments.fileId` (INC-024); same preview path as inbound |
 | fireGoal + campaignId/botInstanceId | gift-bot-worker → ConversionEvent | ✅ |
 | Username `voxly_{slug}_{NN}_bot` | `buildVoxlyBotUsername` | ✅ |
-| AI Telegram / WhatsApp workers | apps/ai-* | 🟡 TG: Business + OpenRouter + handoff + CRM leads + ASR/vision; **AI reply only if AiAgent assigned** (ADR-014); **skip Telegram `is_bot` senders**; **WA: Evolution QR + inbound CRM + soft trial + sendMedia/presence/read + E.164 from webhook `remoteJidAlt`/`senderPn`/vCard/explicit Contact|Chat/`platformUsername` cache (INC-043/059; avatar twin OFF); business profile email on LID**; skip groups/status/newsletter |
+| AI Telegram / WhatsApp workers | apps/ai-* | ✅ **Golden path `docs/agent/CHAT.md`**: WA эталон (debounce 10s + in-flight queue, typing via `sendText(delay)` ≥~3s, bubble gaps 4–6s, LID→PN no CUID-phone, business email+website + soft-delete email free INC-062; IG/FB only if URL in profile). TG Business: same agent/debounce model; typing shorter than WA. **AI reply only if AiAgent assigned** (ADR-014); skip TG `is_bot`; WA skip groups/status/newsletter |
 | Gift → AI webhook forward | gift-bot-worker `/tg` | ✅ if `botType === 'ai_tg'` → `ai-telegram-worker:3005` |
 | PATCH conversation handoff | `PATCH /api/bots/:botId/conversations/:conversationId` | ✅ mode / pause / aiDisabled / needsReview / **aiAgentId** |
 | AI portal onboarding | saas-portal `/dashboard/ai` + `/agents` + `/whatsapp` | ✅ Business + agents assign; GramJS + WA separate |

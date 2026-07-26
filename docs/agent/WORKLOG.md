@@ -1,3 +1,16 @@
+### 2026-07-26 — Document CRM/AI chat golden path + push
+- Goal: lock WA/TG/GramJS/AI agent chat behavior so agents never regress the working chat.
+- Changes: new `docs/agent/CHAT.md`; wire README + FLOWS §4 + CAPABILITIES; commit INC-062 worker/compose + docs; push `feature/twenty-crm-chat-tab`.
+- Verify: docs linked from README; git push origin.
+- Next: optional TG typing parity with WA ≥3s.
+
+### 2026-07-26 — INC-062 auto-free soft-deleted Person email
+- Goal: business profile email sync survives Twenty trash unique; stop manual SQL after CRM wipe.
+- Cause: `emailsPrimaryEmail` UNIQUE includes soft-deleted rows; updatePersonEmail failed while website OK.
+- Changes: `releaseSoftDeletedPersonEmail` via `TWENTY_DATABASE_URL` on `ai-whatsapp-worker`; retry after trash clear; compose env; prod one-shot SQL for Антон; INC-062. IG/FB still N/A from Evolution for this peer.
+- Verify: typecheck; deploy `compose,ai-whatsapp-worker`; worker has TWENTY_DATABASE_URL; Person email=anton@genadich.com.
+- Next: none for email; IG only if URL in website/description or manual.
+
 ### 2026-07-26 — WA business socials (website) + stronger typing for personal peers
 - Goal: Person «Сайт» + IG/FB from business profile when Evolution exposes URLs; typing visible on personal WA.
 - Cause: no `website` social field; fetchBusinessProfile ignored website; IG/FB not in Baileys payload for this peer (only website/email); typing min delay ~1.2s easy to miss.

@@ -6,12 +6,13 @@
 
 1. **Этот файл** → сразу `CAPABILITIES.md` (что уже есть — anti-reimplementation).
 2. Протокол `apps/.cursorrules`: **`docs/ai/FEATURES.md`** + **`docs/ai/ARCHITECTURE.md`** (фичи и паттерны; обновлять после значимой работы).
-3. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
-4. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
-5. При дебаге runtime → **сначала** `INCIDENTS.md`.
-6. При выкладке на prod → **`DEPLOY.md`** + **`ENVIRONMENTS.md`** + `./scripts/prod-deploy.sh` (не ad-hoc rsync).
-7. Graphify (`graphify query/path/explain`) → затем код.
-8. Глубокий контекст: `docs/ARCHITECTURE.md`. Доки библиотек: Context7 MCP.
+3. При задаче по **чату / AI-агентам / WA / TG / GramJS** → **`CHAT.md`** (golden path — не регрессировать) + ADR-014 в `DECISIONS.md`.
+4. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
+5. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
+6. При дебаге runtime → **сначала** `INCIDENTS.md`.
+7. При выкладке на prod → **`DEPLOY.md`** + **`ENVIRONMENTS.md`** + `./scripts/prod-deploy.sh` (не ad-hoc rsync).
+8. Graphify (`graphify query/path/explain`) → затем код.
+9. Глубокий контекст: `docs/ARCHITECTURE.md`. Доки библиотек: Context7 MCP.
 
 ## Карта файлов
 
@@ -23,6 +24,7 @@
 | `DATA.md` | PG×2, Redis, ключевые Prisma-модели, кто R/W |
 | `SERVICES.md` | Apps/workers: роль, порт, deps |
 | `FLOWS.md` | E2E-потоки + пути файлов |
+| `CHAT.md` | **Golden path** CRM/AI chat (WA эталон, TG/GramJS, агенты) — не регрессировать |
 | `CAPABILITIES.md` | Чеклист существующего surface (API/UI/worker) |
 | `DECISIONS.md` | Короткие ADR |
 | `WORKLOG.md` | Журнал значимых сессий агента (append-only) |

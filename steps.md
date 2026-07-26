@@ -476,13 +476,13 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Снимок сессии (читать перед продолжением)
 
-**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
+**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; **`CHAT.md`** — golden path CRM/AI chat (WA эталон); `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
 
 **Design reference (вне монорепо):** Open WebUI → `/Users/antonsagajdak/Desktop/open-webui` (shallow clone; смотреть `src/tailwind.css`, `src/app.css`, `src/lib/components/common|layout`, `src/routes/auth`). Не runtime-зависимость.
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/059**. **2026-07-26** Person↔Opportunity link + no auto-pause + inbound debounce; stage-by-option-id; admin purge; Business `can_reply`; CRM Chat **0.1.8** (presence deployed); **Evolution `v2.3.7-lid` on prod** (INC-059 LID→PN). **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: confirm LID inbound phone fill; rotate root SSH; monitor disk.
+**Статус кода:** CRM chat + INC-024…**/062**. **2026-07-26** WA chat golden path documented (`CHAT.md`); Evolution `v2.3.7-lid`; debounce 10s + typing `sendText(delay)`; business email+website (INC-062 soft-delete free); CRM Chat **0.1.8**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: TG typing parity with WA; rotate root SSH; monitor disk.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

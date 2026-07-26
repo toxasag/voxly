@@ -459,6 +459,8 @@ services:
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       AI_WHATSAPP_WEBHOOK_URL: ${AI_WHATSAPP_WEBHOOK_URL:-http://ai-whatsapp-worker:3006/webhook/evolution}
       AI_WHATSAPP_PORT: 3006
+      # Free soft-deleted Person emails that block unique (INC-062)
+      TWENTY_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
     networks:
       - voxly-net
 

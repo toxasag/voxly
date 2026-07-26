@@ -19,6 +19,7 @@ import { fireGoal } from '@voxly/analytics-dispatchers';
 import { isAiConversationMode, PRODUCT_CODES } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
 import OpenAI from 'openai';
+import pg from 'pg';
 
 const PORT = Number(process.env.AI_WHATSAPP_PORT || 3006);
 const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
@@ -656,6 +657,52 @@ function pickSocialFromUrls(
     }
   }
   return { website, instagram, facebook };
+}
+
+/**
+ * Twenty unique on emailsPrimaryEmail includes soft-deleted rows. Clearing trash
+ * emails lets us attach the address to the live Person after CRM wipe (INC-062).
+ */
+async function releaseSoftDeletedPersonEmail(
+  workspaceId: string,
+  email: string,
+): Promise<number> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!connectionString || !workspaceId || !normalized.includes('@')) return 0;
+
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return 0;
+    const res = await client.query(
+      `UPDATE "${schema}".person
+       SET "emailsPrimaryEmail" = NULL, "updatedAt" = NOW()
+       WHERE "deletedAt" IS NOT NULL
+         AND lower("emailsPrimaryEmail") = $1`,
+      [normalized],
+    );
+    const n = res.rowCount ?? 0;
+    if (n > 0) {
+      console.log(
+        `[ai-whatsapp] cleared soft-deleted email=${normalized} rows=${n} workspace=${workspaceId}`,
+      );
+    }
+    return n;
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] releaseSoftDeletedPersonEmail failed',
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
 }
 
 /**
@@ -1656,10 +1703,19 @@ async function syncLeadToCrm(opts: {
 
     const applyBusinessSocial = async (id: string) => {
       if (emailForCrm) {
-        const ok = await client.updatePersonEmail(id, emailForCrm);
+        let ok = await client.updatePersonEmail(id, emailForCrm);
+        if (!ok && tenant.twentyWorkspaceId) {
+          const freed = await releaseSoftDeletedPersonEmail(
+            tenant.twentyWorkspaceId,
+            emailForCrm,
+          );
+          if (freed > 0) {
+            ok = await client.updatePersonEmail(id, emailForCrm);
+          }
+        }
         if (!ok) {
           console.warn(
-            `[ai-whatsapp] could not set email=${emailForCrm} on person=${id} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${id} — unique still held after trash clear attempt`,
           );
         }
       }

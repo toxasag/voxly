@@ -51,6 +51,8 @@ flowchart LR
 
 ## 4. Чат оператора (сейчас)
 
+**AI / мессенджеры (поведение, debounce, typing, CRM sync):** см. **`CHAT.md`** — golden path (WA эталон ✅ 2026-07-26).
+
 **Портал:** UI → `GET .../subscribers/:id/messages` → `POST .../reply` → Telegram + `Conversation.mode=human` + note на Person в Twenty.
 
 **CRM card (SDK) — UX contract (не регрессировать):**

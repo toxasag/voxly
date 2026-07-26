@@ -81,10 +81,16 @@ importers:
       openai:
         specifier: ^4.77.0
         version: 4.104.0(ws@8.21.1(bufferutil@4.1.0)(utf-8-validate@5.0.10))(zod@3.25.76)
+      pg:
+        specifier: ^8.13.0
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.20.0
       tsx:
         specifier: ^4.19.0
         version: 4.23.1

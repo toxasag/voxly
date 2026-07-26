@@ -5,6 +5,12 @@
 
 ---
 
+### INC-062 — WA business email blocked by Twenty soft-delete unique
+- **Симптом:** business profile отдаёт `anton@…`, сайт заполняется, email на новом Person пустой; Instagram/Facebook пустые.
+- **Причина:** (1) `emailsPrimaryEmail` UNIQUE включает soft-deleted — после удаления контакта email остаётся в корзине. (2) Evolution/Baileys `fetchBusinessProfile` для этого peer **не возвращает** Instagram/Facebook (только website/email/address) — Meta linked accounts не в WA Web API.
+- **Фикс:** `releaseSoftDeletedPersonEmail` via `TWENTY_DATABASE_URL` before retry `updatePersonEmail`; worker compose gets Twenty DB URL; IG/FB only when URLs appear in website/description.
+- **Дата:** 2026-07-26.
+
 ### INC-061 — WA no CRM lead after wipe + parallel AI storms
 - **Симптом:** удалили Person/Opportunity → новое WA сообщение: сделки нет; ИИ шлёт 2×4 пузыря на паузу ~7с между сообщениями.
 - **Причина:** (1) `createPerson` с `anton@…` → Twenty unique «duplicate entry» (email ещё занят / soft-delete); sync abort. (2) debounce 6с: «Привет» flush стартовал, следующее сообщение через ~7с → второй параллельный flush.
