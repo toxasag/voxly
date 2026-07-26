@@ -1,3 +1,10 @@
+### 2026-07-26 — WA business socials (website) + stronger typing for personal peers
+- Goal: Person «Сайт» + IG/FB from business profile when Evolution exposes URLs; typing visible on personal WA.
+- Cause: no `website` social field; fetchBusinessProfile ignored website; IG/FB not in Baileys payload for this peer (only website/email); typing min delay ~1.2s easy to miss.
+- Changes: PERSON_SOCIAL `website`/Сайт; parse website+IG/FB URLs; sync to Person; typing min 3s + presence before sendText(delay).
+- Verify: typecheck; deploy worker; business inbound → Сайт=https://team-big.ru; personal inbound → «печатает» ≥3s.
+- Next: deploy.
+
 ### 2026-07-26 — WA typing via sendText delay + email stuck in Twenty trash
 - Goal: real «печатает…» before each bubble; Person email from business profile.
 - Cause: sendPresence returns immediately (no visible typing); soft-deleted Person still held unique `emailsPrimaryEmail=anton@genadich.com`.

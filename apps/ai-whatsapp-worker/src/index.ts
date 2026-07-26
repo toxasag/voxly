@@ -554,27 +554,108 @@ async function resolvePhoneFromConversationCache(opts: {
   return { source: 'none' };
 }
 
-/** Business WA profile for @lid — often has email/address, never phone on Evolution 2.2.3. */
+/** Business WA profile — email/website/address; IG/FB only if present as URLs. */
 async function fetchWaBusinessProfile(
   instanceName: string,
   lidOrNumber: string,
-): Promise<{ email?: string; address?: string; description?: string } | null> {
+): Promise<{
+  email?: string;
+  address?: string;
+  description?: string;
+  website?: string;
+  instagram?: string;
+  facebook?: string;
+} | null> {
   const digits = normalizeWaNumber(lidOrNumber);
   if (!instanceName || !digits) return null;
   const number = isWhatsAppLid(lidOrNumber) ? `${digits}@lid` : digits;
-  const res = await evoFetch(`/chat/fetchBusinessProfile/${encodeURIComponent(instanceName)}`, {
+
+  const bizRes = await evoFetch(
+    `/chat/fetchBusinessProfile/${encodeURIComponent(instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ number }) },
+  );
+  const profileRes = await evoFetch(`/chat/fetchProfile/${encodeURIComponent(instanceName)}`, {
     method: 'POST',
     body: JSON.stringify({ number }),
   });
-  if (!res.ok || !res.json?.isBusiness) return null;
-  const email = String(res.json.email || '').trim().toLowerCase();
-  const address = String(res.json.address || '').trim();
-  const description = String(res.json.description || '').trim();
+
+  const biz = bizRes.ok ? bizRes.json || {} : {};
+  const profile = profileRes.ok ? profileRes.json || {} : {};
+  const isBusiness = Boolean(biz.isBusiness || profile.isBusiness);
+  if (!isBusiness && !biz.email && !profile.email && !biz.website && !profile.website) {
+    return null;
+  }
+
+  const email = String(biz.email || profile.email || '')
+    .trim()
+    .toLowerCase();
+  const address = String(biz.address || profile.address || '').trim();
+  const description = String(biz.description || profile.description || '').trim();
+  const websiteUrls = collectWaWebsiteUrls(biz.website, profile.website, description);
+  const social = pickSocialFromUrls(websiteUrls, description);
+
   return {
     email: email.includes('@') ? email : undefined,
     address: address || undefined,
     description: description || undefined,
+    website: social.website,
+    instagram: social.instagram,
+    facebook: social.facebook,
   };
+}
+
+function collectWaWebsiteUrls(...sources: unknown[]): string[] {
+  const out: string[] = [];
+  for (const src of sources) {
+    if (!src) continue;
+    if (Array.isArray(src)) {
+      for (const item of src) {
+        const s = String(item || '').trim();
+        if (s) out.push(s);
+      }
+      continue;
+    }
+    const s = String(src).trim();
+    if (!s) continue;
+    // Pull bare URLs out of description text.
+    const matches = s.match(/https?:\/\/[^\s<>"']+/gi) || [];
+    if (matches.length) out.push(...matches);
+    else if (/^https?:\/\//i.test(s) || /\.[a-z]{2,}/i.test(s)) out.push(s);
+  }
+  return [...new Set(out.map((u) => u.replace(/[),.;]+$/g, '')))];
+}
+
+function pickSocialFromUrls(
+  urls: string[],
+  description?: string,
+): { website?: string; instagram?: string; facebook?: string } {
+  let website: string | undefined;
+  let instagram: string | undefined;
+  let facebook: string | undefined;
+  const all = [...urls];
+  if (description) {
+    all.push(...collectWaWebsiteUrls(description));
+  }
+  for (const raw of all) {
+    const u = raw.trim();
+    if (!u) continue;
+    const lower = u.toLowerCase();
+    if (!instagram && /(instagram\.com|instagr\.am)\//i.test(lower)) {
+      instagram = u.startsWith('http') ? u : `https://${u}`;
+      continue;
+    }
+    if (!facebook && /(facebook\.com|fb\.com|fb\.me)\//i.test(lower)) {
+      facebook = u.startsWith('http') ? u : `https://${u}`;
+      continue;
+    }
+    if (
+      !website &&
+      !/(instagram\.com|instagr\.am|facebook\.com|fb\.com|fb\.me)\//i.test(lower)
+    ) {
+      website = u.startsWith('http') ? u : `https://${u}`;
+    }
+  }
+  return { website, instagram, facebook };
 }
 
 /**
@@ -762,10 +843,10 @@ function sleep(ms: number) {
 }
 
 function typingDelayMs(text: string): number {
-  const base = 900;
-  const perChar = 35;
-  // Cap 5.5s think/typing before each bubble (Evolution presence is non-blocking).
-  return Math.min(5500, Math.max(1200, base + String(text || '').length * perChar));
+  const base = 1400;
+  const perChar = 40;
+  // Min ~3s so «печатает…» is visible on personal WA clients before the bubble.
+  return Math.min(6500, Math.max(3000, base + String(text || '').length * perChar));
 }
 
 /** Parse n8n-style multi-bubble JSON; fallback to paragraph / single bubble. */
@@ -1332,8 +1413,11 @@ async function sendWhatsAppHumanLike(
     }
     const text = parts[i];
     const thinkMs = typingDelayMs(text);
-    // Presence-only is unreliable on Evolution 2.3 (returns immediately). Typing that
-    // users actually see comes from sendText `delay` (composing for N ms, then send).
+    // Kick composing immediately, then sendText(delay) holds typing until the bubble.
+    await sendWhatsAppTyping(instanceName, to, thinkMs);
+    console.log(
+      `[ai-whatsapp] typing+send delay=${thinkMs}ms bubble=${i + 1}/${parts.length}`,
+    );
     await sendWhatsAppText(instanceName, to, text, { delayMs: thinkMs });
     sent += 1;
     if (i < parts.length - 1) {
@@ -1400,6 +1484,9 @@ async function syncLeadToCrm(opts: {
   phoneE164?: string;
   /** Optional email from WA business profile (LID peers often lack phone). */
   email?: string;
+  website?: string;
+  instagram?: string;
+  facebook?: string;
   /** Optional Telegram @username for cross-channel hint merge. */
   telegramUsername?: string;
 }): Promise<void> {
@@ -1567,6 +1654,26 @@ async function syncLeadToCrm(opts: {
 
     const emailForCrm = emailForCrmEarly;
 
+    const applyBusinessSocial = async (id: string) => {
+      if (emailForCrm) {
+        const ok = await client.updatePersonEmail(id, emailForCrm);
+        if (!ok) {
+          console.warn(
+            `[ai-whatsapp] could not set email=${emailForCrm} on person=${id} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
+          );
+        }
+      }
+      if (opts.website) {
+        await client.updatePersonSocialText(id, 'website', opts.website);
+      }
+      if (opts.instagram) {
+        await client.updatePersonSocialText(id, 'instagram', opts.instagram);
+      }
+      if (opts.facebook) {
+        await client.updatePersonSocialText(id, 'facebook', opts.facebook);
+      }
+    };
+
     if (!personId) {
       // Create without email first — soft-deleted Persons often still hold unique emails
       // in Twenty (IDX on emailsPrimaryEmail includes trash). Attach email after create.
@@ -1592,14 +1699,7 @@ async function syncLeadToCrm(opts: {
           /* ignore */
         }
       }
-      if (personId && emailForCrm) {
-        const ok = await client.updatePersonEmail(personId, emailForCrm);
-        if (!ok) {
-          console.warn(
-            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
-          );
-        }
-      }
+      if (personId) await applyBusinessSocial(personId);
     } else if (phoneForCrm) {
       // Backfill phone on existing Person when LID→PN mapping appears later / TG merge.
       try {
@@ -1612,14 +1712,7 @@ async function syncLeadToCrm(opts: {
       } catch {
         /* ignore */
       }
-      if (emailForCrm) {
-        const ok = await client.updatePersonEmail(personId, emailForCrm);
-        if (!ok) {
-          console.warn(
-            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
-          );
-        }
-      }
+      await applyBusinessSocial(personId);
       // Clear LID-looking lastName left by older sync (INC-039).
       try {
         await client.updatePersonName(personId, {
@@ -1630,14 +1723,7 @@ async function syncLeadToCrm(opts: {
         /* ignore */
       }
     } else {
-      if (emailForCrm) {
-        const ok = await client.updatePersonEmail(personId, emailForCrm);
-        if (!ok) {
-          console.warn(
-            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
-          );
-        }
-      }
+      await applyBusinessSocial(personId);
       if (displayName !== 'WhatsApp') {
         try {
           await client.updatePersonName(personId, {
@@ -1651,14 +1737,7 @@ async function syncLeadToCrm(opts: {
     }
 
     if (personId && opportunityId && !clearedStale) {
-      if (emailForCrm) {
-        const ok = await client.updatePersonEmail(personId, emailForCrm);
-        if (!ok) {
-          console.warn(
-            `[ai-whatsapp] could not set email=${emailForCrm} on person=${personId} — likely unique held by soft-deleted Person; empty Twenty trash or free the email`,
-          );
-        }
-      }
+      await applyBusinessSocial(personId);
       if (phoneForCrm || displayName !== 'WhatsApp' || needsReview || emailForCrm) {
         await prisma.conversation.update({
           where: { id: opts.conversationId },
@@ -1939,15 +2018,21 @@ async function handleInboundMessage(opts: {
   }
   const displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
 
-  // Business profile email (PN or LID) — never invent phone from it.
+  // Business profile: email / website / IG·FB URLs when Evolution exposes them.
   let businessEmail: string | undefined;
+  let businessWebsite: string | undefined;
+  let businessInstagram: string | undefined;
+  let businessFacebook: string | undefined;
   try {
     const bizPeer = phoneE164 || from;
     const biz = await fetchWaBusinessProfile(opts.instanceName, bizPeer);
     businessEmail = biz?.email;
-    if (businessEmail) {
+    businessWebsite = biz?.website;
+    businessInstagram = biz?.instagram;
+    businessFacebook = biz?.facebook;
+    if (businessEmail || businessWebsite || businessInstagram || businessFacebook) {
       console.log(
-        `[ai-whatsapp] business profile email for peer=${bizPeer} email=${businessEmail}`,
+        `[ai-whatsapp] business profile peer=${bizPeer} email=${businessEmail || '-'} website=${businessWebsite || '-'} ig=${businessInstagram || '-'} fb=${businessFacebook || '-'}`,
       );
     }
   } catch (err) {
@@ -2022,6 +2107,9 @@ async function handleInboundMessage(opts: {
     contactName: displayName !== 'WhatsApp' ? displayName : undefined,
     phoneE164,
     email: businessEmail,
+    website: businessWebsite,
+    instagram: businessInstagram,
+    facebook: businessFacebook,
   }).catch((err) => {
     console.error('[ai-whatsapp] syncLeadToCrm unhandled', err);
   });

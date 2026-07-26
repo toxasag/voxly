@@ -28,7 +28,7 @@
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off; **dedupe** shell + SQL | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/dedupe-cabinet-nav.sql`) |
 | Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
 | Сделки views = «Канбан» + «Списком» | ✅ default INDEX **Канбан** (KANBAN); secondary TABLE **Списком** (IconList); clears poisoned `overrides` that showed «All Сделки» as fake kanban | SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` + `twenty-client.applyWorkspaceDefaults` |
-| Person «Социальные сети» | ✅ LinkedIn + Telegram/WhatsApp/OK/VK/Instagram/Facebook/Threads; WA lead fills `whatsapp` | `twenty-client.ensureSocialFields` |
+| Person «Социальные сети» | ✅ LinkedIn + Telegram/WhatsApp/OK/VK/Instagram/Facebook/Threads/**Сайт (website)**; WA business profile fills email + website (+ IG/FB if URLs in profile) | `twenty-client.ensureSocialFields` |
 | Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
 
 Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-preview.tsx`.

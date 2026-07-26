@@ -337,6 +337,7 @@ const PERSON_SOCIAL_TEXT_FIELDS: Array<{
   { name: 'instagram', label: 'Instagram', icon: 'IconBrandInstagram' },
   { name: 'facebook', label: 'Facebook', icon: 'IconBrandFacebook' },
   { name: 'threads', label: 'Threads', icon: 'IconBrandThreads' },
+  { name: 'website', label: 'Сайт', icon: 'IconWorld' },
 ];
 const UPDATE_PERSON = gql`
   mutation UpdatePerson($id: UUID!, $data: PersonUpdateInput!) {
@@ -1822,31 +1823,33 @@ export class TwentyClient {
   async updatePersonWhatsapp(personId: string, whatsapp: string): Promise<void> {
     const handle = formatWhatsappHandle(whatsapp);
     if (!handle) return;
+    await this.updatePersonSocialText(personId, 'whatsapp', handle);
+  }
+
+  /**
+   * Set a Person social TEXT field (instagram / facebook / website / …).
+   * Best-effort if the custom field is missing.
+   */
+  async updatePersonSocialText(
+    personId: string,
+    fieldName: string,
+    value: string,
+  ): Promise<boolean> {
+    const v = String(value || '').trim();
+    if (!personId || !fieldName || !v) return false;
     const headers = this.getAuthHeaders();
     try {
       await this.client.request(
         UPDATE_PERSON,
-        { id: personId, data: { whatsapp: handle } },
+        { id: personId, data: { [fieldName]: v } },
         headers,
       );
-      return;
-    } catch {
-      /* try alternate */
-    }
-    try {
-      await this.client.request(
-        gql`
-          mutation UpdateOnePersonWhatsapp($id: UUID!, $data: PersonUpdateInput!) {
-            updatePerson(id: $id, data: $data) {
-              id
-            }
-          }
-        `,
-        { id: personId, data: { whatsapp: handle } },
-        headers,
+      return true;
+    } catch (err) {
+      console.warn(
+        `[twenty-client] updatePersonSocialText ${fieldName} failed person=${personId}: ${errorMessage(err)}`,
       );
-    } catch {
-      /* field may not exist yet */
+      return false;
     }
   }
 
