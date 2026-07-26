@@ -58,12 +58,13 @@ const DEFAULT_SYSTEM_PROMPT = `Ты — живой менеджер в WhatsApp.
 Правила пузырей:
 - почти всегда 2–4 коротких сообщения (не один длинный абзац);
 - 1 пузырь только если ответ в одно короткое предложение;
-- каждое message — одна мысль, до ~120 символов;
+- каждое message — одна мысль, максимум 1–2 коротких предложения (~80–120 символов);
+- не пиши эссе и не задавай сразу 3 вопроса в одном пузыре;
 - пустые поля оставь "";
 - без эмодзи, без переносов внутри строк.`;
 const JSON_FORMAT_HINT = `
 
-Ответь ТОЛЬКО JSON с message1…message4. Обычно заполни 2–4 пузыря, не склеивай всё в message1.`;
+Ответь ТОЛЬКО JSON с message1…message4. Заполни 2–4 КОРОТКИХ пузыря (≤120 символов каждый). Не склеивай всё в message1.`;
 
 type SessionPayload = {
   instanceName: string;
@@ -761,9 +762,10 @@ function sleep(ms: number) {
 }
 
 function typingDelayMs(text: string): number {
-  const base = 600;
-  const perChar = 25;
-  return Math.min(4500, Math.max(400, base + String(text || '').length * perChar));
+  const base = 900;
+  const perChar = 35;
+  // Cap 5.5s think/typing before each bubble (Evolution presence is non-blocking).
+  return Math.min(5500, Math.max(1200, base + String(text || '').length * perChar));
 }
 
 /** Parse n8n-style multi-bubble JSON; fallback to paragraph / single bubble. */
@@ -1282,12 +1284,13 @@ async function sendWhatsAppTyping(
   const number = formatWaSendRecipient(to);
   if (!number) return;
   const delay = Math.max(400, Math.min(8000, Math.floor(delayMs)));
-  // Doc: options.number required alongside delay/presence.
+  // Evolution ≥2.3.7 expects top-level `presence` + `delay` (nested `options` → 400).
   const res = await evoFetch(`/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
     method: 'POST',
     body: JSON.stringify({
       number,
-      options: { delay, presence: 'composing', number },
+      delay,
+      presence: 'composing',
     }),
   }).catch(() => null);
   if (res && !res.ok) {
@@ -1322,8 +1325,10 @@ async function sendWhatsAppHumanLike(
       return { aborted: true, sent };
     }
     const text = parts[i];
-    await sendWhatsAppTyping(instanceName, to, typingDelayMs(text));
-    await sleep(Math.min(2200, typingDelayMs(text)));
+    // Presence is fire-and-forget on Evolution 2.3 — local sleep is the real pacing.
+    const thinkMs = typingDelayMs(text);
+    await sendWhatsAppTyping(instanceName, to, thinkMs);
+    await sleep(thinkMs);
     if (
       opts?.conversationId &&
       opts.sendStartedAt &&
@@ -1340,7 +1345,11 @@ async function sendWhatsAppHumanLike(
     await sendWhatsAppText(instanceName, to, text);
     sent += 1;
     if (i < parts.length - 1) {
-      await sleep(humanBubbleGapMs());
+      const gap = humanBubbleGapMs();
+      console.log(
+        `[ai-whatsapp] human gap ${gap}ms before bubble ${i + 2}/${parts.length}`,
+      );
+      await sleep(gap);
     }
   }
   return { sent };
@@ -1623,7 +1632,14 @@ async function syncLeadToCrm(opts: {
     }
 
     if (personId && opportunityId && !clearedStale) {
-      if (phoneForCrm || displayName !== 'WhatsApp' || needsReview) {
+      if (emailForCrm) {
+        try {
+          await client.updatePersonEmail(personId, emailForCrm);
+        } catch {
+          /* ignore */
+        }
+      }
+      if (phoneForCrm || displayName !== 'WhatsApp' || needsReview || emailForCrm) {
         await prisma.conversation.update({
           where: { id: opts.conversationId },
           data: {
@@ -1903,20 +1919,19 @@ async function handleInboundMessage(opts: {
   }
   const displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
 
-  // Business profile: email when phone missing (never invent phone from it).
+  // Business profile email (PN or LID) — never invent phone from it.
   let businessEmail: string | undefined;
-  if (isWhatsAppLid(from)) {
-    try {
-      const biz = await fetchWaBusinessProfile(opts.instanceName, from);
-      businessEmail = biz?.email;
-      if (businessEmail) {
-        console.log(
-          `[ai-whatsapp] business profile email for lid=${from} email=${businessEmail}`,
-        );
-      }
-    } catch (err) {
-      console.warn('[ai-whatsapp] fetchBusinessProfile failed', err);
+  try {
+    const bizPeer = phoneE164 || from;
+    const biz = await fetchWaBusinessProfile(opts.instanceName, bizPeer);
+    businessEmail = biz?.email;
+    if (businessEmail) {
+      console.log(
+        `[ai-whatsapp] business profile email for peer=${bizPeer} email=${businessEmail}`,
+      );
     }
+  } catch (err) {
+    console.warn('[ai-whatsapp] fetchBusinessProfile failed', err);
   }
 
   if (!conversation) {

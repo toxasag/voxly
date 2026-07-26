@@ -49,16 +49,23 @@ export function createInboundDebouncer<T>(opts: {
   };
 }
 
-/** Inter-bubble gap: 3–4s (human-like pacing). */
+/** Inter-bubble gap: 4–6s (readable human pacing in messengers). */
 export function humanBubbleGapMs(): number {
-  return 3000 + Math.floor(Math.random() * 1000);
+  return 4000 + Math.floor(Math.random() * 2000);
 }
 
 /** Cap + split a single long bubble into 2–4 short messenger bubbles. */
 export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
+  const MAX_CHARS = 140;
   const cleaned = rawBubbles.map((b) => String(b || '').trim()).filter(Boolean);
   if (!cleaned.length) return [];
-  if (cleaned.length > 1) return cleaned.slice(0, max);
+
+  // Multi-bubble from model: keep up to max, hard-cap length per bubble.
+  if (cleaned.length > 1) {
+    return cleaned.slice(0, max).map((b) =>
+      b.length > MAX_CHARS ? `${b.slice(0, MAX_CHARS - 1).trim()}…` : b,
+    );
+  }
 
   const text = cleaned[0];
   if (text.length < 110) return [text];
@@ -67,7 +74,11 @@ export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
     .split(/\n{2,}|\n/)
     .map((p) => p.trim())
     .filter(Boolean);
-  if (byPara.length >= 2 && byPara.length <= max) return byPara.slice(0, max);
+  if (byPara.length >= 2 && byPara.length <= max) {
+    return byPara.slice(0, max).map((b) =>
+      b.length > MAX_CHARS ? `${b.slice(0, MAX_CHARS - 1).trim()}…` : b,
+    );
+  }
 
   const sentences = text
     .split(/(?<=[.!?…])\s+/)
@@ -78,7 +89,7 @@ export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
     let buf = '';
     for (const s of sentences) {
       const next = buf ? `${buf} ${s}` : s;
-      if (buf && next.length > 140) {
+      if (buf && next.length > MAX_CHARS) {
         out.push(buf);
         buf = s;
         if (out.length >= max - 1) {
@@ -90,7 +101,11 @@ export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
       }
     }
     if (buf.trim()) out.push(buf.trim());
-    if (out.length >= 2) return out.slice(0, max);
+    if (out.length >= 2) {
+      return out.slice(0, max).map((b) =>
+        b.length > MAX_CHARS ? `${b.slice(0, MAX_CHARS - 1).trim()}…` : b,
+      );
+    }
   }
 
   // Hard wrap long single bubble into ~2–3 chunks by words.
@@ -100,5 +115,7 @@ export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
   for (let i = 0; i < words.length && chunks.length < max; i += chunkSize) {
     chunks.push(words.slice(i, i + chunkSize).join(' '));
   }
-  return chunks.filter(Boolean);
+  return chunks
+    .filter(Boolean)
+    .map((b) => (b.length > MAX_CHARS ? `${b.slice(0, MAX_CHARS - 1).trim()}…` : b));
 }

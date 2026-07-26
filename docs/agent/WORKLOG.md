@@ -1,3 +1,10 @@
+### 2026-07-26 — WA pacing + business email on PN peers
+- Goal: visible delays between AI bubbles; fill Person email from WA business profile.
+- Cause: Evolution 2.3 `sendPresence` needs top-level `presence`/`delay` (nested options → 400); local sleep capped at 2.2s; business profile fetched only for `@lid` after INC-060 PN identity; multi-bubble normalize did not hard-cap length.
+- Changes: fix presence payload; full typing sleep + 4–6s gaps; email fetch for PN/LID; early-return sync still updates email; `normalizeAiBubbles` ≤140 chars; stronger short-bubble prompt.
+- Verify: typecheck; deploy `ai-whatsapp-worker`; retest burst → spaced short bubbles + email on Person.
+- Next: deploy.
+
 ### 2026-07-26 — INC-060 WA duplicate deal from CUID-as-phone + LID/PN twin
 - Goal: one WA message → one Person + one Opportunity (user saw `+20034505` + `Антон`).
 - Cause: Contact CUID digits → fake E.164; Evolution twin LID+PN webhooks → two Conversations.
