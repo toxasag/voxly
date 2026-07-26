@@ -4,7 +4,7 @@ import { prisma } from '@voxly/db';
 import { AI_MODEL_DEFAULTS } from '@voxly/shared';
 import { resolveProviderCostRub, type OpenRouterUsageLike } from './openrouter-cost.js';
 
-export const DEFAULT_WON_STAGES = ['CUSTOMER'] as const;
+export const DEFAULT_WON_STAGES = ['USPESHNAYA_SDELKA', 'CUSTOMER'] as const;
 
 export type AgentLearnSettings = {
   learnFromWonDeals?: boolean;

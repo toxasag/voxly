@@ -22,7 +22,7 @@
 | `/dashboard/mailing/gramjs` | ✅ Conversation audience + schedule/edit/preview (text; media N/A) | `dashboard/mailing/gramjs/page.tsx` |
 | `/dashboard/mailing/whatsapp` | ✅ Conversation audience + schedule/edit/preview + mediaUrl | `dashboard/mailing/whatsapp/page.tsx` |
 | `/dashboard/mailing/stories` | ✅ schedule/edit/preview; GramJS send; WA/ai_tg → unsupported on send (ADR-019) | `dashboard/mailing/stories/page.tsx` |
-| Twenty sidebar «Рассылка» | ✅ FOLDER + 4 LINK (crm-chat ≥0.1.12) | `navigation-menu-items/mailing-*.ts` |
+| Twenty sidebar «Рассылка» | ✅ **in-CRM** STANDALONE_PAGE + front-component (crm-chat ≥0.1.17); bot compose/list/trial. Portal LINKs removed | `page-layouts/mailing.page-layout.ts` + `front-components/mailing-panel.tsx` |
 | `/dashboard/ai` | ✅ Telegram Business: инструкция BotFather + token connect + delete; **не** manager provision | `dashboard/ai/page.tsx` |
 | `/dashboard/ai/gramjs` | ✅ QR + trial/оплата `ai_gramjs`; QR gated `requiresPayment` | `dashboard/ai/gramjs/page.tsx` |
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment` | `dashboard/ai/whatsapp/page.tsx` |
@@ -175,7 +175,9 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Mailing billing | PRODUCT_CODES mailing_* | ✅ 500/500/1000 + trial gate |
 | Trial period | `TRIAL_PERIOD_DAYS` | ✅ **7** days (was 14) |
 | CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ + custom Person.`telegram` (`@username`); phone → Person.phones when contact shared |
+| Media ASR/vision/docs | ai-telegram-worker / ai-whatsapp-worker / gramjs-bridge / **gift-bot-worker** | ✅ **Platform default** (worker-global; no per-tenant flag). Whisper via OpenRouter STT (voice + **video_note/ptv + regular video** / doc-video; ffmpeg demux; tags `[голос]`/`[кружочек]`/`[видео]`, ≤**20MB** / ≤**180s**); vision multimodal; **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k, `@voxly/ai-core` pdf-parse/mammoth); `MEDIA_INBOUND_HINT` on AI channels; fail → clear RU fallback. **Gift:** same enrich into `ChatMessage` for CRM (no sales LLM); `ai_tg` still forwarded to telegram-worker. New workspaces: `ensureCrmChatAppInstalled(forceReinstall)` on provision |
 | Bot outbound media in CRM chat | gift-bot-worker `logBotOutbound` | ✅ photo/video/document `attachments.fileId` (INC-024); same preview path as inbound |
+| Gift inbound media CRM | gift-bot-worker `storeInboundMessage` + `enrichGiftInboundMedia` | ✅ attachments + ASR/vision/PDF/DOCX text (video_note included); ffmpeg in image; OPENROUTER_* in compose |
 | fireGoal + campaignId/botInstanceId | gift-bot-worker → ConversionEvent | ✅ |
 | Username `voxly_{slug}_{NN}_bot` | `buildVoxlyBotUsername` | ✅ |
 | AI Telegram / WhatsApp workers | apps/ai-* | ✅ **Golden path `docs/agent/CHAT.md`**: WA эталон (debounce 10s + in-flight queue, typing via `sendText(delay)` ≥~3s, bubble gaps 4–6s, LID→PN no CUID-phone, business email+website + soft-delete email free INC-062; IG/FB only if URL in profile). TG Business: same agent/debounce model; typing shorter than WA. **AI reply only if AiAgent assigned** (ADR-014); skip TG `is_bot`; WA skip groups/status/newsletter |
@@ -193,7 +195,6 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | `emailWorker` SMTP | queues.ts | ❌ logging stub |
 | `notifyHumanOperator` | AI workers | ❌ |
 | GramJS bridge | `apps/gramjs-bridge` | 🟡 QR + encrypted session + human 1h pause + soft SKU + `POST /messages/send` (CRM operator); portal via saas-api proxy |
-| Media ASR/vision | ai-telegram-worker / ai-whatsapp-worker / gramjs-bridge | ✅ Whisper via OpenRouter STT (voice + **video_note + regular video** / doc-video; ffmpeg audio demux; tags `[голос]`/`[кружочек]`/`[видео]`, ≤**20MB** / ≤**180s**); vision multimodal; **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k chars, pdf-parse/mammoth); `MEDIA_INBOUND_HINT`; fail → clear RU fallback |
 | Skip bot senders | ai-telegram / gramjs / WA | ✅ TG `is_bot` → no AI, no Conversation, no CRM lead; GramJS `User.bot`; WA skip status/newsletter/broadcast |
 | GramJS → AI handoff | `POST /internal/inbound` on ai-telegram-worker | ✅ Bearer `VOXLY_SERVICE_TOKEN`; returns bubbles |
 | GramJS portal UI | saas-portal `/dashboard/ai/gramjs` | ✅ QR + status + accounts; browser never hits bridge |
@@ -217,6 +218,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 
 ## Shared helpers (не дублировать)
 
+- Shared helpers: `packages/ai-core` (`extractAudioFromVideo`, `extractDocumentText`, `MEDIA_INBOUND_HINT`)
 - `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO` — `packages/shared`
 - `resolveTelegramMedia`, `buildVoxlyBotUsername`
 - `parseTelegramClientMd` / `clientMdToMarkdownV2`

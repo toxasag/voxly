@@ -2,7 +2,7 @@
 // Browser never talks to Evolution or the worker directly.
 
 import type { FastifyPluginAsync } from 'fastify';
-import { PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
@@ -151,7 +151,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({
       ok: true,
       priceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
-      trialDays: 14,
+      trialDays: TRIAL_PERIOD_DAYS,
       workerConfigured: Boolean(serviceToken()),
       evolutionConfigured,
       evolutionHint: cfg.json?.hint || null,
@@ -168,7 +168,7 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
       billingWarning: addonActive
         ? null
         : meta.trialAvailable
-          ? `Доступен пробный период 14 дней, затем ${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес.`
+          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес.`
           : `Тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
       requiresPayment: !addonActive,
       accounts: bots.map((b) => ({

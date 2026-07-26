@@ -15,7 +15,7 @@
 | Debounce inbound | `@voxly/ai-core` `createInboundAiDebouncer`, default **10s** (`AI_INBOUND_DEBOUNCE_MS`); in-flight queue — **не** параллельные `humanLike` на один chat |
 | Bubbles | `normalizeAiBubbles` ≤**4**, ≤**~140** символов; короткие «живые» сообщения |
 | Abort mid-send | Если за время набора пришёл новый `role=user` → остановить оставшиеся bubbles |
-| CRM UI | Вкладка «Чат», presence/last-seen где канал умеет, AI вкл/пауза/выкл, threads multi-channel — FLOWS §4 |
+| CRM UI | Вкладка «Чат», presence/last-seen где канал умеет, AI вкл/пауза/выкл, threads multi-channel — FLOWS §4; **unread badges** на карточках сделок/контактов (shell-ux + `lastOperatorReadAt`) |
 | Не выдумывать телефон | Только явные PN/E.164 из webhook / vCard / Contact fields |
 
 ## 2. WhatsApp (`ai-whatsapp-worker` + Evolution) — эталон ✅
@@ -52,7 +52,7 @@
 | Typing | `sendChatAction(typing)` + `typingDelayMs` (base 800, max 5s) — **короче**, чем WA эталон; при полировке TG подтянуть к WA ≥~3s visible |
 | Bubbles | parse multi-bubble + normalize где подключено |
 | Skip | `is_bot` senders |
-| Media | ASR/vision через OpenRouter; degrade placeholder |
+| Media | ASR/vision/PDF/DOCX через OpenRouter + `@voxly/ai-core` (platform default, all tenants); degrade placeholder |
 | Presence в CRM | Business: hide/limited (см. CAPABILITIES) |
 
 Цель: тот же UX, что WA (короткие bubbles, нет параллельных flush, один lead). Не ослаблять debounce / assignment model.
@@ -62,16 +62,28 @@
 | Тема | Сейчас |
 |---|---|
 | Продукт | Отдельный SKU `ai_gramjs` (~500 ₽), UI `/dashboard/ai/gramjs` |
-| CRM chat outbound | Bridge `POST /messages/send`; text-oriented |
+| CRM chat outbound | Bridge `POST /messages/send`; **text-only** (media outbound not yet) |
+| CRM chat inbound media | Photo/video/sticker/voice/doc → `attachments` `gramjs:{peer}:{msgId}` + CRM `/file` via bridge `POST /messages/media`; **video/audio** play via HMAC signed URL (`/file-url` → `/media/:token`) with MIME sniff + Range |
+| AI media | Photo/sticker → vision; voice/audio → ASR; **кружочек + обычное видео** → ASR (`[кружочек]:` / `[видео]:`, ffmpeg demux, ≤20MB/180s); **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k); else fallback «не удалось разобрать»; animation/GIF → placeholder |
 | Presence | Live через GramJS → crm-chat |
 | AI | Тот же AiAgent assign / OFF default |
 
 При изменениях AI-ответов — тот же debounce + human pacing, что WA/TG Business.
 
+## 4b. Gift-бот (`gift-bot-worker`)
+
+| Тема | Сейчас |
+|---|---|
+| Продукт | Воронка подарков (не sales LLM). `botType=ai_tg` → forward на `ai-telegram-worker` |
+| CRM inbound media | attachments `file_id` + preview; **video_note** stored |
+| Media understanding | **Same extractors** as Business: voice/audio ASR, кружочек+video ASR, photo/sticker vision, PDF/DOCX text → enriched `ChatMessage.content` for operators; soft-charge AI wallet if present |
+| AI reply | Нет на gift funnel; только CRM display + notes |
+
 ## 5. AI-агенты (ортогональный слой)
 
 - Portal: `/dashboard/ai/agents` + bind на аккаунт/чат.
 - `systemPrompt` + `settings`; knowledge chunks + learn from **won** deals (ADR-016).
+- После PATCH prompt/model workers **перечитывают** AiAgent на следующий inbound; assistant-история до `agent.updatedAt` не few-shot'ит старую персону (INC-064).
 - Стоимость: OpenRouter `usage.cost` → wallet (ADR-015).
 - CRM panel: оператор может вкл/пауза/выкл AI на треде без отключения канала.
 
@@ -81,7 +93,8 @@
 |---|---|
 | WA inbound / sync / humanLike | `apps/ai-whatsapp-worker/src/index.ts` |
 | TG Business inbound / typing | `apps/ai-telegram-worker/src/index.ts` |
-| Debounce / bubbles / gap | `packages/ai-core/src/inbound-debounce.ts` |
+| Gift inbound + media enrich | `apps/gift-bot-worker/src/index.ts` (`enrichGiftInboundMedia`) |
+| Debounce / bubbles / gap / media hint | `packages/ai-core` (`inbound-debounce`, `document-text`, `extract-audio`) |
 | CRM API + presence | `apps/saas-api/src/routes/crm-chat.ts` |
 | Chat UI | `twenty-app/voxly-crm-chat` |
 | Person socials / email | `packages/twenty-client` (`website`, `updatePersonEmail`, …) |
@@ -94,3 +107,18 @@
 3. Burst 2–3 сообщений за &lt;10s → **один** AI-ответ (не шторм).
 4. CRM вкладка «Чат»: history, reply, presence (где канал умеет), AI toggle.
 5. Без assigned agent → сообщения в CRM, **без** LLM reply.
+6. Media (all channels): voice / кружочек / video → `[…]: transcript`; photo → `[фото]: …`; PDF/DOCX → `[документ …]:`; gift CRM shows same enriched text.
+
+## Media parity (platform default)
+
+| Capability | Business | GramJS | WA | Gift |
+|---|---|---|---|---|
+| Voice/audio ASR | ✅ | ✅ | ✅ | ✅ CRM text |
+| Кружочек / ptv ASR | ✅ | ✅ | ✅ | ✅ CRM text |
+| Regular video ASR | ✅ | ✅ | ✅ | ✅ CRM text |
+| Photo/sticker vision | ✅ | ✅ | ✅ | ✅ CRM text |
+| PDF/DOCX extract | ✅ | ✅ | ✅ | ✅ CRM text |
+| Sales LLM reply | ✅ if agent | ✅ if agent | ✅ if agent | ❌ funnel only |
+| CRM attachment preview | ✅ | ✅ | ✅ | ✅ |
+
+No per-tenant feature flag — workers enrich whenever `OPENROUTER_API_KEY` is set. New portals get latest crm-chat via provision `forceReinstall`.

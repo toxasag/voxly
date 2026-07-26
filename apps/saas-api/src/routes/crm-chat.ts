@@ -2,12 +2,98 @@
 // Auth: portal JWT or short-lived crm-chat JWT from /api/tenant/crm-login
 // Also: GiftSubscriber (gift bot) OR Conversation (ai_tg / ai_gramjs) CRM links.
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
 import { clientMdToMarkdownV2, AI_HANDOFF_PAUSE_MS } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
+
+/** Browser-reachable API origin for CRM media <video>/<audio>/<img> src (bypasses Twenty /s JSON size cap). */
+function publicApiBase(): string {
+  return (
+    process.env.VOXLY_PUBLIC_API_URL ||
+    process.env.PUBLIC_API_URL ||
+    `https://api.${process.env.VOXLY_DOMAIN || 'getvoxly.ru'}`
+  ).replace(/\/$/, '');
+}
+
+const MEDIA_URL_TTL_SEC = 60 * 60; // 1h
+
+type MediaTokenPayload = {
+  v: 1;
+  tenantId: string;
+  recordId: string;
+  fileId: string;
+  botId: string;
+  exp: number;
+};
+
+function mediaSigningSecret(): string {
+  return (
+    process.env.JWT_SECRET ||
+    process.env.VOXLY_SERVICE_TOKEN ||
+    'dev-secret-change-me'
+  );
+}
+
+function mintMediaToken(opts: {
+  tenantId: string;
+  recordId: string;
+  fileId: string;
+  botId: string;
+}): string {
+  const payload: MediaTokenPayload = {
+    v: 1,
+    tenantId: opts.tenantId,
+    recordId: opts.recordId,
+    fileId: opts.fileId,
+    botId: opts.botId,
+    exp: Math.floor(Date.now() / 1000) + MEDIA_URL_TTL_SEC,
+  };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = createHmac('sha256', mediaSigningSecret())
+    .update(body)
+    .digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyMediaToken(token: string): MediaTokenPayload | null {
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!body || !sig) return null;
+  const expected = createHmac('sha256', mediaSigningSecret())
+    .update(body)
+    .digest('base64url');
+  try {
+    const a = Buffer.from(sig);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  } catch {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(
+      Buffer.from(body, 'base64url').toString('utf8'),
+    ) as MediaTokenPayload;
+    if (payload.v !== 1) return null;
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    if (
+      !payload.tenantId ||
+      !payload.recordId ||
+      !payload.fileId ||
+      !payload.botId
+    ) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
 
 type ChatAttachment = {
   type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker' | 'animation';
@@ -228,6 +314,105 @@ function detectUploadKind(
   return 'document';
 }
 
+/** Browser <video>/<audio> need a real mime; Telegram/WA often return octet-stream. */
+function sniffMediaContentType(
+  buf: Buffer,
+  hints: {
+    contentType?: string | null;
+    filePath?: string | null;
+    fileName?: string | null;
+    mimeType?: string | null;
+  } = {},
+): string {
+  const rawHint = String(hints.mimeType || hints.contentType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase();
+  if (
+    rawHint &&
+    rawHint !== 'application/octet-stream' &&
+    !rawHint.includes('json') &&
+    !rawHint.includes('text/')
+  ) {
+    return rawHint;
+  }
+
+  if (buf.length >= 12) {
+    // ISO BMFF (mp4 / m4a / mov)
+    if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+      const brand = buf.slice(8, 12).toString('ascii');
+      if (/^M4A|^M4B/i.test(brand)) return 'audio/mp4';
+      return 'video/mp4';
+    }
+    if (buf.slice(0, 4).toString('ascii') === 'OggS') return 'audio/ogg';
+    if (buf.slice(0, 3).toString('ascii') === 'ID3') return 'audio/mpeg';
+    if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+    if (buf.slice(0, 4).toString('ascii') === 'RIFF') {
+      const form = buf.slice(8, 12).toString('ascii');
+      if (form === 'WAVE') return 'audio/wav';
+      if (form === 'WEBP') return 'image/webp';
+      if (form === 'AVI ') return 'video/avi';
+    }
+    // EBML → webm/mkv
+    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+      return 'video/webm';
+    }
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+    if (
+      buf[0] === 0x89 &&
+      buf[1] === 0x50 &&
+      buf[2] === 0x4e &&
+      buf[3] === 0x47
+    ) {
+      return 'image/png';
+    }
+    if (buf.slice(0, 4).toString('ascii') === 'GIF8') return 'image/gif';
+  }
+
+  const pathHint = `${hints.filePath || ''} ${hints.fileName || ''}`.toLowerCase();
+  if (/video_note|\.mp4(\b|$)/i.test(pathHint)) return 'video/mp4';
+  if (/\.webm(\b|$)/i.test(pathHint)) return 'video/webm';
+  if (/\.mov(\b|$)/i.test(pathHint)) return 'video/quicktime';
+  if (/\.(ogg|oga|opus)(\b|$)/i.test(pathHint)) return 'audio/ogg';
+  if (/\.mp3(\b|$)/i.test(pathHint)) return 'audio/mpeg';
+  if (/\.m4a(\b|$)/i.test(pathHint)) return 'audio/mp4';
+  if (/\.wav(\b|$)/i.test(pathHint)) return 'audio/wav';
+  if (/\.jpe?g(\b|$)/i.test(pathHint)) return 'image/jpeg';
+  if (/\.png(\b|$)/i.test(pathHint)) return 'image/png';
+  if (/\.webp(\b|$)/i.test(pathHint)) return 'image/webp';
+
+  return rawHint || 'application/octet-stream';
+}
+
+async function lookupStoredAttachmentMeta(
+  prisma: FastifyInstance['prisma'],
+  opts: { tenantId: string; recordId: string; fileId: string },
+): Promise<{ mimeType?: string; fileName?: string; type?: string } | null> {
+  const target = await findCrmChatTarget(prisma, opts.tenantId, opts.recordId);
+  if (!target?.conversationId) return null;
+
+  const messages = await prisma.chatMessage.findMany({
+    where: { conversationId: target.conversationId },
+    orderBy: { sentAt: 'desc' },
+    take: 80,
+    select: { attachments: true },
+  });
+  for (const m of messages) {
+    if (!Array.isArray(m.attachments)) continue;
+    for (const raw of m.attachments) {
+      if (!raw || typeof raw !== 'object') continue;
+      const a = raw as Record<string, unknown>;
+      if (a.fileId !== opts.fileId) continue;
+      return {
+        mimeType: typeof a.mimeType === 'string' ? a.mimeType : undefined,
+        fileName: typeof a.fileName === 'string' ? a.fileName : undefined,
+        type: typeof a.type === 'string' ? a.type : undefined,
+      };
+    }
+  }
+  return null;
+}
+
 function mapAttachment(att: unknown): ChatAttachment | null {
   if (!att || typeof att !== 'object') return null;
   const a = att as Record<string, unknown>;
@@ -391,6 +576,94 @@ async function sendViaGramjsBridge(opts: {
   if (!res.ok || !json.ok) {
     throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
   }
+}
+
+function parseGramjsFileId(
+  fileId: string,
+): { peerUserId: string; messageId: string } | null {
+  if (!fileId.startsWith('gramjs:')) return null;
+  const rest = fileId.slice('gramjs:'.length);
+  const colon = rest.lastIndexOf(':');
+  if (colon <= 0) return null;
+  const peerUserId = rest.slice(0, colon).trim();
+  const messageId = rest.slice(colon + 1).trim();
+  if (!peerUserId || !messageId) return null;
+  return { peerUserId, messageId };
+}
+
+async function fetchGramjsMedia(opts: {
+  botId: string;
+  fileId: string;
+}): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) {
+    throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  }
+  const parsed = parseGramjsFileId(opts.fileId);
+  if (!parsed) return null;
+  const res = await fetch(`${gramjsBridgeBase()}/messages/media`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      peerUserId: parsed.peerUserId,
+      messageId: parsed.messageId,
+      fileId: opts.fileId,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    dataBase64?: string;
+    mimeType?: string;
+  };
+  if (!res.ok || !json.ok || !json.dataBase64) {
+    throw new Error(json.error || `GramJS media failed (HTTP ${res.status})`);
+  }
+  return {
+    buffer: Buffer.from(json.dataBase64, 'base64'),
+    contentType: json.mimeType || 'application/octet-stream',
+  };
+}
+
+async function fetchWhatsappMedia(opts: {
+  botId: string;
+  fileId: string;
+  peerUserId?: string;
+}): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) {
+    throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  }
+  const res = await fetch(`${whatsappWorkerBase()}/internal/messages/media`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      fileId: opts.fileId,
+      messageId: opts.fileId,
+      peerUserId: opts.peerUserId,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    dataBase64?: string;
+    mimeType?: string;
+  };
+  if (!res.ok || !json.ok || !json.dataBase64) {
+    throw new Error(json.error || `WhatsApp media failed (HTTP ${res.status})`);
+  }
+  return {
+    buffer: Buffer.from(json.dataBase64, 'base64'),
+    contentType: json.mimeType || 'application/octet-stream',
+  };
 }
 
 async function sendViaWhatsappWorker(opts: {
@@ -889,6 +1162,136 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  /**
+   * Unread inbound counts for CRM board/list badges (shell-ux poll).
+   * Unread = ChatMessage role=user with sentAt > Conversation.lastOperatorReadAt
+   * (or all user msgs if never opened in CRM Chat). Aggregated by Person / Opportunity.
+   */
+  fastify.get(
+    '/unread-badges',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const prisma = fastify.prisma;
+
+      type UnreadRow = {
+        conversationId: string;
+        personId: string | null;
+        opportunityId: string | null;
+        platformUserId: string;
+        count: number;
+      };
+
+      const rows = await prisma.$queryRaw<UnreadRow[]>`
+        SELECT
+          c.id AS "conversationId",
+          c."twentyPersonId" AS "personId",
+          c."twentyOpportunityId" AS "opportunityId",
+          c."platformUserId" AS "platformUserId",
+          COUNT(m.id)::int AS count
+        FROM "ChatMessage" m
+        INNER JOIN "Conversation" c ON c.id = m."conversationId"
+        WHERE c."tenantId" = ${tenantId}
+          AND m.role = 'user'
+          AND (
+            c."lastOperatorReadAt" IS NULL
+            OR m."sentAt" > c."lastOperatorReadAt"
+          )
+        GROUP BY c.id, c."twentyPersonId", c."twentyOpportunityId", c."platformUserId"
+        HAVING COUNT(m.id) > 0
+        LIMIT 500
+      `;
+
+      if (rows.length === 0) {
+        return reply.send({
+          opportunities: [],
+          persons: [],
+          serverTime: new Date().toISOString(),
+        });
+      }
+
+      const needGift = rows.filter((r) => !r.personId && !r.opportunityId);
+      const giftByConv = new Map<
+        string,
+        { twentyPersonId: string | null; twentyOpportunityId: string | null }
+      >();
+      const giftByTg = new Map<
+        string,
+        { twentyPersonId: string | null; twentyOpportunityId: string | null }
+      >();
+
+      if (needGift.length > 0) {
+        const convIds = needGift.map((r) => r.conversationId);
+        const tgIds = [...new Set(needGift.map((r) => r.platformUserId))];
+        const gifts = await prisma.giftSubscriber.findMany({
+          where: {
+            tenantId,
+            OR: [
+              { conversationId: { in: convIds } },
+              { telegramId: { in: tgIds }, twentyPersonId: { not: null } },
+            ],
+          },
+          orderBy: { updatedAt: 'desc' },
+          select: {
+            conversationId: true,
+            telegramId: true,
+            twentyPersonId: true,
+            twentyOpportunityId: true,
+          },
+        });
+        for (const g of gifts) {
+          if (
+            g.conversationId &&
+            !giftByConv.has(g.conversationId) &&
+            (g.twentyPersonId || g.twentyOpportunityId)
+          ) {
+            giftByConv.set(g.conversationId, g);
+          }
+          if (
+            !giftByTg.has(g.telegramId) &&
+            (g.twentyPersonId || g.twentyOpportunityId)
+          ) {
+            giftByTg.set(g.telegramId, g);
+          }
+        }
+      }
+
+      const oppCounts = new Map<string, number>();
+      const personCounts = new Map<string, number>();
+      for (const row of rows) {
+        const gift =
+          giftByConv.get(row.conversationId) ||
+          giftByTg.get(row.platformUserId);
+        const personId = row.personId || gift?.twentyPersonId || null;
+        const opportunityId =
+          row.opportunityId || gift?.twentyOpportunityId || null;
+        if (opportunityId) {
+          oppCounts.set(
+            opportunityId,
+            (oppCounts.get(opportunityId) || 0) + row.count,
+          );
+        }
+        if (personId) {
+          personCounts.set(
+            personId,
+            (personCounts.get(personId) || 0) + row.count,
+          );
+        }
+      }
+
+      const toList = (map: Map<string, number>) =>
+        [...map.entries()]
+          .map(([id, count]) => ({ id, count }))
+          .sort((a, b) => b.count - a.count);
+
+      return reply.send({
+        opportunities: toList(oppCounts),
+        persons: toList(personCounts),
+        serverTime: new Date().toISOString(),
+      });
+    },
+  );
+
   fastify.get(
     '/:recordId',
     { preHandler: [fastify.authenticate] },
@@ -1030,7 +1433,28 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           })
         : [];
 
-      // Operator opened chat → mark inbound as read (best-effort). Typing only on send.
+      // CRM unread badges: opening Chat marks ALL linked threads read.
+      // Badges aggregate every conversation for the Person/Opportunity; marking only
+      // the active thread left counts stuck when multi-channel (WA+TG+gift).
+      const readConvIds = [
+        ...new Set(
+          allTargets
+            .map((t) => t.conversationId)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      if (readConvIds.length > 0) {
+        try {
+          await prisma.conversation.updateMany({
+            where: { id: { in: readConvIds }, tenantId },
+            data: { lastOperatorReadAt: new Date() },
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Operator opened chat → mark inbound as read on channel (best-effort). Typing only on send.
       if (botType === 'ai_wa') {
         const inboundIds = messages
           .filter((m) => m.role === 'user' && m.externalMessageId)
@@ -1225,9 +1649,189 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
-  // Proxy Telegram file for CRM chat preview (auth + tenant-scoped)
+  async function resolveCrmMediaBuffer(opts: {
+    tenantId: string;
+    recordId: string;
+    fileId: string;
+    botId?: string;
+  }): Promise<{ buffer: Buffer; contentType: string } | { error: string; status: number }> {
+    const prisma = fastify.prisma;
+    const target = await findCrmChatTarget(prisma, opts.tenantId, opts.recordId);
+    if (!target) return { error: 'Not found', status: 404 };
+
+    const bot = await prisma.botInstance.findFirst({
+      where: {
+        id: opts.botId || target.botInstanceId,
+        tenantId: opts.tenantId,
+        status: 'active',
+      },
+    });
+    if (!bot) return { error: 'Bot not found', status: 404 };
+    if (opts.botId && bot.id !== target.botInstanceId) {
+      return { error: 'Bot mismatch', status: 403 };
+    }
+
+    const fileId = opts.fileId;
+    const storedMeta = await lookupStoredAttachmentMeta(prisma, {
+      tenantId: opts.tenantId,
+      recordId: opts.recordId,
+      fileId,
+    });
+
+    if (bot.botType === 'ai_gramjs') {
+      if (!fileId.startsWith('gramjs:')) {
+        return {
+          error: 'Превью файлов для личного Telegram пока не поддерживается',
+          status: 400,
+        };
+      }
+      try {
+        const media = await fetchGramjsMedia({ botId: bot.id, fileId });
+        if (!media) return { error: 'Invalid GramJS file id', status: 400 };
+        return {
+          buffer: media.buffer,
+          contentType: sniffMediaContentType(media.buffer, {
+            contentType: media.contentType,
+            mimeType: storedMeta?.mimeType,
+            fileName: storedMeta?.fileName,
+          }),
+        };
+      } catch (err) {
+        return {
+          error: (err as Error).message || 'Failed to fetch GramJS media',
+          status: 502,
+        };
+      }
+    }
+
+    if (bot.botType === 'ai_wa') {
+      try {
+        const media = await fetchWhatsappMedia({
+          botId: bot.id,
+          fileId,
+          peerUserId: target.telegramId || undefined,
+        });
+        if (!media) return { error: 'WhatsApp media not found', status: 404 };
+        return {
+          buffer: media.buffer,
+          contentType: sniffMediaContentType(media.buffer, {
+            contentType: media.contentType,
+            mimeType: storedMeta?.mimeType,
+            fileName: storedMeta?.fileName,
+          }),
+        };
+      } catch (err) {
+        return {
+          error: (err as Error).message || 'Failed to fetch WhatsApp media',
+          status: 502,
+        };
+      }
+    }
+
+    if (!bot.botTokenEncrypted) return { error: 'Bot not found', status: 404 };
+
+    const token = decrypt(bot.botTokenEncrypted);
+    const metaRes = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+    });
+    const meta = (await metaRes.json()) as {
+      ok?: boolean;
+      result?: { file_path?: string };
+      description?: string;
+    };
+    if (!meta.ok || !meta.result?.file_path) {
+      return { error: meta.description || 'File not found', status: 404 };
+    }
+
+    const fileUrl = `https://api.telegram.org/file/bot${token}/${meta.result.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) return { error: 'Failed to fetch Telegram file', status: 502 };
+
+    const headerType = fileRes.headers.get('content-type') || 'application/octet-stream';
+    const buf = Buffer.from(await fileRes.arrayBuffer());
+    return {
+      buffer: buf,
+      contentType: sniffMediaContentType(buf, {
+        contentType: headerType,
+        filePath: meta.result.file_path,
+        mimeType: storedMeta?.mimeType,
+        fileName: storedMeta?.fileName,
+      }),
+    };
+  }
+
+  function sendMediaBuffer(
+    reply: import('fastify').FastifyReply,
+    request: import('fastify').FastifyRequest,
+    result: { buffer: Buffer; contentType: string },
+  ) {
+    const buf = result.buffer;
+    const contentType = result.contentType;
+    reply
+      .header('Content-Type', contentType)
+      .header('Cache-Control', 'private, max-age=300')
+      .header('Content-Disposition', 'inline')
+      .header('Accept-Ranges', 'bytes');
+
+    const range = String(request.headers.range || '');
+    const m = /^bytes=(\d+)-(\d+)?$/i.exec(range);
+    if (m) {
+      const size = buf.length;
+      let start = Number(m[1]);
+      let end = m[2] != null && m[2] !== '' ? Number(m[2]) : size - 1;
+      if (
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        start < 0 ||
+        end < start ||
+        start >= size
+      ) {
+        return reply
+          .code(416)
+          .header('Content-Range', `bytes */${size}`)
+          .send({ error: 'Range Not Satisfiable' });
+      }
+      end = Math.min(end, size - 1);
+      const chunk = buf.subarray(start, end + 1);
+      return reply
+        .code(206)
+        .header('Content-Range', `bytes ${start}-${end}/${size}`)
+        .header('Content-Length', chunk.length)
+        .send(chunk);
+    }
+
+    return reply.header('Content-Length', buf.length).send(buf);
+  }
+
+  // HMAC-signed media stream for <video>/<audio>/<img> (no Twenty /s base64 size limit).
+  // Wildcard path so long base64url.sig tokens (with `.`) match; also needs
+  // Fastify maxParamLength ≫ 100 (set in index.ts) — INC-063 reopen.
+  fastify.get('/media/*', async (request, reply) => {
+    const wildcard = String((request.params as { '*': string })['*'] || '').replace(
+      /^\/+/,
+      '',
+    );
+    const payload = verifyMediaToken(wildcard);
+    if (!payload) {
+      return reply.code(401).send({ error: 'Invalid or expired media token' });
+    }
+    const result = await resolveCrmMediaBuffer({
+      tenantId: payload.tenantId,
+      recordId: payload.recordId,
+      fileId: payload.fileId,
+      botId: payload.botId,
+    });
+    if ('error' in result) {
+      return reply.code(result.status).send({ error: result.error });
+    }
+    return sendMediaBuffer(reply, request, result);
+  });
+
+  // Small JSON: signed URL for CRM chat panel (photos still work; video/audio play natively).
   fastify.get(
-    '/:recordId/file/:fileId',
+    '/:recordId/file/:fileId/signed-url',
     { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const { tenantId } = (request as any).user;
@@ -1235,7 +1839,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         recordId: string;
         fileId: string;
       };
-      if (!fileId || fileId.length < 10) {
+      if (!fileId || fileId.length < 8) {
         return reply.code(400).send({ error: 'Invalid file id' });
       }
 
@@ -1246,43 +1850,56 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       const bot = await prisma.botInstance.findFirst({
         where: { id: target.botInstanceId, tenantId, status: 'active' },
       });
-      if (!bot?.botTokenEncrypted) return reply.code(404).send({ error: 'Bot not found' });
-      if (bot.botType === 'ai_gramjs') {
-        return reply
-          .code(400)
-          .send({ error: 'Превью файлов для личного Telegram пока не поддерживается' });
-      }
-      if (bot.botType === 'ai_wa') {
-        return reply
-          .code(400)
-          .send({ error: 'Превью файлов для WhatsApp пока не поддерживается' });
-      }
+      if (!bot) return reply.code(404).send({ error: 'Bot not found' });
 
-      const token = decrypt(bot.botTokenEncrypted);
-      const metaRes = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: fileId }),
+      const storedMeta = await lookupStoredAttachmentMeta(prisma, {
+        tenantId,
+        recordId,
+        fileId,
       });
-      const meta = (await metaRes.json()) as {
-        ok?: boolean;
-        result?: { file_path?: string };
-        description?: string;
+      const mediaToken = mintMediaToken({
+        tenantId,
+        recordId,
+        fileId,
+        botId: bot.id,
+      });
+      const hintType =
+        storedMeta?.mimeType ||
+        (storedMeta?.type === 'video' || storedMeta?.type === 'animation'
+          ? 'video/mp4'
+          : storedMeta?.type === 'voice' || storedMeta?.type === 'audio'
+            ? 'audio/ogg'
+            : storedMeta?.type === 'photo' || storedMeta?.type === 'sticker'
+              ? 'image/jpeg'
+              : undefined);
+      return reply.send({
+        url: `${publicApiBase()}/api/crm/chat/media/${mediaToken}`,
+        expiresIn: MEDIA_URL_TTL_SEC,
+        contentType: hintType || null,
+        fileName: storedMeta?.fileName || null,
+      });
+    },
+  );
+
+  // Proxy Telegram / GramJS / WA file for CRM chat preview (auth + tenant-scoped)
+  fastify.get(
+    '/:recordId/file/:fileId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { recordId, fileId } = request.params as {
+        recordId: string;
+        fileId: string;
       };
-      if (!meta.ok || !meta.result?.file_path) {
-        return reply.code(404).send({ error: meta.description || 'File not found' });
+      if (!fileId || fileId.length < 8) {
+        return reply.code(400).send({ error: 'Invalid file id' });
       }
 
-      const fileUrl = `https://api.telegram.org/file/bot${token}/${meta.result.file_path}`;
-      const fileRes = await fetch(fileUrl);
-      if (!fileRes.ok) return reply.code(502).send({ error: 'Failed to fetch Telegram file' });
-
-      const contentType = fileRes.headers.get('content-type') || 'application/octet-stream';
-      const buf = Buffer.from(await fileRes.arrayBuffer());
-      return reply
-        .header('Content-Type', contentType)
-        .header('Cache-Control', 'private, max-age=300')
-        .send(buf);
+      const result = await resolveCrmMediaBuffer({ tenantId, recordId, fileId });
+      if ('error' in result) {
+        return reply.code(result.status).send({ error: result.error });
+      }
+      return sendMediaBuffer(reply, request, result);
     },
   );
 

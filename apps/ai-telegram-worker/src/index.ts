@@ -13,7 +13,15 @@ import {
   createInboundDebouncer,
   humanBubbleGapMs,
   normalizeAiBubbles,
+  filterHistoryAfterAgentUpdate,
+  AGENT_PROMPT_PRIORITY_HINT,
+  MEDIA_INBOUND_HINT,
   DEFAULT_INBOUND_DEBOUNCE_MS,
+  extractAudioFromVideo,
+  detectDocumentKind,
+  extractDocumentText,
+  formatDocumentAiText,
+  DOC_MEDIA_MAX_BYTES,
   type OpenRouterUsageLike,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
@@ -23,6 +31,8 @@ import {
   AI_MODEL_DEFAULTS,
   isAiConversationMode,
   PRICING,
+  isWithinMailingAttributionWindow,
+  mailingAttributionNote,
 } from '@voxly/shared';
 import OpenAI from 'openai';
 
@@ -33,6 +43,10 @@ const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const CONTEXT_WINDOW = 20;
 const AI_WORKER_URL = process.env.AI_TELEGRAM_WORKER_URL || '';
+/** Download cap for video ASR (Telegram Bot API getFile ~20MB). Audio extracted via ffmpeg before Whisper. */
+const ASR_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+/** Skip ASR for very long videos — cost / latency. */
+const ASR_VIDEO_MAX_DURATION_SEC = 180;
 const AI_INBOUND_DEBOUNCE_MS = Math.max(
   500,
   Number(process.env.AI_INBOUND_DEBOUNCE_MS || DEFAULT_INBOUND_DEBOUNCE_MS) ||
@@ -100,6 +114,21 @@ const JSON_FORMAT_HINT = `
 
 Ответь ТОЛЬКО JSON с message1…message4. Обычно заполни 2–4 пузыря, не склеивай всё в message1.`;
 
+/** Prefer column; fall back to settings.systemPrompt if an older client wrote there. */
+function agentSystemPrompt(agent: {
+  systemPrompt: string | null;
+  settings: unknown;
+} | null): string | null {
+  const fromCol = agent?.systemPrompt?.trim();
+  if (fromCol) return fromCol;
+  const s = agent?.settings;
+  if (s && typeof s === 'object') {
+    const p = (s as Record<string, unknown>).systemPrompt;
+    if (typeof p === 'string' && p.trim()) return p.trim();
+  }
+  return null;
+}
+
 async function main() {
   const http = await import('node:http');
   const server = http.createServer(async (req, res) => {
@@ -158,6 +187,13 @@ async function main() {
   });
 }
 
+type InternalInboundAttachment = {
+  type: string;
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+};
+
 type InternalInboundPayload = {
   tenantId: string;
   botId: string;
@@ -171,6 +207,11 @@ type InternalInboundPayload = {
   channel?: string;
   /** When true (or sender is a TG bot), skip AI entirely. */
   isBot?: boolean;
+  /** CRM-displayable attachments (e.g. gramjs:{peer}:{msgId}). */
+  attachments?: InternalInboundAttachment[];
+  /** Optional image bytes for vision (GramJS photo/sticker). */
+  mediaBase64?: string;
+  mediaMime?: string;
 };
 
 /** Shared AI turn for GramJS (and other non-Bot-API channels). Does not send Telegram. */
@@ -181,13 +222,13 @@ async function handleInternalInbound(
     tenantId,
     botId,
     platformUserId,
-    text,
     firstName,
     username,
     phone,
     externalMessageId,
   } = payload;
-  if (!tenantId || !botId || !platformUserId || !text?.trim()) {
+  let text = String(payload.text || '').trim();
+  if (!tenantId || !botId || !platformUserId || !text) {
     return { ok: false, error: 'tenantId, botId, platformUserId, text required' };
   }
 
@@ -204,6 +245,159 @@ async function handleInternalInbound(
     },
   });
   if (!bot) return { ok: false, error: 'bot not found' };
+
+  const attachments = Array.isArray(payload.attachments)
+    ? payload.attachments.filter(
+        (a) => a && typeof a.fileId === 'string' && typeof a.type === 'string',
+      )
+    : [];
+
+  // Vision / ASR on GramJS media: enrich text for AI; still store gramjs: fileId for CRM.
+  if (payload.mediaBase64 && OPENROUTER_API_KEY) {
+    try {
+      const mime = payload.mediaMime || 'image/jpeg';
+      const buffer = Buffer.from(payload.mediaBase64, 'base64');
+      const isVideoNote =
+        text === '[кружочек]' ||
+        attachments.some(
+          (a) =>
+            typeof a.fileName === 'string' && /video_note/i.test(a.fileName),
+        );
+      const isVideo =
+        !isVideoNote &&
+        (mime.startsWith('video/') ||
+          text === '[видео]' ||
+          attachments.some((a) => a.type === 'video'));
+      const caption =
+        text.startsWith('[') && text.endsWith(']') ? undefined : text;
+
+      if (buffer.length === 0 || buffer.length > ASR_MEDIA_MAX_BYTES) {
+        if (isVideoNote) {
+          text = caption
+            ? `${caption}\n\n[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+            : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+        } else if (isVideo) {
+          text = caption
+            ? `${caption}\n\n[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+            : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+        }
+        console.warn(
+          `[ai-telegram] gramjs media oversized/empty ${buffer.length}b`,
+        );
+      } else if (buffer.length > 0) {
+        const isAudio =
+          mime.startsWith('audio/') ||
+          mime.includes('ogg') ||
+          mime.includes('opus') ||
+          attachments.some((a) => a.type === 'voice' || a.type === 'audio');
+        const docKind = detectDocumentKind({
+          mimeType: mime,
+          fileName: attachments.find((a) => a.fileName)?.fileName,
+        });
+        const isDocument =
+          Boolean(docKind) &&
+          (attachments.some((a) => a.type === 'document') ||
+            mime.includes('pdf') ||
+            mime.includes('wordprocessingml') ||
+            mime.includes('msword'));
+
+        if (isDocument && docKind) {
+          if (buffer.length > DOC_MEDIA_MAX_BYTES) {
+            text = formatDocumentAiText({
+              kind: docKind,
+              text: null,
+              caption,
+            });
+          } else {
+            const extracted = await extractDocumentText(buffer, docKind);
+            text = formatDocumentAiText({
+              kind: docKind,
+              text: extracted,
+              caption,
+            });
+          }
+        } else if (isAudio || isVideoNote || isVideo) {
+          const asrModel = await getAsrModel();
+          let asrBuf: Buffer = buffer;
+          let format =
+            isVideoNote || isVideo ? 'mp4' : audioFormatFromMime(mime);
+          if (isVideoNote || isVideo) {
+            const extracted = await extractAudioFromVideo(buffer, 'mp4');
+            if (extracted) {
+              asrBuf = Buffer.from(extracted.buffer);
+              format = extracted.format;
+              console.log(
+                `[ai-telegram] gramjs ${isVideoNote ? 'кружочек' : 'видео'} ffmpeg ${extracted.format} ${extracted.buffer.length}b`,
+              );
+            }
+          }
+          const asr = await transcribeAudio(asrBuf, format, asrModel);
+          if (asr?.text) {
+            const estTokens = Math.max(1, Math.ceil(asr.text.length / 4));
+            void resolveProviderCostRub({
+              model: asrModel,
+              usage: asr.usage || { total_tokens: estTokens },
+              apiKey: OPENROUTER_API_KEY,
+              baseUrl: OPENROUTER_BASE_URL,
+            })
+              .then((cost) =>
+                chargeAiUsage({
+                  tenantId,
+                  providerCostRub: cost.providerCostRub,
+                  tokens: cost.tokens || estTokens,
+                  model: asrModel,
+                  requestType: 'transcribe',
+                }),
+              )
+              .catch((err) =>
+                console.warn('[ai-telegram] gramjs ASR charge failed', err),
+              );
+            const tag = isVideoNote ? 'кружочек' : isVideo ? 'видео' : 'голос';
+            text = caption
+              ? `${caption}\n\n[${tag}]: ${asr.text}`
+              : `[${tag}]: ${asr.text}`;
+          } else if (isVideoNote) {
+            text = caption
+              ? `${caption}\n\n[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+              : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+          } else if (isVideo) {
+            text = caption
+              ? `${caption}\n\n[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+              : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+          }
+        } else {
+          const visionModel = process.env.AI_CHAT_MODEL || AI_MODEL_DEFAULTS.chat;
+          const vision = await describeImage(buffer, mime, caption, visionModel);
+          if (vision?.text) {
+            const estTokens = Math.max(1, Math.ceil(vision.text.length / 4));
+            void resolveProviderCostRub({
+              model: visionModel,
+              usage: vision.usage || { total_tokens: estTokens },
+              apiKey: OPENROUTER_API_KEY,
+              baseUrl: OPENROUTER_BASE_URL,
+            })
+              .then((cost) =>
+                chargeAiUsage({
+                  tenantId,
+                  providerCostRub: cost.providerCostRub,
+                  tokens: cost.tokens || estTokens,
+                  model: visionModel,
+                  requestType: 'vision',
+                }),
+              )
+              .catch((err) =>
+                console.warn('[ai-telegram] gramjs vision charge failed', err),
+              );
+            text = caption
+              ? `${caption}\n\n[фото]: ${vision.text}`
+              : `[фото]: ${vision.text}`;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[ai-telegram] gramjs media AI failed', err);
+    }
+  }
 
   const channel = payload.channel || 'telegram_gramjs';
   const conversation = await ensureConversation({
@@ -232,8 +426,13 @@ async function handleInternalInbound(
       role: 'user',
       content: text,
       externalMessageId: externalMessageId || undefined,
+      attachments: attachments.length ? attachments : undefined,
     },
   });
+  void maybeAttributeMailingInbound({
+    tenantId,
+    conversationId: conversation.id,
+  }).catch((err) => console.warn('[ai-telegram] mailing attribution failed', err));
   const storedAt = new Date();
 
   if (!(await shouldAiReply(conversation.id))) {
@@ -284,10 +483,49 @@ type TgMessage = {
   from?: { id: number; first_name?: string; username?: string; is_bot?: boolean };
   text?: string;
   caption?: string;
-  voice?: { file_id: string };
-  audio?: { file_id: string };
-  photo?: Array<{ file_id: string }>;
-  document?: { file_id: string; file_name?: string };
+  voice?: { file_id: string; file_unique_id?: string; mime_type?: string; file_size?: number };
+  audio?: {
+    file_id: string;
+    file_unique_id?: string;
+    mime_type?: string;
+    file_name?: string;
+    file_size?: number;
+  };
+  photo?: Array<{
+    file_id: string;
+    file_unique_id?: string;
+    file_size?: number;
+  }>;
+  document?: {
+    file_id: string;
+    file_unique_id?: string;
+    file_name?: string;
+    mime_type?: string;
+    file_size?: number;
+  };
+  video?: {
+    file_id: string;
+    file_unique_id?: string;
+    mime_type?: string;
+    file_name?: string;
+    file_size?: number;
+    duration?: number;
+  };
+  video_note?: {
+    file_id: string;
+    file_unique_id?: string;
+    length?: number;
+    duration?: number;
+    file_size?: number;
+  };
+  sticker?: { file_id: string; file_unique_id?: string; file_size?: number };
+  animation?: {
+    file_id: string;
+    file_unique_id?: string;
+    mime_type?: string;
+    file_name?: string;
+    file_size?: number;
+  };
   contact?: {
     phone_number?: string;
     first_name?: string;
@@ -554,9 +792,18 @@ async function handleInboundMessage(
   }
 
   const needsMediaPipeline =
-    !!(message.voice || message.audio || (message.photo?.length && !message.caption));
+    !!(
+      message.voice ||
+      message.audio ||
+      message.sticker ||
+      message.video_note ||
+      message.video ||
+      message.document ||
+      (message.photo?.length && !message.caption)
+    );
   if (needsMediaPipeline && OPENROUTER_API_KEY) {
-    void sendHumanLike({ botApi, chatId, bubbles: ['Секунду…'], businessConnectionId }).catch(() => {});
+    // Typing only — do not send a "Секунду…" bubble (looks like the only reply if ASR/LLM stalls).
+    void sendChatAction(botApi, chatId, 'typing', businessConnectionId);
   }
 
   const textOrMedia = await extractInboundText(message, botApi, tenantId);
@@ -656,11 +903,19 @@ async function handleInboundMessage(
       role: 'user',
       content: displayText,
       externalMessageId: String(message.message_id),
-      attachments: mediaPlaceholder
-        ? [{ type: 'stub', note: mediaPlaceholder }]
-        : undefined,
+      attachments: (() => {
+        const atts = extractBotApiAttachments(message);
+        if (atts.length) return atts;
+        if (mediaPlaceholder) return [{ type: 'stub', note: mediaPlaceholder }];
+        return undefined;
+      })(),
     },
   });
+
+  void maybeAttributeMailingInbound({
+    tenantId,
+    conversationId: conversation.id,
+  }).catch((err) => console.warn('[ai-telegram] mailing attribution failed', err));
 
   if (!(await shouldAiReply(conversation.id))) {
     if (!isAiConversationMode(conversation.mode) || conversation.aiDisabled) {
@@ -870,11 +1125,18 @@ async function generateAiBubbles(opts: {
     orderBy: { createdAt: 'desc' },
     take: CONTEXT_WINDOW + 1,
   });
-  const prior = historyDesc.slice(1).reverse();
+  const prior = filterHistoryAfterAgentUpdate(
+    historyDesc.slice(1).reverse(),
+    assigned?.updatedAt,
+  );
 
-  const basePrompt =
-    assigned?.systemPrompt || aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-  let systemPrompt = basePrompt + JSON_FORMAT_HINT;
+  const customPrompt = agentSystemPrompt(assigned);
+  const basePrompt = customPrompt || aiConfig.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+  let systemPrompt =
+    basePrompt +
+    MEDIA_INBOUND_HINT +
+    JSON_FORMAT_HINT +
+    (assigned ? AGENT_PROMPT_PRIORITY_HINT : '');
   try {
     if (assigned?.id) {
       const rag = await retrieveAgentContext({
@@ -899,7 +1161,13 @@ async function generateAiBubbles(opts: {
   }
   messages.push({ role: 'user', content: displayText });
 
-  const model = aiConfig.model || AI_MODEL_DEFAULTS.chat;
+  const agentModel =
+    assigned?.settings &&
+    typeof assigned.settings === 'object' &&
+    typeof (assigned.settings as Record<string, unknown>).model === 'string'
+      ? String((assigned.settings as Record<string, unknown>).model).trim()
+      : '';
+  const model = agentModel || aiConfig.model || AI_MODEL_DEFAULTS.chat;
   let completion;
   try {
     completion = await openai.chat.completions.create({
@@ -968,15 +1236,118 @@ async function generateAiBubbles(opts: {
   };
 }
 
+/** Download + ASR a Telegram video (regular / document-video). Caps size & duration. */
+async function asrTelegramVideo(opts: {
+  botApi: string;
+  tenantId?: string;
+  fileId: string;
+  fileSize?: number;
+  durationSec?: number;
+  caption?: string;
+  tag: 'видео' | 'кружочек';
+}): Promise<{ text?: string; mediaPlaceholder?: string }> {
+  const placeholder = `[${opts.tag}]`;
+  const failText = (reason?: string) => {
+    const body =
+      reason ||
+      `${opts.tag} — не удалось разобрать речь. Опиши текстом, пожалуйста.`;
+    return opts.caption
+      ? `${opts.caption}\n\n[${body}]`
+      : `[${body}]`;
+  };
+
+  const tooBig =
+    typeof opts.fileSize === 'number' && opts.fileSize > ASR_MEDIA_MAX_BYTES;
+  const tooLong =
+    typeof opts.durationSec === 'number' &&
+    opts.durationSec > ASR_VIDEO_MAX_DURATION_SEC;
+  if (tooBig || tooLong || !OPENROUTER_API_KEY) {
+    console.warn(
+      `[ai-telegram] ${opts.tag} ASR skip`,
+      tooLong
+        ? `duration=${opts.durationSec}s>${ASR_VIDEO_MAX_DURATION_SEC}`
+        : tooBig
+          ? `size=${opts.fileSize}>${ASR_MEDIA_MAX_BYTES}`
+          : 'no OPENROUTER_API_KEY',
+    );
+    return {
+      text: failText(
+        tooLong
+          ? `${opts.tag} слишком длинное (>${ASR_VIDEO_MAX_DURATION_SEC}с) — не разобрал звук. Опиши текстом, пожалуйста.`
+          : tooBig
+            ? `${opts.tag} слишком большое (>${Math.round(ASR_MEDIA_MAX_BYTES / (1024 * 1024))}МБ) — не разобрал звук. Опиши текстом, пожалуйста.`
+            : undefined,
+      ),
+      mediaPlaceholder: placeholder,
+    };
+  }
+
+  try {
+    const file = await downloadTelegramFile(opts.botApi, opts.fileId);
+    if (!file || file.buffer.length === 0 || file.buffer.length > ASR_MEDIA_MAX_BYTES) {
+      console.warn(
+        `[ai-telegram] ${opts.tag} download fail/oversized`,
+        file?.buffer.length ?? 0,
+      );
+      return { text: failText(), mediaPlaceholder: placeholder };
+    }
+    const asrModel = await getAsrModel();
+    const extracted = await extractAudioFromVideo(file.buffer, 'mp4');
+    const asrBuf: Buffer = extracted
+      ? Buffer.from(extracted.buffer)
+      : file.buffer;
+    const asrFmt = extracted?.format || 'mp4';
+    if (extracted) {
+      console.log(
+        `[ai-telegram] ${opts.tag} ffmpeg audio ${extracted.format} ${extracted.buffer.length}b (from ${file.buffer.length}b)`,
+      );
+    } else {
+      console.warn(
+        `[ai-telegram] ${opts.tag} ffmpeg audio extract failed; trying raw ${asrFmt}`,
+      );
+    }
+    const asr = await transcribeAudio(asrBuf, asrFmt, asrModel);
+    if (asr?.text) {
+      if (opts.tenantId) {
+        const estTokens = Math.max(1, Math.ceil(asr.text.length / 4));
+        void resolveProviderCostRub({
+          model: asrModel,
+          usage: asr.usage || { total_tokens: estTokens },
+          apiKey: OPENROUTER_API_KEY,
+          baseUrl: OPENROUTER_BASE_URL,
+        })
+          .then((cost) =>
+            chargeAiUsage({
+              tenantId: opts.tenantId!,
+              providerCostRub: cost.providerCostRub,
+              tokens: cost.tokens || estTokens,
+              model: asrModel,
+              requestType: 'transcribe',
+            }),
+          )
+          .catch((err) =>
+            console.warn(`[ai-telegram] ${opts.tag} ASR charge failed`, err),
+          );
+      }
+      return {
+        text: opts.caption
+          ? `${opts.caption}\n\n[${opts.tag}]: ${asr.text}`
+          : `[${opts.tag}]: ${asr.text}`,
+        mediaPlaceholder: placeholder,
+      };
+    }
+  } catch (err) {
+    console.warn(`[ai-telegram] ${opts.tag} ASR failed`, err);
+  }
+  return { text: failText(), mediaPlaceholder: placeholder };
+}
+
 async function extractInboundText(
   message: TgMessage,
   botApi: string,
   tenantId?: string,
 ): Promise<{ text?: string; mediaPlaceholder?: string }> {
   if (message.text) return { text: message.text };
-  if (message.caption && !message.voice && !message.audio) {
-    return { text: message.caption };
-  }
 
   if (message.voice || message.audio) {
     const fileId = message.voice?.file_id || message.audio?.file_id;
@@ -1020,7 +1391,7 @@ async function extractInboundText(
         return {
           text: message.caption
             ? `${message.caption}\n\n[голос]: ${asr.text}`
-            : asr.text,
+            : `[голос]: ${asr.text}`,
         };
       }
       return {
@@ -1036,21 +1407,24 @@ async function extractInboundText(
     }
   }
 
-  if (message.photo?.length) {
+  if (message.photo?.length || message.sticker) {
     try {
-      const largest = message.photo[message.photo.length - 1];
-      const file = await downloadTelegramFile(botApi, largest.file_id);
+      const fileId = message.sticker
+        ? message.sticker.file_id
+        : message.photo![message.photo!.length - 1].file_id;
+      const file = await downloadTelegramFile(botApi, fileId);
       if (!file) {
         return {
           text: message.caption,
-          mediaPlaceholder: '[фото — файл недоступен]',
+          mediaPlaceholder: message.sticker ? '[стикер — файл недоступен]' : '[фото — файл недоступен]',
         };
       }
       const visionModel =
         process.env.AI_CHAT_MODEL || AI_MODEL_DEFAULTS.chat;
+      const mime = message.sticker ? 'image/webp' : 'image/jpeg';
       const vision = await describeImage(
         file.buffer,
-        'image/jpeg',
+        mime,
         message.caption,
         visionModel,
       );
@@ -1074,33 +1448,222 @@ async function extractInboundText(
             )
             .catch((err) => console.warn('[ai-telegram] vision charge failed', err));
         }
+        const tag = message.sticker ? '[стикер]' : '[фото]';
         return {
           text: message.caption
-            ? `${message.caption}\n\n[фото]: ${vision.text}`
-            : `[фото]: ${vision.text}`,
+            ? `${message.caption}\n\n${tag}: ${vision.text}`
+            : `${tag}: ${vision.text}`,
         };
       }
       return {
         text: message.caption,
-        mediaPlaceholder: '[фото — не удалось описать]',
+        mediaPlaceholder: message.sticker
+          ? '[стикер — не удалось описать]'
+          : '[фото — не удалось описать]',
       };
     } catch (err) {
       console.error('[ai-telegram] vision failed:', err);
       return {
         text: message.caption,
-        mediaPlaceholder: '[фото — ошибка vision]',
+        mediaPlaceholder: message.sticker ? '[стикер — ошибка vision]' : '[фото — ошибка vision]',
       };
     }
   }
 
+  if (message.video_note) {
+    return await asrTelegramVideo({
+      botApi,
+      tenantId,
+      fileId: message.video_note.file_id,
+      fileSize: message.video_note.file_size,
+      durationSec: message.video_note.duration,
+      caption: message.caption,
+      tag: 'кружочек',
+    });
+  }
+
+  if (message.video) {
+    return await asrTelegramVideo({
+      botApi,
+      tenantId,
+      fileId: message.video.file_id,
+      fileSize: message.video.file_size,
+      durationSec: message.video.duration,
+      caption: message.caption,
+      tag: 'видео',
+    });
+  }
+
+  if (message.animation) {
+    return {
+      text: message.caption,
+      mediaPlaceholder: '[видео]',
+    };
+  }
+
   if (message.document) {
+    const mime = (message.document.mime_type || '').toLowerCase();
+    if (mime.startsWith('video/')) {
+      return await asrTelegramVideo({
+        botApi,
+        tenantId,
+        fileId: message.document.file_id,
+        fileSize: message.document.file_size,
+        caption: message.caption,
+        tag: 'видео',
+      });
+    }
+    const docKind = detectDocumentKind({
+      mimeType: message.document.mime_type,
+      fileName: message.document.file_name,
+    });
+    if (docKind) {
+      const size = message.document.file_size;
+      if (typeof size === 'number' && size > DOC_MEDIA_MAX_BYTES) {
+        return {
+          text: formatDocumentAiText({
+            kind: docKind,
+            text: null,
+            caption: message.caption,
+            fileName: message.document.file_name,
+          }),
+          mediaPlaceholder: `[файл: ${message.document.file_name || 'document'}]`,
+        };
+      }
+      try {
+        const file = await downloadTelegramFile(botApi, message.document.file_id);
+        if (!file || file.buffer.length > DOC_MEDIA_MAX_BYTES) {
+          return {
+            text: formatDocumentAiText({
+              kind: docKind,
+              text: null,
+              caption: message.caption,
+            }),
+            mediaPlaceholder: `[файл: ${message.document.file_name || 'document'}]`,
+          };
+        }
+        const extracted = await extractDocumentText(file.buffer, docKind);
+        return {
+          text: formatDocumentAiText({
+            kind: docKind,
+            text: extracted,
+            caption: message.caption,
+            fileName: message.document.file_name,
+          }),
+          mediaPlaceholder: `[файл: ${message.document.file_name || 'document'}]`,
+        };
+      } catch (err) {
+        console.warn(`[ai-telegram] ${docKind} extract failed`, err);
+        return {
+          text: formatDocumentAiText({
+            kind: docKind,
+            text: null,
+            caption: message.caption,
+          }),
+          mediaPlaceholder: `[файл: ${message.document.file_name || 'document'}]`,
+        };
+      }
+    }
     return {
       text: message.caption,
       mediaPlaceholder: `[файл: ${message.document.file_name || 'document'}]`,
     };
   }
 
+  if (message.caption) return { text: message.caption };
+
   return {};
+}
+
+type BotApiAttachment = {
+  type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker' | 'animation';
+  fileId: string;
+  fileUniqueId?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSize?: number;
+};
+
+/** Persist real Telegram file_id so CRM photo preview works (gift-bot parity). */
+function extractBotApiAttachments(message: TgMessage): BotApiAttachment[] {
+  const out: BotApiAttachment[] = [];
+  if (Array.isArray(message.photo) && message.photo.length > 0) {
+    const best = message.photo[message.photo.length - 1];
+    out.push({
+      type: 'photo',
+      fileId: best.file_id,
+      fileUniqueId: best.file_unique_id,
+      fileSize: best.file_size,
+    });
+  }
+  if (message.video) {
+    out.push({
+      type: 'video',
+      fileId: message.video.file_id,
+      fileUniqueId: message.video.file_unique_id,
+      mimeType: message.video.mime_type,
+      fileName: message.video.file_name,
+      fileSize: message.video.file_size,
+    });
+  }
+  if (message.video_note) {
+    out.push({
+      type: 'video',
+      fileId: message.video_note.file_id,
+      fileUniqueId: message.video_note.file_unique_id,
+      mimeType: 'video/mp4',
+      fileName: 'video_note.mp4',
+      fileSize: message.video_note.file_size,
+    });
+  }
+  if (message.document) {
+    out.push({
+      type: 'document',
+      fileId: message.document.file_id,
+      fileUniqueId: message.document.file_unique_id,
+      mimeType: message.document.mime_type,
+      fileName: message.document.file_name,
+      fileSize: message.document.file_size,
+    });
+  }
+  if (message.audio) {
+    out.push({
+      type: 'audio',
+      fileId: message.audio.file_id,
+      fileUniqueId: message.audio.file_unique_id,
+      mimeType: message.audio.mime_type,
+      fileName: message.audio.file_name,
+      fileSize: message.audio.file_size,
+    });
+  }
+  if (message.voice) {
+    out.push({
+      type: 'voice',
+      fileId: message.voice.file_id,
+      fileUniqueId: message.voice.file_unique_id,
+      mimeType: message.voice.mime_type,
+      fileSize: message.voice.file_size,
+    });
+  }
+  if (message.sticker) {
+    out.push({
+      type: 'sticker',
+      fileId: message.sticker.file_id,
+      fileUniqueId: message.sticker.file_unique_id,
+      fileSize: message.sticker.file_size,
+    });
+  }
+  if (message.animation) {
+    out.push({
+      type: 'animation',
+      fileId: message.animation.file_id,
+      fileUniqueId: message.animation.file_unique_id,
+      mimeType: message.animation.mime_type,
+      fileName: message.animation.file_name,
+      fileSize: message.animation.file_size,
+    });
+  }
+  return out;
 }
 
 function botTokenFromApi(botApi: string): string {
@@ -1111,7 +1674,19 @@ function botTokenFromApi(botApi: string): string {
 function audioFormatFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() || 'ogg';
   if (ext === 'oga' || ext === 'opus') return 'ogg';
-  if (['ogg', 'mp3', 'wav', 'flac', 'm4a', 'webm', 'aac'].includes(ext)) return ext;
+  if (ext === 'mp4' || ext === 'm4v' || ext === 'm4a') return ext === 'm4a' ? 'm4a' : 'mp4';
+  if (['ogg', 'mp3', 'wav', 'flac', 'webm', 'aac'].includes(ext)) return ext;
+  return 'ogg';
+}
+
+function audioFormatFromMime(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('flac')) return 'flac';
+  if (m.includes('m4a') || m.includes('mp4')) return 'm4a';
+  if (m.includes('webm')) return 'webm';
+  if (m.includes('aac')) return 'aac';
   return 'ogg';
 }
 
@@ -1151,23 +1726,34 @@ async function transcribeAudio(
   model: string,
 ): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
   if (!OPENROUTER_API_KEY) return null;
-  const res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
-      'X-Title': 'Voxly AI Telegram ASR',
-    },
-    body: JSON.stringify({
-      model,
-      language: 'ru',
-      input_audio: {
-        data: buffer.toString('base64'),
-        format,
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  let res: Response;
+  try {
+    res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
+        'X-Title': 'Voxly AI Telegram ASR',
       },
-    }),
-  });
+      body: JSON.stringify({
+        model,
+        language: 'ru',
+        input_audio: {
+          data: buffer.toString('base64'),
+          format,
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    console.error('[ai-telegram] transcription fetch failed', err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     console.error('[ai-telegram] transcription HTTP', res.status, errText.slice(0, 400));
@@ -1653,34 +2239,38 @@ async function syncLeadToCrm(opts: {
   }
 }
 
-/** Conversation.aiAgentId → else BotInstance.defaultAiAgentId; null = AI off (ADR-014). */
+/** Conversation.aiAgentId → else BotInstance.defaultAiAgentId; null = AI off (ADR-014).
+ * Always re-reads AiAgent by id so portal PATCH (prompt/model) applies on the next message.
+ */
 async function resolveAssignedAgent(conversationId: string): Promise<{
   id: string;
   name: string;
   systemPrompt: string | null;
   settings: unknown;
   status: string;
+  updatedAt: Date;
 } | null> {
   const c = await prisma.conversation.findUnique({
     where: { id: conversationId },
     select: {
       aiAgentId: true,
-      botInstanceId: true,
-      aiAgent: {
-        select: { id: true, name: true, systemPrompt: true, settings: true, status: true },
-      },
-      botInstance: {
-        select: {
-          defaultAiAgent: {
-            select: { id: true, name: true, systemPrompt: true, settings: true, status: true },
-          },
-        },
-      },
+      botInstance: { select: { defaultAiAgentId: true } },
     },
   });
   if (!c) return null;
-  const agent = c.aiAgent || c.botInstance?.defaultAiAgent || null;
-  if (!agent || agent.status !== 'active') return null;
+  const agentId = c.aiAgentId || c.botInstance?.defaultAiAgentId;
+  if (!agentId) return null;
+  const agent = await prisma.aiAgent.findFirst({
+    where: { id: agentId, status: 'active' },
+    select: {
+      id: true,
+      name: true,
+      systemPrompt: true,
+      settings: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
   return agent;
 }
 
@@ -2141,6 +2731,60 @@ async function sendBotMessage(
     return false;
   }
   return true;
+}
+
+async function maybeAttributeMailingInbound(opts: {
+  tenantId: string;
+  conversationId: string;
+}): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: opts.conversationId },
+  });
+  if (
+    !conversation?.lastMailingBroadcastId ||
+    !isWithinMailingAttributionWindow(conversation.lastMailingAt)
+  ) {
+    return;
+  }
+  if (!conversation.twentyPersonId) return;
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
+  if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) return;
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId: opts.tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (!owner?.user?.email) return;
+
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  await client.authenticateWorkspace(
+    owner.user.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+
+  const broadcast = await prisma.broadcast.findUnique({
+    where: { id: conversation.lastMailingBroadcastId },
+    select: { messageJson: true },
+  });
+  const channel = (broadcast?.messageJson as { channel?: string } | null)?.channel;
+  const note = mailingAttributionNote({
+    broadcastId: conversation.lastMailingBroadcastId,
+    kind: channel === 'story' ? 'story' : 'broadcast',
+  });
+  await client.createNoteForPerson({
+    personId: conversation.twentyPersonId,
+    body: note,
+    title: note,
+  });
+  await fireGoal({
+    tenantId: opts.tenantId,
+    goalName: 'mailing_reply',
+    subscriberId: conversation.platformUserId,
+    botInstanceId: conversation.botInstanceId || undefined,
+  });
 }
 
 main().catch(console.error);

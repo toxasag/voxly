@@ -246,5 +246,5 @@ export async function refreshCrmChatAppForTenant(opts: {
     forceReinstall: true,
   });
 
-  return { ok: true, versionHint: '0.1.8+' };
+  return { ok: true, versionHint: '0.1.10+' };
 }

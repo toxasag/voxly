@@ -22,6 +22,12 @@ import {
   type GiftFunnelConfig,
   type GiftPromoPost,
 } from '@voxly/shared';
+import {
+  requireActiveAddon,
+  startChannelTrial,
+  trialMeta,
+  type ChannelTrialType,
+} from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -93,14 +99,82 @@ const campaignSchema = z.object({
   }),
 });
 
+const giftFunnelPhaseSchema = z.enum(['started', 'awaiting_sub', 'gifted', 'not_gifted']);
+
 const broadcastSchema = z.object({
   segment: z.enum(['gifted', 'not_gifted', 'all']),
+  /** Optional AND-filter on GiftSubscriber.funnelPhase */
+  funnelPhase: giftFunnelPhaseSchema.optional(),
   text: z.string().min(1).max(4000),
   mediaUrl: optionalHttpsUrl,
   telegramFileId: optionalFileId,
   mediaType: z.enum(['photo', 'video']).optional(),
   scheduledAt: z.string().datetime().optional(),
 });
+
+/** GramJS / WhatsApp mailing — audience = Conversations for the account */
+const channelBroadcastSchema = z.object({
+  text: z.string().min(1).max(4000),
+  mediaUrl: optionalHttpsUrl,
+  mediaType: z.enum(['photo', 'video']).optional(),
+  scheduledAt: z.string().datetime().optional(),
+});
+
+/** Stories — media required; send supported for GramJS only (ADR-019) */
+const storyBroadcastSchema = z.object({
+  channel: z.literal('story'),
+  text: z.string().max(4000).optional().default(''),
+  mediaUrl: z.string().url(),
+  mediaType: z.enum(['photo', 'video']).optional(),
+  scheduledAt: z.string().datetime().optional(),
+});
+
+const patchBroadcastSchema = z.object({
+  segment: z.enum(['gifted', 'not_gifted', 'all']).optional(),
+  funnelPhase: giftFunnelPhaseSchema.nullable().optional(),
+  text: z.string().min(1).max(4000).optional(),
+  mediaUrl: optionalHttpsUrl.nullable().optional(),
+  telegramFileId: optionalFileId.nullable().optional(),
+  mediaType: z.enum(['photo', 'video']).nullable().optional(),
+  scheduledAt: z.string().datetime().optional(),
+});
+
+function giftSubscriberAudienceWhere(input: {
+  campaignId: string;
+  segment: 'gifted' | 'not_gifted' | 'all';
+  funnelPhase?: string | null;
+}) {
+  const where: Record<string, unknown> = { campaignId: input.campaignId };
+  if (input.segment === 'gifted') where.giftDelivered = true;
+  if (input.segment === 'not_gifted') where.giftDelivered = false;
+  if (input.funnelPhase) where.funnelPhase = input.funnelPhase;
+  return where;
+}
+
+function conversationAudienceWhere(botId: string, tenantId: string) {
+  return {
+    tenantId,
+    botInstanceId: botId,
+    status: { not: 'closed' },
+  };
+}
+
+function mailingChannelForBotType(
+  botType: string,
+): 'gift' | 'gramjs' | 'wa' | null {
+  if (botType === 'gift') return 'gift';
+  if (botType === 'ai_gramjs') return 'gramjs';
+  if (botType === 'ai_wa') return 'wa';
+  return null;
+}
+
+function addonTypeForMailingChannel(
+  channel: 'gift' | 'gramjs' | 'wa' | 'story',
+): ChannelTrialType {
+  if (channel === 'gift') return PRODUCT_CODES.MAILING_BOT;
+  if (channel === 'story') return PRODUCT_CODES.MAILING_STORIES;
+  return PRODUCT_CODES.MAILING_ACCOUNTS;
+}
 
 const promoSchema = z.object({
   campaignId: z.string().cuid().optional(),
@@ -313,7 +387,65 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     limits: { fileSize: 48 * 1024 * 1024, files: 1 },
   });
 
-  // --- Start 14-day gift bot trial ---
+  // --- Mailing add-ons billing (bot / accounts / stories) ---
+  fastify.get('/mailing/billing', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const prisma = fastify.prisma;
+    const types = [
+      PRODUCT_CODES.MAILING_BOT,
+      PRODUCT_CODES.MAILING_ACCOUNTS,
+      PRODUCT_CODES.MAILING_STORIES,
+    ] as const;
+    const addons = await prisma.addon.findMany({
+      where: { tenantId, type: { in: [...types] } },
+    });
+    const byType = Object.fromEntries(addons.map((a) => [a.type, a]));
+    return reply.send({
+      trialDays: TRIAL_PERIOD_DAYS,
+      products: {
+        mailing_bot: {
+          price: PRICING.MAILING_BOT_MONTHLY,
+          ...trialMeta(byType.mailing_bot || null),
+        },
+        mailing_accounts: {
+          price: PRICING.MAILING_ACCOUNTS_MONTHLY,
+          ...trialMeta(byType.mailing_accounts || null),
+        },
+        mailing_stories: {
+          price: PRICING.MAILING_STORIES_MONTHLY,
+          ...trialMeta(byType.mailing_stories || null),
+        },
+      },
+    });
+  });
+
+  fastify.post('/mailing/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can start mailing trial' });
+    }
+    const type = String((request.body as { type?: string })?.type || '');
+    if (
+      type !== PRODUCT_CODES.MAILING_BOT &&
+      type !== PRODUCT_CODES.MAILING_ACCOUNTS &&
+      type !== PRODUCT_CODES.MAILING_STORIES
+    ) {
+      return reply.code(400).send({ error: 'type must be mailing_bot|mailing_accounts|mailing_stories' });
+    }
+    const result = await startChannelTrial(fastify.prisma, tenantId, type);
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error, addon: result.addon });
+    }
+    return reply.send({
+      ok: true,
+      isTrial: true,
+      days: result.days,
+      addon: result.addon,
+    });
+  });
+
+  // --- Start gift bot trial ---
   fastify.post('/gift/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;
@@ -1464,7 +1596,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  // --- Broadcast to segment ---
+  // --- Broadcast to segment / channel audience / stories ---
   fastify.post('/:botId/broadcasts', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;
@@ -1473,45 +1605,392 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can broadcast' });
     }
 
-    const parsed = broadcastSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: parsed.error.flatten() });
-    }
-
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
       where: { id: botId, tenantId },
       include: { giftCampaigns: { where: { isActive: true }, take: 1 } },
     });
-    if (!bot || !bot.giftCampaigns[0]) {
-      return reply.code(404).send({ error: 'Active campaign not found' });
+    if (!bot) {
+      return reply.code(404).send({ error: 'Bot not found' });
     }
 
-    const campaignId = bot.giftCampaigns[0].id;
-    const where: any = { campaignId };
-    if (parsed.data.segment === 'gifted') where.giftDelivered = true;
-    if (parsed.data.segment === 'not_gifted') where.giftDelivered = false;
+    const body = (request.body || {}) as Record<string, unknown>;
+    const whenFrom = (scheduledAt?: string) =>
+      scheduledAt ? new Date(scheduledAt) : new Date();
 
-    const totalCount = await prisma.giftSubscriber.count({ where });
-    const when = parsed.data.scheduledAt ? new Date(parsed.data.scheduledAt) : new Date();
+    // --- Stories ---
+    if (body.channel === 'story') {
+      const parsed = storyBroadcastSchema.safeParse(body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.flatten() });
+      }
+      const storyVia =
+        bot.botType === 'ai_gramjs'
+          ? 'gramjs'
+          : bot.botType === 'ai_wa'
+            ? 'wa'
+            : bot.botType === 'ai_tg'
+              ? 'ai_tg'
+              : null;
+      if (!storyVia) {
+        return reply.code(400).send({
+          error: 'Сторис: нужен аккаунт GramJS, WhatsApp или Business-бот',
+        });
+      }
+      const gate = await requireActiveAddon(
+        prisma,
+        tenantId,
+        PRODUCT_CODES.MAILING_STORIES,
+      );
+      if (!gate.ok) {
+        return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+      }
+
+      const broadcast = await prisma.broadcast.create({
+        data: {
+          tenantId,
+          status: 'scheduled',
+          scheduledAt: whenFrom(parsed.data.scheduledAt),
+          totalCount: 1,
+          messageJson: {
+            channel: 'story',
+            storyVia,
+            botId,
+            text: parsed.data.text || '',
+            mediaUrl: parsed.data.mediaUrl,
+            mediaType: parsed.data.mediaType || undefined,
+          },
+        },
+      });
+      return reply.send({ broadcast, queued: 1 });
+    }
+
+    const channel = mailingChannelForBotType(bot.botType);
+    if (!channel) {
+      return reply.code(400).send({ error: 'Broadcasts not supported for this bot type' });
+    }
+
+    const gate = await requireActiveAddon(
+      prisma,
+      tenantId,
+      addonTypeForMailingChannel(channel),
+    );
+    if (!gate.ok) {
+      return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+    }
+
+    if (channel === 'gift') {
+      const parsed = broadcastSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.flatten() });
+      }
+      if (!bot.giftCampaigns[0]) {
+        return reply.code(404).send({ error: 'Active campaign not found' });
+      }
+
+      const campaignId = bot.giftCampaigns[0].id;
+      const where = giftSubscriberAudienceWhere({
+        campaignId,
+        segment: parsed.data.segment,
+        funnelPhase: parsed.data.funnelPhase,
+      });
+
+      const totalCount = await prisma.giftSubscriber.count({ where });
+      const broadcast = await prisma.broadcast.create({
+        data: {
+          tenantId,
+          status: 'scheduled',
+          scheduledAt: whenFrom(parsed.data.scheduledAt),
+          totalCount,
+          messageJson: {
+            channel: 'gift',
+            botId,
+            campaignId,
+            segment: parsed.data.segment,
+            funnelPhase: parsed.data.funnelPhase || undefined,
+            text: parsed.data.text,
+            mediaUrl: parsed.data.telegramFileId ? undefined : parsed.data.mediaUrl || undefined,
+            telegramFileId: parsed.data.telegramFileId || undefined,
+            mediaType: parsed.data.mediaType || undefined,
+          },
+        },
+      });
+
+      return reply.send({ broadcast, queued: totalCount });
+    }
+
+    const parsed = channelBroadcastSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+    if (bot.status !== 'active') {
+      return reply.code(409).send({ error: 'Аккаунт не активен' });
+    }
+
+    const totalCount = await prisma.conversation.count({
+      where: conversationAudienceWhere(botId, tenantId),
+    });
     const broadcast = await prisma.broadcast.create({
       data: {
         tenantId,
         status: 'scheduled',
-        scheduledAt: when,
+        scheduledAt: whenFrom(parsed.data.scheduledAt),
         totalCount,
         messageJson: {
+          channel,
           botId,
-          campaignId,
-          segment: parsed.data.segment,
           text: parsed.data.text,
           mediaUrl: parsed.data.mediaUrl || undefined,
+          mediaType: parsed.data.mediaType || undefined,
         },
       },
     });
 
     return reply.send({ broadcast, queued: totalCount });
   });
+
+  // --- Edit scheduled broadcast (before scanner picks it up) ---
+  fastify.patch(
+    '/:botId/broadcasts/:broadcastId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId, broadcastId } = request.params as { botId: string; broadcastId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can broadcast' });
+      }
+
+      const prisma = fastify.prisma;
+      const existing = await prisma.broadcast.findFirst({
+        where: { id: broadcastId, tenantId },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: 'Broadcast not found' });
+      }
+      if (existing.status !== 'scheduled') {
+        return reply.code(409).send({ error: 'Можно редактировать только запланированные рассылки' });
+      }
+
+      const prev = (existing.messageJson || {}) as Record<string, unknown>;
+      if (prev.botId !== botId) {
+        return reply.code(404).send({ error: 'Broadcast not found' });
+      }
+
+      const bot = await prisma.botInstance.findFirst({
+        where: { id: botId, tenantId },
+        include: { giftCampaigns: { where: { isActive: true }, take: 1 } },
+      });
+      if (!bot) {
+        return reply.code(404).send({ error: 'Bot not found' });
+      }
+
+      const channel =
+        prev.channel === 'gramjs' ||
+        prev.channel === 'wa' ||
+        prev.channel === 'gift' ||
+        prev.channel === 'story'
+          ? prev.channel
+          : mailingChannelForBotType(bot.botType) || 'gift';
+
+      if (channel === 'story') {
+        const gate = await requireActiveAddon(
+          prisma,
+          tenantId,
+          PRODUCT_CODES.MAILING_STORIES,
+        );
+        if (!gate.ok) {
+          return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+        }
+        const parsed = patchBroadcastSchema
+          .pick({ text: true, mediaUrl: true, mediaType: true, scheduledAt: true })
+          .safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ error: parsed.error.flatten() });
+        }
+        const text =
+          parsed.data.text !== undefined
+            ? parsed.data.text
+            : typeof prev.text === 'string'
+              ? prev.text
+              : '';
+        let mediaUrl: string | undefined =
+          typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
+        let mediaType: 'photo' | 'video' | undefined =
+          prev.mediaType === 'video' || prev.mediaType === 'photo'
+            ? prev.mediaType
+            : undefined;
+        if (parsed.data.mediaUrl !== undefined) {
+          mediaUrl = parsed.data.mediaUrl || undefined;
+        }
+        if (parsed.data.mediaType !== undefined) {
+          mediaType = parsed.data.mediaType || undefined;
+        }
+        if (!mediaUrl) {
+          return reply.code(400).send({ error: 'mediaUrl required for stories' });
+        }
+        const scheduledAt = parsed.data.scheduledAt
+          ? new Date(parsed.data.scheduledAt)
+          : existing.scheduledAt;
+        const broadcast = await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: {
+            scheduledAt,
+            messageJson: {
+              ...prev,
+              channel: 'story',
+              botId,
+              text,
+              mediaUrl,
+              mediaType: mediaType || undefined,
+            },
+          },
+        });
+        return reply.send({ broadcast, queued: 1 });
+      }
+
+      const gate = await requireActiveAddon(
+        prisma,
+        tenantId,
+        addonTypeForMailingChannel(channel === 'gift' ? 'gift' : channel),
+      );
+      if (!gate.ok) {
+        return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+      }
+
+      if (channel === 'gift') {
+        const parsed = patchBroadcastSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ error: parsed.error.flatten() });
+        }
+        if (!bot.giftCampaigns[0]) {
+          return reply.code(404).send({ error: 'Active campaign not found' });
+        }
+
+        const segment =
+          parsed.data.segment ??
+          (prev.segment === 'gifted' || prev.segment === 'not_gifted' || prev.segment === 'all'
+            ? prev.segment
+            : 'all');
+        const funnelPhase =
+          parsed.data.funnelPhase === null
+            ? undefined
+            : parsed.data.funnelPhase !== undefined
+              ? parsed.data.funnelPhase
+              : typeof prev.funnelPhase === 'string'
+                ? prev.funnelPhase
+                : undefined;
+        const text =
+          parsed.data.text ?? (typeof prev.text === 'string' ? prev.text : '');
+        if (!text.trim()) {
+          return reply.code(400).send({ error: 'text required' });
+        }
+
+        let telegramFileId: string | undefined =
+          typeof prev.telegramFileId === 'string' ? prev.telegramFileId : undefined;
+        let mediaUrl: string | undefined =
+          typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
+        let mediaType: 'photo' | 'video' | undefined =
+          prev.mediaType === 'video' || prev.mediaType === 'photo'
+            ? prev.mediaType
+            : undefined;
+
+        if (parsed.data.telegramFileId !== undefined) {
+          telegramFileId = parsed.data.telegramFileId || undefined;
+          if (telegramFileId) mediaUrl = undefined;
+        }
+        if (parsed.data.mediaUrl !== undefined) {
+          mediaUrl = parsed.data.mediaUrl || undefined;
+          if (mediaUrl) telegramFileId = undefined;
+        }
+        if (parsed.data.mediaType !== undefined) {
+          mediaType = parsed.data.mediaType || undefined;
+        }
+        if (!telegramFileId && !mediaUrl) mediaType = undefined;
+
+        const campaignId = bot.giftCampaigns[0].id;
+        const where = giftSubscriberAudienceWhere({ campaignId, segment, funnelPhase });
+        const totalCount = await prisma.giftSubscriber.count({ where });
+        const scheduledAt = parsed.data.scheduledAt
+          ? new Date(parsed.data.scheduledAt)
+          : existing.scheduledAt;
+
+        const broadcast = await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: {
+            scheduledAt,
+            totalCount,
+            messageJson: {
+              ...prev,
+              channel: 'gift',
+              botId,
+              campaignId,
+              segment,
+              funnelPhase: funnelPhase || undefined,
+              text,
+              mediaUrl: telegramFileId ? undefined : mediaUrl,
+              telegramFileId: telegramFileId || undefined,
+              mediaType: mediaType || undefined,
+            },
+          },
+        });
+
+        return reply.send({ broadcast, queued: totalCount });
+      }
+
+      const parsed = patchBroadcastSchema
+        .pick({ text: true, mediaUrl: true, mediaType: true, scheduledAt: true })
+        .safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: parsed.error.flatten() });
+      }
+
+      const text =
+        parsed.data.text ?? (typeof prev.text === 'string' ? prev.text : '');
+      if (!text.trim()) {
+        return reply.code(400).send({ error: 'text required' });
+      }
+
+      let mediaUrl: string | undefined =
+        typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
+      let mediaType: 'photo' | 'video' | undefined =
+        prev.mediaType === 'video' || prev.mediaType === 'photo'
+          ? prev.mediaType
+          : undefined;
+      if (parsed.data.mediaUrl !== undefined) {
+        mediaUrl = parsed.data.mediaUrl || undefined;
+      }
+      if (parsed.data.mediaType !== undefined) {
+        mediaType = parsed.data.mediaType || undefined;
+      }
+      if (!mediaUrl) mediaType = undefined;
+
+      const totalCount = await prisma.conversation.count({
+        where: conversationAudienceWhere(botId, tenantId),
+      });
+      const scheduledAt = parsed.data.scheduledAt
+        ? new Date(parsed.data.scheduledAt)
+        : existing.scheduledAt;
+
+      const broadcast = await prisma.broadcast.update({
+        where: { id: broadcastId },
+        data: {
+          scheduledAt,
+          totalCount,
+          messageJson: {
+            ...prev,
+            channel,
+            botId,
+            text,
+            mediaUrl: mediaUrl || undefined,
+            mediaType: mediaType || undefined,
+          },
+        },
+      });
+
+      return reply.send({ broadcast, queued: totalCount });
+    },
+  );
 
   // --- Broadcast history ---
   fastify.get('/:botId/broadcasts', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -1535,8 +2014,13 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           scheduledAt: b.scheduledAt,
           sentCount: b.sentCount,
           totalCount: b.totalCount,
+          channel: msg?.channel || 'gift',
           segment: msg?.segment,
+          funnelPhase: msg?.funnelPhase ?? null,
           text: msg?.text,
+          mediaUrl: msg?.mediaUrl ?? null,
+          telegramFileId: msg?.telegramFileId ?? null,
+          mediaType: msg?.mediaType ?? null,
           createdAt: b.createdAt,
         };
       });

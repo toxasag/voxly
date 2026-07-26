@@ -6,11 +6,26 @@ import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { Prisma } from '@voxly/db';
 import { parseAgentLearnSettings } from '@voxly/ai-core';
+import { AI_MODEL_DEFAULTS } from '@voxly/shared';
 import {
   deleteKnowledgeFile,
   saveKnowledgeUpload,
 } from '../services/ai-knowledge.js';
 import { ingestWonDealsForAgent } from '../services/ai-sales-learn.js';
+
+function platformDefaultChatModel(): string {
+  return (
+    process.env.AI_CHAT_MODEL?.trim() ||
+    process.env.AI_DEFAULT_MODEL?.trim() ||
+    AI_MODEL_DEFAULTS.chat
+  );
+}
+
+function agentModelFromSettings(settings: unknown): string | null {
+  if (!settings || typeof settings !== 'object') return null;
+  const m = (settings as Record<string, unknown>).model;
+  return typeof m === 'string' && m.trim() ? m.trim() : null;
+}
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -32,11 +47,16 @@ function serializeAgent(a: {
   };
 }) {
   const learn = parseAgentLearnSettings(a.settings);
+  const model = agentModelFromSettings(a.settings);
+  const defaultModel = platformDefaultChatModel();
   return {
     id: a.id,
     name: a.name,
     systemPrompt: a.systemPrompt,
     settings: a.settings,
+    model,
+    effectiveModel: model || defaultModel,
+    defaultModel,
     status: a.status,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
@@ -80,7 +100,7 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
         },
       },
     });
-    return reply.send({ agents: agents.map(serializeAgent) });
+    return reply.send({ agents: agents.map(serializeAgent), defaultChatModel: platformDefaultChatModel() });
   });
 
   fastify.post('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -190,6 +210,7 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
       .object({
         name: z.string().min(1).max(120).optional(),
         systemPrompt: z.string().max(20000).optional().nullable(),
+        model: z.string().min(1).max(120).optional().nullable(),
         settings: z.record(z.unknown()).optional().nullable(),
         status: z.enum(['active', 'archived']).optional(),
         learnFromWonDeals: z.boolean().optional(),
@@ -212,6 +233,16 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
       body.data.settings !== undefined
         ? (body.data.settings as Record<string, unknown> | null)
         : ((existing.settings as Record<string, unknown> | null) || {});
+    if (body.data.model !== undefined) {
+      nextSettings = {
+        ...(typeof nextSettings === 'object' && nextSettings ? nextSettings : {}),
+      };
+      if (body.data.model === null || body.data.model.trim() === '') {
+        delete nextSettings.model;
+      } else {
+        nextSettings.model = body.data.model.trim();
+      }
+    }
     if (body.data.learnFromWonDeals !== undefined || body.data.wonStages !== undefined) {
       nextSettings = {
         ...(typeof nextSettings === 'object' && nextSettings ? nextSettings : {}),
@@ -223,6 +254,7 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
     }
     if (
       body.data.settings !== undefined ||
+      body.data.model !== undefined ||
       body.data.learnFromWonDeals !== undefined ||
       body.data.wonStages !== undefined
     ) {

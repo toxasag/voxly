@@ -1,3 +1,15 @@
+### 2026-07-26 — «Рассылка» in-CRM like Chat (ADR-018 amend)
+
+- Goal: Stop portal LINK sidebar UX; ship mailing as Twenty STANDALONE_PAGE + front-component (same pattern as voxly-crm-chat).
+- Changes:
+  - crm-chat **0.1.17**: `mailing-panel` front-component; `mailing.page-layout` STANDALONE_PAGE; nav `PAGE_LAYOUT` «Рассылка»; logic `/s/mailing/context|start-trial|bots/:id/broadcasts`.
+  - Removed portal LINK nav items (bot/gramjs/whatsapp/stories).
+  - Reuses Broadcast API + service-token auth; bot compose + trial + history (text/schedule; media later).
+  - ADR-018 amended; CAPABILITIES / steps.
+- Verify: `yarn typecheck` in `twenty-app/voxly-crm-chat` OK. Apply via refresh-crm-chat / `yarn twenty` sync — **no prod deploy** this session.
+- Broken: GramJS/WA/Stories not in CRM panel yet; media upload not in panel; edit scheduled only on portal.
+- Next: local/prod `refresh-crm-chat` for john when user asks; optional multi-tab hub.
+
 ### 2026-07-26 — Portal indigo shadcn theme live (prod)
 
 - Goal: Ship shadcn indigo theme + dashboard big-bang to prod; open PR.
@@ -14,7 +26,10 @@
   - Confirmed Business/GramJS/WA already share `@voxly/ai-core` video ASR (ffmpeg) + PDF/DOCX + `MEDIA_INBOUND_HINT`.
   - **Gift:** `enrichGiftInboundMedia` (voice/кружочек/video ASR, vision, PDF/DOCX); fix missing `video_note` inbound; Dockerfile `ffmpeg`; compose `OPENROUTER_*` / `AI_*`; soft AI wallet charge.
   - ADR-021; CAPABILITIES / CHAT / FLOWS / DATA / INC-063 / steps.
-- Deploy: `./scripts/prod-deploy.sh` (dry-run then) `ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge,gift-bot-worker,saas-api,compose` (+ refresh-crm-chat).
+- Deploy: `./scripts/prod-deploy.sh ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge,gift-bot-worker,saas-api,compose`
+  - Backup `/opt/voxly/backups/20260726-200949/`
+  - Smoke portal + api health **200**; gift-bot has ffmpeg + OPENROUTER; containers Up
+  - `refresh-crm-chat` john/lexx/antontest/antontest3 → `{ok:true, versionHint:"0.1.10+"}`
 - Verify: parity matrix in CHAT.md; smoke portal/api; gift CRM shows `[кружочек]:` / `[документ PDF]:` on inbound.
 - Broken: GramJS outbound media still N/A; gift has no sales LLM (by design); legacy `.doc` unsupported.
 - Next: user smoke gift + WA + GramJS media; **rotate root SSH password**.

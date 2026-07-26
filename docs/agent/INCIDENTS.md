@@ -5,6 +5,24 @@
 
 ---
 
+### INC-063 — GramJS / WA / TG Business media missing in CRM chat
+- **Симптом:** фото/видео/стикер/кружочек приходят в Telegram/WA, в CRM «Чат» нет превью (или сообщение не появляется); AI не «видит» медиа. **Reopen 2026-07-26 вечер:** видео = чёрный HTML5 player 0:00; кружочек = только текст `[кружочек]`; AI не понимает video_note. **Reopen 2026-07-26 ~22:16:** кружочек = только «Кружочек · скачать» (нет `<video>`); AI «Секунду…» / эхо ASR без полезного ответа. **Reopen 2026-07-26 ~22:30:** кружочек OK; **обычное видео** — AI не расшифровывает (placeholder-only). **Reopen 2026-07-26 ~22:45 user smoke:** кружочек/аудио/фото OK; обычное видео — AI отвечает «Это видео.» (игнор ASR); PDF/DOCX — только `[файл: name]`, AI не читает. **Reopen 2026-07-26 ~23:05:** parity — gift inbound missed `video_note` + no ASR/vision/docs enrich for CRM.
+- **Причина:** (1)–(8) как раньше. **(9)** После regular-video ASR ship: Whisper часто **уже** писал `[видео]: transcript` (~600KB TG Business), но LLM few-shot из старых `[видео]` → «Это видео.»; caps **8MB/90s** + raw-mp4 Whisper без ffmpeg — хрупко на реальных роликах; PDF/DOCX inbound = placeholder only (extract был только в knowledge upload). **(10)** Gift funnel only stored bare placeholders; `video_note` not in inbound message filter.
+- **Фикс:** inbound media + signed URL (0.1.11); **0.1.13:** MIME sniff + Range; **0.1.15 / API:** `maxParamLength: 8192` + route `/media/*`; video_note ASR; **Regular video ASR v2:** caps **20MB / 180s**, **ffmpeg** audio demux → Whisper; **MEDIA_INBOUND_HINT**; **PDF/DOCX** extract on TG Business / GramJS / WA; **Gift:** `enrichGiftInboundMedia` + `video_note` inbound + OPENROUTER/ffmpeg in gift-bot compose/image (CRM text parity; no sales LLM).
+- **Дата:** 2026-07-26 (reopen size-cap + evening playback/mime + night maxParamLength + video ASR + doc extract / LLM hint + gift parity).
+
+### INC-065 — Unread badges duplicated on cards + not clearing after Chat open
+- **Симптом:** на карточке сделки/контакта красный счётчик «N» несколько раз (title + date + person chip / имя + «Электронные письма»); после открытия вкладки «Чат» бейджи не сбрасываются.
+- **Причина:** (1) `twenty-shell-ux` `paintUnreadBadges` вешал badge на board-host **и** на каждый `a[href*="/object/person|opportunity/"]` внутри карточки (отдельные ключи `painted[rid]` vs `painted['link:'+id]`), плюс person-chip с тем же count. (2) `GET /api/crm/chat/:recordId` обновлял `lastOperatorReadAt` только у **активного** `conversationId`, тогда как unread-badges суммирует все треды Person/Opportunity (WA+TG+gift).
+- **Фикс:** shell — один badge на card root (title field); не красить links внутри board card. API — `updateMany` всех `conversationId` из `listCrmChatTargets`; await. Optimistic clear пока открыт Chat canvas.
+- **Дата:** 2026-07-26.
+
+### INC-064 — AI agent system prompt edit ignored in chat
+- **Симптом:** в `/dashboard/ai/agents` сохранили новый system prompt, в UI он виден, но ответы в TG/WA/GramJS продолжают старую персону.
+- **Причина:** workers уже читали `AiAgent` из DB на каждый flush, но ~20 предыдущих `assistant` ChatMessage few-shot'или старый стиль и перекрывали новый system prompt. Дополнительно resolve шёл через Prisma relation include (менее явно, чем fresh `findFirst` by id).
+- **Фикс:** `resolveAssignedAgent` → fresh `aiAgent.findFirst` by id + `updatedAt`; `filterHistoryAfterAgentUpdate` дропает assistant-сообщения до `agent.updatedAt`; `AGENT_PROMPT_PRIORITY_HINT`; fallback `settings.systemPrompt`.
+- **Дата:** 2026-07-26.
+
 ### INC-062 — WA business email blocked by Twenty soft-delete unique
 - **Симптом:** business profile отдаёт `anton@…`, сайт заполняется, email на новом Person пустой; Instagram/Facebook пустые.
 - **Причина:** (1) `emailsPrimaryEmail` UNIQUE включает soft-deleted — после удаления контакта email остаётся в корзине. (2) Evolution/Baileys `fetchBusinessProfile` для этого peer **не возвращает** Instagram/Facebook (только website/email/address) — Meta linked accounts не в WA Web API.

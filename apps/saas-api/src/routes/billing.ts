@@ -20,6 +20,9 @@ const checkoutSchema = z.object({
     'ai_tg_extra_conn',
     'ai_gramjs',
     'ai_wa',
+    'mailing_bot',
+    'mailing_accounts',
+    'mailing_stories',
     'ai_topup',
     'analytics_metrika',
     'analytics_ga4',
@@ -116,7 +119,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           quantity: 1,
           price: totalAmount,
           tax: 'none',
-          paymentMethod: 'full',
+          paymentMethod: 'full_payment',
           paymentObject: 'service',
         },
       ],
@@ -272,7 +275,10 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           existing.productCode === 'gift_bot' ||
           existing.productCode === PRODUCT_CODES.AI_TELEGRAM ||
           existing.productCode === PRODUCT_CODES.AI_GRAMJS ||
-          existing.productCode === PRODUCT_CODES.AI_WHATSAPP
+          existing.productCode === PRODUCT_CODES.AI_WHATSAPP ||
+          existing.productCode === PRODUCT_CODES.MAILING_BOT ||
+          existing.productCode === PRODUCT_CODES.MAILING_ACCOUNTS ||
+          existing.productCode === PRODUCT_CODES.MAILING_STORIES
         ) {
           const existingAddon = await tx.addon.findUnique({
             where: {
@@ -430,6 +436,9 @@ function getBasePrice(productCode: string): number {
     ai_tg_extra_conn: PRICING.AI_TG_EXTRA_CONN_MONTHLY,
     ai_gramjs: PRICING.AI_GRAMJS_MONTHLY,
     ai_wa: PRICING.AI_WHATSAPP_MONTHLY,
+    mailing_bot: PRICING.MAILING_BOT_MONTHLY,
+    mailing_accounts: PRICING.MAILING_ACCOUNTS_MONTHLY,
+    mailing_stories: PRICING.MAILING_STORIES_MONTHLY,
     analytics_metrika: PRICING.ANALYTICS_PLATFORM_MONTHLY,
     analytics_ga4: PRICING.ANALYTICS_PLATFORM_MONTHLY,
     analytics_facebook: PRICING.ANALYTICS_PLATFORM_MONTHLY,
@@ -447,6 +456,9 @@ function buildDescription(productCode: string, periodMonths: number, quantity = 
     ai_tg_extra_conn: `Voxly — доп. Business-аккаунт ×${quantity}`,
     ai_gramjs: 'Voxly — личный Telegram',
     ai_wa: 'Voxly — WhatsApp',
+    mailing_bot: 'Voxly — рассылка ботом',
+    mailing_accounts: 'Voxly — рассылка с аккаунтов',
+    mailing_stories: 'Voxly — постинг сторис',
     analytics_metrika: 'Voxly — аналитика Яндекс Метрика',
     analytics_ga4: 'Voxly — аналитика GA4',
     analytics_facebook: 'Voxly — аналитика Facebook',

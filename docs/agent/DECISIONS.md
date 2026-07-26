@@ -1,5 +1,23 @@
 # Решения (короткие ADR)
 
+## ADR-021 — Inbound media understanding = platform default (all channels)
+
+**Статус:** ✅ 2026-07-26
+
+| Вопрос | Выбор |
+|---|---|
+| Scope | TG Business, GramJS, WhatsApp, Gift inbound CRM |
+| Enablement | **Worker-global** when `OPENROUTER_API_KEY` set — **no per-tenant feature flag** |
+| Shared code | `@voxly/ai-core`: `extractAudioFromVideo`, `extractDocumentText`/`formatDocumentAiText`, `MEDIA_INBOUND_HINT` |
+| Caps | Video ASR ≤20MB / ≤180s; docs ≤15MB / ≤25k chars |
+| Tags | `[голос]` / `[кружочек]` / `[видео]` / `[фото]` / `[документ PDF\|DOCX]:` |
+| Gift | Funnel does **not** sales-LLM; still enriches `ChatMessage` for operators; `ai_tg` → telegram-worker |
+| New portals | Provision `ensureCrmChatAppInstalled({ forceReinstall: true })` ships latest crm-chat; media extract is server-side (workers), not app-gated |
+
+**Отклонено:** per-tenant «enable media AI» toggle; legacy `.doc` (non-docx).
+
+---
+
 ## ADR-001 — Чат в карточке Сделки / Контакта (Twenty 2.22)
 
 **Статус:** ✅ 2026-07-20 Apps SDK tab (inject disabled, file kept for rollback)
@@ -42,23 +60,26 @@
 
 ---
 
-## ADR-018 — «Рассылка» в Twenty CRM (portal LINK, reuse gift broadcast)
+## ADR-018 — «Рассылка» в Twenty CRM (in-app front-component, reuse gift broadcast)
 
-**Статус:** Phase 1–6 (2026-07-26)  
+**Статус:** amended 2026-07-26 (override: UI inside CRM like chat, not portal LINK)  
 
 | Вопрос | Выбор |
 |---|---|
-| CRM UI | Top-level `LINK`s → portal `https://getvoxly.ru/dashboard/mailing/*` (не front-component). **Не** nest under `FOLDER`: Twenty 2.22 `FolderSubItem` does `navigate(url)` → CRM 404 for external https |
-| Bot mailing | Reuse `Broadcast` + gift-bot-worker `processBroadcast` + portal page (не rewrite) |
+| CRM UI | `NavigationMenuItemType.PAGE_LAYOUT` → `definePageLayout` `STANDALONE_PAGE` + `defineFrontComponent` `mailing-panel` (crm-chat ≥0.1.17). Same install/refresh path as Chat. **Не** portal `LINK` to getvoxly.ru |
+| Bot mailing | Reuse `Broadcast` + gift-bot-worker `processBroadcast` via logic `/s/mailing/*` → saas-api (service token + workspace) |
 | Audience (bot) | `GiftSubscriber`; filters `segment` (giftDelivered) + optional `funnelPhase` |
-| Edit scheduled | `PATCH /api/bots/:botId/broadcasts/:id` while `status=scheduled` (scanner queues only when due) |
-| Media | Persist `telegramFileId`/`mediaType` in `messageJson` (schema already accepted; worker uses `resolveTelegramMedia`) |
+| Edit scheduled | `PATCH /api/bots/:botId/broadcasts/:id` while `status=scheduled` (portal; CRM panel v1 = create + list) |
+| Media | Portal supports `telegramFileId`/`mediaType`; CRM panel v1 = text (+ schedule). Media upload in-CRM later |
 | messageJson | Backward compatible: missing `funnelPhase`/`telegramFileId` OK for already-scheduled |
-| GramJS/WA/Stories | Channel broadcasts Phase 3; Stories ADR-019 |
-| Billing / trial | Add-ons mailing_*; one-shot trial like channels; global `TRIAL_PERIOD_DAYS=7` |
+| GramJS/WA/Stories | Portal pages remain; in-CRM tabs later. Stories ADR-019 |
+| Billing / trial | Add-ons mailing_*; trial from panel via `/s/mailing/start-trial`; pay → «Кабинет Voxly» |
 | Attribution | `lastMailingBroadcastId` + CRM note on inbound (48h) |
 
-**Отклонено:** rewrite `processBroadcast`; embed full mailing UI as Twenty front-component (higher Remote DOM risk).
+**Отклонено (superseded):** top-level portal LINKs / FOLDER+LINKs as primary CRM UX (Twenty FolderSubItem `navigate(https)` → CRM 404; trainees expect in-app like chat).  
+**Отклонено:** rewrite `processBroadcast`.
+
+**Portal:** `/dashboard/mailing*` остаётся для кабинета; CRM sidebar больше не ведёт туда.
 
 ---
 
@@ -70,7 +91,7 @@
 **Сейчас:** Twenty Apps SDK `defineNavigationMenuItem` (`NavigationMenuItemType.LINK`) — пункт «Кабинет Voxly» в «Рабочая область» → portal `/dashboard` (`cabinet-voxly.ts`).  
 **Legacy inject:** `docker/twenty-cabinet-link.js` → `/voxly-cabinet.js` отключён (`DISABLE_FLOATING_CABINET=true`); файл оставлен для rollback / rebuild.  
 URL в манифесте локальный (`http://localhost:3001/dashboard`); для prod менять `link` перед apply.  
-**Related:** ADR-018 — folder «Рассылка» + portal LINKs (`VOXLY_CABINET_URL` → portal base).
+**Related:** ADR-018 — in-CRM «Рассылка» PAGE_LAYOUT (cabinet LINK remains separate).
 
 ---
 

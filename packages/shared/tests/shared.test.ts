@@ -42,7 +42,7 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.AI_TG_EXTRA_CONN_MONTHLY).toBe(200);
     expect(PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS).toBe(10);
     expect(PRICING.REFERRAL_PERCENT_DEFAULT).toBe(20);
-    expect(TRIAL_PERIOD_DAYS).toBe(14);
+    expect(TRIAL_PERIOD_DAYS).toBe(7);
   });
 
   it('computes Business capacity from addon config', () => {

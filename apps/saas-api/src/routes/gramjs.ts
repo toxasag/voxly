@@ -2,7 +2,7 @@
 // Browser never talks to gramjs-bridge directly.
 
 import type { FastifyPluginAsync } from 'fastify';
-import { PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
@@ -86,7 +86,7 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({
       ok: true,
       priceMonthly: PRICING.AI_GRAMJS_MONTHLY,
-      trialDays: 14,
+      trialDays: TRIAL_PERIOD_DAYS,
       bridgeConfigured: Boolean(serviceToken()),
       gramjsAddon: addon
         ? {
@@ -100,7 +100,7 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
       billingWarning: addonActive
         ? null
         : meta.trialAvailable
-          ? `Доступен пробный период 14 дней, затем ${PRICING.AI_GRAMJS_MONTHLY} ₽/мес.`
+          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${PRICING.AI_GRAMJS_MONTHLY} ₽/мес.`
           : `Тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
       requiresPayment: !addonActive,
       accounts: bots.map((b) => ({

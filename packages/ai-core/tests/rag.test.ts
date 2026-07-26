@@ -25,10 +25,10 @@ describe('cosineSimilarity', () => {
 });
 
 describe('parseAgentLearnSettings', () => {
-  it('defaults to CUSTOMER won stage and learning on', () => {
+  it('defaults to USPESHNAYA_SDELKA + CUSTOMER won stages and learning on', () => {
     expect(parseAgentLearnSettings(null)).toEqual({
       learnFromWonDeals: true,
-      wonStages: ['CUSTOMER'],
+      wonStages: ['USPESHNAYA_SDELKA', 'CUSTOMER'],
     });
   });
 

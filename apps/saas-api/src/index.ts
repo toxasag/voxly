@@ -39,6 +39,9 @@ async function buildServer() {
     logger: {
       level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
     },
+    // Signed CRM media tokens are base64url.payload.sig — well over Fastify's
+    // default maxParamLength (100), which otherwise 404s /media/:token (INC-063).
+    maxParamLength: 8192,
   });
 
   // --- CORS (portal + Twenty CRM subdomain / localhost) ---

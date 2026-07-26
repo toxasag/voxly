@@ -330,6 +330,14 @@ services:
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       AI_TELEGRAM_WORKER_URL: ${AI_TELEGRAM_WORKER_URL:-http://ai-telegram-worker:3005}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
+      AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
+      # Same media understanding as AI workers (CRM ChatMessage enrichment; no sales LLM).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-google/gemini-2.5-flash}
+      AI_ASR_MODEL: ${AI_ASR_MODEL:-openai/whisper-1}
     labels:
       - "traefik.enable=true"
       # Child bot webhooks: /tg/{tenantId}/{botId}

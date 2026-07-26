@@ -19,7 +19,7 @@
 | `AiWallet`, `AiUsageLog`, `TenantBalance` | AI billing + markup | saas-api, ai-core, AI workers |
 | `BotInstance`, `BotProvisionRequest` | Managed Bots tokens (AES); `defaultAiAgentId` | saas-api, manager-bot R/W token |
 | `AiAgent` | Tenant AI agents (prompt/settings); assign via bot/conversation | saas-api + ai-telegram-worker |
-| `Conversation`, `ChatMessage` | **SoT чата** (+ `aiAgentId` override; null+null default = AI off) | gift/AI workers + saas-api reply |
+| `Conversation`, `ChatMessage` | **SoT чата** (+ `aiAgentId` override; null+null default = AI off; **`lastOperatorReadAt`** for CRM unread badges). `content` may hold media extracts (`[голос|кружочек|видео|фото|документ …]:`); `attachments` JSON for CRM preview | gift/AI workers + saas-api reply |
 | `GiftCampaignConfig` | funnelJson, promoPost, channel | saas-api R/W; gift-worker R |
 | `GiftSubscriber` | фаза воронки, phone, twenty ids | gift-worker R/W; saas-api R (+ reply) |
 | `Broadcast` | рассылки | saas-api create; gift-worker send |

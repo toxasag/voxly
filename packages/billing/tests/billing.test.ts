@@ -15,7 +15,6 @@ const config = {
 
 describe('calculateSubscriptionPrice', () => {
   it('applies period discount correctly', () => {
-    // 500/mo * 12 months with 10% discount = 6000 - 600 = 5400
     expect(calculateSubscriptionPrice(500, 12, 10)).toBe(5400);
   });
 
@@ -24,14 +23,12 @@ describe('calculateSubscriptionPrice', () => {
   });
 
   it('rounds to 2 decimals', () => {
-    // 500 * 6 * 0.95 = 2850
     expect(calculateSubscriptionPrice(500, 6, 5)).toBe(2850);
   });
 });
 
 describe('calculateProratedSeatPrice', () => {
   it('prorates by remaining days', () => {
-    // 300 * (15/30) = 150
     expect(calculateProratedSeatPrice(300, 15, 30)).toBe(150);
   });
 
@@ -45,7 +42,7 @@ describe('calculateProratedSeatPrice', () => {
 });
 
 describe('RobokassaClient signatures', () => {
-  it('generates a payment URL with a SignatureValue', () => {
+  it('generates a payment URL with MerchantLogin:OutSum:InvId:Password1:shp', () => {
     const client = new RobokassaClient(config);
     const url = client.generatePaymentUrl({
       invId: 1001,
@@ -58,27 +55,62 @@ describe('RobokassaClient signatures', () => {
     expect(parsed.searchParams.get('MerchantLogin')).toBe('voxly');
     expect(parsed.searchParams.get('OutSum')).toBe('500.00');
     expect(parsed.searchParams.get('InvId')).toBe('1001');
-    expect(parsed.searchParams.get('SignatureValue')).toBeTruthy();
     expect(parsed.searchParams.get('shp_tenant_id')).toBe('t1');
+    expect(parsed.searchParams.get('IsTest')).toBe('1');
+
+    const expected = createHash('sha256')
+      .update('voxly:500.00:1001:pass1:shp_tenant_id=t1')
+      .digest('hex');
+    expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
   });
 
-  it('verifies a success signature generated with password1', () => {
+  it('includes URL-encoded Receipt in payment signature', () => {
     const client = new RobokassaClient(config);
     const url = client.generatePaymentUrl({
       invId: 1001,
       amount: 500,
-      description: 'Test',
-      items: [],
+      description: 'Voxly CRM Base',
+      email: 'a@b.ru',
+      items: [
+        {
+          name: 'Voxly CRM Base',
+          quantity: 1,
+          price: 500,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        },
+      ],
       customData: { tenant_id: 't1' },
     });
     const parsed = new URL(url);
-    const ok = client.verifySuccessSignature({
-      outSum: parsed.searchParams.get('OutSum')!,
-      invId: parsed.searchParams.get('InvId')!,
-      signatureValue: parsed.searchParams.get('SignatureValue')!,
-      customData: { tenant_id: 't1' },
-    });
-    expect(ok).toBe(true);
+    const receiptJson = parsed.searchParams.get('Receipt');
+    expect(receiptJson).toBeTruthy();
+    const receipt = JSON.parse(receiptJson!);
+    expect(receipt.items[0].payment_method).toBe('full_payment');
+    expect(receipt.items[0].payment_object).toBe('service');
+
+    const receiptEncoded = encodeURIComponent(receiptJson!);
+    const expected = createHash('sha256')
+      .update(`voxly:500.00:1001:${receiptEncoded}:pass1:shp_tenant_id=t1`)
+      .digest('hex');
+    expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
+  });
+
+  it('verifies SuccessURL signature without MerchantLogin (Password#1)', () => {
+    const client = new RobokassaClient(config);
+    const customData = { tenant_id: 't1' };
+    const expected = createHash('sha256')
+      .update('500.00:1001:pass1:shp_tenant_id=t1')
+      .digest('hex');
+    expect(
+      client.verifySuccessSignature({
+        outSum: '500.00',
+        invId: '1001',
+        signatureValue: expected,
+        customData,
+      }),
+    ).toBe(true);
   });
 
   it('rejects a tampered success signature', () => {
@@ -92,30 +124,48 @@ describe('RobokassaClient signatures', () => {
     expect(ok).toBe(false);
   });
 
-  it('verifies result signature computed with password2', () => {
+  it('verifies ResultURL signature without MerchantLogin (Password#2)', () => {
     const client = new RobokassaClient(config);
     const customData = { tenant_id: 't1' };
-    const stringToSign = `voxly:500.00:1001:pass2:shp_tenant_id=t1`;
-    const expected = createHash('sha256').update(stringToSign).digest('hex');
-    const ok = client.verifyResultSignature({
-      outSum: '500.00',
-      invId: '1001',
-      signatureValue: expected,
-      customData,
-    });
-    expect(ok).toBe(true);
+    // Prod may send 6 decimal places — must use raw OutSum
+    const outSum = '500.000000';
+    const expected = createHash('sha256')
+      .update(`${outSum}:1001:pass2:shp_tenant_id=t1`)
+      .digest('hex');
+    expect(
+      client.verifyResultSignature({
+        outSum,
+        invId: '1001',
+        signatureValue: expected,
+        customData,
+      }),
+    ).toBe(true);
   });
 
-  it('rejects result signature computed with password1 (wrong password)', () => {
+  it('rejects result signature computed with password1', () => {
     const client = new RobokassaClient(config);
-    const stringToSign = `voxly:500.00:1001:pass1:shp_tenant_id=t1`;
-    const wrong = createHash('sha256').update(stringToSign).digest('hex');
-    const ok = client.verifyResultSignature({
-      outSum: '500.00',
-      invId: '1001',
-      signatureValue: wrong,
-      customData: { tenant_id: 't1' },
+    const wrong = createHash('sha256')
+      .update('500.00:1001:pass1:shp_tenant_id=t1')
+      .digest('hex');
+    expect(
+      client.verifyResultSignature({
+        outSum: '500.00',
+        invId: '1001',
+        signatureValue: wrong,
+        customData: { tenant_id: 't1' },
+      }),
+    ).toBe(false);
+  });
+
+  it('truncates Description to 100 chars', () => {
+    const client = new RobokassaClient(config);
+    const long = 'x'.repeat(150);
+    const url = client.generatePaymentUrl({
+      invId: 1,
+      amount: 10,
+      description: long,
+      items: [],
     });
-    expect(ok).toBe(false);
+    expect(new URL(url).searchParams.get('Description')!.length).toBe(100);
   });
 });

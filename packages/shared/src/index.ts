@@ -12,6 +12,12 @@ export const PRODUCT_CODES = {
   AI_WHATSAPP: 'ai_wa',
   /** One-shot AI wallet top-up (not a subscription; excluded from referral) */
   AI_TOPUP: 'ai_topup',
+  /** Gift-bot mailing (500₽/mo) */
+  MAILING_BOT: 'mailing_bot',
+  /** GramJS + WhatsApp mailing together (500₽/mo) */
+  MAILING_ACCOUNTS: 'mailing_accounts',
+  /** Stories posting all channels (1000₽/mo) */
+  MAILING_STORIES: 'mailing_stories',
   ANALYTICS_METRIKA: 'analytics_metrika',
   ANALYTICS_GA4: 'analytics_ga4',
   ANALYTICS_FACEBOOK: 'analytics_facebook',
@@ -36,6 +42,9 @@ export const PRICING = {
   AI_GRAMJS_MONTHLY: 500,
   /** WhatsApp account (Evolution) fixed fee */
   AI_WHATSAPP_MONTHLY: 500,
+  MAILING_BOT_MONTHLY: 500,
+  MAILING_ACCOUNTS_MONTHLY: 500,
+  MAILING_STORIES_MONTHLY: 1000,
   ANALYTICS_PLATFORM_MONTHLY: 500,
   AI_TOPUP_MIN_RUB: 500,
   AI_MARKUP_PERCENT_DEFAULT: 50,
@@ -55,14 +64,37 @@ export const PERIOD_DISCOUNTS: Record<number, number> = {
 };
 
 export const GRACE_PERIOD_DAYS = 7;
-export const TRIAL_PERIOD_DAYS = 14;
+export const TRIAL_PERIOD_DAYS = 7;
 export const REFERRAL_COOKIE_DAYS = 30;
+/** Inbound within this window after mailing/story counts as attributed reply */
+export const MAILING_ATTRIBUTION_WINDOW_HOURS = 48;
+
+export function isWithinMailingAttributionWindow(
+  at: Date | string | null | undefined,
+  now = new Date(),
+): boolean {
+  if (!at) return false;
+  const t = at instanceof Date ? at.getTime() : new Date(at).getTime();
+  if (!Number.isFinite(t)) return false;
+  return now.getTime() - t <= MAILING_ATTRIBUTION_WINDOW_HOURS * 60 * 60 * 1000;
+}
+
+export function mailingAttributionNote(opts: {
+  broadcastId: string;
+  kind?: 'broadcast' | 'story';
+}): string {
+  const kind = opts.kind === 'story' ? 'сторис' : 'рассылки';
+  return `Взаимодействие после ${kind} (${opts.broadcastId})`;
+}
 
 export const ADDON_TYPES = [
   'gift_bot',
   'ai_tg',
   'ai_gramjs',
   'ai_wa',
+  'mailing_bot',
+  'mailing_accounts',
+  'mailing_stories',
   'analytics_metrika',
   'analytics_ga4',
   'analytics_facebook',

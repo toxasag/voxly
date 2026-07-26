@@ -1006,11 +1006,12 @@ export class TwentyClient {
       };
       if ((existingGroupsRes.getViewGroups ?? []).length === 0) {
         const sourceGroups = [
-          { fieldValue: 'NEW', position: 0 },
+          { fieldValue: 'NOVYY_LID', position: 0 },
           { fieldValue: 'SCREENING', position: 1 },
           { fieldValue: 'MEETING', position: 2 },
           { fieldValue: 'PROPOSAL', position: 3 },
-          { fieldValue: 'CUSTOMER', position: 4 },
+          { fieldValue: 'USPESHNAYA_SDELKA', position: 4 },
+          { fieldValue: 'SDELKA_PROVALENA', position: 5 },
         ];
 
         for (const group of sourceGroups) {
@@ -1217,6 +1218,30 @@ export class TwentyClient {
         },
         headers,
       );
+    }
+
+    // Hide any other card fields so new portals match john (only the 9 above).
+    const allowedNames = new Set(
+      OPPORTUNITY_KANBAN_CARD_FIELDS.map((spec) => spec.name),
+    );
+    for (const vf of viewFields) {
+      const field = fieldsList.find((f) => f.id === vf.fieldMetadataId);
+      if (!field || allowedNames.has(field.name)) continue;
+      if (vf.isVisible === false) continue;
+      try {
+        await this.authClient.request(
+          UPDATE_VIEW_FIELD,
+          {
+            input: {
+              id: vf.id,
+              update: { isVisible: false },
+            },
+          },
+          headers,
+        );
+      } catch {
+        // best-effort
+      }
     }
   }
 

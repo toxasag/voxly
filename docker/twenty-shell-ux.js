@@ -6,13 +6,16 @@
  * - Opportunity create CTA: «New/Новый …» → «Новая Сделка» (Twenty template is masculine New)
  * - Left inbound-message toasts (prefer /s/crm-chat/inbound-toasts via Twenty session;
  *   fallback: /api/crm/chat/inbound-toasts via portal #voxlyChatToken)
+ * - Unread inbound badges on Opportunity/Person board+list cards + «Чат» tab
+ *   (poll /s/crm-chat/unread-badges; mark-read when Chat tab loads history)
  * Workspaces are provisioned by Voxly control plane, not from CRM UI.
  */
 (function () {
   var MARKER = 'data-voxly-shell-ux';
   var CHAT_PIN = 'data-voxly-chat-pinned';
-  var STYLE_ID = 'voxly-shell-ux-css-v3';
+  var STYLE_ID = 'voxly-shell-ux-css-v4';
   var TOAST_ROOT_ID = 'voxly-inbound-toasts';
+  var UNREAD_ATTR = 'data-voxly-unread-id';
   var TOKEN_KEY = 'voxly_crm_chat_token';
   var SEEN_KEY = 'voxly_inbound_toast_seen';
   var API = '__VOXLY_API_URL__'.replace(/\/$/, '');
@@ -27,6 +30,9 @@
   var shownIds = {};
   var openChatTarget = null;
   var lastChatSoftRefreshAt = 0;
+  /** @type {Record<string, number>} */
+  var unreadById = {};
+  var lastUnreadPollAt = 0;
 
   function ensureCss() {
     if (document.getElementById(STYLE_ID)) return;
@@ -104,6 +110,35 @@
       '  overflow: hidden;',
       '}',
       '@keyframes voxlyToastIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: none;} }',
+      /* Unread chat badges on board/list/chat tab */
+      '.voxly-unread-badge {',
+      '  position: absolute;',
+      '  top: 6px;',
+      '  right: 6px;',
+      '  z-index: 5;',
+      '  min-width: 18px;',
+      '  height: 18px;',
+      '  padding: 0 5px;',
+      '  border-radius: 9px;',
+      '  background: #e11d48;',
+      '  color: #fff;',
+      '  font: 650 11px/18px ui-sans-serif, system-ui, -apple-system, sans-serif;',
+      '  text-align: center;',
+      '  pointer-events: none;',
+      '  box-shadow: 0 1px 2px rgba(0,0,0,0.18);',
+      '}',
+      '.voxly-unread-badge[data-voxly-unread-inline="1"] {',
+      '  position: static;',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  justify-content: center;',
+      '  margin-left: 6px;',
+      '  vertical-align: middle;',
+      '  box-shadow: none;',
+      '}',
+      '[data-voxly-unread-host="1"] {',
+      '  position: relative !important;',
+      '}',
     ].join('\n');
     document.documentElement.appendChild(style);
   }
@@ -581,11 +616,24 @@
     if (refreshOpen) {
       clickOpenChatRefresh();
       lastChatSoftRefreshAt = Date.now();
+      // Optimistic: Chat open + inbound → API marks lastOperatorReadAt; clear local badge.
+      var openId = currentCrmRecordId();
+      if (openId && unreadById[openId]) {
+        delete unreadById[openId];
+        paintUnreadBadges();
+      }
     } else if (findOpenChatCanvas()) {
       // Soft live refresh while Chat tab is open (Remote DOM cannot setInterval).
       var now = Date.now();
       if (now - lastChatSoftRefreshAt >= 4500) {
-        if (clickOpenChatRefresh()) lastChatSoftRefreshAt = now;
+        if (clickOpenChatRefresh()) {
+          lastChatSoftRefreshAt = now;
+          var softId = currentCrmRecordId();
+          if (softId && unreadById[softId]) {
+            delete unreadById[softId];
+            paintUnreadBadges();
+          }
+        }
       }
     }
     if (data && data.serverTime && items.length === 0) {
@@ -610,6 +658,296 @@
     }).then(function (res) {
       if (!res.ok) throw new Error('toast poll ' + res.status);
       return res.json();
+    });
+  }
+
+  function formatUnreadLabel(n) {
+    var c = Number(n) || 0;
+    if (c <= 0) return '';
+    if (c > 99) return '99+';
+    return String(c);
+  }
+
+  function applyUnreadPayload(data) {
+    var next = {};
+    var lists = [
+      (data && data.opportunities) || [],
+      (data && data.persons) || [],
+    ];
+    for (var li = 0; li < lists.length; li++) {
+      var arr = lists[li];
+      for (var i = 0; i < arr.length; i++) {
+        var row = arr[i];
+        if (!row || !row.id || !(row.count > 0)) continue;
+        var id = String(row.id);
+        next[id] = (next[id] || 0) + Number(row.count);
+      }
+    }
+    unreadById = next;
+    paintUnreadBadges();
+  }
+
+  function ensureUnreadBadge(host, recordId, inline) {
+    if (!host || !recordId) return;
+    var count = unreadById[recordId];
+    var label = formatUnreadLabel(count);
+    var existing = null;
+    var kids = host.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].getAttribute && kids[i].getAttribute(UNREAD_ATTR) === recordId) {
+        existing = kids[i];
+        break;
+      }
+    }
+    if (!label) {
+      if (existing) {
+        try {
+          existing.remove();
+        } catch (e) {}
+      }
+      if (host.getAttribute('data-voxly-unread-host') === '1') {
+        host.removeAttribute('data-voxly-unread-host');
+      }
+      return;
+    }
+    if (!inline) host.setAttribute('data-voxly-unread-host', '1');
+    if (!existing) {
+      existing = document.createElement('span');
+      existing.className = 'voxly-unread-badge';
+      existing.setAttribute(UNREAD_ATTR, recordId);
+      existing.setAttribute(MARKER, 'unread');
+      existing.setAttribute('aria-label', 'Непрочитанных сообщений: ' + label);
+      if (inline) existing.setAttribute('data-voxly-unread-inline', '1');
+      host.appendChild(existing);
+    }
+    if (existing.textContent !== label) existing.textContent = label;
+  }
+
+  function findBoardCardRoot(el) {
+    if (!el || !el.closest) return null;
+    return (
+      el.closest('[data-testid="record-board-card"]') ||
+      el.closest('[class*="RecordBoardCard"]') ||
+      el.closest('[class*="record-board-card"]') ||
+      null
+    );
+  }
+
+  function findBoardCardHost(fieldEl) {
+    if (!fieldEl) return null;
+    var card = findBoardCardRoot(fieldEl);
+    if (card) return card;
+    // Fallback: climb a few parents from field cell id=record-board-card-{uuid}-*
+    var el = fieldEl;
+    for (var i = 0; i < 8 && el; i++) {
+      if (el.parentElement) el = el.parentElement;
+      else break;
+      if (
+        el.getAttribute &&
+        (el.getAttribute('data-testid') === 'record-board-card' ||
+          (el.className && String(el.className).indexOf('BoardCard') !== -1))
+      ) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function boardFieldRecordId(el) {
+    var m = String((el && el.id) || '').match(
+      /^record-board-card-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(.+)$/i,
+    );
+    return m ? { id: m[1], field: m[2] } : null;
+  }
+
+  function preferBoardTitleField(recordId) {
+    var preferred = ['name', 'Name', 'fullnameName', 'fullnamename'];
+    for (var i = 0; i < preferred.length; i++) {
+      var el = document.getElementById(
+        'record-board-card-' + recordId + '-' + preferred[i],
+      );
+      if (el) return el;
+    }
+    var fields = document.querySelectorAll(
+      '[id^="record-board-card-' + recordId + '-"]',
+    );
+    return fields.length ? fields[0] : null;
+  }
+
+  /** Skip secondary board fields (emails, phones, dates) — badge only on title/name. */
+  function isSecondaryRecordLink(link) {
+    if (!link || !link.closest) return false;
+    var fieldEl = link.closest('[id^="record-board-card-"]');
+    var meta = boardFieldRecordId(fieldEl);
+    if (meta && meta.field) {
+      var f = String(meta.field).toLowerCase();
+      if (f === 'name' || f === 'fullnamename') return false;
+      return true;
+    }
+    return false;
+  }
+
+  function paintUnreadBadges() {
+    // While Chat canvas is open for a record, treat it as read locally so the
+    // next poll does not flash badges before lastOperatorReadAt commits.
+    var openId = currentCrmRecordId();
+    if (openId && findOpenChatCanvas() && unreadById[openId]) {
+      delete unreadById[openId];
+    }
+
+    // Drop badges for ids that are no longer unread.
+    var stale = document.querySelectorAll('[' + UNREAD_ATTR + ']');
+    for (var s = 0; s < stale.length; s++) {
+      var sid = stale[s].getAttribute(UNREAD_ATTR);
+      if (!sid || !unreadById[sid]) {
+        var host = stale[s].parentElement;
+        try {
+          stale[s].remove();
+        } catch (e) {}
+        if (host && host.getAttribute('data-voxly-unread-host') === '1') {
+          if (!host.querySelector('[' + UNREAD_ATTR + ']')) {
+            host.removeAttribute('data-voxly-unread-host');
+          }
+        }
+      }
+    }
+
+    /** @type {Record<string, 1>} one badge per CRM record id */
+    var painted = {};
+
+    // Kanban / board: exactly one badge on the card root (title field preferred).
+    var boardIds = {};
+    var fields = document.querySelectorAll('[id^="record-board-card-"]');
+    for (var i = 0; i < fields.length; i++) {
+      var meta = boardFieldRecordId(fields[i]);
+      if (!meta || !unreadById[meta.id]) continue;
+      boardIds[meta.id] = 1;
+    }
+    var boardIdList = Object.keys(boardIds);
+    for (var bi = 0; bi < boardIdList.length; bi++) {
+      var rid = boardIdList[bi];
+      if (painted[rid]) continue;
+      var titleField = preferBoardTitleField(rid);
+      var cardHost = findBoardCardHost(titleField) || findBoardCardRoot(titleField);
+      if (!cardHost && titleField) {
+        // Last resort: badge inline next to the name field only (not every field).
+        painted[rid] = 1;
+        ensureUnreadBadge(titleField, rid, true);
+        continue;
+      }
+      if (!cardHost) continue;
+      painted[rid] = 1;
+      ensureUnreadBadge(cardHost, rid, false);
+    }
+
+    // Table / show-page links — never re-badge inside a board card (causes
+    // duplicate «2» on title + date + person chip). One host per record id.
+    var links = document.querySelectorAll(
+      'a[href*="/object/person/"], a[href*="/object/opportunity/"]',
+    );
+    for (var j = 0; j < links.length; j++) {
+      if (findBoardCardRoot(links[j])) continue;
+      var href = String(links[j].getAttribute('href') || '');
+      var lm = href.match(
+        /\/object\/(?:person|opportunity)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+      );
+      if (!lm) continue;
+      var lid = lm[1];
+      if (!unreadById[lid] || painted[lid]) continue;
+      if (isSecondaryRecordLink(links[j])) continue;
+      var row =
+        (links[j].closest &&
+          (links[j].closest('tr') ||
+            links[j].closest('[data-testid*="row"]') ||
+            links[j].closest('[class*="RecordTableRow"]'))) ||
+        null;
+      painted[lid] = 1;
+      if (row) ensureUnreadBadge(row, lid, false);
+      else ensureUnreadBadge(links[j], lid, true);
+    }
+
+    // «Чат» tab on open Person/Opportunity record.
+    var chatTabs = document.querySelectorAll(
+      'button, a, [role="tab"], div, span',
+    );
+    var chatHost = null;
+    for (var k = 0; k < chatTabs.length; k++) {
+      var t = textOf(chatTabs[k]);
+      // Exact label; ignore long wrappers that merely contain «Чат».
+      if (t !== 'Чат' && t !== 'Chat') continue;
+      chatHost =
+        (chatTabs[k].closest &&
+          chatTabs[k].closest('button, a, [role="tab"]')) ||
+        chatTabs[k];
+      break;
+    }
+    if (chatHost) {
+      if (openId && unreadById[openId]) {
+        ensureUnreadBadge(chatHost, openId, true);
+      } else {
+        var old = chatHost.querySelector('[' + UNREAD_ATTR + ']');
+        if (old) {
+          try {
+            old.remove();
+          } catch (e2) {}
+        }
+      }
+    }
+  }
+
+  function fetchCrmApiUnread(crmToken) {
+    return fetch(API + '/api/crm/chat/unread-badges', {
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer ' + crmToken,
+        Accept: 'application/json',
+      },
+      credentials: 'omit',
+    }).then(function (res) {
+      if (!res.ok) throw new Error('unread poll ' + res.status);
+      return res.json();
+    });
+  }
+
+  function pollUnreadBadges() {
+    captureChatToken();
+    var crmToken = getToken();
+    var twentyToken = getTwentyAccessToken();
+    var apiReady = apiUrlReady();
+    if (!twentyToken && !(crmToken && apiReady)) return;
+
+    var req;
+    if (twentyToken) {
+      req = fetch('/s/crm-chat/unread-badges', {
+        method: 'GET',
+        headers: {
+          Authorization: 'Bearer ' + twentyToken,
+          Accept: 'application/json',
+        },
+        credentials: 'include',
+      }).then(function (res) {
+        if (res.status === 404 || res.status === 501) {
+          if (crmToken && apiReady) return fetchCrmApiUnread(crmToken);
+          throw new Error('unread proxy missing');
+        }
+        if (!res.ok) throw new Error('unread poll ' + res.status);
+        return res.json().then(function (data) {
+          if (
+            !data ||
+            (!Array.isArray(data.opportunities) && !Array.isArray(data.persons))
+          ) {
+            if (crmToken && apiReady) return fetchCrmApiUnread(crmToken);
+            throw new Error('unread proxy shape');
+          }
+          return data;
+        });
+      });
+    } else {
+      req = fetchCrmApiUnread(crmToken);
+    }
+
+    req.then(applyUnreadPayload).catch(function () {
+      /* silent */
     });
   }
 
@@ -670,6 +1008,7 @@
     expandKanbanNoteLines();
     hideExtraKanbanNotes();
     maybeOpenChatTab();
+    paintUnreadBadges();
   }
 
   function start() {
@@ -699,7 +1038,17 @@
     });
     if (!pollTimer) {
       pollInboundToasts();
-      pollTimer = setInterval(pollInboundToasts, 4000);
+      pollUnreadBadges();
+      pollTimer = setInterval(function () {
+        pollInboundToasts();
+        // Unread is cheaper to skip occasionally; still refresh ~every 8s.
+        var now = Date.now();
+        if (now - lastUnreadPollAt >= 8000) {
+          lastUnreadPollAt = now;
+          pollUnreadBadges();
+        }
+      }, 4000);
+      lastUnreadPollAt = Date.now();
     }
   }
 

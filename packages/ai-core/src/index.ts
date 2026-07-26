@@ -31,9 +31,24 @@ export {
   createInboundDebouncer,
   humanBubbleGapMs,
   normalizeAiBubbles,
+  filterHistoryAfterAgentUpdate,
+  AGENT_PROMPT_PRIORITY_HINT,
+  MEDIA_INBOUND_HINT,
   DEFAULT_INBOUND_DEBOUNCE_MS,
   type InboundDebouncer,
 } from './inbound-debounce.js';
+export {
+  DOC_TEXT_MAX_CHARS,
+  DOC_MEDIA_MAX_BYTES,
+  detectDocumentKind,
+  extractDocumentText,
+  formatDocumentAiText,
+  type DocumentKind,
+} from './document-text.js';
+export {
+  extractAudioFromVideo,
+  type ExtractedAudio,
+} from './extract-audio.js';
 
 export interface ChargeAiUsageParams {
   tenantId: string;

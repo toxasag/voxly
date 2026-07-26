@@ -90,6 +90,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 ## 3. История разработки (timeline)
 
 - **2026-07-26** — Media parity E2E: Business = GramJS = WA = Gift CRM enrich (ADR-021); gift `video_note` + OpenRouter/ffmpeg; docs + deploy workers/`gift-bot-worker`/`saas-api`/compose; **rotate root SSH password**.
+- **2026-07-26** — ADR-018 amend: «Рассылка» = in-CRM STANDALONE_PAGE + front-component (crm-chat 0.1.17); portal LINKs removed. No prod deploy.
 - **2026-07-26** — Prod: «Рассылка» (`saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-tg/wa,compose`); CRM LINKs absolute → `getvoxly.ru/dashboard/mailing/*`; refresh-crm-chat; backup `20260726-192410`; hub+4 routes **200**.
 - **2026-07-26** — Prod deploy `saas-portal` (legal `/terms|/privacy|/consent|/refund` + реквизиты); backup `20260726-190018`; smoke 200. Conflict recreate saas-api fixed; AI workers restarted.
 - **2026-07-26** — Portal **indigo shadcn** theme + dashboard big-bang (branch `ui/indigo-shadcn-dashboard`; ADR-020; **prod** backup `20260726-200859`; PR link pending `gh auth`).
@@ -534,7 +535,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Следующие шаги (приоритет)**
 0. **Robokassa store activation:** legal pages **на prod** (`https://getvoxly.ru/terms` …). Подать заявку в ЛК Robokassa → после одобрения прописать боевые ключи в prod `.env`. **Сменить root SSH пароль** (светился в чате).
-0b. **Mailing Phase 1–2 local:** sidebar «Рассылка» (crm-chat 0.1.12) + bot funnel/edit/preview/media; GramJS/WA/stories stubs. Phase 3–6 + trial 7d pending. **Не деплоить** mailing без команды.
+0b. **Mailing in-CRM (ADR-018 amend):** sidebar «Рассылка» = STANDALONE_PAGE + `mailing-panel` (crm-chat **0.1.17**); bot compose/list/trial. Portal `/dashboard/mailing*` remains for cabinet. Left: GramJS/WA/Stories tabs in panel; media in-CRM; refresh john on command. **Не деплоить** без команды.
 
 
 1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).

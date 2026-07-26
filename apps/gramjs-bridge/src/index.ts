@@ -1,6 +1,6 @@
 // Voxly GramJS bridge — personal Telegram account sessions (QR login).
 // Pattern from reference server.js; auth is Voxly-internal (Bearer VOXLY_SERVICE_TOKEN).
-// Inbound text → ai-telegram-worker POST /internal/inbound → send bubbles via MTProto.
+// Inbound text/media → ai-telegram-worker POST /internal/inbound → send bubbles via MTProto.
 
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -8,6 +8,8 @@ import QRCode from 'qrcode';
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { NewMessage } from 'telegram/events/index.js';
+import { CustomFile } from 'telegram/client/uploads.js';
+import { generateRandomLong } from 'telegram/Helpers.js';
 import { prisma } from '@voxly/db';
 import { encrypt, decrypt } from '@voxly/crypto';
 import { PRODUCT_CODES, PRICING } from '@voxly/shared';
@@ -58,6 +60,115 @@ async function readJson(req: http.IncomingMessage): Promise<any> {
 function sendJson(res: http.ServerResponse, status: number, data: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
+}
+
+type GramjsAttachment = {
+  type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker' | 'animation';
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+};
+
+/** Stable CRM file id: bridge can re-download via peer + message id. */
+function gramjsFileId(peerId: string, messageId: number | string): string {
+  return `gramjs:${peerId}:${messageId}`;
+}
+
+function parseGramjsFileId(
+  fileId: string,
+): { peerUserId: string; messageId: string } | null {
+  if (!fileId.startsWith('gramjs:')) return null;
+  const rest = fileId.slice('gramjs:'.length);
+  const colon = rest.lastIndexOf(':');
+  if (colon <= 0) return null;
+  const peerUserId = rest.slice(0, colon).trim();
+  const messageId = rest.slice(colon + 1).trim();
+  if (!peerUserId || !messageId) return null;
+  return { peerUserId, messageId };
+}
+
+function extractGramjsAttachment(
+  msg: { id: number; photo?: unknown; sticker?: unknown; voice?: unknown; audio?: unknown; video?: unknown; videoNote?: unknown; gif?: unknown; document?: unknown; file?: { name?: string; mimeType?: string } | undefined },
+  peerId: string,
+): GramjsAttachment | null {
+  const fileId = gramjsFileId(peerId, msg.id);
+  const mime = msg.file?.mimeType;
+  const name = typeof msg.file?.name === 'string' ? msg.file.name : undefined;
+  if (msg.photo) {
+    return { type: 'photo', fileId, mimeType: mime || 'image/jpeg' };
+  }
+  if (msg.sticker) {
+    return { type: 'sticker', fileId, mimeType: mime || 'image/webp' };
+  }
+  if (msg.voice) {
+    return { type: 'voice', fileId, mimeType: mime || 'audio/ogg' };
+  }
+  // videoNote before audio — some clients expose both; CRM needs type=video + fileName.
+  if (msg.video || msg.videoNote) {
+    return {
+      type: 'video',
+      fileId,
+      mimeType: mime || 'video/mp4',
+      fileName: name || (msg.videoNote ? 'video_note.mp4' : undefined),
+    };
+  }
+  if (msg.audio) {
+    return { type: 'audio', fileId, mimeType: mime, fileName: name };
+  }
+  if (msg.gif) {
+    return { type: 'animation', fileId, mimeType: mime || 'video/mp4', fileName: name };
+  }
+  if (msg.document) {
+    const isDocVideo = typeof mime === 'string' && mime.toLowerCase().startsWith('video/');
+    return {
+      type: isDocVideo ? 'video' : 'document',
+      fileId,
+      mimeType: mime,
+      fileName: name,
+    };
+  }
+  return null;
+}
+
+function gramjsAttachmentPlaceholder(a: GramjsAttachment, kind?: 'video_note'): string {
+  if (kind === 'video_note') return '[кружочек]';
+  if (a.type === 'photo') return '[фото]';
+  if (a.type === 'video' || a.type === 'animation') return '[видео]';
+  if (a.type === 'voice') return '[голосовое]';
+  if (a.type === 'audio') return '[аудио]';
+  if (a.type === 'sticker') return '[стикер]';
+  return a.fileName ? `[файл: ${a.fileName}]` : '[файл]';
+}
+
+const GRAMJS_VISION_MAX_BYTES = 8 * 1024 * 1024;
+/** Video ASR / document extract — up to Bot API-ish size; audio demuxed in AI worker. */
+const GRAMJS_ASR_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+/** CRM preview can be larger than vision/ASR payloads (Telegram Bot API ~20MB). */
+const GRAMJS_CRM_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+
+async function downloadGramjsMediaBuffer(
+  client: TelegramClient,
+  msg: Parameters<TelegramClient['downloadMedia']>[0],
+  maxBytes: number = GRAMJS_VISION_MAX_BYTES,
+): Promise<{ buffer: Buffer; mimeType?: string } | null> {
+  try {
+    const raw = await client.downloadMedia(msg, {});
+    if (!raw) return null;
+    const buffer = Buffer.isBuffer(raw)
+      ? raw
+      : typeof raw === 'string'
+        ? Buffer.from(raw)
+        : null;
+    if (!buffer || buffer.length === 0) return null;
+    if (buffer.length > maxBytes) {
+      console.warn(`[gramjs] media too large (${buffer.length} bytes > ${maxBytes}), skip`);
+      return null;
+    }
+    return { buffer };
+  } catch (err) {
+    console.warn('[gramjs] downloadMedia failed', err);
+    return null;
+  }
 }
 
 /** Soft SKU gate — warn if no ai_gramjs addon; do not hard-block (billing UX later). */
@@ -483,10 +594,17 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         console.warn('[gramjs] inbound sighting failed', sightErr);
       }
 
-      const text = (msg.message || '').trim();
+      const peerId = String(sender.id);
+      const attachment = extractGramjsAttachment(msg, peerId);
+      let text = (msg.message || '').trim();
+      if (!text && attachment) {
+        text = gramjsAttachmentPlaceholder(
+          attachment,
+          msg.videoNote ? 'video_note' : undefined,
+        );
+      }
       if (!text) {
-        // Media on GramJS: ASR/vision stays in Bot API worker; text-only MVP here.
-        console.log(`[gramjs] skip non-text from ${sender.id}`);
+        console.log(`[gramjs] skip empty from ${sender.id}`);
         return;
       }
 
@@ -508,16 +626,75 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
           ? sender.phone.trim()
           : undefined;
 
+      // Download images/audio/video/docs for AI vision/ASR/text; CRM re-fetches via gramjs: fileId.
+      let mediaBase64: string | undefined;
+      let mediaMime: string | undefined;
+      const aiDownloadTypes = new Set([
+        'photo',
+        'sticker',
+        'voice',
+        'audio',
+        'video',
+        'document',
+      ]);
+      const isVideoNote = Boolean(msg.videoNote);
+      if (attachment && aiDownloadTypes.has(attachment.type)) {
+        const maxBytes =
+          attachment.type === 'video' || attachment.type === 'document'
+            ? GRAMJS_ASR_MEDIA_MAX_BYTES
+            : GRAMJS_VISION_MAX_BYTES;
+        const downloaded = await downloadGramjsMediaBuffer(client, msg, maxBytes);
+        if (downloaded) {
+          mediaBase64 = downloaded.buffer.toString('base64');
+          mediaMime =
+            attachment.mimeType ||
+            (attachment.type === 'video'
+              ? 'video/mp4'
+              : attachment.type === 'voice' || attachment.type === 'audio'
+                ? 'audio/ogg'
+                : attachment.type === 'document'
+                  ? 'application/octet-stream'
+                  : 'image/jpeg');
+          if (isVideoNote && !attachment.fileName) {
+            attachment.fileName = 'video_note.mp4';
+          }
+        } else if (attachment.type === 'video') {
+          // Download/size fail — still give AI a clear prompt instead of bare [видео].
+          const fail = isVideoNote
+            ? '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]'
+            : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+          const caption =
+            text && !(text.startsWith('[') && text.endsWith(']')) ? text : undefined;
+          text = caption ? `${caption}\n\n${fail}` : fail;
+        } else if (attachment.type === 'document') {
+          const name = attachment.fileName || 'document';
+          const isPdf = /\.pdf$/i.test(name) || /pdf/i.test(attachment.mimeType || '');
+          const isDocx =
+            /\.docx$/i.test(name) ||
+            /wordprocessingml/i.test(attachment.mimeType || '');
+          if (isPdf || isDocx) {
+            const kind = isPdf ? 'PDF' : 'DOCX';
+            const fail = `[документ ${kind} — не удалось прочитать текст. Опиши текстом, пожалуйста.]`;
+            const caption =
+              text && !(text.startsWith('[') && text.endsWith(']')) ? text : undefined;
+            text = caption ? `${caption}\n\n${fail}` : fail;
+          }
+        }
+      }
+
       const bubbles = await askAiWorker({
         tenantId,
         botId,
-        platformUserId: String(sender.id),
+        platformUserId: peerId,
         text,
         firstName: sender.firstName,
         username: sender.username,
         phone: phoneRaw,
         externalMessageId: String(msg.id),
         isBot: Boolean(sender.bot),
+        attachments: attachment ? [attachment] : undefined,
+        mediaBase64,
+        mediaMime,
       });
 
       const sendStartedAt = new Date();
@@ -580,6 +757,10 @@ async function askAiWorker(payload: {
   phone?: string;
   externalMessageId?: string;
   isBot?: boolean;
+  attachments?: GramjsAttachment[];
+  /** Optional image bytes for AI vision (photo/sticker). */
+  mediaBase64?: string;
+  mediaMime?: string;
 }): Promise<string[]> {
   const res = await fetch(`${AI_WORKER_URL}/internal/inbound`, {
     method: 'POST',
@@ -1061,6 +1242,159 @@ async function main() {
           peerUserId,
           messageId: sent?.id != null ? String(sent.id) : null,
         });
+        return;
+      }
+
+      // CRM file preview: re-download inbound media by peer + message id.
+      if (req.method === 'POST' && path === '/messages/media') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        let peerUserId = String(body.peerUserId || '').trim();
+        let messageId = String(body.messageId || '').trim();
+        const fileIdRaw = String(body.fileId || '').trim();
+        if (fileIdRaw) {
+          const parsed = parseGramjsFileId(fileIdRaw);
+          if (parsed) {
+            peerUserId = peerUserId || parsed.peerUserId;
+            messageId = messageId || parsed.messageId;
+          }
+        }
+        if (!botId || !peerUserId || !messageId) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'botId, peerUserId, and messageId are required (or fileId=gramjs:…)',
+          });
+          return;
+        }
+        const msgIdNum = Number(messageId);
+        if (!Number.isFinite(msgIdNum) || msgIdNum <= 0) {
+          sendJson(res, 400, { ok: false, error: 'invalid messageId' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const entity = await resolvePeerEntity(client, peerUserId);
+        if (!entity) {
+          sendJson(res, 404, { ok: false, error: 'peer not found' });
+          return;
+        }
+        let messages;
+        try {
+          messages = await client.getMessages(entity, { ids: msgIdNum });
+        } catch (err) {
+          sendJson(res, 404, {
+            ok: false,
+            error: `message fetch failed: ${String((err as Error)?.message || err)}`,
+          });
+          return;
+        }
+        const msg = Array.isArray(messages) ? messages[0] : null;
+        if (!msg || !(msg as { id?: number }).id) {
+          sendJson(res, 404, { ok: false, error: 'message not found' });
+          return;
+        }
+        const attachment = extractGramjsAttachment(msg as any, peerUserId);
+        const downloaded = await downloadGramjsMediaBuffer(
+          client,
+          msg as any,
+          GRAMJS_CRM_MEDIA_MAX_BYTES,
+        );
+        if (!downloaded) {
+          sendJson(res, 404, { ok: false, error: 'media not available' });
+          return;
+        }
+        const mimeType =
+          attachment?.mimeType ||
+          (msg as { file?: { mimeType?: string } }).file?.mimeType ||
+          'application/octet-stream';
+        const fileName =
+          attachment?.fileName ||
+          (msg as { file?: { name?: string } }).file?.name ||
+          undefined;
+        sendJson(res, 200, {
+          ok: true,
+          botId,
+          peerUserId,
+          messageId: String(msgIdNum),
+          type: attachment?.type || 'document',
+          mimeType,
+          fileName: fileName || null,
+          dataBase64: downloaded.buffer.toString('base64'),
+          size: downloaded.buffer.length,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/stories/send') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        const mediaUrl = String(body.mediaUrl || '').trim();
+        const caption = String(body.text || body.caption || '').trim();
+        const mediaTypeHint = String(body.mediaType || '').trim();
+        if (!botId || !mediaUrl) {
+          sendJson(res, 400, { ok: false, error: 'botId and mediaUrl required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        try {
+          const mediaRes = await fetch(mediaUrl);
+          if (!mediaRes.ok) {
+            sendJson(res, 400, { ok: false, error: `media fetch HTTP ${mediaRes.status}` });
+            return;
+          }
+          const buf = Buffer.from(await mediaRes.arrayBuffer());
+          if (buf.length > 30 * 1024 * 1024) {
+            sendJson(res, 400, { ok: false, error: 'media too large (>30MB)' });
+            return;
+          }
+          const contentType =
+            (mediaRes.headers.get('content-type') || '').split(';')[0].trim() ||
+            (mediaTypeHint === 'video' ? 'video/mp4' : 'image/jpeg');
+          const isVideo =
+            mediaTypeHint === 'video' ||
+            contentType.startsWith('video/') ||
+            /\.(mp4|mov|webm)$/i.test(mediaUrl);
+          const fileName = isVideo ? 'story.mp4' : 'story.jpg';
+          const toUpload = new CustomFile(fileName, buf.length, '', buf);
+          const uploaded = await client.uploadFile({ file: toUpload, workers: 1 });
+          const media = isVideo
+            ? new Api.InputMediaUploadedDocument({
+                file: uploaded,
+                mimeType: contentType.startsWith('video/') ? contentType : 'video/mp4',
+                attributes: [
+                  new Api.DocumentAttributeVideo({
+                    duration: 1,
+                    w: 720,
+                    h: 1280,
+                    supportsStreaming: true,
+                  }),
+                ],
+              })
+            : new Api.InputMediaUploadedPhoto({ file: uploaded });
+
+          const updates = await client.invoke(
+            new Api.stories.SendStory({
+              peer: new Api.InputPeerSelf(),
+              media,
+              caption: caption || undefined,
+              privacyRules: [new Api.InputPrivacyValueAllowAll()],
+              randomId: generateRandomLong(),
+            }),
+          );
+          sendJson(res, 200, { ok: true, botId, updates: Boolean(updates) });
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: String((err as Error)?.message || err),
+          });
+        }
         return;
       }
 

@@ -12,10 +12,13 @@
   },
   "dependencies": {
     "@voxly/db": "workspace:*",
-    "@voxly/shared": "workspace:*"
+    "@voxly/shared": "workspace:*",
+    "mammoth": "^1.9.0",
+    "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/pdf-parse": "^1.1.4",
     "typescript": "^5.6.0"
   }
 }

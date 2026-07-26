@@ -164,3 +164,45 @@ export function normalizeAiBubbles(rawBubbles: string[], max = 4): string[] {
     .filter(Boolean)
     .map((b) => (b.length > MAX_CHARS ? `${b.slice(0, MAX_CHARS - 1).trim()}…` : b));
 }
+
+/**
+ * After an AiAgent prompt/settings edit (`updatedAt`), prior assistant turns still
+ * few-shot the old persona and drown out the new system prompt. Drop those
+ * assistant messages; keep user/operator facts for continuity.
+ */
+export function filterHistoryAfterAgentUpdate<
+  T extends { role: string; createdAt: Date | string },
+>(messages: T[], agentUpdatedAt: Date | string | null | undefined): T[] {
+  if (!agentUpdatedAt || !messages.length) return messages;
+  const cut =
+    agentUpdatedAt instanceof Date
+      ? agentUpdatedAt.getTime()
+      : new Date(agentUpdatedAt).getTime();
+  if (!Number.isFinite(cut)) return messages;
+  return messages.filter((m) => {
+    if (m.role !== 'assistant') return true;
+    const t =
+      m.createdAt instanceof Date
+        ? m.createdAt.getTime()
+        : new Date(m.createdAt).getTime();
+    return Number.isFinite(t) && t >= cut;
+  });
+}
+
+/** Appended when a tenant agent is assigned so new instructions beat chat style. */
+export const AGENT_PROMPT_PRIORITY_HINT = `
+
+Приоритет: текущие инструкции выше важнее стиля и роли из истории переписки.`;
+
+/**
+ * Always append so the model uses ASR/vision/doc extracts, not bare media labels
+ * (few-shot from old `[видео]` / `[файл:…]` placeholders taught «Это видео.»).
+ */
+export const MEDIA_INBOUND_HINT = `
+
+Медиа во входящих размечены так:
+- [голос]: … / [кружочек]: … / [видео]: … — это расшифровка речи, отвечай по смыслу текста после тега;
+- [фото]: … / [стикер]: … — описание картинки;
+- [документ PDF]: … / [документ DOCX]: … — извлечённый текст файла.
+Не отвечай одним словом «видео»/«файл»/«документ», если после тега есть содержимое.`;
+

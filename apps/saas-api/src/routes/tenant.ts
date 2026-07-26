@@ -281,6 +281,9 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         },
         gramjs: addonActive('ai_gramjs'),
         whatsapp: addonActive('ai_wa'),
+        mailingBot: addonActive('mailing_bot'),
+        mailingAccounts: addonActive('mailing_accounts'),
+        mailingStories: addonActive('mailing_stories'),
       },
       accounts: {
         giftBots: byType('gift').length,

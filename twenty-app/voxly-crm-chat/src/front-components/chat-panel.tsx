@@ -14,6 +14,7 @@ type ChatAttachment = {
   type: string;
   fileId: string;
   fileName?: string;
+  mimeType?: string;
 };
 
 type ChatMessage = {
@@ -68,6 +69,8 @@ type ChatThread = {
 };
 
 type FilePayload = {
+  /** Preferred: signed saas-api URL (video/audio/photo; bypasses Twenty /s size cap). */
+  url?: string;
   dataBase64?: string;
   contentType?: string;
   error?: string;
@@ -86,10 +89,15 @@ type PendingAttachment = {
 function isMediaPlaceholder(content: string): boolean {
   const t = (content || '').trim();
   if (!t) return true;
-  return /^\[(фото|видео|стикер|голосовое|аудио|файл(?::[^\]]*)?)\]$/i.test(t);
+  return /^\[(фото|видео|кружочек|стикер|голосовое|аудио|файл(?::[^\]]*)?)\]$/i.test(
+    t,
+  );
 }
 
 function attachmentLabel(a: ChatAttachment): string {
+  if (a.fileName === 'video_note.mp4' || /video_note/i.test(a.fileName || '')) {
+    return 'Кружочек';
+  }
   if (a.fileName) return a.fileName;
   if (a.type === 'video' || a.type === 'animation') return 'Видео';
   if (a.type === 'voice') return 'Голосовое';
@@ -104,6 +112,30 @@ function isImageType(type: string, contentType?: string): boolean {
   return !!contentType && contentType.startsWith('image/');
 }
 
+function isVideoType(type: string, contentType?: string, fileName?: string): boolean {
+  if (type === 'video' || type === 'animation') return true;
+  if (fileName && /video_note|\.(mp4|webm|mov)$/i.test(fileName)) return true;
+  // Mis-tagged video notes (GramJS) still need <video>, not <audio>
+  if (type === 'audio' && contentType?.startsWith('video/')) return true;
+  return !!contentType && contentType.startsWith('video/');
+}
+
+function isAudioType(type: string, contentType?: string): boolean {
+  if (contentType?.startsWith('video/')) return false;
+  if (type === 'voice' || type === 'audio') return true;
+  return !!contentType && contentType.startsWith('audio/');
+}
+
+function isVideoNoteAttachment(a: ChatAttachment): boolean {
+  return (
+    a.fileName === 'video_note.mp4' ||
+    /video_note/i.test(a.fileName || '') ||
+    /video_note/i.test(a.mimeType || '') ||
+    // GramJS sometimes stored video_note as audio+video/mp4 without fileName
+    (a.mimeType === 'video/mp4' && a.type === 'audio')
+  );
+}
+
 function ChatAttachmentView({
   recordId,
   attachment,
@@ -115,29 +147,67 @@ function ChatAttachmentView({
   muted: string;
   ink: string;
 }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string>('');
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setMediaUrl(null);
+    setContentType('');
+    setFailed(false);
     if (!attachment.fileId) {
       setFailed(true);
       return;
     }
+    const preferSignedUrl =
+      isVideoType(attachment.type, attachment.mimeType, attachment.fileName) ||
+      isVideoNoteAttachment(attachment) ||
+      isAudioType(attachment.type, attachment.mimeType);
     void (async () => {
       try {
+        if (preferSignedUrl) {
+          const data = await api.get<FilePayload>(
+            `/s/crm-chat/${recordId}/file-url/${encodeURIComponent(attachment.fileId)}`,
+          );
+          if (cancelled) return;
+          if (data.error || !data.url) {
+            setFailed(true);
+            return;
+          }
+          setContentType(
+            data.contentType ||
+              attachment.mimeType ||
+              (isVideoType(attachment.type, undefined, attachment.fileName)
+                ? 'video/mp4'
+                : isAudioType(attachment.type)
+                  ? 'audio/ogg'
+                  : ''),
+          );
+          setMediaUrl(data.url);
+          return;
+        }
         const data = await api.get<FilePayload>(
           `/s/crm-chat/${recordId}/file/${encodeURIComponent(attachment.fileId)}`,
         );
         if (cancelled) return;
-        if (data.error || !data.dataBase64) {
+        if (data.error) {
           setFailed(true);
           return;
         }
-        const ct = data.contentType || 'application/octet-stream';
-        setContentType(ct);
-        setDataUrl(`data:${ct};base64,${data.dataBase64}`);
+        if (data.url) {
+          setContentType(data.contentType || attachment.mimeType || '');
+          setMediaUrl(data.url);
+          return;
+        }
+        if (data.dataBase64) {
+          const ct =
+            data.contentType || attachment.mimeType || 'application/octet-stream';
+          setContentType(ct);
+          setMediaUrl(`data:${ct};base64,${data.dataBase64}`);
+          return;
+        }
+        setFailed(true);
       } catch {
         if (!cancelled) setFailed(true);
       }
@@ -145,16 +215,39 @@ function ChatAttachmentView({
     return () => {
       cancelled = true;
     };
-  }, [recordId, attachment.fileId]);
+  }, [
+    recordId,
+    attachment.fileId,
+    attachment.type,
+    attachment.mimeType,
+    attachment.fileName,
+  ]);
 
   const label = attachmentLabel(attachment);
+  const videoNote = isVideoNoteAttachment(attachment);
 
   if (failed) {
     return (
-      <div style={{ marginTop: 6, fontSize: 12, color: muted }}>📎 {label}</div>
+      <div style={{ marginTop: 6, fontSize: 12, color: muted }}>
+        📎 {label}
+        {mediaUrl ? (
+          <>
+            {' · '}
+            <a
+              href={mediaUrl}
+              download={attachment.fileName || label}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: ink, textDecoration: 'underline' }}
+            >
+              скачать
+            </a>
+          </>
+        ) : null}
+      </div>
     );
   }
-  if (!dataUrl) {
+  if (!mediaUrl) {
     return (
       <div style={{ marginTop: 6, fontSize: 12, color: muted }}>Загрузка…</div>
     );
@@ -162,7 +255,7 @@ function ChatAttachmentView({
   if (isImageType(attachment.type, contentType)) {
     return (
       <img
-        src={dataUrl}
+        src={mediaUrl}
         alt={label}
         style={{
           display: 'block',
@@ -173,10 +266,74 @@ function ChatAttachmentView({
       />
     );
   }
+  if (isVideoType(attachment.type, contentType, attachment.fileName) || videoNote) {
+    const videoType =
+      contentType && contentType.startsWith('video/')
+        ? contentType
+        : 'video/mp4';
+    return (
+      <div style={{ marginTop: 6 }}>
+        <video
+          key={mediaUrl}
+          src={mediaUrl}
+          controls
+          playsInline
+          preload="metadata"
+          onError={() => setFailed(true)}
+          style={{
+            display: 'block',
+            maxWidth: videoNote ? 220 : '100%',
+            width: videoNote ? 220 : undefined,
+            height: videoNote ? 220 : undefined,
+            objectFit: videoNote ? 'cover' : undefined,
+            borderRadius: videoNote ? '50%' : 8,
+            background: '#111',
+          }}
+        >
+          <source src={mediaUrl} type={videoType} />
+        </video>
+        <a
+          href={mediaUrl}
+          download={attachment.fileName || label}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: 4,
+            fontSize: 11,
+            color: muted,
+            textDecoration: 'underline',
+          }}
+        >
+          Скачать {label}
+        </a>
+      </div>
+    );
+  }
+  if (isAudioType(attachment.type, contentType)) {
+    const audioType =
+      contentType && contentType.startsWith('audio/')
+        ? contentType
+        : 'audio/ogg';
+    return (
+      <div style={{ marginTop: 6 }}>
+        <audio
+          controls
+          preload="metadata"
+          onError={() => setFailed(true)}
+          style={{ display: 'block', width: '100%' }}
+        >
+          <source src={mediaUrl} type={audioType} />
+        </audio>
+      </div>
+    );
+  }
   return (
     <a
-      href={dataUrl}
+      href={mediaUrl}
       download={attachment.fileName || label}
+      target="_blank"
+      rel="noreferrer"
       style={{
         display: 'inline-block',
         marginTop: 6,

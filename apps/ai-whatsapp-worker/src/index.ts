@@ -12,11 +12,19 @@ import {
   createInboundDebouncer,
   humanBubbleGapMs,
   normalizeAiBubbles,
+  filterHistoryAfterAgentUpdate,
+  AGENT_PROMPT_PRIORITY_HINT,
+  MEDIA_INBOUND_HINT,
   DEFAULT_INBOUND_DEBOUNCE_MS,
+  extractAudioFromVideo,
+  detectDocumentKind,
+  extractDocumentText,
+  formatDocumentAiText,
+  DOC_MEDIA_MAX_BYTES,
   type OpenRouterUsageLike,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
-import { isAiConversationMode, PRODUCT_CODES } from '@voxly/shared';
+import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, isWithinMailingAttributionWindow, mailingAttributionNote } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
@@ -66,6 +74,21 @@ const DEFAULT_SYSTEM_PROMPT = `Ты — живой менеджер в WhatsApp.
 const JSON_FORMAT_HINT = `
 
 Ответь ТОЛЬКО JSON с message1…message4. Заполни 2–4 КОРОТКИХ пузыря (≤120 символов каждый). Не склеивай всё в message1.`;
+
+/** Prefer column; fall back to settings.systemPrompt if an older client wrote there. */
+function agentSystemPrompt(agent: {
+  systemPrompt: string | null;
+  settings: unknown;
+} | null): string | null {
+  const fromCol = agent?.systemPrompt?.trim();
+  if (fromCol) return fromCol;
+  const s = agent?.settings;
+  if (s && typeof s === 'object') {
+    const p = (s as Record<string, unknown>).systemPrompt;
+    if (typeof p === 'string' && p.trim()) return p.trim();
+  }
+  return null;
+}
 
 type SessionPayload = {
   instanceName: string;
@@ -312,22 +335,474 @@ function encodeSession(payload: SessionPayload): string {
 }
 
 function extractText(message: any): string | null {
-  if (!message) return null;
-  if (typeof message.conversation === 'string') return message.conversation;
-  if (message.extendedTextMessage?.text) return String(message.extendedTextMessage.text);
-  if (message.imageMessage?.caption) return String(message.imageMessage.caption) || '[фото]';
-  if (message.videoMessage?.caption) return String(message.videoMessage.caption) || '[видео]';
-  if (message.documentMessage) {
-    return message.documentMessage.fileName
-      ? `[файл: ${message.documentMessage.fileName}]`
-      : '[документ]';
+  const classified = classifyWaInbound(message, undefined);
+  return classified.text;
+}
+
+type WaAttachment = {
+  type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker';
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+};
+
+function classifyWaInbound(
+  message: any,
+  messageId: string | undefined,
+): {
+  text: string | null;
+  attachments: WaAttachment[];
+  needsVision: boolean;
+  needsAsr: boolean;
+  needsDoc?: boolean;
+} {
+  const attachments: WaAttachment[] = [];
+  if (!message) {
+    return { text: null, attachments, needsVision: false, needsAsr: false };
   }
-  if (message.audioMessage) return '[аудио]';
-  if (message.stickerMessage) return '[стикер]';
+  if (typeof message.conversation === 'string') {
+    return {
+      text: message.conversation,
+      attachments,
+      needsVision: false,
+      needsAsr: false,
+    };
+  }
+  if (message.extendedTextMessage?.text) {
+    return {
+      text: String(message.extendedTextMessage.text),
+      attachments,
+      needsVision: false,
+      needsAsr: false,
+    };
+  }
+
+  const fileId = messageId ? String(messageId) : '';
+
+  if (message.imageMessage) {
+    if (fileId) {
+      attachments.push({
+        type: 'photo',
+        fileId,
+        mimeType: message.imageMessage.mimetype || 'image/jpeg',
+      });
+    }
+    const cap = message.imageMessage.caption
+      ? String(message.imageMessage.caption).trim()
+      : '';
+    return {
+      text: cap || '[фото]',
+      attachments,
+      needsVision: true,
+      needsAsr: false,
+    };
+  }
+
+  if (message.stickerMessage) {
+    if (fileId) {
+      attachments.push({
+        type: 'sticker',
+        fileId,
+        mimeType: message.stickerMessage.mimetype || 'image/webp',
+      });
+    }
+    return { text: '[стикер]', attachments, needsVision: true, needsAsr: false };
+  }
+
+  // WhatsApp video circle (push-to-video)
+  if (message.ptvMessage) {
+    if (fileId) {
+      attachments.push({
+        type: 'video',
+        fileId,
+        mimeType: message.ptvMessage.mimetype || 'video/mp4',
+        fileName: 'video_note.mp4',
+      });
+    }
+    return { text: '[кружочек]', attachments, needsVision: false, needsAsr: true };
+  }
+
+  if (message.videoMessage) {
+    if (fileId) {
+      attachments.push({
+        type: 'video',
+        fileId,
+        mimeType: message.videoMessage.mimetype || 'video/mp4',
+        fileName: message.videoMessage.fileName,
+      });
+    }
+    const cap = message.videoMessage.caption
+      ? String(message.videoMessage.caption).trim()
+      : '';
+    return {
+      text: cap || '[видео]',
+      attachments,
+      needsVision: false,
+      needsAsr: true,
+    };
+  }
+
+  if (message.audioMessage) {
+    const ptt = Boolean(message.audioMessage.ptt);
+    if (fileId) {
+      attachments.push({
+        type: ptt ? 'voice' : 'audio',
+        fileId,
+        mimeType: message.audioMessage.mimetype || 'audio/ogg',
+      });
+    }
+    return {
+      text: ptt ? '[голосовое]' : '[аудио]',
+      attachments,
+      needsVision: false,
+      needsAsr: true,
+    };
+  }
+
+  if (message.documentMessage || message.documentWithCaptionMessage) {
+    const doc =
+      message.documentMessage ||
+      message.documentWithCaptionMessage?.message?.documentMessage ||
+      {};
+    const mime = String(doc.mimetype || '').toLowerCase();
+    const isDocVideo = mime.startsWith('video/');
+    const docKind = !isDocVideo
+      ? detectDocumentKind({ mimeType: mime, fileName: doc.fileName })
+      : null;
+    if (fileId) {
+      attachments.push({
+        type: isDocVideo ? 'video' : 'document',
+        fileId,
+        mimeType: doc.mimetype,
+        fileName: doc.fileName,
+      });
+    }
+    const cap = doc.caption ? String(doc.caption).trim() : '';
+    return {
+      text: cap || (isDocVideo ? '[видео]' : doc.fileName ? `[файл: ${doc.fileName}]` : '[документ]'),
+      attachments,
+      needsVision: false,
+      needsAsr: isDocVideo,
+      needsDoc: Boolean(docKind),
+    };
+  }
+
   if (message.contactMessage || message.contactsArrayMessage) {
-    return '[контакт]';
+    return { text: '[контакт]', attachments, needsVision: false, needsAsr: false };
   }
-  return null;
+
+  return { text: null, attachments, needsVision: false, needsAsr: false };
+}
+
+async function fetchEvolutionMediaBase64(opts: {
+  instanceName: string;
+  messageId: string;
+  remoteJid?: string;
+  convertToMp4?: boolean;
+}): Promise<{ base64: string; mimeType: string; fileName?: string } | null> {
+  const key: Record<string, unknown> = { id: opts.messageId };
+  if (opts.remoteJid) {
+    key.remoteJid = opts.remoteJid.includes('@')
+      ? opts.remoteJid
+      : `${normalizeWaNumber(opts.remoteJid)}@s.whatsapp.net`;
+    key.fromMe = false;
+  }
+  const res = await evoFetch(
+    `/chat/getBase64FromMediaMessage/${encodeURIComponent(opts.instanceName)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message: { key },
+        // Only convert video → mp4; converting audio/voice breaks ASR / playback.
+        convertToMp4: Boolean(opts.convertToMp4),
+      }),
+    },
+  );
+  if (!res.ok) {
+    console.warn(
+      '[ai-whatsapp] getBase64FromMediaMessage failed',
+      res.status,
+      evolutionErrorMessage(res.json, ''),
+    );
+    return null;
+  }
+  const b64 = String(res.json?.base64 || res.json?.base64Data || '').replace(
+    /^data:[^;]+;base64,/,
+    '',
+  );
+  if (!b64) return null;
+  return {
+    base64: b64,
+    mimeType: String(res.json?.mimetype || res.json?.mimeType || 'application/octet-stream'),
+    fileName: res.json?.fileName ? String(res.json.fileName) : undefined,
+  };
+}
+
+async function describeWaImage(
+  buffer: Buffer,
+  mime: string,
+  caption: string | undefined,
+  model: string,
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
+  if (!OPENROUTER_API_KEY) return null;
+  const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+  const prompt =
+    'Опиши изображение кратко для ассистента-продавца: что на фото, текст/цены если видны. 1–3 предложения на русском, только факты.' +
+    (caption ? ` Подпись пользователя: ${caption}` : '');
+  const completion = await openai.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+    max_tokens: 300,
+    temperature: 0.2,
+  });
+  const text = completion.choices[0]?.message?.content?.trim();
+  if (!text) return null;
+  return { text, usage: completion.usage as OpenRouterUsageLike | undefined };
+}
+
+async function transcribeWaAudio(
+  buffer: Buffer,
+  format: string,
+  model: string,
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
+  if (!OPENROUTER_API_KEY) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  let res: Response;
+  try {
+    res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
+        'X-Title': 'Voxly AI WhatsApp ASR',
+      },
+      body: JSON.stringify({
+        model,
+        language: 'ru',
+        input_audio: {
+          data: buffer.toString('base64'),
+          format,
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    console.error('[ai-whatsapp] transcription fetch failed', err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    console.error('[ai-whatsapp] transcription HTTP', res.status, errText.slice(0, 400));
+    return null;
+  }
+  const data = (await res.json()) as { text?: string; usage?: OpenRouterUsageLike };
+  const text = data.text?.trim();
+  if (!text) return null;
+  return { text, usage: data.usage };
+}
+
+function audioFormatFromWaMime(mime: string): string {
+  const m = mime.toLowerCase();
+  if (m.includes('mpeg') || m.includes('mp3')) return 'mp3';
+  if (m.includes('wav')) return 'wav';
+  if (m.includes('flac')) return 'flac';
+  if (m.includes('m4a') || m.includes('mp4')) return 'm4a';
+  if (m.includes('webm')) return 'webm';
+  if (m.includes('aac')) return 'aac';
+  return 'ogg';
+}
+
+async function enrichWaTextWithMediaAi(opts: {
+  tenantId: string;
+  instanceName: string;
+  messageId: string;
+  remoteJid?: string;
+  text: string;
+  needsVision: boolean;
+  needsAsr: boolean;
+  needsDoc?: boolean;
+  mimeHint?: string;
+  fileNameHint?: string;
+}): Promise<string> {
+  if (
+    !OPENROUTER_API_KEY ||
+    (!opts.needsVision && !opts.needsAsr && !opts.needsDoc)
+  ) {
+    return opts.text;
+  }
+  const looksLikeVideoNote =
+    opts.text === '[кружочек]' ||
+    /video_note/i.test(opts.mimeHint || '') ||
+    /video_note/i.test(opts.text);
+  const looksLikeVideo =
+    !looksLikeVideoNote &&
+    (opts.text === '[видео]' || (opts.mimeHint || '').startsWith('video/'));
+  const isVideoMedia = looksLikeVideoNote || looksLikeVideo;
+  const docKind = opts.needsDoc
+    ? detectDocumentKind({
+        mimeType: opts.mimeHint,
+        fileName: opts.fileNameHint,
+      })
+    : null;
+  const media = await fetchEvolutionMediaBase64({
+    instanceName: opts.instanceName,
+    messageId: opts.messageId,
+    remoteJid: opts.remoteJid,
+    convertToMp4: isVideoMedia,
+  });
+  if (!media) {
+    if (docKind) {
+      return formatDocumentAiText({ kind: docKind, text: null });
+    }
+    if (looksLikeVideoNote) {
+      return opts.text.includes('не удалось')
+        ? opts.text
+        : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+    }
+    if (looksLikeVideo) {
+      return opts.text.includes('не удалось')
+        ? opts.text
+        : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+    }
+    return opts.text;
+  }
+  const buffer = Buffer.from(media.base64, 'base64');
+  const caption =
+    opts.text.startsWith('[') && opts.text.endsWith(']') ? undefined : opts.text;
+  const asrMax = 20 * 1024 * 1024;
+  if (buffer.length === 0 || (isVideoMedia && buffer.length > asrMax)) {
+    if (looksLikeVideoNote) {
+      return caption
+        ? `${caption}\n\n[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+        : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+    }
+    if (looksLikeVideo) {
+      return caption
+        ? `${caption}\n\n[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+        : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+    }
+    return opts.text;
+  }
+  const mime = media.mimeType || opts.mimeHint || 'application/octet-stream';
+
+  try {
+    if (docKind) {
+      if (buffer.length > DOC_MEDIA_MAX_BYTES) {
+        return formatDocumentAiText({ kind: docKind, text: null, caption });
+      }
+      const extracted = await extractDocumentText(buffer, docKind);
+      return formatDocumentAiText({
+        kind: docKind,
+        text: extracted,
+        caption,
+        fileName: opts.fileNameHint,
+      });
+    }
+    if (opts.needsAsr) {
+      const asrModel =
+        process.env.AI_ASR_MODEL || AI_MODEL_DEFAULTS.asr;
+      let asrBuf: Buffer = buffer;
+      let format = isVideoMedia ? 'mp4' : audioFormatFromWaMime(mime);
+      if (isVideoMedia) {
+        const extracted = await extractAudioFromVideo(buffer, 'mp4');
+        if (extracted) {
+          asrBuf = Buffer.from(extracted.buffer);
+          format = extracted.format;
+          console.log(
+            `[ai-whatsapp] ffmpeg audio ${extracted.format} ${extracted.buffer.length}b (from ${buffer.length}b)`,
+          );
+        } else {
+          console.warn('[ai-whatsapp] ffmpeg audio extract failed; trying raw mp4');
+        }
+      }
+      const asr = await transcribeWaAudio(asrBuf, format, asrModel);
+      if (asr?.text) {
+        const estTokens = Math.max(1, Math.ceil(asr.text.length / 4));
+        void resolveProviderCostRub({
+          model: asrModel,
+          usage: asr.usage || { total_tokens: estTokens },
+          apiKey: OPENROUTER_API_KEY,
+          baseUrl: OPENROUTER_BASE_URL,
+        })
+          .then((cost) =>
+            chargeAiUsage({
+              tenantId: opts.tenantId,
+              providerCostRub: cost.providerCostRub,
+              tokens: cost.tokens || estTokens,
+              model: asrModel,
+              requestType: 'transcribe',
+            }),
+          )
+          .catch((err) => console.warn('[ai-whatsapp] ASR charge failed', err));
+        const tag = looksLikeVideoNote
+          ? '[кружочек]'
+          : looksLikeVideo
+            ? '[видео]'
+            : '[голос]';
+        return caption ? `${caption}\n\n${tag}: ${asr.text}` : `${tag}: ${asr.text}`;
+      }
+      if (looksLikeVideoNote) {
+        return caption
+          ? `${caption}\n\n[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+          : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+      }
+      if (looksLikeVideo) {
+        return caption
+          ? `${caption}\n\n[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+          : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+      }
+    }
+    if (opts.needsVision) {
+      const visionModel = process.env.AI_CHAT_MODEL || AI_MODEL_DEFAULTS.chat;
+      const vision = await describeWaImage(buffer, mime, caption, visionModel);
+      if (vision?.text) {
+        const estTokens = Math.max(1, Math.ceil(vision.text.length / 4));
+        void resolveProviderCostRub({
+          model: visionModel,
+          usage: vision.usage || { total_tokens: estTokens },
+          apiKey: OPENROUTER_API_KEY,
+          baseUrl: OPENROUTER_BASE_URL,
+        })
+          .then((cost) =>
+            chargeAiUsage({
+              tenantId: opts.tenantId,
+              providerCostRub: cost.providerCostRub,
+              tokens: cost.tokens || estTokens,
+              model: visionModel,
+              requestType: 'vision',
+            }),
+          )
+          .catch((err) => console.warn('[ai-whatsapp] vision charge failed', err));
+        const tag = mime.includes('webp') ? '[стикер]' : '[фото]';
+        return caption ? `${caption}\n\n${tag}: ${vision.text}` : `${tag}: ${vision.text}`;
+      }
+    }
+  } catch (err) {
+    console.warn('[ai-whatsapp] media AI failed', err);
+  }
+  if (looksLikeVideoNote) {
+    return caption
+      ? `${caption}\n\n[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+      : '[кружочек — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+  }
+  if (looksLikeVideo) {
+    return caption
+      ? `${caption}\n\n[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+      : '[видео — не удалось разобрать речь. Опиши текстом, пожалуйста.]';
+  }
+  return opts.text;
 }
 
 /** Phone from shared WA contact card / vCard (when peer shares contact). */
@@ -1487,27 +1962,29 @@ async function sendWhatsAppHumanLike(
   return { sent };
 }
 
+/** Always re-read AiAgent by id so portal PATCH (prompt/model) applies on next message. */
 async function resolveAssignedAgent(conversationId: string) {
   const c = await prisma.conversation.findUnique({
     where: { id: conversationId },
     select: {
       aiAgentId: true,
-      aiAgent: {
-        select: { id: true, name: true, systemPrompt: true, settings: true, status: true },
-      },
-      botInstance: {
-        select: {
-          defaultAiAgent: {
-            select: { id: true, name: true, systemPrompt: true, settings: true, status: true },
-          },
-        },
-      },
+      botInstance: { select: { defaultAiAgentId: true } },
     },
   });
   if (!c) return null;
-  const agent = c.aiAgent || c.botInstance?.defaultAiAgent || null;
-  if (!agent || agent.status !== 'active') return null;
-  return agent;
+  const agentId = c.aiAgentId || c.botInstance?.defaultAiAgentId;
+  if (!agentId) return null;
+  return prisma.aiAgent.findFirst({
+    where: { id: agentId, status: 'active' },
+    select: {
+      id: true,
+      name: true,
+      systemPrompt: true,
+      settings: true,
+      status: true,
+      updatedAt: true,
+    },
+  });
 }
 
 async function shouldAiReply(conversationId: string): Promise<boolean> {
@@ -1904,6 +2381,11 @@ async function handleInboundMessage(opts: {
   phoneSource?: LidPnSource;
   profilePicUrl?: string;
   remoteJid?: string;
+  attachments?: WaAttachment[];
+  needsVision?: boolean;
+  needsAsr?: boolean;
+  needsDoc?: boolean;
+  mimeHint?: string;
 }) {
   // MVP: decrypt session payloads (tenant WA count is small).
   const candidates = await prisma.botInstance.findMany({
@@ -2146,14 +2628,41 @@ async function handleInboundMessage(opts: {
     }
   }
 
+  let displayText = opts.text;
+  if (
+    opts.messageId &&
+    (opts.needsVision || opts.needsAsr || opts.needsDoc) &&
+    OPENROUTER_API_KEY
+  ) {
+    displayText = await enrichWaTextWithMediaAi({
+      tenantId: resolved.tenantId,
+      instanceName: opts.instanceName,
+      messageId: opts.messageId,
+      remoteJid: opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
+      text: opts.text,
+      needsVision: Boolean(opts.needsVision),
+      needsAsr: Boolean(opts.needsAsr),
+      needsDoc: Boolean(opts.needsDoc),
+      mimeHint: opts.mimeHint,
+      fileNameHint: opts.attachments?.[0]?.fileName,
+    });
+  }
+
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
-      content: opts.text,
+      content: displayText,
       externalMessageId: opts.messageId,
+      attachments:
+        opts.attachments && opts.attachments.length ? opts.attachments : undefined,
     },
   });
+
+  void maybeAttributeMailingInbound({
+    tenantId: resolved.tenantId,
+    conversationId: conversation.id,
+  }).catch((err) => console.warn('[ai-whatsapp] mailing attribution failed', err));
 
   void syncLeadToCrm({
     tenantId: resolved.tenantId,
@@ -2215,7 +2724,7 @@ async function handleInboundMessage(opts: {
     conversationId: conversation.id,
     tenantId: resolved.tenantId,
     botId: resolved.id,
-    text: opts.text,
+    text: displayText,
     messageId: opts.messageId,
     remoteJid: opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
     addonId: resolved.addonId,
@@ -2272,11 +2781,20 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
   if (!conversation) return;
 
   const agent = await resolveAssignedAgent(conversationId);
+  const settingsModelRaw = (agent?.settings as { model?: unknown } | null | undefined)?.model;
+  const settingsModel =
+    typeof settingsModelRaw === 'string' ? settingsModelRaw.trim() : '';
   const model =
-    (agent?.settings as any)?.model ||
-    process.env.AI_DEFAULT_MODEL ||
-    'openai/gpt-4o-mini';
-  let systemPrompt = (agent?.systemPrompt || DEFAULT_SYSTEM_PROMPT) + JSON_FORMAT_HINT;
+    settingsModel ||
+    process.env.AI_CHAT_MODEL?.trim() ||
+    process.env.AI_DEFAULT_MODEL?.trim() ||
+    AI_MODEL_DEFAULTS.chat;
+  const customPrompt = agentSystemPrompt(agent);
+  let systemPrompt =
+    (customPrompt || DEFAULT_SYSTEM_PROMPT) +
+    MEDIA_INBOUND_HINT +
+    JSON_FORMAT_HINT +
+    (agent ? AGENT_PROMPT_PRIORITY_HINT : '');
   try {
     if (agent?.id) {
       const rag = await retrieveAgentContext({
@@ -2294,7 +2812,11 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     { role: 'system', content: systemPrompt },
   ];
   // History already includes all burst user messages; do not re-append last text.
-  for (const msg of [...conversation.messages].reverse()) {
+  const history = filterHistoryAfterAgentUpdate(
+    [...conversation.messages].reverse(),
+    agent?.updatedAt,
+  );
+  for (const msg of history) {
     messages.push({
       role: msg.role === 'user' ? 'user' : 'assistant',
       content: msg.content,
@@ -2449,8 +2971,9 @@ async function handleEvolutionWebhook(payload: any) {
     ) {
       continue;
     }
-    const text = extractText(item?.message);
-    if (!text) continue;
+    const messageId = item?.key?.id ? String(item.key.id) : undefined;
+    const classified = classifyWaInbound(item?.message, messageId);
+    if (!classified.text) continue;
     const phoneE164 = extractPhoneFromInboundItem(item);
     const profilePicUrl = extractProfilePicFromInboundItem(item);
     const key = item?.key || {};
@@ -2467,14 +2990,19 @@ async function handleEvolutionWebhook(payload: any) {
     await handleInboundMessage({
       instanceName: String(instanceName),
       from: remoteJid,
-      text,
-      messageId: item?.key?.id,
+      text: classified.text,
+      messageId,
       pushName: item?.pushName,
       contactName: item?.pushName,
       phoneE164,
       phoneSource: webhookPnSource,
       profilePicUrl,
       remoteJid: String(remoteJid),
+      attachments: classified.attachments,
+      needsVision: classified.needsVision,
+      needsAsr: classified.needsAsr,
+      needsDoc: Boolean(classified.needsDoc),
+      mimeHint: classified.attachments[0]?.mimeType,
     });
   }
 }
@@ -2698,6 +3226,71 @@ async function main() {
         return sendJson(res, 200, { ok: true, attachment: attachment || null });
       }
 
+      // CRM file preview: re-download media by Evolution message id.
+      if (req.method === 'POST' && url.pathname === '/internal/messages/media') {
+        const body = await readJsonBody(req);
+        const botId = String(body.botId || '').trim();
+        const messageId = String(body.messageId || body.fileId || '').trim();
+        let remoteJid = String(body.remoteJid || body.peerUserId || '').trim();
+        if (!botId || !messageId) {
+          return sendJson(res, 400, {
+            ok: false,
+            error: 'botId and messageId (or fileId) required',
+          });
+        }
+        const bot = await prisma.botInstance.findFirst({
+          where: { id: botId, botType: 'ai_wa' },
+        });
+        if (!bot) return sendJson(res, 404, { ok: false, error: 'account not found' });
+        const session = decodeSession(bot.botTokenEncrypted);
+        if (!session?.instanceName) {
+          return sendJson(res, 400, { ok: false, error: 'WhatsApp session missing' });
+        }
+        let attTypeHint = '';
+        {
+          const msgRow = await prisma.chatMessage.findFirst({
+            where: {
+              externalMessageId: messageId,
+              conversation: { botInstanceId: bot.id },
+            },
+            select: {
+              attachments: true,
+              conversation: { select: { platformUserId: true } },
+            },
+          });
+          if (!remoteJid) {
+            remoteJid = msgRow?.conversation?.platformUserId || '';
+          }
+          if (Array.isArray(msgRow?.attachments)) {
+            const first = msgRow.attachments.find(
+              (a: unknown) =>
+                a &&
+                typeof a === 'object' &&
+                typeof (a as { fileId?: string }).fileId === 'string',
+            ) as { type?: string } | undefined;
+            attTypeHint = first?.type || '';
+          }
+        }
+        const convertToMp4 = attTypeHint === 'video';
+        const media = await fetchEvolutionMediaBase64({
+          instanceName: session.instanceName,
+          messageId,
+          remoteJid: remoteJid || undefined,
+          convertToMp4,
+        });
+        if (!media) {
+          return sendJson(res, 404, { ok: false, error: 'media not available' });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          botId,
+          messageId,
+          mimeType: media.mimeType,
+          fileName: media.fileName || null,
+          dataBase64: media.base64,
+        });
+      }
+
       if (req.method === 'POST' && url.pathname === '/internal/chat/typing') {
         const body = await readJsonBody(req);
         const botId = String(body.botId || '');
@@ -2824,6 +3417,60 @@ async function main() {
     console.log(
       `[ai-whatsapp-worker] Listening on :${PORT} evolution=${evolutionConfigured() ? 'yes' : 'NO'}`,
     );
+  });
+}
+
+async function maybeAttributeMailingInbound(opts: {
+  tenantId: string;
+  conversationId: string;
+}): Promise<void> {
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: opts.conversationId },
+  });
+  if (
+    !conversation?.lastMailingBroadcastId ||
+    !isWithinMailingAttributionWindow(conversation.lastMailingAt)
+  ) {
+    return;
+  }
+  if (!conversation.twentyPersonId) return;
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
+  if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) return;
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId: opts.tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (!owner?.user?.email) return;
+
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  await client.authenticateWorkspace(
+    owner.user.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+
+  const broadcast = await prisma.broadcast.findUnique({
+    where: { id: conversation.lastMailingBroadcastId },
+    select: { messageJson: true },
+  });
+  const channel = (broadcast?.messageJson as { channel?: string } | null)?.channel;
+  const note = mailingAttributionNote({
+    broadcastId: conversation.lastMailingBroadcastId,
+    kind: channel === 'story' ? 'story' : 'broadcast',
+  });
+  await client.createNoteForPerson({
+    personId: conversation.twentyPersonId,
+    body: note,
+    title: note,
+  });
+  await fireGoal({
+    tenantId: opts.tenantId,
+    goalName: 'mailing_reply',
+    subscriberId: conversation.platformUserId,
+    botInstanceId: conversation.botInstanceId || undefined,
   });
 }
 

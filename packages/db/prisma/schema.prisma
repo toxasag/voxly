@@ -594,6 +594,9 @@ model GiftSubscriber {
   twentyOpportunityId String?
   conversationId     String?
   lastMessageAt      DateTime?
+  /// Last bot mailing that reached this subscriber (effectiveness attribution).
+  lastMailingBroadcastId String?
+  lastMailingAt          DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -604,6 +607,7 @@ model GiftSubscriber {
   @@index([subscribed])
   @@index([twentyOpportunityId])
   @@index([twentyPersonId])
+  @@index([lastMailingAt])
 }
 
 model Broadcast {
@@ -657,6 +661,11 @@ model Conversation {
   needsReview          Boolean  @default(false)
   /// Set after won-deal sales examples were ingested for this conversation
   salesLearnedAt       DateTime?
+  /// CRM operator last opened this thread in Twenty «Чат» (unread = user msgs after).
+  lastOperatorReadAt   DateTime?
+  /// Last mailing/broadcast that reached this peer (effectiveness attribution).
+  lastMailingBroadcastId String?
+  lastMailingAt          DateTime?
   lastAiMessageAt DateTime?
   assignedToUserId String?
   createdAt       DateTime @default(now())
@@ -672,7 +681,9 @@ model Conversation {
   @@index([aiDisabled])
   @@index([needsReview])
   @@index([twentyPersonId])
+  @@index([twentyOpportunityId])
   @@index([aiAgentId])
+  @@index([lastMailingAt])
 }
 
 model ChatMessage {

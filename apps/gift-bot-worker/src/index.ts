@@ -10,6 +10,7 @@ import { fireGoal } from '@voxly/analytics-dispatchers';
 import { TwentyClient } from '@voxly/twenty-client';
 import {
   DEFAULT_GIFT_FUNNEL,
+  AI_MODEL_DEFAULTS,
   clientMdToMarkdownV2,
   formatPromoButtonLabel,
   giftPromoStartPayload,
@@ -17,11 +18,28 @@ import {
   type GiftFunnelConfig,
   type GiftFunnelMessage,
   type GiftPromoPost,
+  isWithinMailingAttributionWindow,
+  mailingAttributionNote,
 } from '@voxly/shared';
+import {
+  chargeAiUsage,
+  detectDocumentKind,
+  extractAudioFromVideo,
+  extractDocumentText,
+  formatDocumentAiText,
+  resolveProviderCostRub,
+  DOC_MEDIA_MAX_BYTES,
+  type OpenRouterUsageLike,
+} from '@voxly/ai-core';
 
 const PORT = 3004;
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const USE_POLLING = process.env.GIFT_BOT_USE_POLLING === 'true';
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_BASE_URL =
+  process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+const ASR_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+const ASR_VIDEO_MAX_DURATION_SEC = 180;
 
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 const delayQueue = new Queue('gift-bot-delay', { connection });
@@ -240,13 +258,14 @@ async function handleTelegramUpdate(update: any, tenantId: string, botId: string
     update.message?.contact ||
     update.message?.photo ||
     update.message?.video ||
+    update.message?.video_note ||
     update.message?.document ||
     update.message?.audio ||
     update.message?.voice ||
     update.message?.sticker ||
     update.message?.animation
   ) {
-    await storeInboundMessage(tenantId, botId, update);
+    await storeInboundMessage(tenantId, botId, update, botApi);
     if (update.message?.contact?.phone_number) {
       const telegramId = String(update.message.from.id);
       const phone = String(update.message.contact.phone_number);
@@ -698,6 +717,21 @@ async function processBroadcast(broadcastId: string) {
   const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
   if (!broadcast) return;
   const msg = broadcast.messageJson as any;
+  const channel =
+    msg?.channel === 'gramjs' || msg?.channel === 'wa' || msg?.channel === 'story'
+      ? msg.channel
+      : 'gift';
+
+  if (channel === 'story') {
+    await processStoryBroadcast(broadcast, msg);
+    return;
+  }
+
+  if (channel === 'gramjs' || channel === 'wa') {
+    await processChannelBroadcast(broadcast, msg, channel);
+    return;
+  }
+
   const bot = await prisma.botInstance.findFirst({
     where: { id: msg.botId, tenantId: broadcast.tenantId },
   });
@@ -709,9 +743,17 @@ async function processBroadcast(broadcastId: string) {
   const where: any = { campaignId: msg.campaignId };
   if (msg.segment === 'gifted') where.giftDelivered = true;
   if (msg.segment === 'not_gifted') where.giftDelivered = false;
+  // Backward-compatible: older scheduled jobs omit funnelPhase
+  if (typeof msg.funnelPhase === 'string' && msg.funnelPhase) {
+    where.funnelPhase = msg.funnelPhase;
+  }
 
   const subscribers = await prisma.giftSubscriber.findMany({ where });
   const botApi = `https://api.telegram.org/bot${decrypt(bot.botTokenEncrypted)}`;
+  const media = resolveTelegramMedia({
+    telegramFileId: msg.telegramFileId,
+    mediaUrl: msg.mediaUrl,
+  });
   let sent = 0;
   for (const s of subscribers) {
     try {
@@ -720,11 +762,22 @@ async function processBroadcast(broadcastId: string) {
         botId: bot.id,
         telegramId: s.telegramId,
       };
-      if (msg.mediaUrl) {
-        await sendBotPhoto(botApi, Number(s.telegramId), msg.mediaUrl, msg.text, undefined, ctx);
+      if (media) {
+        if (msg.mediaType === 'video') {
+          await sendBotVideo(botApi, Number(s.telegramId), media, msg.text, undefined, ctx);
+        } else {
+          await sendBotPhoto(botApi, Number(s.telegramId), media, msg.text, undefined, ctx);
+        }
       } else {
         await sendBotMessage(botApi, Number(s.telegramId), msg.text, undefined, ctx);
       }
+      await prisma.giftSubscriber.update({
+        where: { id: s.id },
+        data: {
+          lastMailingBroadcastId: broadcast.id,
+          lastMailingAt: new Date(),
+        },
+      });
       sent += 1;
       await sleep(40);
     } catch (err) {
@@ -735,6 +788,312 @@ async function processBroadcast(broadcastId: string) {
     where: { id: broadcastId },
     data: { status: 'sent', sentCount: sent },
   });
+}
+
+async function processStoryBroadcast(
+  broadcast: { id: string; tenantId: string },
+  msg: any,
+) {
+  const botId = String(msg.botId || '');
+  const mediaUrl = String(msg.mediaUrl || '').trim();
+  const storyVia = String(msg.storyVia || '');
+  if (!botId || !mediaUrl) {
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: { status: 'failed' },
+    });
+    return;
+  }
+
+  if (storyVia !== 'gramjs') {
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: {
+        status: 'failed',
+        messageJson: {
+          ...msg,
+          error:
+            storyVia === 'wa' || storyVia === 'ai_tg'
+              ? `stories_unsupported_${storyVia}`
+              : 'stories_unsupported',
+        },
+      },
+    });
+    console.warn(
+      '[gift-bot] story send unsupported for',
+      storyVia,
+      '— scheduled job marked failed (ADR-019)',
+    );
+    return;
+  }
+
+  try {
+    await sendViaGramjsStory({
+      botId,
+      mediaUrl,
+      text: String(msg.text || ''),
+      mediaType: msg.mediaType,
+    });
+    // Tag open conversations on this account for inbound attribution window
+    await prisma.conversation.updateMany({
+      where: {
+        tenantId: broadcast.tenantId,
+        botInstanceId: botId,
+        status: { not: 'closed' },
+      },
+      data: {
+        lastMailingBroadcastId: broadcast.id,
+        lastMailingAt: new Date(),
+      },
+    });
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: { status: 'sent', sentCount: 1 },
+    });
+  } catch (err) {
+    console.error('[gift-bot] story send failed', err);
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: {
+        status: 'failed',
+        messageJson: {
+          ...msg,
+          error: String((err as Error)?.message || err),
+        },
+      },
+    });
+  }
+}
+
+async function sendViaGramjsStory(opts: {
+  botId: string;
+  mediaUrl: string;
+  text: string;
+  mediaType?: string;
+}): Promise<void> {
+  const token = serviceToken();
+  if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  const res = await fetch(`${gramjsBridgeBase()}/stories/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      mediaUrl: opts.mediaUrl,
+      text: opts.text,
+      mediaType: opts.mediaType,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `GramJS story send failed (HTTP ${res.status})`);
+  }
+}
+
+async function processChannelBroadcast(
+  broadcast: { id: string; tenantId: string },
+  msg: any,
+  channel: 'gramjs' | 'wa',
+) {
+  const botId = String(msg.botId || '');
+  const text = String(msg.text || '').trim();
+  if (!botId || !text) {
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: { status: 'failed' },
+    });
+    return;
+  }
+
+  const bot = await prisma.botInstance.findFirst({
+    where: {
+      id: botId,
+      tenantId: broadcast.tenantId,
+      botType: channel === 'gramjs' ? 'ai_gramjs' : 'ai_wa',
+    },
+  });
+  if (!bot || bot.status !== 'active') {
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: { status: 'failed' },
+    });
+    return;
+  }
+
+  const conversations = await prisma.conversation.findMany({
+    where: {
+      tenantId: broadcast.tenantId,
+      botInstanceId: botId,
+      status: { not: 'closed' },
+    },
+    select: { id: true, platformUserId: true },
+  });
+
+  let mediaPayload:
+    | { mediaBase64: string; mimeType: string; fileName: string }
+    | undefined;
+  if (channel === 'wa' && typeof msg.mediaUrl === 'string' && msg.mediaUrl) {
+    try {
+      mediaPayload = await fetchMediaAsBase64(msg.mediaUrl, msg.mediaType);
+    } catch (err) {
+      console.error('[gift-bot] channel broadcast media fetch failed', err);
+    }
+  } else if (channel === 'gramjs' && msg.mediaUrl) {
+    console.warn(
+      '[gift-bot] GramJS mailing: media skipped (outbound media not supported); text only',
+    );
+  }
+
+  let sent = 0;
+  for (const conv of conversations) {
+    try {
+      if (channel === 'gramjs') {
+        await sendViaGramjsBridge({
+          botId,
+          peerUserId: conv.platformUserId,
+          text,
+        });
+      } else {
+        await sendViaWhatsappWorker({
+          botId,
+          peerUserId: conv.platformUserId,
+          text,
+          media: mediaPayload,
+        });
+      }
+      await prisma.chatMessage.create({
+        data: {
+          conversationId: conv.id,
+          role: 'operator',
+          content: text,
+        },
+      });
+      await prisma.conversation.update({
+        where: { id: conv.id },
+        data: {
+          lastMailingBroadcastId: broadcast.id,
+          lastMailingAt: new Date(),
+        },
+      });
+      sent += 1;
+      await sleep(channel === 'gramjs' ? 120 : 80);
+    } catch (err) {
+      console.error(
+        '[gift-bot] channel broadcast send failed',
+        channel,
+        conv.platformUserId,
+        err,
+      );
+    }
+  }
+
+  await prisma.broadcast.update({
+    where: { id: broadcast.id },
+    data: { status: 'sent', sentCount: sent },
+  });
+}
+
+function serviceToken(): string {
+  return process.env.VOXLY_SERVICE_TOKEN || '';
+}
+
+function gramjsBridgeBase(): string {
+  return (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
+}
+
+function whatsappWorkerBase(): string {
+  return (process.env.AI_WHATSAPP_WORKER_URL || 'http://ai-whatsapp-worker:3006').replace(
+    /\/$/,
+    '',
+  );
+}
+
+async function sendViaGramjsBridge(opts: {
+  botId: string;
+  peerUserId: string;
+  text: string;
+}): Promise<void> {
+  const token = serviceToken();
+  if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  const res = await fetch(`${gramjsBridgeBase()}/messages/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      peerUserId: opts.peerUserId,
+      text: opts.text,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
+  }
+}
+
+async function sendViaWhatsappWorker(opts: {
+  botId: string;
+  peerUserId: string;
+  text: string;
+  media?: { mediaBase64: string; mimeType: string; fileName: string };
+}): Promise<void> {
+  const token = serviceToken();
+  if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  const body: Record<string, unknown> = {
+    botId: opts.botId,
+    to: opts.peerUserId,
+    text: opts.text || '',
+    markRead: false,
+  };
+  if (opts.media) {
+    body.mediaBase64 = opts.media.mediaBase64;
+    body.mimeType = opts.media.mimeType;
+    body.fileName = opts.media.fileName;
+  }
+  const res = await fetch(`${whatsappWorkerBase()}/internal/messages/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `WhatsApp send failed (HTTP ${res.status})`);
+  }
+}
+
+async function fetchMediaAsBase64(
+  mediaUrl: string,
+  mediaType?: string,
+): Promise<{ mediaBase64: string; mimeType: string; fileName: string }> {
+  const res = await fetch(mediaUrl);
+  if (!res.ok) throw new Error(`media fetch HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > 15 * 1024 * 1024) {
+    throw new Error('media too large (>15MB)');
+  }
+  const contentType = res.headers.get('content-type') || '';
+  const mimeType =
+    contentType.split(';')[0].trim() ||
+    (mediaType === 'video' ? 'video/mp4' : 'image/jpeg');
+  const ext = mimeType.includes('video')
+    ? 'mp4'
+    : mimeType.includes('png')
+      ? 'png'
+      : mimeType.includes('webp')
+        ? 'webp'
+        : 'jpg';
+  return {
+    mediaBase64: buf.toString('base64'),
+    mimeType,
+    fileName: `broadcast.${ext}`,
+  };
 }
 
 async function trackPromoClick(
@@ -1113,15 +1472,36 @@ async function ensureConversation(
   return conversation;
 }
 
-async function storeInboundMessage(tenantId: string, botId: string, update: any) {
+async function storeInboundMessage(
+  tenantId: string,
+  botId: string,
+  update: any,
+  botApi: string,
+) {
   const telegramId = String(update.message.from.id);
   const attachments = extractTelegramAttachments(update.message);
-  const text =
+  let text =
     update.message.text ||
     update.message.caption ||
     update.message.contact?.phone_number ||
     (attachments.length ? attachmentPlaceholder(attachments[0]) : '');
   if (!text && attachments.length === 0) return;
+
+  // Same media understanding as Business AI path — enrich CRM ChatMessage for operators.
+  // Gift funnel itself does not LLM-reply; ai_tg bots are forwarded upstream.
+  if (attachments.length && OPENROUTER_API_KEY && !update.message.text) {
+    try {
+      text = await enrichGiftInboundMedia({
+        tenantId,
+        botApi,
+        message: update.message,
+        attachments,
+        fallbackText: text,
+      });
+    } catch (err) {
+      console.warn('[gift-bot] media enrich failed', err);
+    }
+  }
 
   const conversation = await ensureConversation(
     tenantId,
@@ -1152,6 +1532,9 @@ async function storeInboundMessage(tenantId: string, botId: string, update: any)
   if (sub?.twentyPersonId && text) {
     await syncChatNoteToCRM(tenantId, sub.twentyPersonId, 'Сообщение из Telegram', text);
   }
+  void maybeAttributeGiftMailingReply(tenantId, botId, telegramId, sub).catch((err) =>
+    console.warn('[gift-bot] mailing attribution failed', err),
+  );
 }
 
 type TgAttachment = {
@@ -1182,6 +1565,16 @@ function extractTelegramAttachments(message: any): TgAttachment[] {
       mimeType: message.video.mime_type,
       fileName: message.video.file_name,
       fileSize: message.video.file_size,
+    });
+  }
+  if (message.video_note) {
+    out.push({
+      type: 'video',
+      fileId: message.video_note.file_id,
+      fileUniqueId: message.video_note.file_unique_id,
+      mimeType: 'video/mp4',
+      fileName: 'video_note.mp4',
+      fileSize: message.video_note.file_size,
     });
   }
   if (message.document) {
@@ -1237,11 +1630,349 @@ function extractTelegramAttachments(message: any): TgAttachment[] {
 function attachmentPlaceholder(a?: TgAttachment): string {
   if (!a) return '';
   if (a.type === 'photo') return '[фото]';
+  if (a.fileName === 'video_note.mp4' || /video_note/i.test(a.fileName || '')) {
+    return '[кружочек]';
+  }
   if (a.type === 'video' || a.type === 'animation') return '[видео]';
   if (a.type === 'voice') return '[голосовое]';
   if (a.type === 'audio') return '[аудио]';
   if (a.type === 'sticker') return '[стикер]';
   return a.fileName ? `[файл: ${a.fileName}]` : '[файл]';
+}
+
+async function downloadGiftTelegramFile(
+  botApi: string,
+  fileId: string,
+): Promise<{ buffer: Buffer; filePath: string } | null> {
+  const metaRes = await fetch(`${botApi}/getFile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  const meta = (await metaRes.json()) as {
+    ok?: boolean;
+    result?: { file_path?: string };
+    description?: string;
+  };
+  if (!meta.ok || !meta.result?.file_path) {
+    console.warn('[gift-bot] getFile failed:', meta.description || meta);
+    return null;
+  }
+  const token = botApi.replace(/^https:\/\/api\.telegram\.org\/bot/, '');
+  const fileUrl = `https://api.telegram.org/file/bot${token}/${meta.result.file_path}`;
+  const fileRes = await fetch(fileUrl);
+  if (!fileRes.ok) {
+    console.warn('[gift-bot] file download failed', fileRes.status);
+    return null;
+  }
+  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  return { buffer, filePath: meta.result.file_path };
+}
+
+function giftAudioFormatFromPath(filePath: string): string {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.mp3')) return 'mp3';
+  if (lower.endsWith('.wav')) return 'wav';
+  if (lower.endsWith('.m4a') || lower.endsWith('.mp4')) return 'm4a';
+  if (lower.endsWith('.webm')) return 'webm';
+  if (lower.endsWith('.flac')) return 'flac';
+  return 'ogg';
+}
+
+async function softChargeGiftMedia(
+  tenantId: string,
+  model: string,
+  usage: OpenRouterUsageLike | undefined,
+  textLen: number,
+  requestType: 'transcribe' | 'vision',
+): Promise<void> {
+  const estTokens = Math.max(1, Math.ceil(textLen / 4));
+  try {
+    const cost = await resolveProviderCostRub({
+      model,
+      usage: usage || { total_tokens: estTokens },
+      apiKey: OPENROUTER_API_KEY,
+      baseUrl: OPENROUTER_BASE_URL,
+    });
+    await chargeAiUsage({
+      tenantId,
+      providerCostRub: cost.providerCostRub,
+      tokens: cost.tokens || estTokens,
+      model,
+      requestType,
+    });
+  } catch (err) {
+    // Gift tenants may lack AI wallet — enrichment still useful for CRM.
+    console.warn('[gift-bot] media charge skipped', err);
+  }
+}
+
+async function giftTranscribeAudio(
+  buffer: Buffer,
+  format: string,
+  model: string,
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
+  if (!OPENROUTER_API_KEY) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  try {
+    const res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
+        'X-Title': 'Voxly Gift Bot ASR',
+      },
+      body: JSON.stringify({
+        model,
+        language: 'ru',
+        input_audio: {
+          data: buffer.toString('base64'),
+          format,
+        },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.warn('[gift-bot] transcription HTTP', res.status, errText.slice(0, 300));
+      return null;
+    }
+    const data = (await res.json()) as { text?: string; usage?: OpenRouterUsageLike };
+    const text = data.text?.trim();
+    return text ? { text, usage: data.usage } : null;
+  } catch (err) {
+    console.warn('[gift-bot] transcription failed', err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function giftDescribeImage(
+  buffer: Buffer,
+  mime: string,
+  caption: string | undefined,
+  model: string,
+): Promise<{ text: string; usage?: OpenRouterUsageLike } | null> {
+  if (!OPENROUTER_API_KEY) return null;
+  const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+  const prompt =
+    'Опиши изображение кратко для оператора CRM: что на фото, текст/цены если видны. 1–3 предложения на русском, только факты.' +
+    (caption ? ` Подпись пользователя: ${caption}` : '');
+  try {
+    const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
+        'X-Title': 'Voxly Gift Bot Vision',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        max_tokens: 300,
+      }),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.warn('[gift-bot] vision HTTP', res.status, errText.slice(0, 300));
+      return null;
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: OpenRouterUsageLike;
+    };
+    const text = data.choices?.[0]?.message?.content?.trim();
+    return text ? { text, usage: data.usage } : null;
+  } catch (err) {
+    console.warn('[gift-bot] vision failed', err);
+    return null;
+  }
+}
+
+async function enrichGiftInboundMedia(opts: {
+  tenantId: string;
+  botApi: string;
+  message: any;
+  attachments: TgAttachment[];
+  fallbackText: string;
+}): Promise<string> {
+  const a = opts.attachments[0];
+  if (!a?.fileId) return opts.fallbackText;
+  const caption =
+    typeof opts.message.caption === 'string' ? opts.message.caption.trim() : '';
+  const isVideoNote =
+    Boolean(opts.message.video_note) ||
+    a.fileName === 'video_note.mp4' ||
+    /video_note/i.test(a.fileName || '');
+  const isVideo =
+    !isVideoNote &&
+    (a.type === 'video' ||
+      Boolean(opts.message.video) ||
+      (a.type === 'document' && (a.mimeType || '').startsWith('video/')));
+  const isAudio = a.type === 'voice' || a.type === 'audio';
+  const isImage = a.type === 'photo' || a.type === 'sticker';
+  const docKind =
+    a.type === 'document' && !isVideo
+      ? detectDocumentKind({ mimeType: a.mimeType, fileName: a.fileName })
+      : null;
+
+  if (a.type === 'animation') return opts.fallbackText;
+
+  if (isVideo || isVideoNote) {
+    const duration =
+      opts.message.video_note?.duration ?? opts.message.video?.duration;
+    const tooBig =
+      typeof a.fileSize === 'number' && a.fileSize > ASR_MEDIA_MAX_BYTES;
+    const tooLong =
+      typeof duration === 'number' && duration > ASR_VIDEO_MAX_DURATION_SEC;
+    const tag = isVideoNote ? 'кружочек' : 'видео';
+    const fail = caption
+      ? `${caption}\n\n[${tag} — не удалось разобрать речь. Опиши текстом, пожалуйста.]`
+      : `[${tag} — не удалось разобрать речь. Опиши текстом, пожалуйста.]`;
+    if (tooBig || tooLong) return fail;
+    const file = await downloadGiftTelegramFile(opts.botApi, a.fileId);
+    if (!file || file.buffer.length === 0 || file.buffer.length > ASR_MEDIA_MAX_BYTES) {
+      return fail;
+    }
+    const asrModel = process.env.AI_ASR_MODEL || AI_MODEL_DEFAULTS.asr;
+    let asrBuf = file.buffer;
+    let format = 'mp4';
+    const extracted = await extractAudioFromVideo(file.buffer, 'mp4');
+    if (extracted) {
+      asrBuf = Buffer.from(extracted.buffer);
+      format = extracted.format;
+    }
+    const asr = await giftTranscribeAudio(asrBuf, format, asrModel);
+    if (!asr?.text) return fail;
+    void softChargeGiftMedia(opts.tenantId, asrModel, asr.usage, asr.text.length, 'transcribe');
+    return caption
+      ? `${caption}\n\n[${tag}]: ${asr.text}`
+      : `[${tag}]: ${asr.text}`;
+  }
+
+  if (isAudio) {
+    const fail = caption
+      ? `${caption}\n\n[голосовое — не удалось распознать]`
+      : '[голосовое — не удалось распознать]';
+    const file = await downloadGiftTelegramFile(opts.botApi, a.fileId);
+    if (!file) return fail;
+    const asrModel = process.env.AI_ASR_MODEL || AI_MODEL_DEFAULTS.asr;
+    const format = giftAudioFormatFromPath(file.filePath);
+    const asr = await giftTranscribeAudio(file.buffer, format, asrModel);
+    if (!asr?.text) return fail;
+    void softChargeGiftMedia(opts.tenantId, asrModel, asr.usage, asr.text.length, 'transcribe');
+    return caption
+      ? `${caption}\n\n[голос]: ${asr.text}`
+      : `[голос]: ${asr.text}`;
+  }
+
+  if (docKind) {
+    if (typeof a.fileSize === 'number' && a.fileSize > DOC_MEDIA_MAX_BYTES) {
+      return formatDocumentAiText({ kind: docKind, text: null, caption });
+    }
+    const file = await downloadGiftTelegramFile(opts.botApi, a.fileId);
+    if (!file || file.buffer.length > DOC_MEDIA_MAX_BYTES) {
+      return formatDocumentAiText({ kind: docKind, text: null, caption });
+    }
+    const extracted = await extractDocumentText(file.buffer, docKind);
+    return formatDocumentAiText({
+      kind: docKind,
+      text: extracted,
+      caption,
+      fileName: a.fileName,
+    });
+  }
+
+  if (isImage) {
+    const fail = caption
+      ? `${caption}\n\n[${a.type === 'sticker' ? 'стикер' : 'фото'} — не удалось описать]`
+      : `[${a.type === 'sticker' ? 'стикер' : 'фото'} — не удалось описать]`;
+    const file = await downloadGiftTelegramFile(opts.botApi, a.fileId);
+    if (!file) return fail;
+    const visionModel = process.env.AI_CHAT_MODEL || AI_MODEL_DEFAULTS.chat;
+    const mime = a.type === 'sticker' ? 'image/webp' : a.mimeType || 'image/jpeg';
+    const vision = await giftDescribeImage(file.buffer, mime, caption || undefined, visionModel);
+    if (!vision?.text) return fail;
+    void softChargeGiftMedia(opts.tenantId, visionModel, vision.usage, vision.text.length, 'vision');
+    const tag = a.type === 'sticker' ? '[стикер]' : '[фото]';
+    return caption ? `${caption}\n\n${tag}: ${vision.text}` : `${tag}: ${vision.text}`;
+  }
+
+  return opts.fallbackText;
+}
+
+async function maybeAttributeGiftMailingReply(
+  tenantId: string,
+  botId: string,
+  telegramId: string,
+  sub: {
+    twentyPersonId: string | null;
+    lastMailingBroadcastId: string | null;
+    lastMailingAt: Date | null;
+  } | null,
+): Promise<void> {
+  if (
+    !sub?.lastMailingBroadcastId ||
+    !sub.twentyPersonId ||
+    !isWithinMailingAttributionWindow(sub.lastMailingAt)
+  ) {
+    // Also check Conversation tags (channel mailing / stories)
+    const conv = await prisma.conversation.findFirst({
+      where: { tenantId, botInstanceId: botId, platformUserId: telegramId },
+    });
+    if (
+      !conv?.lastMailingBroadcastId ||
+      !conv.twentyPersonId ||
+      !isWithinMailingAttributionWindow(conv.lastMailingAt)
+    ) {
+      return;
+    }
+    await syncChatNoteToCRM(
+      tenantId,
+      conv.twentyPersonId,
+      'Ответ после рассылки',
+      mailingAttributionNote({
+        broadcastId: conv.lastMailingBroadcastId,
+        kind:
+          ((await prisma.broadcast.findUnique({ where: { id: conv.lastMailingBroadcastId } }))
+            ?.messageJson as { channel?: string } | null)?.channel === 'story'
+            ? 'story'
+            : 'broadcast',
+      }),
+    );
+    await fireGoal({
+      tenantId,
+      goalName: 'mailing_reply',
+      subscriberId: telegramId,
+      botInstanceId: botId,
+    });
+    return;
+  }
+
+  await syncChatNoteToCRM(
+    tenantId,
+    sub.twentyPersonId,
+    'Ответ после рассылки',
+    mailingAttributionNote({ broadcastId: sub.lastMailingBroadcastId }),
+  );
+  await fireGoal({
+    tenantId,
+    goalName: 'mailing_reply',
+    subscriberId: telegramId,
+    botInstanceId: botId,
+  });
 }
 
 async function syncChatNoteToCRM(

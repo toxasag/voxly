@@ -121,6 +121,52 @@ export function voxlyServiceToken(): string {
   return process.env.VOXLY_SERVICE_TOKEN || '';
 }
 
+export async function fetchVoxlyApiJson(opts: {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: unknown;
+}): Promise<{ status: number; data: unknown; error?: string }> {
+  const token = voxlyServiceToken();
+  const workspaceId = decodeWorkspaceIdFromAppToken();
+  if (!token) {
+    return { status: 500, data: { error: 'VOXLY_SERVICE_TOKEN is not configured' } };
+  }
+  if (!workspaceId) {
+    return { status: 500, data: { error: 'Could not resolve Twenty workspace id' } };
+  }
+  const url = `${voxlyApiBaseUrl()}${opts.path}`;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'X-Twenty-Workspace-Id': workspaceId,
+  };
+  let body: BodyInit | undefined;
+  if (opts.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(opts.body);
+  }
+  try {
+    const res = await fetch(url, { method: opts.method, headers, body });
+    const text = await res.text();
+    let data: unknown = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { error: text };
+      }
+    }
+    return { status: res.status, data };
+  } catch (error) {
+    return {
+      status: 502,
+      data: {
+        error: 'Failed to reach Voxly API',
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 export async function proxyToVoxlyApi(opts: {
   method: 'GET' | 'POST';
   path: string;
@@ -178,7 +224,7 @@ export async function proxyToVoxlyApi(opts: {
         return new Response(parsed, { status: res.status });
       }
       const preview = maybeCompressImagePreview(buf, contentType);
-      buf = preview.buf;
+      buf = Buffer.from(preview.buf);
       // Oversized non-compressible payloads → explicit JSON error (not empty 200).
       if (buf.length > MAX_PREVIEW_RAW_BYTES * 2) {
         return new Response(
@@ -229,5 +275,5 @@ export function recordIdFromEvent(event: RoutePayload): string | null {
 
 export function fileIdFromEvent(event: RoutePayload): string | null {
   const raw = event.pathParameters?.fileId;
-  return typeof raw === 'string' && raw.length >= 10 ? raw : null;
+  return typeof raw === 'string' && raw.length >= 8 ? raw : null;
 }

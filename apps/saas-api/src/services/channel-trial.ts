@@ -7,14 +7,22 @@ type AddonConfig = {
   [key: string]: unknown;
 };
 
+export type ChannelTrialType =
+  | 'ai_gramjs'
+  | 'ai_wa'
+  | 'mailing_bot'
+  | 'mailing_accounts'
+  | 'mailing_stories';
+
 /**
- * One-shot 14-day trial for a channel addon (ai_gramjs / ai_wa).
+ * One-shot trial for a channel/mailing addon.
  * Refuses if already active or trial was used before.
+ * Duration = TRIAL_PERIOD_DAYS (global, currently 7).
  */
 export async function startChannelTrial(
   prisma: PrismaClient,
   tenantId: string,
-  type: 'ai_gramjs' | 'ai_wa',
+  type: ChannelTrialType,
 ) {
   const now = new Date();
   const existing = await prisma.addon.findUnique({
@@ -89,5 +97,26 @@ export function trialMeta(addon: {
     trialAvailable: !isActive && !trialConsumed,
     activeUntil: addon?.activeUntil ?? null,
     status: addon?.status ?? null,
+  };
+}
+
+/** Soft-gate: active addon (paid or trial) required to send/schedule. */
+export async function requireActiveAddon(
+  prisma: PrismaClient,
+  tenantId: string,
+  type: ChannelTrialType,
+): Promise<{ ok: true } | { ok: false; code: 402; error: string; meta: ReturnType<typeof trialMeta> }> {
+  const addon = await prisma.addon.findUnique({
+    where: { tenantId_type: { tenantId, type } },
+  });
+  const meta = trialMeta(addon);
+  if (meta.isActive) return { ok: true };
+  return {
+    ok: false,
+    code: 402,
+    error: meta.trialAvailable
+      ? 'Нужен пробный период или оплата add-on'
+      : 'Оформите оплату add-on',
+    meta,
   };
 }
