@@ -72,12 +72,21 @@ async function buildServer() {
   });
 
   // --- Shared services on instance ---
+  const hashAlgRaw = (process.env.ROBOKASSA_HASH_ALG || 'sha256').toLowerCase();
+  const robokassaHashAlgorithm = hashAlgRaw === 'md5' ? 'md5' : 'sha256';
+  const robokassaLogin = (process.env.ROBOKASSA_LOGIN || '').trim();
   const robokassa = new RobokassaClient({
-    merchantLogin: process.env.ROBOKASSA_LOGIN || '',
+    merchantLogin: robokassaLogin,
     password1: process.env.ROBOKASSA_PASSWORD1 || '',
     password2: process.env.ROBOKASSA_PASSWORD2 || '',
     isTest: process.env.ROBOKASSA_IS_TEST === '1',
+    hashAlgorithm: robokassaHashAlgorithm,
   });
+  if (!robokassaLogin || !process.env.ROBOKASSA_PASSWORD1 || !process.env.ROBOKASSA_PASSWORD2) {
+    console.warn(
+      '[saas-api] ROBOKASSA_LOGIN / PASSWORD1 / PASSWORD2 incomplete — checkout will fail signatures',
+    );
+  }
 
   const twentyClient = new TwentyClient({
     apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
@@ -88,6 +97,20 @@ async function buildServer() {
   fastify.decorate('robokassa', robokassa);
   fastify.decorate('twenty', twentyClient);
   fastify.decorate('voxlyDomain', VOXLY_DOMAIN);
+
+  // Robokassa ResultURL sends application/x-www-form-urlencoded
+  fastify.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      try {
+        const raw = typeof body === 'string' ? body : String(body ?? '');
+        done(null, Object.fromEntries(new URLSearchParams(raw)));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
 
   // --- Auth decorator ---
   // Portal JWT, short-lived crm-chat JWT, or Twenty app service token

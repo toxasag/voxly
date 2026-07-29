@@ -5,6 +5,42 @@
 
 ---
 
+### INC-070 — CRM side-panel «Чат» tab missing (app uninstalled)
+- **Симптом:** john-crm сделка/контакт: вкладки Главная / Временная шкала / +Ещё, **нет «Чат»**. Unread badge «N» на карточке остаётся (shell-ux). Не путать с кабинетным nav.
+- **Причина:** `voxly-crm-chat` **не установлен** в Twenty (`core.application` / `applicationRegistration` пусты) → нет `pageLayoutTab` «Чат» на Opportunity/Person. Типичный триггер: `refreshCrmChatAppForTenant` делает DELETE registration + `forceReinstall` (uninstall → cascade tabs) **до** успешного install; при **ENOSPC** / сбое upload-install вкладка исчезает, а shell-ux badges живут отдельно. После mailing **0.1.22** на prod был ENOSPC во время refresh.
+- **Диагностика:** `SELECT name FROM core.application WHERE "universalIdentifier"='b5c92442-…'`; `pageLayoutTab` title=`Чат`; metadata `getPageLayouts` tabs; `GET /rest/front-components/:id` → JS bundle.
+- **Фикс:** `POST /api/admin/tenants/:id/refresh-crm-chat` (body `{}`) на все tenants после свободного места на диске; flush Redis `flatPageLayout*`; bump `workspace.metadataVersion`. Tarball уже **0.1.22** в saas-api — отдельный twenty rebuild не нужен.
+- **Verify:** metadata `getPageLayouts` Opportunity/Person → tab «Чат» position 15; REST front-component **200**; hard-refresh john-crm → open deal → «Чат» visible + messages.
+- **Дата:** 2026-07-27.
+
+### INC-069 — CRM Chat empty («нет данных») after mailing receipts schema
+- **Симптом:** john-crm вкладка «Чат» пустая на WA / Business WA / GramJS при живых Conversation+ChatMessage+AI; API выглядел «без данных».
+- **Причина:** в Prisma/`ChatMessage` появились `deliveryStatus`/`deliveredAt`/`readAt` (миграция `20260727020000_mailing_broadcast_receipts` для mailing receipts), saas-api задеплоили с новым client, **колонок на prod control PG не было** → `chatMessage.findMany` **P2022** → GET `/api/crm/chat/:recordId` **500**. UI (RestApiClient) показывает пусто/ошибку. Не баг `listCrmChatTargets` / soft-delete ids.
+- **Фикс:** backup + `ALTER` + `BroadcastRecipient` + запись в `_prisma_migrations`. Дополнительно (AI): refusal retry + near-duplicate skip + burst focus (workers).
+- **Verify:** GET Person/Opportunity john → 200 + msgs>0 (WA 37/63, GramJS 51); hard-refresh Chat tab.
+- **Дата:** 2026-07-27.
+
+### INC-068 — Personal WA voice after CRM wipe: no Person/Opportunity
+- **Симптом:** после wipe / clear stale ids на `+79150946944` голосовое с личного WA → сделки нет (Business WA ASR+сделка ок).
+- **Причина:** (1) после INC-067 clear CRM ids **не было реального inbound** с `+7915` до recreate (Evolution: только LID `79855…` media). (2) WA `syncLeadToCrm` шёл **после** `enrichWaTextWithMediaAi` — при hang/fail ASR lead не создавался вовремя; TG media тоже ASR→sync.
+- **Фикс:** WA: ChatMessage placeholder → **await syncLeadToCrm** → ASR/vision/doc enrich + update content; TG media: ensureConversation+sync **до** `extractInboundText`; success/empty CRM logs.
+- **Verify:** wipe CRM ids on `+7915` → send voice → Person+Opportunity + `[голос]/` / `[голосовое]`; Business WA / TG text unchanged.
+- **Дата:** 2026-07-27.
+
+### INC-067 — WA video ASR OK but AI refuses; PDF/DOCX CRM download broken; typing stuck; personal WA no deal after wipe
+- **Симптом:** Business WA («ремонт тоя»): video/кружочек → AI «не могу просмотреть/прослушать»; PDF/DOCX AI читает, но скачать в CRM «Чат» нельзя; «Печатает» залипает / ответы висят; обычный WA (+7915…) после wipe — сделки нет.
+- **Причина:** (1) ASR уже писал `[видео]:` / `[кружочек]:` в ChatMessage, но история few-shot'ила старые отказы «не могу просмотреть» + слабый MEDIA hint. (2) Документы шли через `/file`→base64 в Twenty `/s` (~96KB cap) — PDF/DOCX не влезают; photo/audio ок. (3) `sendPresence(composing)` без `paused` на abort/error; TG Business GET chat слал `typing` на каждый poll. (4) Conversation `+7915` держал soft-deleted Opportunity + мёртвый Person id; после wipe inbound с этого номера не было в логах до фикса.
+- **Фикс:** `filterMediaCapabilityRefusals` + усиленный `MEDIA_INBOUND_HINT`; CRM documents → signed URL (crm-chat **0.1.20**); `Content-Disposition: attachment` для docs; `clearWhatsAppTyping(paused)`; убран typing с CRM GET (TG); await `syncLeadToCrm`; cleared stale IDs на `79150946944`.
+- **Verify:** Business WA video/кружочек → AI отвечает по transcript; PDF/DOCX «Скачать» в CRM; typing clears after reply; personal WA (+7915) video/text → new Person+Opportunity.
+- **Дата:** 2026-07-26 / 2026-07-27.
+
+### INC-066 — WA Business off-topic AI + regular WA silent / no Opportunity
+- **Симптом:** (1) WhatsApp (business-profile peer) — AI «не впопад» vs TG с тем же агентом. (2) «Обычный» WA — нет ответа и/или сделки.
+- **Причина:** (1) `filterHistoryAfterAgentUpdate` оставлял *все* user-сообщения до смены промпта без старых assistant → длинный WA-тред (оскорбления / старая персона) few-shot'ил мусор; MEDIA hint слабо запрещал «не могу обработать видео». (2) `resolveDefaultOpportunityStage` GraphQL `filter: { nameSingular }` → Twenty ObjectFilter 400 → fallback `NEW` → createOpportunity падает на RU стадиях (INC-055). (3) Closed LID-тред с фейковым `platformUsername=+20034505` (INC-060) — новый inbound мог не попасть в живой CRM-тред; AI off на `status=closed`.
+- **Фикс:** metadata objects без filter + pick `opportunity` client-side; fallback stage `''` (omit), не `NEW`; history cut **всех** ролей до `agent.updatedAt`; stronger `MEDIA_INBOUND_HINT`; WA reopen closed peer/phone threads + clear bogus username.
+- **Verify:** worker log no `nameSingular is not defined`; `resolveDefault` → `NOVYY_LID` (or workspace value); personal/LID inbound → reopen or one Person+Opportunity + AI reply; after agent prompt edit WA answers match TG echo style without old-thread pollution.
+- **Дата:** 2026-07-26.
+
 ### INC-063 — GramJS / WA / TG Business media missing in CRM chat
 - **Симптом:** фото/видео/стикер/кружочек приходят в Telegram/WA, в CRM «Чат» нет превью (или сообщение не появляется); AI не «видит» медиа. **Reopen 2026-07-26 вечер:** видео = чёрный HTML5 player 0:00; кружочек = только текст `[кружочек]`; AI не понимает video_note. **Reopen 2026-07-26 ~22:16:** кружочек = только «Кружочек · скачать» (нет `<video>`); AI «Секунду…» / эхо ASR без полезного ответа. **Reopen 2026-07-26 ~22:30:** кружочек OK; **обычное видео** — AI не расшифровывает (placeholder-only). **Reopen 2026-07-26 ~22:45 user smoke:** кружочек/аудио/фото OK; обычное видео — AI отвечает «Это видео.» (игнор ASR); PDF/DOCX — только `[файл: name]`, AI не читает. **Reopen 2026-07-26 ~23:05:** parity — gift inbound missed `video_note` + no ASR/vision/docs enrich for CRM.
 - **Причина:** (1)–(8) как раньше. **(9)** После regular-video ASR ship: Whisper часто **уже** писал `[видео]: transcript` (~600KB TG Business), но LLM few-shot из старых `[видео]` → «Это видео.»; caps **8MB/90s** + raw-mp4 Whisper без ffmpeg — хрупко на реальных роликах; PDF/DOCX inbound = placeholder only (extract был только в knowledge upload). **(10)** Gift funnel only stored bare placeholders; `video_note` not in inbound message filter.
@@ -20,8 +56,8 @@
 ### INC-064 — AI agent system prompt edit ignored in chat
 - **Симптом:** в `/dashboard/ai/agents` сохранили новый system prompt, в UI он виден, но ответы в TG/WA/GramJS продолжают старую персону.
 - **Причина:** workers уже читали `AiAgent` из DB на каждый flush, но ~20 предыдущих `assistant` ChatMessage few-shot'или старый стиль и перекрывали новый system prompt. Дополнительно resolve шёл через Prisma relation include (менее явно, чем fresh `findFirst` by id).
-- **Фикс:** `resolveAssignedAgent` → fresh `aiAgent.findFirst` by id + `updatedAt`; `filterHistoryAfterAgentUpdate` дропает assistant-сообщения до `agent.updatedAt`; `AGENT_PROMPT_PRIORITY_HINT`; fallback `settings.systemPrompt`.
-- **Дата:** 2026-07-26.
+- **Фикс:** `resolveAssignedAgent` → fresh `aiAgent.findFirst` by id + `updatedAt`; `filterHistoryAfterAgentUpdate` дропает **все** сообщения (user+assistant) до `agent.updatedAt` (INC-066: orphan user lines тоже путали модель); `AGENT_PROMPT_PRIORITY_HINT`; fallback `settings.systemPrompt`.
+- **Дата:** 2026-07-26 (amended INC-066).
 
 ### INC-062 — WA business email blocked by Twenty soft-delete unique
 - **Симптом:** business profile отдаёт `anton@…`, сайт заполняется, email на новом Person пустой; Instagram/Facebook пустые.

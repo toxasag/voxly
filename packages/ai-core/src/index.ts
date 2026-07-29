@@ -32,8 +32,13 @@ export {
   humanBubbleGapMs,
   normalizeAiBubbles,
   filterHistoryAfterAgentUpdate,
+  filterMediaCapabilityRefusals,
+  isMediaCapabilityRefusal,
+  hasEnrichedMediaTag,
+  isNearDuplicateReply,
   AGENT_PROMPT_PRIORITY_HINT,
   MEDIA_INBOUND_HINT,
+  MEDIA_REFUSAL_RETRY_USER,
   DEFAULT_INBOUND_DEBOUNCE_MS,
   type InboundDebouncer,
 } from './inbound-debounce.js';

@@ -60,26 +60,24 @@
 
 ---
 
-## ADR-018 — «Рассылка» в Twenty CRM (in-app front-component, reuse gift broadcast)
+## ADR-018 — «Рассылка» в Twenty CRM (FOLDER + in-app pages, reuse Broadcast)
 
-**Статус:** amended 2026-07-26 (override: UI inside CRM like chat, not portal LINK)  
+**Статус:** amended 2026-07-26 (folder UX + stage trigger)  
 
 | Вопрос | Выбор |
 |---|---|
-| CRM UI | `NavigationMenuItemType.PAGE_LAYOUT` → `definePageLayout` `STANDALONE_PAGE` + `defineFrontComponent` `mailing-panel` (crm-chat ≥0.1.17). Same install/refresh path as Chat. **Не** portal `LINK` to getvoxly.ru |
-| Bot mailing | Reuse `Broadcast` + gift-bot-worker `processBroadcast` via logic `/s/mailing/*` → saas-api (service token + workspace) |
-| Audience (bot) | `GiftSubscriber`; filters `segment` (giftDelivered) + optional `funnelPhase` |
-| Edit scheduled | `PATCH /api/bots/:botId/broadcasts/:id` while `status=scheduled` (portal; CRM panel v1 = create + list) |
-| Media | Portal supports `telegramFileId`/`mediaType`; CRM panel v1 = text (+ schedule). Media upload in-CRM later |
-| messageJson | Backward compatible: missing `funnelPhase`/`telegramFileId` OK for already-scheduled |
-| GramJS/WA/Stories | Portal pages remain; in-CRM tabs later. Stories ADR-019 |
-| Billing / trial | Add-ons mailing_*; trial from panel via `/s/mailing/start-trial`; pay → «Кабинет Voxly» |
-| Attribution | `lastMailingBroadcastId` + CRM note on inbound (48h) |
+| CRM UI | Expandable `FOLDER` «Рассылка» + **4** child `PAGE_LAYOUT` STANDALONE_PAGE front-components (crm-chat ≥0.1.18): **Бот**, **Аккаунты**, **Сторис**, **По этапу сделки**. In-CRM only — **не** portal LINK |
+| Bot / accounts / stories | Reuse `Broadcast` + gift-bot-worker scanner; schedule via `datetime-local` → `scheduledAt`; edit `PATCH` while `scheduled`; duplicate = prefill create |
+| Accounts | One page, GramJS/WA toggle; billing `mailing_accounts` |
+| Stories | Media URL + caption; GramJS send (ADR-019); billing `mailing_stories` |
+| Stage trigger | `MailingStageRule` + `POST …/stage-rules/fire`; Twenty LF `opportunity.updated` (stage); send via Broadcast `subscriberIds` (worker filter). Gift-bot linked by `twentyOpportunityId` |
+| Billing / trial | mailing_*; trial from each panel; pay → Кабинет Voxly |
+| Attribution | unchanged |
 
-**Отклонено (superseded):** top-level portal LINKs / FOLDER+LINKs as primary CRM UX (Twenty FolderSubItem `navigate(https)` → CRM 404; trainees expect in-app like chat).  
-**Отклонено:** rewrite `processBroadcast`.
+**Отклонено:** portal LINK / FOLDER+https as primary CRM UX.  
+**Отклонено:** rewrite `processBroadcast` (only additive `subscriberIds` / `conversationIds` filters).
 
-**Portal:** `/dashboard/mailing*` остаётся для кабинета; CRM sidebar больше не ведёт туда.
+**Portal:** `/dashboard/mailing*` остаётся для кабинета.
 
 ---
 

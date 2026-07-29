@@ -14,8 +14,12 @@ import {
   humanBubbleGapMs,
   normalizeAiBubbles,
   filterHistoryAfterAgentUpdate,
+  filterMediaCapabilityRefusals,
+  isMediaCapabilityRefusal,
+  hasEnrichedMediaTag,
   AGENT_PROMPT_PRIORITY_HINT,
   MEDIA_INBOUND_HINT,
+  MEDIA_REFUSAL_RETRY_USER,
   DEFAULT_INBOUND_DEBOUNCE_MS,
   extractAudioFromVideo,
   detectDocumentKind,
@@ -801,6 +805,47 @@ async function handleInboundMessage(
       message.document ||
       (message.photo?.length && !message.caption)
     );
+  const telegramId = from.id;
+  const firstName = from.first_name;
+  const username = from.username;
+  // Contact share (collect_phone / user card) — prefer when user_id matches sender.
+  const contactPhone =
+    message.contact?.phone_number &&
+    (!message.contact.user_id || message.contact.user_id === from.id)
+      ? message.contact.phone_number
+      : undefined;
+
+  // Media: open Conversation + CRM sync BEFORE ASR/vision so a hang never blocks lead create.
+  let conversation =
+    needsMediaPipeline
+      ? await ensureConversation({
+          tenantId,
+          botId,
+          platformUserId: String(telegramId),
+          username,
+          firstName,
+          channel,
+          businessConnectionId,
+        })
+      : null;
+  if (conversation) {
+    const businessAccountLabel = await resolveBusinessAccountLabel(
+      tenantId,
+      botId,
+      businessConnectionId,
+    );
+    await syncLeadToCrm({
+      tenantId,
+      botId,
+      conversationId: conversation.id,
+      platformUserId: String(telegramId),
+      username,
+      firstName,
+      phone: contactPhone,
+      businessAccountLabel: businessAccountLabel || undefined,
+    }).catch((err) => console.warn('[ai-telegram] CRM lead sync failed', err));
+  }
+
   if (needsMediaPipeline && OPENROUTER_API_KEY) {
     // Typing only — do not send a "Секунду…" bubble (looks like the only reply if ASR/LLM stalls).
     void sendChatAction(botApi, chatId, 'typing', businessConnectionId);
@@ -813,15 +858,6 @@ async function handleInboundMessage(
   if (!text && !mediaPlaceholder) return;
 
   const displayText = text || mediaPlaceholder || '[сообщение]';
-  const telegramId = from.id;
-  const firstName = from.first_name;
-  const username = from.username;
-  // Contact share (collect_phone / user card) — prefer when user_id matches sender.
-  const contactPhone =
-    message.contact?.phone_number &&
-    (!message.contact.user_id || message.contact.user_id === from.id)
-      ? message.contact.phone_number
-      : undefined;
 
   if (text === '/start') {
     await sendHumanLike({ botApi, chatId, bubbles: ['Привет! Чем могу помочь?'], businessConnectionId });
@@ -870,32 +906,33 @@ async function handleInboundMessage(
     return;
   }
 
-  const conversation = await ensureConversation({
-    tenantId,
-    botId,
-    platformUserId: String(telegramId),
-    username,
-    firstName,
-    channel,
-    businessConnectionId,
-  });
-
-  // Always sync: validates stale Twenty ids after CRM wipe (INC-042).
-  const businessAccountLabel = await resolveBusinessAccountLabel(
-    tenantId,
-    botId,
-    businessConnectionId,
-  );
-  void syncLeadToCrm({
-    tenantId,
-    botId,
-    conversationId: conversation.id,
-    platformUserId: String(telegramId),
-    username,
-    firstName,
-    phone: contactPhone,
-    businessAccountLabel: businessAccountLabel || undefined,
-  }).catch((err) => console.warn('[ai-telegram] CRM lead sync failed', err));
+  if (!conversation) {
+    conversation = await ensureConversation({
+      tenantId,
+      botId,
+      platformUserId: String(telegramId),
+      username,
+      firstName,
+      channel,
+      businessConnectionId,
+    });
+    // Always sync: validates stale Twenty ids after CRM wipe (INC-042).
+    const businessAccountLabel = await resolveBusinessAccountLabel(
+      tenantId,
+      botId,
+      businessConnectionId,
+    );
+    await syncLeadToCrm({
+      tenantId,
+      botId,
+      conversationId: conversation.id,
+      platformUserId: String(telegramId),
+      username,
+      firstName,
+      phone: contactPhone,
+      businessAccountLabel: businessAccountLabel || undefined,
+    }).catch((err) => console.warn('[ai-telegram] CRM lead sync failed', err));
+  }
 
   await prisma.chatMessage.create({
     data: {
@@ -1125,9 +1162,11 @@ async function generateAiBubbles(opts: {
     orderBy: { createdAt: 'desc' },
     take: CONTEXT_WINDOW + 1,
   });
-  const prior = filterHistoryAfterAgentUpdate(
-    historyDesc.slice(1).reverse(),
-    assigned?.updatedAt,
+  const prior = filterMediaCapabilityRefusals(
+    filterHistoryAfterAgentUpdate(
+      historyDesc.slice(1).reverse(),
+      assigned?.updatedAt,
+    ),
   );
 
   const customPrompt = agentSystemPrompt(assigned);
@@ -1168,25 +1207,38 @@ async function generateAiBubbles(opts: {
       ? String((assigned.settings as Record<string, unknown>).model).trim()
       : '';
   const model = agentModel || aiConfig.model || AI_MODEL_DEFAULTS.chat;
-  let completion;
-  try {
-    completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: aiConfig.temperature ?? 0.7,
-      max_tokens: aiConfig.maxTokens ?? 1000,
-      response_format: { type: 'json_object' },
-    });
-  } catch {
-    completion = await openai.chat.completions.create({
-      model,
-      messages,
-      temperature: aiConfig.temperature ?? 0.7,
-      max_tokens: aiConfig.maxTokens ?? 1000,
-    });
-  }
+  const callModel = async (msgs: OpenAI.Chat.ChatCompletionMessageParam[]) => {
+    try {
+      return await openai.chat.completions.create({
+        model,
+        messages: msgs,
+        temperature: aiConfig.temperature ?? 0.7,
+        max_tokens: aiConfig.maxTokens ?? 1000,
+        response_format: { type: 'json_object' },
+      });
+    } catch {
+      return await openai.chat.completions.create({
+        model,
+        messages: msgs,
+        temperature: aiConfig.temperature ?? 0.7,
+        max_tokens: aiConfig.maxTokens ?? 1000,
+      });
+    }
+  };
+  let completion = await callModel(messages);
 
-  const raw = completion.choices[0]?.message?.content || 'Извините, не удалось ответить.';
+  let raw = completion.choices[0]?.message?.content || 'Извините, не удалось ответить.';
+  if (isMediaCapabilityRefusal(raw) && hasEnrichedMediaTag(displayText)) {
+    console.warn(
+      `[ai-telegram] media refusal retry conv=${conversationId} text=${displayText.slice(0, 80)}`,
+    );
+    completion = await callModel([
+      ...messages,
+      { role: 'assistant', content: raw },
+      { role: 'user', content: MEDIA_REFUSAL_RETRY_USER },
+    ]);
+    raw = completion.choices[0]?.message?.content || 'Извините, не удалось ответить.';
+  }
   const bubbles = normalizeAiBubbles(parseAiBubbles(raw), 4);
   const usage = completion.usage as OpenRouterUsageLike | undefined;
   const cost = await resolveProviderCostRub({

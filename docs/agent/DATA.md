@@ -15,7 +15,7 @@
 | Модель | Назначение | R/W |
 |---|---|---|
 | `Tenant`, `User`, `TenantMember` | мультитенант + auth | saas-api |
-| `Subscription`, `Payment`, `Addon` | биллинг / trial CRM 14д | saas-api (Robokassa) |
+| `Subscription`, `Payment`, `Addon` | биллинг / trial CRM **7д** (`TRIAL_PERIOD_DAYS`) | saas-api (Robokassa) |
 | `AiWallet`, `AiUsageLog`, `TenantBalance` | AI billing + markup | saas-api, ai-core, AI workers |
 | `BotInstance`, `BotProvisionRequest` | Managed Bots tokens (AES); `defaultAiAgentId` | saas-api, manager-bot R/W token |
 | `AiAgent` | Tenant AI agents (prompt/settings); assign via bot/conversation | saas-api + ai-telegram-worker |
@@ -23,6 +23,7 @@
 | `GiftCampaignConfig` | funnelJson, promoPost, channel | saas-api R/W; gift-worker R |
 | `GiftSubscriber` | фаза воронки, phone, twenty ids | gift-worker R/W; saas-api R (+ reply) |
 | `Broadcast` | рассылки | saas-api create; gift-worker send |
+| `MailingStageRule` | auto-send on Opportunity stage enter | saas-api R/W; fire → Broadcast |
 | `ReferralCode/Referral/…` | рефералка | saas-api |
 | `AnalyticsIntegration`, `AttributionSession`, `ConversionEvent`, `TrackingLink` | S2S аналитика; у ConversionEvent есть `campaignId`/`botInstanceId` | saas-api, gift-worker `fireGoal`, analytics-dispatchers |
 | `PlatformSetting`, `PricingOverride`, `AuditLog` | супер-админ | saas-api |

@@ -25,3 +25,20 @@ export async function startCheckout(body: {
   if (!json.paymentUrl) throw new Error('Нет ссылки на оплату');
   window.location.href = json.paymentUrl;
 }
+
+/**
+ * Handle mailing soft-gate 402: trial still available → message;
+ * otherwise redirect to Robokassa for productCode.
+ */
+export async function handleMailingBillingGate(json: {
+  error?: string;
+  productCode?: string;
+  billing?: { trialAvailable?: boolean };
+}): Promise<'checkout' | 'message'> {
+  const product = json.productCode;
+  if (product && !json.billing?.trialAvailable) {
+    await startCheckout({ productCode: product, periodMonths: 1 });
+    return 'checkout';
+  }
+  return 'message';
+}

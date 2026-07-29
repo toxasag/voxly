@@ -11,7 +11,7 @@ sequenceDiagram
   participant Q as BullMQ
   participant T as Twenty
   P->>A: POST /api/auth/register
-  A->>A: Tenant + User + Subscription crm_base 14d
+  A->>A: Tenant + User + Subscription crm_base 7d trial
   A->>Q: enqueueProvisioning
   Q->>T: signUp / workspace + ru-RU defaults
   P->>A: GET /api/tenant/crm-login
@@ -82,7 +82,9 @@ Billing: Robokassa checkout mailing_bot|mailing_accounts|mailing_stories; trial 
 
 ## 7. Биллинг
 
-`POST /api/billing/checkout` → Robokassa → `POST /api/billing/result` (idempotent) → activate Subscription/Addon.  
+`POST /api/billing/checkout` → Robokassa `Index.aspx` (`IsTest=1` when `ROBOKASSA_IS_TEST=1`) → ResultURL `GET|POST /api/billing/result` → reply `OK{InvId}` → activate Subscription/Addon. Success → `/api/billing/success` → portal dashboard; Fail → `/api/billing/fail`.
+
+Signatures (hash = `ROBOKASSA_HASH_ALG`, must match ЛК): pay `MerchantLogin:OutSum:InvId[:Receipt]:Password1:Shp_*`; Result `OutSum:InvId:Password2:Shp_*`. Test mode uses **test** Password#1/#2 only.
 Пакет: `packages/billing`.
 
 ## 8. Аналитика S2S

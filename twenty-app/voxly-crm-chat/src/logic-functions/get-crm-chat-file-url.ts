@@ -9,8 +9,8 @@ import {
 } from 'src/logic-functions/voxly-proxy';
 
 /**
- * Short-lived signed media URL for video/audio/voice (Twenty /s JSON ~96KB cap
- * cannot carry media bytes as base64).
+ * Short-lived signed media URL for video/audio/voice/documents (Twenty /s JSON
+ * ~96KB cap cannot carry media bytes as base64).
  */
 const handler = async (event: RoutePayload) => {
   const recordId = recordIdFromEvent(event);
@@ -31,7 +31,7 @@ export default defineLogicFunction({
   universalIdentifier: GET_CRM_CHAT_FILE_URL_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'get-crm-chat-file-url',
   description:
-    'Mint a signed URL for large CRM chat attachments (video, audio, voice)',
+    'Mint a signed URL for large CRM chat attachments (video, audio, voice, documents)',
   timeoutSeconds: 30,
   httpRouteTriggerSettings: {
     path: '/crm-chat/:recordId/file-url/:fileId',

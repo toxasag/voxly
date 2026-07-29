@@ -115,7 +115,7 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // --- One-shot 14-day trial for ai_gramjs ---
+  // --- One-shot trial for ai_gramjs (TRIAL_PERIOD_DAYS) ---
   fastify.post('/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;

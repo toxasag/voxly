@@ -14,6 +14,7 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
 import { PageHeader } from '@/components/portal/page-header';
+import { HeroBanner } from '@/components/portal/hero-banner';
 
 interface DashboardOverview {
   tenant: {
@@ -360,6 +361,21 @@ export default function DashboardPage() {
 
   return (
     <AppShell maxWidth="6xl">
+      <HeroBanner
+        greeting={`Добрый день, ${data.tenant.name || 'Антон'}!`}
+        date={new Date().toLocaleDateString('ru-RU', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }).replace(/^\w/, (c) => c.toUpperCase())}
+        actions={[
+          { label: '+ Новый документ', href: '#', variant: 'white' },
+          { label: '+ Заказ', href: '#', variant: 'primary' },
+          { label: '+ Контрагент', href: '#', variant: 'primary' },
+        ]}
+      />
+
       <PageHeader
         title={data.tenant.name || data.tenant.slug}
         description={

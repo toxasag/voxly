@@ -142,9 +142,11 @@ const GET_WORKSPACE_DEFAULTS_CONTEXT = gql`
   }
 `;
 
+// Twenty metadata ObjectFilter does not accept nameSingular (INC-066).
+// Fetch a page and pick opportunity client-side (same pattern as applyWorkspaceDefaults).
 const GET_OPPORTUNITY_STAGE_FIELD = gql`
   query GetOpportunityStageField {
-    objects(paging: { first: 200 }, filter: { nameSingular: { eq: "opportunity" } }) {
+    objects(paging: { first: 200 }) {
       edges {
         node {
           id
@@ -2108,6 +2110,7 @@ export class TwentyClient {
         objects?: {
           edges?: Array<{
             node?: {
+              nameSingular?: string;
               fieldsList?: Array<{
                 name?: string;
                 options?: Array<{
@@ -2120,10 +2123,13 @@ export class TwentyClient {
           }>;
         };
       };
-      const fields =
-        result.objects?.edges?.[0]?.node?.fieldsList ||
-        result.objects?.edges?.find((e) => e.node?.fieldsList)?.node?.fieldsList ||
-        [];
+      const opportunityNode =
+        result.objects?.edges?.find((e) => e.node?.nameSingular === 'opportunity')
+          ?.node ||
+        result.objects?.edges?.find((e) =>
+          e.node?.fieldsList?.some((f) => f.name === 'stage' && Array.isArray(f.options)),
+        )?.node;
+      const fields = opportunityNode?.fieldsList || [];
       const stageField = fields.find((f) => f.name === 'stage');
       const options = Array.isArray(stageField?.options) ? stageField!.options! : [];
       const byId = options.find((o) => o.id === OPPORTUNITY_NEW_STAGE_OPTION_ID);
@@ -2138,7 +2144,9 @@ export class TwentyClient {
         err instanceof Error ? err.message : err,
       );
     }
-    return 'NEW';
+    // Empty → omit stage on create (Twenty default). Never fall back to English `NEW`
+    // on RU workspaces (INC-055 / INC-066) — that aborts Opportunity create.
+    return '';
   }
 
   /** Soft-delete current workspace (Settings → Delete). Follow with SQL hard-drop if needed. */
@@ -2159,8 +2167,8 @@ export class TwentyClient {
   }): Promise<{ id: string }> {
     const headers = this.getAuthHeaders();
     const preferredStage =
-      !input.stage || input.stage === 'NEW'
-        ? await this.resolveDefaultOpportunityStage()
+      !input.stage || input.stage === 'NEW' || input.stage === ''
+        ? (await this.resolveDefaultOpportunityStage()) || undefined
         : input.stage;
 
     const buildData = (stage: string | undefined, useConnect: boolean) => {
@@ -2317,10 +2325,11 @@ export class TwentyClient {
       return await createAndLink(preferredStage);
     } catch (err) {
       const valid = parseValidStages(err);
+      const preferredForPick = preferredStage || 'NOVYY_LID';
       const stage =
-        valid.length > 0 ? pickStage(valid, preferredStage) : preferredStage;
+        valid.length > 0 ? pickStage(valid, preferredForPick) : preferredStage;
 
-      if (valid.length > 0 && stage !== preferredStage) {
+      if (valid.length > 0 && stage && stage !== preferredStage) {
         return await createAndLink(stage);
       }
 

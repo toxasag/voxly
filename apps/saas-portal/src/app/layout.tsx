@@ -1,16 +1,40 @@
 import type { Metadata } from 'next';
+import { Manrope, Unbounded } from 'next/font/google';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import './globals.css';
 
+const display = Unbounded({
+  subsets: ['cyrillic', 'latin'],
+  variable: '--font-voxly-display',
+  display: 'swap',
+  weight: ['500', '600', '700'],
+});
+
+const body = Manrope({
+  subsets: ['cyrillic', 'latin'],
+  variable: '--font-voxly-body',
+  display: 'swap',
+  weight: ['400', '500', '600', '700'],
+});
+
 export const metadata: Metadata = {
-  title: 'Voxly — 7 дней бесплатно. CRM, боты и AI в 3 раза дешевле рынка',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://getvoxly.ru'),
+  title: 'Voxly — CRM, Telegram и WhatsApp в одном кабинете',
   description:
-    'CRM, gift-боты, AI Telegram/WhatsApp и рассылки. Попробуйте 7 дней бесплатно, затем модули от 500 ₽ — обычно в 3 раза дешевле Salebot, Wazzup и amo в сборке.',
+    'Клиенты пишут в мессенджеры. Voxly держит CRM, ботов и AI вместе. 7 дней бесплатно, без карты. От 500 ₽/мес.',
+  openGraph: {
+    title: 'Voxly — один кабинет вместо трёх сервисов',
+    description: '7 дней бесплатно. CRM, боты и AI. От 500 ₽ за модуль.',
+    siteName: 'Voxly',
+    locale: 'ru_RU',
+    type: 'website',
+    images: [{ url: '/mascot/voxly-hero-v5.png', width: 1024, height: 1536, alt: 'Voxly — робот-компаньон' }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ru">
+    <html lang="ru" className={`${display.variable} ${body.variable}`}>
       <body className="font-sans antialiased">
         <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
       </body>

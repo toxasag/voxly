@@ -49,6 +49,7 @@ model Tenant {
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
+  mailingStageRules MailingStageRule[]
   conversations     Conversation[]
   aiUsageLog        AiUsageLog[]
   aiAgents          AiAgent[]
@@ -626,6 +627,26 @@ model Broadcast {
   @@index([status])
 }
 
+/// Auto-send when Opportunity enters a pipeline stage (in-CRM «По этапу сделки»).
+model MailingStageRule {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String
+  botId      String
+  channel    String   @default("gift") // gift | gramjs | wa
+  name       String   @default("")
+  stageValue String
+  text       String
+  mediaUrl   String?
+  mediaType  String?
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, stageValue, enabled])
+}
+
 // ============================================================
 // Conversations & Chat Messages (AI agents)
 // ============================================================
@@ -695,6 +716,10 @@ model ChatMessage {
   /// Telegram media: [{ type, fileId, fileUniqueId?, fileName?, mimeType?, fileSize? }]
   attachments     Json?
   externalMessageId String? // Telegram/WhatsApp message ID
+  /// sent | delivered | read | failed — mailing/outbound receipts (Phase 2)
+  deliveryStatus  String?
+  deliveredAt     DateTime?
+  readAt          DateTime?
   tokensUsed      Int?
   modelUsed       String?
   providerCostRub Decimal? @db.Decimal(10, 4)
@@ -704,6 +729,29 @@ model ChatMessage {
 
   @@index([conversationId])
   @@index([role])
+  @@index([externalMessageId])
+  @@index([deliveryStatus])
+}
+
+/// Per-recipient delivery for channel mailings (GramJS / WA).
+model BroadcastRecipient {
+  id               String   @id @default(cuid())
+  broadcastId      String
+  conversationId   String?
+  giftSubscriberId String?
+  externalMessageId String?
+  status           String   @default("pending") // pending | sent | delivered | read | failed
+  error            String?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([broadcastId])
+  @@index([conversationId])
+  @@index([externalMessageId])
+  @@index([status])
 }
 
 // ============================================================

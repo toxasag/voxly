@@ -179,8 +179,9 @@ export function filterHistoryAfterAgentUpdate<
       ? agentUpdatedAt.getTime()
       : new Date(agentUpdatedAt).getTime();
   if (!Number.isFinite(cut)) return messages;
+  // Drop *all* turns before the prompt change. Keeping orphan user lines without their
+  // old assistant replies (WA long threads) few-shot'ит мусор → «не впопад» (INC-066).
   return messages.filter((m) => {
-    if (m.role !== 'assistant') return true;
     const t =
       m.createdAt instanceof Date
         ? m.createdAt.getTime()
@@ -195,14 +196,66 @@ export const AGENT_PROMPT_PRIORITY_HINT = `
 Приоритет: текущие инструкции выше важнее стиля и роли из истории переписки.`;
 
 /**
+ * Old assistant turns like «не могу просмотреть видео» few-shot refusals even when
+ * the latest user line already has ASR/vision text (`[видео]: …`). Drop those.
+ */
+const MEDIA_CAPABILITY_REFUSAL_RE =
+  /не\s+могу(?:\s+\S+){0,6}\s+(?:просмотреть|прослушать|обработать|посмотреть|открыть|прочитать|услышать)|могу\s+(?:работать|отвечать)\s+только\s+(?:с\s+текстом|на\s+текстов)|только\s+на\s+текстов(?:ые|ые\s+сообщения)|cannot\s+(?:view|watch|listen|process)\s+(?:the\s+)?(?:video|audio|media|voice)/i;
+
+export function isMediaCapabilityRefusal(content: string): boolean {
+  return MEDIA_CAPABILITY_REFUSAL_RE.test(String(content || ''));
+}
+
+/** True when ASR/vision/doc already put real text after a media tag (`[голос]: …`). */
+export function hasEnrichedMediaTag(content: string): boolean {
+  return /\[(?:голос(?:овое)?|кружочек|видео|фото|стикер|документ[^\]]*)\]:\s*\S+/i.test(
+    String(content || ''),
+  );
+}
+
+export function filterMediaCapabilityRefusals<
+  T extends { role: string; content?: string | null },
+>(messages: T[]): T[] {
+  return messages.filter((m) => {
+    if (m.role !== 'assistant') return true;
+    return !isMediaCapabilityRefusal(String(m.content || ''));
+  });
+}
+
+/** Near-identical AI replies within a short window (double flush / twin webhook). */
+export function isNearDuplicateReply(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    String(s || '')
+      .replace(/\s+/g, ' ')
+      .replace(/[.…]+$/g, '')
+      .trim()
+      .toLowerCase();
+  const na = norm(a);
+  const nb = norm(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const shorter = na.length <= nb.length ? na : nb;
+  const longer = na.length <= nb.length ? nb : na;
+  if (shorter.length < 48) return false;
+  return longer.startsWith(shorter);
+}
+
+/**
  * Always append so the model uses ASR/vision/doc extracts, not bare media labels
  * (few-shot from old `[видео]` / `[файл:…]` placeholders taught «Это видео.»).
  */
 export const MEDIA_INBOUND_HINT = `
 
-Медиа во входящих размечены так:
-- [голос]: … / [кружочек]: … / [видео]: … — это расшифровка речи, отвечай по смыслу текста после тега;
-- [фото]: … / [стикер]: … — описание картинки;
-- [документ PDF]: … / [документ DOCX]: … — извлечённый текст файла.
-Не отвечай одним словом «видео»/«файл»/«документ», если после тега есть содержимое.`;
+Медиа во входящих уже распознаны системой. Теги:
+- [голос]: текст / [кружочек]: текст / [видео]: текст — это ГОТОВАЯ расшифровка речи. Отвечай по смыслу текста после «:» как будто клиент написал его вручную (даже одно слово вроде «Голосовое.» / «Огонь.»).
+- [фото]: … / [стикер]: … — описание картинки (ты «увидел»).
+- [документ PDF]: … / [документ DOCX]: … — извлечённый текст (ты «прочитал»).
+Пример: user «[видео]: это видео про заявку» → ответь про заявку, НЕ пиши что не видишь видео.
+Пример: user «[голос]: Голосовое.» → ответь по слову «Голосовое», НЕ пиши «не могу прослушать».
+Пример: user «[кружочек]: один» → ответь по слову «один», НЕ путай с голосом и НЕ отказывайся слушать.
+Запрещено писать «не могу просмотреть/прослушать/обработать», «могу только текст», «ответьте текстом» — если после тега есть любой текст.
+Голый тег без текста после «:» (например «[видео]» или «[голосовое]») — коротко попроси описать текстом; не выдумывай длинный отказ в «просмотре».
+Отвечай по ПОСЛЕДНЕМУ входящему user-сообщению; если последнее — [фото], говори про фото, не про старое видео.`;
+
+export const MEDIA_REFUSAL_RETRY_USER = `Система уже расшифровала медиа. В истории есть теги [голос]//[видео]//[фото]//[документ]: с текстом после «:». Ответь по этому тексту обычным полезным ответом. Запрещено снова писать, что ты не можешь прослушать/просмотреть.`;
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
@@ -22,6 +23,7 @@ export function MailingBillingBanner({
   product: Product;
   onActiveChange?: (active: boolean) => void;
 }) {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -33,6 +35,7 @@ export function MailingBillingBanner({
     trialDays: number;
     activeUntil: string | null;
   } | null>(null);
+  const [autoPayStarted, setAutoPayStarted] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/bots/mailing/billing', { headers: authHeaders() });
@@ -49,6 +52,7 @@ export function MailingBillingBanner({
     };
     setMeta(next);
     onActiveChange?.(next.isActive);
+    return next;
   }, [product, onActiveChange]);
 
   useEffect(() => {
@@ -56,6 +60,26 @@ export function MailingBillingBanner({
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
       .finally(() => setLoading(false));
   }, [load]);
+
+  const pay = useCallback(async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await startCheckout({ productCode: product, periodMonths: 1 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy(false);
+    }
+  }, [product]);
+
+  // ?pay=1 → сразу на Robokassa (из CRM «Оплатить» или после 402)
+  useEffect(() => {
+    if (autoPayStarted || loading || !meta || meta.isActive) return;
+    if (searchParams.get('pay') !== '1') return;
+    if (meta.trialAvailable) return;
+    setAutoPayStarted(true);
+    void pay();
+  }, [autoPayStarted, loading, meta, pay, searchParams]);
 
   const startTrial = async () => {
     setBusy(true);
@@ -72,17 +96,6 @@ export function MailingBillingBanner({
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
     } finally {
-      setBusy(false);
-    }
-  };
-
-  const pay = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      await startCheckout({ productCode: product, periodMonths: 1 });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy(false);
     }
   };
@@ -121,7 +134,7 @@ export function MailingBillingBanner({
               Пробный период {meta.trialDays} дн.
             </Button>
           ) : null}
-          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={pay}>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void pay()}>
             Оплатить {meta.price} ₽/мес
           </Button>
         </div>

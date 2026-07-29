@@ -89,7 +89,17 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-29** — Лендинг getvoxly.ru пересобран по AIDA: official mascot Voxly, industrial-tech art direction, Unbounded+Manrope, story-first вместо comparison-table-first, mobile sticky CTA; portal build green.
+- **2026-07-27** — ServiceApp UI Design System: созданы `serviceapp_design_system.json` и `serviceapp_design_system.md` (в корень и в `design-system/voxly/`), обновлен `MASTER.md`.
+- **2026-07-27** — Local: mailing UX **0.1.21** composer+preview+history+delete; accounts CRM/gift/read filters; stage multi-channel; BroadcastRecipient migrate pending deploy.
+- **2026-07-27** — Prod: «Рассылка» FOLDER live — migrate `MailingStageRule`; refresh john/lexx/antontest/antontest3; john nav = FOLDER + 4 PAGE_LAYOUT; tarball **0.1.20**.
+- **2026-07-27** — INC-070: CRM side-panel «Чат» tab missing — voxly-crm-chat uninstalled after ENOSPC/partial refresh; refresh-crm-chat all tenants + Redis flatLayout flush; metadata confirms Chat @15.
+- **2026-07-27** — INC-069: CRM Chat empty — missing `deliveryStatus` migration on prod (mailing receipts); applied; WA/TG refusal retry + near-dupe skip; deploy workers; backups `20260726-220746` + `20260726-221209`.
+- **2026-07-27** — INC-068: WA/TG sync CRM before ASR (personal voice after wipe); deploy `ai-whatsapp-worker,ai-telegram-worker`; **rotate root SSH password**.
+- **2026-07-27** — INC-067: WA video ASR used by LLM; PDF/DOCX CRM signed URL (0.1.20); typing clear; personal WA stale link cleared; deploy `saas-api,ai-tg/wa`; backup `20260726-210924`; **rotate root SSH password**.
 - **2026-07-26** — Media parity E2E: Business = GramJS = WA = Gift CRM enrich (ADR-021); gift `video_note` + OpenRouter/ffmpeg; docs + deploy workers/`gift-bot-worker`/`saas-api`/compose; **rotate root SSH password**.
+- **2026-07-26** — Local: crm-chat **0.1.18** FOLDER «Рассылка» → Бот / Аккаунты / Сторис / По этапу сделки; stage rules API; no prod deploy.
+- **2026-07-26** — Prod ship: crm-chat **0.1.17** in-CRM «Рассылка» (`saas-api`); backup `20260726-202005`; refresh john/lexx/antontest/antontest3; john nav = PAGE_LAYOUT.
 - **2026-07-26** — ADR-018 amend: «Рассылка» = in-CRM STANDALONE_PAGE + front-component (crm-chat 0.1.17); portal LINKs removed. No prod deploy.
 - **2026-07-26** — Prod: «Рассылка» (`saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-tg/wa,compose`); CRM LINKs absolute → `getvoxly.ru/dashboard/mailing/*`; refresh-crm-chat; backup `20260726-192410`; hub+4 routes **200**.
 - **2026-07-26** — Prod deploy `saas-portal` (legal `/terms|/privacy|/consent|/refund` + реквизиты); backup `20260726-190018`; smoke 200. Conflict recreate saas-api fixed; AI workers restarted.
@@ -496,7 +506,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/065**. **2026-07-26** inbound media CRM+AI parity (**ADR-021**): Business = GramJS = WA = **Gift CRM enrich** (INC-063); **signed URL** + **MIME sniff/Range** + **maxParamLength/media/** — CRM Chat **0.1.15** (prod); **regular video ASR v2** (`[видео]:`, ffmpeg demux, ≤20MB/180s) + **PDF/DOCX extract** + `MEDIA_INBOUND_HINT`; **platform default** (no per-tenant flag; provision forceReinstall crm-chat). Unread badges + **INC-065** (prod); WA chat golden path (`CHAT.md`); **Opportunity board = john-crm** (ADR-017). Evolution `v2.3.7-lid`. **Portal:** shadcn **indigo** theme (ADR-020) **live on prod** (backup `20260726-200859`); branch `ui/indigo-shadcn-dashboard` pushed — open PR: https://github.com/toxasag/voxly/pull/new/ui/indigo-shadcn-dashboard. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; TG typing parity; gift no sales LLM (by design); **rotate root SSH password**; `gh auth login` for CLI PRs.
+**Статус кода:** CRM chat + INC-024…**/070**. **2026-07-27** INC-070: side-panel «Чат» restored via refresh-crm-chat (was uninstalled after ENOSPC). INC-069: Chat 500 from missing `deliveryStatus` — applied. Prior INC-068: WA/TG CRM sync **before** ASR. **Portal:** shadcn **indigo** theme (ADR-020) **live on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; gift no sales LLM; **rotate root SSH password**; harden refresh uninstall-before-install.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -535,7 +545,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Следующие шаги (приоритет)**
 0. **Robokassa store activation:** legal pages **на prod** (`https://getvoxly.ru/terms` …). Подать заявку в ЛК Robokassa → после одобрения прописать боевые ключи в prod `.env`. **Сменить root SSH пароль** (светился в чате).
-0b. **Mailing in-CRM (ADR-018 amend):** sidebar «Рассылка» = STANDALONE_PAGE + `mailing-panel` (crm-chat **0.1.17**); bot compose/list/trial. Portal `/dashboard/mailing*` remains for cabinet. Left: GramJS/WA/Stories tabs in panel; media in-CRM; refresh john on command. **Не деплоить** без команды.
+0b. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS (was 100%). Optional: WA ack→read wiring.
 
 
 1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).

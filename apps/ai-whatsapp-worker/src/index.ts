@@ -13,8 +13,13 @@ import {
   humanBubbleGapMs,
   normalizeAiBubbles,
   filterHistoryAfterAgentUpdate,
+  filterMediaCapabilityRefusals,
+  isMediaCapabilityRefusal,
+  hasEnrichedMediaTag,
+  isNearDuplicateReply,
   AGENT_PROMPT_PRIORITY_HINT,
   MEDIA_INBOUND_HINT,
+  MEDIA_REFUSAL_RETRY_USER,
   DEFAULT_INBOUND_DEBOUNCE_MS,
   extractAudioFromVideo,
   detectDocumentKind,
@@ -1917,6 +1922,27 @@ async function sendWhatsAppTyping(
   }
 }
 
+/** Clear stuck «печатает…» after abort / error / reply complete. */
+async function clearWhatsAppTyping(instanceName: string, to: string): Promise<void> {
+  const number = formatWaSendRecipient(to);
+  if (!number) return;
+  const res = await evoFetch(`/chat/sendPresence/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      number,
+      delay: 0,
+      presence: 'paused',
+    }),
+  }).catch(() => null);
+  if (res && !res.ok) {
+    console.warn(
+      '[ai-whatsapp] clearPresence failed',
+      res.status,
+      evolutionErrorMessage(res.json, ''),
+    );
+  }
+}
+
 async function sendWhatsAppHumanLike(
   instanceName: string,
   to: string,
@@ -1925,41 +1951,48 @@ async function sendWhatsAppHumanLike(
 ): Promise<{ aborted?: boolean; sent: number }> {
   const parts = bubbles.map((b) => b.trim()).filter(Boolean).slice(0, 4);
   let sent = 0;
-  for (let i = 0; i < parts.length; i += 1) {
-    if (
-      opts?.conversationId &&
-      opts.sendStartedAt &&
-      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
-    ) {
-      return { aborted: true, sent };
-    }
-    const text = parts[i];
-    const thinkMs = typingDelayMs(text);
-    // Kick composing immediately, then sendText(delay) holds typing until the bubble.
-    await sendWhatsAppTyping(instanceName, to, thinkMs);
-    console.log(
-      `[ai-whatsapp] typing+send delay=${thinkMs}ms bubble=${i + 1}/${parts.length}`,
-    );
-    await sendWhatsAppText(instanceName, to, text, { delayMs: thinkMs });
-    sent += 1;
-    if (i < parts.length - 1) {
+  try {
+    for (let i = 0; i < parts.length; i += 1) {
       if (
         opts?.conversationId &&
         opts.sendStartedAt &&
         (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
       ) {
+        await clearWhatsAppTyping(instanceName, to);
         return { aborted: true, sent };
       }
-      const gap = humanBubbleGapMs();
+      const text = parts[i];
+      const thinkMs = typingDelayMs(text);
+      // Kick composing immediately, then sendText(delay) holds typing until the bubble.
+      await sendWhatsAppTyping(instanceName, to, thinkMs);
       console.log(
-        `[ai-whatsapp] human gap ${gap}ms before bubble ${i + 2}/${parts.length}`,
+        `[ai-whatsapp] typing+send delay=${thinkMs}ms bubble=${i + 1}/${parts.length}`,
       );
-      // Keep composing visible during the quiet gap between bubbles.
-      void sendWhatsAppTyping(instanceName, to, gap);
-      await sleep(gap);
+      await sendWhatsAppText(instanceName, to, text, { delayMs: thinkMs });
+      sent += 1;
+      if (i < parts.length - 1) {
+        if (
+          opts?.conversationId &&
+          opts.sendStartedAt &&
+          (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+        ) {
+          await clearWhatsAppTyping(instanceName, to);
+          return { aborted: true, sent };
+        }
+        const gap = humanBubbleGapMs();
+        console.log(
+          `[ai-whatsapp] human gap ${gap}ms before bubble ${i + 2}/${parts.length}`,
+        );
+        // Keep composing visible during the quiet gap between bubbles.
+        void sendWhatsAppTyping(instanceName, to, gap);
+        await sleep(gap);
+      }
     }
+    return { sent };
+  } finally {
+    // Always clear composing so WA UI does not stick on «печатает…».
+    await clearWhatsAppTyping(instanceName, to);
   }
-  return { sent };
 }
 
 /** Always re-read AiAgent by id so portal PATCH (prompt/model) applies on next message. */
@@ -2057,6 +2090,7 @@ async function syncLeadToCrm(opts: {
 
     // INC-042: after CRM wipe, Conversation may still hold deleted Twenty ids.
     // Validate before early-return / updates; clear + recreate when missing.
+    // Soft-deleted Opportunity still stored on Conversation looks “linked” until we check.
     let personId = conversation.twentyPersonId || undefined;
     let opportunityId = conversation.twentyOpportunityId || undefined;
     let clearedStale = false;
@@ -2087,7 +2121,7 @@ async function syncLeadToCrm(opts: {
       await prisma.conversation.update({
         where: { id: opts.conversationId },
         data: {
-          twentyPersonId: null,
+          twentyPersonId: personId || null,
           twentyOpportunityId: null,
         },
       });
@@ -2343,6 +2377,16 @@ async function syncLeadToCrm(opts: {
       },
     });
 
+    if (personId || opportunityId) {
+      console.log(
+        `[ai-whatsapp] syncLeadToCrm ok conv=${opts.conversationId} person=${personId || '-'} opp=${opportunityId || '-'} clearedStale=${clearedStale}`,
+      );
+    } else {
+      console.warn(
+        `[ai-whatsapp] syncLeadToCrm left CRM empty conv=${opts.conversationId} phone=${phoneForCrm || '-'}`,
+      );
+    }
+
     if (personId && (clearedStale || !conversation.twentyPersonId)) {
       try {
         const account =
@@ -2507,6 +2551,44 @@ async function handleInboundMessage(opts: {
       messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
     },
   });
+  // Reopen closed same-peer thread so AI + CRM sync continue on one Conversation
+  // (new open twin left Opportunity empty / AI silent on the closed card — INC-066).
+  if (!conversation) {
+    const closed = await prisma.conversation.findFirst({
+      where: {
+        tenantId: resolved.tenantId,
+        botInstanceId: resolved.id,
+        platform: 'whatsapp',
+        platformUserId: from,
+        status: 'closed',
+      },
+      include: {
+        messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (closed) {
+      const bogusUsername =
+        closed.platformUsername &&
+        !isLikelyE164Phone(normalizeWaNumber(closed.platformUsername));
+      conversation = await prisma.conversation.update({
+        where: { id: closed.id },
+        data: {
+          status: 'open',
+          mode: isAiConversationMode(closed.mode) ? closed.mode : 'ai',
+          aiDisabled: false,
+          pausedUntil: null,
+          ...(bogusUsername ? { platformUsername: null } : {}),
+        },
+        include: {
+          messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+        },
+      });
+      console.log(
+        `[ai-whatsapp] reopened closed conv=${conversation.id} peer=${from}`,
+      );
+    }
+  }
   if (!conversation && phoneE164) {
     conversation = await prisma.conversation.findFirst({
       where: {
@@ -2524,6 +2606,48 @@ async function handleInboundMessage(opts: {
         messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
       },
     });
+    if (!conversation) {
+      const closedByPhone = await prisma.conversation.findFirst({
+        where: {
+          tenantId: resolved.tenantId,
+          botInstanceId: resolved.id,
+          platform: 'whatsapp',
+          status: 'closed',
+          OR: [
+            { platformUserId: phoneE164 },
+            { platformUsername: `+${phoneE164}` },
+            { platformUsername: phoneE164 },
+          ],
+        },
+        include: {
+          messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (closedByPhone) {
+        conversation = await prisma.conversation.update({
+          where: { id: closedByPhone.id },
+          data: {
+            status: 'open',
+            mode: isAiConversationMode(closedByPhone.mode)
+              ? closedByPhone.mode
+              : 'ai',
+            aiDisabled: false,
+            pausedUntil: null,
+            platformUsername: `+${phoneE164}`,
+            platformUserId: isWhatsAppLid(closedByPhone.platformUserId)
+              ? phoneE164
+              : closedByPhone.platformUserId,
+          },
+          include: {
+            messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+          },
+        });
+        console.log(
+          `[ai-whatsapp] reopened closed phone thread conv=${conversation.id} phone=+${phoneE164}`,
+        );
+      }
+    }
     if (conversation) {
       console.log(
         `[ai-whatsapp] merge inbound into existing phone thread conv=${conversation.id} from=${from} phone=+${phoneE164}`,
@@ -2628,27 +2752,10 @@ async function handleInboundMessage(opts: {
     }
   }
 
+  // Persist + CRM sync BEFORE slow ASR/vision/doc extract so voice/video/image/doc
+  // still create Person+Opportunity if media AI hangs or fails (personal WA wipe path).
   let displayText = opts.text;
-  if (
-    opts.messageId &&
-    (opts.needsVision || opts.needsAsr || opts.needsDoc) &&
-    OPENROUTER_API_KEY
-  ) {
-    displayText = await enrichWaTextWithMediaAi({
-      tenantId: resolved.tenantId,
-      instanceName: opts.instanceName,
-      messageId: opts.messageId,
-      remoteJid: opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
-      text: opts.text,
-      needsVision: Boolean(opts.needsVision),
-      needsAsr: Boolean(opts.needsAsr),
-      needsDoc: Boolean(opts.needsDoc),
-      mimeHint: opts.mimeHint,
-      fileNameHint: opts.attachments?.[0]?.fileName,
-    });
-  }
-
-  await prisma.chatMessage.create({
+  const createdMsg = await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
@@ -2664,7 +2771,7 @@ async function handleInboundMessage(opts: {
     conversationId: conversation.id,
   }).catch((err) => console.warn('[ai-whatsapp] mailing attribution failed', err));
 
-  void syncLeadToCrm({
+  await syncLeadToCrm({
     tenantId: resolved.tenantId,
     botId: resolved.id,
     conversationId: conversation.id,
@@ -2678,6 +2785,35 @@ async function handleInboundMessage(opts: {
   }).catch((err) => {
     console.error('[ai-whatsapp] syncLeadToCrm unhandled', err);
   });
+
+  if (
+    opts.messageId &&
+    (opts.needsVision || opts.needsAsr || opts.needsDoc) &&
+    OPENROUTER_API_KEY
+  ) {
+    try {
+      displayText = await enrichWaTextWithMediaAi({
+        tenantId: resolved.tenantId,
+        instanceName: opts.instanceName,
+        messageId: opts.messageId,
+        remoteJid: opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
+        text: opts.text,
+        needsVision: Boolean(opts.needsVision),
+        needsAsr: Boolean(opts.needsAsr),
+        needsDoc: Boolean(opts.needsDoc),
+        mimeHint: opts.mimeHint,
+        fileNameHint: opts.attachments?.[0]?.fileName,
+      });
+      if (displayText !== opts.text) {
+        await prisma.chatMessage.update({
+          where: { id: createdMsg.id },
+          data: { content: displayText },
+        });
+      }
+    } catch (err) {
+      console.warn('[ai-whatsapp] media enrich after CRM sync failed', err);
+    }
+  }
 
   if (!(await shouldAiReply(conversation.id))) {
     const c = await prisma.conversation.findUnique({
@@ -2736,7 +2872,7 @@ async function hasNewerUserMessage(conversationId: string, since: Date): Promise
     where: {
       conversationId,
       role: 'user',
-      createdAt: { gt: since },
+      OR: [{ createdAt: { gt: since } }, { sentAt: { gt: since } }],
     },
   });
   return n > 0;
@@ -2747,7 +2883,22 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
   if (!last) return;
   const { instanceName, from, conversationId, tenantId, addonId } = last;
   const messageIds = items.map((i) => i.messageId).filter(Boolean) as string[];
-  const burstText = items.map((i) => i.text).filter(Boolean).join('\n');
+  // Prefer DB content (post-ASR/vision) over stale placeholder in the debounce bag.
+  let burstText = items.map((i) => i.text).filter(Boolean).join('\n');
+  if (messageIds.length) {
+    const fresh = await prisma.chatMessage.findMany({
+      where: {
+        conversationId,
+        role: 'user',
+        externalMessageId: { in: messageIds },
+      },
+      orderBy: { sentAt: 'asc' },
+      select: { content: true },
+    });
+    if (fresh.length) {
+      burstText = fresh.map((m) => m.content).filter(Boolean).join('\n') || burstText;
+    }
+  }
   // Stamp before OpenRouter so mid-flight inbound aborts this reply (INC-061).
   const sendStartedAt = new Date();
 
@@ -2795,6 +2946,9 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     MEDIA_INBOUND_HINT +
     JSON_FORMAT_HINT +
     (agent ? AGENT_PROMPT_PRIORITY_HINT : '');
+  if (burstText) {
+    systemPrompt += `\n\nСейчас ответь именно на эти новые сообщения клиента (не на более старые из истории):\n${burstText}`;
+  }
   try {
     if (agent?.id) {
       const rag = await retrieveAgentContext({
@@ -2812,9 +2966,11 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     { role: 'system', content: systemPrompt },
   ];
   // History already includes all burst user messages; do not re-append last text.
-  const history = filterHistoryAfterAgentUpdate(
-    [...conversation.messages].reverse(),
-    agent?.updatedAt,
+  const history = filterMediaCapabilityRefusals(
+    filterHistoryAfterAgentUpdate(
+      [...conversation.messages].reverse(),
+      agent?.updatedAt,
+    ),
   );
   for (const msg of history) {
     messages.push({
@@ -2823,43 +2979,86 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     });
   }
 
+  const callModel = async (msgs: OpenAI.Chat.ChatCompletionMessageParam[]) => {
+    try {
+      return await openai.chat.completions.create({
+        model,
+        messages: msgs,
+        temperature: 0.7,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
+      });
+    } catch {
+      return await openai.chat.completions.create({
+        model,
+        messages: msgs,
+        temperature: 0.7,
+        max_tokens: 1000,
+      });
+    }
+  };
+
+  let typingStarted = false;
   try {
     const preferredJid =
       items.map((i) => i.remoteJid).find(Boolean) || last.remoteJid || undefined;
     await markWhatsAppRead(instanceName, from, messageIds, preferredJid);
     await sendWhatsAppTyping(instanceName, from, 4000);
+    typingStarted = true;
     if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
       console.log(
         `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound before OpenRouter`,
       );
       return;
     }
-    let completion;
-    try {
-      completion = await openai.chat.completions.create({
-        model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 1000,
-        response_format: { type: 'json_object' },
-      });
-    } catch {
-      completion = await openai.chat.completions.create({
-        model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 1000,
-      });
-    }
+    let completion = await callModel(messages);
     if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
       console.log(
         `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound after OpenRouter`,
       );
       return;
     }
-    const raw =
+    let raw =
       completion.choices[0]?.message?.content || 'Извините, я не смог сформировать ответ.';
+    if (
+      isMediaCapabilityRefusal(raw) &&
+      (hasEnrichedMediaTag(burstText) || items.some((i) => hasEnrichedMediaTag(i.text)))
+    ) {
+      console.warn(
+        `[ai-whatsapp] media refusal retry conv=${conversationId} burst=${burstText.slice(0, 80)}`,
+      );
+      completion = await callModel([
+        ...messages,
+        { role: 'assistant', content: raw },
+        { role: 'user', content: MEDIA_REFUSAL_RETRY_USER },
+      ]);
+      if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+        console.log(
+          `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound after refusal retry`,
+        );
+        return;
+      }
+      raw =
+        completion.choices[0]?.message?.content ||
+        'Извините, я не смог сформировать ответ.';
+    }
     const bubbles = normalizeAiBubbles(parseAiBubbles(raw), 4);
+    const replyText = bubbles.join('\n\n');
+    const recentAssistant = await prisma.chatMessage.findFirst({
+      where: {
+        conversationId,
+        role: 'assistant',
+        createdAt: { gte: new Date(Date.now() - 90_000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true },
+    });
+    if (recentAssistant && isNearDuplicateReply(recentAssistant.content, replyText)) {
+      console.log(
+        `[ai-whatsapp] skip near-duplicate assistant conv=${conversationId}`,
+      );
+      return;
+    }
     const usage = completion.usage as OpenRouterUsageLike | undefined;
     const cost = await resolveProviderCostRub({
       model,
@@ -2882,6 +3081,7 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       conversationId,
       sendStartedAt,
     });
+    typingStarted = false; // humanLike clears presence in finally
 
     if (sendResult.aborted) {
       console.log(
@@ -2894,7 +3094,7 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       data: {
         conversationId,
         role: 'assistant',
-        content: bubbles.join('\n\n'),
+        content: replyText,
         tokensUsed,
         modelUsed: model,
         providerCostRub: cost.providerCostRub,
@@ -2907,6 +3107,10 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     });
   } catch (err) {
     console.error('[ai-whatsapp] AI reply error:', err);
+  } finally {
+    if (typingStarted) {
+      await clearWhatsAppTyping(instanceName, from);
+    }
   }
 }
 

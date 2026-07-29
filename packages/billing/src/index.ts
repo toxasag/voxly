@@ -4,11 +4,15 @@
 
 import { createHash } from 'node:crypto';
 
+export type RobokassaHashAlgorithm = 'md5' | 'sha256';
+
 export interface RobokassaConfig {
   merchantLogin: string;
   password1: string;
   password2: string;
   isTest: boolean;
+  /** Must match «Алгоритм расчета хеша» in Robokassa merchant settings. */
+  hashAlgorithm?: RobokassaHashAlgorithm;
 }
 
 /** Robokassa Receipt.payment_method values (54-ФЗ) */
@@ -49,10 +53,12 @@ export interface CheckoutParams {
 
 export class RobokassaClient {
   private readonly config: RobokassaConfig;
+  private readonly hashAlgorithm: RobokassaHashAlgorithm;
   private readonly baseUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx';
 
   constructor(config: RobokassaConfig) {
     this.config = config;
+    this.hashAlgorithm = config.hashAlgorithm === 'md5' ? 'md5' : 'sha256';
   }
 
   /**
@@ -102,7 +108,8 @@ export class RobokassaClient {
 
     if (params.customData) {
       for (const [key, value] of Object.entries(params.customData)) {
-        url.searchParams.set(`shp_${key}`, value);
+        // Docs: prefix is Shp_ (case-sensitive; shp_ ≠ Shp_ → error 29).
+        url.searchParams.set(`Shp_${key}`, value);
       }
     }
 
@@ -111,8 +118,8 @@ export class RobokassaClient {
 
   /**
    * Verify ResultURL webhook (Password #2).
-   * Docs: OutSum:InvId:Password#2[:shp_*] — use OutSum exactly as received
-   * (prod may send 6 decimal places).
+   * Docs: OutSum:InvId:Password#2[:Shp_*] — use OutSum exactly as received
+   * (prod may send 6 decimal places; test often 2).
    */
   verifyResultSignature(params: {
     outSum: string;
@@ -129,7 +136,7 @@ export class RobokassaClient {
 
   /**
    * Verify SuccessURL redirect (Password #1).
-   * Docs: OutSum:InvId:Password#1[:shp_*]
+   * Docs: OutSum:InvId:Password#1[:Shp_*]
    */
   verifySuccessSignature(params: {
     outSum: string;
@@ -145,14 +152,15 @@ export class RobokassaClient {
   }
 
   private hash(stringToSign: string): string {
-    return createHash('sha256').update(stringToSign).digest('hex');
+    return createHash(this.hashAlgorithm).update(stringToSign).digest('hex');
   }
 
+  /** Shp_* sorted alphabetically by full param name; format :Shp_key=value */
   private buildShpSuffix(customData?: Record<string, string>): string {
     if (!customData || Object.keys(customData).length === 0) return '';
     return Object.keys(customData)
-      .sort()
-      .map((k) => `:shp_${k}=${customData[k]}`)
+      .sort((a, b) => a.localeCompare(b))
+      .map((k) => `:Shp_${k}=${customData[k]}`)
       .join('');
   }
 

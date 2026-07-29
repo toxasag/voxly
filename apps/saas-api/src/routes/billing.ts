@@ -78,8 +78,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     } else {
       const basePrice = getBasePrice(productCode);
       const discount = PERIOD_DISCOUNTS[periodMonths] ?? 0;
+      const seatCount =
+        productCode === PRODUCT_CODES.EXTRA_SEAT ? Math.max(1, quantity) : 0;
       const unit =
-        productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN ? basePrice * quantity : basePrice;
+        productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN
+          ? basePrice * quantity
+          : productCode === PRODUCT_CODES.EXTRA_SEAT
+            ? basePrice * seatCount
+            : basePrice;
       totalAmount = calculateSubscriptionPrice(unit, periodMonths, discount);
       if (productCode === 'crm_base' && extraSeats > 0) {
         totalAmount += calculateSubscriptionPrice(
@@ -88,7 +94,11 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           discount,
         );
       }
-      description = buildDescription(productCode, periodMonths, quantity);
+      description = buildDescription(
+        productCode,
+        periodMonths,
+        productCode === PRODUCT_CODES.EXTRA_SEAT ? seatCount : quantity,
+      );
     }
 
     const invId = await getNextInvId(prisma);
@@ -127,30 +137,46 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         tenant_id: tenantId,
         payment_id: payment.id,
         quantity: String(quantity),
+        extra_seats: String(
+          productCode === 'crm_base'
+            ? Math.max(0, extraSeats)
+            : productCode === PRODUCT_CODES.EXTRA_SEAT
+              ? Math.max(1, quantity)
+              : 0,
+        ),
       },
     });
 
     return reply.send({ paymentUrl, invId, amount: totalAmount });
   });
 
-  fastify.post('/result', async (request, reply) => {
-    const body = request.body as Record<string, string>;
-    const outSum = body['OutSum'];
-    const invId = body['InvId'];
-    const signatureValue = body['SignatureValue'] || '';
+  const handleResult = async (request: any, reply: any) => {
+    const raw =
+      request.method === 'GET'
+        ? ((request.query as Record<string, string>) || {})
+        : ((request.body as Record<string, string>) || {});
+    const outSum = raw['OutSum'];
+    const invId = raw['InvId'];
+    const signatureValue = raw['SignatureValue'] || '';
+
+    if (!outSum || !invId) {
+      return reply.code(400).send('missing OutSum or InvId');
+    }
 
     const customData: Record<string, string> = {};
-    for (const [key, value] of Object.entries(body)) {
-      if (key.startsWith('shp_')) {
-        customData[key.slice(4)] = value;
+    for (const [key, value] of Object.entries(raw)) {
+      // Accept Shp_* / shp_* from Robokassa; signature uses Shp_ (docs).
+      const m = /^shp_(.+)$/i.exec(key);
+      if (m && value != null) {
+        customData[m[1]] = String(value);
       }
     }
 
     const robokassa = fastify.robokassa;
     const isValid = robokassa.verifyResultSignature({
-      outSum,
-      invId,
-      signatureValue,
+      outSum: String(outSum),
+      invId: String(invId),
+      signatureValue: String(signatureValue),
       customData,
     });
 
@@ -160,7 +186,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const prisma = fastify.prisma;
-    const invIdNum = parseInt(invId, 10);
+    const invIdNum = parseInt(String(invId), 10);
 
     const existing = await prisma.payment.findUnique({
       where: { robokassaInvId: invIdNum },
@@ -241,6 +267,39 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
             payments: { connect: { id: existing.id } },
           },
         });
+      } else if (existing.productCode === PRODUCT_CODES.EXTRA_SEAT) {
+        const addSeats = Math.max(
+          1,
+          parseInt(customData.extra_seats || customData.quantity || '1', 10) || 1,
+        );
+        const activeCrm = await tx.subscription.findFirst({
+          where: {
+            tenantId: existing.tenantId,
+            productCode: PRODUCT_CODES.CRM_BASE,
+            status: 'active',
+            endsAt: { gt: now },
+          },
+          orderBy: { endsAt: 'desc' },
+        });
+        if (activeCrm) {
+          await tx.subscription.update({
+            where: { id: activeCrm.id },
+            data: { extraSeats: { increment: addSeats } },
+          });
+        }
+        await tx.subscription.create({
+          data: {
+            tenantId: existing.tenantId,
+            productCode: existing.productCode,
+            periodMonths,
+            seatsIncluded: 0,
+            extraSeats: addSeats,
+            startsAt: now,
+            endsAt,
+            status: 'active',
+            payments: { connect: { id: existing.id } },
+          },
+        });
       } else {
         if (existing.productCode === 'crm_base') {
           await tx.subscription.updateMany({
@@ -257,12 +316,18 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
 
+        const extraSeatsPaid =
+          existing.productCode === 'crm_base'
+            ? Math.max(0, parseInt(customData.extra_seats || '0', 10) || 0)
+            : 0;
+
         await tx.subscription.create({
           data: {
             tenantId: existing.tenantId,
             productCode: existing.productCode,
             periodMonths,
             seatsIncluded: existing.productCode === 'crm_base' ? PRICING.SEATS_INCLUDED : 0,
+            extraSeats: extraSeatsPaid,
             startsAt: now,
             endsAt,
             status: 'active',
@@ -321,13 +386,22 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
     fastify.log.info({ invId, tenantId: existing.tenantId }, 'Payment processed successfully');
     return reply.type('text/plain').send(`OK${invId}`);
-  });
+  };
+
+  // ResultURL: POST preferred; GET accepted (Robokassa cabinet method).
+  fastify.post('/result', handleResult);
+  fastify.get('/result', handleResult);
 
   fastify.get('/success', async (request, reply) => {
     const query = request.query as Record<string, string>;
     const invId = query['InvId'];
     const voxlyDomain = fastify.voxlyDomain;
     return reply.redirect(302, `https://${voxlyDomain}/dashboard?paid=${invId || ''}`);
+  });
+
+  fastify.get('/fail', async (_request, reply) => {
+    const voxlyDomain = fastify.voxlyDomain;
+    return reply.redirect(302, `https://${voxlyDomain}/dashboard?paid=fail`);
   });
 
   fastify.get('/status', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -464,15 +538,22 @@ function buildDescription(productCode: string, periodMonths: number, quantity = 
     analytics_facebook: 'Voxly — аналитика Facebook',
     analytics_vk: 'Voxly — аналитика ВКонтакте',
   };
-  const name = names[productCode] || productCode;
+  const name =
+    productCode === 'extra_seat' && quantity > 1
+      ? `Voxly CRM — доп. место ×${quantity}`
+      : names[productCode] || productCode;
   const period = periodMonths === 1 ? '1 мес' : `${periodMonths} мес`;
   return `${name} — ${period}`;
 }
 
 async function getNextInvId(prisma: any): Promise<number> {
-  const lastPayment = await prisma.payment.findFirst({
-    orderBy: { robokassaInvId: 'desc' },
-    select: { robokassaInvId: true },
+  // Serialize InvId allocation (advisory lock) so parallel checkouts cannot collide.
+  return prisma.$transaction(async (tx: any) => {
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(87236401)`);
+    const lastPayment = await tx.payment.findFirst({
+      orderBy: { robokassaInvId: 'desc' },
+      select: { robokassaInvId: true },
+    });
+    return (lastPayment?.robokassaInvId || 1000) + 1;
   });
-  return (lastPayment?.robokassaInvId || 1000) + 1;
 }

@@ -9,10 +9,13 @@ import {
   LogOut,
   Menu,
   MessageSquare,
+  Search,
   Send,
   Smartphone,
   Sparkles,
   UserRound,
+  Bell,
+  HelpCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -166,39 +169,78 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background px-4 lg:hidden">
-        <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-primary">
-          Voxly
-        </Link>
-        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Открыть меню">
-              <Menu className="h-4 w-4" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="w-64 bg-sidebar p-0 text-sidebar-foreground">
-            <SheetHeader className="border-b border-sidebar-border px-4 py-4 text-left">
-              <SheetTitle className="text-sm font-semibold text-sidebar-primary">Voxly</SheetTitle>
-            </SheetHeader>
-            <div className="flex h-[calc(100%-3.5rem)] flex-col py-4">
-              <ScrollArea className="flex-1">
-                <NavLinks onNavigate={() => setMobileOpen(false)} />
-              </ScrollArea>
-              <Separator className="mx-3 my-3" />
-              <div className="px-2">
-                <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onClick={logout}>
-                  <LogOut className="h-4 w-4" />
-                  Выйти
-                </Button>
-              </div>
+      {/* Header & Main Desktop */}
+      <div className="hidden h-screen flex-1 flex-col lg:flex">
+        <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border bg-background px-6 py-3">
+          <div className="flex flex-1 items-center gap-6">
+            <div className="flex items-center gap-2 rounded-lg bg-neutral-bg-subtle px-4 py-2.5 text-sm text-neutral-text-muted">
+              <Search className="h-4 w-4" />
+              <span className="hidden sm:inline">Поиск</span>
+              <kbd className="ml-auto hidden text-xs text-neutral-text-placeholder sm:inline-block rounded px-2 py-1 bg-white border border-neutral-border-light">
+                Ctrl K
+              </kbd>
             </div>
-          </SheetContent>
-        </Sheet>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+              <Bell className="h-5 w-5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+              <HelpCircle className="h-5 w-5" />
+            </Button>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-dark text-white font-semibold text-sm">
+              AC
+            </div>
+          </div>
+        </div>
+
+        <main className={cn('min-w-0 flex-1 overflow-auto px-6 py-8 sm:px-8 sm:py-10', className)}>
+          <div className={cn('mx-auto', width)}>{children}</div>
+        </main>
       </div>
 
-      <main className={cn('min-w-0 flex-1 animate-in px-5 py-8 sm:px-6 sm:py-10', className)}>
-        <div className={cn('mx-auto', width)}>{children}</div>
-      </main>
+      {/* Mobile & Tablet Layout */}
+      <div className="flex flex-1 flex-col lg:hidden">
+        <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background px-4">
+          <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-primary">
+            Voxly
+          </Link>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+              <Bell className="h-4 w-4" />
+            </Button>
+            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+              <SheetTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="Открыть меню">
+                  <Menu className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="w-64 bg-sidebar p-0 text-sidebar-foreground">
+                <SheetHeader className="border-b border-sidebar-border px-4 py-4 text-left">
+                  <SheetTitle className="text-sm font-semibold text-sidebar-primary">Voxly</SheetTitle>
+                </SheetHeader>
+                <div className="flex h-[calc(100%-3.5rem)] flex-col py-4">
+                  <ScrollArea className="flex-1">
+                    <NavLinks onNavigate={() => setMobileOpen(false)} />
+                  </ScrollArea>
+                  <Separator className="mx-3 my-3" />
+                  <div className="px-2">
+                    <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onClick={logout}>
+                      <LogOut className="h-4 w-4" />
+                      Выйти
+                    </Button>
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        </div>
+
+        <main className={cn('min-w-0 flex-1 overflow-auto animate-in px-5 py-8 sm:px-6 sm:py-10', className)}>
+          <div className={cn('mx-auto', width)}>{children}</div>
+        </main>
+      </div>
     </div>
   );
 }

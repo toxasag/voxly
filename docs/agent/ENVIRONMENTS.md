@@ -87,6 +87,13 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Image: `voxly-evolution-api:v2.3.7-lid` (LID patch 150 files). Session restored without QR; webhook includes `PRESENCE_UPDATE`.
 - Smoke: portal + API health **200**.
 
+### Deploy 2026-07-26 (in-CRM «Рассылка» 0.1.17)
+
+- Services: `saas-api` (crm-chat tarball **0.1.17** PAGE_LAYOUT + mailing-panel).
+- Backup `/opt/voxly/backups/20260726-202005/`.
+- refresh-crm-chat john/lexx/antontest/antontest3 → `{ok:true}`; john nav `Рассылка` = `PAGE_LAYOUT` (no portal mailing LINKs).
+- Smoke: portal + API health **200**.
+
 ### Deploy 2026-07-26 (INC-063 media token maxParamLength + video_note AI)
 
 - Services: `saas-api`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge` (crm-chat tarball **0.1.15**).

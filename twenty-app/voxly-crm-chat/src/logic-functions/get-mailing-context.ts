@@ -7,6 +7,7 @@ import { fetchVoxlyApiJson } from 'src/logic-functions/voxly-proxy';
 type BotRow = {
   id: string;
   botUsername?: string | null;
+  displayName?: string | null;
   name?: string | null;
   botType?: string;
   status?: string;
@@ -14,10 +15,24 @@ type BotRow = {
   subscriberCount?: number;
 };
 
+function mapBot(b: BotRow) {
+  return {
+    id: b.id,
+    botUsername: b.botUsername || null,
+    name: b.displayName || b.name || null,
+    displayName: b.displayName || b.name || null,
+    status: b.status || null,
+    hasGiftCampaign: Boolean(b.hasGiftCampaign),
+    subscriberCount: Number(b.subscriberCount) || 0,
+    botType: b.botType || null,
+  };
+}
+
 const handler = async () => {
-  const [botsRes, billingRes] = await Promise.all([
+  const [botsRes, billingRes, stagesRes] = await Promise.all([
     fetchVoxlyApiJson({ method: 'GET', path: '/api/bots' }),
     fetchVoxlyApiJson({ method: 'GET', path: '/api/bots/mailing/billing' }),
+    fetchVoxlyApiJson({ method: 'GET', path: '/api/bots/mailing/stage-rules' }),
   ]);
 
   if (botsRes.status >= 400) {
@@ -28,21 +43,20 @@ const handler = async () => {
   }
 
   const botsPayload = (botsRes.data || {}) as { bots?: BotRow[] };
-  const giftBots = (botsPayload.bots || [])
-    .filter((b) => b.botType === 'gift')
-    .map((b) => ({
-      id: b.id,
-      botUsername: b.botUsername || null,
-      name: (b as { displayName?: string | null }).displayName || b.name || null,
-      status: b.status || null,
-      hasGiftCampaign: Boolean(b.hasGiftCampaign),
-      subscriberCount: Number(b.subscriberCount) || 0,
-    }));
+  const bots = botsPayload.bots || [];
+  const stagesPayload = (stagesRes.data || {}) as {
+    stages?: { value: string; label: string }[];
+  };
 
   return new Response(
     {
-      bots: giftBots,
+      giftBots: bots.filter((b) => b.botType === 'gift').map(mapBot),
+      gramjsAccounts: bots.filter((b) => b.botType === 'ai_gramjs').map(mapBot),
+      waAccounts: bots.filter((b) => b.botType === 'ai_wa').map(mapBot),
+      /** @deprecated use giftBots */
+      bots: bots.filter((b) => b.botType === 'gift').map(mapBot),
       billing: billingRes.data,
+      stages: stagesPayload.stages || [],
     },
     { status: 200 },
   );
@@ -51,7 +65,7 @@ const handler = async () => {
 export default defineLogicFunction({
   universalIdentifier: GET_MAILING_CONTEXT_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'get-mailing-context',
-  description: 'Gift bots + mailing_bot billing for in-CRM Рассылка panel',
+  description: 'Bots/accounts + mailing billing + stages for in-CRM Рассылка',
   timeoutSeconds: 30,
   httpRouteTriggerSettings: {
     path: '/mailing/context',

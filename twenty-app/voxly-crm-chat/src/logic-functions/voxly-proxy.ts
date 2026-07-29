@@ -122,7 +122,7 @@ export function voxlyServiceToken(): string {
 }
 
 export async function fetchVoxlyApiJson(opts: {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   body?: unknown;
 }): Promise<{ status: number; data: unknown; error?: string }> {
@@ -168,7 +168,7 @@ export async function fetchVoxlyApiJson(opts: {
 }
 
 export async function proxyToVoxlyApi(opts: {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   body?: unknown;
   formData?: FormData;

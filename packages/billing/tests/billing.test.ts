@@ -55,11 +55,11 @@ describe('RobokassaClient signatures', () => {
     expect(parsed.searchParams.get('MerchantLogin')).toBe('voxly');
     expect(parsed.searchParams.get('OutSum')).toBe('500.00');
     expect(parsed.searchParams.get('InvId')).toBe('1001');
-    expect(parsed.searchParams.get('shp_tenant_id')).toBe('t1');
+    expect(parsed.searchParams.get('Shp_tenant_id')).toBe('t1');
     expect(parsed.searchParams.get('IsTest')).toBe('1');
 
     const expected = createHash('sha256')
-      .update('voxly:500.00:1001:pass1:shp_tenant_id=t1')
+      .update('voxly:500.00:1001:pass1:Shp_tenant_id=t1')
       .digest('hex');
     expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
   });
@@ -92,7 +92,7 @@ describe('RobokassaClient signatures', () => {
 
     const receiptEncoded = encodeURIComponent(receiptJson!);
     const expected = createHash('sha256')
-      .update(`voxly:500.00:1001:${receiptEncoded}:pass1:shp_tenant_id=t1`)
+      .update(`voxly:500.00:1001:${receiptEncoded}:pass1:Shp_tenant_id=t1`)
       .digest('hex');
     expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
   });
@@ -101,7 +101,7 @@ describe('RobokassaClient signatures', () => {
     const client = new RobokassaClient(config);
     const customData = { tenant_id: 't1' };
     const expected = createHash('sha256')
-      .update('500.00:1001:pass1:shp_tenant_id=t1')
+      .update('500.00:1001:pass1:Shp_tenant_id=t1')
       .digest('hex');
     expect(
       client.verifySuccessSignature({
@@ -130,7 +130,7 @@ describe('RobokassaClient signatures', () => {
     // Prod may send 6 decimal places — must use raw OutSum
     const outSum = '500.000000';
     const expected = createHash('sha256')
-      .update(`${outSum}:1001:pass2:shp_tenant_id=t1`)
+      .update(`${outSum}:1001:pass2:Shp_tenant_id=t1`)
       .digest('hex');
     expect(
       client.verifyResultSignature({
@@ -145,7 +145,7 @@ describe('RobokassaClient signatures', () => {
   it('rejects result signature computed with password1', () => {
     const client = new RobokassaClient(config);
     const wrong = createHash('sha256')
-      .update('500.00:1001:pass1:shp_tenant_id=t1')
+      .update('500.00:1001:pass1:Shp_tenant_id=t1')
       .digest('hex');
     expect(
       client.verifyResultSignature({
@@ -167,5 +167,21 @@ describe('RobokassaClient signatures', () => {
       items: [],
     });
     expect(new URL(url).searchParams.get('Description')!.length).toBe(100);
+  });
+
+  it('supports md5 when configured to match Robokassa cabinet', () => {
+    const client = new RobokassaClient({ ...config, hashAlgorithm: 'md5' });
+    const customData = { tenant_id: 't1' };
+    const expected = createHash('md5')
+      .update('500.00:1001:pass2:Shp_tenant_id=t1')
+      .digest('hex');
+    expect(
+      client.verifyResultSignature({
+        outSum: '500.00',
+        invId: '1001',
+        signatureValue: expected,
+        customData,
+      }),
+    ).toBe(true);
   });
 });

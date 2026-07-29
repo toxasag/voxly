@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
+import { handleMailingBillingGate } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -184,7 +185,13 @@ export default function MailingStoriesPage() {
         ),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(typeof json.error === 'string' ? json.error : 'Не сохранено');
+      if (!res.ok) {
+        if (res.status === 402) {
+          const mode = await handleMailingBillingGate(json);
+          if (mode === 'checkout') return;
+        }
+        throw new Error(typeof json.error === 'string' ? json.error : 'Не сохранено');
+      }
       resetForm();
       setOk(editingId ? 'Обновлено' : scheduledAt ? 'Сторис запланирован' : 'Сторис в очереди');
       await loadHistory(botId);

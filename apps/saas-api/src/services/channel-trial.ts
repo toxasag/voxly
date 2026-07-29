@@ -105,7 +105,16 @@ export async function requireActiveAddon(
   prisma: PrismaClient,
   tenantId: string,
   type: ChannelTrialType,
-): Promise<{ ok: true } | { ok: false; code: 402; error: string; meta: ReturnType<typeof trialMeta> }> {
+): Promise<
+  | { ok: true }
+  | {
+      ok: false;
+      code: 402;
+      error: string;
+      productCode: ChannelTrialType;
+      meta: ReturnType<typeof trialMeta>;
+    }
+> {
   const addon = await prisma.addon.findUnique({
     where: { tenantId_type: { tenantId, type } },
   });
@@ -114,6 +123,7 @@ export async function requireActiveAddon(
   return {
     ok: false,
     code: 402,
+    productCode: type,
     error: meta.trialAvailable
       ? 'Нужен пробный период или оплата add-on'
       : 'Оформите оплату add-on',

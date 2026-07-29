@@ -28,6 +28,7 @@ import {
   trialMeta,
   type ChannelTrialType,
 } from '../services/channel-trial.js';
+import { VOXLY_OPPORTUNITY_STAGE_OPTIONS } from '../services/twenty-opportunity-ru-defaults.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -117,6 +118,10 @@ const channelBroadcastSchema = z.object({
   text: z.string().min(1).max(4000),
   mediaUrl: optionalHttpsUrl,
   mediaType: z.enum(['photo', 'video']).optional(),
+  opportunityStage: z.string().min(1).max(80).optional(),
+  giftStarted: z.enum(['any', 'yes', 'no']).optional(),
+  funnelPhase: giftFunnelPhaseSchema.optional(),
+  readStatus: z.enum(['any', 'read', 'unread']).optional(),
   scheduledAt: z.string().datetime().optional(),
 });
 
@@ -126,6 +131,10 @@ const storyBroadcastSchema = z.object({
   text: z.string().max(4000).optional().default(''),
   mediaUrl: z.string().url(),
   mediaType: z.enum(['photo', 'video']).optional(),
+  opportunityStage: z.string().min(1).max(80).optional(),
+  giftStarted: z.enum(['any', 'yes', 'no']).optional(),
+  funnelPhase: giftFunnelPhaseSchema.optional(),
+  readStatus: z.enum(['any', 'read', 'unread']).optional(),
   scheduledAt: z.string().datetime().optional(),
 });
 
@@ -136,6 +145,9 @@ const patchBroadcastSchema = z.object({
   mediaUrl: optionalHttpsUrl.nullable().optional(),
   telegramFileId: optionalFileId.nullable().optional(),
   mediaType: z.enum(['photo', 'video']).nullable().optional(),
+  opportunityStage: z.string().min(1).max(80).nullable().optional(),
+  giftStarted: z.enum(['any', 'yes', 'no']).nullable().optional(),
+  readStatus: z.enum(['any', 'read', 'unread']).nullable().optional(),
   scheduledAt: z.string().datetime().optional(),
 });
 
@@ -159,6 +171,146 @@ function conversationAudienceWhere(botId: string, tenantId: string) {
   };
 }
 
+type ChannelAudienceFilters = {
+  opportunityStage?: string;
+  giftStarted?: 'any' | 'yes' | 'no';
+  funnelPhase?: z.infer<typeof giftFunnelPhaseSchema>;
+  readStatus?: 'any' | 'read' | 'unread';
+};
+
+function normalizeChannelAudienceFilters(input: ChannelAudienceFilters): ChannelAudienceFilters {
+  return {
+    opportunityStage: input.opportunityStage?.trim() || undefined,
+    giftStarted: input.giftStarted && input.giftStarted !== 'any' ? input.giftStarted : undefined,
+    funnelPhase: input.funnelPhase || undefined,
+    // Applied when ChatMessage.deliveryStatus / BroadcastRecipient exist (Phase 2).
+    readStatus: input.readStatus && input.readStatus !== 'any' ? input.readStatus : undefined,
+  };
+}
+
+async function getTenantTwentyClient(prisma: any, tenantId: string): Promise<TwentyClient | null> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (
+    !tenant?.twentyWorkspaceId ||
+    !tenant.twentyOwnerPasswordEncrypted ||
+    !owner?.user?.email
+  ) {
+    return null;
+  }
+
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  await client.authenticateWorkspace(
+    owner.user.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+  return client;
+}
+
+async function resolveChannelBroadcastAudience(input: {
+  prisma: any;
+  tenantId: string;
+  botId: string;
+  filters: ChannelAudienceFilters;
+}): Promise<{ conversationIds: string[]; count: number }> {
+  const filters = normalizeChannelAudienceFilters(input.filters);
+  const conversations = await input.prisma.conversation.findMany({
+    where: conversationAudienceWhere(input.botId, input.tenantId),
+    select: {
+      id: true,
+      platformUserId: true,
+      twentyOpportunityId: true,
+    },
+  });
+
+  let audience = conversations;
+
+  if (filters.opportunityStage) {
+    const linked = audience.filter((c: { twentyOpportunityId: string | null }) => c.twentyOpportunityId);
+    try {
+      const client = await getTenantTwentyClient(input.prisma, input.tenantId);
+      if (!client) throw new Error('Twenty workspace credentials are not configured');
+
+      const stages = new Map<string, string | null>();
+      const opportunityIds: string[] = [];
+      for (const c of linked as Array<{ twentyOpportunityId: string | null }>) {
+        if (c.twentyOpportunityId) opportunityIds.push(c.twentyOpportunityId);
+      }
+      for (const opportunityId of [...new Set(opportunityIds)]) {
+        stages.set(opportunityId, await client.getOpportunityStage(opportunityId));
+      }
+      audience = linked.filter((c: { twentyOpportunityId: string | null }) =>
+        c.twentyOpportunityId && stages.get(c.twentyOpportunityId) === filters.opportunityStage,
+      );
+    } catch (err) {
+      console.warn('[bots] channel broadcast opportunity stage filter skipped', err);
+    }
+  }
+
+  if (filters.giftStarted || filters.funnelPhase) {
+    const platformIds = [...new Set(audience.map((c: { platformUserId: string }) => c.platformUserId))];
+    const subscribers = platformIds.length
+      ? await input.prisma.giftSubscriber.findMany({
+          where: {
+            tenantId: input.tenantId,
+            telegramId: { in: platformIds },
+          },
+          select: { telegramId: true, funnelPhase: true },
+        })
+      : [];
+    const subscribersByTelegramId = new Map<string, Array<{ funnelPhase: string }>>();
+    for (const subscriber of subscribers) {
+      const list = subscribersByTelegramId.get(subscriber.telegramId) || [];
+      list.push(subscriber);
+      subscribersByTelegramId.set(subscriber.telegramId, list);
+    }
+    audience = audience.filter((conversation: { platformUserId: string }) => {
+      const matched = subscribersByTelegramId.get(conversation.platformUserId) || [];
+      if (filters.giftStarted === 'yes' && matched.length === 0) return false;
+      if (filters.giftStarted === 'no' && matched.length > 0) return false;
+      if (filters.funnelPhase && !matched.some((s) => s.funnelPhase === filters.funnelPhase)) return false;
+      return true;
+    });
+  }
+
+  if (filters.readStatus === 'read' || filters.readStatus === 'unread') {
+    const ids = audience.map((c: { id: string }) => c.id);
+    if (ids.length) {
+      const lastOutbound = await input.prisma.chatMessage.findMany({
+        where: {
+          conversationId: { in: ids },
+          role: { in: ['operator', 'assistant'] },
+          deliveryStatus: { not: null },
+        },
+        orderBy: { sentAt: 'desc' },
+        distinct: ['conversationId'],
+        select: { conversationId: true, deliveryStatus: true },
+      });
+      const byConv = new Map(
+        lastOutbound.map((m: { conversationId: string; deliveryStatus: string | null }) => [
+          m.conversationId,
+          m.deliveryStatus,
+        ]),
+      );
+      audience = audience.filter((c: { id: string }) => {
+        const st = byConv.get(c.id);
+        if (filters.readStatus === 'read') return st === 'read';
+        // unread = never read (sent/delivered/missing)
+        return st !== 'read';
+      });
+    }
+  }
+
+  const conversationIds = audience.map((c: { id: string }) => c.id);
+  return { conversationIds, count: conversationIds.length };
+}
+
 function mailingChannelForBotType(
   botType: string,
 ): 'gift' | 'gramjs' | 'wa' | null {
@@ -174,6 +326,16 @@ function addonTypeForMailingChannel(
   if (channel === 'gift') return PRODUCT_CODES.MAILING_BOT;
   if (channel === 'story') return PRODUCT_CODES.MAILING_STORIES;
   return PRODUCT_CODES.MAILING_ACCOUNTS;
+}
+
+function normalizeStageRuleChannel(value: unknown): 'gift' | 'gramjs' | 'wa' {
+  return value === 'gramjs' || value === 'wa' ? value : 'gift';
+}
+
+function botTypeForStageRuleChannel(channel: 'gift' | 'gramjs' | 'wa') {
+  if (channel === 'gramjs') return 'ai_gramjs';
+  if (channel === 'wa') return 'ai_wa';
+  return 'gift';
 }
 
 const promoSchema = z.object({
@@ -445,6 +607,234 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
+  // --- Stage-trigger mailing rules (Opportunity stage enter) ---
+  fastify.get('/mailing/stage-rules', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const rules = await fastify.prisma.mailingStageRule.findMany({
+      where: { tenantId },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+    return reply.send({
+      rules,
+      stages: VOXLY_OPPORTUNITY_STAGE_OPTIONS.map((s) => ({
+        value: s.value,
+        label: s.label,
+      })),
+    });
+  });
+
+  fastify.post('/mailing/stage-rules', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can manage stage rules' });
+    }
+    const body = (request.body || {}) as {
+      botId?: string;
+      channel?: string;
+      name?: string;
+      stageValue?: string;
+      text?: string;
+      mediaUrl?: string;
+      mediaType?: string;
+      enabled?: boolean;
+    };
+    const botId = String(body.botId || '').trim();
+    const channel = normalizeStageRuleChannel(body.channel);
+    const stageValue = String(body.stageValue || '').trim();
+    const text = String(body.text || '').trim();
+    if (!botId || !stageValue || !text) {
+      return reply.code(400).send({ error: 'botId, stageValue, text required' });
+    }
+    const bot = await fastify.prisma.botInstance.findFirst({
+      where: { id: botId, tenantId, botType: botTypeForStageRuleChannel(channel) },
+    });
+    if (!bot) return reply.code(404).send({ error: 'Bot not found' });
+    const rule = await fastify.prisma.mailingStageRule.create({
+      data: {
+        tenantId,
+        botId,
+        channel,
+        name: String(body.name || '').slice(0, 120),
+        stageValue,
+        text: text.slice(0, 4000),
+        mediaUrl: String(body.mediaUrl || '').trim() || undefined,
+        mediaType:
+          body.mediaType === 'photo' || body.mediaType === 'video' ? body.mediaType : undefined,
+        enabled: body.enabled !== false,
+      },
+    });
+    return reply.send({ rule });
+  });
+
+  fastify.patch(
+    '/mailing/stage-rules/:ruleId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can manage stage rules' });
+      }
+      const { ruleId } = request.params as { ruleId: string };
+      const existing = await fastify.prisma.mailingStageRule.findFirst({
+        where: { id: ruleId, tenantId },
+      });
+      if (!existing) return reply.code(404).send({ error: 'Not found' });
+      const body = (request.body || {}) as {
+        botId?: string;
+        channel?: string;
+        name?: string;
+        stageValue?: string;
+        text?: string;
+        mediaUrl?: string | null;
+        mediaType?: string | null;
+        enabled?: boolean;
+      };
+      const channel =
+        body.channel !== undefined ? normalizeStageRuleChannel(body.channel) : existing.channel;
+      if (body.botId || body.channel !== undefined) {
+        const bot = await fastify.prisma.botInstance.findFirst({
+          where: {
+            id: body.botId || existing.botId,
+            tenantId,
+            botType: botTypeForStageRuleChannel(channel as 'gift' | 'gramjs' | 'wa'),
+          },
+        });
+        if (!bot) return reply.code(404).send({ error: 'Bot not found' });
+      }
+      const rule = await fastify.prisma.mailingStageRule.update({
+        where: { id: ruleId },
+        data: {
+          ...(body.botId ? { botId: body.botId } : {}),
+          ...(body.channel !== undefined ? { channel } : {}),
+          ...(body.name !== undefined ? { name: String(body.name).slice(0, 120) } : {}),
+          ...(body.stageValue ? { stageValue: String(body.stageValue).trim() } : {}),
+          ...(body.text !== undefined ? { text: String(body.text).trim().slice(0, 4000) } : {}),
+          ...(body.mediaUrl !== undefined
+            ? { mediaUrl: body.mediaUrl ? String(body.mediaUrl).trim() : null }
+            : {}),
+          ...(body.mediaType !== undefined
+            ? {
+                mediaType:
+                  body.mediaType === 'photo' || body.mediaType === 'video'
+                    ? body.mediaType
+                    : null,
+              }
+            : {}),
+          ...(body.enabled !== undefined ? { enabled: Boolean(body.enabled) } : {}),
+        },
+      });
+      return reply.send({ rule });
+    },
+  );
+
+  /** Called from Twenty DB event (opportunity.updated) via crm-chat logic. */
+  fastify.post('/mailing/stage-rules/fire', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const body = (request.body || {}) as {
+      opportunityId?: string;
+      stage?: string;
+    };
+    const opportunityId = String(body.opportunityId || '').trim();
+    const stage = String(body.stage || '').trim();
+    if (!opportunityId || !stage) {
+      return reply.code(400).send({ error: 'opportunityId and stage required' });
+    }
+
+    const rules = await fastify.prisma.mailingStageRule.findMany({
+      where: { tenantId, enabled: true, stageValue: stage },
+    });
+    if (!rules.length) {
+      return reply.send({ ok: true, fired: 0 });
+    }
+
+    let fired = 0;
+    let skipped = 0;
+    for (const rule of rules) {
+      const channel = normalizeStageRuleChannel(rule.channel);
+      if (channel !== 'gift') {
+        const conversation = await fastify.prisma.conversation.findFirst({
+          where: {
+            tenantId,
+            botInstanceId: rule.botId,
+            twentyOpportunityId: opportunityId,
+            status: { not: 'closed' },
+          },
+          orderBy: { updatedAt: 'desc' },
+        });
+        if (!conversation) {
+          skipped += 1;
+          continue;
+        }
+        await fastify.prisma.broadcast.create({
+          data: {
+            tenantId,
+            status: 'scheduled',
+            scheduledAt: new Date(),
+            totalCount: 1,
+            messageJson: {
+              channel,
+              botId: rule.botId,
+              text: rule.text,
+              mediaUrl: rule.mediaUrl || undefined,
+              mediaType: rule.mediaType || undefined,
+              conversationIds: [conversation.id],
+              trigger: 'stage',
+              stageValue: stage,
+              opportunityId,
+              stageRuleId: rule.id,
+            },
+          },
+        });
+        fired += 1;
+        continue;
+      }
+
+      const subscriber = await fastify.prisma.giftSubscriber.findFirst({
+        where: { tenantId, botInstanceId: rule.botId, twentyOpportunityId: opportunityId },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (!subscriber) {
+        skipped += 1;
+        continue;
+      }
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: rule.botId, tenantId, botType: 'gift' },
+        include: { giftCampaigns: { where: { isActive: true }, take: 1 } },
+      });
+      if (!bot?.giftCampaigns[0]) {
+        skipped += 1;
+        continue;
+      }
+      await fastify.prisma.broadcast.create({
+        data: {
+          tenantId,
+          status: 'scheduled',
+          scheduledAt: new Date(),
+          totalCount: 1,
+          messageJson: {
+            channel: 'gift',
+            botId: rule.botId,
+            campaignId: bot.giftCampaigns[0].id,
+            segment: 'all',
+            text: rule.text,
+            mediaUrl: rule.mediaUrl || undefined,
+            mediaType: rule.mediaType || undefined,
+            subscriberIds: [subscriber.id],
+            trigger: 'stage',
+            stageValue: stage,
+            opportunityId,
+            stageRuleId: rule.id,
+          },
+        },
+      });
+      fired += 1;
+    }
+    return reply.send({ ok: true, fired, skipped });
+  });
+
   // --- Start gift bot trial ---
   fastify.post('/gift/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
@@ -485,7 +875,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // --- Start 14-day AI Telegram Business bot trial ---
+  // --- Start AI Telegram Business bot trial (TRIAL_PERIOD_DAYS) ---
   fastify.post('/ai/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
     const { tenantId } = user;
@@ -1643,9 +2033,15 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         PRODUCT_CODES.MAILING_STORIES,
       );
       if (!gate.ok) {
-        return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+        return reply.code(gate.code).send({
+          error: gate.error,
+          billing: gate.meta,
+          productCode: gate.productCode,
+          payUrl: true,
+        });
       }
 
+      const filters = normalizeChannelAudienceFilters(parsed.data);
       const broadcast = await prisma.broadcast.create({
         data: {
           tenantId,
@@ -1659,6 +2055,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             text: parsed.data.text || '',
             mediaUrl: parsed.data.mediaUrl,
             mediaType: parsed.data.mediaType || undefined,
+            opportunityStage: filters.opportunityStage,
+            giftStarted: filters.giftStarted || 'any',
+            funnelPhase: filters.funnelPhase,
+            readStatus: parsed.data.readStatus || 'any',
           },
         },
       });
@@ -1676,7 +2076,12 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       addonTypeForMailingChannel(channel),
     );
     if (!gate.ok) {
-      return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+      return reply.code(gate.code).send({
+        error: gate.error,
+        billing: gate.meta,
+        productCode: gate.productCode,
+        payUrl: true,
+      });
     }
 
     if (channel === 'gift') {
@@ -1727,26 +2132,35 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(409).send({ error: 'Аккаунт не активен' });
     }
 
-    const totalCount = await prisma.conversation.count({
-      where: conversationAudienceWhere(botId, tenantId),
+    const filters = normalizeChannelAudienceFilters(parsed.data);
+    const audience = await resolveChannelBroadcastAudience({
+      prisma,
+      tenantId,
+      botId,
+      filters,
     });
     const broadcast = await prisma.broadcast.create({
       data: {
         tenantId,
         status: 'scheduled',
         scheduledAt: whenFrom(parsed.data.scheduledAt),
-        totalCount,
+        totalCount: audience.count,
         messageJson: {
           channel,
           botId,
           text: parsed.data.text,
           mediaUrl: parsed.data.mediaUrl || undefined,
           mediaType: parsed.data.mediaType || undefined,
+          opportunityStage: filters.opportunityStage,
+          giftStarted: parsed.data.giftStarted || 'any',
+          funnelPhase: filters.funnelPhase,
+          readStatus: parsed.data.readStatus || 'any',
+          conversationIds: audience.conversationIds,
         },
       },
     });
 
-    return reply.send({ broadcast, queued: totalCount });
+    return reply.send({ broadcast, queued: audience.count });
   });
 
   // --- Edit scheduled broadcast (before scanner picks it up) ---
@@ -1800,10 +2214,24 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           PRODUCT_CODES.MAILING_STORIES,
         );
         if (!gate.ok) {
-          return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+          return reply.code(gate.code).send({
+            error: gate.error,
+            billing: gate.meta,
+            productCode: gate.productCode,
+            payUrl: true,
+          });
         }
         const parsed = patchBroadcastSchema
-          .pick({ text: true, mediaUrl: true, mediaType: true, scheduledAt: true })
+          .pick({
+            text: true,
+            mediaUrl: true,
+            mediaType: true,
+            opportunityStage: true,
+            giftStarted: true,
+            funnelPhase: true,
+            readStatus: true,
+            scheduledAt: true,
+          })
           .safeParse(request.body);
         if (!parsed.success) {
           return reply.code(400).send({ error: parsed.error.flatten() });
@@ -1829,6 +2257,38 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         if (!mediaUrl) {
           return reply.code(400).send({ error: 'mediaUrl required for stories' });
         }
+        const opportunityStage =
+          parsed.data.opportunityStage === null
+            ? undefined
+            : parsed.data.opportunityStage !== undefined
+              ? parsed.data.opportunityStage
+              : typeof prev.opportunityStage === 'string'
+                ? prev.opportunityStage
+                : undefined;
+        const giftStarted =
+          parsed.data.giftStarted === null
+            ? 'any'
+            : parsed.data.giftStarted !== undefined
+              ? parsed.data.giftStarted
+              : prev.giftStarted === 'yes' || prev.giftStarted === 'no'
+                ? prev.giftStarted
+                : 'any';
+        const funnelPhase =
+          parsed.data.funnelPhase === null
+            ? undefined
+            : parsed.data.funnelPhase !== undefined
+              ? parsed.data.funnelPhase
+              : typeof prev.funnelPhase === 'string'
+                ? prev.funnelPhase
+                : undefined;
+        const readStatus =
+          parsed.data.readStatus === null
+            ? 'any'
+            : parsed.data.readStatus !== undefined
+              ? parsed.data.readStatus
+              : prev.readStatus === 'read' || prev.readStatus === 'unread'
+                ? prev.readStatus
+                : 'any';
         const scheduledAt = parsed.data.scheduledAt
           ? new Date(parsed.data.scheduledAt)
           : existing.scheduledAt;
@@ -1843,6 +2303,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
               text,
               mediaUrl,
               mediaType: mediaType || undefined,
+              opportunityStage: opportunityStage || undefined,
+              giftStarted,
+              funnelPhase: funnelPhase || undefined,
+              readStatus,
             },
           },
         });
@@ -1855,7 +2319,12 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         addonTypeForMailingChannel(channel === 'gift' ? 'gift' : channel),
       );
       if (!gate.ok) {
-        return reply.code(gate.code).send({ error: gate.error, billing: gate.meta });
+        return reply.code(gate.code).send({
+          error: gate.error,
+          billing: gate.meta,
+          productCode: gate.productCode,
+          payUrl: true,
+        });
       }
 
       if (channel === 'gift') {
@@ -1939,7 +2408,16 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const parsed = patchBroadcastSchema
-        .pick({ text: true, mediaUrl: true, mediaType: true, scheduledAt: true })
+        .pick({
+          text: true,
+          mediaUrl: true,
+          mediaType: true,
+          opportunityStage: true,
+          giftStarted: true,
+          funnelPhase: true,
+          readStatus: true,
+          scheduledAt: true,
+        })
         .safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: parsed.error.flatten() });
@@ -1965,8 +2443,45 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (!mediaUrl) mediaType = undefined;
 
-      const totalCount = await prisma.conversation.count({
-        where: conversationAudienceWhere(botId, tenantId),
+      const filters = normalizeChannelAudienceFilters({
+        opportunityStage:
+          parsed.data.opportunityStage === null
+            ? undefined
+            : parsed.data.opportunityStage !== undefined
+              ? parsed.data.opportunityStage
+              : typeof prev.opportunityStage === 'string'
+                ? prev.opportunityStage
+                : undefined,
+        giftStarted:
+          parsed.data.giftStarted === null
+            ? 'any'
+            : parsed.data.giftStarted !== undefined
+              ? parsed.data.giftStarted
+              : prev.giftStarted === 'yes' || prev.giftStarted === 'no'
+                ? prev.giftStarted
+                : 'any',
+        funnelPhase:
+          parsed.data.funnelPhase === null
+            ? undefined
+            : parsed.data.funnelPhase !== undefined
+              ? parsed.data.funnelPhase
+              : typeof prev.funnelPhase === 'string'
+                ? (prev.funnelPhase as z.infer<typeof giftFunnelPhaseSchema>)
+                : undefined,
+        readStatus:
+          parsed.data.readStatus === null
+            ? 'any'
+            : parsed.data.readStatus !== undefined
+              ? parsed.data.readStatus
+              : prev.readStatus === 'read' || prev.readStatus === 'unread'
+                ? prev.readStatus
+                : 'any',
+      });
+      const audience = await resolveChannelBroadcastAudience({
+        prisma,
+        tenantId,
+        botId,
+        filters,
       });
       const scheduledAt = parsed.data.scheduledAt
         ? new Date(parsed.data.scheduledAt)
@@ -1976,7 +2491,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: broadcastId },
         data: {
           scheduledAt,
-          totalCount,
+          totalCount: audience.count,
           messageJson: {
             ...prev,
             channel,
@@ -1984,11 +2499,46 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             text,
             mediaUrl: mediaUrl || undefined,
             mediaType: mediaType || undefined,
+            opportunityStage: filters.opportunityStage,
+            giftStarted: filters.giftStarted || 'any',
+            funnelPhase: filters.funnelPhase,
+            readStatus: filters.readStatus || 'any',
+            conversationIds: audience.conversationIds,
           },
         },
       });
 
-      return reply.send({ broadcast, queued: totalCount });
+      return reply.send({ broadcast, queued: audience.count });
+    },
+  );
+
+  // --- Delete draft/scheduled broadcast ---
+  fastify.delete(
+    '/:botId/broadcasts/:broadcastId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId, broadcastId } = request.params as { botId: string; broadcastId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can delete broadcasts' });
+      }
+
+      const broadcast = await fastify.prisma.broadcast.findFirst({
+        where: { id: broadcastId, tenantId },
+      });
+      if (!broadcast || (broadcast.messageJson as any)?.botId !== botId) {
+        return reply.code(404).send({ error: 'Broadcast not found' });
+      }
+      if (broadcast.status === 'sending') {
+        return reply.code(409).send({ error: 'Нельзя удалить рассылку во время отправки' });
+      }
+      if (broadcast.status !== 'scheduled' && broadcast.status !== 'draft') {
+        return reply.code(409).send({ error: 'Можно удалить только черновик или запланированную рассылку' });
+      }
+
+      await fastify.prisma.broadcast.delete({ where: { id: broadcastId } });
+      return reply.send({ ok: true });
     },
   );
 
@@ -2017,10 +2567,16 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           channel: msg?.channel || 'gift',
           segment: msg?.segment,
           funnelPhase: msg?.funnelPhase ?? null,
+          opportunityStage: msg?.opportunityStage ?? null,
+          giftStarted: msg?.giftStarted ?? 'any',
+          readStatus: msg?.readStatus ?? 'any',
           text: msg?.text,
           mediaUrl: msg?.mediaUrl ?? null,
           telegramFileId: msg?.telegramFileId ?? null,
           mediaType: msg?.mediaType ?? null,
+          deliveredCount: msg?.deliveredCount ?? null,
+          readCount: msg?.readCount ?? null,
+          failedCount: msg?.failedCount ?? null,
           createdAt: b.createdAt,
         };
       });

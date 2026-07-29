@@ -10,7 +10,7 @@
 
 | Path | Статус | Файл |
 |---|---|---|
-| `/` лендинг | ✅ shadcn **indigo** theme; Table/Accordion; 7 дней free + ~3× дешевле; реквизиты ИП | `page.tsx` |
+| `/` лендинг | ✅ AIDA conversion landing; industrial-tech art direction; маскот **Voxly**; Unbounded + Manrope; 7 дней free, CRM от 500 ₽; mobile sticky CTA; реквизиты ИП | `page.tsx` + `components/landing/vox-relay.tsx` |
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
 | `/login`, `/register` | ✅ shadcn Card/Input; register: shadcn Checkbox оферта + ПДн | `login/page.tsx`, `register/page.tsx` |
 | `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; `AppShell` Sheet mobile | `dashboard/page.tsx` |
@@ -22,7 +22,7 @@
 | `/dashboard/mailing/gramjs` | ✅ Conversation audience + schedule/edit/preview (text; media N/A) | `dashboard/mailing/gramjs/page.tsx` |
 | `/dashboard/mailing/whatsapp` | ✅ Conversation audience + schedule/edit/preview + mediaUrl | `dashboard/mailing/whatsapp/page.tsx` |
 | `/dashboard/mailing/stories` | ✅ schedule/edit/preview; GramJS send; WA/ai_tg → unsupported on send (ADR-019) | `dashboard/mailing/stories/page.tsx` |
-| Twenty sidebar «Рассылка» | ✅ **in-CRM** STANDALONE_PAGE + front-component (crm-chat ≥0.1.17); bot compose/list/trial. Portal LINKs removed | `page-layouts/mailing.page-layout.ts` + `front-components/mailing-panel.tsx` |
+| Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.21** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
 | `/dashboard/ai` | ✅ Telegram Business: инструкция BotFather + token connect + delete; **не** manager provision | `dashboard/ai/page.tsx` |
 | `/dashboard/ai/gramjs` | ✅ QR + trial/оплата `ai_gramjs`; QR gated `requiresPayment` | `dashboard/ai/gramjs/page.tsx` |
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment` | `dashboard/ai/whatsapp/page.tsx` |
@@ -30,7 +30,7 @@
 | `/dashboard/ai/[botId]` | ✅ Business capacity + unlink + buy slot 200₽; диалоги, handoff, agent | `dashboard/ai/[botId]/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта** | `admin/page.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
-| Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio preview** (signed URL + MIME sniff/Range; Fastify `maxParamLength`+`/media/*` for long tokens), MarkdownV2, **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **clickable http(s) links** (INC-050/055/057/063, app ≥0.1.15) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
+| Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for video/audio/**PDF·DOCX**; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), MarkdownV2, **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **clickable http(s) links** (INC-050/055/057/063/067, app ≥0.1.20) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
 | Inbound message left toast | ✅ shell-ux poll prefer `/s/crm-chat/inbound-toasts` ~4s; toast + **auto-refresh open Chat** (click «Обновить» / soft ~4.5s); skew 15s | `docker/twenty-shell-ux.js` + `get-inbound-toasts` + `crm-chat.ts` |
 | Unread chat badges (deals + contacts) | ✅ count = inbound `role=user` after `Conversation.lastOperatorReadAt`; mark-read on Chat GET **all** linked threads; shell-ux **one** badge per card (title) + «Чат» tab; poll `/s/crm-chat/unread-badges` ~8s | `crm-chat.ts` + `get-unread-badges` + `twenty-shell-ux.js` |
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off; **dedupe** shell + SQL | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/dedupe-cabinet-nav.sql`) |
@@ -57,7 +57,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 ### Billing `/api/billing`
 | Method | Path | ✅ |
 |---|---|---|
-| POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_wa`, `ai_topup` (+ legacy); webhook top-up wallet / extraSlots / referral 20% excl. `ai_topup` |
+| POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_wa`, `ai_topup`, `crm_base`+`extraSeats`, `extra_seat`; webhook persists `Subscription.extraSeats`; InvId via advisory lock; wallet / extraSlots / referral 20% excl. `ai_topup` |
 | GET | `/success`, `/status` | ✅ |
 
 ### Tenant `/api/tenant`
@@ -80,6 +80,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 | GET | `/` → `campaigns[]` + `campaign` (active/newest) | ✅ |
 | PUT | `/:botId/promo` (+ `campaignId`) | ✅ |
 | POST | `/:botId/media`, `/:botId/promo/publish`, `/:botId/channel/verify` | ✅ |
+| GET/POST | `/mailing/stage-rules`, `PATCH …/:id`, `POST …/fire` | ✅ Opportunity-stage auto-send rules |
 | POST/GET | `/:botId/broadcasts` | ✅ gift / gramjs / wa / **story**; soft-gate mailing_* addon |
 | PATCH | `/:botId/broadcasts/:broadcastId` | ✅ only `status=scheduled` |
 | GET/POST | `/mailing/billing`, `/mailing/start-trial` | ✅ mailing_bot / mailing_accounts / mailing_stories |
@@ -90,7 +91,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 | PATCH | `/:botId/conversations/:conversationId` | ✅ mode / pause / aiDisabled / needsReview |
 | DELETE | `/:botId` | ✅ |
 | POST | `/webhook/:botId` | ✅ (prod webhook; local = poll) |
-| GET/POST | `/api/crm/chat/:recordId` (+ `/reply`, `/file/:fileId`, `/file/:fileId/signed-url`, `/media/*`) | ✅ Opportunity **или** Person id; link = GiftSubscriber **или** Conversation (gift / `ai_tg` / `ai_gramjs` / `ai_wa`); GET returns `threads[]` + channel/identity labels + optional `presence` (online/lastSeenAt/approx); optional `?conversationId=` / `giftSubscriberId` (reply body too); text+media+MarkdownV2 (GramJS outbound text-only; **inbound media preview** via gramjs: fileIds + WA via Evolution getBase64; **video/audio via HMAC signed URL** — long token via `maxParamLength`+wildcard); typing/read presence on GET/reply; **marks `lastOperatorReadAt`** on open; auth = portal/crm JWT **или** `VOXLY_SERVICE_TOKEN` + `X-Twenty-Workspace-Id` |
+| GET/POST | `/api/crm/chat/:recordId` (+ `/reply`, `/file/:fileId`, `/file/:fileId/signed-url`, `/media/*`) | ✅ Opportunity **или** Person id; link = GiftSubscriber **или** Conversation (gift / `ai_tg` / `ai_gramjs` / `ai_wa`); GET returns `threads[]` + channel/identity labels + optional `presence` (online/lastSeenAt/approx); optional `?conversationId=` / `giftSubscriberId` (reply body too); text+media+MarkdownV2 (GramJS outbound text-only; **inbound media preview** via gramjs: fileIds + WA via Evolution getBase64; **video/audio/documents via HMAC signed URL** — long token via `maxParamLength`+wildcard); **read** on GET (WA/TG Business); **typing only on reply** (not on poll); **marks `lastOperatorReadAt`** on open; auth = portal/crm JWT **или** `VOXLY_SERVICE_TOKEN` + `X-Twenty-Workspace-Id` |
 | GET | `/api/crm/chat/inbound-toasts` | ✅ recent role=`user` ChatMessages for CRM left toasts (crm-chat JWT / service token) |
 | GET | `/api/crm/chat/unread-badges` | ✅ `{ opportunities:[{id,count}], persons:[{id,count}] }` unread inbound since `lastOperatorReadAt` |
 
@@ -108,7 +109,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Method | Path | ✅ |
 |---|---|---|
 | GET | `/accounts` | ✅ list `ai_gramjs` + soft billing warning |
-| POST | `/start-trial` | ✅ soft 14d addon `ai_gramjs` (no Robokassa yet) |
+| POST | `/start-trial` | ✅ soft **7d** addon `ai_gramjs` (`TRIAL_PERIOD_DAYS`) + Robokassa `ai_gramjs` |
 | POST | `/auth/qr/start` | ✅ |
 | GET | `/auth/qr/status`, `/auth/qr/png` | ✅ |
 | POST | `/auth/qr/password` | ✅ 2FA |
@@ -118,7 +119,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Method | Path | ✅ |
 |---|---|---|
 | GET | `/accounts` | ✅ list `ai_wa` (`name`/`displayName` + `slug`) + soft billing + evolutionConfigured; prunes underscore never-connected stubs |
-| POST | `/start-trial` | ✅ soft 14d addon `ai_wa` |
+| POST | `/start-trial` | ✅ soft **7d** addon `ai_wa` (`TRIAL_PERIOD_DAYS`) + Robokassa `ai_wa` |
 | POST | `/auth/qr/start` | ✅ Evolution instance + QR; persists human `displayName` (Cyrillic OK), ascii slug for Evolution |
 | GET | `/auth/qr/status` | ✅ connectionState + QR refresh |
 | DELETE | `/accounts/:botId` | ✅ Evolution logout/delete + remove `BotInstance` |
@@ -172,7 +173,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Broadcasts | gift-bot-worker | ✅ gift + gramjs/wa + stories (GramJS); attribution tags |
 | Mailing GramJS / WA | portal + Broadcast | ✅ Phase 3 |
 | Mailing stories | gramjs-bridge `/stories/send` | ✅ GramJS; WA/ai_tg explicit unsupported |
-| Mailing billing | PRODUCT_CODES mailing_* | ✅ 500/500/1000 + trial gate |
+| Mailing billing | PRODUCT_CODES mailing_* | ✅ 500/500/1000 + trial gate; soft 402 → portal Robokassa (`productCode` / `?pay=1`) |
 | Trial period | `TRIAL_PERIOD_DAYS` | ✅ **7** days (was 14) |
 | CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ + custom Person.`telegram` (`@username`); phone → Person.phones when contact shared |
 | Media ASR/vision/docs | ai-telegram-worker / ai-whatsapp-worker / gramjs-bridge / **gift-bot-worker** | ✅ **Platform default** (worker-global; no per-tenant flag). Whisper via OpenRouter STT (voice + **video_note/ptv + regular video** / doc-video; ffmpeg demux; tags `[голос]`/`[кружочек]`/`[видео]`, ≤**20MB** / ≤**180s**); vision multimodal; **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k, `@voxly/ai-core` pdf-parse/mammoth); `MEDIA_INBOUND_HINT` on AI channels; fail → clear RU fallback. **Gift:** same enrich into `ChatMessage` for CRM (no sales LLM); `ai_tg` still forwarded to telegram-worker. New workspaces: `ensureCrmChatAppInstalled(forceReinstall)` on provision |

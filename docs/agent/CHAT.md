@@ -2,7 +2,7 @@
 
 Канон поведения мессенджер-чата в Twenty «Чат» + AI. Заказчик 2026-07-26: **WA чат работает идеально** — этот документ фиксирует эталон. Telegram/GramJS должны держаться того же UX-контракта, где код уже умеет; отличия помечены.
 
-Связано: ADR-014 (агенты OFF по умолчанию), ADR-016 (knowledge/learn), INC-059…062, FLOWS §4 (UI CRM).
+Связано: ADR-014 (агенты OFF по умолчанию), ADR-016 (knowledge/learn), INC-059…069, FLOWS §4 (UI CRM).
 
 ## 1. Общий контракт (все каналы)
 
@@ -26,7 +26,7 @@
 1. PN из `remoteJidAlt` / `senderPn` / vCard / explicit Contact|Chat — **не** avatar/pushName (default). Opt-in: `WA_LID_AVATAR_PHONE_MATCH=1`.
 2. **Не** трактовать Evolution Contact CUID как E.164 (INC-060).
 3. Dedupe LID↔PN conversations / messageId — один диалог.
-4. `syncLeadToCrm`: Person phone + whatsapp `+E.164`; имя без LID в lastName (INC-039).
+4. `syncLeadToCrm`: Person phone + whatsapp `+E.164`; имя без LID в lastName (INC-039). **Before** ASR/vision/doc enrich (INC-068) — lead must not wait on media AI.
 5. Business profile (`fetchBusinessProfile`): **email**, **website** → Person; Instagram/Facebook **только** если URL есть в ответе Evolution или в website/description. Meta-linked IG в UI WA **не** в Baileys API — не выдумывать.
 6. Email unique в Twenty включает soft-delete: при fail → `releaseSoftDeletedPersonEmail` (SQL через `TWENTY_DATABASE_URL`) → retry `updatePersonEmail` (INC-062). Create Person без email, потом attach.
 
@@ -35,8 +35,8 @@
 2. Перед ответом: mark read (best-effort).
 3. Каждый bubble: `sendPresence(composing)` + `sendText({ delay })` — `typingDelayMs` ≈ **3.0–6.5s** (base 1400 + 40×chars). Evolution `delay` держит «печатает…» до отправки.
 4. Между bubbles: `humanBubbleGapMs()` (~4–6s) + composing на gap.
-5. CRM presence: worker/cache → saas-api `crm-chat` presence line.
-
+5. После ответа / abort / error: `sendPresence(paused)` — не оставлять залипший «печатает…» (INC-067).
+6. CRM presence: worker/cache → saas-api `crm-chat` presence line.
 ### Не ломать
 - Группы / status / newsletter — skip.
 - Soft trial addon на канале.
@@ -63,7 +63,7 @@
 |---|---|
 | Продукт | Отдельный SKU `ai_gramjs` (~500 ₽), UI `/dashboard/ai/gramjs` |
 | CRM chat outbound | Bridge `POST /messages/send`; **text-only** (media outbound not yet) |
-| CRM chat inbound media | Photo/video/sticker/voice/doc → `attachments` `gramjs:{peer}:{msgId}` + CRM `/file` via bridge `POST /messages/media`; **video/audio** play via HMAC signed URL (`/file-url` → `/media/:token`) with MIME sniff + Range |
+| CRM chat inbound media | Photo/video/sticker/voice/doc → `attachments` `gramjs:{peer}:{msgId}` + CRM `/file` via bridge `POST /messages/media`; **video/audio/documents** via HMAC signed URL (`/file-url` → `/media/:token`) with MIME sniff + Range |
 | AI media | Photo/sticker → vision; voice/audio → ASR; **кружочек + обычное видео** → ASR (`[кружочек]:` / `[видео]:`, ffmpeg demux, ≤20MB/180s); **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k); else fallback «не удалось разобрать»; animation/GIF → placeholder |
 | Presence | Live через GramJS → crm-chat |
 | AI | Тот же AiAgent assign / OFF default |
@@ -83,7 +83,8 @@
 
 - Portal: `/dashboard/ai/agents` + bind на аккаунт/чат.
 - `systemPrompt` + `settings`; knowledge chunks + learn from **won** deals (ADR-016).
-- После PATCH prompt/model workers **перечитывают** AiAgent на следующий inbound; assistant-история до `agent.updatedAt` не few-shot'ит старую персону (INC-064).
+- После PATCH prompt/model workers **перечитывают** AiAgent на следующий inbound; история **до** `agent.updatedAt` (user+assistant) не few-shot'ит старую персону (INC-064/066); assistant-отказы «не могу просмотреть/прослушать» вырезаются из history (INC-067); при отказе **после** `[голос]/`/`[видео]:` — один retry (INC-069).
+- **Schema:** новые поля Prisma на `ChatMessage` (напр. `deliveryStatus`) **обязаны** быть мигрированы на prod до деплоя saas-api — иначе GET chat **500** и пустой «Чат» (INC-069).
 - Стоимость: OpenRouter `usage.cost` → wallet (ADR-015).
 - CRM panel: оператор может вкл/пауза/выкл AI на треде без отключения канала.
 

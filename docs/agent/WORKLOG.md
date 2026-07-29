@@ -1,3 +1,182 @@
+### 2026-07-30 — Ship AIDA landing (GitHub + prod saas-portal)
+
+- Goal: Push branch + deploy selling landing to getvoxly.ru.
+- Changes:
+  - Landing: conversational RU AIDA copy; amber full-bleed hero; Voxly mascot poses `voxly-*-v5.png` (transparent).
+  - Unbounded + Manrope; sticky mobile CTA; removed comparison-table-first layout.
+  - Commit also includes prior staged mailing/CRM work on `ui/indigo-shadcn-dashboard` (portal deploy targets landing first).
+- Verify: `./scripts/prod-deploy.sh saas-portal` + `curl -Ik https://getvoxly.ru/`.
+- Broken: —
+- Next: smoke live landing; optional refresh-crm-chat if mailing panels not yet on prod.
+
+### 2026-07-29 — AIDA landing + official Voxly mascot
+
+- Goal: Replace the comparison-table-first homepage with a conversion-focused landing.
+- Changes:
+  - Rebuilt `/` as an AIDA narrative: pain → unified solution → benefits → four-step onboarding → price → FAQ → closing CTA.
+  - Adopted a restrained industrial-tech direction using the official Voxly robot, amber/red/black/white palette, and Cyrillic Unbounded + Manrope typography.
+  - Added mobile-specific composition and a sticky 48px CTA; retained legal details and accessible focus/reduced-motion behavior.
+  - Updated metadata/Open Graph and the landing capability record.
+- Verify: `pnpm build` in `apps/saas-portal` passed; local `GET http://localhost:3000/` returned **200**; IDE lints clean.
+- Broken: Standalone `tsc --noEmit` initially hit stale missing `.next/types`; Next production build regenerated types and completed successfully.
+- Next: Visual review at `http://localhost:3000/`; deploy only after approval.
+
+### 2026-07-27 — ServiceApp UI Design System Tokens integration
+
+- Goal: Update design system tokens to ServiceApp UI Design System Tokens (`serviceapp_design_system.json` & `serviceapp_design_system.md`).
+- Changes:
+  - Created `serviceapp_design_system.json` and `serviceapp_design_system.md` in root workspace and in `design-system/voxly/`.
+  - Updated `design-system/voxly/MASTER.md` to set ServiceApp UI Design System as the primary source of truth.
+  - Verified `apps/saas-portal` typecheck passes with 0 errors.
+- Verify: `pnpm --filter @voxly/saas-portal typecheck` -> 0 errors. `serviceapp_design_system.json` and `serviceapp_design_system.md` written and validated.
+- Next: None.
+
+### 2026-07-27 — INC-070 CRM «Чат» tab disappeared (side panel)
+
+- Goal: Restore Opportunity/Person **Чат** tab on john-crm (and other tenants if broken).
+- Cause: `voxly-crm-chat` missing from Twenty after failed/partial `refresh-crm-chat` (ENOSPC during 0.1.22 ship left uninstall without reinstall). Shell-ux unread badges unrelated — kept working.
+- Changes (prod only, no volume wipe):
+  - Confirmed tarball `/voxly/assets/voxly-crm-chat.tgz` **0.1.22** in saas-api.
+  - `POST …/refresh-crm-chat` `{}` → john / lexx / antontest / antontest3 `{ok:true}`.
+  - Flushed Redis `flatPageLayout*`; bumped all `workspace.metadataVersion`.
+  - Chat tab already `position=15` (set-chat-tab-position no-op).
+- Verify: metadata `getPageLayouts` john Opportunity/Person includes **Чат** @15; widgets → Voxly Chat; `GET /rest/front-components/<id>` **200** (bundle); apps **0.1.22** on all 4 workspaces.
+- Broken: rotate root SSH; harden refresh to not uninstall before successful upload when disk low.
+- Next: user hard-refresh john-crm → open deal «Антон · WA · ремонт тоя» → **Чат** visible + loads messages.
+
+### 2026-07-27 — INC-069 CRM Chat «нет данных» (deliveryStatus) + WA refusal/dup
+
+- Goal: Restore CRM Chat history (WA/GramJS/Business); stop voice ASR refusals + duplicate AI replies.
+- Cause: saas-api Prisma client expected `ChatMessage.deliveryStatus` (mailing receipts schema) but migration `20260727020000_mailing_broadcast_receipts` was **not** on prod → every `GET /api/crm/chat/:id` **500 P2022** → empty Chat tab. Secondary: LLM still refused after `[голос]: …`; double flush echoed video and skipped photo.
+- Changes:
+  - Prod: backup + applied receipts migration (`deliveryStatus`/`deliveredAt`/`readAt` + `BroadcastRecipient`).
+  - ai-core: stronger MEDIA hint + refusal regex; `hasEnrichedMediaTag` / `isNearDuplicateReply` / `MEDIA_REFUSAL_RETRY_USER`.
+  - WA/TG workers: refusal retry; WA flush focuses DB-fresh burst; skip near-duplicate assistant ≤90s.
+- Deploy: migration on control PG; `./scripts/prod-deploy.sh ai-whatsapp-worker,ai-telegram-worker`; backups `/opt/voxly/backups/20260726-220746/` (migrate) + `/opt/voxly/backups/20260726-221209/` (workers).
+- Verify: service-token GET john Person/Opp → **200** msgs 37/63/51 (WA personal/business/GramJS); workers have `media refusal retry`; portal+api **200**.
+- Broken: rotate root SSH password.
+- Next: user hard-refresh john-crm Chat; smoke voice/photo; confirm one AI reply.
+
+### 2026-07-27 — INC-068 personal WA voice CRM sync before ASR
+
+- Goal: Personal WA voice must create Person+Opportunity after wipe; don’t block CRM on ASR.
+- Cause: CRM ids cleared on `+79150946944` with no post-clear inbound; sync ran after media enrich.
+- Changes: WA inbound → save msg → `await syncLeadToCrm` → then ASR/vision/doc update; TG media sync before `extractInboundText`; sync ok/empty logs.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker,ai-telegram-worker`; backup `/opt/voxly/backups/20260726-214839/`; smoke portal+`/health` **200**.
+- Verify: clear CRM ids on `+7915` → synthetic voice webhook → `syncLeadToCrm ok` **before** ASR fail → Person+Opportunity recreated; log order confirmed in dist.
+- Broken: rotate root SSH password.
+- Next: user sends real personal voice; confirm deal in john-crm.
+
+### 2026-07-27 — Prod: mailing UX 0.1.22 + receipts migrate
+
+- Goal: Ship composer/preview/filters/delete + stage multi-channel; fix refresh after missing bot front-component.
+- Deploy: `prod-deploy.sh saas-api,gift-bot-worker` then saas-api again for **0.1.22**; backups `20260726-220429`, `20260726-221943`.
+- Migrate: `MailingStageRule.channel/media*`; `BroadcastRecipient` + ChatMessage delivery columns.
+- Disk: VPS hit ENOSPC on refresh; pruned unused docker images (no volumes) → ~71G free; refresh john/lexx/antontest/antontest3 → `{ok:true}`.
+- Verify: tarball **0.1.22** with 5 frontComponents (Bot/Accounts/Stories/Stage/Chat); portal+api+john-crm **200**.
+- Broken: rotate root SSH; live WA/GramJS read acks still partial; bot panel recovered via rename `mailing-bot-panel` (old `mailing-panel` dropped from twenty build).
+- Next: hard-refresh john-crm → expand «Рассылка»; smoke composer/preview/delete.
+
+### 2026-07-27 — Mailing UX 0.1.21: composer, filters, delete, receipts
+
+- Goal: Lift in-CRM «Рассылка» to gift-broadcasts UX; audience filters; delete; multi-channel stage; receipts skeleton.
+- Changes:
+  - crm-chat **0.1.21**: shared `mailing-composer` / `mailing-preview` / `mailing-history`; wired bot/accounts/stories/stage; DELETE LF; accounts filters CRM stage + gift started/phase + read; stage sender gift|gramjs|wa + preview.
+  - API already had channel audience resolve + DELETE + stage channel; added `readStatus` audience via `ChatMessage.deliveryStatus`.
+  - Schema: `BroadcastRecipient` + ChatMessage delivery fields; migration `20260727020000_mailing_broadcast_receipts`; gift-bot-worker writes recipients on channel send.
+- Verify: `yarn typecheck` in voxly-crm-chat OK; prisma generate OK. **Not deployed.**
+- Broken / gaps: WA/GramJS live ack→delivered/read not fully wired (Evolution messages.update); gift-bot never gets true read; media upload file_id in CRM still URL-oriented.
+- Next: migrate receipts on control DB; deploy saas-api + gift-bot-worker + refresh-crm-chat; hard-refresh john; then WA ack handler.
+
+### 2026-07-27 — Prod: Robokassa test keys live (crmgetvoxly)
+
+- Goal: Wire shop `crmgetvoxly` test passwords + SHA256; Result/Success/Fail URLs already set in ЛК.
+- Changes: prod `.env` test Password#1/#2 + `HASH_ALG=sha256` + `IS_TEST=1`; deploy saas-api (compose name conflict cleaned; `--no-cache` rebuild). Code: `Shp_*`, Result GET/POST, `/fail`.
+- Verify: container `LOGIN=crmgetvoxly IS_TEST=1 HASH=sha256 P1/P2=20`; `/health` **200**; Result POST without sig **400**; Fail **302**.
+- Broken: none for wiring. **Do not commit secrets**; passwords appeared in chat — rotate after go-live if needed.
+- Next: user runs one **test** checkout from portal (IsTest=1); then switch env to live passwords + `IS_TEST=0`.
+
+### 2026-07-27 — Robokassa docs alignment (Shp_ + MD5)
+
+- Goal: Match official Robokassa docs vs cabinet screenshots.
+- Changes: `Shp_*` prefix (not `shp_`) in pay URL + signature; Result parse case-insensitive; prod `ROBOKASSA_HASH_ALG=md5` (cabinet MD5); `.env.example` notes test passwords + IPs.
+- Still blocked: Password#1/#2 empty on prod; cabinet Result/Success/Fail still on getvoxly.ru until user updates.
+- Verify: `@voxly/billing` tests pass.
+- Next: user pastes **test** Password#1/#2 → env + deploy saas-api → test pay with IsTest=1.
+
+### 2026-07-27 — Robokassa wiring (shop crmgetvoxly)
+
+- Goal: Align code + prod with Robokassa merchant `crmgetvoxly` (MD5/GET URLs were wrong vs code).
+- Changes: `ROBOKASSA_HASH_ALG` (md5|sha256); Result GET+POST + urlencoded parser; `/fail` redirect; compose env; LOGIN=`crmgetvoxly` + HASH=`sha256` + IS_TEST=1 on prod `.env` (**PASSWORD1/2 still empty**).
+- Cabinet must set: Result `https://api.getvoxly.ru/api/billing/result` POST; Success/Fail api billing URLs; hash **SHA256** (or set env md5); test hash also SHA256.
+- Verify: billing tests 14; saas-api typecheck OK. **Await passwords** then recreate saas-api + test payment.
+- Broken: live checkout blocked until Password#1/#2 in prod `.env`.
+- Next: user pastes passwords → write env → deploy saas-api → smoke test pay.
+
+### 2026-07-26 — Prod: landing «Документы» links in contacts/footer
+
+- Goal: Full legal links in contacts + footer (terms/privacy/consent/refund).
+- Changes: `LEGAL_LINKS` full titles; contacts column «Документы»; `./scripts/prod-deploy.sh saas-portal`.
+- Backup: `/opt/voxly/backups/20260726-215213/`.
+- Verify: after startup race → portal/api **200**; HTML has «Документы» + 4 hrefs.
+- Broken: smoke script 502/404 during recreate (same race as before).
+- Next: none for this ship.
+
+### 2026-07-27 — Prod: «Рассылка» FOLDER + stage rules live
+
+- Goal: Finish mailing in-CRM ship — migrate `MailingStageRule`, refresh nav so john expands «Рассылка».
+- Changes: Applied `20260726230000_mailing_stage_rule` on control Postgres (`MailingStageRule` created, 0 rows). `refresh-crm-chat` john/lexx/antontest/antontest3 → `{ok:true}`. Nav verified on john: FOLDER «Рассылка» + PAGE_LAYOUT children Бот / Аккаунты / Сторис / По этапу сделки. Prod tarball = crm-chat **0.1.20** (includes mailing folder + INC-067 signed docs).
+- Backup: prior deploy `/opt/voxly/backups/20260726-210924/` (saas-api/gift-bot from earlier this session).
+- Verify: john Twenty `core.navigationMenuItem` 5 rows as above; `https://john-crm.getvoxly.ru/` **200**.
+- Broken: rotate root SSH password (still in chat history). Stage fire needs Opportunity ↔ `GiftSubscriber.twentyOpportunityId`. Stories media still URL-only in CRM.
+- Next: user hard-refresh john-crm → expand «Рассылка»; E2E schedule/send + stage rule.
+
+### 2026-07-27 — INC-067 WA video refuse / PDF download / typing / personal deal
+
+- Goal: After wipe retest — Business WA video+кружочек AI uses ASR; PDF/DOCX downloadable in CRM; typing clears; personal WA creates deal. Don’t break photo/audio/text/TG.
+- Cause: ASR already in ChatMessage; LLM few-shot refusals; docs via base64 hit Twenty 96KB cap; composing never cleared; personal conv linked soft-deleted opp + missing person.
+- Changes: `filterMediaCapabilityRefusals` + stronger MEDIA hint (ai-core); WA/TG workers; signed URL for documents (crm-chat **0.1.20**); `clearWhatsAppTyping`; no TG typing on GET; await syncLeadToCrm; cleared `79150946944` stale CRM ids.
+- Deploy: `./scripts/prod-deploy.sh saas-api,ai-whatsapp-worker,ai-telegram-worker`; backup `/opt/voxly/backups/20260726-210924/`; refresh-crm-chat john/lexx/antontest/antontest3 `{ok:true}`; smoke portal+`/health` **200** (first smoke 404 race during recreate).
+- Verify: user smoke — video/кружочек → answer from transcript; PDF/DOCX download; typing clears; +7915 → new deal. Hard-refresh john-crm.
+- Broken: rotate root SSH password (still exposed in chat).
+- Next: user E2E smoke; rotate SSH.
+
+### 2026-07-26 — Prod: billing seats + mailing pay + 7d docs
+
+- Goal: Ship billing fixes (extraSeats webhook, InvId lock, mailing 402→Robokassa) + portal.
+- Changes: `./scripts/prod-deploy.sh saas-api,saas-portal` (portal OK); saas-api initially **stale Docker cache** → forced `build --no-cache saas-api` + recreate.
+- Backup: `/opt/voxly/backups/20260726-214204/` (`voxly_control.dump`, `twenty.dump`).
+- Verify: `https://getvoxly.ru/` **200**; `https://api.getvoxly.ru/health` **200**; container `billing.js` has `extraSeatsPaid` + `pg_advisory_xact_lock`.
+- Broken: first smoke hit portal **404** (startup race); script exited 1 before api no-cache rebuild.
+- Next: optional refresh-crm-chat for in-CRM `?pay=1` deep-link; harden deploy script to `--no-cache` when host sources newer than image.
+
+### 2026-07-26 — INC-066 WA off-topic + silent / no deal
+
+- Goal: Fix WA Business off-topic AI vs TG; regular/LID WA no reply / missing Opportunity.
+- Cause: (1) history filter kept pre-prompt user lines → pollution; (2) `resolveDefaultOpportunityStage` `nameSingular` filter 400 → `NEW` stage abort; (3) closed LID twin + fake `+20034505`.
+- Changes: twenty-client stage query without ObjectFilter; history cut all roles; MEDIA hint; WA reopen closed threads; prisma `///` comment fix (blocked generate); INC-066.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker,ai-telegram-worker`; backups `20260726-204245`, `20260726-204345`, `20260726-204441`.
+- Verify: smoke portal/api **200**; workers Up; no `nameSingular` in new logs; STAGE resolve → workspace value (not NEW).
+- Broken: only one Evolution instance on prod (`ремонт тоя`); assign real sales agent when leaving test prompt «Тестовый, прикольный».
+- Next: user smoke personal + business-profile peers; **rotate root SSH password**.
+
+### 2026-07-26 — «Рассылка» FOLDER + 4 in-CRM pages (0.1.18)
+
+- Goal: Expandable sidebar (Бот / Аккаунты / Сторис / По этапу сделки); calendar schedule + edit/dup; stage trigger.
+- Changes: crm-chat **0.1.18** FOLDER+PAGE_LAYOUT children; panels; PATCH broadcast proxy; `MailingStageRule` + fire API; worker `subscriberIds`; Twenty `opportunity.updated` LF; ADR-018.
+- Verify: `yarn typecheck` OK in voxly-crm-chat. **No prod deploy.**
+- Broken / gaps: FOLDER+PAGE_LAYOUT needs live verify after refresh (FOLDER+LINK was broken; PAGE_LAYOUT should navigate in-app). Stage fire needs linked `GiftSubscriber.twentyOpportunityId`. Stories media = URL only (no upload in CRM). Custom tenant stages beyond john defaults may need UI refresh from live metadata later.
+- Next: migrate control DB `20260726230000_mailing_stage_rule`; deploy saas-api + gift-bot-worker + refresh-crm-chat when user asks; hard-refresh john-crm → expand «Рассылка».
+
+### 2026-07-26 — Prod: in-CRM «Рассылка» (crm-chat 0.1.17)
+
+- Goal: Ship PAGE_LAYOUT mailing panel to john-crm (not portal LINKs).
+- Changes: `./scripts/prod-deploy.sh saas-api` (bakes tarball 0.1.17); refresh-crm-chat john/lexx/antontest/antontest3.
+- Backup: `/opt/voxly/backups/20260726-202005/` (`voxly_control.dump`, `twenty.dump`).
+- Verify: tarball nav `Рассылка` type=`PAGE_LAYOUT`; john Twenty DB same + `pageLayoutId` set, no `getvoxly.ru/mailing` LINKs; smoke portal/api **200**.
+- Broken: none for this ship. Hard-refresh CRM required.
+- Next: user opens john-crm → «Рассылка» stays in CRM; optional GramJS/WA/Stories tabs later.
+
 ### 2026-07-26 — «Рассылка» in-CRM like Chat (ADR-018 amend)
 
 - Goal: Stop portal LINK sidebar UX; ship mailing as Twenty STANDALONE_PAGE + front-component (same pattern as voxly-crm-chat).

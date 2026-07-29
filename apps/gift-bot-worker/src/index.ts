@@ -741,11 +741,15 @@ async function processBroadcast(broadcastId: string) {
   }
 
   const where: any = { campaignId: msg.campaignId };
-  if (msg.segment === 'gifted') where.giftDelivered = true;
-  if (msg.segment === 'not_gifted') where.giftDelivered = false;
-  // Backward-compatible: older scheduled jobs omit funnelPhase
-  if (typeof msg.funnelPhase === 'string' && msg.funnelPhase) {
-    where.funnelPhase = msg.funnelPhase;
+  if (Array.isArray(msg.subscriberIds) && msg.subscriberIds.length > 0) {
+    where.id = { in: msg.subscriberIds.map(String) };
+  } else {
+    if (msg.segment === 'gifted') where.giftDelivered = true;
+    if (msg.segment === 'not_gifted') where.giftDelivered = false;
+    // Backward-compatible: older scheduled jobs omit funnelPhase
+    if (typeof msg.funnelPhase === 'string' && msg.funnelPhase) {
+      where.funnelPhase = msg.funnelPhase;
+    }
   }
 
   const subscribers = await prisma.giftSubscriber.findMany({ where });
@@ -927,6 +931,9 @@ async function processChannelBroadcast(
       tenantId: broadcast.tenantId,
       botInstanceId: botId,
       status: { not: 'closed' },
+      ...(Array.isArray(msg.conversationIds) && msg.conversationIds.length > 0
+        ? { id: { in: msg.conversationIds.map(String) } }
+        : {}),
     },
     select: { id: true, platformUserId: true },
   });
@@ -968,8 +975,21 @@ async function processChannelBroadcast(
           conversationId: conv.id,
           role: 'operator',
           content: text,
+          deliveryStatus: 'sent',
         },
       });
+      try {
+        await prisma.broadcastRecipient.create({
+          data: {
+            broadcastId: broadcast.id,
+            conversationId: conv.id,
+            status: 'sent',
+            sentAt: new Date(),
+          },
+        });
+      } catch (err) {
+        console.warn('[gift-bot] BroadcastRecipient create skipped', err);
+      }
       await prisma.conversation.update({
         where: { id: conv.id },
         data: {
@@ -986,12 +1006,50 @@ async function processChannelBroadcast(
         conv.platformUserId,
         err,
       );
+      try {
+        await prisma.broadcastRecipient.create({
+          data: {
+            broadcastId: broadcast.id,
+            conversationId: conv.id,
+            status: 'failed',
+            error: err instanceof Error ? err.message : String(err),
+          },
+        });
+      } catch {
+        // ignore until migrate
+      }
     }
+  }
+
+  let deliveredCount = 0;
+  let readCount = 0;
+  let failedCount = 0;
+  try {
+    const recipients = await prisma.broadcastRecipient.findMany({
+      where: { broadcastId: broadcast.id },
+      select: { status: true },
+    });
+    for (const r of recipients) {
+      if (r.status === 'delivered' || r.status === 'read') deliveredCount += 1;
+      if (r.status === 'read') readCount += 1;
+      if (r.status === 'failed') failedCount += 1;
+    }
+  } catch {
+    // table may not exist until migrate
   }
 
   await prisma.broadcast.update({
     where: { id: broadcast.id },
-    data: { status: 'sent', sentCount: sent },
+    data: {
+      status: sent > 0 ? 'sent' : 'failed',
+      sentCount: sent,
+      messageJson: {
+        ...msg,
+        deliveredCount,
+        readCount,
+        failedCount,
+      },
+    },
   });
 }
 

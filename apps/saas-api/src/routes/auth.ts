@@ -59,7 +59,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const twentyOwnerPassword = generateSecret(24);
     const twentyOwnerPasswordEncrypted = encrypt(twentyOwnerPassword);
 
-    // Create user + tenant + 14-day trial + membership + referral code in a transaction
+    // Create user + tenant + TRIAL_PERIOD_DAYS trial + membership + referral code in a transaction
     const result = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {

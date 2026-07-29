@@ -1479,7 +1479,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         try {
           const token = decrypt(bot.botTokenEncrypted);
           const botApi = `https://api.telegram.org/bot${token}`;
-          void sendTelegramTyping(botApi, target.telegramId, target.businessConnectionId);
+          // Read receipts only on open — never sendChatAction(typing) here (stuck «печатает»).
           if (target.businessConnectionId) {
             const inboundIds = messages
               .filter((m) => m.role === 'user' && m.externalMessageId)
@@ -1654,7 +1654,10 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
     recordId: string;
     fileId: string;
     botId?: string;
-  }): Promise<{ buffer: Buffer; contentType: string } | { error: string; status: number }> {
+  }): Promise<
+    | { buffer: Buffer; contentType: string; fileName?: string | null }
+    | { error: string; status: number }
+  > {
     const prisma = fastify.prisma;
     const target = await findCrmChatTarget(prisma, opts.tenantId, opts.recordId);
     if (!target) return { error: 'Not found', status: 404 };
@@ -1677,6 +1680,10 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       recordId: opts.recordId,
       fileId,
     });
+    const withMeta = (media: { buffer: Buffer; contentType: string }) => ({
+      ...media,
+      fileName: storedMeta?.fileName || null,
+    });
 
     if (bot.botType === 'ai_gramjs') {
       if (!fileId.startsWith('gramjs:')) {
@@ -1688,14 +1695,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const media = await fetchGramjsMedia({ botId: bot.id, fileId });
         if (!media) return { error: 'Invalid GramJS file id', status: 400 };
-        return {
+        return withMeta({
           buffer: media.buffer,
           contentType: sniffMediaContentType(media.buffer, {
             contentType: media.contentType,
             mimeType: storedMeta?.mimeType,
             fileName: storedMeta?.fileName,
           }),
-        };
+        });
       } catch (err) {
         return {
           error: (err as Error).message || 'Failed to fetch GramJS media',
@@ -1712,14 +1719,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           peerUserId: target.telegramId || undefined,
         });
         if (!media) return { error: 'WhatsApp media not found', status: 404 };
-        return {
+        return withMeta({
           buffer: media.buffer,
           contentType: sniffMediaContentType(media.buffer, {
             contentType: media.contentType,
             mimeType: storedMeta?.mimeType,
             fileName: storedMeta?.fileName,
           }),
-        };
+        });
       } catch (err) {
         return {
           error: (err as Error).message || 'Failed to fetch WhatsApp media',
@@ -1751,7 +1758,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
 
     const headerType = fileRes.headers.get('content-type') || 'application/octet-stream';
     const buf = Buffer.from(await fileRes.arrayBuffer());
-    return {
+    return withMeta({
       buffer: buf,
       contentType: sniffMediaContentType(buf, {
         contentType: headerType,
@@ -1759,20 +1766,29 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         mimeType: storedMeta?.mimeType,
         fileName: storedMeta?.fileName,
       }),
-    };
+    });
   }
 
   function sendMediaBuffer(
     reply: import('fastify').FastifyReply,
     request: import('fastify').FastifyRequest,
-    result: { buffer: Buffer; contentType: string },
+    result: { buffer: Buffer; contentType: string; fileName?: string | null },
   ) {
     const buf = result.buffer;
     const contentType = result.contentType;
+    const rawName = String(result.fileName || '').trim();
+    const safeName = rawName.replace(/[^\w.\- ()а-яА-ЯёЁ]+/gi, '_').slice(0, 120);
+    const isDoc =
+      contentType.startsWith('application/') ||
+      contentType === 'text/plain' ||
+      /\.(pdf|docx?|xlsx?|zip)$/i.test(safeName);
+    const disposition = isDoc
+      ? `attachment; filename="${safeName || 'file.bin'}"`
+      : 'inline';
     reply
       .header('Content-Type', contentType)
       .header('Cache-Control', 'private, max-age=300')
-      .header('Content-Disposition', 'inline')
+      .header('Content-Disposition', disposition)
       .header('Accept-Ranges', 'bytes');
 
     const range = String(request.headers.range || '');

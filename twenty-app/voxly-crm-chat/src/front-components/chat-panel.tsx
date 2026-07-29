@@ -163,7 +163,9 @@ function ChatAttachmentView({
     const preferSignedUrl =
       isVideoType(attachment.type, attachment.mimeType, attachment.fileName) ||
       isVideoNoteAttachment(attachment) ||
-      isAudioType(attachment.type, attachment.mimeType);
+      isAudioType(attachment.type, attachment.mimeType) ||
+      // PDF/DOCX exceed Twenty /s ~96KB base64 cap — use signed URL like video/audio.
+      attachment.type === 'document';
     void (async () => {
       try {
         if (preferSignedUrl) {

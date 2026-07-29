@@ -21,8 +21,8 @@ export const LEGAL = {
 } as const;
 
 export const LEGAL_LINKS = [
-  { href: '/terms', label: 'Оферта' },
-  { href: '/privacy', label: 'Конфиденциальность' },
-  { href: '/consent', label: 'Согласие на ПДн' },
-  { href: '/refund', label: 'Возврат' },
+  { href: '/terms', label: 'Пользовательское соглашение' },
+  { href: '/privacy', label: 'Политика конфиденциальности' },
+  { href: '/consent', label: 'Согласие на обработку персональных данных' },
+  { href: '/refund', label: 'Правила возврата средств' },
 ] as const;
