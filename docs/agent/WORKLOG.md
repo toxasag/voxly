@@ -1,13 +1,11 @@
-### 2026-07-30 — Ship AIDA landing (GitHub + prod saas-portal)
+### 2026-07-30 — Prod saas-portal AIDA landing live
 
-- Goal: Push branch + deploy selling landing to getvoxly.ru.
-- Changes:
-  - Landing: conversational RU AIDA copy; amber full-bleed hero; Voxly mascot poses `voxly-*-v5.png` (transparent).
-  - Unbounded + Manrope; sticky mobile CTA; removed comparison-table-first layout.
-  - Commit also includes prior staged mailing/CRM work on `ui/indigo-shadcn-dashboard` (portal deploy targets landing first).
-- Verify: `./scripts/prod-deploy.sh saas-portal` + `curl -Ik https://getvoxly.ru/`.
-- Broken: —
-- Next: smoke live landing; optional refresh-crm-chat if mailing panels not yet on prod.
+- Goal: Deploy selling landing to getvoxly.ru without volume wipe.
+- Changes: `./scripts/prod-deploy.sh saas-portal` (whitelist rsync + rebuild). No password in docs.
+- Backup: `/opt/voxly/backups/20260729-214558/` (`voxly_control.dump`, `twenty.dump`).
+- Verify: `https://getvoxly.ru/` **200** (HTML has `landing-root`, `voxly-hero-v5`, amber `#f5a623`); `https://api.getvoxly.ru/health` **200** `ok`.
+- Broken: root SSH password was shared in chat — **rotate immediately**.
+- Next: optional hard-refresh CDN/browser caches for returning visitors.
 
 ### 2026-07-29 — AIDA landing + official Voxly mascot
 
