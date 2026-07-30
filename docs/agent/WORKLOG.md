@@ -21,6 +21,14 @@
 - Deploy: `saas-api,saas-portal` (backup `/opt/voxly/backups/20260730-113714/`; retry `--skip-backup` completed).
 - Verify: portal+API health **200**; container has `twenty-member-display-names` + credentials route. Hard-refresh `/dashboard/crm`.
 
+### 2026-07-30 — Commit INC-073 + confirm DB migrations / name backfill
+
+- Goal: Persist delete-member fix; ensure control DB migrations + portal names for clients.
+- Git: `06da880` Fix CRM member delete GraphQL type (`String!`).
+- DB: `prisma migrate deploy` on prod → **No pending migrations** (`20260730020000_tenant_member_twenty_password` already applied).
+- Backfill: Voxly `User.firstName/lastName` from Twenty `workspaceMember` where empty (antontest/lexx/efim1/john owner). New tenants still get names live via `fetchTwentyMemberDisplayNames` + invite flow.
+- Verify: migrate clean; john members list reflects remaining seats after deletes.
+
 ### 2026-07-30 — INC-073 fix delete member GraphQL String!
 
 - Goal: Portal Delete member failed with CRM remove error.
