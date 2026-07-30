@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  Activity,
   Gift,
   LayoutDashboard,
   Loader2,
@@ -11,12 +12,15 @@ import {
   MessageSquare,
   Search,
   Send,
+  Shield,
   Smartphone,
   Sparkles,
   UserRound,
   Bell,
   HelpCircle,
   Building2,
+  Users,
+  Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -32,39 +36,47 @@ import { cn } from '@/lib/utils';
 import { readSessionClaims } from '@/lib/session';
 import { useEffect, useMemo, useState } from 'react';
 
-const NAV = [
+type NavItem = {
+  href: string;
+  label: string;
+  match: (pathname: string, hash: string) => boolean;
+  icon: React.ComponentType<{ className?: string }>;
+  ownerOnly?: boolean;
+};
+
+const CABINET_NAV: NavItem[] = [
   {
     href: '/dashboard',
     label: 'Дашборд',
-    match: (p: string) => p === '/dashboard',
+    match: (p) => p === '/dashboard',
     icon: LayoutDashboard,
     ownerOnly: true,
   },
   {
     href: '/dashboard/crm',
     label: 'CRM портал',
-    match: (p: string) => p.startsWith('/dashboard/crm'),
+    match: (p) => p.startsWith('/dashboard/crm'),
     icon: Building2,
     ownerOnly: false,
   },
   {
     href: '/dashboard/bots',
     label: 'Gift-боты',
-    match: (p: string) => p.startsWith('/dashboard/bots'),
+    match: (p) => p.startsWith('/dashboard/bots'),
     icon: Gift,
     ownerOnly: true,
   },
   {
     href: '/dashboard/mailing',
     label: 'Рассылка',
-    match: (p: string) => p.startsWith('/dashboard/mailing'),
+    match: (p) => p.startsWith('/dashboard/mailing'),
     icon: Send,
     ownerOnly: true,
   },
   {
     href: '/dashboard/ai',
     label: 'Telegram Business',
-    match: (p: string) => {
+    match: (p) => {
       if (p === '/dashboard/ai') return true;
       if (!p.startsWith('/dashboard/ai/')) return false;
       if (p.startsWith('/dashboard/ai/gramjs')) return false;
@@ -78,25 +90,53 @@ const NAV = [
   {
     href: '/dashboard/ai/whatsapp',
     label: 'WhatsApp',
-    match: (p: string) => p.startsWith('/dashboard/ai/whatsapp'),
+    match: (p) => p.startsWith('/dashboard/ai/whatsapp'),
     icon: Smartphone,
     ownerOnly: true,
   },
   {
     href: '/dashboard/ai/agents',
     label: 'AI-агенты',
-    match: (p: string) => p.startsWith('/dashboard/ai/agents'),
+    match: (p) => p.startsWith('/dashboard/ai/agents'),
     icon: Sparkles,
     ownerOnly: true,
   },
   {
     href: '/dashboard/ai/gramjs',
     label: 'Личный Telegram',
-    match: (p: string) => p.startsWith('/dashboard/ai/gramjs'),
+    match: (p) => p.startsWith('/dashboard/ai/gramjs'),
     icon: UserRound,
     ownerOnly: true,
   },
-] as const;
+];
+
+/** Super-admin only — no cabinet product links. */
+const ADMIN_NAV: NavItem[] = [
+  {
+    href: '/admin',
+    label: 'Обзор',
+    match: (p, hash) => p.startsWith('/admin') && !hash,
+    icon: Shield,
+  },
+  {
+    href: '/admin#health',
+    label: 'Здоровье',
+    match: (p, hash) => p.startsWith('/admin') && hash === 'health',
+    icon: Activity,
+  },
+  {
+    href: '/admin#clients',
+    label: 'Клиенты',
+    match: (p, hash) => p.startsWith('/admin') && hash === 'clients',
+    icon: Users,
+  },
+  {
+    href: '/admin#funnels',
+    label: 'Воронки',
+    match: (p, hash) => p.startsWith('/admin') && hash === 'funnels',
+    icon: Filter,
+  },
+];
 
 export function AppShell({
   children,
@@ -113,24 +153,34 @@ export function AppShell({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [tenantRole, setTenantRole] = useState<string | undefined>(undefined);
+  const [hash, setHash] = useState('');
+
+  const isAdminShell = pathname.startsWith('/admin');
 
   useEffect(() => {
     const claims = readSessionClaims();
     setTenantRole(claims?.tenantRole);
   }, [pathname]);
 
+  useEffect(() => {
+    const syncHash = () => setHash(window.location.hash.replace(/^#/, ''));
+    syncHash();
+    window.addEventListener('hashchange', syncHash);
+    return () => window.removeEventListener('hashchange', syncHash);
+  }, [pathname]);
+
   const isMember = tenantRole === 'member';
-  const navItems = useMemo(
-    () => (isMember ? NAV.filter((item) => !item.ownerOnly) : NAV),
-    [isMember],
-  );
+  const navItems = useMemo(() => {
+    if (isAdminShell) return ADMIN_NAV;
+    return isMember ? CABINET_NAV.filter((item) => !item.ownerOnly) : CABINET_NAV;
+  }, [isAdminShell, isMember]);
 
   useEffect(() => {
-    if (!isMember) return;
+    if (!isMember || isAdminShell) return;
     if (pathname.startsWith('/dashboard') && !pathname.startsWith('/dashboard/crm')) {
       router.replace('/dashboard/crm');
     }
-  }, [isMember, pathname, router]);
+  }, [isMember, isAdminShell, pathname, router]);
 
   const width =
     maxWidth === '2xl'
@@ -146,19 +196,30 @@ export function AppShell({
     router.push('/');
   };
 
-  const homeHref = isMember ? '/dashboard/crm' : '/dashboard';
+  const homeHref = isAdminShell ? '/admin' : isMember ? '/dashboard/crm' : '/dashboard';
+  const brandLabel = isAdminShell ? 'Voxly Admin' : 'Voxly';
 
   const NavLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <nav className="flex flex-col gap-1 px-2" aria-label="Основная навигация">
+    <nav
+      className="flex flex-col gap-1 px-2"
+      aria-label={isAdminShell ? 'Навигация супер-админки' : 'Основная навигация'}
+    >
       {navItems.map((item) => {
-        const active = item.match(pathname);
+        const active = item.match(pathname, hash);
         const Icon = item.icon;
         return (
           <Link
             key={item.href}
             href={item.href}
             aria-current={active ? 'page' : undefined}
-            onClick={onNavigate}
+            onClick={() => {
+              if (item.href.includes('#')) {
+                setHash(item.href.split('#')[1] || '');
+              } else {
+                setHash('');
+              }
+              onNavigate?.();
+            }}
             className={cn(
               'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
@@ -192,13 +253,21 @@ export function AppShell({
           href={homeHref}
           className="mb-4 px-5 pt-5 text-sm font-semibold tracking-tight text-sidebar-primary"
         >
-          Voxly
+          {brandLabel}
         </Link>
         <ScrollArea className="flex-1">
           <NavLinks />
         </ScrollArea>
         <Separator className="mx-3 my-3" />
-        <div className="px-2 pb-4">
+        <div className="space-y-1 px-2 pb-4">
+          {isAdminShell ? (
+            <Button variant="ghost" size="sm" className="w-full justify-start gap-2" asChild>
+              <Link href="/dashboard">
+                <LayoutDashboard className="h-4 w-4" />
+                В кабинет
+              </Link>
+            </Button>
+          ) : null}
           <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onClick={logout}>
             <LogOut className="h-4 w-4" />
             Выйти
@@ -213,12 +282,12 @@ export function AppShell({
             <div className="flex items-center gap-2 rounded-lg bg-neutral-bg-subtle px-4 py-2.5 text-sm text-neutral-text-muted">
               <Search className="h-4 w-4" />
               <span className="hidden sm:inline">Поиск</span>
-              <kbd className="ml-auto hidden text-xs text-neutral-text-placeholder sm:inline-block rounded px-2 py-1 bg-white border border-neutral-border-light">
+              <kbd className="ml-auto hidden rounded border border-neutral-border-light bg-white px-2 py-1 text-xs text-neutral-text-placeholder sm:inline-block">
                 Ctrl K
               </kbd>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
               <Bell className="h-5 w-5" />
@@ -226,7 +295,7 @@ export function AppShell({
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
               <HelpCircle className="h-5 w-5" />
             </Button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-dark text-white font-semibold text-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-dark text-sm font-semibold text-white">
               AC
             </div>
           </div>
@@ -241,7 +310,7 @@ export function AppShell({
       <div className="flex flex-1 flex-col lg:hidden">
         <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background px-4">
           <Link href={homeHref} className="text-sm font-semibold tracking-tight text-primary">
-            Voxly
+            {brandLabel}
           </Link>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
@@ -255,15 +324,35 @@ export function AppShell({
               </SheetTrigger>
               <SheetContent side="left" className="w-64 bg-sidebar p-0 text-sidebar-foreground">
                 <SheetHeader className="border-b border-sidebar-border px-4 py-4 text-left">
-                  <SheetTitle className="text-sm font-semibold text-sidebar-primary">Voxly</SheetTitle>
+                  <SheetTitle className="text-sm font-semibold text-sidebar-primary">
+                    {brandLabel}
+                  </SheetTitle>
                 </SheetHeader>
                 <div className="flex h-[calc(100%-3.5rem)] flex-col py-4">
                   <ScrollArea className="flex-1">
                     <NavLinks onNavigate={() => setMobileOpen(false)} />
                   </ScrollArea>
                   <Separator className="mx-3 my-3" />
-                  <div className="px-2">
-                    <Button variant="ghost" size="sm" className="w-full justify-start gap-2" onClick={logout}>
+                  <div className="space-y-1 px-2">
+                    {isAdminShell ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start gap-2"
+                        asChild
+                      >
+                        <Link href="/dashboard" onClick={() => setMobileOpen(false)}>
+                          <LayoutDashboard className="h-4 w-4" />
+                          В кабинет
+                        </Link>
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start gap-2"
+                      onClick={logout}
+                    >
                       <LogOut className="h-4 w-4" />
                       Выйти
                     </Button>
@@ -274,7 +363,12 @@ export function AppShell({
           </div>
         </div>
 
-        <main className={cn('min-w-0 flex-1 overflow-auto animate-in px-5 py-8 sm:px-6 sm:py-10', className)}>
+        <main
+          className={cn(
+            'min-w-0 flex-1 overflow-auto animate-in px-5 py-8 sm:px-6 sm:py-10',
+            className,
+          )}
+        >
           <div className={cn('mx-auto', width)}>{children}</div>
         </main>
       </div>

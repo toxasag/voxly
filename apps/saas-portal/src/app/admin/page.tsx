@@ -253,7 +253,7 @@ export default function AdminPage() {
       />
 
       {health && (
-        <Card>
+        <Card id="health" className="scroll-mt-24">
           <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
             <div>
               <CardTitle>Работоспособность системы</CardTitle>
@@ -303,7 +303,10 @@ export default function AdminPage() {
         </Card>
       )}
 
-      <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div
+        id="overview"
+        className="stagger grid scroll-mt-24 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+      >
         <StatCard label="Клиентов" value={String(stats.tenants.total)} />
         <StatCard label="Активных" value={String(stats.tenants.active)} accent="sage" />
         <StatCard label="Приостановлено" value={String(stats.tenants.suspended)} accent="peach" />
@@ -312,7 +315,7 @@ export default function AdminPage() {
         <StatCard label="AI маржа" value={`${stats.ai.margin} ₽`} accent="sage" />
       </div>
 
-      <Card>
+      <Card id="clients" className="scroll-mt-24">
         <CardHeader>
           <CardTitle>Клиенты</CardTitle>
           {aiCreditMsg ? (
@@ -404,7 +407,7 @@ export default function AdminPage() {
         </CardContent>
       </Card>
 
-      <div>
+      <div id="funnels" className="scroll-mt-24">
         <h2 className="text-lg font-semibold tracking-tight">Воронки gift-ботов</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Результативность по всем клиентам. Старты / подписки / подарки — из подписчиков; клики —
