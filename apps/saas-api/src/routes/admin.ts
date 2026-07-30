@@ -12,6 +12,15 @@ import {
 import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { z } from 'zod';
 
+/** JWT from auth/login uses `sub` (user id); never `userId`. */
+function actorUserId(request: { user?: { sub?: string; userId?: string } }): string {
+  const id = request.user?.sub || request.user?.userId;
+  if (!id) {
+    throw Object.assign(new Error('Missing JWT subject'), { statusCode: 401 });
+  }
+  return id;
+}
+
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.requireSuperadmin);
 
@@ -210,7 +219,6 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // --- Irreversible full tenant wipe (portal + CRM + bots + chats) ---
   fastify.delete('/tenants/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { userId } = (request as any).user;
     const body = z
       .object({ confirmSlug: z.string().min(1) })
       .safeParse(request.body);
@@ -223,7 +231,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const result = await purgeTenantFully({
         tenantId: id,
         confirmSlug: body.data.confirmSlug,
-        actorUserId: userId,
+        actorUserId: actorUserId(request as any),
         db: fastify.prisma,
       });
       return reply.send(result);
@@ -239,7 +247,6 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // --- Suspend tenant ---
   fastify.post('/tenants/:id/suspend', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { userId } = (request as any).user;
     const prisma = fastify.prisma;
 
     const tenant = await prisma.tenant.update({
@@ -252,7 +259,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     await prisma.auditLog.create({
       data: {
         tenantId: id,
-        actorUserId: userId,
+        actorUserId: actorUserId(request as any),
         action: 'suspend',
         payload: { tenantId: id },
       },
@@ -296,7 +303,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     await prisma.auditLog.create({
       data: {
         tenantId: id,
-        actorUserId: (request as any).user.userId,
+        actorUserId: actorUserId(request as any),
         action: 'pricing_override',
         payload: { overrideId: override.id, productCode: body.productCode },
       },
@@ -320,7 +327,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     await prisma.auditLog.create({
       data: {
         tenantId: id,
-        actorUserId: (request as any).user.userId,
+        actorUserId: actorUserId(request as any),
         action: 'manual_credit',
         payload: { amountRub, note },
       },
@@ -360,7 +367,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     await prisma.auditLog.create({
       data: {
         tenantId: id,
-        actorUserId: (request as any).user.userId,
+        actorUserId: actorUserId(request as any),
         action: 'manual_ai_credit',
         payload: { amountRub, note: body.note || null, balanceRub: Number(wallet.balanceRub) },
       },
@@ -498,6 +505,294 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({ campaigns: rows, totals });
   });
 
+  // --- CRM admin: platform pricing + connected workspaces ---
+  fastify.get('/crm', async (_request, reply) => {
+    const prisma = fastify.prisma;
+    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    const { loadTenantsCrmPricingMap } = await import('../services/crm-tenant-pricing.js');
+    const pricing = await loadCrmPlatformPricing(prisma);
+
+    const tenants = await prisma.tenant.findMany({
+      where: { twentyWorkspaceId: { not: null } },
+      include: {
+        users: {
+          where: { role: 'owner' },
+          include: { user: true },
+          take: 1,
+        },
+        subscriptions: {
+          where: { status: 'active', productCode: 'crm_base' },
+          orderBy: { endsAt: 'desc' },
+          take: 1,
+        },
+        _count: { select: { users: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const subSeatsMap = new Map(
+      tenants.map((t) => [t.id, t.subscriptions[0]?.seatsIncluded ?? pricing.seatsIncluded]),
+    );
+    const tenantPricingMap = await loadTenantsCrmPricingMap(
+      prisma,
+      tenants.map((t) => t.id),
+      pricing,
+      subSeatsMap,
+    );
+
+    const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
+    const now = new Date();
+
+    return reply.send({
+      pricing,
+      tenants: tenants.map((t) => {
+        const sub = t.subscriptions[0];
+        const tp = tenantPricingMap.get(t.id)!;
+        const crmHost = `${t.crmSubdomain || `${t.slug}-crm`}.${voxlyDomain}`;
+        const isTrial =
+          sub && sub.periodMonths > 0
+            ? false
+            : !sub
+              ? t.status === 'trial'
+              : sub.periodMonths === 0;
+        const isPaid =
+          t.status !== 'suspended' &&
+          t.status !== 'cancelled' &&
+          Boolean(sub && sub.periodMonths > 0 && sub.endsAt >= now);
+
+        return {
+          id: t.id,
+          slug: t.slug,
+          status: t.status,
+          portalHost: t.portalHost,
+          crmSubdomain: t.crmSubdomain,
+          crmHost,
+          crmUrl: `https://${crmHost}`,
+          twentyWorkspaceId: t.twentyWorkspaceId,
+          twentyWorkspaceSlug: t.twentyWorkspaceSlug,
+          seatsUsed: t._count.users,
+          seatsIncluded: tp.seatsIncluded + (sub?.extraSeats ?? 0),
+          pricing: {
+            baseMonthly: tp.baseMonthly,
+            extraSeatMonthly: tp.extraSeatMonthly,
+            seatsIncluded: tp.seatsIncluded,
+            customBase: tp.customBase,
+            customExtraSeat: tp.customExtraSeat,
+            customSeatsIncluded: tp.customSeatsIncluded,
+          },
+          isTrial,
+          isPaid,
+          subscription: sub
+            ? {
+                productCode: sub.productCode,
+                endsAt: sub.endsAt.toISOString(),
+                periodMonths: sub.periodMonths,
+                seatsIncluded: sub.seatsIncluded,
+                extraSeats: sub.extraSeats,
+              }
+            : null,
+          owner: t.users[0]?.user
+            ? {
+                email: t.users[0].user.email,
+                name: `${t.users[0].user.firstName || ''} ${t.users[0].user.lastName || ''}`.trim(),
+              }
+            : null,
+          createdAt: t.createdAt.toISOString(),
+        };
+      }),
+    });
+  });
+
+  fastify.get('/crm/report', async (request, reply) => {
+    const q = request.query as { from?: string; to?: string };
+    const { buildCrmAdminReport } = await import('../services/crm-admin-report.js');
+    try {
+      const report = await buildCrmAdminReport(fastify.prisma, q);
+      return reply.send(report);
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Report failed',
+      });
+    }
+  });
+
+  fastify.get('/crm/resources', async (_request, reply) => {
+    const { collectTenantResourceUsage } = await import('../services/tenant-resource-usage.js');
+    try {
+      const resources = await collectTenantResourceUsage(fastify.prisma);
+      return reply.send(resources);
+    } catch (err) {
+      fastify.log.error({ err }, 'crm resources collection failed');
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Resource collection failed',
+      });
+    }
+  });
+
+  fastify.put('/crm/tenants/:id/pricing', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        baseMonthly: z.number().min(0).max(1_000_000).nullable().optional(),
+        extraSeatMonthly: z.number().min(0).max(1_000_000).nullable().optional(),
+        seatsIncluded: z.number().int().min(1).max(500).nullable().optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Invalid pricing payload' });
+    }
+
+    const tenant = await fastify.prisma.tenant.findUnique({
+      where: { id },
+      select: { id: true, slug: true },
+    });
+    if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
+
+    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    const { saveTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
+    const platform = await loadCrmPlatformPricing(fastify.prisma);
+
+    try {
+      const pricing = await saveTenantCrmPricing(fastify.prisma, id, body.data, platform);
+      await fastify.prisma.auditLog.create({
+        data: {
+          tenantId: id,
+          actorUserId: actorUserId(request as any),
+          action: 'crm_tenant_pricing_update',
+          payload: { ...body.data, slug: tenant.slug },
+        },
+      });
+      return reply.send({ pricing });
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Failed to save tenant pricing',
+      });
+    }
+  });
+
+  fastify.put('/crm/pricing', async (request, reply) => {
+    const body = z
+      .object({
+        baseMonthly: z.number().min(0).max(1_000_000),
+        extraSeatMonthly: z.number().min(0).max(1_000_000),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'baseMonthly and extraSeatMonthly required (≥ 0)' });
+    }
+    const { saveCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    try {
+      const pricing = await saveCrmPlatformPricing(fastify.prisma, body.data);
+      await fastify.prisma.auditLog.create({
+        data: {
+          actorUserId: actorUserId(request as any),
+          action: 'crm_platform_pricing_update',
+          payload: body.data,
+        },
+      });
+      return reply.send({ pricing });
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Failed to save pricing',
+      });
+    }
+  });
+
+  /** Impersonate tenant owner in portal (JWT for /dashboard). */
+  fastify.post('/tenants/:id/impersonate', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const actorId = actorUserId(request as any);
+    const prisma = fastify.prisma;
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        users: {
+          where: { role: 'owner' },
+          include: { user: true },
+          take: 1,
+        },
+      },
+    });
+    if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
+    const owner = tenant.users[0]?.user;
+    if (!owner) return reply.code(404).send({ error: 'Owner not found' });
+
+    const token = fastify.jwt.sign({
+      sub: owner.id,
+      email: owner.email,
+      role: owner.role,
+      tenantRole: 'owner',
+      tenantId: tenant.id,
+      impersonatedBy: actorId,
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        tenantId: id,
+        actorUserId: actorId,
+        action: 'impersonate',
+        payload: { ownerUserId: owner.id, ownerEmail: owner.email },
+      },
+    });
+
+    return reply.send({
+      token,
+      redirectUrl: '/dashboard/crm',
+      owner: { email: owner.email, name: `${owner.firstName || ''} ${owner.lastName || ''}`.trim() },
+      tenant: { id: tenant.id, slug: tenant.slug },
+    });
+  });
+
+  /** Open tenant CRM as workspace owner (SSO URL). */
+  fastify.post('/tenants/:id/crm-login', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const actorId = actorUserId(request as any);
+    const prisma = fastify.prisma;
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id },
+      include: {
+        users: {
+          where: { role: 'owner' },
+          include: { user: true },
+          take: 1,
+        },
+      },
+    });
+    if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
+    if (!tenant.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+      return reply.code(409).send({ error: 'CRM workspace is not ready' });
+    }
+    const owner = tenant.users[0]?.user;
+    if (!owner) return reply.code(404).send({ error: 'Owner not found' });
+
+    try {
+      const password = decrypt(tenant.twentyOwnerPasswordEncrypted);
+      const url = await fastify.twenty.createWorkspaceLoginUrl(
+        owner.email,
+        password,
+        tenant.twentyWorkspaceId,
+      );
+      await prisma.auditLog.create({
+        data: {
+          tenantId: id,
+          actorUserId: actorId,
+          action: 'admin_crm_login',
+          payload: { ownerEmail: owner.email },
+        },
+      });
+      return reply.send({ url, crmUrl: url, ownerEmail: owner.email });
+    } catch (err) {
+      fastify.log.error({ err, tenantId: id }, 'admin CRM login failed');
+      return reply.code(502).send({ error: 'Не удалось открыть CRM клиента' });
+    }
+  });
+
   // --- Update platform settings ---
   fastify.patch('/settings', async (request, reply) => {
     const body = request.body as { key: string; value: string };
@@ -511,7 +806,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
     await prisma.auditLog.create({
       data: {
-        actorUserId: (request as any).user.userId,
+        actorUserId: actorUserId(request as any),
         action: 'platform_setting_update',
         payload: { key: body.key, value: body.value },
       },

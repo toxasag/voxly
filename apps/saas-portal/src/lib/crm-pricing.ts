@@ -1,4 +1,4 @@
-import { PERIOD_DISCOUNTS, PRICING } from '@voxly/shared';
+import { PERIOD_DISCOUNTS } from '@voxly/shared';
 
 export function calculateSubscriptionPrice(
   monthlyPrice: number,
@@ -10,13 +10,22 @@ export function calculateSubscriptionPrice(
   return Math.round((base - discount) * 100) / 100;
 }
 
-export function computeCrmCheckoutTotals(periodMonths: number, extraSeats: number) {
+export type CrmCheckoutRates = {
+  baseMonthly: number;
+  extraSeatMonthly: number;
+};
+
+export function computeCrmCheckoutTotals(
+  periodMonths: number,
+  extraSeats: number,
+  rates: CrmCheckoutRates,
+) {
   const discount = PERIOD_DISCOUNTS[periodMonths] ?? 0;
-  const baseTotal = calculateSubscriptionPrice(PRICING.CRM_BASE_MONTHLY, periodMonths, discount);
+  const baseTotal = calculateSubscriptionPrice(rates.baseMonthly, periodMonths, discount);
   const extraTotal =
     extraSeats > 0
       ? calculateSubscriptionPrice(
-          PRICING.EXTRA_SEAT_MONTHLY * extraSeats,
+          rates.extraSeatMonthly * extraSeats,
           periodMonths,
           discount,
         )

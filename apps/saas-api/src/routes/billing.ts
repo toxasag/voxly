@@ -66,6 +66,11 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       ? `${tenant.crmSubdomain || `${tenant.slug}-crm`}.${process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru'}`
       : 'crm';
 
+    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
+    const crmPlatformPricing = await loadCrmPlatformPricing(prisma);
+    const crmPricing = await loadTenantCrmPricing(prisma, tenantId, crmPlatformPricing);
+
     const isTopup = productCode === PRODUCT_CODES.AI_TOPUP;
     const periodMonths = isTopup ? 0 : periodRaw ?? 1;
     if (!isTopup && (!periodRaw || periodRaw < 1)) {
@@ -103,7 +108,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         },
       ];
     } else {
-      const basePrice = getBasePrice(productCode);
+      const basePrice = getBasePrice(productCode, crmPricing);
       const discount = PERIOD_DISCOUNTS[periodMonths] ?? 0;
       const seatCount =
         productCode === PRODUCT_CODES.EXTRA_SEAT ? Math.max(1, quantity) : 0;
@@ -118,7 +123,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (productCode === 'crm_base') {
         const baseTotal = calculateSubscriptionPrice(
-          PRICING.CRM_BASE_MONTHLY,
+          crmPricing.baseMonthly,
           periodMonths,
           discount,
         );
@@ -132,7 +137,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         });
         if (extraSeats > 0) {
           const seatUnit = calculateSubscriptionPrice(
-            PRICING.EXTRA_SEAT_MONTHLY,
+            crmPricing.extraSeatMonthly,
             periodMonths,
             discount,
           );
@@ -151,7 +156,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         }
       } else if (productCode === PRODUCT_CODES.EXTRA_SEAT) {
         const seatUnit = calculateSubscriptionPrice(
-          PRICING.EXTRA_SEAT_MONTHLY,
+          crmPricing.extraSeatMonthly,
           periodMonths,
           discount,
         );
@@ -269,6 +274,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const quantity = Math.max(1, parseInt(customData.quantity || '1', 10) || 1);
+
+    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
+    const crmPlatformPricing = await loadCrmPlatformPricing(prisma);
+    const tenantCrmPricing = await loadTenantCrmPricing(
+      prisma,
+      existing.tenantId,
+      crmPlatformPricing,
+    );
 
     await prisma.$transaction(async (tx) => {
       await tx.payment.update({
@@ -413,7 +427,8 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
             tenantId: existing.tenantId,
             productCode: existing.productCode,
             periodMonths,
-            seatsIncluded: existing.productCode === 'crm_base' ? PRICING.SEATS_INCLUDED : 0,
+            seatsIncluded:
+              existing.productCode === 'crm_base' ? tenantCrmPricing.seatsIncluded : 0,
             extraSeats: extraSeatsPaid,
             startsAt: now,
             endsAt,
@@ -594,10 +609,13 @@ async function creditReferralForPayment(
   });
 }
 
-function getBasePrice(productCode: string): number {
+function getBasePrice(
+  productCode: string,
+  crmPricing?: { baseMonthly: number; extraSeatMonthly: number },
+): number {
   const prices: Record<string, number> = {
-    crm_base: PRICING.CRM_BASE_MONTHLY,
-    extra_seat: PRICING.EXTRA_SEAT_MONTHLY,
+    crm_base: crmPricing?.baseMonthly ?? PRICING.CRM_BASE_MONTHLY,
+    extra_seat: crmPricing?.extraSeatMonthly ?? PRICING.EXTRA_SEAT_MONTHLY,
     gift_bot: PRICING.GIFT_BOT_MONTHLY,
     ai_tg: PRICING.AI_TELEGRAM_MONTHLY,
     ai_tg_extra_conn: PRICING.AI_TG_EXTRA_CONN_MONTHLY,

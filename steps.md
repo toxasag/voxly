@@ -513,7 +513,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; **Super-admin `/admin/crm`** (platform pricing + portals) on prod.  invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

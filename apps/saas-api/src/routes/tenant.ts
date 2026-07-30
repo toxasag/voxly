@@ -371,7 +371,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
     const prisma = fastify.prisma;
     const now = new Date();
 
-    const [tenant, members, crmSubRow, access] = await Promise.all([
+    const [tenant, members, crmSubRow, access, crmPricing] = await Promise.all([
       prisma.tenant.findUnique({
         where: { id: tenantId },
         select: {
@@ -392,12 +392,17 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: { endsAt: 'desc' },
       }),
       loadCrmAccessForTenant(prisma, tenantId, now),
+      import('../services/crm-pricing-settings.js').then(async (m) => {
+        const platform = await m.loadCrmPlatformPricing(prisma);
+        const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
+        return loadTenantCrmPricing(prisma, tenantId, platform, null);
+      }),
     ]);
 
     if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
 
     const crmSub = crmSubRow;
-    const seatsIncluded = crmSub?.seatsIncluded ?? PRICING.SEATS_INCLUDED;
+    const seatsIncluded = crmSub?.seatsIncluded ?? crmPricing.seatsIncluded;
     const extraSeats = crmSub?.extraSeats ?? 0;
     const seatLimit = seatsIncluded + extraSeats;
     const used = members.length;
@@ -440,7 +445,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
             isActive: false,
             periodMonths: 0,
             endsAt: null,
-            seatsIncluded: PRICING.SEATS_INCLUDED,
+            seatsIncluded: crmPricing.seatsIncluded,
             extraSeats: 0,
           },
       seats: {
@@ -449,9 +454,9 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         remaining: Math.max(0, seatLimit - used),
       },
       pricing: {
-        baseMonthly: PRICING.CRM_BASE_MONTHLY,
-        extraSeatMonthly: PRICING.EXTRA_SEAT_MONTHLY,
-        seatsIncluded: PRICING.SEATS_INCLUDED,
+        baseMonthly: crmPricing.baseMonthly,
+        extraSeatMonthly: crmPricing.extraSeatMonthly,
+        seatsIncluded: crmPricing.seatsIncluded,
       },
       members: members.map((m) => {
         const email = m.user.email.trim().toLowerCase();

@@ -140,8 +140,17 @@ export default function CrmPortalPage() {
   }, [router, load]);
 
   const checkoutTotals = useMemo(
-    () => computeCrmCheckoutTotals(payPeriodMonths, extraSeatsToBuy),
-    [payPeriodMonths, extraSeatsToBuy],
+    () =>
+      computeCrmCheckoutTotals(payPeriodMonths, extraSeatsToBuy, {
+        baseMonthly: data?.pricing.baseMonthly ?? 0,
+        extraSeatMonthly: data?.pricing.extraSeatMonthly ?? 0,
+      }),
+    [
+      payPeriodMonths,
+      extraSeatsToBuy,
+      data?.pricing.baseMonthly,
+      data?.pricing.extraSeatMonthly,
+    ],
   );
 
   const isOwner = data?.tenantRole === 'owner';

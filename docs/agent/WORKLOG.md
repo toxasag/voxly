@@ -1,3 +1,52 @@
+### 2026-07-30 — Admin CRM resources: real disk only, no per-tenant RAM estimate
+
+- Goal: Show honest resource usage on `/admin/crm` — factual disk per client; remove misleading proportional RAM estimates.
+- Changes: `tenant-resource-usage.ts` — drop `memoryBytesEstimate`; disk label includes mount path; portal table shows `{used} / {server total}` + Twenty·CP·AI breakdown; RAM column «н/д (общий стек)»; platform header real server RAM/disk. `billing.ts` webhook — paid `crm_base` uses `loadTenantCrmPricing().seatsIncluded` (platform/override) not hardcoded constant.
+- Verify (local): typecheck/lints clean; onboarding pricing path — register trial `PRICING.SEATS_INCLUDED`, checkout + GET `/crm` via `loadCrmPlatformPricing` + tenant overrides, billing webhook now syncs seats from tenant pricing.
+- Deploy: pending this commit.
+
+---
+
+- Goal: Fix per-tenant «Мест в тарифе» not persisting on reset/save; clarify RAM estimate vs real disk in resources section.
+- Root cause: `saveTenantCrmPricing` deleted seats override on platform default but did not reset `Subscription.seatsIncluded`; `loadTenantCrmPricing` fell back to stale subscription (e.g. 100).
+- Changes: `crm-tenant-pricing.ts` — always sync active `crm_base` subscription seats on save (including reset to platform 10); portal `/admin/crm` — seats validation (min 1), pricing hint, RAM/disk tooltips and copy.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-161354/`; build OK; smoke 502 cold-start then portal + API + `/admin/crm` **200**.
+- Verify: john admin → reset seats to 10 → save → reload shows 10; explicit 50/100 persists after reload.
+- Next: rotate root SSH password (shared in chat).
+
+### 2026-07-30 — CRM checkout: tenant pricing in «Тариф и оплата»
+
+- Goal: Fix client cabinet checkout block showing hardcoded 500 ₽ instead of per-tenant API pricing.
+- Root cause: `computeCrmCheckoutTotals` used `PRICING.CRM_BASE_MONTHLY` / `EXTRA_SEAT_MONTHLY` from `@voxly/shared`; stat cards already used `data.pricing` from API.
+- Changes: `apps/saas-portal/src/lib/crm-pricing.ts` — accept `baseMonthly`/`extraSeatMonthly` rates; `dashboard/crm/page.tsx` — pass `data.pricing` into checkout totals. Backend (`tenant.ts` GET `/crm`, `billing.ts` checkout, `crm-tenant-pricing.ts` save/load with 0) already correct.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-160526/`; portal rebuilt+recreated; API cached (no API diff). Smoke transient 404 on `/` during restart; post-check `/` + `/dashboard/crm` + API health **200**.
+- Verify: john owner → `/dashboard/crm` → «Тариф и оплата» shows **0 ₽** (CRM Base · 1 мес + «Оплатить 0 ₽») matching stat cards; extra seats × 0 ₽.
+- Next: none.
+
+### 2026-07-30 — Admin CRM: отчёт, индив. тарифы, RAM/диск по клиентам
+
+- Goal: CRM admin — per-tenant pricing, revenue report (date range), platform + per-client disk/RAM snapshot on `/admin/crm`.
+- Changes: `crm-tenant-pricing.ts`, `crm-admin-report.ts`, `tenant-resource-usage.ts`; `GET /api/admin/crm/report`, `/crm/resources`, `PUT /crm/tenants/:id/pricing`; portal report block, pricing editor, resource bars (RAM ≈ estimate from disk share); dedupe `/crm/resources` route.
+- Deploy: rsync + build OK; backup `/opt/voxly/backups/20260730-155428/`; fixed orphan `de516e27417e_docker-saas-api-1` conflict → `docker-compose up -d saas-api saas-portal`. Smoke API health + `/admin/crm` **200**.
+- Verify: hard-refresh `https://getvoxly.ru/admin/crm` → «Отчёт CRM», «Ресурсы платформы», per-client «Тариф» expand.
+- Next: rotate root SSH password (shared in chat); optional true per-tenant RAM if cgroups added later.
+
+### 2026-07-30 — Admin CRM: report, per-tenant pricing, resource bars
+
+- Goal: Finish super-admin CRM page — revenue report, per-tenant tariff overrides, platform/tenant RAM+disk snapshot with 60s auto-refresh.
+- Changes: `tenant-resource-usage.ts` (platform `/proc/meminfo` + disk statfs; per-tenant Twenty schema + control plane + AI files; RAM estimate by disk share); `crm-tenant-pricing.ts` + `crm-admin-report.ts`; `GET /api/admin/crm/report`, `GET /api/admin/crm/resources`, `PUT /api/admin/crm/pricing`, `PUT /api/admin/crm/tenants/:id/pricing`; portal `/admin/crm` report block, resource bars (RAM labeled estimate), per-tenant pricing editor, 60s refresh.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-155410/` (volumes untouched). Docker recreate glitch on first pass; `docker-compose up -d` retry OK.
+- Verify: `https://api.getvoxly.ru/health` **200**; `https://getvoxly.ru/admin/crm` **200**; container dist includes `crm/resources`.
+- Next: **rotate root SSH password** (shared in chat).
+
+### 2026-07-30 — Super-admin CRM портал (`/admin/crm`) + platform pricing
+
+- Goal: Replace hash-nav admin sidebar with Обзор + CRM портал; manage global CRM tariff/extra seat; list/delete portals; open CRM as owner; impersonate cabinet.
+- Changes: `crm-pricing-settings.ts`; `GET/PUT /api/admin/crm[/pricing]`, impersonate + crm-login; billing/tenant load platform prices; portal `/admin/crm` + `ADMIN_NAV`; JWT audit actors use `sub` (not missing `userId`).
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-153129/` (volumes untouched). Smoke: portal `/` + `/admin` + `/admin/crm` **200**; API health **200**. Build includes route `/admin/crm`.
+- Verify: hard-refresh `https://getvoxly.ru/admin` → sidebar Обзор / CRM портал; open `/admin/crm`.
+- Next: optional unsuspend UI (still open from ADR-023).
+
 ### 2026-07-30 — Hard CRM lock when subscription ends (ADR-023)
 
 - Goal: «оплата закончилась → CRM закрыта» — SSO, portal, invite, chat, direct Twenty login.

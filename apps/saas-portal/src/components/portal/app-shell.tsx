@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
-  Activity,
   Gift,
   LayoutDashboard,
   Loader2,
@@ -19,8 +18,6 @@ import {
   Bell,
   HelpCircle,
   Building2,
-  Users,
-  Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -39,7 +36,7 @@ import { useEffect, useMemo, useState } from 'react';
 type NavItem = {
   href: string;
   label: string;
-  match: (pathname: string, hash: string) => boolean;
+  match: (pathname: string, hash?: string) => boolean;
   icon: React.ComponentType<{ className?: string }>;
   ownerOnly?: boolean;
 };
@@ -115,26 +112,14 @@ const ADMIN_NAV: NavItem[] = [
   {
     href: '/admin',
     label: 'Обзор',
-    match: (p, hash) => p.startsWith('/admin') && !hash,
+    match: (p) => p === '/admin' || p === '/admin/',
     icon: Shield,
   },
   {
-    href: '/admin#health',
-    label: 'Здоровье',
-    match: (p, hash) => p.startsWith('/admin') && hash === 'health',
-    icon: Activity,
-  },
-  {
-    href: '/admin#clients',
-    label: 'Клиенты',
-    match: (p, hash) => p.startsWith('/admin') && hash === 'clients',
-    icon: Users,
-  },
-  {
-    href: '/admin#funnels',
-    label: 'Воронки',
-    match: (p, hash) => p.startsWith('/admin') && hash === 'funnels',
-    icon: Filter,
+    href: '/admin/crm',
+    label: 'CRM портал',
+    match: (p) => p.startsWith('/admin/crm'),
+    icon: Building2,
   },
 ];
 

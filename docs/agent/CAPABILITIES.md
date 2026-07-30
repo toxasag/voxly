@@ -29,7 +29,8 @@
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment` | `dashboard/ai/whatsapp/page.tsx` |
 | `/dashboard/ai/agents` | ✅ list/create/**edit name+prompt+model**; assign; **usage**; **KB files** + **won-deal sales examples** | `dashboard/ai/agents/page.tsx` |
 | `/dashboard/ai/[botId]` | ✅ Business capacity + unlink + buy slot 200₽; диалоги, handoff, agent | `dashboard/ai/[botId]/page.tsx` |
-| `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar **только супер-админ** (Обзор / Здоровье / Клиенты / Воронки), не кабинет | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
+| `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar супер-админ **Обзор** + **CRM портал** (не кабинет) | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
+| `/admin/crm` | ✅ платформенные цены + per-tenant pricing; отчёт CRM (trial/paid/revenue); ресурсы (RAM оценка + диск по клиентам, 60s refresh); purge; CRM-login; impersonate | `admin/crm/page.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
 | Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for video/audio/**PDF·DOCX**; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), MarkdownV2, **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **clickable http(s) links** (INC-050/055/057/063/067, app ≥0.1.20) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
 | Inbound message left toast | ✅ shell-ux poll prefer `/s/crm-chat/inbound-toasts` ~4s; toast + **auto-refresh open Chat** (click «Обновить» / soft ~4.5s); skew 15s | `docker/twenty-shell-ux.js` + `get-inbound-toasts` + `crm-chat.ts` |
@@ -134,6 +135,10 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 |---|---|---|
 | GET | `/health` | ✅ Postgres/Redis/queues/workers + expiring addons/subs, low wallets |
 | GET | `/stats`, `/tenants`, `/tenants/:id`, `/funnels` | ✅ |
+| GET | `/crm` | ✅ platform CRM pricing + tenants with Twenty workspaces |
+| PUT | `/crm/pricing` | ✅ `PlatformSetting` `crm_base_monthly` / `extra_seat_monthly` (`crm-pricing-settings.ts`) |
+| POST | `/tenants/:id/impersonate` | ✅ JWT as tenant owner → portal `/dashboard/crm` |
+| POST | `/tenants/:id/crm-login` | ✅ Twenty SSO URL as workspace owner |
 | POST | `.../suspend`, `.../pricing`, `.../credit`, `.../ai-credit`, `.../reapply-crm-defaults`, `.../refresh-crm-chat` | ✅ `ai-credit` = manual AI wallet top-up; `refresh-crm-chat` force-reinstalls voxly-crm-chat tarball |
 | DELETE | `/tenants/:id` body `{ confirmSlug }` | ✅ full wipe ЛК+CRM+bots+chats (`purge-tenant.ts`) |
 | PATCH | `/settings` | ✅ |
