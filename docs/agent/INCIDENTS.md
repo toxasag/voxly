@@ -12,6 +12,13 @@
 - **Verify:** hard-refresh john-crm as test2 → sidebar «CRM · john» + «Вы: Тест2…»; Chat reply → bubble «Тест2…» (not «Менеджер»).
 - **Дата:** 2026-07-30.
 
+### INC-073 — Delete CRM member → «Не удалось удалить пользователя из CRM»
+- **Симптом:** `/dashboard/crm` Delete → 502 friendly error; member stays.
+- **Причина:** `deleteUserFromWorkspace` arg typed as `UUID!` but Twenty metadata expects `String!`.
+- **Фикс:** GraphQL var → `String!` in `@voxly/twenty-client`.
+- **Verify:** Delete test2/test3 on john → 200; gone from CRM + portal list.
+- **Дата:** 2026-07-30.
+
 ### INC-071 — CRM portal Edit/Delete member → Bad Request
 - **Симптом:** `/dashboard/crm` «Редактировать» / «Удалить» → `Bad Request` (400).
 - **Причина:** portal `authHeaders()` всегда шлёт `Content-Type: application/json`, а DELETE и `POST .../reissue-credentials` без body → Fastify `FST_ERR_CTP_EMPTY_JSON_BODY`.

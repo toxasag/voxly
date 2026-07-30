@@ -410,7 +410,7 @@ const SIGN_UP_IN_WORKSPACE = gql`
 `;
 
 const DELETE_USER_FROM_WORKSPACE = gql`
-  mutation DeleteUserFromWorkspace($workspaceMemberIdToDelete: UUID!) {
+  mutation DeleteUserFromWorkspace($workspaceMemberIdToDelete: String!) {
     deleteUserFromWorkspace(workspaceMemberIdToDelete: $workspaceMemberIdToDelete) {
       id
     }

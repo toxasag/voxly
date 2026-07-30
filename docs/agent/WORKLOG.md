@@ -21,6 +21,13 @@
 - Deploy: `saas-api,saas-portal` (backup `/opt/voxly/backups/20260730-113714/`; retry `--skip-backup` completed).
 - Verify: portal+API health **200**; container has `twenty-member-display-names` + credentials route. Hard-refresh `/dashboard/crm`.
 
+### 2026-07-30 — INC-073 fix delete member GraphQL String!
+
+- Goal: Portal Delete member failed with CRM remove error.
+- Cause: `deleteUserFromWorkspace` var typed `UUID!`; Twenty expects `String!`.
+- Changes: `@voxly/twenty-client` mutation; deploy `saas-api` backup `/opt/voxly/backups/20260730-125406/`.
+- Verify: API health 200; Delete on `/dashboard/crm` for test2+.
+
 ### 2026-07-30 — Persist CRM portal defaults (commit)
 
 - Goal: Save all CRM portal / billing / member / lock / identity UX as defaults for portal + new Voxly tenants.
