@@ -14,6 +14,7 @@
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
 | `/login`, `/register` | ✅ shadcn Card/Input; register: shadcn Checkbox оферта + ПДн | `login/page.tsx`, `register/page.tsx` |
 | `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; `AppShell` Sheet mobile | `dashboard/page.tsx` |
+| `/dashboard/crm` | ✅ amber CRM portal: Trial/seats, URL+SSO, Robokassa, invite; **hard lock paywall** when sub ended (ADR-023) | `dashboard/crm/page.tsx` |
 | `/dashboard/bots` | ✅ список gift-ботов | `dashboard/bots/page.tsx` |
 | `/dashboard/bots/[botId]` | ✅ **1.1** канал → **1.2** первое сообщение (Telegram description до /start) → **1.3** стартовое (/start funnel) → promo, funnel, media, chat, subscribers; **расписание проекта** | `dashboard/bots/[botId]/page.tsx` |
 | `/dashboard/bots/broadcasts` | ✅ funnelPhase + edit scheduled + TelegramPreview + MediaPicker (file_id) | `dashboard/bots/broadcasts/page.tsx` |
@@ -22,7 +23,7 @@
 | `/dashboard/mailing/gramjs` | ✅ Conversation audience + schedule/edit/preview (text; media N/A) | `dashboard/mailing/gramjs/page.tsx` |
 | `/dashboard/mailing/whatsapp` | ✅ Conversation audience + schedule/edit/preview + mediaUrl | `dashboard/mailing/whatsapp/page.tsx` |
 | `/dashboard/mailing/stories` | ✅ schedule/edit/preview; GramJS send; WA/ai_tg → unsupported on send (ADR-019) | `dashboard/mailing/stories/page.tsx` |
-| Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.21** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
+| Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.23** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
 | `/dashboard/ai` | ✅ Telegram Business: инструкция BotFather + token connect + delete; **не** manager provision | `dashboard/ai/page.tsx` |
 | `/dashboard/ai/gramjs` | ✅ QR + trial/оплата `ai_gramjs`; QR gated `requiresPayment` | `dashboard/ai/gramjs/page.tsx` |
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment` | `dashboard/ai/whatsapp/page.tsx` |
@@ -35,6 +36,7 @@
 | Unread chat badges (deals + contacts) | ✅ count = inbound `role=user` after `Conversation.lastOperatorReadAt`; mark-read on Chat GET **all** linked threads; shell-ux **one** badge per card (title) + «Чат» tab; poll `/s/crm-chat/unread-badges` ~8s | `crm-chat.ts` + `get-unread-badges` + `twenty-shell-ux.js` |
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off; **dedupe** shell + SQL | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/dedupe-cabinet-nav.sql`) |
 | Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
+| Sidebar workspace vs user clarity | ✅ top-left «CRM · {slug}» + chip «Вы: {member}» (workspace ≠ profile); Chat operator = Twenty member name (not «Менеджер») | `twenty-shell-ux.js` + `crm-chat` **0.1.23** + `resolveTwentyOperatorLabel` |
 | Сделки views = «Канбан» + «Списком» | ✅ default INDEX **Канбан** (KANBAN, `openRecordIn=SIDE_PANEL`, width 320); secondary TABLE **Списком**; stages = john golden; **locked** Новый лид / Успешная / Провалена (PG trigger); middle stages editable; card fields name/createdAt/amount/…/noteTargets | SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` + `twenty-client.applyWorkspaceDefaults` |
 | Person «Социальные сети» | ✅ LinkedIn + Telegram/WhatsApp/OK/VK/Instagram/Facebook/Threads/**Сайт (website)**; WA business profile fills email + website (+ IG/FB if URLs in profile) | `twenty-client.ensureSocialFields` |
 | Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
@@ -52,21 +54,24 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 |---|---|---|
 | POST | `/register`, `/login` | ✅ |
 | GET | `/me` | ✅ flat `user.tenant` |
-| POST | `/invite` | ✅ |
+| POST | `/invite` | ✅ Voxly+Twenty user; returns `crmUrl`+`tempPassword` (SMTP deferred); skips `/install-apps` for new member; **blocked when CRM locked** (ADR-023) |
 
 ### Billing `/api/billing`
 | Method | Path | ✅ |
 |---|---|---|
 | POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_wa`, `ai_topup`, `crm_base`+`extraSeats`, `extra_seat`; webhook persists `Subscription.extraSeats`; InvId via advisory lock; wallet / extraSlots / referral 20% excl. `ai_topup` |
-| GET | `/success`, `/status` | ✅ |
+| GET | `/success`, `/fail`, `/status` | ✅ success/fail → `/dashboard/crm?paid=ok\|fail` |
 
 ### Tenant `/api/tenant`
 | Method | Path | ✅ |
 |---|---|---|
-| GET | `/dashboard` | ✅ overview stats + **mailing_bot/accounts/stories** addon statuses |
-| GET | `/`, `/members`, `/crm-login` | ✅ |
+| GET | `/dashboard` | ✅ overview stats + mailing addons; CRM `isTrial`; **`crmAccessLocked` fields** (ADR-023) |
+| GET | `/crm` | ✅ CRM portal payload: trial, seats, members, pricing; **`crmAccessLocked` + reason/error/grace** |
+| GET | `/`, `/members`, `/crm-login` | ✅ crm-login: owner/member Twenty password; **402/403 when CRM locked** |
 | PATCH | `/` | ✅ |
-| DELETE | `/members/:memberId` | ✅ |
+| GET | `/members/:memberId/credentials` | ✅ owner: reveal stored CRM password (no regenerate) |
+| DELETE | `/members/:memberId` | ✅ remove Voxly seat + Twenty `deleteUserFromWorkspace`; reassign opportunity.ownerId + task.assigneeId → owner; people stay in workspace |
+| POST | `/members/:memberId/reissue-credentials` | ✅ owner: set/change password (`{ password? }`) + CRM sync |
 
 ### Bots `/api/bots`
 | Method | Path | ✅ |
@@ -201,7 +206,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | GramJS portal UI | saas-portal `/dashboard/ai/gramjs` | ✅ QR + status + accounts; browser never hits bridge |
 | Twenty App SDK deal chat | twenty-app/voxly-crm-chat + `/api/crm/chat` | ✅ tab + format toolbar + multi-📎 (INC-017/018/020 JPEG shrink) + pinned composer (INC-019) + remount (INC-016) + photo preview (INC-014); inject off |
 | `installApp` in provisioning | queues + twenty-client | ✅ private `uploadAppTarball` + `installApplication` + set `WORKSPACE_ORIGIN`/`VOXLY_API_URL` (tarball in saas-api image / `VOXLY_CRM_CHAT_TARBALL`) |
-| Skip `/install-apps` onboarding | `twenty-client.skipInstallAppsOnboarding` | ✅ empty `triggerInstallAppsOnboardingStep` during provision |
+| Skip `/install-apps` onboarding | `twenty-client.skipInstallAppsOnboarding` | ✅ empty `triggerInstallAppsOnboardingStep` on **owner provision** and **invited member** sign-up |
 | RU object labels on provision | `applyWorkspaceDefaults` + SQL | ✅ GraphQL labels Сделка/Сделки; SQL `ensureOpportunityRuDefaults` / `set-opportunity-kanban-default.sql` sets `isLabelSyncedWithName=false` + INDEX **Канбан** + TABLE **Списком** (strips poisoned kanban `overrides`); shell-ux CTA → «Новая Сделка» |
 | `VOXLY_SERVICE_TOKEN` on Twenty | compose twenty-server/worker | ✅ LOCAL logic → saas-api (INC-026) |
 

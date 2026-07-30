@@ -64,19 +64,20 @@ export class RobokassaClient {
   /**
    * Generate payment URL for redirect.
    * Signature (pay-interface):
-   *   MerchantLogin:OutSum:InvId[:Receipt]:Password#1[:shp_*=…]
-   * Receipt in the signature string must be URL-encoded.
+   *   MerchantLogin:OutSum:InvId[:Receipt]:Password#1[:Shp_*=…]
+   * Receipt in the signature string is the raw JSON (UTF-8). Empirically
+   * encodeURIComponent(Receipt) causes Robokassa error 29 for crmgetvoxly;
+   * URLSearchParams encodes the query param once for the wire format.
    */
   generatePaymentUrl(params: CheckoutParams): string {
     const outSum = params.amount.toFixed(2);
     const shpSuffix = this.buildShpSuffix(params.customData);
     const receipt = this.buildReceipt(params.items, params.email);
     const receiptJson = receipt ? JSON.stringify(receipt) : null;
-    const receiptEncoded = receiptJson ? encodeURIComponent(receiptJson) : null;
 
-    const signature = receiptEncoded
+    const signature = receiptJson
       ? this.hash(
-          `${this.config.merchantLogin}:${outSum}:${params.invId}:${receiptEncoded}:${this.config.password1}${shpSuffix}`,
+          `${this.config.merchantLogin}:${outSum}:${params.invId}:${receiptJson}:${this.config.password1}${shpSuffix}`,
         )
       : this.hash(
           `${this.config.merchantLogin}:${outSum}:${params.invId}:${this.config.password1}${shpSuffix}`,
@@ -100,8 +101,6 @@ export class RobokassaClient {
       url.searchParams.set('IsTest', '1');
     }
 
-    // Pass raw JSON; URLSearchParams encodes once for the query string.
-    // Signature above used encodeURIComponent of the same JSON (Robokassa docs).
     if (receiptJson) {
       url.searchParams.set('Receipt', receiptJson);
     }

@@ -1,5 +1,6 @@
 /* Voxly: Twenty shell UX tweaks (multiworkspace + CRM defaults).
  * - Hide «+ Создать рабочее пространство» / Create workspace in profile ⋯ menu
+ * - Clarify top-left workspace switcher (slug «john») vs logged-in member
  * - Pin CRM «Чат» canvas: disable page-layout outer scroll so composer stays fixed
  * - Kanban note chips: body text via title label; ≥5 lines; only latest note visible
  * - Deduplicate sidebar «Кабинет Voxly» (keep first)
@@ -13,8 +14,9 @@
 (function () {
   var MARKER = 'data-voxly-shell-ux';
   var CHAT_PIN = 'data-voxly-chat-pinned';
-  var STYLE_ID = 'voxly-shell-ux-css-v4';
+  var STYLE_ID = 'voxly-shell-ux-css-v5';
   var TOAST_ROOT_ID = 'voxly-inbound-toasts';
+  var MEMBER_CHIP_ID = 'voxly-current-member-chip';
   var UNREAD_ATTR = 'data-voxly-unread-id';
   var TOKEN_KEY = 'voxly_crm_chat_token';
   var SEEN_KEY = 'voxly_inbound_toast_seen';
@@ -25,6 +27,7 @@
   var DEAL_CREATE_RE =
     /^\s*(new|новый|новая)\s+(возможност[ьи]|opportunit(y|ies)|сделк[аи])\s*$/i;
   var DEAL_CREATE_LABEL = 'Новая Сделка';
+  var CRM_WS_PREFIX = 'CRM · ';
   var pollTimer = null;
   var toastSince = null;
   var shownIds = {};
@@ -33,6 +36,9 @@
   /** @type {Record<string, number>} */
   var unreadById = {};
   var lastUnreadPollAt = 0;
+  var memberNameCache = null;
+  var memberNameFetchedAt = 0;
+  var memberNameInFlight = false;
 
   function ensureCss() {
     if (document.getElementById(STYLE_ID)) return;
@@ -139,12 +145,202 @@
       '[data-voxly-unread-host="1"] {',
       '  position: relative !important;',
       '}',
+      '#' + MEMBER_CHIP_ID + ' {',
+      '  display: block;',
+      '  margin: 2px 12px 8px;',
+      '  padding: 0 2px;',
+      '  font: 500 11px/1.35 ui-sans-serif, system-ui, -apple-system, sans-serif;',
+      '  color: rgba(0,0,0,0.55);',
+      '  white-space: nowrap;',
+      '  overflow: hidden;',
+      '  text-overflow: ellipsis;',
+      '  pointer-events: none;',
+      '}',
+      '[data-theme="dark"] #' + MEMBER_CHIP_ID + ', html.dark #' + MEMBER_CHIP_ID + ' {',
+      '  color: rgba(255,255,255,0.62);',
+      '}',
     ].join('\n');
     document.documentElement.appendChild(style);
   }
 
   function textOf(el) {
     return (el && (el.innerText || el.textContent) || '').replace(/\s+/g, ' ').trim();
+  }
+
+  /** Hostname `{slug}-crm.…` → slug used as Twenty workspace displayName. */
+  function crmWorkspaceSlug() {
+    try {
+      var host = (location.hostname || '').toLowerCase();
+      var m = host.match(/^([a-z0-9-]+)-crm\./);
+      return m ? m[1] : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * Top-left MultiWorkspaceDropdown shows workspace displayName (often = slug «john»),
+   * not the logged-in member — invitees confuse it with their profile.
+   * Prefix with «CRM · » and set a clarifying title.
+   */
+  function clarifyWorkspaceSwitcher() {
+    var slug = crmWorkspaceSlug();
+    if (!slug) return;
+    var nodes = document.querySelectorAll('button, [role="button"], a, div, span');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!el) continue;
+      var t = textOf(el);
+      if (!t) continue;
+      var bare = t.indexOf(CRM_WS_PREFIX) === 0 ? t.slice(CRM_WS_PREFIX.length) : t;
+      if (bare.toLowerCase() !== slug) continue;
+      if (t.length > 40) continue;
+      var rect = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+      if (rect && (rect.top > 120 || rect.left > 320 || rect.width > 280)) continue;
+      var labelEl = el;
+      if (el.children && el.children.length) {
+        for (var c = 0; c < el.children.length; c++) {
+          var child = el.children[c];
+          var ct = textOf(child);
+          var cbare =
+            ct.indexOf(CRM_WS_PREFIX) === 0 ? ct.slice(CRM_WS_PREFIX.length) : ct;
+          if (cbare && cbare.toLowerCase() === slug) {
+            labelEl = child;
+            break;
+          }
+        }
+      }
+      if (textOf(labelEl).toLowerCase() === slug) {
+        labelEl.textContent = CRM_WS_PREFIX + slug;
+      }
+      var row =
+        (el.closest && el.closest('button, [role="button"], a')) || el;
+      if (row.getAttribute(MARKER) !== 'ws-label') {
+        row.setAttribute(MARKER, 'ws-label');
+        row.setAttribute(
+          'title',
+          'Рабочее пространство CRM («' +
+            slug +
+            '»). Это не ваш профиль — имя сотрудника ниже / в Настройках.',
+        );
+      }
+      break;
+    }
+  }
+
+  function formatMemberChipName(data) {
+    if (!data || typeof data !== 'object') return '';
+    var name = data.name || data;
+    var first =
+      (name && (name.firstName || name.first_name)) ||
+      data.firstName ||
+      '';
+    var last =
+      (name && (name.lastName || name.last_name)) || data.lastName || '';
+    var full = [first, last]
+      .map(function (s) {
+        return String(s || '').trim();
+      })
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+    if (full) return full;
+    var email = String(data.userEmail || data.email || '').trim();
+    if (email.indexOf('@') !== -1) return email.split('@')[0];
+    return email;
+  }
+
+  function paintMemberChip(name) {
+    if (!name) return;
+    var existing = document.getElementById(MEMBER_CHIP_ID);
+    if (existing) {
+      existing.textContent = 'Вы: ' + name;
+      return;
+    }
+    var chip = document.createElement('div');
+    chip.id = MEMBER_CHIP_ID;
+    chip.setAttribute(MARKER, 'member-chip');
+    chip.textContent = 'Вы: ' + name;
+    // Prefer under the top of the left navigation drawer.
+    var nav =
+      document.querySelector('nav') ||
+      document.querySelector('[class*="navigation-drawer"]') ||
+      document.querySelector('[class*="NavigationDrawer"]');
+    if (nav && nav.firstChild) {
+      // Insert after the first header block when possible.
+      var header = nav.firstElementChild;
+      if (header && header.nextSibling) {
+        nav.insertBefore(chip, header.nextSibling);
+      } else {
+        nav.insertBefore(chip, nav.firstChild);
+      }
+      return;
+    }
+    document.body.appendChild(chip);
+  }
+
+  function fetchCurrentMemberName() {
+    var now = Date.now();
+    if (memberNameCache) {
+      paintMemberChip(memberNameCache);
+      return;
+    }
+    if (memberNameInFlight) return;
+    if (now - memberNameFetchedAt < 15000 && memberNameFetchedAt > 0) return;
+    var token = getTwentyAccessToken();
+    if (!token) return;
+    memberNameInFlight = true;
+    memberNameFetchedAt = now;
+    var queries = [
+      {
+        query:
+          'query { currentWorkspaceMember { name { firstName lastName } userEmail } }',
+        pick: function (j) {
+          return j && j.data && j.data.currentWorkspaceMember;
+        },
+      },
+      {
+        query:
+          'query { currentUser { firstName lastName email fullName } }',
+        pick: function (j) {
+          return j && j.data && j.data.currentUser;
+        },
+      },
+    ];
+    var i = 0;
+    function tryNext() {
+      if (i >= queries.length) {
+        memberNameInFlight = false;
+        return;
+      }
+      var q = queries[i++];
+      fetch('/graphql', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + token,
+        },
+        body: JSON.stringify({ query: q.query }),
+      })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (json) {
+          var raw = q.pick(json);
+          var name = formatMemberChipName(raw);
+          if (name) {
+            memberNameCache = name;
+            memberNameInFlight = false;
+            paintMemberChip(name);
+            return;
+          }
+          tryNext();
+        })
+        .catch(function () {
+          tryNext();
+        });
+    }
+    tryNext();
   }
 
   function hideCreateWorkspaceNodes(root) {
@@ -1002,6 +1198,8 @@
   function tick() {
     ensureCss();
     hideCreateWorkspaceNodes(document);
+    clarifyWorkspaceSwitcher();
+    fetchCurrentMemberName();
     dedupeCabinetNav();
     fixOpportunityCreateCta();
     pinChatCanvasScroll();

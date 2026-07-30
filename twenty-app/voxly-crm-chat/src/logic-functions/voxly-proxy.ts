@@ -125,6 +125,8 @@ export async function fetchVoxlyApiJson(opts: {
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   path: string;
   body?: unknown;
+  /** Twenty logic-function auth context → saas-api resolves operator display name. */
+  userWorkspaceId?: string | null;
 }): Promise<{ status: number; data: unknown; error?: string }> {
   const token = voxlyServiceToken();
   const workspaceId = decodeWorkspaceIdFromAppToken();
@@ -139,6 +141,8 @@ export async function fetchVoxlyApiJson(opts: {
     Authorization: `Bearer ${token}`,
     'X-Twenty-Workspace-Id': workspaceId,
   };
+  const uw = typeof opts.userWorkspaceId === 'string' ? opts.userWorkspaceId.trim() : '';
+  if (uw) headers['X-Twenty-User-Workspace-Id'] = uw;
   let body: BodyInit | undefined;
   if (opts.body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -174,6 +178,8 @@ export async function proxyToVoxlyApi(opts: {
   formData?: FormData;
   /** Non-JSON bodies → `{ dataBase64, contentType }` (CRM chat file preview). */
   binaryAsBase64?: boolean;
+  /** Twenty logic-function auth context → saas-api resolves operator display name. */
+  userWorkspaceId?: string | null;
 }): Promise<Response> {
   const token = voxlyServiceToken();
   const workspaceId = decodeWorkspaceIdFromAppToken();
@@ -189,6 +195,8 @@ export async function proxyToVoxlyApi(opts: {
     Authorization: `Bearer ${token}`,
     'X-Twenty-Workspace-Id': workspaceId,
   };
+  const uw = typeof opts.userWorkspaceId === 'string' ? opts.userWorkspaceId.trim() : '';
+  if (uw) headers['X-Twenty-User-Workspace-Id'] = uw;
   let body: BodyInit | undefined;
   if (opts.formData) {
     body = opts.formData;
@@ -270,6 +278,12 @@ export async function proxyToVoxlyApi(opts: {
 
 export function recordIdFromEvent(event: RoutePayload): string | null {
   const raw = event.pathParameters?.recordId;
+  return typeof raw === 'string' && raw.length >= 10 ? raw : null;
+}
+
+/** Logged-in Twenty member context from `/s/*` logic-function auth. */
+export function userWorkspaceIdFromEvent(event: RoutePayload): string | null {
+  const raw = (event as { userWorkspaceId?: string | null }).userWorkspaceId;
   return typeof raw === 'string' && raw.length >= 10 ? raw : null;
 }
 

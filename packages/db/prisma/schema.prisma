@@ -85,6 +85,7 @@ model TenantMember {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   role      UserRole @default(member) // owner or member within tenant
+  twentyPasswordEncrypted String?
   createdAt DateTime @default(now())
 
   @@unique([tenantId, userId])

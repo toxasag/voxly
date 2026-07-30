@@ -66,6 +66,153 @@ export const PERIOD_DISCOUNTS: Record<number, number> = {
 export const GRACE_PERIOD_DAYS = 7;
 export const TRIAL_PERIOD_DAYS = 7;
 export const REFERRAL_COOKIE_DAYS = 30;
+
+/** Why CRM SSO / chat / invite is blocked (or ok). */
+export type CrmAccessReason =
+  | 'ok'
+  | 'tenant_suspended'
+  | 'tenant_cancelled'
+  | 'no_crm_subscription'
+  | 'trial_ended'
+  | 'subscription_grace_ended';
+
+export type CrmAccessEvaluation = {
+  allowed: boolean;
+  locked: boolean;
+  reason: CrmAccessReason;
+  /** 402 = pay / renew; 403 = suspended / cancelled */
+  code: 402 | 403 | null;
+  error: string | null;
+  inGrace: boolean;
+  graceEndsAt: string | null;
+  endsAt: string | null;
+  isTrial: boolean;
+  /** Active crm_base with endsAt >= now */
+  isPaidCoveringNow: boolean;
+};
+
+export type CrmSubscriptionSnapshot = {
+  status: string;
+  endsAt: Date | string;
+  periodMonths: number;
+};
+
+/**
+ * Hard CRM access gate — aligned with subscription scheduler:
+ * - trial (periodMonths=0): lock immediately when endsAt < now
+ * - paid: GRACE_PERIOD_DAYS after endsAt, then lock
+ * - tenant suspended/cancelled: lock (overrides in-grace)
+ */
+export function evaluateCrmAccess(opts: {
+  tenantStatus: string;
+  crmSubscription: CrmSubscriptionSnapshot | null | undefined;
+  now?: Date;
+  gracePeriodDays?: number;
+}): CrmAccessEvaluation {
+  const now = opts.now ?? new Date();
+  const graceDays = opts.gracePeriodDays ?? GRACE_PERIOD_DAYS;
+  const sub = opts.crmSubscription ?? null;
+  const endsAt = sub ? new Date(sub.endsAt) : null;
+  const endsAtIso = endsAt && Number.isFinite(endsAt.getTime()) ? endsAt.toISOString() : null;
+  const isTrial = Boolean(sub && sub.periodMonths === 0);
+  const coveringNow = Boolean(
+    sub &&
+      sub.status === 'active' &&
+      endsAt &&
+      Number.isFinite(endsAt.getTime()) &&
+      endsAt.getTime() >= now.getTime(),
+  );
+
+  const base = {
+    inGrace: false,
+    graceEndsAt: null as string | null,
+    endsAt: endsAtIso,
+    isTrial,
+    isPaidCoveringNow: coveringNow && !isTrial,
+  };
+
+  if (opts.tenantStatus === 'cancelled') {
+    return {
+      ...base,
+      allowed: false,
+      locked: true,
+      reason: 'tenant_cancelled',
+      code: 403,
+      error: 'Аккаунт отменён. CRM недоступна.',
+    };
+  }
+
+  if (opts.tenantStatus === 'suspended') {
+    return {
+      ...base,
+      allowed: false,
+      locked: true,
+      reason: 'tenant_suspended',
+      code: 403,
+      error: 'Подписка на CRM закончилась. Оформите оплату, чтобы снова открыть CRM.',
+    };
+  }
+
+  if (coveringNow) {
+    return {
+      ...base,
+      allowed: true,
+      locked: false,
+      reason: 'ok',
+      code: null,
+      error: null,
+    };
+  }
+
+  if (sub && sub.status === 'active' && endsAt && Number.isFinite(endsAt.getTime())) {
+    if (sub.periodMonths === 0) {
+      return {
+        ...base,
+        allowed: false,
+        locked: true,
+        reason: 'trial_ended',
+        code: 402,
+        error: 'Пробный период CRM закончился. Оформите оплату, чтобы открыть CRM.',
+      };
+    }
+
+    const graceEnds = new Date(endsAt);
+    graceEnds.setDate(graceEnds.getDate() + graceDays);
+    if (now.getTime() < graceEnds.getTime()) {
+      return {
+        ...base,
+        allowed: true,
+        locked: false,
+        reason: 'ok',
+        code: null,
+        error: null,
+        inGrace: true,
+        graceEndsAt: graceEnds.toISOString(),
+        isPaidCoveringNow: false,
+      };
+    }
+
+    return {
+      ...base,
+      allowed: false,
+      locked: true,
+      reason: 'subscription_grace_ended',
+      code: 402,
+      error: 'Подписка на CRM закончилась. Оформите оплату, чтобы снова открыть CRM.',
+      graceEndsAt: graceEnds.toISOString(),
+    };
+  }
+
+  return {
+    ...base,
+    allowed: false,
+    locked: true,
+    reason: 'no_crm_subscription',
+    code: 402,
+    error: 'Нет активной подписки на CRM. Оформите оплату, чтобы открыть CRM.',
+    isTrial: opts.tenantStatus === 'trial',
+  };
+}
 /** Inbound within this window after mailing/story counts as attributed reply */
 export const MAILING_ATTRIBUTION_WINDOW_HOURS = 48;
 

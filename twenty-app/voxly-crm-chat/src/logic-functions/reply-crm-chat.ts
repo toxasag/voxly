@@ -2,7 +2,11 @@ import { defineLogicFunction, HTTPMethod } from 'twenty-sdk/define';
 import { Response, type RoutePayload } from 'twenty-sdk/logic-function';
 
 import { REPLY_CRM_CHAT_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
-import { proxyToVoxlyApi, recordIdFromEvent } from 'src/logic-functions/voxly-proxy';
+import {
+  proxyToVoxlyApi,
+  recordIdFromEvent,
+  userWorkspaceIdFromEvent,
+} from 'src/logic-functions/voxly-proxy';
 
 type ReplyBody = {
   text?: string;
@@ -21,6 +25,7 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
   if (!recordId) {
     return new Response({ error: 'Invalid CRM record id' }, { status: 400 });
   }
+  const userWorkspaceId = userWorkspaceIdFromEvent(event);
   const text = typeof event.body?.text === 'string' ? event.body.text.trim() : '';
   const conversationId =
     typeof event.body?.conversationId === 'string' ? event.body.conversationId.trim() : '';
@@ -68,6 +73,7 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
       method: 'POST',
       path: `/api/crm/chat/${encodeURIComponent(recordId)}/reply`,
       formData: form,
+      userWorkspaceId,
     });
   }
 
@@ -78,6 +84,7 @@ const handler = async (event: RoutePayload<ReplyBody>) => {
     method: 'POST',
     path: `/api/crm/chat/${encodeURIComponent(recordId)}/reply`,
     body,
+    userWorkspaceId,
   });
 };
 

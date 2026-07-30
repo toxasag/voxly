@@ -16,6 +16,7 @@ import {
   UserRound,
   Bell,
   HelpCircle,
+  Building2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -28,7 +29,8 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
+import { readSessionClaims } from '@/lib/session';
+import { useEffect, useMemo, useState } from 'react';
 
 const NAV = [
   {
@@ -36,18 +38,28 @@ const NAV = [
     label: 'Дашборд',
     match: (p: string) => p === '/dashboard',
     icon: LayoutDashboard,
+    ownerOnly: true,
+  },
+  {
+    href: '/dashboard/crm',
+    label: 'CRM портал',
+    match: (p: string) => p.startsWith('/dashboard/crm'),
+    icon: Building2,
+    ownerOnly: false,
   },
   {
     href: '/dashboard/bots',
     label: 'Gift-боты',
     match: (p: string) => p.startsWith('/dashboard/bots'),
     icon: Gift,
+    ownerOnly: true,
   },
   {
     href: '/dashboard/mailing',
     label: 'Рассылка',
     match: (p: string) => p.startsWith('/dashboard/mailing'),
     icon: Send,
+    ownerOnly: true,
   },
   {
     href: '/dashboard/ai',
@@ -61,24 +73,28 @@ const NAV = [
       return true;
     },
     icon: MessageSquare,
+    ownerOnly: true,
   },
   {
     href: '/dashboard/ai/whatsapp',
     label: 'WhatsApp',
     match: (p: string) => p.startsWith('/dashboard/ai/whatsapp'),
     icon: Smartphone,
+    ownerOnly: true,
   },
   {
     href: '/dashboard/ai/agents',
     label: 'AI-агенты',
     match: (p: string) => p.startsWith('/dashboard/ai/agents'),
     icon: Sparkles,
+    ownerOnly: true,
   },
   {
     href: '/dashboard/ai/gramjs',
     label: 'Личный Telegram',
     match: (p: string) => p.startsWith('/dashboard/ai/gramjs'),
     icon: UserRound,
+    ownerOnly: true,
   },
 ] as const;
 
@@ -96,6 +112,25 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [tenantRole, setTenantRole] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const claims = readSessionClaims();
+    setTenantRole(claims?.tenantRole);
+  }, [pathname]);
+
+  const isMember = tenantRole === 'member';
+  const navItems = useMemo(
+    () => (isMember ? NAV.filter((item) => !item.ownerOnly) : NAV),
+    [isMember],
+  );
+
+  useEffect(() => {
+    if (!isMember) return;
+    if (pathname.startsWith('/dashboard') && !pathname.startsWith('/dashboard/crm')) {
+      router.replace('/dashboard/crm');
+    }
+  }, [isMember, pathname, router]);
 
   const width =
     maxWidth === '2xl'
@@ -111,9 +146,11 @@ export function AppShell({
     router.push('/');
   };
 
+  const homeHref = isMember ? '/dashboard/crm' : '/dashboard';
+
   const NavLinks = ({ onNavigate }: { onNavigate?: () => void }) => (
     <nav className="flex flex-col gap-1 px-2" aria-label="Основная навигация">
-      {NAV.map((item) => {
+      {navItems.map((item) => {
         const active = item.match(pathname);
         const Icon = item.icon;
         return (
@@ -152,7 +189,7 @@ export function AppShell({
     <div className="min-h-screen bg-background lg:flex">
       <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:flex">
         <Link
-          href="/dashboard"
+          href={homeHref}
           className="mb-4 px-5 pt-5 text-sm font-semibold tracking-tight text-sidebar-primary"
         >
           Voxly
@@ -203,7 +240,7 @@ export function AppShell({
       {/* Mobile & Tablet Layout */}
       <div className="flex flex-1 flex-col lg:hidden">
         <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-background px-4">
-          <Link href="/dashboard" className="text-sm font-semibold tracking-tight text-primary">
+          <Link href={homeHref} className="text-sm font-semibold tracking-tight text-primary">
             Voxly
           </Link>
           <div className="flex items-center gap-2">

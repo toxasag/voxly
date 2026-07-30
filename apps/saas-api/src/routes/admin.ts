@@ -9,6 +9,7 @@ import {
   purgeTenantFully,
   refreshCrmChatAppForTenant,
 } from '../services/purge-tenant.js';
+import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { z } from 'zod';
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
@@ -245,6 +246,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
       data: { status: 'suspended' },
     });
+
+    await syncTwentyCrmLock(tenant.twentyWorkspaceId, true);
 
     await prisma.auditLog.create({
       data: {

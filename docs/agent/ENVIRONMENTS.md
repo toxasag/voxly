@@ -43,6 +43,7 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 | Twenty app re-apply | If CRM chat front already installed on workspaces, re-apply after `chat-panel` bake |
 | Root SSH | Password auth via `SSHPASS` only (no laptop key) — rotate to key |
 | Hard Robokassa `ai_gramjs` | Soft trial only; SKU payment later |
+| Robokassa cabinet `crmgetvoxly` | SHA256; Result POST `/api/billing/result`; Success/Fail GET; **test** passwords in prod `.env`, `IS_TEST=1` until modules ready → then live + `IS_TEST=0` |
 
 ### Match update — GramJS (2026-07-23 ~16:10 MSK)
 

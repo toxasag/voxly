@@ -46,6 +46,7 @@ export function stopScheduledJobs() {
 async function checkExpiredSubscriptions() {
   // Dynamic import to avoid circular deps
   const { prisma } = await import('@voxly/db');
+  const { syncTwentyCrmLock } = await import('../services/crm-access.js');
   const now = new Date();
   const graceEnd = new Date(now);
   graceEnd.setDate(graceEnd.getDate() - GRACE_PERIOD_DAYS);
@@ -86,6 +87,9 @@ async function checkExpiredSubscriptions() {
           data: { status: 'expired' },
         }),
       ]);
+      if (hasPaidSubscription === 0) {
+        await syncTwentyCrmLock(sub.tenant.twentyWorkspaceId, true);
+      }
       console.log(`[scheduler] Trial expired for tenant ${sub.tenantId}`);
       continue;
     }
@@ -102,6 +106,7 @@ async function checkExpiredSubscriptions() {
         where: { id: sub.id },
         data: { status: 'expired' },
       });
+      await syncTwentyCrmLock(sub.tenant.twentyWorkspaceId, true);
       console.log(`[scheduler] Suspended tenant ${sub.tenantId} (grace period ended)`);
     } else {
       console.log(`[scheduler] Tenant ${sub.tenantId} in grace period (${daysSinceExpiry}/${GRACE_PERIOD_DAYS} days)`);

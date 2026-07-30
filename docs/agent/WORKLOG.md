@@ -1,3 +1,123 @@
+### 2026-07-30 — Hard CRM lock when subscription ends (ADR-023)
+
+- Goal: «оплата закончилась → CRM закрыта» — SSO, portal, invite, chat, direct Twenty login.
+- Changes: `evaluateCrmAccess` in `@voxly/shared`; `crm-access.ts` + `twenty-workspace-activation.ts`; gate `crm-login` / invite / crm-chat(+media); portal paywall; scheduler+admin suspend → Twenty INACTIVE; Robokassa `crm_base` → ACTIVE.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-123748/` (volumes untouched). Smoke initially 502 (cold start), then portal+API **200**.
+- Verify: unit tests on evaluateCrmAccess (61✓); do **not** expire john on prod — use helper tests or non-prod tenant / admin suspend on throwaway.
+- Next: optional admin «unsuspend» UI that also restores Twenty ACTIVE.
+
+### 2026-07-30 — CRM identity: workspace «john» vs Тест2 + Chat «Менеджер»
+
+- Goal: Fix confusion (sidebar john vs Тест2) and Chat author label «Менеджер» for invited members.
+- Root cause: sidebar = Twenty workspace `displayName` (slug); Chat `/s` proxy is service-token → no Voxly user → hardcoded «Менеджер».
+- Changes: `resolveTwentyOperatorLabel` + `X-Twenty-User-Workspace-Id` in get/reply proxy; shell-ux «CRM · slug» + «Вы: …»; crm-chat **0.1.23**.
+- Deploy: rsync + `saas-api` (no-cache) + `twenty`; backup `/opt/voxly/backups/20260730-123434/`; refresh-crm-chat john/lexx/antontest/antontest3 → apps **0.1.23**.
+- Verify: hard-refresh as test2 → «CRM · john» + «Вы: Тест2…»; reply bubble uses Тест2 (not Менеджер). Shell-ux served with `CRM · `; API health **200**.
+
+### 2026-07-30 — CRM team: show names + edit password without auto-rotate
+
+- Goal: «Редактировать» shows current password (no auto-change); owner sets new password explicitly; «Команда CRM» shows Twenty profile names (Тест2) when Voxly User name empty.
+- Changes: `GET /api/tenant/members/:id/credentials`; reissue accepts `{ password? }`; `fetchTwentyMemberDisplayNames` for `GET /tenant/crm`; portal modal editable password + Save.
+- Deploy: `saas-api,saas-portal` (backup `/opt/voxly/backups/20260730-113714/`; retry `--skip-backup` completed).
+- Verify: portal+API health **200**; container has `twenty-member-display-names` + credentials route. Hard-refresh `/dashboard/crm`.
+
+### 2026-07-30 — Persist CRM portal defaults (commit)
+
+- Goal: Save all CRM portal / billing / member / lock / identity UX as defaults for portal + new Voxly tenants.
+- Defaults already on provision path: `applyWorkspaceDefaults`, `ensureCrmChatAppInstalled(forceReinstall)`, `skipInstallAppsOnboarding` (owner + invite), shell-ux baked in Twenty image, `evaluateCrmAccess` platform-wide.
+- Docs: ADR-017 chat/shell/portal defaults; CAPABILITIES crm-chat **0.1.23** + invite skip install-apps.
+- Next: git commit product surface (exclude `.cursor/skills`).
+
+### 2026-07-30 — CRM members: Bad Request + install-apps + delete→owner
+
+- Goal: Save Robokassa settings; fix Edit/Delete Bad Request; skip `/install-apps` for invites; delete member removes CRM access and reassigns deals/tasks to owner.
+- Cause (400): empty JSON body + `Content-Type: application/json` (INC-071).
+- Cause (install-apps): skip only on workspace provision, not on `provisionWorkspaceMember`.
+- Changes: Fastify empty JSON `{}`; `skipInstallAppsOnboarding` after member signUp; `removeTwentyMemberFromTenant` (ownerId/assigneeId → owner + `deleteUserFromWorkspace`); ADR-022; FLOWS Robokassa cabinet table.
+- Deploy: `./scripts/prod-deploy.sh saas-api` → backup `/opt/voxly/backups/20260730-112615/`.
+- Verify: API health **200**; container has empty-JSON parser + `twenty-member-remove` + `deleteUserFromWorkspace`; empty-body DELETE/POST → **401** (not 400).
+- Answer: sidebar «john» = workspace name; profile Тест2 = logged-in user; deal «John Doe» = createdBy owner (bots).
+
+### 2026-07-30 — Fix Robokassa error 29 (Receipt in signature)
+
+- Goal: Checkout opened Robokassa with error 29; pending payments never completed.
+- Cause: pay signature used `encodeURIComponent(Receipt)`; live shop expects **raw JSON** in the hash string (URLSearchParams still encodes the query param).
+- Changes: `@voxly/billing` `generatePaymentUrl`; tests; `./scripts/prod-deploy.sh saas-api`.
+- Backup: from deploy script under `/opt/voxly/backups/` (today).
+- Verify: probe payment URL with Receipt+Shp → Robokassa pay UI (no code 29); `/health` **200**.
+- Still: `IS_TEST=1` + test passwords; user should complete one test pay from CRM portal.
+- Next: successful test Result → then live passwords + `IS_TEST=0`.
+
+### 2026-07-30 — CRM pay UX: receipt lines + post-pay refresh
+
+- Goal: Clear Robokassa line items (who/what); portal shows Active + extra seats after test pay.
+- Findings: InvId **1010** (1100 ₽) **paid** OK; DB had Active + `extraSeats=2`; UI stuck on Trial due to Success redirect racing Result + weak `crmIsTrial`.
+- Changes: multi-item Receipt + `crmHost` in description; extend `endsAt` from prior trial/paid end; `crmIsTrial` ignores stale tenant.trial; CRM page polls reload on `?paid=ok`; labels «Активная» + доп. места hint. Backfilled john `endsAt` → **2026-09-06**.
+- Deploy: `saas-api,saas-portal`.
+- Verify: john DB Active / 10+2 / ends 2026-09-06; next checkout shows distinct receipt lines.
+- Next: user hard-refresh `/dashboard/crm`; retest seats-only pay (1011/1012 were pending/cancelled).
+
+### 2026-07-30 — CRM invite: reissue credentials + Edit button
+
+- Goal: Owner can re-open/copy invite credentials for existing members; fix failed invites via «Редактировать».
+- Changes: `POST /api/tenant/members/:memberId/reissue-credentials` (new password, Voxly + Twenty sync); CRM page Edit button + reuse invite modal.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-093416/`.
+- Verify: john tenant → Edit on invited member → modal with new password; login on john-crm.getvoxly.ru.
+- Note: old password invalidated on reissue; delete stale member before re-invite if first invite failed.
+
+### 2026-07-30 — Fix CRM invite: AppToken.value not id
+
+- Goal: Invite flow failed with «User does not have access to this workspace» — wrong token passed to `signUpInWorkspace`.
+- Root cause: `sendInvitations` GraphQL returns `AppToken.id` (UUID); Twenty validates `AppToken.value` (64-char hex).
+- Changes: `fetchTwentyInvitationTokenValue` (SQL via `TWENTY_DATABASE_URL`); `provisionWorkspaceMember` uses resolver + public auth client for signUp; friendly error messages in `twenty-member-provision.ts`.
+- Deploy: `./scripts/prod-deploy.sh saas-api` → backup `/opt/voxly/backups/20260730-092701/`.
+- Verify: re-invite `test@voxly.ru` on john → modal shows «Аккаунт в CRM создан»; login on john-crm.getvoxly.ru works.
+- Broken: SMTP still deferred.
+
+### 2026-07-30 — CRM billing UI: period + seats + total
+
+- Goal: CRM portal «Тариф и оплата» — выбор срока, доп. мест, итого, оплата пакетом или только места.
+- Changes: `crm-pricing.ts` (formula matches backend); `crm/page.tsx` period selector, seat stepper, breakdown, dual CTAs; combined checkout uses existing `crm_base`+`extraSeats`.
+- Deploy: `./scripts/prod-deploy.sh saas-portal` → backup `/opt/voxly/backups/20260730-094849/`.
+- Verify: build OK; smoke 200 after warm-up.
+
+### 2026-07-30 — CRM portal working (trial/seats/invite/Twenty)
+
+- Goal: Full CRM portal: Trial badge, remaining seats, amber UI, invite→Twenty member + modal credentials, member nav guard, billing redirect.
+- Changes:
+  - API: `GET /api/tenant/crm`; `isTrial` fix; `crm-login` uses per-member `twentyPasswordEncrypted`; invite provisions Twenty via `sendInvitations`+`signUpInWorkspace`; Robokassa → `/dashboard/crm?paid=`.
+  - DB: migration `20260730020000_tenant_member_twenty_password`.
+  - Portal: amber `crm-portal-hero`, rewrite `/dashboard/crm`, invite modal, `lib/open-crm.ts`, member-only NAV + login→`/dashboard/crm`.
+- Deploy: `saas-api` backup `/opt/voxly/backups/20260729-232007/`; migrate applied; `saas-portal` backup `/opt/voxly/backups/20260729-232207/`.
+- Verify: `/`, `/login`, `/dashboard/crm`, API health **200** after warm-up.
+- Broken: SMTP still deferred (credentials only in modal); root SSH password used via SSHPASS — **rotate**.
+- Next: user smoke on john — Trial, remaining seats=9, invite → CRM direct login.
+
+### 2026-07-30 — CRM portal page + sidebar nav
+
+- Goal: Add «CRM портал» menu after Dashboard; settings + billing page in dashboard style.
+- Changes: `app-shell.tsx` nav item; new `/dashboard/crm` (hero, stats, portal URL, CRM Base payment, team seats).
+- Deploy: `./scripts/prod-deploy.sh saas-portal` → backup `/opt/voxly/backups/20260729-223804/`.
+- Verify: build includes `/dashboard/crm`; smoke OK after container warm-up.
+- Next: user validates live nav + checkout buttons.
+
+### 2026-07-30 — Dashboard hero: Open CRM button + remove duplicate header
+
+- Goal: Move «Открыть CRM» into blue hero banner; remove tenant title/subtitle block below banner.
+- Changes: `hero-banner.tsx` accepts `actions`; `dashboard/page.tsx` passes CRM button to banner, drops `PageHeader` + separator.
+- Deploy: `./scripts/prod-deploy.sh saas-portal` → backup `/opt/voxly/backups/20260729-223233/`.
+- Verify: smoke **200** on `/` and API health; dashboard bundle rebuilt.
+- Next: user validates live on `https://getvoxly.ru/dashboard`.
+
+### 2026-07-30 — Prod saas-portal auth UI + landing refresh
+
+- Goal: Ship restyled `/login` + `/register` (landing visual language) with current portal code; no Spline.
+- Changes: `./scripts/prod-deploy.sh saas-portal` (whitelist rsync + rebuild). Volumes untouched.
+- Backup: `/opt/voxly/backups/20260729-220728/` (`voxly_control.dump`, `twenty.dump`).
+- Verify: `/`, `/login`, `/register` **200** HTML from portal; API `/health` **200**. Smoke briefly 404 while container started — recovered within ~20s.
+- Broken: root SSH password still used via SSHPASS in chat — **rotate** and prefer SSH key.
+- Next: commit uncommitted portal auth/CSS changes on branch if desired.
+
 ### 2026-07-30 — Prod saas-portal AIDA landing live
 
 - Goal: Deploy selling landing to getvoxly.ru without volume wipe.

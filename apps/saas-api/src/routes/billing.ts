@@ -10,6 +10,7 @@ import {
   getAiTgExtraSlots,
 } from '@voxly/shared';
 import { calculateSubscriptionPrice } from '@voxly/billing';
+import { syncTwentyCrmLock } from '../services/crm-access.js';
 
 const checkoutSchema = z.object({
   productCode: z.enum([
@@ -57,6 +58,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     const prisma = fastify.prisma;
     const robokassa = fastify.robokassa;
 
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { slug: true, crmSubdomain: true },
+    });
+    const crmHost = tenant
+      ? `${tenant.crmSubdomain || `${tenant.slug}-crm`}.${process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru'}`
+      : 'crm';
+
     const isTopup = productCode === PRODUCT_CODES.AI_TOPUP;
     const periodMonths = isTopup ? 0 : periodRaw ?? 1;
     if (!isTopup && (!periodRaw || periodRaw < 1)) {
@@ -65,6 +74,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
     let totalAmount = 0;
     let description = '';
+    let receiptItems: Array<{
+      name: string;
+      quantity: number;
+      price: number;
+      tax: 'none';
+      paymentMethod: 'full_payment';
+      paymentObject: 'service';
+    }> = [];
 
     if (isTopup) {
       const amount = Number(amountRub);
@@ -74,7 +91,17 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       totalAmount = Math.round(amount * 100) / 100;
-      description = `Voxly — пополнение AI баланса ${totalAmount} ₽`;
+      description = `Voxly AI · ${crmHost} · ${totalAmount} ₽`;
+      receiptItems = [
+        {
+          name: `Пополнение AI · ${crmHost}`,
+          quantity: 1,
+          price: totalAmount,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        },
+      ];
     } else {
       const basePrice = getBasePrice(productCode);
       const discount = PERIOD_DISCOUNTS[periodMonths] ?? 0;
@@ -87,18 +114,67 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
             ? basePrice * seatCount
             : basePrice;
       totalAmount = calculateSubscriptionPrice(unit, periodMonths, discount);
-      if (productCode === 'crm_base' && extraSeats > 0) {
-        totalAmount += calculateSubscriptionPrice(
-          PRICING.EXTRA_SEAT_MONTHLY * extraSeats,
+      const periodLabel = periodMonths === 1 ? '1 мес' : `${periodMonths} мес`;
+
+      if (productCode === 'crm_base') {
+        const baseTotal = calculateSubscriptionPrice(
+          PRICING.CRM_BASE_MONTHLY,
           periodMonths,
           discount,
         );
+        receiptItems.push({
+          name: `CRM Base · ${crmHost} · ${periodLabel}`,
+          quantity: 1,
+          price: baseTotal,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        });
+        if (extraSeats > 0) {
+          const seatUnit = calculateSubscriptionPrice(
+            PRICING.EXTRA_SEAT_MONTHLY,
+            periodMonths,
+            discount,
+          );
+          totalAmount += seatUnit * extraSeats;
+          receiptItems.push({
+            name: `Доп. место CRM · ${crmHost} · ${periodLabel}`,
+            quantity: extraSeats,
+            price: seatUnit,
+            tax: 'none',
+            paymentMethod: 'full_payment',
+            paymentObject: 'service',
+          });
+          description = `Voxly CRM · ${crmHost} · ${periodLabel} + ${extraSeats} мест`;
+        } else {
+          description = `Voxly CRM · ${crmHost} · ${periodLabel}`;
+        }
+      } else if (productCode === PRODUCT_CODES.EXTRA_SEAT) {
+        const seatUnit = calculateSubscriptionPrice(
+          PRICING.EXTRA_SEAT_MONTHLY,
+          periodMonths,
+          discount,
+        );
+        receiptItems.push({
+          name: `Доп. место CRM · ${crmHost} · ${periodLabel}`,
+          quantity: seatCount,
+          price: seatUnit,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        });
+        description = `Voxly CRM · ${crmHost} · доп. ×${seatCount} · ${periodLabel}`;
+      } else {
+        description = `${buildDescription(productCode, periodMonths, quantity)} · ${crmHost}`;
+        receiptItems.push({
+          name: description.slice(0, 128),
+          quantity: 1,
+          price: totalAmount,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        });
       }
-      description = buildDescription(
-        productCode,
-        periodMonths,
-        productCode === PRODUCT_CODES.EXTRA_SEAT ? seatCount : quantity,
-      );
     }
 
     const invId = await getNextInvId(prisma);
@@ -123,16 +199,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       amount: totalAmount,
       description,
       email,
-      items: [
-        {
-          name: description,
-          quantity: 1,
-          price: totalAmount,
-          tax: 'none',
-          paymentMethod: 'full_payment',
-          paymentObject: 'service',
-        },
-      ],
+      items: receiptItems,
       customData: {
         tenant_id: tenantId,
         payment_id: payment.id,
@@ -211,8 +278,28 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
       const periodMonths = existing.periodMonths || 1;
       const now = new Date();
-      const endsAt = new Date(now);
+      let endsAt = new Date(now);
       endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
+
+      // CRM renewals: extend from current paid/trial end if still in the future
+      // (so paying during trial yields trialEnd + period, not now + period).
+      if (
+        existing.productCode === 'crm_base' ||
+        existing.productCode === PRODUCT_CODES.EXTRA_SEAT
+      ) {
+        const priorCrm = await tx.subscription.findFirst({
+          where: {
+            tenantId: existing.tenantId,
+            productCode: PRODUCT_CODES.CRM_BASE,
+            OR: [{ status: 'active' }, { status: 'expired', periodMonths: 0 }],
+          },
+          orderBy: { endsAt: 'desc' },
+        });
+        if (priorCrm && priorCrm.endsAt > now) {
+          endsAt = new Date(priorCrm.endsAt);
+          endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
+        }
+      }
 
       if (existing.productCode === PRODUCT_CODES.AI_TOPUP) {
         await tx.aiWallet.upsert({
@@ -384,6 +471,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       await creditReferralForPayment(tx, existing);
     });
 
+    if (existing.productCode === 'crm_base' || existing.productCode === PRODUCT_CODES.CRM_BASE) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: existing.tenantId },
+        select: { twentyWorkspaceId: true },
+      });
+      await syncTwentyCrmLock(tenant?.twentyWorkspaceId, false);
+    }
+
     fastify.log.info({ invId, tenantId: existing.tenantId }, 'Payment processed successfully');
     return reply.type('text/plain').send(`OK${invId}`);
   };
@@ -392,16 +487,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/result', handleResult);
   fastify.get('/result', handleResult);
 
-  fastify.get('/success', async (request, reply) => {
-    const query = request.query as Record<string, string>;
-    const invId = query['InvId'];
+  fastify.get('/success', async (_request, reply) => {
     const voxlyDomain = fastify.voxlyDomain;
-    return reply.redirect(302, `https://${voxlyDomain}/dashboard?paid=${invId || ''}`);
+    return reply.redirect(302, `https://${voxlyDomain}/dashboard/crm?paid=ok`);
   });
 
   fastify.get('/fail', async (_request, reply) => {
     const voxlyDomain = fastify.voxlyDomain;
-    return reply.redirect(302, `https://${voxlyDomain}/dashboard?paid=fail`);
+    return reply.redirect(302, `https://${voxlyDomain}/dashboard/crm?paid=fail`);
   });
 
   fastify.get('/status', { preHandler: [fastify.authenticate] }, async (request, reply) => {

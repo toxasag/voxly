@@ -366,6 +366,57 @@ const SIGN_UP_IN_NEW_WORKSPACE = gql`
   }
 `;
 
+const SEND_INVITATIONS = gql`
+  mutation SendInvitations($emails: [String!]!) {
+    sendInvitations(emails: $emails) {
+      success
+      errors
+      result {
+        id
+        email
+        expiresAt
+      }
+    }
+  }
+`;
+
+const SIGN_UP_IN_WORKSPACE = gql`
+  mutation SignUpInWorkspace(
+    $email: String!
+    $password: String!
+    $workspaceId: UUID
+    $workspacePersonalInviteToken: String
+    $locale: String
+  ) {
+    signUpInWorkspace(
+      email: $email
+      password: $password
+      workspaceId: $workspaceId
+      workspacePersonalInviteToken: $workspacePersonalInviteToken
+      locale: $locale
+    ) {
+      loginToken {
+        token
+      }
+      workspace {
+        id
+        workspaceUrls {
+          subdomainUrl
+          customUrl
+        }
+      }
+    }
+  }
+`;
+
+const DELETE_USER_FROM_WORKSPACE = gql`
+  mutation DeleteUserFromWorkspace($workspaceMemberIdToDelete: UUID!) {
+    deleteUserFromWorkspace(workspaceMemberIdToDelete: $workspaceMemberIdToDelete) {
+      id
+    }
+  }
+`;
+
 const SIGN_IN = gql`
   mutation SignIn($email: String!, $password: String!) {
     signIn(email: $email, password: $password) {
@@ -570,6 +621,12 @@ const CREATE_NOTE = gql`
   }
 `;
 
+export type ResolveInvitationToken = (args: {
+  workspaceId: string;
+  memberEmail: string;
+  appTokenId: string;
+}) => Promise<string>;
+
 export class TwentyClient {
   private client: GraphQLClient;
   private authClient: GraphQLClient;
@@ -693,6 +750,123 @@ export class TwentyClient {
       loginToken,
       authTokens: this.authTokens,
     };
+  }
+
+  /**
+   * Invite a member into an existing workspace and create their Twenty account
+   * (same password they will use on john-crm.getvoxly.ru).
+   */
+  async provisionWorkspaceMember(params: {
+    ownerEmail: string;
+    ownerPassword: string;
+    workspaceId: string;
+    memberEmail: string;
+    memberPassword: string;
+    resolveInvitationToken: ResolveInvitationToken;
+  }): Promise<void> {
+    const memberEmail = normalizeEmail(params.memberEmail);
+    await this.authenticateWorkspace(
+      params.ownerEmail,
+      params.ownerPassword,
+      params.workspaceId,
+    );
+
+    const inviteResult = (await this.authClient.request(
+      SEND_INVITATIONS,
+      { emails: [memberEmail] },
+      this.getAuthHeaders(),
+    )) as {
+      sendInvitations?: {
+        success?: boolean;
+        errors?: string[];
+        result?: Array<{ id: string; email: string }>;
+      };
+    };
+
+    const output = inviteResult.sendInvitations;
+    const inviteErrors = output?.errors ?? [];
+    if (!output?.success && inviteErrors.length > 0) {
+      throw new Error(inviteErrors.join('; ') || 'Failed to send workspace invitation');
+    }
+
+    const invite = output?.result?.find(
+      (row) => normalizeEmail(row.email) === memberEmail,
+    );
+    if (!invite?.id) {
+      throw new Error('Workspace invitation token not returned');
+    }
+
+    const invitationTokenValue = await params.resolveInvitationToken({
+      workspaceId: params.workspaceId,
+      memberEmail,
+      appTokenId: invite.id,
+    });
+    if (!invitationTokenValue) {
+      throw new Error('Could not resolve workspace invitation token value');
+    }
+
+    // Public auth mutation — no Authorization header (must not use owner session).
+    const publicAuthClient = new GraphQLClient(
+      this.config.apiUrl.replace(/\/graphql\/?$/, '/metadata'),
+    );
+    const signUpResult = (await publicAuthClient.request(SIGN_UP_IN_WORKSPACE, {
+      email: memberEmail,
+      password: params.memberPassword,
+      workspaceId: params.workspaceId,
+      workspacePersonalInviteToken: invitationTokenValue,
+      locale: 'ru-RU',
+    })) as {
+      signUpInWorkspace?: {
+        loginToken?: { token?: string };
+        workspace?: {
+          workspaceUrls?: { customUrl?: string | null; subdomainUrl?: string | null };
+        };
+      };
+    };
+
+    // Complete /install-apps as the new member so invited users land in CRM.
+    const memberLoginToken = signUpResult.signUpInWorkspace?.loginToken?.token;
+    const memberWorkspaceUrl =
+      signUpResult.signUpInWorkspace?.workspace?.workspaceUrls?.customUrl ??
+      signUpResult.signUpInWorkspace?.workspace?.workspaceUrls?.subdomainUrl;
+    if (memberLoginToken && memberWorkspaceUrl) {
+      try {
+        const tokenResult = await this.authClient.request(GET_AUTH_TOKENS_FROM_LOGIN_TOKEN, {
+          loginToken: memberLoginToken,
+          origin: memberWorkspaceUrl,
+        });
+        const tokens = (tokenResult as any).getAuthTokensFromLoginToken.tokens;
+        this.authTokens = {
+          accessToken: tokens.accessOrWorkspaceAgnosticToken.token,
+          refreshToken: tokens.refreshToken?.token,
+        };
+        await this.skipInstallAppsOnboarding();
+      } catch {
+        // Optional: member can still dismiss /install-apps manually.
+      }
+    }
+  }
+
+  /**
+   * Remove a member from the Twenty workspace (owner session).
+   * Callers should reassign CRM records before this when needed.
+   */
+  async removeWorkspaceMember(params: {
+    ownerEmail: string;
+    ownerPassword: string;
+    workspaceId: string;
+    workspaceMemberId: string;
+  }): Promise<void> {
+    await this.authenticateWorkspace(
+      params.ownerEmail,
+      params.ownerPassword,
+      params.workspaceId,
+    );
+    await this.authClient.request(
+      DELETE_USER_FROM_WORKSPACE,
+      { workspaceMemberIdToDelete: params.workspaceMemberId },
+      this.getAuthHeaders(),
+    );
   }
 
   async createWorkspaceLoginUrl(

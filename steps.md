@@ -89,6 +89,8 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-30** — CRM portal defaults for all tenants: `/dashboard/crm`, invite+credentials, hard lock ADR-023, shell-ux «CRM · slug»+«Вы:», chat operator names, crm-chat **0.1.23**; provision installs latest chat + skip install-apps (owner+invite).
+- **2026-07-30** — INC-072: sidebar «john» = workspace (shell-ux «CRM · john» + «Вы: …»); Chat author from Twenty member (not «Менеджер»); crm-chat **0.1.23** on prod.
 - **2026-07-29** — Лендинг getvoxly.ru пересобран по AIDA: official mascot Voxly, industrial-tech art direction, Unbounded+Manrope, story-first вместо comparison-table-first, mobile sticky CTA; portal build green.
 - **2026-07-27** — ServiceApp UI Design System: созданы `serviceapp_design_system.json` и `serviceapp_design_system.md` (в корень и в `design-system/voxly/`), обновлен `MASTER.md`.
 - **2026-07-27** — Local: mailing UX **0.1.21** composer+preview+history+delete; accounts CRM/gift/read filters; stage multi-channel; BroadcastRecipient migrate pending deploy.
@@ -493,6 +495,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Nest JSON body limit 10MB → 500 `"request entity too large"` on large `fileBase64` (common with 2 photos).
 - Fix: host JPEG shrink in `patch-twenty-file-base64.cjs`; chat-panel top-level `event.files` + size preflight; front `c93f55cd…` on test2.
 
+### 2026-07-30 — CRM портал (prod)
+- `/dashboard/crm`: Trial, «осталось мест», amber UI, invite→Twenty + modal пароль, member sidebar только CRM.
+- API: `GET /tenant/crm`, invite Twenty sync, crm-login per-member password; Robokassa → `?paid=`.
+- Deployed `saas-api` + migrate `twentyPasswordEncrypted` + `saas-portal`. SMTP deferred.
+
 
 ---
 
@@ -506,7 +513,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/070**. **2026-07-27** INC-070: side-panel «Чат» restored via refresh-crm-chat (was uninstalled after ENOSPC). INC-069: Chat 500 from missing `deliveryStatus` — applied. Prior INC-068: WA/TG CRM sync **before** ASR. **Portal:** shadcn **indigo** theme (ADR-020) **live on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: GramJS outbound media; gift no sales LLM; **rotate root SSH password**; harden refresh uninstall-before-install.
+**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

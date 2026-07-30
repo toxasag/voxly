@@ -127,9 +127,18 @@
       "border_radius": "16px",
       "text_color": "#FFFFFF",
       "cta_buttons": [
-        {"label": "+ Новый документ", "variant": "white_glass"},
-        {"label": "+ Заказ", "variant": "primary_light"},
-        {"label": "+ Контрагент", "variant": "primary_light"}
+        {
+          "label": "+ Новый документ",
+          "variant": "white_glass"
+        },
+        {
+          "label": "+ Заказ",
+          "variant": "primary_light"
+        },
+        {
+          "label": "+ Контрагент",
+          "variant": "primary_light"
+        }
       ]
     },
     "kpi_card": {
@@ -157,12 +166,19 @@
       "backdrop": "rgba(15, 23, 42, 0.4)",
       "footer": {
         "sticky": true,
-        "buttons": ["Primary (Создать)", "Outline (Создать и еще один)", "Ghost (Отменить)"]
+        "buttons": [
+          "Primary (Создать)",
+          "Outline (Создать и еще один)",
+          "Ghost (Отменить)"
+        ]
       }
     },
     "chat_inbox": {
       "split_ratio": "320px 1fr",
-      "channel_badge_avito": {"bg": "#EBF5FF", "text": "#0066FF"},
+      "channel_badge_avito": {
+        "bg": "#EBF5FF",
+        "text": "#0066FF"
+      },
       "message_composer": {
         "send_button": "bg-slate-800 text-white rounded-lg px-4 py-2"
       }

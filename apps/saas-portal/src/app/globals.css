@@ -518,6 +518,46 @@
   border-color: color-mix(in srgb, var(--land-ink) 30%, transparent);
 }
 
+.land-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Auth forms on landing surfaces */
+.land-input {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--land-ink) 16%, transparent);
+  background: #fff;
+  padding: 0.7rem 0.95rem;
+  font-family: var(--font-voxly-body), "Manrope", sans-serif;
+  font-size: 1rem;
+  color: var(--land-ink);
+  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
+}
+
+.land-input::placeholder {
+  color: color-mix(in srgb, var(--land-ink) 38%, transparent);
+}
+
+.land-input:focus-visible {
+  outline: none;
+  border-color: var(--land-ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--land-amber) 55%, transparent);
+}
+
+.land-label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--land-ink) 70%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-in,
   .animate-fade,

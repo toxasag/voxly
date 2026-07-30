@@ -9,11 +9,9 @@ import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
-import { PageHeader } from '@/components/portal/page-header';
 import { HeroBanner } from '@/components/portal/hero-banner';
 
 interface DashboardOverview {
@@ -23,6 +21,9 @@ interface DashboardOverview {
     name: string;
     status: string;
     crmReady: boolean;
+    crmAccessLocked?: boolean;
+    crmAccessReason?: string;
+    crmAccessError?: string | null;
   };
   subscription: {
     productCode: string;
@@ -178,7 +179,6 @@ export default function DashboardPage() {
   const router = useRouter();
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [role, setRole] = useState('');
-  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [trialBusy, setTrialBusy] = useState('');
@@ -200,7 +200,6 @@ export default function DashboardPage() {
       if (!meRes.ok) throw new Error('Unauthorized');
       const me = await meRes.json();
       setRole(me.role || '');
-      setEmail(me.email || '');
 
       if (!me.tenant) {
         if (me.role === 'superadmin') {
@@ -274,51 +273,27 @@ export default function DashboardPage() {
   const openCrm = async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) return router.push('/login');
+    if (data?.tenant.crmAccessLocked) {
+      setCrmError(
+        data.tenant.crmAccessError ||
+          'Подписка на CRM закончилась. Оформите оплату в разделе CRM.',
+      );
+      return;
+    }
     setCrmOpening(true);
     setCrmError('');
     setCrmFallbackUrl('');
-    const popup = window.open('about:blank', 'voxly_crm');
-    if (popup) {
-      try {
-        popup.document.write(
-          '<!doctype html><title>Voxly CRM</title><body style="font:14px system-ui;padding:24px;color:#333">Открываем CRM…</body>',
-        );
-        popup.document.close();
-      } catch {
-        /* ignore */
-      }
+    const { openCrmWorkspace } = await import('@/lib/open-crm');
+    const result = await openCrmWorkspace();
+    if (result.error === 'not_authenticated') {
+      router.push('/login');
+    } else if (result.error) {
+      setCrmError(result.error);
+      if (result.url) setCrmFallbackUrl(result.url);
+    } else if (result.url) {
+      setCrmFallbackUrl(result.url);
     }
-    try {
-      const res = await fetch('/api/tenant/crm-login', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json();
-      if (!res.ok || !json.url) throw new Error(json.error || 'Не удалось открыть CRM');
-      const crmUrl =
-        json.chatToken && typeof json.chatToken === 'string'
-          ? `${json.url}${json.url.includes('#') ? '&' : '#'}voxlyChatToken=${encodeURIComponent(json.chatToken)}`
-          : json.url;
-      setCrmFallbackUrl(crmUrl);
-      const navigated = window.open(crmUrl, 'voxly_crm');
-      if (!navigated && !(popup && !popup.closed)) {
-        setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
-      } else if (popup && !popup.closed && !navigated) {
-        try {
-          popup.location.replace(crmUrl);
-        } catch {
-          setCrmError('Нажмите ссылку ниже, чтобы открыть CRM.');
-        }
-      }
-    } catch (err) {
-      try {
-        popup?.close();
-      } catch {
-        /* ignore */
-      }
-      setCrmError(err instanceof Error ? err.message : 'Не удалось открыть CRM');
-    } finally {
-      setCrmOpening(false);
-    }
+    setCrmOpening(false);
   };
 
   if (loading) {
@@ -369,41 +344,40 @@ export default function DashboardPage() {
           month: 'long',
           day: 'numeric',
         }).replace(/^\w/, (c) => c.toUpperCase())}
-        actions={[
-          { label: '+ Новый документ', href: '#', variant: 'white' },
-          { label: '+ Заказ', href: '#', variant: 'primary' },
-          { label: '+ Контрагент', href: '#', variant: 'primary' },
-        ]}
-      />
-
-      <PageHeader
-        title={data.tenant.name || data.tenant.slug}
-        description={
-          <>
-            {email || 'Воркспейс'} · сводка по каналам, сообщениям, тарифам и расходам
-          </>
-        }
         actions={
-          <div className="flex flex-wrap gap-2">
-            {role === 'superadmin' && (
-              <Button asChild variant="outline" size="sm">
-                <Link href="/admin">Админка</Link>
-              </Button>
-            )}
-            <Button
-              variant="solid"
-              size="sm"
-              onClick={() => void openCrm()}
-              disabled={!data.tenant.crmReady || crmOpening}
-            >
-              {crmOpening ? 'Открываем…' : data.tenant.crmReady ? 'Открыть CRM' : 'CRM создаётся…'}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (data.tenant.crmAccessLocked) {
+                router.push('/dashboard/crm');
+                return;
+              }
+              void openCrm();
+            }}
+            disabled={
+              (!data.tenant.crmReady && !data.tenant.crmAccessLocked) || crmOpening
+            }
+            className="bg-white text-blue-700 shadow-sm hover:bg-blue-50 hover:text-blue-800 disabled:bg-white/70 disabled:text-blue-700/60"
+          >
+            {crmOpening
+              ? 'Открываем…'
+              : data.tenant.crmAccessLocked
+                ? 'CRM закрыта — оплатить'
+                : data.tenant.crmReady
+                  ? 'Открыть CRM'
+                  : 'CRM создаётся…'}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
         }
       />
 
-      <Separator className="mb-8" />
+      {role === 'superadmin' && (
+        <div className="mb-6 flex justify-end">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/admin">Админка</Link>
+          </Button>
+        </div>
+      )}
 
       {crmError && (
         <Alert className="mb-4" variant="error">
@@ -454,7 +428,7 @@ export default function DashboardPage() {
           <CardContent className="space-y-2">
             <ProductRow
               title="CRM Base"
-              href="/dashboard"
+              href="/dashboard/crm"
               active={p.crm.isActive}
               until={p.crm.activeUntil}
               detail={

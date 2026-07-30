@@ -2,7 +2,11 @@ import { defineLogicFunction, HTTPMethod } from 'twenty-sdk/define';
 import { type RoutePayload } from 'twenty-sdk/logic-function';
 
 import { GET_CRM_CHAT_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
-import { proxyToVoxlyApi, recordIdFromEvent } from 'src/logic-functions/voxly-proxy';
+import {
+  proxyToVoxlyApi,
+  recordIdFromEvent,
+  userWorkspaceIdFromEvent,
+} from 'src/logic-functions/voxly-proxy';
 import { Response } from 'twenty-sdk/logic-function';
 
 const handler = async (event: RoutePayload) => {
@@ -26,6 +30,7 @@ const handler = async (event: RoutePayload) => {
   return proxyToVoxlyApi({
     method: 'GET',
     path: `/api/crm/chat/${encodeURIComponent(recordId)}${suffix}`,
+    userWorkspaceId: userWorkspaceIdFromEvent(event),
   });
 };
 

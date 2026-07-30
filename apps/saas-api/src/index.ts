@@ -22,6 +22,7 @@ import { audienceRoutes } from './routes/audience.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
+import { assertCrmAccessAllowed } from './services/crm-access.js';
 import './jobs/queues.js'; // Start BullMQ workers
 
 const PORT = parseInt(process.env.API_PORT || '3002', 10);
@@ -112,10 +113,46 @@ async function buildServer() {
     },
   );
 
+  // Portal DELETE/POST without body may still send Content-Type: application/json
+  // (legacy authHeaders). Treat empty body as {}.
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_req, body, done) => {
+      try {
+        const raw = typeof body === 'string' ? body : String(body ?? '');
+        if (!raw.trim()) {
+          done(null, {});
+          return;
+        }
+        done(null, JSON.parse(raw));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
+  );
+
   // --- Auth decorator ---
   // Portal JWT, short-lived crm-chat JWT, or Twenty app service token
   // (Authorization: Bearer VOXLY_SERVICE_TOKEN + X-Twenty-Workspace-Id).
   const serviceToken = process.env.VOXLY_SERVICE_TOKEN || '';
+
+  async function rejectIfCrmLocked(tenantId: string, reply: any): Promise<boolean> {
+    const denied = await assertCrmAccessAllowed(prisma, tenantId);
+    if (!denied) return false;
+    reply.code(denied.code || 403).send({
+      error: denied.error || 'CRM access locked',
+      reason: denied.reason,
+      crmAccessLocked: true,
+    });
+    return true;
+  }
+
+  function isCrmChatRequest(request: { url?: string; routerPath?: string }): boolean {
+    const path = String(request.routerPath || request.url || '');
+    return path.includes('/crm/chat');
+  }
+
   fastify.decorate('authenticate', async (request: any, reply: any) => {
     const authHeader = String(request.headers.authorization || '');
     const bearer = authHeader.startsWith('Bearer ')
@@ -142,9 +179,7 @@ async function buildServer() {
           detail: 'Unknown Twenty workspace',
         });
       }
-      if (tenant.status === 'suspended') {
-        return reply.code(403).send({ error: 'Tenant suspended' });
-      }
+      if (await rejectIfCrmLocked(tenant.id, reply)) return;
       request.user = {
         sub: 'twenty-app',
         role: 'member',
@@ -157,6 +192,9 @@ async function buildServer() {
 
     try {
       await request.jwtVerify();
+      if (isCrmChatRequest(request) && request.user?.tenantId) {
+        if (await rejectIfCrmLocked(request.user.tenantId, reply)) return;
+      }
     } catch (err) {
       reply.code(401).send({ error: 'Unauthorized' });
     }

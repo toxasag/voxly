@@ -21,6 +21,7 @@ sequenceDiagram
 - Auth: `apps/saas-api/src/routes/auth.ts`
 - Provision: `apps/saas-api/src/services/provisioning.ts`, `jobs/queues.ts`
 - Portal: `apps/saas-portal/src/app/register/page.tsx`, dashboard CRM button
+- **Hard lock (ADR-023):** after trial end or paid endsAt+grace / `tenant.suspended` → SSO/`crm-login` 402|403, invite blocked, CRM chat+media gated; Twenty workspace `activationStatus=INACTIVE` (reversible on pay). Shared: `evaluateCrmAccess`. Portal: `/dashboard/crm` paywall.
 
 ## 2. Gift-бот: trial → Managed Bot → кампания
 
@@ -58,7 +59,7 @@ flowchart LR
 
 **CRM card (SDK) — UX contract (не регрессировать):**
 1. Вкладка «Чат» на Person и Opportunity.
-2. История из Prisma (`ChatMessage`), роли Клиент/Менеджер/Бот.
+2. История из Prisma (`ChatMessage`), роли Клиент / имя оператора (Twenty workspaceMember) / Бот.
 3. Composer **pinned at bottom** (host `twenty-shell-ux.js` locks `.page-layout-scroll-wrapper` overflow + widget height; panel root absolute/flex fill; only message list `overflowY:auto` — INC-019). Textarea + right column **Прикрепить** (above) / **Отправить**; multi-file chips; Enter = send. Outbound: saas-api one file/reply → sequential `/reply` (caption on first). Clear draft/files only after success; remount textarea via `composerKey` (INC-016); `sending` cleared in `finally` then `void load()` (INC-015).
 4. Формат Telegram client-MD: **always-visible toolbar** above textarea (Жирный/Курсив/Зачёркнутый/Спойлер/Код) wraps selection; Remote DOM: **no ПКМ** (contextmenu preventDefault unreliable), без `.focus()` / `setSelectionRange`. Display also renders `_italic_`.
 5. Inbound media: **photo/sticker `<img>` preview** via `/s/crm-chat/.../file/...` → logic compresses JPEG ≤~48KB raw then `{ dataBase64, contentType: image/jpeg }` (INC-014 size cliff); **video/audio** via HMAC signed URL + MIME sniff/Range; other attachments = download link or 📎 fallback; hide bare placeholders when attachments exist. **AI/gift understanding** (worker-global): ChatMessage content may already contain `[голос|кружочек|видео|фото|документ …]: …` — INC-063. Outbound: host patch encodes file → `dataBase64` on change (INC-017) **with JPEG shrink** so JSON stays under Nest 10MB (INC-020); front stores `PendingAttachment` (top-level `event.files`) and posts sequential JSON `fileBase64` (Remote DOM File stubs are **not** Blobs — no FileReader/arrayBuffer in worker); logic rebuilds multipart → saas-api.
@@ -84,8 +85,22 @@ Billing: Robokassa checkout mailing_bot|mailing_accounts|mailing_stories; trial 
 
 `POST /api/billing/checkout` → Robokassa `Index.aspx` (`IsTest=1` when `ROBOKASSA_IS_TEST=1`) → ResultURL `GET|POST /api/billing/result` → reply `OK{InvId}` → activate Subscription/Addon. Success → `/api/billing/success` → portal dashboard; Fail → `/api/billing/fail`.
 
-Signatures (hash = `ROBOKASSA_HASH_ALG`, must match ЛК): pay `MerchantLogin:OutSum:InvId[:Receipt]:Password1:Shp_*`; Result `OutSum:InvId:Password2:Shp_*`. Test mode uses **test** Password#1/#2 only.
+Signatures (hash = `ROBOKASSA_HASH_ALG`, must match ЛК): pay `MerchantLogin:OutSum:InvId[:Receipt]:Password1:Shp_*`; Result `OutSum:InvId:Password2:Shp_*`. Test mode uses **test** Password#1/#2 only. Receipt JSON in signature = **raw** (not URL-encoded) — INC error 29.
 Пакет: `packages/billing`.
+
+### Robokassa кабинет (магазин `crmgetvoxly`) — сохранить для модулей
+
+| Параметр | Значение |
+|---|---|
+| MerchantLogin | `crmgetvoxly` |
+| Алгоритм (боевой + тестовый) | **SHA256** → prod `ROBOKASSA_HASH_ALG=sha256` |
+| Result URL | `https://api.getvoxly.ru/api/billing/result` **POST** |
+| Success URL | `https://api.getvoxly.ru/api/billing/success` **GET** |
+| Fail URL | `https://api.getvoxly.ru/api/billing/fail` **GET** |
+| Prod env | `ROBOKASSA_LOGIN`, `PASSWORD1/2` (test или live), `ROBOKASSA_IS_TEST=0\|1` |
+| SKUs reuse | `crm_base`+`extraSeats`, `extra_seat`, `mailing_*`, `ai_*`, `ai_topup` — один Result webhook |
+
+Секреты только в `/opt/voxly/.env` (не в git). Перед боем: live Password#1/#2 + `ROBOKASSA_IS_TEST=0`.
 
 ## 8. Аналитика S2S
 

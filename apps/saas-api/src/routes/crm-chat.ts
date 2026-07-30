@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
 import { clientMdToMarkdownV2, AI_HANDOFF_PAUSE_MS } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
+import { resolveTwentyOperatorLabel } from '../services/twenty-member-display-names.js';
+import { assertCrmAccessAllowed } from '../services/crm-access.js';
 
 /** Browser-reachable API origin for CRM media <video>/<audio>/<img> src (bypasses Twenty /s JSON size cap). */
 function publicApiBase(): string {
@@ -450,6 +452,64 @@ function formatOperatorName(user: {
   const email = String(user.email || '').trim();
   if (email.includes('@')) return email.split('@')[0] || email;
   return email || 'Менеджер';
+}
+
+/**
+ * CRM Chat replies via Twenty `/s/*` use VOXLY_SERVICE_TOKEN (sub=twenty-app),
+ * so Voxly User names are missing. Resolve from Twenty workspaceMember instead.
+ */
+async function resolveOperatorLabel(opts: {
+  prisma: FastifyInstance['prisma'];
+  tenantId: string;
+  user: {
+    sub?: string;
+    email?: string;
+    purpose?: string;
+  };
+  headers: Record<string, unknown>;
+}): Promise<string> {
+  const headerUw = String(
+    opts.headers['x-twenty-user-workspace-id'] || '',
+  ).trim();
+  const tenant = await opts.prisma.tenant.findUnique({
+    where: { id: opts.tenantId },
+    select: { twentyWorkspaceId: true },
+  });
+
+  let dbUser: {
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null = null;
+  if (opts.user.sub && opts.user.sub !== 'twenty-app') {
+    dbUser = await opts.prisma.user.findUnique({
+      where: { id: opts.user.sub },
+      select: { firstName: true, lastName: true, email: true },
+    });
+  }
+
+  const fromVoxly = dbUser
+    ? formatOperatorName(dbUser)
+    : opts.user.email
+      ? formatOperatorName({ email: opts.user.email })
+      : null;
+  // Prefer real names over email-local-part / generic fallback.
+  if (fromVoxly && fromVoxly !== 'Менеджер') {
+    const looksLikeEmailLocal =
+      !!dbUser &&
+      !dbUser.firstName &&
+      !dbUser.lastName &&
+      !!dbUser.email;
+    if (!looksLikeEmailLocal) return fromVoxly;
+  }
+
+  const fromTwenty = await resolveTwentyOperatorLabel({
+    workspaceId: tenant?.twentyWorkspaceId,
+    userWorkspaceId: headerUw || null,
+    email: dbUser?.email || opts.user.email || null,
+  });
+  if (fromTwenty) return fromTwenty;
+  return fromVoxly || 'Менеджер';
 }
 
 function formatBotAgentLabel(opts: {
@@ -1361,16 +1421,17 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         agentName = agent?.name || null;
       }
 
-      const jwtUser = (request as any).user as { sub?: string; email?: string };
-      let operatorName = 'Менеджер';
-      if (jwtUser?.sub) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: jwtUser.sub },
-          select: { firstName: true, lastName: true, email: true },
-        });
-        if (dbUser) operatorName = formatOperatorName(dbUser);
-        else if (jwtUser.email) operatorName = formatOperatorName({ email: jwtUser.email });
-      }
+      const jwtUser = (request as any).user as {
+        sub?: string;
+        email?: string;
+        purpose?: string;
+      };
+      const operatorName = await resolveOperatorLabel({
+        prisma,
+        tenantId,
+        user: jwtUser,
+        headers: request.headers as Record<string, unknown>,
+      });
 
       const botIds = [...new Set(allTargets.map((t) => t.botInstanceId))];
       const bots = await prisma.botInstance.findMany({
@@ -1833,6 +1894,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
     if (!payload) {
       return reply.code(401).send({ error: 'Invalid or expired media token' });
     }
+    const denied = await assertCrmAccessAllowed(fastify.prisma, payload.tenantId);
+    if (denied) {
+      return reply.code(denied.code || 403).send({
+        error: denied.error,
+        reason: denied.reason,
+        crmAccessLocked: true,
+      });
+    }
     const result = await resolveCrmMediaBuffer({
       tenantId: payload.tenantId,
       recordId: payload.recordId,
@@ -2184,15 +2253,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const operatorUser = user?.sub
-        ? await prisma.user.findUnique({
-            where: { id: user.sub },
-            select: { firstName: true, lastName: true, email: true },
-          })
-        : null;
-      const operatorLabel = formatOperatorName(
-        operatorUser || { email: user?.email || null },
-      );
+      const operatorLabel = await resolveOperatorLabel({
+        prisma,
+        tenantId,
+        user,
+        headers: request.headers as Record<string, unknown>,
+      });
       const storedAttachments = [
         ...attachments,
         { type: 'sender_meta', label: operatorLabel },

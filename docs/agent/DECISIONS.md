@@ -1,5 +1,46 @@
 # Решения (короткие ADR)
 
+## ADR-023 — Hard CRM lock when subscription ends
+
+**Статус:** ✅ 2026-07-30
+
+| Вопрос | Выбор |
+|---|---|
+| Source of truth | `evaluateCrmAccess()` in `@voxly/shared` (same rules as scheduler) |
+| Trial end | lock immediately (`periodMonths===0`, endsAt &lt; now) |
+| Paid end | `GRACE_PERIOD_DAYS` (7) still open; then lock |
+| Tenant `suspended`/`cancelled` | lock (overrides in-grace) |
+| Portal SSO | `GET /api/tenant/crm-login` → **402/403** + `crmAccessLocked` |
+| Portal UI | `/dashboard/crm` paywall; «Открыть CRM» disabled; invite blocked |
+| CRM chat | service token + portal/crm JWT + signed `/media/*` gated |
+| Direct Twenty login | reversible `core.workspace.activationStatus=INACTIVE` on suspend; `ACTIVE` on Robokassa `crm_base` renew |
+| Restore | ResultURL sets tenant `active` + new sub → unlock Twenty |
+
+**Отклонено:** удаление workspace/данных при suspend; блокировка всего ЛК (оплата должна оставаться доступной).
+
+**Остаточный gap:** уже выданный Twenty session JWT может жить до истечения/refresh; UI workspace INACTIVE + chat API 403 закрывают practically. Не тестировать lock на prod `john` без mock/local.
+
+---
+
+## ADR-022 — CRM member delete = remove from Twenty + reassign owner
+
+**Статус:** ✅ 2026-07-30
+
+| Вопрос | Выбор |
+|---|---|
+| Portal delete `/dashboard/crm` | `DELETE /api/tenant/members/:id` |
+| Voxly | delete `TenantMember` (frees seat); User row kept if other tenants |
+| Twenty | `deleteUserFromWorkspace(workspaceMemberId)` as owner |
+| Deals | `opportunity.ownerId` → owner workspaceMember (if set) |
+| Tasks | `task.assigneeId` → owner |
+| People / companies | **остаются** в workspace (нет owner-поля; Twenty docs: data stays) |
+| createdBy | не переписываем (аудит) |
+| Invite onboarding | after `signUpInWorkspace` → member session `skipInstallAppsOnboarding` |
+
+**Отклонено:** только удалять Voxly seat (CRM доступ оставался); hard-delete Person rows.
+
+---
+
 ## ADR-021 — Inbound media understanding = platform default (all channels)
 
 **Статус:** ✅ 2026-07-26
@@ -347,8 +388,11 @@ Shared helper: `@voxly/ai-core` `resolveProviderCostRub`. No hardcoded model pri
 - Won-learn default stages: `USPESHNAYA_SDELKA` (+ `CUSTOMER` legacy)
 
 ### Chat defaults on new portals
-- **Yes (product UX):** `voxly-crm-chat` auto-install on provision (tab «Чат», composer, AI bar, presence) — latest tarball.
+- **Yes (product UX):** `voxly-crm-chat` auto-install on provision (tab «Чат», composer, AI bar, presence) — latest tarball (**0.1.23+**: operator name from Twenty member, not «Менеджер»).
 - **Yes (runtime):** WA/TG debounce, typing, CRM sync — code defaults in workers (`CHAT.md`), not per-tenant CRM settings.
+- **Yes (shell, all workspaces):** baked `voxly-shell-ux.js` — hide create-workspace; «CRM · {slug}» + «Вы: {member}»; toasts/badges.
+- **Yes (portal):** every tenant gets `/dashboard/crm` (trial/seats/invite/paywall ADR-023); members land on CRM portal only.
+- **Yes (invite):** Twenty member + `skipInstallAppsOnboarding`; credentials stored encrypted for reveal/edit.
 - **No (tenant content):** john’s AI agents / prompts / channel bindings are **not** copied — each tenant configures agents (ADR-014 default OFF).
 ---
 

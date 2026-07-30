@@ -1,12 +1,20 @@
 // Auth routes: register, login, invite members
 
-import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { encrypt, generateSecret } from '@voxly/crypto';
 import { provisionWorkspace } from '../services/provisioning.js';
+import { provisionTwentyMemberForTenant } from '../services/twenty-member-provision.js';
+import { assertCrmAccessAllowed } from '../services/crm-access.js';
+
+function buildCrmPublicUrl(crmSubdomain: string | null | undefined, slug: string): string {
+  const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
+  const host = crmSubdomain ? `${crmSubdomain}.${voxlyDomain}` : `${slug}-crm.${voxlyDomain}`;
+  return `https://${host}`;
+}
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -299,8 +307,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
 
-    const { email, role } = parsed.data;
-    const { tenantId, role: userRole, tenantRole } = (request as any).user;
+    const email = parsed.data.email.trim().toLowerCase();
+    const { role } = parsed.data;
+    const { tenantId, sub: ownerUserId, email: ownerEmail, role: userRole, tenantRole } =
+      (request as any).user;
     const prisma = fastify.prisma;
 
     // Only owner or superadmin can invite
@@ -325,6 +335,16 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(404).send({ error: 'Tenant not found' });
     }
 
+    const denied = await assertCrmAccessAllowed(prisma, tenantId);
+    if (denied) {
+      return reply.code(denied.code || 403).send({
+        error: denied.error,
+        reason: denied.reason,
+        crmAccessLocked: true,
+        message: denied.error,
+      });
+    }
+
     const activeSub = tenant.subscriptions[0];
     const seatLimit = activeSub ? activeSub.seatsIncluded + activeSub.extraSeats : PRICING.SEATS_INCLUDED;
     if (tenant.users.length >= seatLimit) {
@@ -336,6 +356,43 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const tempPassword = nanoid(16);
+    const crmUrl = buildCrmPublicUrl(tenant.crmSubdomain, tenant.slug);
+    const resolvedOwnerEmail =
+      typeof ownerEmail === 'string' && ownerEmail
+        ? ownerEmail
+        : (
+            await prisma.user.findUnique({
+              where: { id: ownerUserId },
+              select: { email: true },
+            })
+          )?.email;
+
+    if (!resolvedOwnerEmail) {
+      return reply.code(500).send({ error: 'Owner email not found' });
+    }
+
+    const provisionAndStore = async (memberId: string) => {
+      const provisioned = await provisionTwentyMemberForTenant({
+        tenant,
+        ownerEmail: resolvedOwnerEmail,
+        memberEmail: email,
+        memberPassword: tempPassword,
+        log: fastify.log,
+      });
+      if (provisioned.ok && provisioned.twentyPasswordEncrypted) {
+        await prisma.tenantMember.update({
+          where: { id: memberId },
+          data: { twentyPasswordEncrypted: provisioned.twentyPasswordEncrypted },
+        });
+        return { twentyProvisioned: true as const };
+      }
+      return {
+        twentyProvisioned: false as const,
+        warning: provisioned.error || 'CRM user was not created in Twenty',
+      };
+    };
+
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
@@ -345,14 +402,29 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       if (existingMember) {
         return reply.code(409).send({ error: 'User already a member' });
       }
-      await prisma.tenantMember.create({
+
+      // Reset password so invite credentials work for both Voxly + Twenty
+      const passwordHash = await bcrypt.hash(tempPassword, 12);
+      await prisma.user.update({
+        where: { id: existingUser.id },
+        data: { passwordHash },
+      });
+      const member = await prisma.tenantMember.create({
         data: { tenantId, userId: existingUser.id, role },
       });
-      return reply.code(201).send({ message: 'Existing user added to workspace' });
+      const provision = await provisionAndStore(member.id);
+
+      return reply.code(201).send({
+        message: 'Existing user added to workspace',
+        userId: existingUser.id,
+        memberId: member.id,
+        email,
+        tempPassword,
+        crmUrl,
+        ...provision,
+      });
     }
 
-    // Create invite-only user with random password (will be set on first login)
-    const tempPassword = nanoid(32);
     const passwordHash = await bcrypt.hash(tempPassword, 12);
     const newUser = await prisma.user.create({
       data: {
@@ -360,12 +432,21 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         passwordHash,
         tenantMembers: { create: { tenantId, role } },
       },
+      include: { tenantMembers: { where: { tenantId } } },
     });
+    const member = newUser.tenantMembers[0];
+    const provision = member
+      ? await provisionAndStore(member.id)
+      : { twentyProvisioned: false as const, warning: 'Member row missing after create' };
 
     return reply.code(201).send({
       message: 'Member invited',
       userId: newUser.id,
-      tempPassword, // In production: send via email instead
+      memberId: member?.id,
+      email,
+      tempPassword,
+      crmUrl,
+      ...provision,
     });
   });
 };

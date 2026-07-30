@@ -3,6 +3,7 @@ import {
   PRODUCT_CODES,
   PRICING,
   TRIAL_PERIOD_DAYS,
+  GRACE_PERIOD_DAYS,
   PERIOD_DISCOUNTS,
   ADDON_TYPES,
   ANALYTICS_PLATFORMS,
@@ -17,6 +18,7 @@ import {
   clientMdToMarkdownV2,
   parseTelegramClientMd,
   buildVoxlyBotUsername,
+  evaluateCrmAccess,
 } from '../src/index';
 
 describe('@voxly/shared exports', () => {
@@ -43,6 +45,73 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS).toBe(10);
     expect(PRICING.REFERRAL_PERCENT_DEFAULT).toBe(20);
     expect(TRIAL_PERIOD_DAYS).toBe(7);
+  });
+
+  it('locks CRM access after trial/paid grace (evaluateCrmAccess)', () => {
+    const now = new Date('2026-07-30T12:00:00.000Z');
+
+    const activePaid = evaluateCrmAccess({
+      tenantStatus: 'active',
+      crmSubscription: {
+        status: 'active',
+        periodMonths: 1,
+        endsAt: '2026-08-06T12:00:00.000Z',
+      },
+      now,
+    });
+    expect(activePaid.allowed).toBe(true);
+    expect(activePaid.locked).toBe(false);
+
+    const trialEnded = evaluateCrmAccess({
+      tenantStatus: 'trial',
+      crmSubscription: {
+        status: 'active',
+        periodMonths: 0,
+        endsAt: '2026-07-29T12:00:00.000Z',
+      },
+      now,
+    });
+    expect(trialEnded.locked).toBe(true);
+    expect(trialEnded.reason).toBe('trial_ended');
+    expect(trialEnded.code).toBe(402);
+
+    const inGrace = evaluateCrmAccess({
+      tenantStatus: 'active',
+      crmSubscription: {
+        status: 'active',
+        periodMonths: 1,
+        endsAt: '2026-07-28T12:00:00.000Z',
+      },
+      now,
+      gracePeriodDays: GRACE_PERIOD_DAYS,
+    });
+    expect(inGrace.allowed).toBe(true);
+    expect(inGrace.inGrace).toBe(true);
+
+    const graceEnded = evaluateCrmAccess({
+      tenantStatus: 'active',
+      crmSubscription: {
+        status: 'active',
+        periodMonths: 1,
+        endsAt: '2026-07-20T12:00:00.000Z',
+      },
+      now,
+    });
+    expect(graceEnded.locked).toBe(true);
+    expect(graceEnded.reason).toBe('subscription_grace_ended');
+
+    const suspended = evaluateCrmAccess({
+      tenantStatus: 'suspended',
+      crmSubscription: {
+        status: 'active',
+        periodMonths: 1,
+        endsAt: '2026-08-06T12:00:00.000Z',
+      },
+      now,
+    });
+    expect(suspended.locked).toBe(true);
+    expect(suspended.reason).toBe('tenant_suspended');
+    expect(suspended.code).toBe(403);
   });
 
   it('computes Business capacity from addon config', () => {

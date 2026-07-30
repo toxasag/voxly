@@ -1,8 +1,27 @@
 // Tenant routes: get tenant info, list members, update settings
 
 import type { FastifyPluginAsync } from 'fastify';
-import { decrypt } from '@voxly/crypto';
-import { getAiTgExtraSlots, PRICING } from '@voxly/shared';
+import bcrypt from 'bcryptjs';
+import { nanoid } from 'nanoid';
+import { evaluateCrmAccess, getAiTgExtraSlots, PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { decrypt, encrypt } from '@voxly/crypto';
+import { resolveTwentyPasswordForMember, provisionTwentyMemberForTenant } from '../services/twenty-member-provision.js';
+import { assertCrmAccessAllowed, loadCrmAccessForTenant } from '../services/crm-access.js';
+import { z } from 'zod';
+
+function crmIsTrial(tenantStatus: string, crmSub: { periodMonths: number } | null): boolean {
+  // Paid CRM sub (periodMonths > 0) is never trial — ignore stale tenant.status.
+  if (crmSub && crmSub.periodMonths > 0) return false;
+  if (!crmSub) return tenantStatus === 'trial';
+  return crmSub.periodMonths === 0;
+}
+
+
+function buildCrmPublicUrl(crmSubdomain: string | null | undefined, slug: string): string {
+  const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
+  const host = crmSubdomain ? `${crmSubdomain}.${voxlyDomain}` : `${slug}-crm.${voxlyDomain}`;
+  return `https://${host}`;
+}
 
 /**
  * Twenty multiworkspace SSO URL → browser host.
@@ -43,13 +62,21 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
   // --- Create a short-lived SSO link to this tenant's Twenty workspace ---
   fastify.get('/crm-login', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId, sub: userId } = (request as any).user;
-    const [tenant, user] = await Promise.all([
+    const [tenant, user, denied] = await Promise.all([
       fastify.prisma.tenant.findUnique({ where: { id: tenantId } }),
       fastify.prisma.user.findUnique({ where: { id: userId } }),
+      assertCrmAccessAllowed(fastify.prisma, tenantId),
     ]);
 
     if (!tenant || !user) {
       return reply.code(404).send({ error: 'Tenant or user not found' });
+    }
+    if (denied) {
+      return reply.code(denied.code || 403).send({
+        error: denied.error,
+        reason: denied.reason,
+        crmAccessLocked: true,
+      });
     }
     if (!tenant.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
       return reply.code(409).send({
@@ -59,17 +86,21 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      const password = decrypt(tenant.twentyOwnerPasswordEncrypted);
+      const member = await fastify.prisma.tenantMember.findFirst({
+        where: { tenantId, userId },
+      });
+      const password = resolveTwentyPasswordForMember(tenant, member);
+      if (!password) {
+        return reply.code(409).send({
+          error: 'CRM access is not provisioned for this user yet',
+        });
+      }
       const rawUrl = await fastify.twenty.createWorkspaceLoginUrl(
         user.email,
         password,
         tenant.twentyWorkspaceId,
       );
       const url = toBrowserCrmUrl(rawUrl, tenant.crmSubdomain);
-      // Token for deal-card chat inject inside Twenty (same claims as portal JWT)
-      const member = await fastify.prisma.tenantMember.findFirst({
-        where: { tenantId, userId },
-      });
       const chatToken = fastify.jwt.sign({
         sub: userId,
         email: user.email,
@@ -230,7 +261,15 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
       };
     };
 
-    const crmSub = subscriptions.find((s) => s.productCode === 'crm_base') || subscriptions[0] || null;
+    const crmSub =
+      subscriptions.find((s) => s.productCode === PRODUCT_CODES.CRM_BASE) ||
+      subscriptions[0] ||
+      null;
+    const crmAccess = evaluateCrmAccess({
+      tenantStatus: tenant.status,
+      crmSubscription: crmSub,
+      now,
+    });
     const byType = (t: string) => bots.filter((b) => b.botType === t && b.status !== 'deleted');
 
     const giftPhases = Object.fromEntries(
@@ -255,12 +294,16 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         name: tenant.slug,
         status: tenant.status,
         crmReady: Boolean(tenant.twentyWorkspaceId),
+        crmAccessLocked: crmAccess.locked,
+        crmAccessReason: crmAccess.reason,
+        crmAccessError: crmAccess.error,
       },
       subscription: crmSub
         ? {
             productCode: crmSub.productCode,
             status: crmSub.status,
-            isTrial: false,
+            isTrial: crmIsTrial(tenant.status, crmSub),
+            periodMonths: crmSub.periodMonths,
             startsAt: crmSub.startsAt,
             endsAt: crmSub.endsAt,
             seatsIncluded: crmSub.seatsIncluded,
@@ -319,6 +362,115 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         displayName: b.displayName,
         status: b.status,
       })),
+    });
+  });
+
+  // --- CRM portal settings (single payload for /dashboard/crm) ---
+  fastify.get('/crm', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId, tenantRole } = (request as any).user;
+    const prisma = fastify.prisma;
+    const now = new Date();
+
+    const [tenant, members, crmSubRow, access] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          id: true,
+          slug: true,
+          status: true,
+          crmSubdomain: true,
+          twentyWorkspaceId: true,
+        },
+      }),
+      prisma.tenantMember.findMany({
+        where: { tenantId },
+        include: { user: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.subscription.findFirst({
+        where: { tenantId, status: 'active', productCode: PRODUCT_CODES.CRM_BASE },
+        orderBy: { endsAt: 'desc' },
+      }),
+      loadCrmAccessForTenant(prisma, tenantId, now),
+    ]);
+
+    if (!tenant) return reply.code(404).send({ error: 'Tenant not found' });
+
+    const crmSub = crmSubRow;
+    const seatsIncluded = crmSub?.seatsIncluded ?? PRICING.SEATS_INCLUDED;
+    const extraSeats = crmSub?.extraSeats ?? 0;
+    const seatLimit = seatsIncluded + extraSeats;
+    const used = members.length;
+    const crmUrl = buildCrmPublicUrl(tenant.crmSubdomain, tenant.slug);
+    const crmAccess = access.evaluation;
+    const isActive = Boolean(crmSub && crmSub.endsAt >= now);
+    const isTrial = crmIsTrial(tenant.status, crmSub);
+
+    const { fetchTwentyMemberDisplayNames } = await import(
+      '../services/twenty-member-display-names.js'
+    );
+    const crmNames = await fetchTwentyMemberDisplayNames(tenant.twentyWorkspaceId);
+
+    return reply.send({
+      tenantRole: tenantRole || 'member',
+      tenant: {
+        slug: tenant.slug,
+        status: tenant.status,
+        crmReady: Boolean(tenant.twentyWorkspaceId),
+        crmSubdomain: tenant.crmSubdomain,
+        crmUrl,
+        crmHost: new URL(crmUrl).host,
+      },
+      crmAccessLocked: crmAccess.locked,
+      crmAccessReason: crmAccess.reason,
+      crmAccessError: crmAccess.error,
+      crmInGrace: crmAccess.inGrace,
+      crmGraceEndsAt: crmAccess.graceEndsAt,
+      subscription: crmSub
+        ? {
+            isTrial,
+            isActive,
+            periodMonths: crmSub.periodMonths,
+            endsAt: crmSub.endsAt.toISOString(),
+            seatsIncluded,
+            extraSeats,
+          }
+        : {
+            isTrial: tenant.status === 'trial',
+            isActive: false,
+            periodMonths: 0,
+            endsAt: null,
+            seatsIncluded: PRICING.SEATS_INCLUDED,
+            extraSeats: 0,
+          },
+      seats: {
+        limit: seatLimit,
+        used,
+        remaining: Math.max(0, seatLimit - used),
+      },
+      pricing: {
+        baseMonthly: PRICING.CRM_BASE_MONTHLY,
+        extraSeatMonthly: PRICING.EXTRA_SEAT_MONTHLY,
+        seatsIncluded: PRICING.SEATS_INCLUDED,
+      },
+      members: members.map((m) => {
+        const email = m.user.email.trim().toLowerCase();
+        const crm = crmNames.get(email);
+        const firstName = m.user.firstName?.trim() || crm?.firstName || null;
+        const lastName = m.user.lastName?.trim() || crm?.lastName || null;
+        return {
+          id: m.id,
+          email: m.user.email,
+          firstName,
+          lastName,
+          role: m.role,
+          hasCrmAccess: Boolean(
+            m.role === 'owner'
+              ? tenant.twentyWorkspaceId
+              : (m as { twentyPasswordEncrypted?: string | null }).twentyPasswordEncrypted,
+          ),
+        };
+      }),
     });
   });
 
@@ -395,9 +547,10 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // --- Remove member ---
+  // --- Remove member (Voxly seat + Twenty CRM; deals/tasks → owner) ---
   fastify.delete('/members/:memberId', { preHandler: [fastify.authenticate] }, async (request, reply) => {
-    const { tenantId, role: userRole, tenantRole } = (request as any).user;
+    const { tenantId, sub: ownerUserId, email: ownerEmail, role: userRole, tenantRole } =
+      (request as any).user;
     const { memberId } = request.params as { memberId: string };
     const prisma = fastify.prisma;
 
@@ -405,12 +558,209 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can remove members' });
     }
 
-    await prisma.tenantMember.deleteMany({
+    const member = await prisma.tenantMember.findFirst({
       where: { id: memberId, tenantId },
+      include: { user: true, tenant: true },
     });
+    if (!member) {
+      return reply.code(404).send({ error: 'Member not found' });
+    }
+    if (member.role === 'owner') {
+      return reply.code(403).send({ error: 'Cannot remove workspace owner' });
+    }
+    if (member.userId === ownerUserId) {
+      return reply.code(403).send({ error: 'Cannot remove yourself' });
+    }
 
-    return reply.send({ message: 'Member removed' });
+    const resolvedOwnerEmail =
+      typeof ownerEmail === 'string' && ownerEmail
+        ? ownerEmail
+        : (
+            await prisma.user.findUnique({
+              where: { id: ownerUserId },
+              select: { email: true },
+            })
+          )?.email;
+
+    if (!resolvedOwnerEmail) {
+      return reply.code(500).send({ error: 'Owner email not found' });
+    }
+
+    const { removeTwentyMemberFromTenant } = await import('../services/twenty-member-remove.js');
+    const crmResult = await removeTwentyMemberFromTenant({
+      tenant: member.tenant,
+      ownerEmail: resolvedOwnerEmail,
+      memberEmail: member.user.email,
+      log: fastify.log,
+    });
+    if (!crmResult.ok) {
+      return reply.code(502).send({
+        error: crmResult.error || 'Failed to remove member from CRM',
+      });
+    }
+
+    await prisma.tenantMember.delete({ where: { id: memberId } });
+
+    return reply.send({
+      message: 'Member removed',
+      removedFromCrm: crmResult.removedFromCrm,
+    });
   });
+
+  // --- Reveal stored member CRM credentials (no password change) ---
+  fastify.get(
+    '/members/:memberId/credentials',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId, role: userRole, tenantRole } = (request as any).user;
+      const { memberId } = request.params as { memberId: string };
+      const prisma = fastify.prisma;
+
+      if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
+        return reply.code(403).send({ error: 'Only owners can view member credentials' });
+      }
+
+      const member = await prisma.tenantMember.findFirst({
+        where: { id: memberId, tenantId },
+        include: { user: true, tenant: true },
+      });
+      if (!member) {
+        return reply.code(404).send({ error: 'Member not found' });
+      }
+      if (member.role === 'owner') {
+        return reply.code(403).send({ error: 'Owner credentials are not managed here' });
+      }
+
+      const crmUrl = buildCrmPublicUrl(member.tenant.crmSubdomain, member.tenant.slug);
+      const email = member.user.email.trim().toLowerCase();
+      let password: string | null = null;
+      if (member.twentyPasswordEncrypted) {
+        try {
+          password = decrypt(member.twentyPasswordEncrypted);
+        } catch {
+          password = null;
+        }
+      }
+
+      return reply.send({
+        email,
+        password,
+        crmUrl,
+        twentyProvisioned: Boolean(member.twentyPasswordEncrypted),
+        ...(password
+          ? {}
+          : {
+              warning:
+                'Пароль не сохранён в кабинете. Задайте новый пароль кнопкой «Сменить пароль».',
+            }),
+      });
+    },
+  );
+
+  // --- Set / reissue member credentials (explicit password change + CRM sync) ---
+  const setCredentialsSchema = z.object({
+    password: z.string().min(8).max(128).optional(),
+  });
+
+  fastify.post(
+    '/members/:memberId/reissue-credentials',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId, sub: ownerUserId, email: ownerEmail, role: userRole, tenantRole } =
+        (request as any).user;
+      const { memberId } = request.params as { memberId: string };
+      const prisma = fastify.prisma;
+
+      if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
+        return reply.code(403).send({ error: 'Only owners can reissue credentials' });
+      }
+
+      const parsedBody = setCredentialsSchema.safeParse(request.body ?? {});
+      if (!parsedBody.success) {
+        return reply.code(400).send({ error: 'Пароль: минимум 8 символов' });
+      }
+
+      const member = await prisma.tenantMember.findFirst({
+        where: { id: memberId, tenantId },
+        include: { user: true, tenant: true },
+      });
+
+      if (!member) {
+        return reply.code(404).send({ error: 'Member not found' });
+      }
+      if (member.role === 'owner') {
+        return reply.code(403).send({ error: 'Cannot reissue owner credentials' });
+      }
+
+      const tenant = member.tenant;
+      const email = member.user.email.trim().toLowerCase();
+      const tempPassword = parsedBody.data.password?.trim() || nanoid(16);
+      const crmUrl = buildCrmPublicUrl(tenant.crmSubdomain, tenant.slug);
+
+      const resolvedOwnerEmail =
+        typeof ownerEmail === 'string' && ownerEmail
+          ? ownerEmail
+          : (
+              await prisma.user.findUnique({
+                where: { id: ownerUserId },
+                select: { email: true },
+              })
+            )?.email;
+
+      if (!resolvedOwnerEmail) {
+        return reply.code(500).send({ error: 'Owner email not found' });
+      }
+
+      await prisma.user.update({
+        where: { id: member.userId },
+        data: { passwordHash: await bcrypt.hash(tempPassword, 12) },
+      });
+
+      let twentyProvisioned = false;
+      let warning: string | undefined;
+
+      if (member.twentyPasswordEncrypted) {
+        const { updateTwentyUserPassword } = await import('../services/twenty-user-password.js');
+        const updated = await updateTwentyUserPassword(email, tempPassword);
+        if (updated) {
+          await prisma.tenantMember.update({
+            where: { id: memberId },
+            data: { twentyPasswordEncrypted: encrypt(tempPassword) },
+          });
+          twentyProvisioned = true;
+        } else {
+          warning = 'Пароль кабинета обновлён. Не удалось обновить пароль в CRM — попробуйте ещё раз.';
+        }
+      } else {
+        const provisioned = await provisionTwentyMemberForTenant({
+          tenant,
+          ownerEmail: resolvedOwnerEmail,
+          memberEmail: email,
+          memberPassword: tempPassword,
+          log: fastify.log,
+        });
+        if (provisioned.ok && provisioned.twentyPasswordEncrypted) {
+          await prisma.tenantMember.update({
+            where: { id: memberId },
+            data: { twentyPasswordEncrypted: provisioned.twentyPasswordEncrypted },
+          });
+          twentyProvisioned = true;
+        } else {
+          warning =
+            provisioned.error ||
+            'Пароль кабинета обновлён. Пользователь в CRM не создан — попробуйте ещё раз.';
+        }
+      }
+
+      return reply.send({
+        email,
+        tempPassword,
+        crmUrl,
+        twentyProvisioned,
+        ...(warning ? { warning } : {}),
+      });
+    },
+  );
 
   // --- Update tenant settings ---
   fastify.patch('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {

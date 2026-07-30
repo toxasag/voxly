@@ -1,15 +1,63 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert } from '@/components/portal/alert';
+import { ArrowRight, Loader2 } from 'lucide-react';
+
+/** Cyrillic → latin for URL slug; latin/digits kept. */
+function toCompanySlug(raw: string): string {
+  const map: Record<string, string> = {
+    а: 'a',
+    б: 'b',
+    в: 'v',
+    г: 'g',
+    д: 'd',
+    е: 'e',
+    ё: 'e',
+    ж: 'zh',
+    з: 'z',
+    и: 'i',
+    й: 'y',
+    к: 'k',
+    л: 'l',
+    м: 'm',
+    н: 'n',
+    о: 'o',
+    п: 'p',
+    р: 'r',
+    с: 's',
+    т: 't',
+    у: 'u',
+    ф: 'f',
+    х: 'h',
+    ц: 'ts',
+    ч: 'ch',
+    ш: 'sh',
+    щ: 'sch',
+    ъ: '',
+    ы: 'y',
+    ь: '',
+    э: 'e',
+    ю: 'yu',
+    я: 'ya',
+  };
+
+  return raw
+    .trim()
+    .toLowerCase()
+    .split('')
+    .map((ch) => {
+      if (map[ch] !== undefined) return map[ch];
+      if (/[a-z0-9-]/.test(ch)) return ch;
+      if (/\s|_/.test(ch)) return '-';
+      return '-';
+    })
+    .join('')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -22,31 +70,27 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const companySlug = useMemo(() => toCompanySlug(workspaceName), [workspaceName]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
-    const companySlug = workspaceName
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-
     if (!companySlug || companySlug.length < 2) {
-      setError('Slug воркспейса: латиница, цифры или дефис (минимум 2 символа)');
+      setError('Название портала слишком короткое. Нужно минимум 2 символа для адреса.');
       setLoading(false);
       return;
     }
 
     if (password.length < 8) {
-      setError('Пароль должен быть не короче 8 символов');
+      setError('Пароль — не короче 8 символов.');
       setLoading(false);
       return;
     }
 
     if (!acceptedLegal) {
-      setError('Примите оферту и согласие на обработку персональных данных');
+      setError('Нужно принять оферту и согласие на обработку персональных данных.');
       setLoading(false);
       return;
     }
@@ -93,44 +137,92 @@ export default function RegisterPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-6 py-16">
-      <div className="w-full max-w-md animate-in">
-        <div className="mb-8 text-center">
-          <Link
-            href="/"
-            className="text-[24px] font-semibold tracking-[-0.025em] text-foreground transition-opacity duration-[var(--duration-fast)] hover:opacity-70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          >
-            Voxly
-          </Link>
-          <p className="mt-2 text-sm text-muted-foreground">Новый воркспейс</p>
-        </div>
-        <Card>
-          <CardHeader className="text-center">
-            <CardTitle className="text-[24px] tracking-[-0.025em]">Регистрация</CardTitle>
-            <CardDescription>Создайте воркспейс за минуту</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {error && (
-              <Alert className="mb-4" variant="error">
+    <main className="landing-root min-h-svh">
+      <div className="grid min-h-svh lg:grid-cols-2">
+        <section className="relative isolate flex flex-col bg-[#f5a623] px-5 py-6 sm:px-8 sm:py-8 lg:px-12 lg:py-10">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 opacity-[0.07]"
+            style={{
+              backgroundImage:
+                'linear-gradient(rgba(10,10,10,.45) 1px, transparent 1px), linear-gradient(90deg, rgba(10,10,10,.45) 1px, transparent 1px)',
+              backgroundSize: '48px 48px',
+            }}
+          />
+
+          <header className="relative z-10 flex items-center justify-between gap-3">
+            <Link href="/" className="land-display text-base font-bold uppercase tracking-[-0.04em]">
+              Voxly
+            </Link>
+            <Link href="/login" className="land-btn-ghost min-h-11 border-black/20 bg-transparent px-4 py-2.5 text-sm">
+              Войти
+            </Link>
+          </header>
+
+          <div className="relative z-10 mt-8 flex flex-1 flex-col lg:mt-0 lg:justify-center">
+            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
+              7 дней без карты
+            </p>
+            <h1 className="land-rise mt-4 max-w-[18ch] text-[clamp(1.85rem,4.2vw,3.25rem)] leading-[1.1] tracking-[-0.04em]">
+              Запусти кабинет за минуту.
+            </h1>
+            <p className="land-rise-delay mt-4 max-w-[38ch] text-base text-black/65">
+              CRM, боты и мессенджеры в одном месте. Сначала пробуешь — потом решаешь, платить или нет.
+            </p>
+
+            <div className="relative mx-auto mt-6 hidden w-[min(48vw,180px)] sm:block sm:w-[200px] lg:mt-10 lg:w-[min(100%,260px)]">
+              <div className="land-mascot-float relative aspect-[3/4] w-full">
+                <Image
+                  src="/mascot/voxly-cta-v5.png"
+                  alt="Voxly"
+                  fill
+                  priority
+                  sizes="(max-width: 1024px) 200px, 260px"
+                  className="object-contain object-bottom"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex bg-white px-5 py-8 sm:px-10 sm:py-12 lg:items-center lg:px-14 lg:py-12">
+          <div className="land-rise mx-auto w-full max-w-[420px]">
+            <h2 className="text-2xl tracking-[-0.03em] sm:text-3xl">Регистрация</h2>
+            <p className="mt-2 text-sm text-[var(--land-muted)]">
+              Заполни поля — и сразу в кабинет.
+            </p>
+
+            {error ? (
+              <div
+                role="alert"
+                className="mt-5 rounded-xl border border-[#b04a43]/35 bg-[#b04a43]/8 px-4 py-3 text-sm font-medium text-[#8b2e2e]"
+              >
                 {error}
-              </Alert>
-            )}
-            <form onSubmit={handleSubmit} className="space-y-3.5">
-              <div className="space-y-1.5">
-                <Label htmlFor="firstName">Имя</Label>
-                <Input
+              </div>
+            ) : null}
+
+            <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+              <div>
+                <label htmlFor="firstName" className="land-label">
+                  Имя
+                </label>
+                <input
                   id="firstName"
                   name="given-name"
                   autoComplete="given-name"
-                  placeholder="Как к вам обращаться"
+                  placeholder="Как к тебе обращаться"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   required
+                  className="land-input"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="email">Email</Label>
-                <Input
+
+              <div>
+                <label htmlFor="email" className="land-label">
+                  Email
+                </label>
+                <input
                   id="email"
                   name="email"
                   type="email"
@@ -140,11 +232,15 @@ export default function RegisterPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  className="land-input"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Пароль</Label>
-                <Input
+
+              <div>
+                <label htmlFor="password" className="land-label">
+                  Пароль
+                </label>
+                <input
                   id="password"
                   name="new-password"
                   type="password"
@@ -154,79 +250,111 @@ export default function RegisterPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
+                  className="land-input"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="workspace">Slug воркспейса</Label>
-                <Input
+
+              <div>
+                <label htmlFor="workspace" className="land-label">
+                  Название вашего CRM-портала
+                </label>
+                <input
                   id="workspace"
                   name="organization"
                   value={workspaceName}
                   onChange={(e) => setWorkspaceName(e.target.value)}
-                  placeholder="my-company"
+                  placeholder="Например: Студия Антона"
                   required
                   minLength={2}
                   maxLength={50}
-                  title="Только латиница, цифры и дефис"
+                  className="land-input"
                 />
-                <p className="text-xs text-muted-foreground">Латиница, цифры, дефис · станет адресом кабинета</p>
+                <p className="mt-1.5 text-xs leading-relaxed text-[var(--land-muted)]">
+                  Это имя вашего воркспейса / CRM-портала.
+                  {companySlug.length >= 2 ? (
+                    <>
+                      {' '}
+                      Адрес кабинета:{' '}
+                      <span className="font-semibold text-[var(--land-ink)]">{companySlug}</span>
+                    </>
+                  ) : (
+                    <> Из названия сделаем латинский адрес для ссылки.</>
+                  )}
+                </p>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="ref">Реферальный код</Label>
-                <Input
+
+              <div>
+                <label htmlFor="ref" className="land-label">
+                  Реферальный код
+                </label>
+                <input
                   id="ref"
                   name="referral"
                   value={refCode}
                   onChange={(e) => setRefCode(e.target.value)}
-                  placeholder="необязательно"
+                  placeholder="Если есть — сюда"
+                  className="land-input"
                 />
               </div>
-              <div className="flex items-start gap-2.5">
-                <Checkbox
+
+              <label
+                htmlFor="legal"
+                className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-black/10 bg-[#f7f7f7] px-3 py-3"
+              >
+                <input
                   id="legal"
+                  type="checkbox"
                   checked={acceptedLegal}
-                  onCheckedChange={(v) => setAcceptedLegal(v === true)}
-                  className="mt-0.5"
+                  onChange={(e) => setAcceptedLegal(e.target.checked)}
+                  required
                   aria-required="true"
+                  className="mt-1 h-5 w-5 shrink-0 accent-[#0a0a0a]"
                 />
-                <Label htmlFor="legal" className="text-sm font-normal leading-snug text-muted-foreground">
+                <span className="text-sm leading-snug text-[var(--land-muted)]">
                   Принимаю{' '}
-                  <Link href="/terms" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
+                  <Link href="/terms" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
                     оферту
                   </Link>{' '}
                   и{' '}
-                  <Link href="/consent" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
-                    согласие на обработку персональных данных
+                  <Link href="/consent" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
+                    согласие на обработку ПДн
                   </Link>
-                  . Ознакомлен с{' '}
-                  <Link href="/privacy" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
-                    политикой конфиденциальности
+                  . Читал{' '}
+                  <Link href="/privacy" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
+                    политику
                   </Link>{' '}
                   и{' '}
-                  <Link href="/refund" className="font-medium text-foreground underline-offset-4 hover:underline" target="_blank">
-                    правилами возврата
+                  <Link href="/refund" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
+                    правила возврата
                   </Link>
                   .
-                </Label>
-              </div>
-              <Button
+                </span>
+              </label>
+
+              <button
                 type="submit"
-                variant="solid"
-                className="mt-1 w-full"
+                className="land-btn w-full"
                 disabled={loading || !acceptedLegal}
               >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {loading ? 'Создание…' : 'Создать аккаунт'}
-              </Button>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                {loading ? 'Создаём…' : 'Создать аккаунт'}
+                {!loading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
+              </button>
             </form>
-            <p className="mt-6 text-center text-sm text-muted-foreground">
+
+            <p className="mt-7 text-sm text-[var(--land-muted)]">
               Уже есть аккаунт?{' '}
-              <Link href="/login" className="font-medium text-foreground underline-offset-4 hover:underline">
+              <Link href="/login" className="font-semibold text-[var(--land-ink)] underline underline-offset-4">
                 Войти
               </Link>
             </p>
-          </CardContent>
-        </Card>
+            <p className="mt-3">
+              <Link href="/" className="text-sm font-medium text-[var(--land-muted)] underline-offset-4 hover:underline">
+                ← На главную
+              </Link>
+            </p>
+          </div>
+        </section>
       </div>
     </main>
   );

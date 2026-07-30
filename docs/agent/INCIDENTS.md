@@ -5,6 +5,20 @@
 
 ---
 
+### INC-072 — CRM Chat author «Менеджер» + sidebar «john» vs Тест2
+- **Симптом:** (1) top-left CRM shows pink «J» + «john» while logged in as `test2@voxly.ru` (profile «Тест2 ФИОтест2»); (2) Chat outbound bubble labeled «Менеджер» instead of «Тест2».
+- **Причина:** (1) Twenty `MultiWorkspaceDropdown` = workspace `displayName` (= slug `john`), **not** current user — session is correct (`createdBy` = Тест2). (2) Chat `/s/*` proxy uses `VOXLY_SERVICE_TOKEN` → `sub=twenty-app`; saas-api `formatOperatorName` fell back to «Менеджер» (Voxly User names for invitees often empty; Twenty member names ignored).
+- **Фикс:** forward `X-Twenty-User-Workspace-Id` from logic functions; `resolveTwentyOperatorLabel` → workspaceMember name; shell-ux «CRM · {slug}» + chip «Вы: {member}»; crm-chat **0.1.23**.
+- **Verify:** hard-refresh john-crm as test2 → sidebar «CRM · john» + «Вы: Тест2…»; Chat reply → bubble «Тест2…» (not «Менеджер»).
+- **Дата:** 2026-07-30.
+
+### INC-071 — CRM portal Edit/Delete member → Bad Request
+- **Симптом:** `/dashboard/crm` «Редактировать» / «Удалить» → `Bad Request` (400).
+- **Причина:** portal `authHeaders()` всегда шлёт `Content-Type: application/json`, а DELETE и `POST .../reissue-credentials` без body → Fastify `FST_ERR_CTP_EMPTY_JSON_BODY`.
+- **Фикс:** saas-api JSON parser treats empty body as `{}`; (invite still provisions Twenty).
+- **Verify:** Edit + Delete on member → 200; Edit returns new password modal.
+- **Дата:** 2026-07-30.
+
 ### INC-070 — CRM side-panel «Чат» tab missing (app uninstalled)
 - **Симптом:** john-crm сделка/контакт: вкладки Главная / Временная шкала / +Ещё, **нет «Чат»**. Unread badge «N» на карточке остаётся (shell-ux). Не путать с кабинетным nav.
 - **Причина:** `voxly-crm-chat` **не установлен** в Twenty (`core.application` / `applicationRegistration` пусты) → нет `pageLayoutTab` «Чат» на Opportunity/Person. Типичный триггер: `refreshCrmChatAppForTenant` делает DELETE registration + `forceReinstall` (uninstall → cascade tabs) **до** успешного install; при **ENOSPC** / сбое upload-install вкладка исчезает, а shell-ux badges живут отдельно. После mailing **0.1.22** на prod был ENOSPC во время refresh.

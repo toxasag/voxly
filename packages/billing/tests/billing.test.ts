@@ -64,7 +64,7 @@ describe('RobokassaClient signatures', () => {
     expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
   });
 
-  it('includes URL-encoded Receipt in payment signature', () => {
+  it('includes raw Receipt JSON in payment signature (not URL-encoded)', () => {
     const client = new RobokassaClient(config);
     const url = client.generatePaymentUrl({
       invId: 1001,
@@ -90,9 +90,8 @@ describe('RobokassaClient signatures', () => {
     expect(receipt.items[0].payment_method).toBe('full_payment');
     expect(receipt.items[0].payment_object).toBe('service');
 
-    const receiptEncoded = encodeURIComponent(receiptJson!);
     const expected = createHash('sha256')
-      .update(`voxly:500.00:1001:${receiptEncoded}:pass1:Shp_tenant_id=t1`)
+      .update(`voxly:500.00:1001:${receiptJson}:pass1:Shp_tenant_id=t1`)
       .digest('hex');
     expect(parsed.searchParams.get('SignatureValue')).toBe(expected);
   });
