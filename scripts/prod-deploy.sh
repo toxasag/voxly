@@ -304,7 +304,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
     echo "[dry-run] would: cd ${REMOTE_DIR}/docker && docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build ${BUILD_SVCS[*]}"
   fi
-  echo "[dry-run] would smoke https://getvoxly.ru/ and https://api.getvoxly.ru/health"
+  echo "[dry-run] would smoke-wait (up to 60s per endpoint, retries every 3s) https://getvoxly.ru/ and https://api.getvoxly.ru/health"
   exit 0
 fi
 
@@ -408,16 +408,41 @@ else
   echo "=== No compose services to rebuild (compose files only) ==="
 fi
 
-# --- Smoke ---
-echo "=== Smoke ==="
+# --- Smoke (retry until ready or timeout) ---
+SMOKE_TIMEOUT=60   # seconds total per endpoint
+SMOKE_INTERVAL=3   # seconds between retries
+
+smoke_wait() {
+  local url="$1"
+  local elapsed=0
+  local code=""
+  while (( elapsed < SMOKE_TIMEOUT )); do
+    code="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)" || code="000"
+    if [[ "$code" == "200" ]]; then
+      echo "  OK $code  $url  (${elapsed}s)"
+      return 0
+    fi
+    echo "  waiting… $url → $code (${elapsed}/${SMOKE_TIMEOUT}s)"
+    sleep "$SMOKE_INTERVAL"
+    (( elapsed += SMOKE_INTERVAL )) || true
+  done
+  # Final attempt after last sleep
+  code="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)" || code="000"
+  if [[ "$code" == "200" ]]; then
+    echo "  OK $code  $url  (${elapsed}s)"
+    return 0
+  fi
+  echo "  FAIL $url → last $code (gave up after ${SMOKE_TIMEOUT}s)" >&2
+  return 1
+}
+
+echo "=== Smoke (waiting up to ${SMOKE_TIMEOUT}s per endpoint) ==="
 fail=0
 for url in \
   'https://getvoxly.ru/' \
   'https://api.getvoxly.ru/health'
 do
-  code="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 25 "$url" || echo fail)"
-  echo "  $code  $url"
-  if [[ "$code" != "200" ]]; then
+  if ! smoke_wait "$url"; then
     fail=1
   fi
 done
@@ -426,9 +451,9 @@ done
 if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
   for cs in "${BUILD_SVCS[@]}"; do
     if [[ "$cs" == twenty-server || "$cs" == twenty-worker ]]; then
-      code="$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 25 'https://app.getvoxly.ru/healthz' || echo fail)"
-      echo "  $code  https://app.getvoxly.ru/healthz"
-      [[ "$code" == "200" ]] || fail=1
+      if ! smoke_wait 'https://app.getvoxly.ru/healthz'; then
+        fail=1
+      fi
       break
     fi
   done
