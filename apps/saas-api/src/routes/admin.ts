@@ -510,6 +510,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const prisma = fastify.prisma;
     const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
     const { loadTenantsCrmPricingMap } = await import('../services/crm-tenant-pricing.js');
+    const { evaluateCrmAccess } = await import('@voxly/shared');
     const pricing = await loadCrmPlatformPricing(prisma);
 
     const tenants = await prisma.tenant.findMany({
@@ -559,6 +560,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           t.status !== 'suspended' &&
           t.status !== 'cancelled' &&
           Boolean(sub && sub.periodMonths > 0 && sub.endsAt >= now);
+        const access = evaluateCrmAccess({
+          tenantStatus: t.status,
+          crmSubscription: sub ?? null,
+          now,
+        });
 
         return {
           id: t.id,
@@ -582,6 +588,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           },
           isTrial,
           isPaid,
+          // read-only: lets the admin UI distinguish grace period from a hard lock
+          access: {
+            locked: access.locked,
+            reason: access.reason,
+            inGrace: access.inGrace,
+            graceEndsAt: access.graceEndsAt,
+          },
           subscription: sub
             ? {
                 productCode: sub.productCode,
