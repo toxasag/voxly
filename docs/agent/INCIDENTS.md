@@ -19,6 +19,42 @@
 - **Verify:** Delete test2/test3 on john → 200; gone from CRM + portal list.
 - **Дата:** 2026-07-30.
 
+### INC-074 — WA: кошелёк AI обнулился в диалоге → AI продолжает отвечать
+- **Симптом:** баланс AI дошёл до 0 посреди диалога; в Telegram клиент получает предупреждение и уходит на оператора, в WhatsApp AI отвечает как обычно. Диалог остаётся `mode=ai`, оператор его не видит как ожидающий; стоп срабатывал только на **следующем** входящем — pre-flight `hasAiBalance(tenantId, 1)` (`apps/ai-whatsapp-worker/src/index.ts` flushWhatsAppAiReply).
+- **Причина:** `chargeAiUsage` возвращает `paused` (кошелёк исчерпан), но WA-воркер использовал `chargeResult` только для полей `ChatMessage` — ветки `paused` не было (в TG есть: `chargeResult.paused` → `switchToHuman`). Плюс сам pre-flight gate только отправлял текст про баланс и **не** переводил диалог на человека.
+- **Фикс:** WA-воркер: `switchToHuman(instanceName, from, tenantId, botId, conversationId)` (`mode='human'`, `status='waiting_for_human'` + `fireGoal('human_handoff')`) — зеркало TG; вызывается после `paused` (с уведомлением про исчерпанный баланс) и на pre-flight gate.
+- **Verify:** обнулить кошелёк тенанта → написать в WA → после ответа AI приходят «Баланс … исчерпан … Переключаю на оператора.» + «Режим оператора. Ожидайте ответа.»; `Conversation.mode=human`, `status=waiting_for_human`; следующее входящее AI не отвечает (`shouldAiReply` → false).
+- **Дата:** 2026-07-31.
+
+### INC-075 — Параллельные списания AI теряли деньги (lost update)
+- **Симптом:** сумма `AiUsageLog.chargedRub` за период больше, чем реально списано с `AiWallet`; при медиа-сообщениях (ASR/vision летят как detached promises рядом со списанием за ответ) баланс уменьшался на одно списание вместо двух-трёх.
+- **Причина:** `chargeAiUsage` (`packages/ai-core/src/index.ts`) делал read-modify-write абсолютного значения (`balanceRub: Math.max(0, currentBalance - chargedRub)`) внутри Read Committed транзакции — обе параллельные транзакции читали один и тот же старый баланс, побеждала последняя запись. Плюс `Math.max(0, …)` молча списывал недобор, а `chargedRub` в логе оставался полным → маржа в админке и трата за 30 дней завышались.
+- **Фикс:** атомарный условный декремент `aiWallet.updateMany({ where: { tenantId, balanceRub: { gte: chargedRub } }, data: { balanceRub: { decrement } } })` (как в `admin-referrals.ts` для выплат партнёрам); при `count === 0` — `SELECT … FOR UPDATE`, собираем остаток, обнуляем кошелёк, пишем недобор в новую колонку `AiUsageLog.uncollectedRub` и возвращаем `paused: true`.
+- **Verify:** запустить два списания на один тенант одновременно → баланс уменьшается на сумму обоих; при нехватке средств кошелёк = 0, в логе `uncollectedRub > 0`, `paused = true`.
+- **Дата:** 2026-07-31.
+
+### INC-076 — Повторная доставка Robokassa ResultURL начисляла всё дважды
+- **Симптом:** потенциально дубли `Subscription`, двойной топап `AiWallet`, двойные `ReferralEarning` + `TenantBalance` по одному `InvId`.
+- **Причина:** `apps/saas-api/src/routes/billing.ts` проверял `existing.status === 'paid'` **до** транзакции (stale read), а внутри делал безусловный `payment.update` по id. Robokassa ретраит до ответа `OK{InvId}`, поэтому две доставки могли пройти проверку одновременно.
+- **Фикс:** условный claim внутри транзакции — `payment.updateMany({ where: { id, status: 'pending' }, data: { status: 'paid', paidAt } })`; при `count === 0` транзакция возвращает `false`, эффекты не применяются, но ответ остаётся `OK{InvId}` (иначе Robokassa продолжит ретраить). DB-бэкстоп: `@@unique([paymentId])` на `ReferralEarning`.
+- **Verify:** отправить один и тот же подписанный ResultURL дважды подряд → второй отвечает `OK{InvId}`, в логе `Payment already claimed by another delivery`, новых `Subscription` / `ReferralEarning` / изменений баланса нет.
+- **Дата:** 2026-07-31.
+
+### INC-077 — `productScope` / `durationMonths` в `ReferralRule` не читались при начислении
+- **Симптом:** супер-админ в `/admin/partners` выбирает «С каких оплат начисляем» и «Начислять, мес.», UI пишет «первые N мес.», но начисления идут 20% со **всех** оплат (кроме `ai_topup`) и **бесконечно** — прямая переплата партнёрам против явной настройки. В prod хранилось `productScope='subscriptions'` — значение, которого нет ни в комментарии схемы (`// all, crm`), ни в коде начисления.
+- **Причина:** `creditReferralForPayment` (`apps/saas-api/src/routes/billing.ts`) читал только `rule.type` / `rule.value`; `productScope` валидировался как свободная строка (`z.string()`), сохранялся и отдавался обратно на экран, но нигде не сравнивался с `payment.productCode`. Ветка `percent_recurring` не сверялась с `Referral.firstPaymentAt`. Персональное правило (`PUT /partners/:tenantId/rule`) вообще хардкодило `productScope: 'all'`.
+- **Фикс:** словарь `REFERRAL_PRODUCT_SCOPES` (`all` | `crm`) + `isProductInReferralScope` / `normalizeReferralProductScope` в `packages/shared`; guard по скоупу **сразу после** `REFERRAL_EXCLUDED_PRODUCTS` (AI-топап исключён всегда, независимо от скоупа); окно `durationMonths` от `Referral.firstPaymentAt`; `z.enum` на границе API + приём `productScope` в персональном правиле; миграция `20260731180000_referral_rule_product_scope` нормализует legacy `'subscriptions'` → `'all'`, чтобы включение проверки **не сузило** выплаты.
+- **Verify:** правило `percent_recurring` 20% + «Начислять, 6 мес.» → оплата клиента через >6 мес. после его первой оплаты не создаёт `ReferralEarning`; скоуп «Только CRM» → `ReferralEarning` только на `crm_base` / `extra_seat`; `ai_topup` не начисляет ни при каком скоупе; `PUT /api/admin/referrals/rule` с `productScope: 'subscriptions'` → 400.
+- **Дата:** 2026-07-31.
+
+### INC-078 — Расход AI нельзя было разложить по каналам (`addonId` почти всегда пустой)
+- **Симптом:** тенант видит общую сумму списаний за 30 дней, но не может ответить «сколько съедает WhatsApp против Telegram». Разбивка была только по `aiAgentId`, а один агент обслуживает несколько каналов (ADR-014), так что по ней канал не восстанавливается.
+- **Причина:** единственный намёк на канал в `AiUsageLog` — `addonId`, и его передавал **один** call-site из десяти (`ai-whatsapp-worker` текстовый ответ). Остальные девять (ASR/vision в TG/WA, текст TG Business и GramJS, gift-бот, эмбеддинги RAG) писали лог без какой-либо привязки к каналу → любая агрегация по `addonId` дала бы почти пустую таблицу.
+- **Фикс:** словарь `AI_USAGE_CHANNELS` + `aiUsageChannelLabel` в `packages/shared`; nullable колонка `AiUsageLog.channel` + индекс `(tenantId, channel, createdAt)` (миграция `20260731190000_ai_usage_channel`); `channel` в `ChargeAiUsageParams` и во всех десяти call-site; `byChannel[]` в `GET /api/ai/agents/usage` рядом с существующим `byAgent[]`; блок «Куда ушли деньги — по каналам» в `/dashboard/ai`.
+- **Verify:** написать в WhatsApp и в Telegram Business → в `/dashboard/ai` §02 два канала с суммами; голосовое в WA даёт отдельное списание в том же канале; загрузка файла в базу знаний попадает в «База знаний и обучение».
+- **Осторожно:** строки до миграции остаются `channel = null` и показываются как «Не определён» — бэкфилла нет и быть не может, канал в старых строках не восстановим.
+- **Дата:** 2026-07-31.
+
 ### INC-071 — CRM portal Edit/Delete member → Bad Request
 - **Симптом:** `/dashboard/crm` «Редактировать» / «Удалить» → `Bad Request` (400).
 - **Причина:** portal `authHeaders()` всегда шлёт `Content-Type: application/json`, а DELETE и `POST .../reissue-credentials` без body → Fastify `FST_ERR_CTP_EMPTY_JSON_BODY`.
