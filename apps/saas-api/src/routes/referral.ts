@@ -9,7 +9,34 @@ import {
   resolveReferralAttribution,
 } from '../services/referral-program.js';
 
+const campaignCodeSchema = z
+  .string()
+  .trim()
+  .min(4)
+  .max(32)
+  .regex(/^[A-Za-z0-9]+$/)
+  .toUpperCase();
+
+function codeIssueMessage(issue: z.ZodIssue | undefined): string {
+  if (issue?.code === 'invalid_type') return 'Укажите код проекта';
+  if (issue?.code === 'too_small') return 'Код должен быть не короче 4 символов';
+  if (issue?.code === 'too_big') return 'Код должен быть не длиннее 32 символов';
+  return 'Код может содержать только латинские буквы и цифры, без пробелов';
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string })?.code === 'P2002';
+}
+
+const codeTakenMessage = (code: string) => `Код ${code} уже занят — выберите другой`;
+
 export const referralRoutes: FastifyPluginAsync = async (fastify) => {
+  const isCodeTaken = async (code: string): Promise<boolean> =>
+    Boolean(
+      (await fastify.prisma.referralCampaign.findUnique({ where: { code } })) ||
+        (await fastify.prisma.referralCode.findUnique({ where: { code } })),
+    );
+
   // --- Partner dashboard (stats + campaigns) ---
   fastify.get('/dashboard', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId } = (request as any).user;
@@ -62,48 +89,70 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId } = (request as any).user;
     const body = z
       .object({
-        name: z.string().min(1).max(120),
-        code: z
-          .string()
-          .min(4)
-          .max(32)
-          .regex(/^[A-Za-z0-9]+$/)
-          .optional(),
+        name: z.string().trim().min(1).max(120),
+        code: campaignCodeSchema.optional(),
       })
       .safeParse(request.body);
     if (!body.success) {
-      return reply.code(400).send({ error: 'name required; code optional alphanumeric 4-32' });
+      const issue = body.error.issues[0];
+      return reply.code(400).send({
+        error:
+          issue?.path[0] === 'code'
+            ? codeIssueMessage(issue)
+            : 'Укажите название проекта (от 1 до 120 символов)',
+      });
     }
 
-    let code = body.data.code?.toUpperCase() ?? generateCampaignCode(body.data.name);
+    const customCode = body.data.code ?? null;
     const prisma = fastify.prisma;
+    let code = customCode ?? generateCampaignCode(body.data.name);
 
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const exists =
-        (await prisma.referralCampaign.findUnique({ where: { code } })) ||
-        (await prisma.referralCode.findUnique({ where: { code } }));
-      if (!exists) break;
-      code = generateCampaignCode(body.data.name);
+    for (let attempt = 0; attempt < (customCode ? 1 : 5); attempt++) {
+      if (await isCodeTaken(code)) {
+        if (customCode) return reply.code(409).send({ error: codeTakenMessage(code) });
+        code = generateCampaignCode(body.data.name);
+        continue;
+      }
+
+      try {
+        const campaign = await prisma.referralCampaign.create({
+          data: {
+            tenantId,
+            name: body.data.name,
+            code,
+          },
+        });
+        return reply.code(201).send({
+          ...campaign,
+          link: `https://${fastify.voxlyDomain}/r/${campaign.code}`,
+        });
+      } catch (err) {
+        if (!isUniqueViolation(err)) {
+          request.log.error({ err }, 'referral campaign create failed');
+          return reply.code(500).send({ error: 'Не удалось создать ссылку' });
+        }
+        if (customCode) return reply.code(409).send({ error: codeTakenMessage(code) });
+        code = generateCampaignCode(body.data.name);
+      }
     }
 
-    try {
-      const campaign = await prisma.referralCampaign.create({
-        data: {
-          tenantId,
-          name: body.data.name.trim(),
-          code,
-        },
-      });
-      return reply.code(201).send({
-        ...campaign,
-        link: `https://${fastify.voxlyDomain}/r/${campaign.code}`,
-      });
-    } catch (err) {
-      return reply.code(409).send({
-        error: err instanceof Error ? err.message : 'Code already exists',
-      });
-    }
+    return reply.code(409).send({
+      error: 'Не удалось подобрать свободный код — попробуйте ещё раз',
+    });
   });
+
+  // --- Check whether a campaign code is free (for inline validation) ---
+  fastify.get(
+    '/campaigns/code-available',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const parsed = campaignCodeSchema.safeParse((request.query as { code?: string }).code);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: codeIssueMessage(parsed.error.issues[0]) });
+      }
+      return reply.send({ available: !(await isCodeTaken(parsed.data)) });
+    },
+  );
 
   // --- Manual expense for a project ---
   fastify.post(
