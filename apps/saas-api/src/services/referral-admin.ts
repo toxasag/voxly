@@ -1,7 +1,13 @@
 // Admin-side aggregation of the referral program: partners overview, partner detail, effective rule
 
 import type { PrismaClient, ReferralRule } from '@voxly/db';
-import { parsePeriod, resolveRuleForReferrer, type RuleDb } from './referral-program.js';
+import { REFERRAL_PRODUCT_SCOPES } from '@voxly/shared';
+import {
+  parsePeriod,
+  resolveRuleForReferrer,
+  withdrawalShape,
+  type RuleDb,
+} from './referral-program.js';
 
 export { resolveRuleForReferrer };
 
@@ -13,12 +19,19 @@ function round2(value: number): number {
 
 function ruleShape(rule: ReferralRule | null, isOverride: boolean) {
   if (!rule) {
-    return { type: 'none', value: 0, durationMonths: null as number | null, isOverride: false };
+    return {
+      type: 'none',
+      value: 0,
+      durationMonths: null as number | null,
+      productScope: REFERRAL_PRODUCT_SCOPES.ALL as string,
+      isOverride: false,
+    };
   }
   return {
     type: rule.type as string,
     value: Number(rule.value),
     durationMonths: rule.durationMonths,
+    productScope: rule.productScope,
     isOverride,
   };
 }
@@ -46,27 +59,40 @@ export async function buildReferralAdminOverview(
   const { from, to } = parsePeriod(opts.from, opts.to);
   const inPeriod = (d: Date | null) => Boolean(d && d >= from && d <= to);
 
-  const [defaultRule, codes, campaigns, referrals, earnings, transactions, balances, personalRules] =
-    await Promise.all([
-      findGlobalRule(prisma),
-      prisma.referralCode.findMany({
-        select: { tenantId: true, code: true, isActive: true, clicksCount: true },
-      }),
-      prisma.referralCampaign.findMany({
-        select: { tenantId: true, isActive: true, clicksCount: true },
-      }),
-      prisma.referral.findMany({
-        select: { referrerTenantId: true, attributedAt: true, firstPaymentAt: true },
-      }),
-      prisma.referralEarning.findMany({
-        select: { tenantId: true, amountRub: true, creditedAt: true },
-      }),
-      prisma.referralTransaction.findMany({
-        select: { tenantId: true, kind: true, amountRub: true, createdAt: true },
-      }),
-      prisma.tenantBalance.findMany({ select: { tenantId: true, balanceRub: true } }),
-      prisma.referralRule.findMany({ where: { tenantId: { not: null }, isActive: true } }),
-    ]);
+  const [
+    defaultRule,
+    codes,
+    campaigns,
+    referrals,
+    earnings,
+    transactions,
+    balances,
+    personalRules,
+    pendingWithdrawals,
+  ] = await Promise.all([
+    findGlobalRule(prisma),
+    prisma.referralCode.findMany({
+      select: { tenantId: true, code: true, isActive: true, clicksCount: true },
+    }),
+    prisma.referralCampaign.findMany({
+      select: { tenantId: true, isActive: true, clicksCount: true },
+    }),
+    prisma.referral.findMany({
+      select: { referrerTenantId: true, attributedAt: true, firstPaymentAt: true },
+    }),
+    prisma.referralEarning.findMany({
+      select: { tenantId: true, amountRub: true, creditedAt: true },
+    }),
+    prisma.referralTransaction.findMany({
+      select: { tenantId: true, kind: true, amountRub: true, createdAt: true },
+    }),
+    prisma.tenantBalance.findMany({ select: { tenantId: true, balanceRub: true } }),
+    prisma.referralRule.findMany({ where: { tenantId: { not: null }, isActive: true } }),
+    prisma.referralWithdrawal.findMany({
+      where: { status: 'pending' },
+      select: { tenantId: true, amountRub: true },
+    }),
+  ]);
 
   const partnerIds = new Set<string>([
     ...codes.map((c) => c.tenantId),
@@ -127,6 +153,11 @@ export async function buildReferralAdminOverview(
             .filter((t) => t.tenantId === tenant.id && t.kind === 'payout')
             .reduce((s, t) => s + Number(t.amountRub), 0),
         ),
+        pendingWithdrawalRub: round2(
+          pendingWithdrawals
+            .filter((w) => w.tenantId === tenant.id)
+            .reduce((s, w) => s + Number(w.amountRub), 0),
+        ),
         rule: personal ? ruleShape(personal, true) : globalShape,
         blocked: !code?.isActive && campaignsActive === 0,
       };
@@ -161,6 +192,10 @@ export async function buildReferralAdminOverview(
           .reduce((s, t) => s + Number(t.amountRub), 0),
       ),
       balanceOwedRub: round2(balances.reduce((s, b) => s + Number(b.balanceRub), 0)),
+      pendingWithdrawalsCount: pendingWithdrawals.length,
+      pendingWithdrawalsRub: round2(
+        pendingWithdrawals.reduce((s, w) => s + Number(w.amountRub), 0),
+      ),
       clicksTotal:
         codes.reduce((s, c) => s + c.clicksCount, 0) +
         campaigns.reduce((s, c) => s + c.clicksCount, 0),
@@ -187,7 +222,15 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
     throw Object.assign(new Error('Партнёр не найден'), { statusCode: 404 });
   }
 
-  const [mainCode, campaigns, referrals, balance, transactions, rule] = await Promise.all([
+  const [
+    mainCode,
+    campaigns,
+    referrals,
+    balance,
+    transactions,
+    rule,
+    withdrawals,
+  ] = await Promise.all([
     prisma.referralCode.findUnique({ where: { tenantId } }),
     prisma.referralCampaign.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } }),
     prisma.referral.findMany({
@@ -205,6 +248,10 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
       orderBy: { createdAt: 'desc' },
     }),
     resolveEffectiveRuleShape(prisma, tenantId),
+    prisma.referralWithdrawal.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    }),
   ]);
 
   const earnedOf = (referralIds: Set<string>) =>
@@ -267,6 +314,11 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
       amountRub: Number(t.amountRub),
       note: t.note,
       createdAt: t.createdAt.toISOString(),
+    })),
+    withdrawals: withdrawals.map((w) => ({
+      ...withdrawalShape(w),
+      tenantId: w.tenantId,
+      balanceRub: round2(Number(balance?.balanceRub ?? 0)),
     })),
   };
 }

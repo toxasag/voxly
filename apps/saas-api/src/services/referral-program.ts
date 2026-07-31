@@ -1,4 +1,5 @@
 import type { PrismaClient, ReferralRule } from '@voxly/db';
+import { REFERRAL_WITHDRAWAL_MIN_RUB } from '@voxly/shared';
 
 export type ReferralAttribution = {
   referrerTenantId: string;
@@ -91,6 +92,82 @@ export async function incrementReferralClick(
   return false;
 }
 
+type WithdrawalRow = {
+  id: string;
+  amountRub: unknown;
+  status: string;
+  payoutDetails: string;
+  comment: string | null;
+  decisionNote: string | null;
+  createdAt: Date;
+  decidedAt: Date | null;
+};
+
+/** Единая форма заявки на вывод для кабинета партнёра и админки. */
+export function withdrawalShape(w: WithdrawalRow) {
+  return {
+    id: w.id,
+    amountRub: Number(w.amountRub),
+    status: w.status,
+    payoutDetails: w.payoutDetails,
+    comment: w.comment,
+    decisionNote: w.decisionNote,
+    createdAt: w.createdAt.toISOString(),
+    decidedAt: w.decidedAt?.toISOString() ?? null,
+  };
+}
+
+export type HoldReleaseResult = {
+  released: boolean;
+  tenantId: string | null;
+  balanceRub: number | null;
+};
+
+/**
+ * Освободить резерв партнёрского баланса под неоплаченный счёт.
+ * Резерв освобождаем только пока `Payment.status = 'pending'` и `balanceAppliedRub > 0`:
+ * платёж переводим в `cancelled`, `balanceAppliedRub` возвращаем на `TenantBalance`.
+ * `Payment.amount` не трогаем. Условный `updateMany` гарантирует возврат не более одного раза.
+ */
+export async function releaseBalanceHold(
+  prisma: PrismaClient,
+  paymentId: string,
+  tenantId?: string,
+): Promise<HoldReleaseResult> {
+  const miss: HoldReleaseResult = { released: false, tenantId: null, balanceRub: null };
+
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findFirst({
+      where: {
+        id: paymentId,
+        ...(tenantId ? { tenantId } : {}),
+        status: 'pending',
+        balanceAppliedRub: { gt: 0 },
+      },
+      select: { id: true, tenantId: true, balanceAppliedRub: true },
+    });
+    if (!payment) return miss;
+
+    const released = await tx.payment.updateMany({
+      where: { id: payment.id, status: 'pending', balanceAppliedRub: { gt: 0 } },
+      data: { status: 'cancelled' },
+    });
+    if (released.count === 0) return miss;
+
+    const balance = await tx.tenantBalance.upsert({
+      where: { tenantId: payment.tenantId },
+      create: { tenantId: payment.tenantId, balanceRub: payment.balanceAppliedRub },
+      update: { balanceRub: { increment: payment.balanceAppliedRub } },
+    });
+
+    return {
+      released: true,
+      tenantId: payment.tenantId,
+      balanceRub: Number(balance.balanceRub),
+    };
+  });
+}
+
 export function parsePeriod(fromRaw?: string, toRaw?: string): { from: Date; to: Date } {
   const now = new Date();
   const to = toRaw ? new Date(toRaw) : now;
@@ -113,37 +190,74 @@ export async function buildReferralDashboard(
 ) {
   const { from, to } = parsePeriod(opts.from, opts.to);
 
-  const [mainCode, balance, campaigns, referrals, earningsInPeriod, expensesInPeriod, rule] =
-    await Promise.all([
-      prisma.referralCode.findUnique({ where: { tenantId } }),
-      prisma.tenantBalance.findUnique({ where: { tenantId } }),
-      prisma.referralCampaign.findMany({
-        where: { tenantId },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.referral.findMany({
-        where: { referrerTenantId: tenantId },
-        include: {
-          referredTenant: { select: { slug: true, status: true, createdAt: true } },
-          campaign: { select: { id: true, name: true, code: true } },
-          earnings: true,
-        },
-        orderBy: { attributedAt: 'desc' },
-      }),
-      prisma.referralEarning.findMany({
-        where: {
-          tenantId,
-          creditedAt: { gte: from, lte: to },
-        },
-      }),
-      prisma.referralCampaignExpense.findMany({
-        where: {
-          tenantId,
-          spentAt: { gte: from, lte: to },
-        },
-      }),
-      resolveRuleForReferrer(prisma, tenantId),
-    ]);
+  const [
+    mainCode,
+    balance,
+    campaigns,
+    referrals,
+    earningsInPeriod,
+    expensesInPeriod,
+    rule,
+    holds,
+    withdrawals,
+    transactions,
+    payoutTotal,
+  ] = await Promise.all([
+    prisma.referralCode.findUnique({ where: { tenantId } }),
+    prisma.tenantBalance.findUnique({ where: { tenantId } }),
+    prisma.referralCampaign.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.referral.findMany({
+      where: { referrerTenantId: tenantId },
+      include: {
+        referredTenant: { select: { slug: true, status: true, createdAt: true } },
+        campaign: { select: { id: true, name: true, code: true } },
+        earnings: true,
+      },
+      orderBy: { attributedAt: 'desc' },
+    }),
+    prisma.referralEarning.findMany({
+      where: {
+        tenantId,
+        creditedAt: { gte: from, lte: to },
+      },
+    }),
+    prisma.referralCampaignExpense.findMany({
+      where: {
+        tenantId,
+        spentAt: { gte: from, lte: to },
+      },
+    }),
+    resolveRuleForReferrer(prisma, tenantId),
+    // Активные резервы: неоплаченные счета, частично закрытые партнёрским балансом
+    prisma.payment.findMany({
+      where: { tenantId, status: 'pending', balanceAppliedRub: { gt: 0 } },
+      select: {
+        id: true,
+        robokassaInvId: true,
+        balanceAppliedRub: true,
+        description: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.referralWithdrawal.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.referralTransaction.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    // Выплачено считаем за всё время на сервере: срез transactions[] по периоду
+    // или количеству не должен занижать итог в кабинете
+    prisma.referralTransaction.aggregate({
+      where: { tenantId, kind: 'payout' },
+      _sum: { amountRub: true },
+    }),
+  ]);
 
   if (!mainCode) {
     throw Object.assign(new Error('No referral code found'), { statusCode: 404 });
@@ -227,7 +341,26 @@ export async function buildReferralDashboard(
       expensesRub: 0,
       netRub: Math.round(mainEarned),
     },
+    // Свободный остаток: резервы и заявки на вывод уже списаны с него
     balanceRub: Number(balance?.balanceRub ?? 0),
+    heldRub: Math.round(holds.reduce((s, p) => s + Number(p.balanceAppliedRub), 0) * 100) / 100,
+    minWithdrawalRub: REFERRAL_WITHDRAWAL_MIN_RUB,
+    paidOutRub: Math.round(Number(payoutTotal._sum.amountRub ?? 0) * 100) / 100,
+    holds: holds.map((p) => ({
+      paymentId: p.id,
+      invId: p.robokassaInvId,
+      amountRub: Number(p.balanceAppliedRub),
+      description: p.description,
+      createdAt: p.createdAt.toISOString(),
+    })),
+    withdrawals: withdrawals.map(withdrawalShape),
+    transactions: transactions.map((t) => ({
+      id: t.id,
+      kind: t.kind,
+      amountRub: Number(t.amountRub),
+      note: t.note,
+      createdAt: t.createdAt.toISOString(),
+    })),
     totalEarnedAllTime: referrals.reduce(
       (s, r) => s + r.earnings.reduce((es, e) => es + Number(e.amountRub), 0),
       0,

@@ -371,7 +371,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
     const prisma = fastify.prisma;
     const now = new Date();
 
-    const [tenant, members, crmSubRow, access, crmPricing] = await Promise.all([
+    const [tenant, members, crmSubRow, access, crmPricing, partnerBalance] = await Promise.all([
       prisma.tenant.findUnique({
         where: { id: tenantId },
         select: {
@@ -396,6 +396,10 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         const platform = await m.loadCrmPlatformPricing(prisma);
         const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
         return loadTenantCrmPricing(prisma, tenantId, platform, null);
+      }),
+      prisma.tenantBalance.findUnique({
+        where: { tenantId },
+        select: { balanceRub: true },
       }),
     ]);
 
@@ -460,6 +464,8 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         extraSeatMonthly: crmPricing.extraSeatMonthly,
         seatsIncluded: crmPricing.seatsIncluded,
       },
+      // Свободный остаток партнёрского баланса (резервы и заявки уже списаны)
+      partnerBalanceRub: Number(partnerBalance?.balanceRub ?? 0),
       members: members.map((m) => {
         const email = m.user.email.trim().toLowerCase();
         const crm = crmNames.get(email);

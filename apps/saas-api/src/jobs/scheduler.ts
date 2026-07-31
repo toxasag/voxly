@@ -28,9 +28,14 @@ export function startScheduledJobs() {
   const giftScheduleInterval = setInterval(syncGiftCampaignSchedules, 60 * 1000);
   intervals.push(giftScheduleInterval);
 
+  // Release abandoned partner-balance holds every hour
+  const holdSweepInterval = setInterval(releaseStaleBalanceHolds, 60 * 60 * 1000);
+  intervals.push(holdSweepInterval);
+
   // Run initial check after 10 seconds
   setTimeout(checkExpiredSubscriptions, 10_000);
   setTimeout(syncGiftCampaignSchedules, 15_000);
+  setTimeout(releaseStaleBalanceHolds, 30_000);
   setTimeout(() => {
     void import('../services/ai-sales-learn.js')
       .then((m) => m.ingestWonDealsAllTenants())
@@ -136,6 +141,30 @@ async function checkAiWalletAlerts() {
     if (owner) {
       console.log(`[scheduler] Low AI balance alert for ${owner.email} (${wallet.balanceRub}₽)`);
       // TODO: send email notification
+    }
+  }
+}
+
+const HOLD_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Return the partner balance from holds abandoned on unpaid invoices older than 24h. */
+async function releaseStaleBalanceHolds() {
+  const { prisma } = await import('@voxly/db');
+  const { releaseBalanceHold } = await import('../services/referral-program.js');
+
+  const stale = await prisma.payment.findMany({
+    where: {
+      status: 'pending',
+      balanceAppliedRub: { gt: 0 },
+      createdAt: { lt: new Date(Date.now() - HOLD_TTL_MS) },
+    },
+    select: { id: true },
+  });
+
+  for (const payment of stale) {
+    const result = await releaseBalanceHold(prisma, payment.id);
+    if (result.released) {
+      console.log(`[scheduler] Released stale balance hold on payment ${payment.id}`);
     }
   }
 }

@@ -2,12 +2,14 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { REFERRAL_PRODUCT_SCOPES, REFERRAL_PRODUCT_SCOPE_VALUES } from '@voxly/shared';
 import {
   MAIN_LINK_LABEL,
   buildReferralAdminOverview,
   buildReferralPartnerDetail,
   resolveEffectiveRuleShape,
 } from '../services/referral-admin.js';
+import { withdrawalShape } from '../services/referral-program.js';
 
 const ruleTypeSchema = z.enum([
   'fixed_first_payment',
@@ -19,7 +21,9 @@ const ruleTypeSchema = z.enum([
 
 const amountSchema = z.number().positive().max(10_000_000);
 const durationSchema = z.number().int().positive().max(120).nullable().optional();
+const productScopeSchema = z.enum(REFERRAL_PRODUCT_SCOPE_VALUES).optional();
 const activeSchema = z.object({ isActive: z.boolean() });
+const withdrawalStatusSchema = z.enum(['pending', 'paid', 'rejected', 'cancelled']);
 
 const CANCEL_NOTICE =
   'Начисления и баланс не изменены: отмена привязки не откатывает уже выплаченное. Для списания используйте ручное списание.';
@@ -66,7 +70,7 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
         type: ruleTypeSchema,
         value: z.number().min(0).max(10_000_000),
         durationMonths: durationSchema,
-        productScope: z.string().trim().min(1).max(32).optional(),
+        productScope: productScopeSchema,
         isActive: z.boolean(),
       })
       .safeParse(request.body);
@@ -91,7 +95,7 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
         type: data.type,
         value: data.value,
         durationMonths: data.durationMonths ?? null,
-        productScope: data.productScope ?? 'all',
+        productScope: data.productScope ?? REFERRAL_PRODUCT_SCOPES.ALL,
         isActive: data.isActive,
       };
       return primary
@@ -121,6 +125,7 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
           type: ruleTypeSchema,
           value: z.number().min(0).max(10_000_000),
           durationMonths: durationSchema,
+          productScope: productScopeSchema,
         }),
       ])
       .safeParse(request.body);
@@ -136,7 +141,7 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
     if ('reset' in body.data) {
       await prisma.referralRule.deleteMany({ where: { tenantId } });
     } else {
-      const { type, value, durationMonths } = body.data;
+      const { type, value, durationMonths, productScope } = body.data;
       await prisma.$transaction([
         prisma.referralRule.deleteMany({ where: { tenantId } }),
         prisma.referralRule.create({
@@ -145,7 +150,7 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
             type,
             value,
             durationMonths: durationMonths ?? null,
-            productScope: 'all',
+            productScope: productScope ?? REFERRAL_PRODUCT_SCOPES.ALL,
             isDefault: false,
             isActive: true,
           },
@@ -225,6 +230,143 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return reply.code(status).send({
         error: err instanceof Error && status !== 500 ? err.message : 'Не удалось провести операцию',
+      });
+    }
+  });
+
+  // --- Withdrawal requests queue ---
+  fastify.get('/withdrawals', async (request, reply) => {
+    const parsed = withdrawalStatusSchema
+      .optional()
+      .safeParse((request.query as { status?: string }).status || undefined);
+    if (!parsed.success) return reply.code(400).send({ error: 'Неизвестный статус заявки' });
+    const status = parsed.data;
+
+    const [rows, pendingAgg] = await Promise.all([
+      prisma.referralWithdrawal.findMany({
+        where: status ? { status } : {},
+        // Очередь на рассмотрении — по возрастанию: первым обрабатываем самое старое
+        orderBy: { createdAt: status === 'pending' ? 'asc' : 'desc' },
+      }),
+      prisma.referralWithdrawal.aggregate({
+        where: { status: 'pending' },
+        _count: { _all: true },
+        _sum: { amountRub: true },
+      }),
+    ]);
+
+    const tenantIds = [...new Set(rows.map((w) => w.tenantId))];
+    const [tenants, balances] = await Promise.all([
+      prisma.tenant.findMany({
+        where: { id: { in: tenantIds } },
+        select: {
+          id: true,
+          slug: true,
+          users: {
+            where: { role: 'owner' },
+            take: 1,
+            select: { user: { select: { email: true } } },
+          },
+        },
+      }),
+      prisma.tenantBalance.findMany({
+        where: { tenantId: { in: tenantIds } },
+        select: { tenantId: true, balanceRub: true },
+      }),
+    ]);
+    const tenantById = new Map(tenants.map((t) => [t.id, t]));
+    const balanceByTenant = new Map(balances.map((b) => [b.tenantId, Number(b.balanceRub)]));
+
+    return reply.send({
+      withdrawals: rows.map((w) => ({
+        ...withdrawalShape(w),
+        tenantId: w.tenantId,
+        slug: tenantById.get(w.tenantId)?.slug ?? null,
+        ownerEmail: tenantById.get(w.tenantId)?.users[0]?.user.email ?? null,
+        balanceRub: balanceByTenant.get(w.tenantId) ?? 0,
+      })),
+      summary: {
+        pendingCount: pendingAgg._count._all,
+        pendingRub: Number(pendingAgg._sum.amountRub ?? 0),
+      },
+    });
+  });
+
+  // --- Approve (paid) or reject a withdrawal request ---
+  fastify.patch('/withdrawals/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        action: z.enum(['paid', 'rejected']),
+        note: z.string().trim().max(500).optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Укажите действие: paid или rejected' });
+    }
+    const { action, note } = body.data;
+    if (action === 'rejected' && !note) {
+      return reply.code(400).send({ error: 'Укажите причину отказа' });
+    }
+    const adminUserId = ((request as any).user?.sub as string | undefined) ?? null;
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const existing = await tx.referralWithdrawal.findUnique({ where: { id } });
+        if (!existing) {
+          throw Object.assign(new Error('Заявка не найдена'), { statusCode: 404 });
+        }
+
+        const decided = await tx.referralWithdrawal.updateMany({
+          where: { id, status: 'pending' },
+          data: {
+            status: action,
+            decisionNote: note || null,
+            decidedAt: new Date(),
+            decidedByUserId: adminUserId,
+          },
+        });
+        if (decided.count === 0) {
+          throw Object.assign(new Error('Заявка уже обработана'), { statusCode: 409 });
+        }
+
+        if (action === 'paid') {
+          // Баланс не трогаем: деньги ушли с него в момент создания заявки
+          await tx.referralTransaction.create({
+            data: {
+              tenantId: existing.tenantId,
+              kind: 'payout',
+              amountRub: existing.amountRub,
+              note: note || 'Выплата по заявке',
+              adminUserId,
+            },
+          });
+        } else {
+          await tx.tenantBalance.upsert({
+            where: { tenantId: existing.tenantId },
+            create: { tenantId: existing.tenantId, balanceRub: existing.amountRub },
+            update: { balanceRub: { increment: existing.amountRub } },
+          });
+        }
+
+        const withdrawal = await tx.referralWithdrawal.findUniqueOrThrow({ where: { id } });
+        const balance = await tx.tenantBalance.findUnique({
+          where: { tenantId: existing.tenantId },
+        });
+
+        return { withdrawal, balanceRub: Number(balance?.balanceRub ?? 0) };
+      });
+
+      return reply.send({
+        withdrawal: withdrawalShape(result.withdrawal),
+        balanceRub: result.balanceRub,
+      });
+    } catch (err) {
+      const status = statusOf(err);
+      if (status === 500) request.log.error({ err, id }, 'withdrawal decision failed');
+      return reply.code(status).send({
+        error:
+          err instanceof Error && status !== 500 ? err.message : 'Не удалось обработать заявку',
       });
     }
   });

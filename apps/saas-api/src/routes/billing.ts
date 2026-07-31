@@ -8,10 +8,12 @@ import {
   PRODUCT_CODES,
   REFERRAL_EXCLUDED_PRODUCTS,
   getAiTgExtraSlots,
+  isProductInReferralScope,
 } from '@voxly/shared';
 import { calculateSubscriptionPrice } from '@voxly/billing';
 import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { resolveRuleForReferrer } from '../services/referral-admin.js';
+import { releaseBalanceHold } from '../services/referral-program.js';
 
 const checkoutSchema = z.object({
   productCode: z.enum([
@@ -38,7 +40,17 @@ const checkoutSchema = z.object({
   quantity: z.number().int().min(1).max(50).optional(),
   extraSeats: z.number().int().min(0).optional(),
   email: z.string().email().optional(),
+  /** How much of the partner balance to redeem against this invoice */
+  applyBalanceRub: z.number().nonnegative().optional(),
 });
+
+/** Thrown when a conditional balance decrement finds less money than the checkout promised. */
+const BALANCE_CONFLICT = 'voxly_balance_conflict';
+const BALANCE_CONFLICT_MESSAGE = 'Баланс изменился — обновите страницу и повторите';
+
+function roundRub(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/checkout', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -54,10 +66,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       quantity = 1,
       extraSeats = 0,
       email,
+      applyBalanceRub = 0,
     } = parsed.data;
     const { tenantId } = (request as any).user;
     const prisma = fastify.prisma;
     const robokassa = fastify.robokassa;
+
+    // The common abandonment case: the customer opened an invoice, changed their mind and came
+    // back. Give the held money back before quoting a new price from the same balance.
+    await releaseBalanceHolds(prisma, tenantId);
 
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
@@ -183,26 +200,117 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
 
+    const grossAmount = roundRub(totalAmount);
+    let appliedBalanceRub = 0;
+    if (applyBalanceRub > 0) {
+      const balance = await prisma.tenantBalance.findUnique({ where: { tenantId } });
+      const freeBalance = Number(balance?.balanceRub ?? 0);
+      appliedBalanceRub = roundRub(Math.max(0, Math.min(applyBalanceRub, freeBalance, grossAmount)));
+    }
+    const netAmount = roundRub(grossAmount - appliedBalanceRub);
+    // A gross of 0 without redemption is not a balance purchase — leave that path untouched.
+    const fullyCovered = netAmount === 0 && appliedBalanceRub > 0;
+
+    if (appliedBalanceRub > 0) {
+      description = fullyCovered
+        ? `${description} · оплачено партнёрским балансом`.slice(0, 250)
+        : `${description} · частично с партнёрского баланса`.slice(0, 250);
+      // The receipt must add up to OutSum, which is now the money part only.
+      receiptItems = [
+        {
+          name: description.slice(0, 128),
+          quantity: 1,
+          price: netAmount,
+          tax: 'none',
+          paymentMethod: 'full_payment',
+          paymentObject: 'service',
+        },
+      ];
+    }
+
+    // InvId is allocated the same way for every payment type so invoice numbering has no holes.
     const invId = await getNextInvId(prisma);
     const idempotencyKey = `${tenantId}-${productCode}-${periodMonths}-${Date.now()}`;
 
-    const payment = await prisma.payment.create({
-      data: {
-        tenantId,
-        robokassaInvId: invId,
-        amount: totalAmount,
-        status: 'pending',
-        productCode,
-        periodMonths: periodMonths || 1,
-        description,
-        idempotencyKey,
-        shpTenantId: tenantId,
-      },
-    });
+    let payment;
+    try {
+      payment = await prisma.$transaction(async (tx: any) => {
+        // Hold the balance the moment the invoice exists: minutes pass before the webhook
+        // arrives and the same money could be sent to a withdrawal meanwhile. Conditional
+        // decrement — never compute the new balance in JS.
+        if (appliedBalanceRub > 0) {
+          const held = await tx.tenantBalance.updateMany({
+            where: { tenantId, balanceRub: { gte: appliedBalanceRub } },
+            data: { balanceRub: { decrement: appliedBalanceRub } },
+          });
+          if (held.count === 0) {
+            throw Object.assign(new Error(BALANCE_CONFLICT_MESSAGE), { code: BALANCE_CONFLICT });
+          }
+        }
+        return tx.payment.create({
+          data: {
+            tenantId,
+            robokassaInvId: invId,
+            amount: netAmount,
+            balanceAppliedRub: appliedBalanceRub,
+            status: 'pending',
+            productCode,
+            periodMonths: periodMonths || 1,
+            description,
+            idempotencyKey,
+            shpTenantId: tenantId,
+          },
+        });
+      });
+    } catch (err: any) {
+      if (err?.code === BALANCE_CONFLICT) {
+        return reply.code(400).send({ error: BALANCE_CONFLICT_MESSAGE });
+      }
+      throw err;
+    }
+
+    if (fullyCovered) {
+      // Robokassa cannot process a 0 ₽ invoice, so the purchase completes server-side. It goes
+      // through `fulfilPaymentTransactional` so the post-commit Twenty CRM unlock still runs.
+      const ctx = await loadFulfilPaymentContext(prisma, payment, {});
+      const done = await fulfilPaymentTransactional(prisma, payment, ctx, async (tx: any) => {
+        const claim = await tx.payment.updateMany({
+          where: { id: payment.id, status: 'pending' },
+          data: { status: 'paid', paidAt: new Date() },
+        });
+        if (claim.count === 0) return false;
+        await tx.referralTransaction.create({
+          data: {
+            tenantId,
+            kind: 'redeem',
+            amountRub: appliedBalanceRub,
+            note: `Счёт #${invId} оплачен партнёрским балансом`,
+          },
+        });
+        return true;
+      });
+
+      if (!done) {
+        return reply.code(400).send({ error: BALANCE_CONFLICT_MESSAGE });
+      }
+
+      fastify.log.info(
+        { invId, tenantId, appliedBalanceRub },
+        'Invoice fully covered by partner balance',
+      );
+      return reply.send({
+        paid: true,
+        invId,
+        amount: 0,
+        grossAmount,
+        appliedBalanceRub,
+        redirectUrl: '/dashboard/crm?paid=ok',
+      });
+    }
 
     const paymentUrl = robokassa.generatePaymentUrl({
       invId,
-      amount: totalAmount,
+      amount: netAmount,
       description,
       email,
       items: receiptItems,
@@ -220,7 +328,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    return reply.send({ paymentUrl, invId, amount: totalAmount });
+    return reply.send({ paymentUrl, invId, amount: netAmount, grossAmount, appliedBalanceRub });
   });
 
   const handleResult = async (request: any, reply: any) => {
@@ -274,225 +382,53 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.type('text/plain').send(`OK${invId}`);
     }
 
-    const quantity = Math.max(1, parseInt(customData.quantity || '1', 10) || 1);
+    const ctx = await loadFulfilPaymentContext(prisma, existing, customData);
 
-    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
-    const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
-    const crmPlatformPricing = await loadCrmPlatformPricing(prisma);
-    const tenantCrmPricing = await loadTenantCrmPricing(
-      prisma,
-      existing.tenantId,
-      crmPlatformPricing,
-    );
-
-    await prisma.$transaction(async (tx) => {
-      await tx.payment.update({
-        where: { id: existing.id },
+    const claimed = await fulfilPaymentTransactional(prisma, existing, ctx, async (tx: any) => {
+      // Conditional claim: only one concurrent delivery may flip pending → paid.
+      // `cancelled` is accepted because a Robokassa session can outlive the balance hold, which
+      // a later /checkout releases — the customer still paid and must receive the goods.
+      const claim = await tx.payment.updateMany({
+        where: { id: existing.id, status: { in: ['pending', 'cancelled'] } },
         data: { status: 'paid', paidAt: new Date() },
       });
+      if (claim.count === 0) return false;
 
-      const periodMonths = existing.periodMonths || 1;
-      const now = new Date();
-      let endsAt = new Date(now);
-      endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
-
-      // CRM renewals: extend from current paid/trial end if still in the future
-      // (so paying during trial yields trialEnd + period, not now + period).
-      if (
-        existing.productCode === 'crm_base' ||
-        existing.productCode === PRODUCT_CODES.EXTRA_SEAT
-      ) {
-        const priorCrm = await tx.subscription.findFirst({
-          where: {
-            tenantId: existing.tenantId,
-            productCode: PRODUCT_CODES.CRM_BASE,
-            OR: [{ status: 'active' }, { status: 'expired', periodMonths: 0 }],
-          },
-          orderBy: { endsAt: 'desc' },
-        });
-        if (priorCrm && priorCrm.endsAt > now) {
-          endsAt = new Date(priorCrm.endsAt);
-          endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
+      const applied = Number(existing.balanceAppliedRub ?? 0);
+      if (applied > 0) {
+        let holdStanding = existing.status === 'pending';
+        if (!holdStanding) {
+          // The hold was released; take the money again if it is still there.
+          const held = await tx.tenantBalance.updateMany({
+            where: { tenantId: existing.tenantId, balanceRub: { gte: applied } },
+            data: { balanceRub: { decrement: applied } },
+          });
+          holdStanding = held.count > 0;
         }
-      }
-
-      if (existing.productCode === PRODUCT_CODES.AI_TOPUP) {
-        await tx.aiWallet.upsert({
-          where: { tenantId: existing.tenantId },
-          create: { tenantId: existing.tenantId, balanceRub: Number(existing.amount) },
-          update: { balanceRub: { increment: Number(existing.amount) } },
-        });
-      } else if (existing.productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN) {
-        const addon = await tx.addon.findUnique({
-          where: {
-            tenantId_type: { tenantId: existing.tenantId, type: PRODUCT_CODES.AI_TELEGRAM },
-          },
-        });
-        const prev = getAiTgExtraSlots(addon?.config);
-        const nextSlots = prev + quantity;
-        const config = {
-          ...((addon?.config as object) || {}),
-          extraSlots: nextSlots,
-          trial: false,
-          maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
-        };
-        if (addon) {
-          await tx.addon.update({
-            where: { id: addon.id },
+        if (holdStanding) {
+          await tx.referralTransaction.create({
             data: {
-              config,
-              status: 'active',
-              activeUntil:
-                addon.activeUntil > endsAt ? addon.activeUntil : endsAt,
+              tenantId: existing.tenantId,
+              kind: 'redeem',
+              amountRub: applied,
+              note: `Счёт #${invIdNum} частично оплачен партнёрским балансом`,
             },
           });
         } else {
-          await tx.addon.create({
-            data: {
-              tenantId: existing.tenantId,
-              type: PRODUCT_CODES.AI_TELEGRAM,
-              config,
-              activeUntil: endsAt,
-              status: 'active',
-            },
-          });
-        }
-        await tx.subscription.create({
-          data: {
-            tenantId: existing.tenantId,
-            productCode: existing.productCode,
-            periodMonths,
-            seatsIncluded: 0,
-            startsAt: now,
-            endsAt,
-            status: 'active',
-            payments: { connect: { id: existing.id } },
-          },
-        });
-      } else if (existing.productCode === PRODUCT_CODES.EXTRA_SEAT) {
-        const addSeats = Math.max(
-          1,
-          parseInt(customData.extra_seats || customData.quantity || '1', 10) || 1,
-        );
-        const activeCrm = await tx.subscription.findFirst({
-          where: {
-            tenantId: existing.tenantId,
-            productCode: PRODUCT_CODES.CRM_BASE,
-            status: 'active',
-            endsAt: { gt: now },
-          },
-          orderBy: { endsAt: 'desc' },
-        });
-        if (activeCrm) {
-          await tx.subscription.update({
-            where: { id: activeCrm.id },
-            data: { extraSeats: { increment: addSeats } },
-          });
-        }
-        await tx.subscription.create({
-          data: {
-            tenantId: existing.tenantId,
-            productCode: existing.productCode,
-            periodMonths,
-            seatsIncluded: 0,
-            extraSeats: addSeats,
-            startsAt: now,
-            endsAt,
-            status: 'active',
-            payments: { connect: { id: existing.id } },
-          },
-        });
-      } else {
-        if (existing.productCode === 'crm_base') {
-          await tx.subscription.updateMany({
-            where: {
-              tenantId: existing.tenantId,
-              status: 'active',
-              periodMonths: 0,
-            },
-            data: { status: 'expired' },
-          });
-          await tx.tenant.update({
-            where: { id: existing.tenantId },
-            data: { status: 'active' },
-          });
-        }
-
-        const extraSeatsPaid =
-          existing.productCode === 'crm_base'
-            ? Math.max(0, parseInt(customData.extra_seats || '0', 10) || 0)
-            : 0;
-
-        await tx.subscription.create({
-          data: {
-            tenantId: existing.tenantId,
-            productCode: existing.productCode,
-            periodMonths,
-            seatsIncluded:
-              existing.productCode === 'crm_base' ? tenantCrmPricing.seatsIncluded : 0,
-            extraSeats: extraSeatsPaid,
-            startsAt: now,
-            endsAt,
-            status: 'active',
-            payments: { connect: { id: existing.id } },
-          },
-        });
-
-        if (
-          existing.productCode.startsWith('analytics_') ||
-          existing.productCode === 'gift_bot' ||
-          existing.productCode === PRODUCT_CODES.AI_TELEGRAM ||
-          existing.productCode === PRODUCT_CODES.AI_GRAMJS ||
-          existing.productCode === PRODUCT_CODES.AI_WHATSAPP ||
-          existing.productCode === PRODUCT_CODES.MAILING_BOT ||
-          existing.productCode === PRODUCT_CODES.MAILING_ACCOUNTS ||
-          existing.productCode === PRODUCT_CODES.MAILING_STORIES
-        ) {
-          const existingAddon = await tx.addon.findUnique({
-            where: {
-              tenantId_type: { tenantId: existing.tenantId, type: existing.productCode },
-            },
-          });
-          const prevConfig = (existingAddon?.config as Record<string, unknown>) || {};
-          await tx.addon.upsert({
-            where: {
-              tenantId_type: { tenantId: existing.tenantId, type: existing.productCode },
-            },
-            create: {
-              tenantId: existing.tenantId,
-              type: existing.productCode,
-              config: {
-                ...prevConfig,
-                trial: false,
-                trialConsumed: true,
-                maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
-              },
-              activeUntil: endsAt,
-              status: 'active',
-            },
-            update: {
-              status: 'active',
-              activeUntil: endsAt,
-              config: {
-                ...prevConfig,
-                trial: false,
-                trialConsumed: true,
-                maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
-              },
-            },
-          });
+          // Never let the balance go negative: fulfil anyway and eat the redeemed part. The loss
+          // is bounded by `applied` and stays visible here.
+          fastify.log.error(
+            { invId: invIdNum, tenantId: existing.tenantId, applied },
+            'Late payment for a released balance hold: not enough balance to re-hold, fulfilling anyway',
+          );
         }
       }
-
-      await creditReferralForPayment(tx, existing);
+      return true;
     });
 
-    if (existing.productCode === 'crm_base' || existing.productCode === PRODUCT_CODES.CRM_BASE) {
-      const tenant = await prisma.tenant.findUnique({
-        where: { id: existing.tenantId },
-        select: { twentyWorkspaceId: true },
-      });
-      await syncTwentyCrmLock(tenant?.twentyWorkspaceId, false);
+    if (!claimed) {
+      fastify.log.info({ invId }, 'Payment already claimed by another delivery');
+      return reply.type('text/plain').send(`OK${invId}`);
     }
 
     fastify.log.info({ invId, tenantId: existing.tenantId }, 'Payment processed successfully');
@@ -555,6 +491,308 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   });
 };
 
+interface FulfilmentPayment {
+  id: string;
+  tenantId: string;
+  /** Money part only — `gross - balanceAppliedRub`. */
+  amount: any;
+  /** Part of the invoice closed by the partner balance. */
+  balanceAppliedRub?: any;
+  productCode: string;
+  periodMonths: number | null;
+}
+
+/** Inputs the fulfilment body needs beyond the payment row itself. */
+interface FulfilPaymentContext {
+  /** Robokassa `Shp_*` payload (`quantity`, `extra_seats`); `{}` when there is no gateway. */
+  customData: Record<string, string>;
+  quantity: number;
+  tenantCrmPricing: { seatsIncluded: number };
+}
+
+/**
+ * Loads the fulfilment inputs. Deliberately runs OUTSIDE the fulfilment transaction (as it
+ * always did) so pricing lookups do not extend the write transaction.
+ */
+async function loadFulfilPaymentContext(
+  prisma: any,
+  payment: FulfilmentPayment,
+  customData: Record<string, string>,
+): Promise<FulfilPaymentContext> {
+  const quantity = Math.max(1, parseInt(customData.quantity || '1', 10) || 1);
+
+  const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+  const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
+  const crmPlatformPricing = await loadCrmPlatformPricing(prisma);
+  const tenantCrmPricing = await loadTenantCrmPricing(
+    prisma,
+    payment.tenantId,
+    crmPlatformPricing,
+  );
+
+  return { customData, quantity, tenantCrmPricing };
+}
+
+/**
+ * The ONLY entry point for fulfilling a payment. Claims the payment, runs `fulfilPayment` in the
+ * transaction, and — after commit — runs the effects that must not sit inside a DB transaction
+ * (Twenty CRM unlock for `crm_base`).
+ *
+ * `claim` flips the payment to paid and returns `false` when someone else already fulfilled it;
+ * fulfilment is then skipped and this returns `false`.
+ *
+ * Never call `fulfilPayment` directly: skipping the post-commit unlock leaves a tenant who just
+ * paid (including a renewal covered entirely by partner balance) locked out of their CRM.
+ */
+async function fulfilPaymentTransactional(
+  prisma: any,
+  payment: FulfilmentPayment,
+  ctx: FulfilPaymentContext,
+  claim: (tx: any) => Promise<boolean>,
+): Promise<boolean> {
+  const claimed = await prisma.$transaction(async (tx: any) => {
+    if (!(await claim(tx))) {
+      return false;
+    }
+    await fulfilPayment(tx, payment, ctx);
+    return true;
+  });
+
+  if (!claimed) return false;
+
+  if (payment.productCode === 'crm_base' || payment.productCode === PRODUCT_CODES.CRM_BASE) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: payment.tenantId },
+      select: { twentyWorkspaceId: true },
+    });
+    await syncTwentyCrmLock(tenant?.twentyWorkspaceId, false);
+  }
+
+  return true;
+}
+
+/**
+ * Applies everything a paid payment grants: subscription period, addons/wallet/seats and the
+ * referral commission. Runs inside the caller's transaction, after the payment was claimed.
+ *
+ * Go through `fulfilPaymentTransactional` — it owns the post-commit CRM unlock.
+ */
+async function fulfilPayment(
+  tx: any,
+  payment: FulfilmentPayment,
+  ctx: FulfilPaymentContext,
+): Promise<void> {
+  const { customData, quantity, tenantCrmPricing } = ctx;
+
+  const periodMonths = payment.periodMonths || 1;
+  const now = new Date();
+  let endsAt = new Date(now);
+  endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
+
+  // CRM renewals: extend from current paid/trial end if still in the future
+  // (so paying during trial yields trialEnd + period, not now + period).
+  if (payment.productCode === 'crm_base' || payment.productCode === PRODUCT_CODES.EXTRA_SEAT) {
+    const priorCrm = await tx.subscription.findFirst({
+      where: {
+        tenantId: payment.tenantId,
+        productCode: PRODUCT_CODES.CRM_BASE,
+        OR: [{ status: 'active' }, { status: 'expired', periodMonths: 0 }],
+      },
+      orderBy: { endsAt: 'desc' },
+    });
+    if (priorCrm && priorCrm.endsAt > now) {
+      endsAt = new Date(priorCrm.endsAt);
+      endsAt.setMonth(endsAt.getMonth() + Math.max(1, periodMonths));
+    }
+  }
+
+  if (payment.productCode === PRODUCT_CODES.AI_TOPUP) {
+    // The wallet gets the GROSS top-up: `amount` is only the money part, the rest was closed
+    // by the partner balance. Crediting `amount` alone silently short-changes the customer.
+    const topupRub = Number(payment.amount) + Number(payment.balanceAppliedRub ?? 0);
+    await tx.aiWallet.upsert({
+      where: { tenantId: payment.tenantId },
+      create: { tenantId: payment.tenantId, balanceRub: topupRub },
+      update: { balanceRub: { increment: topupRub } },
+    });
+  } else if (payment.productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN) {
+    const addon = await tx.addon.findUnique({
+      where: {
+        tenantId_type: { tenantId: payment.tenantId, type: PRODUCT_CODES.AI_TELEGRAM },
+      },
+    });
+    const prev = getAiTgExtraSlots(addon?.config);
+    const nextSlots = prev + quantity;
+    const config = {
+      ...((addon?.config as object) || {}),
+      extraSlots: nextSlots,
+      trial: false,
+      maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+    };
+    if (addon) {
+      await tx.addon.update({
+        where: { id: addon.id },
+        data: {
+          config,
+          status: 'active',
+          activeUntil: addon.activeUntil > endsAt ? addon.activeUntil : endsAt,
+        },
+      });
+    } else {
+      await tx.addon.create({
+        data: {
+          tenantId: payment.tenantId,
+          type: PRODUCT_CODES.AI_TELEGRAM,
+          config,
+          activeUntil: endsAt,
+          status: 'active',
+        },
+      });
+    }
+    await tx.subscription.create({
+      data: {
+        tenantId: payment.tenantId,
+        productCode: payment.productCode,
+        periodMonths,
+        seatsIncluded: 0,
+        startsAt: now,
+        endsAt,
+        status: 'active',
+        payments: { connect: { id: payment.id } },
+      },
+    });
+  } else if (payment.productCode === PRODUCT_CODES.EXTRA_SEAT) {
+    const addSeats = Math.max(
+      1,
+      parseInt(customData.extra_seats || customData.quantity || '1', 10) || 1,
+    );
+    const activeCrm = await tx.subscription.findFirst({
+      where: {
+        tenantId: payment.tenantId,
+        productCode: PRODUCT_CODES.CRM_BASE,
+        status: 'active',
+        endsAt: { gt: now },
+      },
+      orderBy: { endsAt: 'desc' },
+    });
+    if (activeCrm) {
+      await tx.subscription.update({
+        where: { id: activeCrm.id },
+        data: { extraSeats: { increment: addSeats } },
+      });
+    }
+    await tx.subscription.create({
+      data: {
+        tenantId: payment.tenantId,
+        productCode: payment.productCode,
+        periodMonths,
+        seatsIncluded: 0,
+        extraSeats: addSeats,
+        startsAt: now,
+        endsAt,
+        status: 'active',
+        payments: { connect: { id: payment.id } },
+      },
+    });
+  } else {
+    if (payment.productCode === 'crm_base') {
+      await tx.subscription.updateMany({
+        where: {
+          tenantId: payment.tenantId,
+          status: 'active',
+          periodMonths: 0,
+        },
+        data: { status: 'expired' },
+      });
+      await tx.tenant.update({
+        where: { id: payment.tenantId },
+        data: { status: 'active' },
+      });
+    }
+
+    const extraSeatsPaid =
+      payment.productCode === 'crm_base'
+        ? Math.max(0, parseInt(customData.extra_seats || '0', 10) || 0)
+        : 0;
+
+    await tx.subscription.create({
+      data: {
+        tenantId: payment.tenantId,
+        productCode: payment.productCode,
+        periodMonths,
+        seatsIncluded: payment.productCode === 'crm_base' ? tenantCrmPricing.seatsIncluded : 0,
+        extraSeats: extraSeatsPaid,
+        startsAt: now,
+        endsAt,
+        status: 'active',
+        payments: { connect: { id: payment.id } },
+      },
+    });
+
+    if (
+      payment.productCode.startsWith('analytics_') ||
+      payment.productCode === 'gift_bot' ||
+      payment.productCode === PRODUCT_CODES.AI_TELEGRAM ||
+      payment.productCode === PRODUCT_CODES.AI_GRAMJS ||
+      payment.productCode === PRODUCT_CODES.AI_WHATSAPP ||
+      payment.productCode === PRODUCT_CODES.MAILING_BOT ||
+      payment.productCode === PRODUCT_CODES.MAILING_ACCOUNTS ||
+      payment.productCode === PRODUCT_CODES.MAILING_STORIES
+    ) {
+      const existingAddon = await tx.addon.findUnique({
+        where: {
+          tenantId_type: { tenantId: payment.tenantId, type: payment.productCode },
+        },
+      });
+      const prevConfig = (existingAddon?.config as Record<string, unknown>) || {};
+      await tx.addon.upsert({
+        where: {
+          tenantId_type: { tenantId: payment.tenantId, type: payment.productCode },
+        },
+        create: {
+          tenantId: payment.tenantId,
+          type: payment.productCode,
+          config: {
+            ...prevConfig,
+            trial: false,
+            trialConsumed: true,
+            maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+          },
+          activeUntil: endsAt,
+          status: 'active',
+        },
+        update: {
+          status: 'active',
+          activeUntil: endsAt,
+          config: {
+            ...prevConfig,
+            trial: false,
+            trialConsumed: true,
+            maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
+          },
+        },
+      });
+    }
+  }
+
+  await creditReferralForPayment(tx, payment);
+}
+
+/**
+ * `durationMonths` («первые N мес.») counts paid months, so the window opens with the client's
+ * first payment, not with `attributedAt`: anchoring on attribution would deny the very first
+ * commission of a client who registered long ago and leave the referral stuck in `attributed`.
+ */
+function isAfterReferralPayoutWindow(
+  referral: { firstPaymentAt: Date | null },
+  durationMonths: number,
+): boolean {
+  if (!referral.firstPaymentAt) return false;
+  const windowEnd = new Date(referral.firstPaymentAt);
+  windowEnd.setMonth(windowEnd.getMonth() + durationMonths);
+  return Date.now() >= windowEnd.getTime();
+}
+
 async function creditReferralForPayment(
   tx: any,
   payment: { id: string; tenantId: string; amount: any; productCode: string },
@@ -568,18 +806,27 @@ async function creditReferralForPayment(
 
   const rule = await resolveRuleForReferrer(tx, referral.referrerTenantId);
   if (!rule) return;
+  if (!isProductInReferralScope(payment.productCode, rule.productScope)) return;
 
+  // `payment.amount` is the NET money part. The redeemed part was already credited to another
+  // partner, so paying commission on it again would disburse the same money twice.
   const amount = Number(payment.amount);
   let earningAmount = 0;
   const isFirst = !referral.firstPaymentAt;
 
   if (rule.type === 'percent_recurring') {
+    if (rule.durationMonths && isAfterReferralPayoutWindow(referral, rule.durationMonths)) return;
     earningAmount = (amount * Number(rule.value)) / 100;
   } else if (rule.type === 'percent_first_payment' && isFirst) {
     earningAmount = (amount * Number(rule.value)) / 100;
-  } else if (rule.type === 'fixed_first_payment' && isFirst) {
-    earningAmount = Number(rule.value);
-  } else if (rule.type === 'credit' && isFirst) {
+  } else if (
+    // `credit` duplicated `fixed_first_payment` verbatim and `credit_discount` had no branch at
+    // all, so it earned nothing AND never stamped `firstPaymentAt` — the referral stayed pending.
+    (rule.type === 'fixed_first_payment' ||
+      rule.type === 'credit' ||
+      rule.type === 'credit_discount') &&
+    isFirst
+  ) {
     earningAmount = Number(rule.value);
   }
 
@@ -654,6 +901,25 @@ function buildDescription(productCode: string, periodMonths: number, quantity = 
       : names[productCode] || productCode;
   const period = periodMonths === 1 ? '1 мес' : `${periodMonths} мес`;
   return `${name} — ${period}`;
+}
+
+/**
+ * Releases this tenant's open balance holds. Release semantics live in `releaseBalanceHold`,
+ * which the partner-facing route and the hourly sweeper also call — keep them a single source
+ * of truth, since a divergence here refunds money twice or not at all.
+ */
+async function releaseBalanceHolds(prisma: any, tenantId: string): Promise<number> {
+  const holds = await prisma.payment.findMany({
+    where: { tenantId, status: 'pending', balanceAppliedRub: { gt: 0 } },
+    select: { id: true, balanceAppliedRub: true },
+  });
+
+  let released = 0;
+  for (const hold of holds) {
+    const result = await releaseBalanceHold(prisma, hold.id, tenantId);
+    if (result.released) released += Number(hold.balanceAppliedRub);
+  }
+  return released;
 }
 
 async function getNextInvId(prisma: any): Promise<number> {

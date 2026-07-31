@@ -2,11 +2,14 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { REFERRAL_WITHDRAWAL_MIN_RUB, normalizeReferralProductScope } from '@voxly/shared';
 import {
   buildReferralDashboard,
   generateCampaignCode,
   incrementReferralClick,
+  releaseBalanceHold,
   resolveReferralAttribution,
+  withdrawalShape,
 } from '../services/referral-program.js';
 
 const campaignCodeSchema = z
@@ -29,6 +32,16 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 const codeTakenMessage = (code: string) => `Код ${code} уже занят — выберите другой`;
+
+const withdrawalSchema = z.object({
+  amountRub: z.number().positive().max(10_000_000),
+  payoutDetails: z.string().trim().min(1).max(500),
+  comment: z.string().trim().max(500).optional(),
+});
+
+function statusOf(err: unknown): number {
+  return (err as { statusCode?: number }).statusCode || 500;
+}
 
 export const referralRoutes: FastifyPluginAsync = async (fastify) => {
   const isCodeTaken = async (code: string): Promise<boolean> =>
@@ -197,6 +210,123 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  // --- Request a payout of the partner balance ---
+  fastify.post('/withdrawals', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const body = withdrawalSchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Укажите сумму и реквизиты для выплаты' });
+    }
+    const { amountRub, payoutDetails, comment } = body.data;
+
+    if (amountRub < REFERRAL_WITHDRAWAL_MIN_RUB) {
+      return reply
+        .code(400)
+        .send({ error: `Минимальная сумма вывода — ${REFERRAL_WITHDRAWAL_MIN_RUB} ₽` });
+    }
+
+    const prisma = fastify.prisma;
+    const alreadyPending = await prisma.referralWithdrawal.count({
+      where: { tenantId, status: 'pending' },
+    });
+    if (alreadyPending > 0) {
+      return reply.code(409).send({ error: 'У вас уже есть заявка на рассмотрении' });
+    }
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        // Conditional update keeps the balance from going negative under concurrency
+        const debited = await tx.tenantBalance.updateMany({
+          where: { tenantId, balanceRub: { gte: amountRub } },
+          data: { balanceRub: { decrement: amountRub } },
+        });
+        if (debited.count === 0) {
+          throw Object.assign(new Error('Сумма больше доступного баланса'), { statusCode: 400 });
+        }
+
+        const withdrawal = await tx.referralWithdrawal.create({
+          data: { tenantId, amountRub, payoutDetails, comment: comment || null },
+        });
+        const balance = await tx.tenantBalance.findUnique({ where: { tenantId } });
+
+        return { withdrawal, balanceRub: Number(balance?.balanceRub ?? 0) };
+      });
+
+      return reply.code(201).send({
+        withdrawal: withdrawalShape(result.withdrawal),
+        balanceRub: result.balanceRub,
+      });
+    } catch (err) {
+      const status = statusOf(err);
+      if (status === 500) request.log.error({ err, tenantId }, 'withdrawal request failed');
+      return reply.code(status).send({
+        error:
+          err instanceof Error && status !== 500 ? err.message : 'Не удалось создать заявку',
+      });
+    }
+  });
+
+  // --- Cancel own pending request: the reserved money goes back to the balance ---
+  fastify.post(
+    '/withdrawals/:id/cancel',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { id } = request.params as { id: string };
+      const prisma = fastify.prisma;
+
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          const cancelled = await tx.referralWithdrawal.updateMany({
+            where: { id, tenantId, status: 'pending' },
+            data: { status: 'cancelled' },
+          });
+          if (cancelled.count === 0) {
+            throw Object.assign(new Error('Заявка не найдена или уже обработана'), {
+              statusCode: 404,
+            });
+          }
+
+          const withdrawal = await tx.referralWithdrawal.findUniqueOrThrow({ where: { id } });
+          const balance = await tx.tenantBalance.upsert({
+            where: { tenantId },
+            create: { tenantId, balanceRub: withdrawal.amountRub },
+            update: { balanceRub: { increment: withdrawal.amountRub } },
+          });
+
+          return { withdrawal, balanceRub: Number(balance.balanceRub) };
+        });
+
+        return reply.send({
+          withdrawal: withdrawalShape(result.withdrawal),
+          balanceRub: result.balanceRub,
+        });
+      } catch (err) {
+        const status = statusOf(err);
+        if (status === 500) request.log.error({ err, tenantId, id }, 'withdrawal cancel failed');
+        return reply.code(status).send({
+          error:
+            err instanceof Error && status !== 500 ? err.message : 'Не удалось отменить заявку',
+        });
+      }
+    },
+  );
+
+  // --- Release a balance hold on an unpaid invoice ---
+  fastify.post(
+    '/holds/:paymentId/release',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { paymentId } = request.params as { paymentId: string };
+
+      const result = await releaseBalanceHold(fastify.prisma, paymentId, tenantId);
+      if (!result.released) return reply.code(404).send({ error: 'Резерв не найден' });
+
+      return reply.send({ balanceRub: result.balanceRub ?? 0 });
+    },
+  );
+
   // --- Admin: list referral rules ---
   fastify.get('/rules', { preHandler: [fastify.requireSuperadmin] }, async (_request, reply) => {
     const rules = await fastify.prisma.referralRule.findMany({
@@ -227,7 +357,7 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
         type: body.type,
         value: body.value,
         durationMonths: body.durationMonths,
-        productScope: body.productScope || 'all',
+        productScope: normalizeReferralProductScope(body.productScope),
         isDefault: body.isDefault || false,
       },
     });
