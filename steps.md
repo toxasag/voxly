@@ -502,6 +502,13 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Deployed `saas-api` + migrate `twentyPasswordEncrypted` + `saas-portal`. SMTP deferred.
 
 
+
+**2026-07-31 (вечер) — Полный деплой: партнёрский баланс, каналы AI, фиксы биллинга**
+- 6 коммитов: схема+миграции, shared constants, billing+referral logic, AI atomic charge+channels, portal UX, incidents doc.
+- Deploy: saas-api, saas-portal, ai-telegram-worker, ai-whatsapp-worker, gift-bot-worker. Backup 20260731-151337.
+- 4 миграции: uncollectedRub+unique paymentId, productScope normalise, AiUsageLog.channel, ReferralWithdrawal+balanceAppliedRub.
+- Smoke: все страницы 200. Логи чисты после restart.
+
 ---
 
 ## 4. Текущее состояние
@@ -514,7 +521,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; **Super-admin `/admin/crm`** (platform pricing + portals) on prod. **2026-07-31** super-admin **`/admin/partners`** on prod: per-tenant `ReferralRule` + `ReferralTransaction` (ручные выплаты/корректировки), блокировка партнёра, уникальные реферальные коды (migrate `20260731140000_referral_admin`).  invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/078**. **2026-07-31 вечер** полный деплой: партнёрский баланс (hold + withdraw + redeem), каналы AI (AiUsageLog.channel), атомарное списание AI-кошелька (INC-075), Robokassa идемпотентность (INC-076), productScope/durationMonths enforcement (INC-077), WA handoff при нуле баланса (INC-074). 4 миграции на проде. Все 5 сервисов (saas-api, saas-portal, ai-telegram-worker, ai-whatsapp-worker, gift-bot-worker) задеплоены и smoke-тестированы. Backup 20260731-151337. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

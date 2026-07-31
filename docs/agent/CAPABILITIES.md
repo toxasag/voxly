@@ -14,7 +14,7 @@
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
 | `/login`, `/register` | ✅ shadcn Card/Input; register: shadcn Checkbox оферта + ПДн | `login/page.tsx`, `register/page.tsx` |
 | `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; link → partners | `dashboard/page.tsx` |
-| `/dashboard/partners` | ✅ реферальная программа: основная ссылка/код; проекты (campaign links); stats за период; расходы по проекту; pending/earned/net | `dashboard/partners/page.tsx` |
+| `/dashboard/partners` | ✅ реферальная программа: основная ссылка/код; проекты (campaign links); stats за период; расходы по проекту; pending/earned/net; **резервы баланса** (holds), **заявки на вывод**, **транзакции**, **«Оплатить балансом»** (applyBalanceRub через checkout) | `dashboard/partners/page.tsx` |
 | `/dashboard/crm` | ✅ amber CRM portal: Trial/seats, URL+SSO, Robokassa, invite; **hard lock paywall** when sub ended (ADR-023) | `dashboard/crm/page.tsx` |
 | `/dashboard/bots` | ✅ список gift-ботов | `dashboard/bots/page.tsx` |
 | `/dashboard/bots/[botId]` | ✅ **1.1** канал → **1.2** первое сообщение (Telegram description до /start) → **1.3** стартовое (/start funnel) → promo, funnel, media, chat, subscribers; **расписание проекта** | `dashboard/bots/[botId]/page.tsx` |
@@ -25,14 +25,14 @@
 | `/dashboard/mailing/whatsapp` | ✅ Conversation audience + schedule/edit/preview + mediaUrl | `dashboard/mailing/whatsapp/page.tsx` |
 | `/dashboard/mailing/stories` | ✅ schedule/edit/preview; GramJS send; WA/ai_tg → unsupported on send (ADR-019) | `dashboard/mailing/stories/page.tsx` |
 | Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.23** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
-| `/dashboard/ai` | ✅ Telegram Business: инструкция BotFather + token connect + delete; **не** manager provision | `dashboard/ai/page.tsx` |
+| `/dashboard/ai` | ✅ Telegram Business: инструкция BotFather + token connect + delete; **разбивка расходов AI по каналам** (TG Business/Personal, WA, gift-бот, база знаний); hero-блок; **не** manager provision | `dashboard/ai/page.tsx` |
 | `/dashboard/ai/gramjs` | ✅ QR + trial/оплата `ai_gramjs`; QR gated `requiresPayment` | `dashboard/ai/gramjs/page.tsx` |
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment` | `dashboard/ai/whatsapp/page.tsx` |
-| `/dashboard/ai/agents` | ✅ list/create/**edit name+prompt+model**; assign; **usage**; **KB files** + **won-deal sales examples** | `dashboard/ai/agents/page.tsx` |
+| `/dashboard/ai/agents` | ✅ list/create/**edit name+prompt+model**; assign; **usage** (**byAgent** + **byChannel**); **KB files** + **won-deal sales examples**; hero-блок | `dashboard/ai/agents/page.tsx` |
 | `/dashboard/ai/[botId]` | ✅ Business capacity + unlink + buy slot 200₽; диалоги, handoff, agent | `dashboard/ai/[botId]/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar супер-админ **Обзор** + **CRM портал** (не кабинет) | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
 | `/admin/crm` | ✅ платформенные цены + per-tenant pricing; отчёт CRM (trial/paid/revenue); ресурсы (RAM оценка + диск по клиентам, 60s refresh); purge; CRM-login; impersonate | `admin/crm/page.tsx` |
-| `/admin/partners` | ✅ супер-админ партнёрской программы: список партнёров + метрики за период, карточка партнёра (рефералы, коды, проекты, транзакции), дефолтное правило вознаграждения + **индивидуальное правило на тенанта**, ручные выплаты/корректировки (`ReferralTransaction`), вкл/выкл кодов и проектов, блокировка партнёра | `admin/partners/page.tsx` + `components/portal/admin-partners-rule.tsx`, `admin-partners-detail.tsx` |
+| `/admin/partners` | ✅ супер-админ партнёрской программы: список партнёров + метрики за период, карточка партнёра (рефералы, коды, проекты, транзакции), дефолтное правило вознаграждения + **индивидуальное правило на тенанта** (+ **productScope**), ручные выплаты/корректировки (`ReferralTransaction`), **очередь заявок на вывод** (`admin-withdrawals-queue.tsx`), вкл/выкл кодов и проектов, блокировка партнёра | `admin/partners/page.tsx` + `components/portal/admin-partners-rule.tsx`, `admin-partners-detail.tsx`, `admin-withdrawals-queue.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
 | Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for video/audio/**PDF·DOCX**; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), MarkdownV2, **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **clickable http(s) links** (INC-050/055/057/063/067, app ≥0.1.20) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
 | Inbound message left toast | ✅ shell-ux poll prefer `/s/crm-chat/inbound-toasts` ~4s; toast + **auto-refresh open Chat** (click «Обновить» / soft ~4.5s); skew 15s | `docker/twenty-shell-ux.js` + `get-inbound-toasts` + `crm-chat.ts` |
@@ -62,7 +62,7 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 ### Billing `/api/billing`
 | Method | Path | ✅ |
 |---|---|---|
-| POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_wa`, `ai_topup`, `crm_base`+`extraSeats`, `extra_seat`; webhook persists `Subscription.extraSeats`; InvId via advisory lock; wallet / extraSlots / referral 20% excl. `ai_topup` |
+| POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_wa`, `ai_topup`, `crm_base`+`extraSeats`, `extra_seat`; **`applyBalanceRub`** (партнёрский баланс → hold → fulfilPaymentTransactional); **idempotent result** (conditional claim); webhook persists `Subscription.extraSeats`; InvId via advisory lock; wallet / extraSlots / referral by resolved rule (productScope + durationMonths enforced) |
 | GET | `/success`, `/fail`, `/status` | ✅ success/fail → `/dashboard/crm?paid=ok\|fail` |
 
 ### Tenant `/api/tenant`
@@ -175,6 +175,15 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | PATCH | `/codes/:id`, `/campaigns/:id` | ✅ активация/деактивация кода и проекта |
 | PATCH | `/partners/:tenantId/block` | ✅ блокировка партнёра |
 | PATCH | `/referrals/:id` | ✅ ручная правка статуса реферала |
+| GET | `/withdrawals?status=` | ✅ очередь заявок на вывод (pending/paid/rejected/cancelled) + summary |
+| PATCH | `/withdrawals/:id` | ✅ approve (paid) / reject заявки на вывод |
+
+### Referral `/api/referrals` (additions)
+| Method | Path | ✅ |
+|---|---|---|
+| POST | `/withdrawals` | ✅ создать заявку на вывод (min 1000 ₽, hold на TenantBalance) |
+| DELETE | `/withdrawals/:id` | ✅ отменить pending-заявку (возврат hold) |
+| POST | `/holds/:paymentId/release` | ✅ освободить резерв по неоплаченному счёту |
 
 ### Analytics `/api/analytics`
 | Method | Path | ✅ |
@@ -216,11 +225,11 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | AiAgent model | packages/db | ✅ tenant agents; bot default + conversation override; null = AI off |
 | AI CRM lead Person+Opportunity | ai-telegram-worker / ai-whatsapp-worker `syncLeadToCrm` | ✅ dedupe; **not for bot senders** (early return before CRM); **cross-channel merge by phone** (`findPersonByPhone` phones+whatsapp, INC-044); ambiguous → `needsReview`; **stale Twenty ids after wipe → clear+recreate (INC-042)**; WA E.164 from webhook/vCard/explicit Evolution fields only (no avatar invent, INC-059) |
 | AI Business SKU | PRODUCT_CODES.AI_TELEGRAM + addon gate | ✅ 1000₽/10 accounts; extra `ai_tg_extra_conn` 200₽/slot; capacity gate + unlink |
-| AI usage by agent | AiUsageLog.aiAgentId + GET `/api/ai/agents/usage` | ✅ charge on reply; portal breakdown |
+| AI usage by agent + channel | AiUsageLog.aiAgentId + **channel** + GET `/api/ai/agents/usage` | ✅ charge on reply; portal breakdown **byAgent** + **byChannel**; `uncollectedRub` for shortfall tracking |
 | AI cost (OpenRouter) | `@voxly/ai-core` `resolveProviderCostRub` | ✅ `usage.cost` → else `GET /models` pricing × tokens → USD×`USD_RUB_RATE`/`usd_rub_rate` → markup; TG+WA workers |
 | AI knowledge + sales RAG | AiKnowledge* + AiSalesExample + retrieveAgentContext | ✅ files txt/md/pdf; learn only from won Opportunity stage (`USPESHNAYA_SDELKA` + legacy `CUSTOMER`); inject into LLM prompt |
 | Referral default | ReferralRule percent_recurring 20% | ✅ excl. `ai_topup`; webhook `creditReferralForPayment` |
-| Referral per-tenant rule + transactions | `referral-program.ts` (резолв правила) + `referral-admin.ts` | ✅ `ReferralRule.tenantId` (индивидуальное правило имеет приоритет над дефолтным); `billing.ts` начисляет по резолвнутому правилу; `ReferralTransaction` (`payout`/`manual_credit`/`manual_debit`) — ручные выплаты и корректировки из `/admin/partners`; резолв вынесен из `referral-admin` чтобы разорвать циклическую зависимость |
+| Referral per-tenant rule + transactions + withdrawals | `referral-program.ts` (резолв правила) + `referral-admin.ts` | ✅ `ReferralRule.tenantId` (индивидуальное правило имеет приоритет над дефолтным); `billing.ts` начисляет по резолвнутому правилу (**productScope** + **durationMonths** enforced); `ReferralTransaction` (`payout`/`manual_credit`/`manual_debit`/`redeem`) — ручные выплаты и корректировки из `/admin/partners`; **`ReferralWithdrawal`** (создание/отмена/approve/reject); **`releaseBalanceHold`** (hold на Payment при checkout, часовой sweep зависших); резолв вынесен из `referral-admin` чтобы разорвать циклическую зависимость |
 | `emailWorker` SMTP | queues.ts | ❌ logging stub |
 | `notifyHumanOperator` | AI workers | ❌ |
 | GramJS bridge | `apps/gramjs-bridge` | 🟡 QR + encrypted session + human 1h pause + soft SKU + `POST /messages/send` (CRM operator); portal via saas-api proxy |

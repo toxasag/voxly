@@ -1833,3 +1833,20 @@
 - Verify: CAPABILITIES/FLOWS/DATA aligned with steps §4–5.
 - Broken / blockers: TG network (api.telegram.org), deal-chat scaffold, uncommitted WIP.
 - Next: gift E2E → deal-card SDK → commit when asked.
+
+### 2026-07-31 — Полный деплой: партнёрский баланс, каналы AI, фиксы биллинга (prod)
+
+- Goal: привести прод в консистентное состояние со всеми локальными изменениями — списание партнёрского баланса в счёт оплаты, заявки на вывод, атомарное списание AI-кошелька, разбивка расходов AI по каналам, фиксы биллинга (Robokassa идемпотентность, productScope/durationMonths), WA handoff при нуле баланса.
+- Changes:
+  - `packages/db` — 4 новые миграции: `..._ai_charge_shortfall_and_referral_earning_unique` (uncollectedRub + unique paymentId на ReferralEarning), `..._referral_rule_product_scope` (нормализация subscriptions→all), `..._ai_usage_channel` (AiUsageLog.channel + индекс), `..._referral_withdrawal_and_balance_applied` (ReferralWithdrawal, Payment.balanceAppliedRub, ReferralTxKind.redeem).
+  - `packages/shared` — REFERRAL_PRODUCT_SCOPES, AI_USAGE_CHANNELS, REFERRAL_WITHDRAWAL_MIN_RUB.
+  - `packages/ai-core` — атомарный conditional decrement в chargeAiUsage, channel param.
+  - `apps/saas-api` — billing.ts (checkout applyBalanceRub, fulfilPaymentTransactional, idempotent result), referral.ts (withdrawals CRUD), admin-referrals.ts (withdrawals queue, productScope), tenant.ts (partnerBalanceRub), scheduler.ts (releaseStaleBalanceHolds).
+  - `apps/ai-telegram-worker` + `ai-whatsapp-worker` + `gift-bot-worker` — channel param во всех chargeAiUsage call-site; WA: switchToHuman при paused.
+  - `apps/saas-portal` — полная переработка UX /dashboard/partners, /dashboard/ai, /dashboard/ai/agents, /dashboard/ai/whatsapp, /admin/partners; checkout с applyBalanceRub.
+  - `docs/agent/INCIDENTS.md` — INC-074..078.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal,ai-telegram-worker,ai-whatsapp-worker,gift-bot-worker`. Backup **`/opt/voxly/backups/20260731-151337/`** (`voxly_control.dump` 279K + `twenty.dump` 2.4M). Тома не трогались, `.env` не синкался.
+- Migration on prod: `prisma migrate deploy` → applied 4 pending (20260731170000, 180000, 190000, 200000). Уникальный индекс ReferralEarning.paymentId создался без проблем (дублей не было).
+- Verify: Smoke `/` `/health` `/dashboard/partners` `/dashboard/crm` `/admin/partners` `/dashboard/ai` — **200**. Логи `saas-api` — одна ожидаемая ошибка releaseStaleBalanceHolds при первом старте (до применения миграций), после restart чисто. Cold start 502 saas-portal — штатно, после прогрева 200.
+- Broken: ничего.
+- Next: обновить CAPABILITIES.md, steps.md; ротировать root SSH пароль.

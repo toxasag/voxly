@@ -136,6 +136,14 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Backup `/opt/voxly/backups/20260724-103450/`.
 - Smoke: portal + API health + app healthz **200**.
 
+### Deploy 2026-07-31 (partner balance + AI channels + billing fixes)
+
+- Services: `saas-api`, `saas-portal`, `ai-telegram-worker`, `ai-whatsapp-worker`, `gift-bot-worker`.
+- Backup `/opt/voxly/backups/20260731-151337/` (`voxly_control.dump` 279K + `twenty.dump` 2.4M).
+- Control migrate: 4 migrations applied (`20260731170000` uncollectedRub + ReferralEarning unique paymentId, `20260731180000` productScope normalise, `20260731190000` AiUsageLog.channel, `20260731200000` ReferralWithdrawal + Payment.balanceAppliedRub + ReferralTxKind.redeem).
+- Cold start: saas-api first boot hit `releaseStaleBalanceHolds` 30s timer before migration → P2022 Payment.balanceAppliedRub; container restarted after migration applied, clean.
+- Smoke: `/`, API health, `/dashboard/partners`, `/dashboard/crm`, `/admin/partners`, `/dashboard/ai` — **200**. Logs clean after restart.
+
 ## Continue local work without breaking deploy
 
 1. Feature only in git working tree / branch.
