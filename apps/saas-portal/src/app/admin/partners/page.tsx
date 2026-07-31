@@ -3,15 +3,18 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { normalizeReferralProductScope } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { AdminPartnerDetail } from '@/components/portal/admin-partners-detail';
+import { AdminWithdrawalsQueue } from '@/components/portal/admin-withdrawals-queue';
 import {
-  PRODUCT_SCOPE_OPTIONS,
   RuleFields,
+  ScopeField,
   formatRub,
   rewardLabel,
+  scopeLabel,
   type RuleDraft,
 } from '@/components/portal/admin-partners-rule';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +38,8 @@ type AdminReferralsPayload = {
     paidOutRub: number;
     balanceOwedRub: number;
     clicksTotal: number;
+    pendingWithdrawalsCount?: number;
+    pendingWithdrawalsRub?: number;
   };
   partners: Array<{
     tenantId: string;
@@ -54,6 +59,7 @@ type AdminReferralsPayload = {
     paidOutRub: number;
     rule: { type: string; value: number; durationMonths: number | null; isOverride: boolean };
     blocked: boolean;
+    pendingWithdrawalRub?: number;
   }>;
 };
 
@@ -169,7 +175,7 @@ export default function AdminPartnersPage() {
                 value: payload.defaultRule?.value ?? 20,
                 durationMonths: payload.defaultRule?.durationMonths ?? null,
               },
-              productScope: payload.defaultRule?.productScope ?? 'all',
+              productScope: normalizeReferralProductScope(payload.defaultRule?.productScope),
               isActive: payload.defaultRule?.isActive ?? true,
             },
         );
@@ -311,6 +317,15 @@ export default function AdminPartnersPage() {
                   {formatRub(summary.balanceOwedRub)} ₽
                 </strong>{' '}
                 должны партнёрам
+              </span>
+              <span>
+                <strong className="font-semibold tabular-nums text-black">
+                  {formatRub(summary.pendingWithdrawalsRub ?? 0)} ₽
+                </strong>{' '}
+                к выплате по заявкам
+                {(summary.pendingWithdrawalsCount ?? 0) > 0
+                  ? ` (${summary.pendingWithdrawalsCount})`
+                  : ''}
               </span>
               <span>
                 <strong className="font-semibold tabular-nums text-black">
@@ -458,27 +473,12 @@ export default function AdminPartnersPage() {
             />
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <label className="block text-sm" htmlFor="global-rule-scope">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                  С каких оплат начисляем
-                </span>
-                <select
-                  id="global-rule-scope"
-                  value={ruleForm.productScope}
-                  disabled={ruleBusy}
-                  onChange={(e) => setRuleForm({ ...ruleForm, productScope: e.target.value })}
-                  className="mt-1.5 min-h-11 w-full cursor-pointer rounded-xl border border-black/15 bg-white px-3 text-sm outline-none focus:border-black/40 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {PRODUCT_SCOPE_OPTIONS.every((o) => o.value !== ruleForm.productScope) ? (
-                    <option value={ruleForm.productScope}>{ruleForm.productScope}</option>
-                  ) : null}
-                  {PRODUCT_SCOPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ScopeField
+                value={ruleForm.productScope}
+                onChange={(productScope) => setRuleForm({ ...ruleForm, productScope })}
+                disabled={ruleBusy}
+                idPrefix="global-rule"
+              />
               <label className="flex cursor-pointer items-start gap-2.5 self-end rounded-xl border border-black/10 bg-[#faf8f5] px-3.5 py-3 text-sm">
                 <input
                   type="checkbox"
@@ -499,6 +499,7 @@ export default function AdminPartnersPage() {
             <div className="mt-3 rounded-xl border border-black/10 bg-[#faf8f5] px-3.5 py-3">
               <p className="text-sm text-black/75">
                 Партнёр получит: <strong>{rewardLabel(ruleForm.draft)}</strong>
+                <span className="text-black/55"> · {scopeLabel(ruleForm.productScope)}</span>
               </p>
               <p className="mt-1 max-w-[74ch] text-xs leading-snug text-black/55">
                 Изменение действует только на будущие начисления — то, что уже начислено партнёрам,
@@ -516,11 +517,13 @@ export default function AdminPartnersPage() {
           </form>
         </section>
 
+        <AdminWithdrawalsQueue onMutated={reload} />
+
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-                03 · Партнёры
+                04 · Партнёры
               </p>
               <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Кто и сколько привёл</h2>
               <p className="mt-1 max-w-[68ch] text-sm text-black/55">

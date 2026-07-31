@@ -5,17 +5,35 @@ import { AlertTriangle, Loader2, ShieldOff, ShieldCheck } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import {
+  REFERRAL_PRODUCT_SCOPES,
+  normalizeReferralProductScope,
+  type ReferralProductScope,
+} from '@voxly/shared';
+import {
   RuleFields,
+  ScopeField,
   formatRub,
   rewardLabel,
   type RuleDraft,
 } from '@/components/portal/admin-partners-rule';
+import {
+  formatWithdrawalDate,
+  normalizeWithdrawal,
+  withdrawalStatusMeta,
+  type AdminWithdrawalRaw,
+} from '@/components/portal/admin-withdrawals-queue';
 
 type TxKind = 'payout' | 'manual_credit' | 'manual_debit';
 
 type PartnerDetail = {
   tenant: { id: string; slug: string; ownerEmail: string | null; status: string };
-  rule: { type: string; value: number; durationMonths: number | null; isOverride: boolean };
+  rule: {
+    type: string;
+    value: number;
+    durationMonths: number | null;
+    productScope: string;
+    isOverride: boolean;
+  };
   balanceRub: number;
   earnedAllTimeRub: number;
   paidOutRub: number;
@@ -48,6 +66,7 @@ type PartnerDetail = {
     note: string | null;
     createdAt: string;
   }>;
+  withdrawals?: AdminWithdrawalRaw[];
 };
 
 const TX_KINDS: Array<{ value: TxKind; label: string; hint: string }> = [
@@ -125,6 +144,7 @@ export function AdminPartnerDetail({
   const [busy, setBusy] = useState('');
 
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
+  const [ruleScope, setRuleScope] = useState<ReferralProductScope>(REFERRAL_PRODUCT_SCOPES.ALL);
   const [txKind, setTxKind] = useState<TxKind>('payout');
   const [txAmount, setTxAmount] = useState('');
   const [txNote, setTxNote] = useState('');
@@ -147,6 +167,7 @@ export function AdminPartnerDetail({
         value: hasRule ? payload.rule.value : 20,
         durationMonths: hasRule ? payload.rule.durationMonths : null,
       });
+      setRuleScope(normalizeReferralProductScope(payload.rule.productScope));
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Ошибка');
     } finally {
@@ -202,6 +223,9 @@ export function AdminPartnerDetail({
   const canSubmitTx = amountValid && !exceedsBalance;
   const pendingCancel = detail.referrals.find((r) => r.id === cancelId);
   const mainCode = detail.mainCode;
+  const withdrawals = (detail.withdrawals ?? []).map(normalizeWithdrawal);
+  const pendingWithdrawals = withdrawals.filter((w) => w.status === 'pending');
+  const pendingWithdrawalRub = pendingWithdrawals.reduce((sum, w) => sum + w.amountRub, 0);
 
   const submitTx = async () => {
     if (!canSubmitTx) return;
@@ -271,6 +295,14 @@ export function AdminPartnerDetail({
             idPrefix={`rule-${tenantId}`}
           />
         </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <ScopeField
+            value={ruleScope}
+            onChange={setRuleScope}
+            disabled={busy === 'rule' || busy === 'rule-reset'}
+            idPrefix={`rule-${tenantId}`}
+          />
+        </div>
         <p className="mt-2 text-xs leading-snug text-black/55">
           Новая ставка применится только к будущим начислениям — уже начисленное не пересчитывается.
         </p>
@@ -287,6 +319,7 @@ export function AdminPartnerDetail({
                   type: ruleDraft.type,
                   value: ruleDraft.value,
                   durationMonths: ruleDraft.durationMonths ?? undefined,
+                  productScope: ruleScope,
                 },
                 `Персональная ставка ${detail.tenant.slug}: ${rewardLabel(ruleDraft)}`,
               )
@@ -316,11 +349,60 @@ export function AdminPartnerDetail({
         </div>
       </section>
 
+      {withdrawals.length > 0 ? (
+        <section className="rounded-xl border border-black/10 bg-white p-4">
+          <SubHeading
+            title="Заявки на вывод"
+            note="Сумма заявки списывается с баланса сразу при подаче. Отметка «Выплачено» баланс не меняет, отказ возвращает деньги партнёру. Решения принимаются в разделе «03 · Заявки на вывод»."
+          />
+          <ul className="mt-3 divide-y divide-black/10 rounded-xl border border-black/10">
+            {withdrawals.map((w) => {
+              const meta = withdrawalStatusMeta(w.status);
+              return (
+                <li key={w.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 px-3 py-2.5">
+                  <span className="whitespace-nowrap text-xs tabular-nums text-black/55">
+                    {formatWithdrawalDate(w.createdAt)}
+                  </span>
+                  <span className="whitespace-nowrap text-sm font-semibold tabular-nums text-[#c2410c]">
+                    {formatRub(w.amountRub)} ₽
+                  </span>
+                  <Badge variant={meta.variant}>{meta.label}</Badge>
+                  {w.payoutDetails ? (
+                    <code className="min-w-0 flex-1 break-words font-mono text-xs text-black/65">
+                      {w.payoutDetails}
+                    </code>
+                  ) : null}
+                  {w.decisionNote ? (
+                    <p className="w-full text-xs leading-snug text-black/55">
+                      Причина: {w.decisionNote}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border border-black/10 bg-white p-4">
         <SubHeading
           title="Деньги: выплаты и корректировки"
           note="Выплата закрывает долг перед партнёром. Начисление и списание вручную — для исправлений: они меняют баланс, но не трогают историю рефералов."
         />
+        {pendingWithdrawals.length > 0 ? (
+          <p className="mt-2 flex items-start gap-2 rounded-xl border border-[#f5a623]/50 bg-[#fffaf0] px-3.5 py-2.5 text-xs leading-snug text-black/75">
+            <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#c2410c]" />
+            <span>
+              У партнёра есть{' '}
+              {pendingWithdrawals.length > 1
+                ? `${pendingWithdrawals.length} заявки на ${formatRub(pendingWithdrawalRub)} ₽`
+                : `заявка на ${formatRub(pendingWithdrawalRub)} ₽`}{' '}
+              — ручная выплата её не закроет. Эти деньги уже списаны с баланса, так что заплатив
+              вручную вы переведёте одну и ту же сумму дважды. Закройте заявку в разделе «03 · Заявки
+              на вывод».
+            </span>
+          </p>
+        ) : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <label className="block text-sm" htmlFor={`tx-kind-${tenantId}`}>
             <span className={LABEL}>Операция</span>

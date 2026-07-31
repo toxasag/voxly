@@ -1,5 +1,11 @@
 'use client';
 
+import {
+  REFERRAL_PRODUCT_SCOPES,
+  normalizeReferralProductScope,
+  type ReferralProductScope,
+} from '@voxly/shared';
+
 export type RuleDraft = {
   type: string;
   value: number;
@@ -44,11 +50,29 @@ export const RULE_TYPE_OPTIONS: Array<{
   },
 ];
 
-export const PRODUCT_SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: 'all', label: 'Все оплаты' },
-  { value: 'subscriptions', label: 'Подписки' },
-  { value: 'crm', label: 'Только CRM' },
+export const PRODUCT_SCOPE_OPTIONS: Array<{
+  value: ReferralProductScope;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: REFERRAL_PRODUCT_SCOPES.ALL,
+    label: 'Все оплаты, кроме пополнения AI-баланса',
+    hint: 'Начисляем со всех подписок и допов. Пополнение AI-баланса не в счёт никогда.',
+  },
+  {
+    value: REFERRAL_PRODUCT_SCOPES.CRM,
+    label: 'Только CRM',
+    hint: 'Начисляем только с подписки CRM и дополнительных мест.',
+  },
 ];
+
+export function scopeLabel(scope: string): string {
+  return (
+    PRODUCT_SCOPE_OPTIONS.find((o) => o.value === scope)?.label ??
+    PRODUCT_SCOPE_OPTIONS[0].label
+  );
+}
 
 export function formatRub(n: number): string {
   return Math.round(n).toLocaleString('ru-RU');
@@ -156,5 +180,40 @@ export function RuleFields({
         {option?.hint ?? 'Нестандартный тип условия — задан не через эту форму.'}
       </p>
     </div>
+  );
+}
+
+export function ScopeField({
+  value,
+  onChange,
+  disabled,
+  idPrefix,
+}: {
+  value: string;
+  onChange: (next: ReferralProductScope) => void;
+  disabled?: boolean;
+  idPrefix: string;
+}) {
+  const scope = normalizeReferralProductScope(value);
+  const option = PRODUCT_SCOPE_OPTIONS.find((o) => o.value === scope) ?? PRODUCT_SCOPE_OPTIONS[0];
+
+  return (
+    <label className="block text-sm" htmlFor={`${idPrefix}-scope`}>
+      <span className={LABEL}>С каких оплат начисляем</span>
+      <select
+        id={`${idPrefix}-scope`}
+        value={scope}
+        disabled={disabled}
+        onChange={(e) => onChange(normalizeReferralProductScope(e.target.value))}
+        className={`${FIELD} disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        {PRODUCT_SCOPE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <span className="mt-1.5 block text-xs leading-snug text-black/55">{option.hint}</span>
+    </label>
   );
 }

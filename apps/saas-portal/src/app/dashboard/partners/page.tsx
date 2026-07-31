@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Check, Loader2, Plus, Wallet, X } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
@@ -26,11 +27,47 @@ type CampaignRow = {
   netRub: number;
 };
 
+type Hold = {
+  paymentId: string;
+  invId: number;
+  amountRub: number;
+  description: string;
+  createdAt: string;
+};
+
+type WithdrawalStatus = 'pending' | 'paid' | 'rejected' | 'cancelled';
+
+type Withdrawal = {
+  id: string;
+  amountRub: number;
+  status: WithdrawalStatus;
+  payoutDetails: string;
+  comment: string | null;
+  decisionNote: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+};
+
+type BalanceTransaction = {
+  id: string;
+  kind: 'payout' | 'manual_credit' | 'manual_debit' | 'redeem';
+  amountRub: number;
+  note: string | null;
+  createdAt: string;
+};
+
 type DashboardPayload = {
   period: { from: string; to: string };
   rule: { type: string; value: number; durationMonths: number | null } | null;
   mainCode: CampaignRow;
   balanceRub: number;
+  /** Fields below ship with the balance/withdrawal API; guarded until it is deployed. */
+  heldRub?: number;
+  minWithdrawalRub?: number;
+  paidOutRub?: number;
+  holds?: Hold[];
+  withdrawals?: Withdrawal[];
+  transactions?: BalanceTransaction[];
   totalEarnedAllTime: number;
   summary: {
     clicksNote: string;
@@ -111,6 +148,23 @@ function rewardLabel(rule: DashboardPayload['rule']): string {
   return `${v} ₽ бонусом на баланс`;
 }
 
+const WITHDRAWAL_STATUS: Record<
+  WithdrawalStatus,
+  { label: string; variant: 'warning' | 'success' | 'destructive' | 'secondary' }
+> = {
+  pending: { label: 'На проверке', variant: 'warning' },
+  paid: { label: 'Выплачено', variant: 'success' },
+  rejected: { label: 'Отклонено', variant: 'destructive' },
+  cancelled: { label: 'Отменена', variant: 'secondary' },
+};
+
+const TRANSACTION_KIND: Record<BalanceTransaction['kind'], { label: string; credit: boolean }> = {
+  payout: { label: 'Выплата', credit: false },
+  manual_credit: { label: 'Начисление', credit: true },
+  manual_debit: { label: 'Списание', credit: false },
+  redeem: { label: 'Зачёт в счёт Voxly', credit: false },
+};
+
 function Stat({
   label,
   value,
@@ -185,6 +239,17 @@ export default function PartnersPage() {
   const [createBusy, setCreateBusy] = useState(false);
   const [codeStatus, setCodeStatus] = useState<CodeStatus>('idle');
   const [codeHint, setCodeHint] = useState('');
+
+  const [wdAmount, setWdAmount] = useState('');
+  const [wdDetails, setWdDetails] = useState('');
+  const [wdDetailsTouched, setWdDetailsTouched] = useState(false);
+  const [wdComment, setWdComment] = useState('');
+  const [wdConfirm, setWdConfirm] = useState(false);
+  const [wdBusy, setWdBusy] = useState(false);
+  const [cancelWdId, setCancelWdId] = useState('');
+  const [cancelWdBusy, setCancelWdBusy] = useState('');
+  const [releaseHoldId, setReleaseHoldId] = useState('');
+  const [releaseHoldBusy, setReleaseHoldBusy] = useState('');
 
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [expenseCampaignId, setExpenseCampaignId] = useState('');
@@ -266,6 +331,16 @@ export default function PartnersPage() {
     };
   }, [normalizedCode]);
 
+  useEffect(() => {
+    if (wdDetailsTouched) return;
+    const list = data?.withdrawals ?? [];
+    if (list.length === 0) return;
+    const latest = list.reduce((acc, w) =>
+      new Date(w.createdAt) > new Date(acc.createdAt) ? w : acc,
+    );
+    if (latest.payoutDetails) setWdDetails(latest.payoutDetails);
+  }, [data, wdDetailsTouched]);
+
   const codeInvalid = codeStatus === 'taken' || codeStatus === 'invalid';
 
   const applyPreset = (next: Exclude<Preset, 'custom'>) => {
@@ -334,6 +409,85 @@ export default function PartnersPage() {
     }
   };
 
+  const submitWithdrawal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = Number(wdAmount);
+    if (!amount || !wdDetails.trim()) return;
+    if (!wdConfirm) {
+      setWdConfirm(true);
+      return;
+    }
+    setWdBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch('/api/referrals/withdrawals', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          amountRub: amount,
+          payoutDetails: wdDetails.trim(),
+          comment: wdComment.trim() || undefined,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось отправить заявку на вывод');
+      setWdAmount('');
+      setWdComment('');
+      setWdConfirm(false);
+      setNotice(
+        `Заявка на ${formatRub(amount)} ₽ отправлена. Эта сумма уже в резерве — она вычтена из «Доступно», но остаётся вашей.`,
+      );
+      await load(from, to);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setWdBusy(false);
+    }
+  };
+
+  const cancelWithdrawal = async (id: string, amountRub: number) => {
+    setCancelWdBusy(id);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch(`/api/referrals/withdrawals/${id}/cancel`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось отменить заявку');
+      setCancelWdId('');
+      setNotice(`Заявка отменена — ${formatRub(amountRub)} ₽ вернулись на доступный баланс.`);
+      await load(from, to);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setCancelWdBusy('');
+    }
+  };
+
+  const releaseHold = async (paymentId: string, amountRub: number) => {
+    setReleaseHoldBusy(paymentId);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fetch(`/api/referrals/holds/${paymentId}/release`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось снять резерв');
+      setReleaseHoldId('');
+      setNotice(`Резерв снят — ${formatRub(amountRub)} ₽ снова доступны для оплаты или вывода.`);
+      await load(from, to);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setReleaseHoldBusy('');
+    }
+  };
+
   const openExpenseForm = (campaignId: string) => {
     setExpenseCampaignId(campaignId);
     setExpenseOpen(true);
@@ -371,6 +525,30 @@ export default function PartnersPage() {
     summary.registrations > 0
       ? `${Math.round((summary.paid / summary.registrations) * 100)}%`
       : undefined;
+
+  const heldRub = data.heldRub ?? 0;
+  const minWithdrawal = data.minWithdrawalRub ?? 1000;
+  const holds = data.holds ?? [];
+  const withdrawals = data.withdrawals ?? [];
+  const transactions = data.transactions ?? [];
+  const pendingWithdrawal = withdrawals.find((w) => w.status === 'pending') ?? null;
+  // Server-side all-time aggregate, so the total stays correct even if `transactions` is
+  // ever windowed or truncated.
+  const paidOutTotal =
+    data.paidOutRub ?? transactions.reduce((sum, t) => (t.kind === 'payout' ? sum + t.amountRub : sum), 0);
+  const belowMinimum = data.balanceRub < minWithdrawal;
+  const withdrawalLocked = Boolean(pendingWithdrawal) || belowMinimum;
+  const wdAmountNum = Number(wdAmount);
+  const wdAmountIssue =
+    !wdAmount || Number.isNaN(wdAmountNum)
+      ? ''
+      : wdAmountNum < minWithdrawal
+        ? `Минимальная сумма вывода — ${formatRub(minWithdrawal)} ₽`
+        : wdAmountNum > data.balanceRub
+          ? `Сумма больше доступного баланса — сейчас свободно ${formatRub(data.balanceRub)} ₽`
+          : '';
+  const wdSubmitDisabled =
+    withdrawalLocked || wdBusy || !wdAmount || Boolean(wdAmountIssue) || !wdDetails.trim();
 
   const presets: Array<{ id: Exclude<Preset, 'custom'>; label: string }> = [
     { id: 'month', label: 'Этот месяц' },
@@ -499,7 +677,11 @@ export default function PartnersPage() {
             <Stat
               label="Баланс к выплате"
               value={`${formatRub(data.balanceRub)} ₽`}
-              hint="Начисленное вознаграждение"
+              hint={
+                heldRub > 0
+                  ? `Свободно сейчас. Ещё ${formatRub(heldRub)} ₽ в резерве — подробности ниже`
+                  : 'Начисленное вознаграждение'
+              }
             />
           </div>
 
@@ -526,6 +708,411 @@ export default function PartnersPage() {
                 note="первая оплата CRM"
               />
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <h2 className="land-display text-xl tracking-[-0.03em]">Баланс: потратить или вывести</h2>
+          <p className="mt-1 max-w-[76ch] text-sm leading-snug text-black/55">
+            Заработанное лежит на одном счёте. Его можно зачесть в оплату собственной подписки
+            Voxly или вывести деньгами. Как только вы отправили заявку на вывод или создали счёт с
+            зачётом, сумма уходит в резерв: из «Доступно» она пропадает, но остаётся вашей.
+          </p>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <Stat
+              accent
+              label="Доступно"
+              value={`${formatRub(data.balanceRub)} ₽`}
+              hint="Свободно прямо сейчас — на оплату счёта или на вывод"
+            />
+            <Stat
+              label="В резерве"
+              value={`${formatRub(heldRub)} ₽`}
+              hint={
+                heldRub > 0
+                  ? 'Удержано под заявку на вывод или неоплаченный счёт. Деньги не потеряны — см. блок ниже'
+                  : 'Ничего не удержано'
+              }
+            />
+            <Stat
+              label="Выплачено всего"
+              value={`${formatRub(paidOutTotal)} ₽`}
+              hint={
+                paidOutTotal > 0
+                  ? 'По заявкам на вывод и переводом напрямую'
+                  : 'Выплат ещё не было'
+              }
+            />
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col rounded-xl border border-black/10 bg-[#faf8f5] p-4">
+              <p className="font-semibold text-black">Оплатить свой счёт</p>
+              <p className="mt-1 text-sm leading-snug text-black/55">
+                Баланс принимается в оплату вашей же подписки Voxly — тарифа CRM, дополнительных
+                мест и AI-дополнений. На шаге «счёт» отметьте «Зачесть партнёрский баланс»: сумма
+                спишется с баланса, картой останется доплатить только разницу.
+              </p>
+              <p className="mt-2 text-sm leading-snug text-black/55">
+                Зачёт по умолчанию выключен — случайно потратить накопленное не получится.
+              </p>
+              <Link
+                href="/dashboard/crm"
+                className="land-btn-ghost mt-4 inline-flex min-h-11 w-fit cursor-pointer items-center px-4 text-sm"
+              >
+                Перейти к оплате CRM
+              </Link>
+            </div>
+
+            <form
+              onSubmit={(e) => void submitWithdrawal(e)}
+              className="rounded-xl border border-black/10 bg-[#faf8f5] p-4"
+            >
+              <p className="font-semibold text-black">Вывести деньгами</p>
+              <p className="mt-1 text-sm leading-snug text-black/55">
+                Заявку проверяет администратор. Сумма уходит в резерв сразу — пока заявка на
+                проверке, потратить её на оплату счёта нельзя.
+              </p>
+
+              <div className="mt-3 space-y-3">
+                <div>
+                  <label htmlFor="wd-amount" className="text-xs text-black/45">
+                    Сумма, ₽ — минимум {formatRub(minWithdrawal)} ₽
+                  </label>
+                  <Input
+                    id="wd-amount"
+                    type="number"
+                    inputMode="numeric"
+                    min={minWithdrawal}
+                    step={1}
+                    placeholder={String(minWithdrawal)}
+                    value={wdAmount}
+                    disabled={withdrawalLocked || wdBusy}
+                    onChange={(e) => {
+                      setWdAmount(e.target.value);
+                      setWdConfirm(false);
+                    }}
+                    aria-invalid={Boolean(wdAmountIssue)}
+                    aria-describedby="wd-status"
+                    className={`mt-1 min-h-11 bg-white text-black transition-colors duration-200 focus:border-black/40 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      wdAmountIssue ? 'border-[#c2410c]' : 'border-black/15'
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="wd-details" className="text-xs text-black/45">
+                    Куда перевести
+                  </label>
+                  <textarea
+                    id="wd-details"
+                    rows={2}
+                    required
+                    value={wdDetails}
+                    disabled={withdrawalLocked || wdBusy}
+                    onChange={(e) => {
+                      setWdDetails(e.target.value);
+                      setWdDetailsTouched(true);
+                      setWdConfirm(false);
+                    }}
+                    placeholder="СБП +7 900 000-00-00, Тинькофф"
+                    className="mt-1 min-h-11 w-full rounded-md border border-black/15 bg-white px-3 py-2 text-sm text-black shadow-sm transition-colors duration-200 focus:border-black/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <p className="mt-1 text-xs leading-snug text-black/45">
+                    Телефон и банк для СБП либо номер карты.
+                    {withdrawals.length > 0
+                      ? ' Подставили реквизиты прошлой заявки — проверьте их.'
+                      : ''}
+                  </p>
+                </div>
+
+                <div>
+                  <label htmlFor="wd-comment" className="text-xs text-black/45">
+                    Комментарий — необязательно
+                  </label>
+                  <Input
+                    id="wd-comment"
+                    value={wdComment}
+                    disabled={withdrawalLocked || wdBusy}
+                    onChange={(e) => setWdComment(e.target.value)}
+                    placeholder="Выплата за июль"
+                    className="mt-1 min-h-11 border-black/15 bg-white text-black transition-colors duration-200 focus:border-black/40 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+
+                <p
+                  id="wd-status"
+                  aria-live="polite"
+                  className={`min-h-4 text-xs leading-snug ${
+                    wdAmountIssue ? 'text-[#c2410c]' : 'text-black/55'
+                  }`}
+                >
+                  {pendingWithdrawal
+                    ? `Заявка на ${formatRub(pendingWithdrawal.amountRub)} ₽ уже на проверке — новую можно создать после решения. Текущую можно отменить в таблице ниже, деньги сразу вернутся на баланс.`
+                    : belowMinimum
+                      ? `Доступно ${formatRub(data.balanceRub)} ₽, а вывод открывается от ${formatRub(minWithdrawal)} ₽ — не хватает ${formatRub(minWithdrawal - data.balanceRub)} ₽. Баланс можно зачесть в оплату счёта без ограничений по сумме.`
+                      : wdBusy
+                        ? 'Отправляем заявку…'
+                        : wdAmountIssue}
+                </p>
+
+                {wdConfirm && !withdrawalLocked ? (
+                  <div className="rounded-lg border border-[#f5a623]/50 bg-[#fffaf0] p-3">
+                    <p className="text-sm leading-snug text-black">
+                      Отправить заявку на{' '}
+                      <span className="font-semibold tabular-nums">
+                        {formatRub(wdAmountNum)} ₽
+                      </span>
+                      ? Сумма сразу уйдёт в резерв — на балансе останется{' '}
+                      <span className="tabular-nums">
+                        {formatRub(Math.max(0, data.balanceRub - wdAmountNum))} ₽
+                      </span>
+                      . Пока администратор не обработал заявку, её можно отменить.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="submit"
+                        disabled={wdSubmitDisabled}
+                        className="land-btn-amber min-h-11 cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {wdBusy ? 'Отправляем…' : 'Подтвердить вывод'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWdConfirm(false)}
+                        disabled={wdBusy}
+                        className="land-btn-ghost min-h-11 cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Изменить
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={wdSubmitDisabled}
+                    className="land-btn-amber min-h-11 w-full cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Отправить заявку
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+
+          {holds.length > 0 ? (
+            <div className="mt-5 rounded-xl border border-[#f5a623]/40 bg-[#fffaf0] p-4">
+              <h3 className="font-semibold text-black">В резерве — {formatRub(heldRub)} ₽</h3>
+              <p className="mt-1 max-w-[76ch] text-sm leading-snug text-black/60">
+                Если баланс стал меньше — деньги здесь, а не потеряны. Эта сумма вычтена из
+                «Доступно», потому что вы зачли её в счёт Voxly. Оплатите счёт — резерв уйдёт в
+                оплату; отмените резерв — сумма тут же вернётся на баланс, но счёт придётся
+                оплатить полностью.
+              </p>
+              <div className="mt-3 divide-y divide-black/10 rounded-lg border border-black/10 bg-white">
+                {holds.map((h) => (
+                  <div
+                    key={h.paymentId}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-black">
+                        Счёт №{h.invId} · {h.description}
+                      </p>
+                      <p className="mt-0.5 text-xs text-black/50">
+                        Резерв от {formatDate(h.createdAt)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-sm font-semibold tabular-nums text-[#c2410c]">
+                        −{formatRub(h.amountRub)} ₽
+                      </span>
+                      {releaseHoldId === h.paymentId ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs leading-snug text-black/60">
+                            Вернуть {formatRub(h.amountRub)} ₽ на баланс?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void releaseHold(h.paymentId, h.amountRub)}
+                            disabled={releaseHoldBusy === h.paymentId}
+                            className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-[#c2410c] px-3 text-xs font-semibold text-[#c2410c] transition-colors duration-200 hover:bg-[#c2410c]/5 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {releaseHoldBusy === h.paymentId ? 'Снимаем…' : 'Да, отменить'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReleaseHoldId('')}
+                            disabled={releaseHoldBusy === h.paymentId}
+                            className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65 transition-colors duration-200 hover:border-black/35 hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Оставить
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setReleaseHoldId(h.paymentId)}
+                          className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65 transition-colors duration-200 hover:border-black/35 hover:text-black"
+                        >
+                          Отменить резерв
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-5">
+            <h3 className="font-semibold text-black">Заявки на вывод</h3>
+            {withdrawals.length === 0 ? (
+              <p className="mt-2 rounded-xl border border-dashed border-black/15 bg-[#faf8f5] px-4 py-6 text-center text-sm leading-snug text-black/55">
+                Заявок ещё не было. Когда на балансе накопится {formatRub(minWithdrawal)} ₽,
+                оформите вывод в форме выше — здесь появится история со статусами и решениями
+                администратора.
+              </p>
+            ) : (
+              <div className="mt-2 overflow-x-auto rounded-xl border border-black/10">
+                <table className="w-full min-w-[760px] border-collapse text-left">
+                  <thead className="bg-[#faf8f5]">
+                    <tr>
+                      <th className={TH}>Дата</th>
+                      <th className={`${TH} text-right`}>Сумма</th>
+                      <th className={TH}>Статус</th>
+                      <th className={TH}>Куда</th>
+                      <th className={TH}>Комментарий администратора</th>
+                      <th className={TH} aria-label="Действия" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/10">
+                    {withdrawals.map((w) => {
+                      const status = WITHDRAWAL_STATUS[w.status];
+                      return (
+                        <tr
+                          key={w.id}
+                          className="transition-colors duration-200 hover:bg-[#faf8f5]"
+                        >
+                          <td className={`${TD} align-top text-black/65`}>
+                            {formatDate(w.createdAt)}
+                            {w.decidedAt ? (
+                              <span className="block text-xs text-black/45">
+                                решение {formatDate(w.decidedAt)}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className={`${TD} align-top text-right font-semibold text-black`}>
+                            {formatRub(w.amountRub)} ₽
+                          </td>
+                          <td className="px-3 py-3 align-top">
+                            <Badge variant={status.variant}>{status.label}</Badge>
+                            {w.status === 'rejected' && w.decisionNote ? (
+                              <p className="mt-1 max-w-[32ch] text-xs leading-snug text-[#c2410c]">
+                                Причина: {w.decisionNote}
+                              </p>
+                            ) : null}
+                            {w.status === 'pending' ? (
+                              <p className="mt-1 max-w-[32ch] text-xs leading-snug text-black/50">
+                                Сумма в резерве
+                              </p>
+                            ) : null}
+                          </td>
+                          <td className="max-w-[28ch] px-3 py-3 align-top text-sm leading-snug text-black/65">
+                            {w.payoutDetails}
+                            {w.comment ? (
+                              <span className="mt-0.5 block text-xs text-black/45">
+                                ваш комментарий: {w.comment}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="max-w-[28ch] px-3 py-3 align-top text-sm leading-snug text-black/65">
+                            {w.status !== 'rejected' && w.decisionNote ? w.decisionNote : '—'}
+                          </td>
+                          <td className="px-3 py-3 align-top text-right">
+                            {w.status !== 'pending' ? (
+                              <span className="text-xs text-black/35">—</span>
+                            ) : cancelWdId === w.id ? (
+                              <div className="flex flex-wrap items-center justify-end gap-2">
+                                <span className="text-xs leading-snug text-black/60">
+                                  Вернуть {formatRub(w.amountRub)} ₽ на баланс?
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void cancelWithdrawal(w.id, w.amountRub)}
+                                  disabled={cancelWdBusy === w.id}
+                                  className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-[#c2410c] px-3 text-xs font-semibold text-[#c2410c] transition-colors duration-200 hover:bg-[#c2410c]/5 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {cancelWdBusy === w.id ? 'Отменяем…' : 'Да, отменить'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCancelWdId('')}
+                                  disabled={cancelWdBusy === w.id}
+                                  className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65 transition-colors duration-200 hover:border-black/35 hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Оставить
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setCancelWdId(w.id)}
+                                className="inline-flex min-h-9 min-w-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65 transition-colors duration-200 hover:border-black/35 hover:text-black"
+                              >
+                                Отменить заявку
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5">
+            <h3 className="font-semibold text-black">История баланса</h3>
+            <p className="mt-1 text-sm leading-snug text-black/55">
+              Все движения по счёту: начисления, зачёты в оплату Voxly и выплаты.
+            </p>
+            {transactions.length === 0 ? (
+              <p className="mt-2 rounded-xl border border-dashed border-black/15 bg-[#faf8f5] px-4 py-6 text-center text-sm leading-snug text-black/55">
+                Движений по балансу пока нет. Здесь появятся строки, когда вознаграждение будет
+                зачтено в счёт Voxly или выплачено деньгами.
+              </p>
+            ) : (
+              <div className="mt-2 divide-y divide-black/10 rounded-xl border border-black/10">
+                {transactions.map((t) => {
+                  const kind = TRANSACTION_KIND[t.kind];
+                  return (
+                    <div
+                      key={t.id}
+                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm"
+                    >
+                      <span className="min-w-0 text-black">
+                        {kind.label}
+                        {t.note ? <span className="text-black/55"> · {t.note}</span> : null}
+                      </span>
+                      <span className="tabular-nums text-black/55">
+                        {formatDate(t.createdAt)} ·{' '}
+                        <span
+                          className={`font-semibold ${
+                            kind.credit ? 'text-[#166534]' : 'text-[#c2410c]'
+                          }`}
+                        >
+                          {kind.credit ? '+' : '−'}
+                          {formatRub(t.amountRub)} ₽
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </section>
 

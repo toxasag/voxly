@@ -1,11 +1,16 @@
-/** Start Robokassa checkout; redirects browser to paymentUrl. */
+/**
+ * Start Robokassa checkout; redirects the browser to paymentUrl.
+ * When the partner balance covers the whole invoice the server returns no
+ * paymentUrl — we then follow its redirectUrl and report 'paid'.
+ */
 export async function startCheckout(body: {
   productCode: string;
   periodMonths?: number;
   amountRub?: number;
   quantity?: number;
   extraSeats?: number;
-}): Promise<void> {
+  applyBalanceRub?: number;
+}): Promise<'redirected' | 'paid'> {
   const res = await fetch('/api/billing/checkout', {
     method: 'POST',
     headers: {
@@ -22,8 +27,16 @@ export async function startCheckout(body: {
         : json.message || 'Не удалось создать платёж',
     );
   }
-  if (!json.paymentUrl) throw new Error('Нет ссылки на оплату');
+  if (!json.paymentUrl) {
+    if (json.paid) {
+      window.location.href =
+        typeof json.redirectUrl === 'string' ? json.redirectUrl : '/dashboard/crm?paid=ok';
+      return 'paid';
+    }
+    throw new Error('Нет ссылки на оплату');
+  }
   window.location.href = json.paymentUrl;
+  return 'redirected';
 }
 
 /**

@@ -81,7 +81,7 @@ const CABINET_NAV: NavItem[] = [
   },
   {
     href: '/dashboard/ai',
-    label: 'Telegram Business',
+    label: 'AI-модуль',
     match: (p) => {
       if (p === '/dashboard/ai') return true;
       if (!p.startsWith('/dashboard/ai/')) return false;

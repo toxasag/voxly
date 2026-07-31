@@ -44,6 +44,8 @@ interface CrmPayload {
     extraSeatMonthly: number;
     seatsIncluded: number;
   };
+  /** Free partner-referral remainder, holds already subtracted. */
+  partnerBalanceRub?: number;
   members: Array<{
     id: string;
     email: string;
@@ -148,6 +150,8 @@ export default function CrmPortalPage() {
   const [passwordDraft, setPasswordDraft] = useState('');
   const [payPeriodMonths, setPayPeriodMonths] = useState<1 | 3 | 12>(1);
   const [extraSeatsToBuy, setExtraSeatsToBuy] = useState(0);
+  const [useBalance, setUseBalance] = useState(false);
+  const [balanceInput, setBalanceInput] = useState('');
   const inviteInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -238,7 +242,12 @@ export default function CrmPortalPage() {
     setCrmOpening(false);
   };
 
-  const pay = async (mode: 'combined' | 'seats_only', periodMonths: number, extraSeats: number) => {
+  const pay = async (
+    mode: 'combined' | 'seats_only',
+    periodMonths: number,
+    extraSeats: number,
+    applyBalanceRub = 0,
+  ) => {
     const busyKey =
       mode === 'combined'
         ? `combined-${periodMonths}-${extraSeats}`
@@ -251,12 +260,14 @@ export default function CrmPortalPage() {
           productCode: 'crm_base',
           periodMonths,
           extraSeats,
+          ...(applyBalanceRub > 0 ? { applyBalanceRub } : {}),
         });
       } else {
         await startCheckout({
           productCode: 'extra_seat',
           periodMonths,
           quantity: Math.max(1, extraSeats),
+          ...(applyBalanceRub > 0 ? { applyBalanceRub } : {}),
         });
       }
     } catch (e) {
@@ -495,6 +506,16 @@ export default function CrmPortalPage() {
     Math.round((grossBase + grossExtra - checkoutTotals.combinedTotal) * 100) / 100;
   const extendsTo =
     endsAtDate && endsAtDate.getTime() > Date.now() ? addMonths(endsAtDate, payPeriodMonths) : null;
+
+  const partnerBalance = data.partnerBalanceRub ?? 0;
+  const balanceCap = Math.min(partnerBalance, checkoutTotals.combinedTotal);
+  const appliedBalance = useBalance
+    ? Math.max(0, Math.min(balanceCap, Math.round((Number(balanceInput) || 0) * 100) / 100))
+    : 0;
+  const appliedToSeats = Math.min(appliedBalance, checkoutTotals.extraTotal);
+  const netTotal = Math.round((checkoutTotals.combinedTotal - appliedBalance) * 100) / 100;
+  const netSeatsTotal = Math.round((checkoutTotals.extraTotal - appliedToSeats) * 100) / 100;
+  const balanceCoversAll = appliedBalance > 0 && netTotal <= 0;
 
   const periodLabel = `${payPeriodMonths} мес.`;
   const combinedBusy = checkoutBusy === `combined-${payPeriodMonths}-${extraSeatsToBuy}`;
@@ -844,13 +865,103 @@ export default function CrmPortalPage() {
                       </span>
                     </div>
                   ) : null}
+                  {appliedBalance > 0 ? (
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-black/55">
+                        Партнёрский баланс
+                        <br />
+                        <span className="text-xs">доступно {formatRub(partnerBalance)} ₽</span>
+                      </span>
+                      <span className="tabular-nums font-medium text-[#166534]">
+                        −{formatRub(appliedBalance)} ₽
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
+
+                {partnerBalance > 0 ? (
+                  <div className="mt-3 rounded-lg border border-black/10 bg-white px-3 py-2.5">
+                    <label
+                      htmlFor="use-partner-balance"
+                      className="flex cursor-pointer items-start gap-2 text-sm text-black"
+                    >
+                      <input
+                        id="use-partner-balance"
+                        type="checkbox"
+                        checked={useBalance}
+                        disabled={Boolean(checkoutBusy)}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setUseBalance(on);
+                          setBalanceInput(on ? String(balanceCap) : '');
+                        }}
+                        className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-[#f5a623] disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <span className="leading-snug">
+                        Зачесть партнёрский баланс
+                        <span className="block text-xs text-black/50">
+                          доступно {formatRub(partnerBalance)} ₽ · по умолчанию не тратится
+                        </span>
+                      </span>
+                    </label>
+
+                    {useBalance ? (
+                      <div className="mt-2 flex items-end gap-2">
+                        <div className="min-w-0 flex-1">
+                          <label htmlFor="apply-balance-rub" className="text-xs text-black/45">
+                            Сколько зачесть, ₽
+                          </label>
+                          <input
+                            id="apply-balance-rub"
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={balanceCap}
+                            step={1}
+                            value={balanceInput}
+                            disabled={Boolean(checkoutBusy)}
+                            onChange={(e) => setBalanceInput(e.target.value)}
+                            className="mt-1 min-h-11 w-full rounded-md border border-black/15 bg-white px-3 text-sm tabular-nums text-black shadow-sm transition-colors duration-200 focus:border-black/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBalanceInput(String(balanceCap))}
+                          disabled={Boolean(checkoutBusy)}
+                          className="land-btn-ghost min-h-11 min-w-9 cursor-pointer px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Всё
+                        </button>
+                      </div>
+                    ) : null}
+                    {useBalance ? (
+                      <p aria-live="polite" className="mt-2 text-xs leading-snug text-black/55">
+                        {(Number(balanceInput) || 0) > balanceCap
+                          ? `Зачтём только ${formatRub(balanceCap)} ₽ — больше по этому счёту нельзя. `
+                          : `Максимум по этому счёту — ${formatRub(balanceCap)} ₽${
+                              partnerBalance > checkoutTotals.combinedTotal
+                                ? ' (вся его сумма). '
+                                : ' (весь свободный баланс). '
+                            }`}
+                        Зачтённое сразу уходит в резерв и пропадает из «Доступно» на странице
+                        партнёрской программы, пока счёт не оплачен.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-black/10 pt-3">
                   <span className="font-semibold">Итого к оплате</span>
                   <span className="land-display text-xl tabular-nums tracking-[-0.03em]">
-                    {formatRub(checkoutTotals.combinedTotal)} ₽
+                    {formatRub(netTotal)} ₽
                   </span>
                 </div>
+                {appliedBalance > 0 ? (
+                  <p className="mt-1 text-xs leading-snug text-[#166534]">
+                    {balanceCoversAll
+                      ? 'Счёт полностью закрывается балансом — платить картой не нужно.'
+                      : `С баланса спишется ${formatRub(appliedBalance)} ₽, картой — ${formatRub(netTotal)} ₽.`}
+                  </p>
+                ) : null}
                 {extendsTo ? (
                   <p className="mt-2 text-xs text-black/55">
                     Подписка продлится до {formatDate(extendsTo)}.
@@ -861,23 +972,31 @@ export default function CrmPortalPage() {
                   <button
                     type="button"
                     disabled={Boolean(checkoutBusy)}
-                    onClick={() => void pay('combined', payPeriodMonths, extraSeatsToBuy)}
+                    onClick={() =>
+                      void pay('combined', payPeriodMonths, extraSeatsToBuy, appliedBalance)
+                    }
                     className="land-btn-amber min-h-11 w-full cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {combinedBusy
-                      ? 'Переходим к оплате…'
-                      : `Оплатить ${formatRub(checkoutTotals.combinedTotal)} ₽`}
+                      ? balanceCoversAll
+                        ? 'Оформляем…'
+                        : 'Переходим к оплате…'
+                      : balanceCoversAll
+                        ? 'Оформить за 0 ₽ — с баланса'
+                        : `Оплатить ${formatRub(netTotal)} ₽`}
                   </button>
                   <button
                     type="button"
                     disabled={Boolean(checkoutBusy) || extraSeatsToBuy <= 0}
-                    onClick={() => void pay('seats_only', payPeriodMonths, extraSeatsToBuy)}
+                    onClick={() =>
+                      void pay('seats_only', payPeriodMonths, extraSeatsToBuy, appliedToSeats)
+                    }
                     className="land-btn-ghost min-h-11 w-full cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {seatsOnlyBusy
                       ? 'Переходим к оплате…'
                       : extraSeatsToBuy > 0
-                        ? `Только места · ${formatRub(checkoutTotals.extraTotal)} ₽`
+                        ? `Только места · ${formatRub(netSeatsTotal)} ₽`
                         : 'Только места'}
                   </button>
                   <p className="text-xs text-black/55">
