@@ -292,6 +292,18 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
     echo "[dry-run] would: cd ${REMOTE_DIR}/docker && docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build ${BUILD_SVCS[*]}"
   fi
+  # Determine if prisma migrations apply
+  NEEDS_MIGRATE=0
+  for svc in "${BUILD_SVCS[@]}"; do
+    case "$svc" in
+      saas-api|gift-bot-worker|manager-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
+        NEEDS_MIGRATE=1; break ;;
+    esac
+  done
+  if [[ "$NEEDS_MIGRATE" -eq 1 ]]; then
+    echo "[dry-run] would: docker-compose ... build saas-api (for prisma CLI)"
+    echo "[dry-run] would: docker-compose ... run --rm saas-api sh -c 'cd /voxly/packages/db && ./node_modules/.bin/prisma migrate deploy'"
+  fi
   echo "[dry-run] would smoke https://getvoxly.ru/ and https://api.getvoxly.ru/health"
   exit 0
 fi
@@ -343,6 +355,35 @@ done
 
 # Guard: never leave override on prod as active compose file
 remote "rm -f '${REMOTE_DIR}/docker/docker-compose.override.yml' || true"
+
+# --- Prisma migrate deploy (before container restart) ---
+NEEDS_MIGRATE=0
+for svc in "${BUILD_SVCS[@]}"; do
+  case "$svc" in
+    saas-api|gift-bot-worker|manager-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
+      NEEDS_MIGRATE=1; break ;;
+  esac
+done
+
+if [[ "$NEEDS_MIGRATE" -eq 1 ]]; then
+  echo "=== Prisma migrate deploy (control DB) ==="
+  # Build saas-api image first (contains prisma CLI + migration files)
+  remote "bash -s" <<REMOTE
+set -euo pipefail
+cd '${REMOTE_DIR}/docker'
+docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env build saas-api
+REMOTE
+  # Run migration in a one-off container (postgres-control already running)
+  remote "bash -s" <<REMOTE
+set -euo pipefail
+cd '${REMOTE_DIR}/docker'
+docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
+  run --rm saas-api sh -c "cd /voxly/packages/db && ./node_modules/.bin/prisma migrate deploy"
+REMOTE
+  echo "  migrations applied (or already up-to-date)"
+else
+  echo "=== Skipping Prisma migrate (no prisma-using services in this deploy) ==="
+fi
 
 # --- Rebuild ---
 if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
@@ -400,5 +441,5 @@ fi
 
 echo
 echo "OK. Append WORKLOG: services=${EXPANDED[*]} host=${HOST}"
-echo "If Prisma schema changed: run migrate on prod explicitly (not db push)."
+echo "Prisma migrations applied automatically before container rebuild."
 echo "Reminder: never docker compose down -v on prod."

@@ -11,6 +11,7 @@ See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified dri
 - Never use `docker-compose.override.yml` on prod.
 - Never ad-hoc `rsync` of multiple files into one parent dir (that already wiped the landing `page.tsx`).
 - Prefer **migrations** on control plane when schema changes — not blind `db push` on prod.
+- `prod-deploy.sh` runs `prisma migrate deploy` automatically before container rebuild (for prisma-using services). Manual migration is no longer needed.
 
 ## Happy path
 
@@ -20,7 +21,7 @@ See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified dri
 4. Dry-run: `./scripts/prod-deploy.sh --dry-run saas-portal`.
 5. Deploy: `./scripts/prod-deploy.sh saas-portal`  
    (set `SSHPASS` if using password SSH; prefer SSH key).
-6. Script does: **DB backup** → whitelist **rsync** → `docker-compose … up -d --build` → HTTPS smoke.
+6. Script does: **DB backup** → whitelist **rsync** → **`prisma migrate deploy`** (if prisma-using services) → `docker-compose … up -d --build` → HTTPS smoke.
 7. Append `docs/agent/WORKLOG.md` (services + verify). Update drift note in `ENVIRONMENTS.md` if you closed known gaps.
 
 ## Commands
@@ -50,6 +51,15 @@ On VPS compose is always:
 cd /opt/voxly/docker
 docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build <service>
 ```
+
+Prisma migrations run inside the saas-api container (built before restart):
+
+```bash
+docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
+  run --rm saas-api sh -c "cd /voxly/packages/db && ./node_modules/.bin/prisma migrate deploy"
+```
+
+This is automated by `prod-deploy.sh` when deploying any prisma-using service (saas-api, gift-bot-worker, manager-bot-service, ai-telegram-worker, ai-whatsapp-worker, gramjs-bridge). If migration fails, deploy halts — prod stays on old code + old schema (safe).
 
 ## Service map (what gets synced)
 
