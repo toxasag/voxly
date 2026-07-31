@@ -48,6 +48,8 @@ model Tenant {
   referralEarnings  ReferralEarning[]
   referralCampaigns ReferralCampaign[]
   referralCampaignExpenses ReferralCampaignExpense[]
+  referralRules     ReferralRule[]
+  referralTransactions ReferralTransaction[]
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
@@ -437,6 +439,8 @@ model Referral {
 
 model ReferralRule {
   id              String          @id @default(cuid())
+  tenant          Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String?         // null = global rule (isDefault); set = personal partner rate
   type            ReferralRuleType
   value           Decimal         @db.Decimal(10, 2) // fixed amount or percentage
   durationMonths  Int?            // for percent_recurring
@@ -445,6 +449,8 @@ model ReferralRule {
   isActive        Boolean         @default(true)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+
+  @@unique([tenantId])
 }
 
 model ReferralEarning {
@@ -495,6 +501,21 @@ model ReferralCampaignExpense {
   @@index([tenantId])
   @@index([campaignId])
   @@index([spentAt])
+}
+
+/// Admin-side movements of TenantBalance: payouts and manual corrections
+model ReferralTransaction {
+  id          String         @id @default(cuid())
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  kind        ReferralTxKind
+  amountRub   Decimal        @db.Decimal(10, 2) // always positive; kind decides the sign
+  note        String?
+  adminUserId String?
+  createdAt   DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
 }
 
 // ============================================================
@@ -894,4 +915,10 @@ enum ReferralRuleType {
   percent_recurring
   credit_discount
   credit
+}
+
+enum ReferralTxKind {
+  payout
+  manual_credit
+  manual_debit
 }
