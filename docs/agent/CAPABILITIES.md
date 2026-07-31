@@ -32,6 +32,7 @@
 | `/dashboard/ai/[botId]` | ✅ Business capacity + unlink + buy slot 200₽; диалоги, handoff, agent | `dashboard/ai/[botId]/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar супер-админ **Обзор** + **CRM портал** (не кабинет) | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
 | `/admin/crm` | ✅ платформенные цены + per-tenant pricing; отчёт CRM (trial/paid/revenue); ресурсы (RAM оценка + диск по клиентам, 60s refresh); purge; CRM-login; impersonate | `admin/crm/page.tsx` |
+| `/admin/partners` | ✅ супер-админ партнёрской программы: список партнёров + метрики за период, карточка партнёра (рефералы, коды, проекты, транзакции), дефолтное правило вознаграждения + **индивидуальное правило на тенанта**, ручные выплаты/корректировки (`ReferralTransaction`), вкл/выкл кодов и проектов, блокировка партнёра | `admin/partners/page.tsx` + `components/portal/admin-partners-rule.tsx`, `admin-partners-detail.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
 | Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for video/audio/**PDF·DOCX**; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), MarkdownV2, **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **clickable http(s) links** (INC-050/055/057/063/067, app ≥0.1.20) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`) |
 | Inbound message left toast | ✅ shell-ux poll prefer `/s/crm-chat/inbound-toasts` ~4s; toast + **auto-refresh open Chat** (click «Обновить» / soft ~4.5s); skew 15s | `docker/twenty-shell-ux.js` + `get-inbound-toasts` + `crm-chat.ts` |
@@ -161,6 +162,19 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | POST | `/campaigns`, `/campaigns/:id/expenses` | ✅ project links + manual spend |
 | GET | `/rules`, `/click/:code` → `/register?ref=` | ✅ |
 | POST | `/rules` (superadmin) | ✅ |
+| GET | `/campaigns/code-available?code=` | ✅ inline-валидация; `POST /campaigns` отдаёт **409** на занятый кастомный код |
+
+### Admin referrals `/api/admin/referrals` (superadmin)
+| Method | Path | ✅ |
+|---|---|---|
+| GET | `/?from=&to=` | ✅ партнёры + метрики (клики/регистрации/оплаты/начислено/выплачено/баланс) |
+| GET | `/partners/:tenantId` | ✅ карточка: рефералы, коды, проекты, транзакции, действующее правило |
+| PUT | `/rule` | ✅ дефолтное `ReferralRule` (`tenantId = null`) |
+| PUT | `/partners/:tenantId/rule` | ✅ **индивидуальное правило** на тенанта (`ReferralRule.tenantId`, `@@unique`) |
+| POST | `/partners/:tenantId/transactions` | ✅ `ReferralTransaction` `payout` / `manual_credit` / `manual_debit` |
+| PATCH | `/codes/:id`, `/campaigns/:id` | ✅ активация/деактивация кода и проекта |
+| PATCH | `/partners/:tenantId/block` | ✅ блокировка партнёра |
+| PATCH | `/referrals/:id` | ✅ ручная правка статуса реферала |
 
 ### Analytics `/api/analytics`
 | Method | Path | ✅ |
@@ -206,6 +220,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | AI cost (OpenRouter) | `@voxly/ai-core` `resolveProviderCostRub` | ✅ `usage.cost` → else `GET /models` pricing × tokens → USD×`USD_RUB_RATE`/`usd_rub_rate` → markup; TG+WA workers |
 | AI knowledge + sales RAG | AiKnowledge* + AiSalesExample + retrieveAgentContext | ✅ files txt/md/pdf; learn only from won Opportunity stage (`USPESHNAYA_SDELKA` + legacy `CUSTOMER`); inject into LLM prompt |
 | Referral default | ReferralRule percent_recurring 20% | ✅ excl. `ai_topup`; webhook `creditReferralForPayment` |
+| Referral per-tenant rule + transactions | `referral-program.ts` (резолв правила) + `referral-admin.ts` | ✅ `ReferralRule.tenantId` (индивидуальное правило имеет приоритет над дефолтным); `billing.ts` начисляет по резолвнутому правилу; `ReferralTransaction` (`payout`/`manual_credit`/`manual_debit`) — ручные выплаты и корректировки из `/admin/partners`; резолв вынесен из `referral-admin` чтобы разорвать циклическую зависимость |
 | `emailWorker` SMTP | queues.ts | ❌ logging stub |
 | `notifyHumanOperator` | AI workers | ❌ |
 | GramJS bridge | `apps/gramjs-bridge` | 🟡 QR + encrypted session + human 1h pause + soft SKU + `POST /messages/send` (CRM operator); portal via saas-api proxy |

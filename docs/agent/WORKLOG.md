@@ -1,3 +1,36 @@
+### 2026-07-31 — Admin `/admin/partners` + per-tenant referral rules + referral transactions (prod)
+
+- Goal: супер-админский surface для партнёрской программы — обзор партнёров, индивидуальные правила вознаграждения, ручные выплаты/корректировки, блокировка; плюс уникальность реферальных кодов в кабинете.
+- Changes: `packages/db` — `ReferralRule.tenantId` (nullable, `@@unique([tenantId])`), новая модель `ReferralTransaction` + enum `ReferralTxKind` (`payout` / `manual_credit` / `manual_debit`), back-relations на `Tenant`; миграция `20260731140000_referral_admin` (чисто аддитивная: CREATE TYPE / ADD COLUMN / CREATE TABLE / CREATE INDEX / ADD FK, byte-identical к `prisma migrate diff`). API — новый `admin-referrals.ts` (`/api/admin/referrals`: `GET /`, `GET /partners/:tenantId`, `PUT /rule`, `PUT /partners/:tenantId/rule`, `POST /partners/:tenantId/transactions`, `PATCH /codes/:id`, `PATCH /campaigns/:id`, `PATCH /partners/:tenantId/block`, `PATCH /referrals/:id`) + `services/referral-admin.ts`; резолв правила вынесен в `referral-program.ts` (разрыв циклической зависимости), `billing.ts` считает вознаграждение по per-tenant правилу; `referral.ts` — 409 на занятый кастомный код + `GET /campaigns/code-available`. Портал — `/admin/partners` (`admin-partners-rule.tsx`, `admin-partners-detail.tsx`), пункт в `ADMIN_NAV` (`app-shell.tsx`); UX-доработки `admin/crm`, `dashboard/crm`, `dashboard/partners` + hero-компоненты.
+- Deploy: `./scripts/prod-diff.sh saas-api,saas-portal` → all compared paths match. `./scripts/prod-deploy.sh --dry-run saas-api,saas-portal` → `./scripts/prod-deploy.sh saas-api,saas-portal`. Backup **`/opt/voxly/backups/20260731-131927/`** (`voxly_control.dump` 273K + `twenty.dump` 2.4M). Тома не трогались, `.env` не синкался.
+- Migration on prod: `docker exec -w /voxly/packages/db docker-saas-api-1 ./node_modules/.bin/prisma migrate deploy` → applied `20260731140000_referral_admin` (единственная pending из 17).
+- Verify: `psql voxly_control` — таблица `ReferralTransaction` (id/tenantId/kind/amountRub/note/adminUserId/createdAt), `ReferralRule.tenantId text NULL`, enum `ReferralTxKind` = payout/manual_credit/manual_debit, `_prisma_migrations` последняя запись `20260731140000_referral_admin`. Smoke: `/` `api/health` `/admin/partners` `/admin/crm` `/dashboard/crm` `/dashboard/partners` — **200**; `GET /api/admin/referrals` без токена — **401** (не 404 → маршруты зарегистрированы). Логи `saas-api` без ошибок; скриптовый smoke сразу после recreate дал 502 (штатный cold start), после прогрева 200.
+- Broken: ничего. Изменения остаются незакоммиченными в рабочем дереве (коммит не запрашивался).
+- Next: коммит на ветке; ротировать root SSH пароль (светился в чате).
+
+### 2026-07-31 — CRM page IA rework (subscription state, seats, itemized checkout)
+
+- Goal: сделать `/dashboard/crm` понятной — состояние подписки в одном месте, ясная модель мест, читаемый счёт, таблица команды.
+- Changes: `tenant.ts` GET `/crm` — additive read-only `subscription.startsAt` (для прогресса периода; в `/dashboard` он уже отдавался). `crm-portal-hero.tsx` — hero несёт адрес CRM + copy + «Открыть CRM» + остаток дней (отдельная секция «Адрес CRM» удалена). `dashboard/crm/page.tsx` — единый `subState` (trial/active/grace/locked/none) с бейджем, прогресс-баром периода и абзацем «что дальше»; «как это работает» (3 шага) для владельца и разъяснение для сотрудника; счётчик мест с progressbar и объяснением базовых/докупленных; постатейный счёт (тариф × мес, доп. места, скидка из `PERIOD_DISCOUNTS`, итого, дата продления); таблица команды Сотрудник/Роль/Доступ в CRM/Действия; empty state; двухшаговое подтверждение удаления; touch targets 44px, aria-label на иконочных кнопках.
+- Business logic не тронута: `computeCrmCheckoutTotals`, `startCheckout`, invite/credentials/reissue/remove, alert-состояния и модалка доступа — как были.
+- Дополнено: модалка доступа закрывается по `Escape` и клику по подложке (`role="presentation"` на подложке, `role="dialog"` + `aria-modal` на панели, общий `closeCredsModal`).
+- Verify: `tsc --noEmit` saas-portal + saas-api чисто; `pnpm --filter @voxly/saas-portal build` — 26/26 страниц, `/dashboard/crm` 11.8 kB. Deploy `./scripts/prod-deploy.sh saas-api,saas-portal`; smoke 502 cold start, после прогрева `/` `/dashboard/crm` `/dashboard/partners` `/admin/crm` + API health **200**.
+- Next: commit на ветке `ui/indigo-shadcn-dashboard`; ротировать root SSH пароль (передавался в чате).
+
+### 2026-07-31 — Partners page UX rework (tables, funnel, reward rule)
+
+- Goal: убрать дублирующий блок «Основная ссылка», сделать страницу понятной и информативной.
+- Changes: `referral-program.ts` — dashboard отдаёт `rule` (default `ReferralRule`: type/value/durationMonths) для явного «сколько вы зарабатываете». `partners-portal-hero.tsx` — hero несёт код + URL + copy + переходы + баланс. `dashboard/partners/page.tsx` — блок «Как это работает» (3 шага), пресеты периода (месяц/30д/год/всё время) + кастомные даты, воронка Переходы→Регистрации→Оплаты с конверсиями, таблицы вместо текстовых строк (`overflow-x-auto`, tabular-nums, заголовки колонок), progressive disclosure для форм создания ссылки и расхода, empty state с действием, статусы бейджами success/warning, `expenses` из API выведены отдельной секцией.
+- Verify: `tsc --noEmit` saas-api + saas-portal чисто. Deploy `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260731-115...`; smoke 502 cold start, после прогрева `/` `/dashboard/partners` `/dashboard/crm` + API health **200**.
+- Next: commit на ветке; ротировать root SSH пароль (передавался в чате).
+
+### 2026-07-31 — Partners page CRM-style UI (prod)
+
+- Goal: Style `/dashboard/partners` like `/dashboard/crm` (amber hero, `landing-root`, stat cards).
+- Changes: `partners-portal-hero.tsx` (new); `dashboard/partners/page.tsx` restyled — no functional API changes.
+- Deploy: `./scripts/prod-deploy.sh saas-portal` → backup `/opt/voxly/backups/20260731-112230/`; portal rebuilt+recreated; initial smoke 404 (cold start), post-check `/` `/dashboard/partners` `/dashboard/crm` + API health **200**.
+- Next: commit partners UI on branch; rotate root SSH password (shared in chat).
+
 ### 2026-07-30 — Admin CRM resources: real disk only, no per-tenant RAM estimate
 
 - Goal: Show honest resource usage on `/admin/crm` — factual disk per client; remove misleading proportional RAM estimates.

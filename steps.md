@@ -89,6 +89,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-31** — **Prod:** супер-админ `/admin/partners` (партнёры, индивидуальные правила вознаграждения, ручные выплаты `ReferralTransaction`, блокировка) + `/api/admin/referrals`; уникальность реферальных кодов (409 + `code-available`); миграция `20260731140000_referral_admin` (аддитивная: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`) применена через `prisma migrate deploy` в `docker-saas-api-1`; backup `20260731-131927`; smoke портал/API/`/admin/partners` **200**, `GET /api/admin/referrals` без токена **401**.
 - **2026-07-30** — CRM portal defaults for all tenants: `/dashboard/crm`, invite+credentials, hard lock ADR-023, shell-ux «CRM · slug»+«Вы:», chat operator names, crm-chat **0.1.23**; provision installs latest chat + skip install-apps (owner+invite).
 - **2026-07-30** — INC-072: sidebar «john» = workspace (shell-ux «CRM · john» + «Вы: …»); Chat author from Twenty member (not «Менеджер»); crm-chat **0.1.23** on prod.
 - **2026-07-29** — Лендинг getvoxly.ru пересобран по AIDA: official mascot Voxly, industrial-tech art direction, Unbounded+Manrope, story-first вместо comparison-table-first, mobile sticky CTA; portal build green.
@@ -513,7 +514,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; **Super-admin `/admin/crm`** (platform pricing + portals) on prod.  invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/072**. **2026-07-30** CRM portal defaults for all tenants + **ADR-023 hard CRM lock**; **Super-admin `/admin/crm`** (platform pricing + portals) on prod. **2026-07-31** super-admin **`/admin/partners`** on prod: per-tenant `ReferralRule` + `ReferralTransaction` (ручные выплаты/корректировки), блокировка партнёра, уникальные реферальные коды (migrate `20260731140000_referral_admin`).  invite credentials + display names from Twenty; shell-ux «CRM · slug»+«Вы:»; crm-chat **0.1.23** (operator ≠ «Менеджер»). New tenants: provision = kanban/RU + chat tarball force-reinstall + skip install-apps. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -573,7 +574,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | phase1-infra | Docker Compose + Traefik + PostgreSQL + Redis | ✅ DONE |
 | phase1-control | Control plane: Prisma, auth, Robokassa, provisioning | ✅ DONE |
 | phase1-portal | Клиентский портал + супер-админка | ✅ DONE |
-| phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) | ✅ DONE |
+| phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) + супер-админ `/admin/partners` (per-tenant правила, ручные выплаты) | ✅ DONE |
 | phase1-manager-bot | Telegram Manager Bot (Managed Bots) | ✅ DONE |
 | phase1-twenty-app | Twenty App voxly-platform (объекты stub) | ✅ DONE (stub archived; chat = voxly-crm-chat) |
 | phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |

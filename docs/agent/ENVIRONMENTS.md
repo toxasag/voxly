@@ -51,6 +51,14 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Prod `.env`: `TELEGRAM_API_*`, `ENCRYPTION_KEY`, `VOXLY_SERVICE_TOKEN`, `GRAMJS_BRIDGE_URL=http://gramjs-bridge:3008` (fixed from `:3010`), `OPENROUTER_API_KEY` present.
 - Backup: `/opt/voxly/backups/20260723-130943/`.
 
+### Deploy 2026-07-31 (admin partners + per-tenant referral rules)
+
+- Services: `saas-api`, `saas-portal`.
+- Backup `/opt/voxly/backups/20260731-131927/` (`voxly_control.dump`, `twenty.dump`).
+- Control migrate: `20260731140000_referral_admin` applied via `docker exec -w /voxly/packages/db docker-saas-api-1 ./node_modules/.bin/prisma migrate deploy` (additive: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`).
+- `prod-diff saas-api,saas-portal` before deploy: all compared paths match.
+- Smoke: `/`, API health, `/admin/partners`, `/admin/crm`, `/dashboard/crm`, `/dashboard/partners` **200**; `GET /api/admin/referrals` unauthenticated **401** (routes registered).
+
 ### Deploy 2026-07-23 (success)
 
 - Backup `/opt/voxly/backups/20260723-122938/`; Conversation AI columns migrated on control DB.
