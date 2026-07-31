@@ -29,7 +29,7 @@ import {
   type OpenRouterUsageLike,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
-import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, isWithinMailingAttributionWindow, mailingAttributionNote } from '@voxly/shared';
+import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
@@ -748,6 +748,7 @@ async function enrichWaTextWithMediaAi(opts: {
               tokens: cost.tokens || estTokens,
               model: asrModel,
               requestType: 'transcribe',
+              channel: AI_USAGE_CHANNELS.WHATSAPP,
             }),
           )
           .catch((err) => console.warn('[ai-whatsapp] ASR charge failed', err));
@@ -787,6 +788,7 @@ async function enrichWaTextWithMediaAi(opts: {
               tokens: cost.tokens || estTokens,
               model: visionModel,
               requestType: 'vision',
+              channel: AI_USAGE_CHANNELS.WHATSAPP,
             }),
           )
           .catch((err) => console.warn('[ai-whatsapp] vision charge failed', err));
@@ -2031,6 +2033,28 @@ async function shouldAiReply(conversationId: string): Promise<boolean> {
   return Boolean(agent);
 }
 
+async function switchToHuman(
+  instanceName: string,
+  from: string,
+  tenantId: string,
+  botId: string,
+  conversationId: string,
+) {
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { mode: 'human', status: 'waiting_for_human' },
+  });
+
+  await sendWhatsAppText(instanceName, from, 'Режим оператора. Ожидайте ответа.');
+
+  await fireGoal({
+    tenantId,
+    goalName: 'human_handoff',
+    subscriberId: from,
+    botInstanceId: botId,
+  });
+}
+
 async function syncLeadToCrm(opts: {
   tenantId: string;
   botId: string;
@@ -2881,7 +2905,7 @@ async function hasNewerUserMessage(conversationId: string, since: Date): Promise
 async function flushWhatsAppAiReply(items: WaAiPending[]) {
   const last = items[items.length - 1];
   if (!last) return;
-  const { instanceName, from, conversationId, tenantId, addonId } = last;
+  const { instanceName, from, conversationId, tenantId, botId, addonId } = last;
   const messageIds = items.map((i) => i.messageId).filter(Boolean) as string[];
   // Prefer DB content (post-ASR/vision) over stale placeholder in the debounce bag.
   let burstText = items.map((i) => i.text).filter(Boolean).join('\n');
@@ -2911,6 +2935,7 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       from,
       '⚠️ Баланс AI-ассистента исчерпан. Пополните баланс в личном кабинете.',
     );
+    await switchToHuman(instanceName, from, tenantId, botId, conversationId);
     return;
   }
 
@@ -3075,6 +3100,7 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       requestType: 'text',
       addonId: addonId || undefined,
       aiAgentId: agent?.id,
+      channel: AI_USAGE_CHANNELS.WHATSAPP,
     });
 
     const sendResult = await sendWhatsAppHumanLike(instanceName, from, bubbles, {
@@ -3105,6 +3131,15 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
       where: { id: conversationId },
       data: { lastAiMessageAt: new Date() },
     });
+
+    if (chargeResult.paused) {
+      await sendWhatsAppText(
+        instanceName,
+        from,
+        '⚠️ Баланс AI-ассистента исчерпан. Пополните баланс в личном кабинете. Переключаю на оператора.',
+      );
+      await switchToHuman(instanceName, from, tenantId, botId, conversationId);
+    }
   } catch (err) {
     console.error('[ai-whatsapp] AI reply error:', err);
   } finally {

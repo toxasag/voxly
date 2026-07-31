@@ -6,7 +6,7 @@ import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { Prisma } from '@voxly/db';
 import { parseAgentLearnSettings } from '@voxly/ai-core';
-import { AI_MODEL_DEFAULTS } from '@voxly/shared';
+import { AI_MODEL_DEFAULTS, aiUsageChannelLabel } from '@voxly/shared';
 import {
   deleteKnowledgeFile,
   saveKnowledgeUpload,
@@ -142,10 +142,16 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
     const since = new Date();
     since.setDate(since.getDate() - days);
 
-    const [wallet, grouped, recent] = await Promise.all([
+    const [wallet, grouped, groupedByChannel, recent] = await Promise.all([
       fastify.prisma.aiWallet.findUnique({ where: { tenantId } }),
       fastify.prisma.aiUsageLog.groupBy({
         by: ['aiAgentId'],
+        where: { tenantId, createdAt: { gte: since } },
+        _sum: { chargedRub: true, tokens: true, providerCostRub: true },
+        _count: true,
+      }),
+      fastify.prisma.aiUsageLog.groupBy({
+        by: ['channel'],
         where: { tenantId, createdAt: { gte: since } },
         _sum: { chargedRub: true, tokens: true, providerCostRub: true },
         _count: true,
@@ -181,6 +187,14 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
       byAgent: grouped.map((g: any) => ({
         aiAgentId: g.aiAgentId,
         name: g.aiAgentId ? nameById[g.aiAgentId] || 'Удалённый агент' : 'Без агента',
+        requests: g._count,
+        tokens: g._sum.tokens || 0,
+        chargedRub: Number(g._sum.chargedRub || 0),
+        providerCostRub: Number(g._sum.providerCostRub || 0),
+      })),
+      byChannel: groupedByChannel.map((g: any) => ({
+        channel: g.channel ?? null,
+        label: aiUsageChannelLabel(g.channel),
         requests: g._count,
         tokens: g._sum.tokens || 0,
         chargedRub: Number(g._sum.chargedRub || 0),

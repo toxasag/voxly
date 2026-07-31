@@ -1,7 +1,7 @@
 // RAG helpers: chunking, embeddings, cosine retrieve for agent knowledge + won-deal sales.
 
 import { prisma } from '@voxly/db';
-import { AI_MODEL_DEFAULTS } from '@voxly/shared';
+import { AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS } from '@voxly/shared';
 import { resolveProviderCostRub, type OpenRouterUsageLike } from './openrouter-cost.js';
 
 export const DEFAULT_WON_STAGES = ['USPESHNAYA_SDELKA', 'CUSTOMER'] as const;
@@ -124,6 +124,7 @@ export async function embedAndCharge(
       model,
       requestType: 'text',
       aiAgentId,
+      channel: AI_USAGE_CHANNELS.SYSTEM,
     });
   } catch (err) {
     console.warn('[ai-core] embedding charge failed', err);

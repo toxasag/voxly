@@ -33,6 +33,8 @@ import { TwentyClient } from '@voxly/twenty-client';
 import {
   AI_HANDOFF_PAUSE_MS,
   AI_MODEL_DEFAULTS,
+  AI_USAGE_CHANNELS,
+  type AiUsageChannel,
   isAiConversationMode,
   PRICING,
   isWithinMailingAttributionWindow,
@@ -351,6 +353,7 @@ async function handleInternalInbound(
                   tokens: cost.tokens || estTokens,
                   model: asrModel,
                   requestType: 'transcribe',
+                  channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
                 }),
               )
               .catch((err) =>
@@ -387,6 +390,7 @@ async function handleInternalInbound(
                   tokens: cost.tokens || estTokens,
                   model: visionModel,
                   requestType: 'vision',
+                  channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
                 }),
               )
               .catch((err) =>
@@ -470,6 +474,7 @@ async function handleInternalInbound(
     tenantId,
     conversationId: conversation.id,
     displayText: text,
+    channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
   });
   return { ok: true, bubbles: normalizeAiBubbles(bubbles, 4) };
 }
@@ -1071,6 +1076,7 @@ async function flushTelegramAiReply(pending: TgAiPending, messageIds: string[] =
       tenantId,
       conversationId: conversation.id,
       displayText,
+      channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
       persist: false,
     });
 
@@ -1143,6 +1149,7 @@ async function generateAiBubbles(opts: {
   tenantId: string;
   conversationId: string;
   displayText: string;
+  channel: AiUsageChannel;
   /** When false, caller stores the message after Telegram delivery (Business send). */
   persist?: boolean;
 }): Promise<{
@@ -1256,6 +1263,7 @@ async function generateAiBubbles(opts: {
     model,
     requestType: 'text',
     aiAgentId: assigned?.id,
+    channel: opts.channel,
   });
 
   if (persist) {
@@ -1375,6 +1383,7 @@ async function asrTelegramVideo(opts: {
               tokens: cost.tokens || estTokens,
               model: asrModel,
               requestType: 'transcribe',
+              channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
             }),
           )
           .catch((err) =>
@@ -1436,6 +1445,7 @@ async function extractInboundText(
                 tokens: cost.tokens || estTokens,
                 model: asrModel,
                 requestType: 'transcribe',
+                channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
               }),
             )
             .catch((err) => console.warn('[ai-telegram] ASR charge failed', err));
@@ -1496,6 +1506,7 @@ async function extractInboundText(
                 tokens: cost.tokens || estTokens,
                 model: visionModel,
                 requestType: 'vision',
+                channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
               }),
             )
             .catch((err) => console.warn('[ai-telegram] vision charge failed', err));

@@ -11,6 +11,7 @@ import { TwentyClient } from '@voxly/twenty-client';
 import {
   DEFAULT_GIFT_FUNNEL,
   AI_MODEL_DEFAULTS,
+  AI_USAGE_CHANNELS,
   clientMdToMarkdownV2,
   formatPromoButtonLabel,
   giftPromoStartPayload,
@@ -1758,6 +1759,7 @@ async function softChargeGiftMedia(
       tokens: cost.tokens || estTokens,
       model,
       requestType,
+      channel: AI_USAGE_CHANNELS.GIFT_BOT,
     });
   } catch (err) {
     // Gift tenants may lack AI wallet — enrichment still useful for CRM.

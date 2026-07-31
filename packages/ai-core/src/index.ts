@@ -1,6 +1,7 @@
 // Voxly AI Core — OpenAI wrapper with per-tenant wallet deduction + markup
 
 import { prisma } from '@voxly/db';
+import type { AiUsageChannel } from '@voxly/shared';
 import { applyMarkup } from './markup.js';
 export {
   applyMarkup,
@@ -63,6 +64,8 @@ export interface ChargeAiUsageParams {
   requestType: 'text' | 'transcribe' | 'vision';
   addonId?: string;
   aiAgentId?: string | null;
+  /** Which surface consumed the tokens; omitted only by callers that predate the breakdown. */
+  channel?: AiUsageChannel;
 }
 
 export interface ChargeResult {
@@ -109,14 +112,33 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
       throw new Error(`No AI wallet for tenant ${params.tenantId}`);
     }
 
-    const currentBalance = Number(wallet.balanceRub);
-    const newBalance = currentBalance - chargedRub;
-
-    // Update wallet (can go negative slightly, but flag for pause)
-    const updatedWallet = await tx.aiWallet.update({
-      where: { tenantId: params.tenantId },
-      data: { balanceRub: Math.max(0, newBalance) },
+    // Conditional decrement keeps concurrent charges from overwriting each other
+    const debited = await tx.aiWallet.updateMany({
+      where: { tenantId: params.tenantId, balanceRub: { gte: chargedRub } },
+      data: { balanceRub: { decrement: chargedRub } },
     });
+
+    let balance: number;
+    let uncollectedRub = 0;
+
+    if (debited.count > 0) {
+      const updatedWallet = await tx.aiWallet.findUnique({
+        where: { tenantId: params.tenantId },
+      });
+      balance = Number(updatedWallet?.balanceRub ?? 0);
+    } else {
+      // Wallet cannot cover the charge: lock the row, collect what is actually there
+      const locked = await tx.$queryRaw<Array<{ balanceRub: unknown }>>`
+        SELECT "balanceRub" FROM "AiWallet" WHERE "tenantId" = ${params.tenantId} FOR UPDATE
+      `;
+      const collected = Number(locked[0]?.balanceRub ?? 0);
+      uncollectedRub = Math.round((chargedRub - collected) * 10000) / 10000;
+      await tx.aiWallet.update({
+        where: { tenantId: params.tenantId },
+        data: { balanceRub: 0 },
+      });
+      balance = 0;
+    }
 
     // Log usage
     await tx.aiUsageLog.create({
@@ -130,13 +152,15 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
         providerCostRub: params.providerCostRub,
         markupPercent,
         chargedRub,
+        uncollectedRub: uncollectedRub > 0 ? uncollectedRub : undefined,
         requestType: params.requestType,
+        channel: params.channel,
       },
     });
 
     return {
-      balance: Number(updatedWallet.balanceRub),
-      paused: newBalance <= 0,
+      balance,
+      paused: balance <= 0,
     };
   });
 
