@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Gift,
+  Handshake,
   LayoutDashboard,
   Loader2,
   LogOut,
@@ -47,6 +48,13 @@ const CABINET_NAV: NavItem[] = [
     label: 'Дашборд',
     match: (p) => p === '/dashboard',
     icon: LayoutDashboard,
+    ownerOnly: true,
+  },
+  {
+    href: '/dashboard/partners',
+    label: 'Партнёрская программа',
+    match: (p) => p.startsWith('/dashboard/partners'),
+    icon: Handshake,
     ownerOnly: true,
   },
   {

@@ -111,17 +111,16 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      // Handle referral attribution
+      // Handle referral attribution (main code or project campaign)
       if (referralCode) {
-        const referrer = await tx.referralCode.findUnique({
-          where: { code: referralCode },
-          include: { tenant: true },
-        });
-        if (referrer && referrer.tenantId !== tenant.id && referrer.isActive) {
+        const { resolveReferralAttribution } = await import('../services/referral-program.js');
+        const attr = await resolveReferralAttribution(tx, referralCode);
+        if (attr && attr.referrerTenantId !== tenant.id) {
           await tx.referral.create({
             data: {
-              referrerTenantId: referrer.tenantId,
+              referrerTenantId: attr.referrerTenantId,
               referredTenantId: tenant.id,
+              campaignId: attr.campaignId,
               status: 'attributed',
             },
           });

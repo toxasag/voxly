@@ -1,69 +1,158 @@
-// Referral routes: get code, stats, earnings
+// Referral routes: dashboard, campaigns, click tracking
 
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+import {
+  buildReferralDashboard,
+  generateCampaignCode,
+  incrementReferralClick,
+  resolveReferralAttribution,
+} from '../services/referral-program.js';
 
 export const referralRoutes: FastifyPluginAsync = async (fastify) => {
-  // --- Get referral info for current tenant ---
+  // --- Partner dashboard (stats + campaigns) ---
+  fastify.get('/dashboard', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const q = request.query as { from?: string; to?: string };
+    try {
+      const data = await buildReferralDashboard(
+        fastify.prisma,
+        tenantId,
+        fastify.voxlyDomain,
+        q,
+      );
+      return reply.send(data);
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Dashboard failed',
+      });
+    }
+  });
+
+  // --- Legacy summary (keep for compatibility) ---
   fastify.get('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId } = (request as any).user;
-    const prisma = fastify.prisma;
-    const voxlyDomain = fastify.voxlyDomain;
+    try {
+      const data = await buildReferralDashboard(
+        fastify.prisma,
+        tenantId,
+        fastify.voxlyDomain,
+        {},
+      );
+      return reply.send({
+        code: data.mainCode.code,
+        link: data.mainCode.link,
+        isActive: data.mainCode.isActive,
+        clicksCount: data.mainCode.clicksCount,
+        totalEarnings: String(data.totalEarnedAllTime),
+        balance: String(data.balanceRub),
+        referrals: data.referrals,
+      });
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Failed',
+      });
+    }
+  });
 
-    const referralCode = await prisma.referralCode.findUnique({
-      where: { tenantId },
-    });
-
-    if (!referralCode) {
-      return reply.code(404).send({ error: 'No referral code found' });
+  // --- Create project campaign / custom link ---
+  fastify.post('/campaigns', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const { tenantId } = (request as any).user;
+    const body = z
+      .object({
+        name: z.string().min(1).max(120),
+        code: z
+          .string()
+          .min(4)
+          .max(32)
+          .regex(/^[A-Za-z0-9]+$/)
+          .optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'name required; code optional alphanumeric 4-32' });
     }
 
-    const referrals = await prisma.referral.findMany({
-      where: { referrerTenantId: tenantId },
-      include: {
-        referredTenant: { select: { slug: true, status: true, createdAt: true } },
-        earnings: true,
-      },
-    });
+    let code = body.data.code?.toUpperCase() ?? generateCampaignCode(body.data.name);
+    const prisma = fastify.prisma;
 
-    const totalEarnings = await prisma.referralEarning.aggregate({
-      where: { tenantId },
-      _sum: { amountRub: true },
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const exists =
+        (await prisma.referralCampaign.findUnique({ where: { code } })) ||
+        (await prisma.referralCode.findUnique({ where: { code } }));
+      if (!exists) break;
+      code = generateCampaignCode(body.data.name);
+    }
 
-    const tenantBalance = await prisma.tenantBalance.findUnique({
-      where: { tenantId },
-    });
-
-    return reply.send({
-      code: referralCode.code,
-      link: `https://${voxlyDomain}/r/${referralCode.code}`,
-      isActive: referralCode.isActive,
-      clicksCount: referralCode.clicksCount,
-      referrals: referrals.map((r) => ({
-        id: r.id,
-        referredSlug: r.referredTenant.slug,
-        status: r.referredTenant.status,
-        attributedAt: r.attributedAt,
-        firstPaymentAt: r.firstPaymentAt,
-        earnings: r.earnings.map((e) => ({
-          amountRub: e.amountRub.toString(),
-          ruleApplied: e.ruleApplied,
-          creditedAt: e.creditedAt,
-        })),
-      })),
-      totalEarnings: totalEarnings._sum.amountRub?.toString() || '0',
-      balance: tenantBalance?.balanceRub.toString() || '0',
-    });
+    try {
+      const campaign = await prisma.referralCampaign.create({
+        data: {
+          tenantId,
+          name: body.data.name.trim(),
+          code,
+        },
+      });
+      return reply.code(201).send({
+        ...campaign,
+        link: `https://${fastify.voxlyDomain}/r/${campaign.code}`,
+      });
+    } catch (err) {
+      return reply.code(409).send({
+        error: err instanceof Error ? err.message : 'Code already exists',
+      });
+    }
   });
+
+  // --- Manual expense for a project ---
+  fastify.post(
+    '/campaigns/:id/expenses',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { id } = request.params as { id: string };
+      const body = z
+        .object({
+          amountRub: z.number().positive().max(10_000_000),
+          note: z.string().max(500).optional(),
+          spentAt: z.string().datetime().optional(),
+        })
+        .safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: 'amountRub required (positive number)' });
+      }
+
+      const campaign = await fastify.prisma.referralCampaign.findFirst({
+        where: { id, tenantId },
+      });
+      if (!campaign) return reply.code(404).send({ error: 'Campaign not found' });
+
+      const expense = await fastify.prisma.referralCampaignExpense.create({
+        data: {
+          tenantId,
+          campaignId: id,
+          amountRub: body.data.amountRub,
+          note: body.data.note?.trim() || null,
+          spentAt: body.data.spentAt ? new Date(body.data.spentAt) : new Date(),
+        },
+      });
+
+      return reply.code(201).send({
+        id: expense.id,
+        campaignId: expense.campaignId,
+        amountRub: Number(expense.amountRub),
+        note: expense.note,
+        spentAt: expense.spentAt.toISOString(),
+      });
+    },
+  );
 
   // --- Admin: list referral rules ---
   fastify.get('/rules', { preHandler: [fastify.requireSuperadmin] }, async (_request, reply) => {
-    const prisma = fastify.prisma;
-
-    const rules = await prisma.referralRule.findMany({
+    const rules = await fastify.prisma.referralRule.findMany({
       orderBy: { createdAt: 'asc' },
     });
-
     return reply.send({ rules });
   });
 
@@ -76,17 +165,15 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
       productScope?: string;
       isDefault?: boolean;
     };
-    const prisma = fastify.prisma;
 
     if (body.isDefault) {
-      // Unset previous default
-      await prisma.referralRule.updateMany({
+      await fastify.prisma.referralRule.updateMany({
         where: { isDefault: true },
         data: { isDefault: false },
       });
     }
 
-    const rule = await prisma.referralRule.create({
+    const rule = await fastify.prisma.referralRule.create({
       data: {
         type: body.type,
         value: body.value,
@@ -99,24 +186,18 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.code(201).send(rule);
   });
 
-  // --- Track referral click (public, no auth) ---
+  // --- Track referral click (public) → register with ref ---
   fastify.get('/click/:code', async (request, reply) => {
     const { code } = request.params as { code: string };
-    const prisma = fastify.prisma;
     const voxlyDomain = fastify.voxlyDomain;
 
-    const referralCode = await prisma.referralCode.findUnique({
-      where: { code },
-    });
+    await incrementReferralClick(fastify.prisma, code);
 
-    if (referralCode && referralCode.isActive) {
-      await prisma.referralCode.update({
-        where: { id: referralCode.id },
-        data: { clicksCount: { increment: 1 } },
-      });
-    }
-
-    // Redirect to landing with ref param
-    return reply.redirect(302, `https://${voxlyDomain}/?ref=${code}`);
+    return reply.redirect(
+      302,
+      `https://${voxlyDomain}/register?ref=${encodeURIComponent(code)}`,
+    );
   });
 };
+
+export { resolveReferralAttribution };

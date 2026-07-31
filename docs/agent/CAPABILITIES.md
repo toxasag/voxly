@@ -13,7 +13,8 @@
 | `/` лендинг | ✅ AIDA conversion landing; industrial-tech art direction; маскот **Voxly**; Unbounded + Manrope; 7 дней free, CRM от 500 ₽; mobile sticky CTA; реквизиты ИП | `page.tsx` + `components/landing/vox-relay.tsx` |
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
 | `/login`, `/register` | ✅ shadcn Card/Input; register: shadcn Checkbox оферта + ПДн | `login/page.tsx`, `register/page.tsx` |
-| `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; `AppShell` Sheet mobile | `dashboard/page.tsx` |
+| `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; link → partners | `dashboard/page.tsx` |
+| `/dashboard/partners` | ✅ реферальная программа: основная ссылка/код; проекты (campaign links); stats за период; расходы по проекту; pending/earned/net | `dashboard/partners/page.tsx` |
 | `/dashboard/crm` | ✅ amber CRM portal: Trial/seats, URL+SSO, Robokassa, invite; **hard lock paywall** when sub ended (ADR-023) | `dashboard/crm/page.tsx` |
 | `/dashboard/bots` | ✅ список gift-ботов | `dashboard/bots/page.tsx` |
 | `/dashboard/bots/[botId]` | ✅ **1.1** канал → **1.2** первое сообщение (Telegram description до /start) → **1.3** стартовое (/start funnel) → promo, funnel, media, chat, subscribers; **расписание проекта** | `dashboard/bots/[botId]/page.tsx` |
@@ -156,7 +157,9 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 ### Referral `/api/referrals`
 | Method | Path | ✅ |
 |---|---|---|
-| GET | `/`, `/rules`, `/click/:code` | ✅ |
+| GET | `/`, `/dashboard?from=&to=` | ✅ stats, campaigns, expenses, referrals list |
+| POST | `/campaigns`, `/campaigns/:id/expenses` | ✅ project links + manual spend |
+| GET | `/rules`, `/click/:code` → `/register?ref=` | ✅ |
 | POST | `/rules` (superadmin) | ✅ |
 
 ### Analytics `/api/analytics`

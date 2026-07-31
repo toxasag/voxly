@@ -46,6 +46,8 @@ model Tenant {
   referralsMade     Referral[]     @relation("ReferrerTenant")
   referralReceived  Referral?      @relation("ReferredTenant")
   referralEarnings  ReferralEarning[]
+  referralCampaigns ReferralCampaign[]
+  referralCampaignExpenses ReferralCampaignExpense[]
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
@@ -416,6 +418,9 @@ model Referral {
   referrerTenantId   String
   referredTenant     Tenant    @relation("ReferredTenant", fields: [referredTenantId], references: [id], onDelete: Cascade)
   referredTenantId   String    @unique
+  /// Project/campaign link used at registration (null = main referral code)
+  campaign           ReferralCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId         String?
   attributedAt       DateTime  @default(now())
   firstPaymentAt     DateTime?
   status             String    @default("attributed") // attributed, earned, cancelled
@@ -425,6 +430,9 @@ model Referral {
   earnings           ReferralEarning[]
 
   @@index([referrerTenantId])
+  @@index([campaignId])
+  @@index([attributedAt])
+  @@index([firstPaymentAt])
 }
 
 model ReferralRule {
@@ -453,6 +461,40 @@ model ReferralEarning {
 
   @@index([tenantId])
   @@index([referralId])
+}
+
+/// Per-project referral link (e.g. different Telegram channels)
+model ReferralCampaign {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  name        String
+  code        String   @unique
+  clicksCount Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  referrals   Referral[]
+  expenses    ReferralCampaignExpense[]
+
+  @@index([tenantId])
+}
+
+model ReferralCampaignExpense {
+  id         String           @id @default(cuid())
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String
+  campaign   ReferralCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  amountRub  Decimal          @db.Decimal(10, 2)
+  note       String?
+  spentAt    DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+
+  @@index([tenantId])
+  @@index([campaignId])
+  @@index([spentAt])
 }
 
 // ============================================================

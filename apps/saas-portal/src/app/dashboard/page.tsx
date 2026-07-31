@@ -555,6 +555,9 @@ export default function DashboardPage() {
                   {refLink && <CopyButton value={refLink} label="Ссылка" />}
                 </div>
               )}
+              <Button asChild variant="link" size="sm" className="mt-2 h-auto p-0">
+                <Link href="/dashboard/partners">Партнёрская программа →</Link>
+              </Button>
             </div>
           </CardContent>
         </Card>

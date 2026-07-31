@@ -3,7 +3,7 @@
 - Goal: Show honest resource usage on `/admin/crm` — factual disk per client; remove misleading proportional RAM estimates.
 - Changes: `tenant-resource-usage.ts` — drop `memoryBytesEstimate`; disk label includes mount path; portal table shows `{used} / {server total}` + Twenty·CP·AI breakdown; RAM column «н/д (общий стек)»; platform header real server RAM/disk. `billing.ts` webhook — paid `crm_base` uses `loadTenantCrmPricing().seatsIncluded` (platform/override) not hardcoded constant.
 - Verify (local): typecheck/lints clean; onboarding pricing path — register trial `PRICING.SEATS_INCLUDED`, checkout + GET `/crm` via `loadCrmPlatformPricing` + tenant overrides, billing webhook now syncs seats from tenant pricing.
-- Deploy: pending this commit.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-162401/`; build OK; smoke 502 cold-start then `/` + `/admin/crm` + API health **200**.
 
 ---
 
@@ -22,6 +22,12 @@
 - Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260730-160526/`; portal rebuilt+recreated; API cached (no API diff). Smoke transient 404 on `/` during restart; post-check `/` + `/dashboard/crm` + API health **200**.
 - Verify: john owner → `/dashboard/crm` → «Тариф и оплата» shows **0 ₽** (CRM Base · 1 мес + «Оплатить 0 ₽») matching stat cards; extra seats × 0 ₽.
 - Next: none.
+
+### 2026-07-31 — Партнёрская программа `/dashboard/partners`
+
+- Goal: Sidebar page for referral links by project, stats (clicks/reg/paid/earned), manual expenses, period filter.
+- Changes: `ReferralCampaign` + `ReferralCampaignExpense` + `Referral.campaignId`; `referral-program.ts`; API dashboard/campaigns/expenses; portal page + nav; register `?ref=` prefill; click → `/register?ref=`.
+- Verify: migrate prod `20260731120000_referral_campaigns`; deploy api+portal; `/dashboard/partners`.
 
 ### 2026-07-30 — Admin CRM: отчёт, индив. тарифы, RAM/диск по клиентам
 
