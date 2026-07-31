@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Search,
   Send,
+  Share2,
   Shield,
   Smartphone,
   Sparkles,
@@ -128,6 +129,12 @@ const ADMIN_NAV: NavItem[] = [
     label: 'CRM портал',
     match: (p) => p.startsWith('/admin/crm'),
     icon: Building2,
+  },
+  {
+    href: '/admin/partners',
+    label: 'Партнёрка',
+    match: (p) => p.startsWith('/admin/partners'),
+    icon: Share2,
   },
 ];
 
