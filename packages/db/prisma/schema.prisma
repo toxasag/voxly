@@ -50,6 +50,7 @@ model Tenant {
   referralCampaignExpenses ReferralCampaignExpense[]
   referralRules     ReferralRule[]
   referralTransactions ReferralTransaction[]
+  referralWithdrawals ReferralWithdrawal[]
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
@@ -130,7 +131,9 @@ model Payment {
   subscriptionId  String?
   robokassaInvId  Int          @unique
   amount          Decimal      @db.Decimal(10, 2)
-  status          String       @default("pending") // pending, paid, failed, refunded
+  /// Сколько закрыто партнёрским балансом; amount = gross - balanceAppliedRub
+  balanceAppliedRub Decimal    @db.Decimal(10, 2) @default(0)
+  status          String       @default("pending") // pending, paid, failed, refunded, cancelled (released hold)
   productCode     String
   periodMonths    Int?
   description     String
@@ -202,13 +205,17 @@ model AiUsageLog {
   providerCostRub Decimal  @db.Decimal(10, 4)
   markupPercent   Int
   chargedRub      Decimal  @db.Decimal(10, 4)
+  uncollectedRub  Decimal? @db.Decimal(10, 4) // part of chargedRub the wallet could not cover
   requestType     String   // text, transcribe, vision
+  /// ai_tg | ai_gramjs | ai_wa | gift_bot | system (AI_USAGE_CHANNELS); null = charge predates channel tracking
+  channel         String?
   createdAt       DateTime @default(now())
 
   @@index([tenantId])
   @@index([aiWalletId])
   @@index([aiAgentId])
   @@index([createdAt])
+  @@index([tenantId, channel, createdAt])
 }
 
 /// Tenant-scoped AI agent (prompt/settings). Orthogonal to channels.
@@ -444,7 +451,7 @@ model ReferralRule {
   type            ReferralRuleType
   value           Decimal         @db.Decimal(10, 2) // fixed amount or percentage
   durationMonths  Int?            // for percent_recurring
-  productScope    String          @default("all") // all, crm
+  productScope    String          @default("all") // REFERRAL_PRODUCT_SCOPES: all (кроме ai_topup) | crm
   isDefault       Boolean         @default(false)
   isActive        Boolean         @default(true)
   createdAt       DateTime        @default(now())
@@ -465,6 +472,7 @@ model ReferralEarning {
   ruleApplied     String
   creditedAt      DateTime  @default(now())
 
+  @@unique([paymentId])
   @@index([tenantId])
   @@index([referralId])
 }
@@ -515,6 +523,29 @@ model ReferralTransaction {
   createdAt   DateTime       @default(now())
 
   @@index([tenantId])
+  @@index([createdAt])
+}
+
+/// Заявка партнёра на вывод партнёрского баланса деньгами
+model ReferralWithdrawal {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  amountRub       Decimal  @db.Decimal(10, 2)
+  status          ReferralWithdrawalStatus @default(pending)
+  /// Куда перевести: карта / счёт / телефон СБП — свободный текст
+  payoutDetails   String
+  /// Комментарий партнёра к заявке
+  comment         String?
+  /// Причина отказа (обязательна при rejected) либо пометка о переводе
+  decisionNote    String?
+  decidedAt       DateTime?
+  decidedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
   @@index([createdAt])
 }
 
@@ -921,4 +952,13 @@ enum ReferralTxKind {
   payout
   manual_credit
   manual_debit
+  /// баланс зачтён в собственный счёт тенанта
+  redeem
+}
+
+enum ReferralWithdrawalStatus {
+  pending
+  paid
+  rejected
+  cancelled
 }
