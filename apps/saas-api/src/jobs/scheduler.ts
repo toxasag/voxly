@@ -7,13 +7,20 @@ import { GRACE_PERIOD_DAYS } from '@voxly/shared';
 
 let intervals: NodeJS.Timeout[] = [];
 
+/** Wrap an async job so timer callbacks never produce unhandled rejections. */
+function safeJob(name: string, fn: () => Promise<void>): () => void {
+  return () => {
+    fn().catch((err) => console.warn(`[scheduler] ${name} failed`, err));
+  };
+}
+
 export function startScheduledJobs() {
   // Check expired subscriptions every hour
-  const subInterval = setInterval(checkExpiredSubscriptions, 60 * 60 * 1000);
+  const subInterval = setInterval(safeJob('check expired subscriptions', checkExpiredSubscriptions), 60 * 60 * 1000);
   intervals.push(subInterval);
 
   // Check AI wallet balance alerts every 6 hours
-  const aiInterval = setInterval(checkAiWalletAlerts, 6 * 60 * 60 * 1000);
+  const aiInterval = setInterval(safeJob('check AI wallet alerts', checkAiWalletAlerts), 6 * 60 * 60 * 1000);
   intervals.push(aiInterval);
 
   // Won-deal sales learning for AI agents (~10 min)
@@ -25,17 +32,17 @@ export function startScheduledJobs() {
   intervals.push(salesLearnInterval);
 
   // Gift project schedules: start/stop by window (every minute)
-  const giftScheduleInterval = setInterval(syncGiftCampaignSchedules, 60 * 1000);
+  const giftScheduleInterval = setInterval(safeJob('sync gift campaign schedules', syncGiftCampaignSchedules), 60 * 1000);
   intervals.push(giftScheduleInterval);
 
   // Release abandoned partner-balance holds every hour
-  const holdSweepInterval = setInterval(releaseStaleBalanceHolds, 60 * 60 * 1000);
+  const holdSweepInterval = setInterval(safeJob('release stale balance holds', releaseStaleBalanceHolds), 60 * 60 * 1000);
   intervals.push(holdSweepInterval);
 
   // Run initial check after 10 seconds
-  setTimeout(checkExpiredSubscriptions, 10_000);
-  setTimeout(syncGiftCampaignSchedules, 15_000);
-  setTimeout(releaseStaleBalanceHolds, 30_000);
+  setTimeout(safeJob('check expired subscriptions', checkExpiredSubscriptions), 10_000);
+  setTimeout(safeJob('sync gift campaign schedules', syncGiftCampaignSchedules), 15_000);
+  setTimeout(safeJob('release stale balance holds', releaseStaleBalanceHolds), 30_000);
   setTimeout(() => {
     void import('../services/ai-sales-learn.js')
       .then((m) => m.ingestWonDealsAllTenants())
