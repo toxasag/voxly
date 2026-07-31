@@ -289,9 +289,6 @@ echo
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "[dry-run] would rsync paths above"
-  if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
-    echo "[dry-run] would: cd ${REMOTE_DIR}/docker && docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build ${BUILD_SVCS[*]}"
-  fi
   # Determine if prisma migrations apply
   NEEDS_MIGRATE=0
   for svc in "${BUILD_SVCS[@]}"; do
@@ -303,6 +300,9 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ "$NEEDS_MIGRATE" -eq 1 ]]; then
     echo "[dry-run] would: docker-compose ... build saas-api (for prisma CLI)"
     echo "[dry-run] would: docker-compose ... run --rm saas-api sh -c 'cd /voxly/packages/db && ./node_modules/.bin/prisma migrate deploy'"
+  fi
+  if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
+    echo "[dry-run] would: cd ${REMOTE_DIR}/docker && docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build ${BUILD_SVCS[*]}"
   fi
   echo "[dry-run] would smoke https://getvoxly.ru/ and https://api.getvoxly.ru/health"
   exit 0
