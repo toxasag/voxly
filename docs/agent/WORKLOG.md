@@ -1850,3 +1850,11 @@
 - Verify: Smoke `/` `/health` `/dashboard/partners` `/dashboard/crm` `/admin/partners` `/dashboard/ai` — **200**. Логи `saas-api` — одна ожидаемая ошибка releaseStaleBalanceHolds при первом старте (до применения миграций), после restart чисто. Cold start 502 saas-portal — штатно, после прогрева 200.
 - Broken: ничего.
 - Next: обновить CAPABILITIES.md, steps.md; ротировать root SSH пароль.
+
+### 2026-07-31 — Scheduler crash protection + migrate-before-restart in deploy (prod)
+
+- Goal: предотвратить падение процесса saas-api от unhandled rejection в джобах планировщика; встроить `prisma migrate deploy` в деплой-скрипт ДО пересоздания контейнеров.
+- Changes: `apps/saas-api/src/jobs/scheduler.ts` — обёртка `safeJob(name, fn)` вокруг всех 4 async-джобов (checkExpiredSubscriptions, checkAiWalletAlerts, syncGiftCampaignSchedules, releaseStaleBalanceHolds); inline `.catch()` у ai-sales-learn не затронут. `scripts/prod-deploy.sh` — новый шаг после rsync: build saas-api image → `docker-compose run --rm saas-api sh -c "cd /voxly/packages/db && ./node_modules/.bin/prisma migrate deploy"`; если миграция упала — деплой останавливается. Dry-run корректно показывает порядок: rsync → build → migrate → up -d → smoke. `docs/agent/DEPLOY.md` обновлён.
+- Deploy: `./scripts/prod-deploy.sh saas-api`; Backup `/opt/voxly/backups/20260731-154611/` (voxly_control.dump 286K + twenty.dump 2.4M); prisma migrate deploy → «No pending migrations to apply» (21 миграций, ни одна pending); container recreated; smoke initial 404 (cold start <1s), после прогрева portal + API health + /dashboard/partners + /dashboard/ai → **200**. Container restarts=0, logs clean (no scheduler errors).
+- Broken: ничего.
+- Next: мониторить логи на предмет `[scheduler] ... failed` — эти варнинги теперь безопасны (не роняют процесс).

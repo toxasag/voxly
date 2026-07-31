@@ -89,6 +89,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-07-31** — **Prod:** INC-079 fix — scheduler crash protection (`safeJob` wrapper for all timer jobs) + `prisma migrate deploy` автоматически в `prod-deploy.sh` до пересоздания контейнеров; backup `20260731-154611`; prisma «No pending migrations to apply»; container restarts=0; smoke portal/API/partners/ai **200**.
 - **2026-07-31** — **Prod:** супер-админ `/admin/partners` (партнёры, индивидуальные правила вознаграждения, ручные выплаты `ReferralTransaction`, блокировка) + `/api/admin/referrals`; уникальность реферальных кодов (409 + `code-available`); миграция `20260731140000_referral_admin` (аддитивная: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`) применена через `prisma migrate deploy` в `docker-saas-api-1`; backup `20260731-131927`; smoke портал/API/`/admin/partners` **200**, `GET /api/admin/referrals` без токена **401**.
 - **2026-07-30** — CRM portal defaults for all tenants: `/dashboard/crm`, invite+credentials, hard lock ADR-023, shell-ux «CRM · slug»+«Вы:», chat operator names, crm-chat **0.1.23**; provision installs latest chat + skip install-apps (owner+invite).
 - **2026-07-30** — INC-072: sidebar «john» = workspace (shell-ux «CRM · john» + «Вы: …»); Chat author from Twenty member (not «Менеджер»); crm-chat **0.1.23** on prod.

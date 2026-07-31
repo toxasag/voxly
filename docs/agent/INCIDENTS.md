@@ -570,3 +570,10 @@
 - **Причина:** в 2.22 нет legacy `installApp`; есть `syncApplication` / `installApplication`.
 - **Фикс (план):** ADR-001 — SDK app + новые mutation; stub не патчить.
 - **Дата:** 2026-07-17.
+
+### INC-079 — Unhandled rejection в джобе планировщика роняет процесс saas-api
+- **Симптом:** saas-api контейнер перезапускается; в логах `UnhandledPromiseRejection` / Prisma P2022 (колонка не найдена) от `releaseStaleBalanceHolds` или другого scheduled job.
+- **Причина:** async-функции передавались в `setInterval`/`setTimeout` без перехвата ошибок. Отклонённый промис в timer callback = unhandled rejection = Node роняет процесс. Проявилось при деплое: миграции накатывались ПОСЛЕ пересоздания контейнеров, и джоб стартовал на старой схеме (колонки `Payment.balanceAppliedRub` ещё не было).
+- **Фикс:** (1) обёртка `safeJob(name, fn)` в `scheduler.ts` — ловит rejection, пишет `console.warn` (процесс не падает); (2) `prod-deploy.sh` теперь выполняет `prisma migrate deploy` ДО `docker-compose up -d --build` (контейнер стартует на актуальной схеме).
+- **Verify:** деплой saas-api → `prisma migrate deploy` проходит (21 migration, 0 pending); контейнер стартует с 0 restarts; в логах нет `[scheduler] ... failed`; прежний P2022 невозможен т.к. миграции теперь предшествуют старту.
+- **Дата:** 2026-07-31.
