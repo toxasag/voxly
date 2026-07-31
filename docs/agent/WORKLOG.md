@@ -1858,3 +1858,11 @@
 - Deploy: `./scripts/prod-deploy.sh saas-api`; Backup `/opt/voxly/backups/20260731-154611/` (voxly_control.dump 286K + twenty.dump 2.4M); prisma migrate deploy → «No pending migrations to apply» (21 миграций, ни одна pending); container recreated; smoke initial 404 (cold start <1s), после прогрева portal + API health + /dashboard/partners + /dashboard/ai → **200**. Container restarts=0, logs clean (no scheduler errors).
 - Broken: ничего.
 - Next: мониторить логи на предмет `[scheduler] ... failed` — эти варнинги теперь безопасны (не роняют процесс).
+
+### 2026-07-31 — Смоук-тест деплоя: retry вместо мгновенного запроса
+
+- Goal: смоук в `prod-deploy.sh` стрелял по адресам сразу после `docker-compose up`, получал 404/ошибку из-за холодного старта и приучал игнорировать красный результат. Нужно ожидание готовности с повторами.
+- Changes: `scripts/prod-deploy.sh` — новая функция `smoke_wait`: опрос каждого эндпоинта каждые 3 с до HTTP 200 или таймаута 60 с; прогресс-вывод; при исчерпании таймаута — ненулевой exit с последним кодом. Обновлено сообщение `--dry-run`. Обработка `curl` совместима с `set -euo pipefail`.
+- Verify: `bash -n` синтаксис OK. Изолированный тест: рабочий URL (`getvoxly.ru`) — успех за 0 с; недоступный (`127.0.0.1:19999`) — корректный таймаут + exit 1. `--dry-run saas-api` — новое сообщение на месте. Боевой деплой `saas-api` — smoke `OK 200 (0s)` для обоих эндпоинтов. Все 4 адреса (health, /, partners, admin/partners) — 200. Логи saas-api чисты, контейнер не перезапускается.
+- Broken: ничего.
+- Next: —

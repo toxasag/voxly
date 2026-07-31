@@ -510,6 +510,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - 4 миграции: uncollectedRub+unique paymentId, productScope normalise, AiUsageLog.channel, ReferralWithdrawal+balanceAppliedRub.
 - Smoke: все страницы 200. Логи чисты после restart.
 
+**2026-07-31 (ночь) -- Smoke-test retry в prod-deploy.sh**
+- smoke_wait: retry каждые 3 с до HTTP 200 или таймаута 60 с. Прогресс-вывод. При таймауте -- exit 1 с последним кодом.
+- Deploy saas-api. Smoke OK 200 (0s) для обоих эндпоинтов. Backup 20260731-203332.
+
 ---
 
 ## 4. Текущее состояние

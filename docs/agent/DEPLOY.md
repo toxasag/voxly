@@ -21,7 +21,7 @@ See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified dri
 4. Dry-run: `./scripts/prod-deploy.sh --dry-run saas-portal`.
 5. Deploy: `./scripts/prod-deploy.sh saas-portal`  
    (set `SSHPASS` if using password SSH; prefer SSH key).
-6. Script does: **DB backup** → whitelist **rsync** → **`prisma migrate deploy`** (if prisma-using services) → `docker-compose … up -d --build` → HTTPS smoke.
+6. Script does: **DB backup** → whitelist **rsync** → **`prisma migrate deploy`** (if prisma-using services) → `docker-compose … up -d --build` → HTTPS smoke (retries up to 60s per endpoint).
 7. Append `docs/agent/WORKLOG.md` (services + verify). Update drift note in `ENVIRONMENTS.md` if you closed known gaps.
 
 ## Commands
@@ -78,6 +78,10 @@ This is automated by `prod-deploy.sh` when deploying any prisma-using service (s
 Rsync keeps **relative paths** (`apps/saas-portal/...` → `/opt/voxly/apps/saas-portal/...`). It never flattens several `page.tsx` into one folder.
 
 ## Smoke (script + manual)
+
+The script's smoke test **retries each endpoint** every 3 seconds up to 60 seconds total, waiting for HTTP 200 after a cold start.  If an endpoint does not respond 200 within the timeout, the deploy exits non-zero.
+
+Manual verification (if needed):
 
 ```bash
 curl -Ik https://getvoxly.ru/
