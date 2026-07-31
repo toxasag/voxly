@@ -29,6 +29,86 @@ export type ProductCode = (typeof PRODUCT_CODES)[keyof typeof PRODUCT_CODES];
 /** Products that never earn referral commission */
 export const REFERRAL_EXCLUDED_PRODUCTS = new Set<string>([PRODUCT_CODES.AI_TOPUP]);
 
+/**
+ * Which payments a `ReferralRule` earns on. `REFERRAL_EXCLUDED_PRODUCTS` is applied first and
+ * wins over every scope, so `all` means "everything except the AI wallet top-up".
+ * There is deliberately no `subscriptions` value: every SKU except `ai_topup` creates a
+ * `Subscription`, so it would be indistinguishable from `all` on the current catalogue.
+ */
+export const REFERRAL_PRODUCT_SCOPES = {
+  ALL: 'all',
+  CRM: 'crm',
+} as const;
+
+export type ReferralProductScope =
+  (typeof REFERRAL_PRODUCT_SCOPES)[keyof typeof REFERRAL_PRODUCT_SCOPES];
+
+export const REFERRAL_PRODUCT_SCOPE_VALUES = [
+  REFERRAL_PRODUCT_SCOPES.ALL,
+  REFERRAL_PRODUCT_SCOPES.CRM,
+] as const satisfies readonly ReferralProductScope[];
+
+const REFERRAL_CRM_PRODUCTS = new Set<string>([PRODUCT_CODES.CRM_BASE, PRODUCT_CODES.EXTRA_SEAT]);
+
+/** Legacy values (e.g. seeded `subscriptions`) mean "everything except the AI top-up" → `all`. */
+export function normalizeReferralProductScope(
+  scope: string | null | undefined,
+): ReferralProductScope {
+  return scope === REFERRAL_PRODUCT_SCOPES.CRM
+    ? REFERRAL_PRODUCT_SCOPES.CRM
+    : REFERRAL_PRODUCT_SCOPES.ALL;
+}
+
+/** Apply only after `REFERRAL_EXCLUDED_PRODUCTS`: AI top-ups never earn, whatever the scope. */
+export function isProductInReferralScope(
+  productCode: string,
+  scope: string | null | undefined,
+): boolean {
+  return normalizeReferralProductScope(scope) === REFERRAL_PRODUCT_SCOPES.CRM
+    ? REFERRAL_CRM_PRODUCTS.has(productCode)
+    : true;
+}
+
+/**
+ * Where an AI charge came from. Values mirror the SKU codes of the products that own each
+ * channel (`ai_tg` / `ai_gramjs` / `ai_wa` / `gift_bot`) so a channel key can be read against
+ * the catalogue without a translation table. `system` covers billed work that is not a
+ * messaging channel at all (RAG embeddings for knowledge base and sales examples).
+ * Orthogonal to `AiAgent` (ADR-014): one agent can serve several channels.
+ * Existing rows predate the column and stay `null` — treat that as "unknown", not a value here.
+ */
+export const AI_USAGE_CHANNELS = {
+  TELEGRAM_BUSINESS: 'ai_tg',
+  TELEGRAM_PERSONAL: 'ai_gramjs',
+  WHATSAPP: 'ai_wa',
+  GIFT_BOT: 'gift_bot',
+  SYSTEM: 'system',
+} as const;
+
+export type AiUsageChannel = (typeof AI_USAGE_CHANNELS)[keyof typeof AI_USAGE_CHANNELS];
+
+export const AI_USAGE_CHANNEL_VALUES = [
+  AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+  AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
+  AI_USAGE_CHANNELS.WHATSAPP,
+  AI_USAGE_CHANNELS.GIFT_BOT,
+  AI_USAGE_CHANNELS.SYSTEM,
+] as const satisfies readonly AiUsageChannel[];
+
+export const AI_USAGE_CHANNEL_LABELS: Record<AiUsageChannel, string> = {
+  [AI_USAGE_CHANNELS.TELEGRAM_BUSINESS]: 'Telegram Business',
+  [AI_USAGE_CHANNELS.TELEGRAM_PERSONAL]: 'Личный Telegram',
+  [AI_USAGE_CHANNELS.WHATSAPP]: 'WhatsApp',
+  [AI_USAGE_CHANNELS.GIFT_BOT]: 'Gift-бот',
+  [AI_USAGE_CHANNELS.SYSTEM]: 'База знаний и обучение',
+};
+
+/** Label for a stored channel value; `null` (legacy rows) and unknown codes → «Не определён». */
+export function aiUsageChannelLabel(channel: string | null | undefined): string {
+  if (!channel) return 'Не определён';
+  return AI_USAGE_CHANNEL_LABELS[channel as AiUsageChannel] || channel;
+}
+
 export const PRICING = {
   CRM_BASE_MONTHLY: 500,
   EXTRA_SEAT_MONTHLY: 300,
@@ -62,6 +142,9 @@ export const PERIOD_DISCOUNTS: Record<number, number> = {
   12: 10,
   24: 15,
 };
+
+/** Минимальная сумма заявки партнёра на вывод партнёрского баланса */
+export const REFERRAL_WITHDRAWAL_MIN_RUB = 1000;
 
 export const GRACE_PERIOD_DAYS = 7;
 export const TRIAL_PERIOD_DAYS = 7;
