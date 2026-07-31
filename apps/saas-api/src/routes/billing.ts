@@ -11,6 +11,7 @@ import {
 } from '@voxly/shared';
 import { calculateSubscriptionPrice } from '@voxly/billing';
 import { syncTwentyCrmLock } from '../services/crm-access.js';
+import { resolveRuleForReferrer } from '../services/referral-admin.js';
 
 const checkoutSchema = z.object({
   productCode: z.enum([
@@ -565,9 +566,7 @@ async function creditReferralForPayment(
   });
   if (!referral) return;
 
-  const rule = await tx.referralRule.findFirst({
-    where: { isDefault: true, isActive: true },
-  });
+  const rule = await resolveRuleForReferrer(tx, referral.referrerTenantId);
   if (!rule) return;
 
   const amount = Number(payment.amount);

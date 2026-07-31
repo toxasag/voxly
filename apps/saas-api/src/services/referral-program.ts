@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@voxly/db';
+import type { PrismaClient, ReferralRule } from '@voxly/db';
 
 export type ReferralAttribution = {
   referrerTenantId: string;
@@ -6,6 +6,22 @@ export type ReferralAttribution = {
 };
 
 type ReferralDb = Pick<PrismaClient, 'referralCampaign' | 'referralCode'>;
+
+export type RuleDb = Pick<PrismaClient, 'referralRule'>;
+
+/** Personal partner rate wins over the global rule; used by admin views, crediting and the partner cabinet. */
+export async function resolveRuleForReferrer(
+  db: RuleDb,
+  referrerTenantId: string,
+): Promise<ReferralRule | null> {
+  const personal = await db.referralRule.findFirst({
+    where: { tenantId: referrerTenantId, isActive: true },
+  });
+  if (personal) return personal;
+  return db.referralRule.findFirst({
+    where: { tenantId: null, isDefault: true, isActive: true },
+  });
+}
 
 export function generateCampaignCode(name: string): string {
   const base =
@@ -75,7 +91,7 @@ export async function incrementReferralClick(
   return false;
 }
 
-function parsePeriod(fromRaw?: string, toRaw?: string): { from: Date; to: Date } {
+export function parsePeriod(fromRaw?: string, toRaw?: string): { from: Date; to: Date } {
   const now = new Date();
   const to = toRaw ? new Date(toRaw) : now;
   const from = fromRaw
@@ -97,7 +113,7 @@ export async function buildReferralDashboard(
 ) {
   const { from, to } = parsePeriod(opts.from, opts.to);
 
-  const [mainCode, balance, campaigns, referrals, earningsInPeriod, expensesInPeriod] =
+  const [mainCode, balance, campaigns, referrals, earningsInPeriod, expensesInPeriod, rule] =
     await Promise.all([
       prisma.referralCode.findUnique({ where: { tenantId } }),
       prisma.tenantBalance.findUnique({ where: { tenantId } }),
@@ -126,6 +142,7 @@ export async function buildReferralDashboard(
           spentAt: { gte: from, lte: to },
         },
       }),
+      resolveRuleForReferrer(prisma, tenantId),
     ]);
 
   if (!mainCode) {
@@ -191,6 +208,13 @@ export async function buildReferralDashboard(
 
   return {
     period: { from: from.toISOString(), to: to.toISOString() },
+    rule: rule
+      ? {
+          type: rule.type,
+          value: Number(rule.value),
+          durationMonths: rule.durationMonths,
+        }
+      : null,
     mainCode: {
       code: mainCode.code,
       link: linkFor(mainCode.code),
