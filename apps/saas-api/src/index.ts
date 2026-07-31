@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { tenantRoutes } from './routes/tenant.js';
 import { adminRoutes } from './routes/admin.js';
+import { adminReferralRoutes } from './routes/admin-referrals.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
 import { gramjsRoutes } from './routes/gramjs.js';
@@ -219,6 +220,7 @@ async function buildServer() {
   await fastify.register(billingRoutes, { prefix: '/api/billing' });
   await fastify.register(tenantRoutes, { prefix: '/api/tenant' });
   await fastify.register(adminRoutes, { prefix: '/api/admin' });
+  await fastify.register(adminReferralRoutes, { prefix: '/api/admin/referrals' });
   await fastify.register(referralRoutes, { prefix: '/api/referrals' });
   await fastify.register(botRoutes, { prefix: '/api/bots' });
   await fastify.register(gramjsRoutes, { prefix: '/api/bots/gramjs' });
