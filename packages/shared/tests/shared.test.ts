@@ -30,6 +30,7 @@ describe('@voxly/shared exports', () => {
     expect(PRODUCT_CODES.AI_TG_EXTRA_CONN).toBe('ai_tg_extra_conn');
     expect(PRODUCT_CODES.AI_GRAMJS).toBe('ai_gramjs');
     expect(PRODUCT_CODES.AI_WHATSAPP).toBe('ai_wa');
+    expect(PRODUCT_CODES.AI_AGENT).toBe('ai_agent');
     expect(PRODUCT_CODES.AI_TOPUP).toBe('ai_topup');
   });
 
@@ -41,6 +42,7 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.USD_RUB_RATE_DEFAULT).toBe(90);
     expect(PRICING.AI_TOPUP_MIN_RUB).toBe(500);
     expect(PRICING.AI_GRAMJS_MONTHLY).toBe(500);
+    expect(PRICING.AI_AGENT_MONTHLY).toBe(500);
     expect(PRICING.AI_TG_EXTRA_CONN_MONTHLY).toBe(200);
     expect(PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS).toBe(10);
     expect(PRICING.REFERRAL_PERCENT_DEFAULT).toBe(20);

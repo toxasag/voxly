@@ -8,6 +8,7 @@ import {
   PRODUCT_CODES,
   REFERRAL_EXCLUDED_PRODUCTS,
   getAiTgExtraSlots,
+  getAiAgentSlots,
   isProductInReferralScope,
 } from '@voxly/shared';
 import { calculateSubscriptionPrice } from '@voxly/billing';
@@ -24,6 +25,7 @@ const checkoutSchema = z.object({
     'ai_tg_extra_conn',
     'ai_gramjs',
     'ai_wa',
+    'ai_agent',
     'mailing_bot',
     'mailing_accounts',
     'mailing_stories',
@@ -131,7 +133,8 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       const seatCount =
         productCode === PRODUCT_CODES.EXTRA_SEAT ? Math.max(1, quantity) : 0;
       const unit =
-        productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN
+        productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN ||
+        productCode === PRODUCT_CODES.AI_AGENT
           ? basePrice * quantity
           : productCode === PRODUCT_CODES.EXTRA_SEAT
             ? basePrice * seatCount
@@ -661,6 +664,50 @@ async function fulfilPayment(
         payments: { connect: { id: payment.id } },
       },
     });
+  } else if (payment.productCode === PRODUCT_CODES.AI_AGENT) {
+    const addon = await tx.addon.findUnique({
+      where: {
+        tenantId_type: { tenantId: payment.tenantId, type: PRODUCT_CODES.AI_AGENT },
+      },
+    });
+    const prev = getAiAgentSlots(addon?.config);
+    const nextSlots = prev + quantity;
+    const config = {
+      ...((addon?.config as object) || {}),
+      agentSlots: nextSlots,
+    };
+    if (addon) {
+      await tx.addon.update({
+        where: { id: addon.id },
+        data: {
+          config,
+          status: 'active',
+          activeUntil: addon.activeUntil > endsAt ? addon.activeUntil : endsAt,
+        },
+      });
+    } else {
+      await tx.addon.create({
+        data: {
+          tenantId: payment.tenantId,
+          type: PRODUCT_CODES.AI_AGENT,
+          config,
+          activeUntil: endsAt,
+          status: 'active',
+        },
+      });
+    }
+    await tx.subscription.create({
+      data: {
+        tenantId: payment.tenantId,
+        productCode: payment.productCode,
+        periodMonths,
+        seatsIncluded: 0,
+        startsAt: now,
+        endsAt,
+        status: 'active',
+        payments: { connect: { id: payment.id } },
+      },
+    });
   } else if (payment.productCode === PRODUCT_CODES.EXTRA_SEAT) {
     const addSeats = Math.max(
       1,
@@ -867,6 +914,7 @@ function getBasePrice(
     ai_tg_extra_conn: PRICING.AI_TG_EXTRA_CONN_MONTHLY,
     ai_gramjs: PRICING.AI_GRAMJS_MONTHLY,
     ai_wa: PRICING.AI_WHATSAPP_MONTHLY,
+    ai_agent: PRICING.AI_AGENT_MONTHLY,
     mailing_bot: PRICING.MAILING_BOT_MONTHLY,
     mailing_accounts: PRICING.MAILING_ACCOUNTS_MONTHLY,
     mailing_stories: PRICING.MAILING_STORIES_MONTHLY,
@@ -883,10 +931,11 @@ function buildDescription(productCode: string, periodMonths: number, quantity = 
     crm_base: 'Voxly CRM',
     extra_seat: 'Voxly CRM — доп. место',
     gift_bot: 'Voxly — бот выдачи подарков',
-    ai_tg: 'Voxly — бот-секретарь Telegram Business',
-    ai_tg_extra_conn: `Voxly — доп. Business-аккаунт ×${quantity}`,
-    ai_gramjs: 'Voxly — личный Telegram',
+    ai_tg: 'Voxly — Телеграм Секретарь',
+    ai_tg_extra_conn: `Voxly — доп. аккаунт секретаря ×${quantity}`,
+    ai_gramjs: 'Voxly — Telegram',
     ai_wa: 'Voxly — WhatsApp',
+    ai_agent: quantity > 1 ? `Voxly — AI-агент ×${quantity}` : 'Voxly — AI-агент',
     mailing_bot: 'Voxly — рассылка ботом',
     mailing_accounts: 'Voxly — рассылка с аккаунтов',
     mailing_stories: 'Voxly — постинг сторис',

@@ -10,6 +10,8 @@ export const PRODUCT_CODES = {
   /** Personal Telegram account via GramJS (500₽/mo + AI wallet) */
   AI_GRAMJS: 'ai_gramjs',
   AI_WHATSAPP: 'ai_wa',
+  /** One AI agent seat (500₽/mo); config.agentSlots on ai_agent addon */
+  AI_AGENT: 'ai_agent',
   /** One-shot AI wallet top-up (not a subscription; excluded from referral) */
   AI_TOPUP: 'ai_topup',
   /** Gift-bot mailing (500₽/mo) */
@@ -96,10 +98,10 @@ export const AI_USAGE_CHANNEL_VALUES = [
 ] as const satisfies readonly AiUsageChannel[];
 
 export const AI_USAGE_CHANNEL_LABELS: Record<AiUsageChannel, string> = {
-  [AI_USAGE_CHANNELS.TELEGRAM_BUSINESS]: 'Telegram Business',
-  [AI_USAGE_CHANNELS.TELEGRAM_PERSONAL]: 'Личный Telegram',
+  [AI_USAGE_CHANNELS.TELEGRAM_BUSINESS]: 'Телеграм Секретарь',
+  [AI_USAGE_CHANNELS.TELEGRAM_PERSONAL]: 'Telegram',
   [AI_USAGE_CHANNELS.WHATSAPP]: 'WhatsApp',
-  [AI_USAGE_CHANNELS.GIFT_BOT]: 'Gift-бот',
+  [AI_USAGE_CHANNELS.GIFT_BOT]: 'Бот выдачи подарков',
   [AI_USAGE_CHANNELS.SYSTEM]: 'База знаний и обучение',
 };
 
@@ -122,6 +124,8 @@ export const PRICING = {
   AI_GRAMJS_MONTHLY: 500,
   /** WhatsApp account (Evolution) fixed fee */
   AI_WHATSAPP_MONTHLY: 500,
+  /** One AI agent seat per month */
+  AI_AGENT_MONTHLY: 500,
   MAILING_BOT_MONTHLY: 500,
   MAILING_ACCOUNTS_MONTHLY: 500,
   MAILING_STORIES_MONTHLY: 1000,
@@ -322,6 +326,7 @@ export const ADDON_TYPES = [
   'ai_tg',
   'ai_gramjs',
   'ai_wa',
+  'ai_agent',
   'mailing_bot',
   'mailing_accounts',
   'mailing_stories',
@@ -340,6 +345,13 @@ export function getAiTgExtraSlots(config: unknown): number {
 
 export function getAiTgBusinessCapacity(config: unknown): number {
   return PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS + getAiTgExtraSlots(config);
+}
+
+/** Paid AI-agent seats from ai_agent addon.config */
+export function getAiAgentSlots(config: unknown): number {
+  if (!config || typeof config !== 'object') return 0;
+  const n = Number((config as { agentSlots?: unknown }).agentSlots);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 export type AddonType = (typeof ADDON_TYPES)[number];

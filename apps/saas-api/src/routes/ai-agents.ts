@@ -6,7 +6,13 @@ import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { Prisma } from '@voxly/db';
 import { parseAgentLearnSettings } from '@voxly/ai-core';
-import { AI_MODEL_DEFAULTS, aiUsageChannelLabel } from '@voxly/shared';
+import {
+  AI_MODEL_DEFAULTS,
+  PRODUCT_CODES,
+  PRICING,
+  aiUsageChannelLabel,
+  getAiAgentSlots,
+} from '@voxly/shared';
 import {
   deleteKnowledgeFile,
   saveKnowledgeUpload,
@@ -29,6 +35,56 @@ function agentModelFromSettings(settings: unknown): string | null {
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
+}
+
+/**
+ * Paid agent seats live on the `ai_agent` addon. Tenants who already had agents before
+ * the SKU shipped are grandfathered: slots are raised to at least the current active count.
+ */
+async function resolveAgentCapacity(
+  prisma: any,
+  tenantId: string,
+): Promise<{ agentSlots: number; activeAgents: number; freeSlots: number; priceMonthly: number }> {
+  const activeAgents = await prisma.aiAgent.count({
+    where: { tenantId, status: { not: 'archived' } },
+  });
+  const addon = await prisma.addon.findUnique({
+    where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_AGENT } },
+  });
+  let agentSlots = getAiAgentSlots(addon?.config);
+  if (activeAgents > agentSlots) {
+    const nextSlots = activeAgents;
+    const config = { ...((addon?.config as object) || {}), agentSlots: nextSlots };
+    const far = new Date();
+    far.setFullYear(far.getFullYear() + 10);
+    if (addon) {
+      await prisma.addon.update({
+        where: { id: addon.id },
+        data: {
+          config,
+          status: 'active',
+          activeUntil: addon.activeUntil > far ? addon.activeUntil : far,
+        },
+      });
+    } else {
+      await prisma.addon.create({
+        data: {
+          tenantId,
+          type: PRODUCT_CODES.AI_AGENT,
+          config,
+          activeUntil: far,
+          status: 'active',
+        },
+      });
+    }
+    agentSlots = nextSlots;
+  }
+  return {
+    agentSlots,
+    activeAgents,
+    freeSlots: Math.max(0, agentSlots - activeAgents),
+    priceMonthly: PRICING.AI_AGENT_MONTHLY,
+  };
 }
 
 function serializeAgent(a: {
@@ -86,21 +142,28 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId } = (request as any).user;
-    const agents = await fastify.prisma.aiAgent.findMany({
-      where: { tenantId, status: { not: 'archived' } },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: {
-          select: {
-            conversations: true,
-            defaultForBots: true,
-            knowledgeFiles: true,
-            salesExamples: true,
+    const [agents, capacity] = await Promise.all([
+      fastify.prisma.aiAgent.findMany({
+        where: { tenantId, status: { not: 'archived' } },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          _count: {
+            select: {
+              conversations: true,
+              defaultForBots: true,
+              knowledgeFiles: true,
+              salesExamples: true,
+            },
           },
         },
-      },
+      }),
+      resolveAgentCapacity(fastify.prisma, tenantId),
+    ]);
+    return reply.send({
+      agents: agents.map(serializeAgent),
+      defaultChatModel: platformDefaultChatModel(),
+      capacity,
     });
-    return reply.send({ agents: agents.map(serializeAgent), defaultChatModel: platformDefaultChatModel() });
   });
 
   fastify.post('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
@@ -117,6 +180,15 @@ export const aiAgentRoutes: FastifyPluginAsync = async (fastify) => {
       })
       .safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
+
+    const capacity = await resolveAgentCapacity(fastify.prisma, tenantId);
+    if (capacity.freeSlots < 1) {
+      return reply.code(402).send({
+        error: `Нет свободных слотов агента. Оплатите AI-агента (${capacity.priceMonthly} ₽/мес)`,
+        code: 'agent_slot_required',
+        capacity,
+      });
+    }
 
     const agent = await fastify.prisma.aiAgent.create({
       data: {

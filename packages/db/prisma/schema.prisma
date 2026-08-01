@@ -158,7 +158,7 @@ model Addon {
   id          String    @id @default(cuid())
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  type        String    // gift_bot, ai_tg, ai_gramjs, ai_wa, analytics_*
+  type        String    // gift_bot, ai_tg, ai_gramjs, ai_wa, ai_agent, analytics_*
   config      Json      // platform-specific config
   activeUntil DateTime
   status      String    @default("active") // active, expired, suspended
