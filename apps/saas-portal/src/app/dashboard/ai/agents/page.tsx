@@ -510,7 +510,7 @@ export default function AiAgentsPage() {
             <span className="font-semibold text-black tabular-nums">
               {capacity?.freeSlots ?? '—'}
             </span>
-            . Ответы клиентам по-прежнему списываются с баланса AI ниже.
+            . Ответы клиентам по-прежнему списываются с баланса AI в блоке «Расход» ниже.
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             <button
@@ -607,235 +607,7 @@ export default function AiAgentsPage() {
 
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            01 · расход
-          </p>
-          <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">
-            Куда ушли деньги за {usageDays} дн.
-          </h2>
-          <p className="mt-1 max-w-[70ch] text-sm text-black/60">
-            Списания с кошелька: сначала по агентам, затем по каналам, где агент отвечал.
-          </p>
-
-          <div className="mt-4">
-            <p
-              id="usage-period-label"
-              className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45"
-            >
-              Период
-            </p>
-            <div
-              role="group"
-              aria-labelledby="usage-period-label"
-              className="mt-1 flex flex-wrap gap-2"
-            >
-              {[7, 30, 90].map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  aria-pressed={days === preset}
-                  disabled={usageBusy}
-                  onClick={() => {
-                    if (days === preset) return;
-                    setUsageBusy(true);
-                    setDays(preset);
-                  }}
-                  className={cn(
-                    'min-h-9 min-w-9 rounded-lg border px-3 text-sm tabular-nums transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50',
-                    days === preset
-                      ? 'border-black/40 bg-[#faf8f5] font-semibold text-black'
-                      : 'border-black/10 text-black/70 hover:border-black/30',
-                  )}
-                >
-                  {preset} дн.
-                </button>
-              ))}
-            </div>
-            <p aria-live="polite" className="mt-2 text-xs text-black/55">
-              {usageBusy ? 'Пересчитываем расход за выбранный период…' : `Показан расход за ${usageDays} дн.`}
-            </p>
-          </div>
-
-          <div className="mt-5">
-            <h3 className="text-sm font-semibold text-black">По агентам</h3>
-            {byAgentRows.length === 0 ? (
-              <p className="mt-2 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
-                За этот период списаний не было. Как только агент ответит клиенту, здесь появится
-                строка с суммой.
-              </p>
-            ) : (
-              <div className="mt-2 overflow-x-auto">
-                <table className="w-full min-w-[720px] border-collapse text-sm">
-                  <thead>
-                    <tr className="text-left">
-                      <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                        Агент
-                      </th>
-                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                        Запросов
-                      </th>
-                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                        Токенов
-                      </th>
-                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                        Списано
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {byAgentRows.map((row) => (
-                      <tr key={row.aiAgentId || 'none'}>
-                        <td className="border-t border-black/5 px-3 py-2.5 font-medium">
-                          {row.name}
-                        </td>
-                        <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
-                          {row.requests.toLocaleString('ru-RU')}
-                        </td>
-                        <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
-                          {row.tokens.toLocaleString('ru-RU')}
-                        </td>
-                        <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
-                          {formatRub(row.chargedRub)} ₽
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-6">
-            <h3 className="text-sm font-semibold text-black">По каналам</h3>
-            {byChannelRows.length === 0 ? (
-              <p className="mt-2 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
-                Разбивки по каналам за этот период нет.
-              </p>
-            ) : (
-              <>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full min-w-[720px] border-collapse text-sm">
-                    <thead>
-                      <tr className="text-left">
-                        <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                          Канал
-                        </th>
-                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                          Запросов
-                        </th>
-                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                          Списано
-                        </th>
-                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                          Доля
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {byChannelRows.map((row) => (
-                        <tr key={row.channel || 'unknown'}>
-                          <td className="border-t border-black/5 px-3 py-2.5">
-                            {row.channel ? (
-                              <span className="font-medium">{row.label}</span>
-                            ) : (
-                              <span className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium">Не определён</span>
-                                <Badge variant="secondary">старые списания</Badge>
-                              </span>
-                            )}
-                          </td>
-                          <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
-                            {row.requests.toLocaleString('ru-RU')}
-                          </td>
-                          <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
-                            {formatRub(row.chargedRub)} ₽
-                          </td>
-                          <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
-                            {channelTotalRub > 0
-                              ? `${Math.round((row.chargedRub / channelTotalRub) * 100)}%`
-                              : '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {byChannelRows.some((row) => !row.channel) && (
-                  <p className="mt-2 text-xs leading-snug text-black/55">
-                    Строка «Не определён» — списания, сделанные до того, как мы начали записывать
-                    канал. Восстановить их канал уже нельзя, поэтому они показаны отдельно и не
-                    приписаны ни к одному каналу.
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            02 · история
-          </p>
-          <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Последние списания</h2>
-          <p className="mt-1 max-w-[70ch] text-sm text-black/60">
-            До 40 последних операций — чтобы можно было сверить конкретный ответ AI с суммой.
-          </p>
-
-          {recentRows.length === 0 ? (
-            <p className="mt-4 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
-              Операций пока нет. Назначьте агента на бота ниже — и здесь появятся списания за
-              каждый его ответ.
-            </p>
-          ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[720px] border-collapse text-sm">
-                <thead>
-                  <tr className="text-left">
-                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                      Когда
-                    </th>
-                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                      Агент
-                    </th>
-                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                      Модель
-                    </th>
-                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                      Тип запроса
-                    </th>
-                    <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-                      Списано
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRows.map((row) => (
-                    <tr key={row.id}>
-                      <td className="border-t border-black/5 px-3 py-2.5 whitespace-nowrap tabular-nums text-black/70">
-                        {formatDateTime(row.createdAt)}
-                      </td>
-                      <td className="border-t border-black/5 px-3 py-2.5 font-medium">
-                        {row.agentName}
-                      </td>
-                      <td className="border-t border-black/5 px-3 py-2.5 font-mono text-xs text-black/60">
-                        {row.model}
-                      </td>
-                      <td className="border-t border-black/5 px-3 py-2.5 text-black/70">
-                        {REQUEST_TYPE_LABEL[row.requestType] ?? row.requestType}
-                      </td>
-                      <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
-                        {formatRub(row.chargedRub)} ₽
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            03 · новый агент
+            02 · новый агент
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Создать агента</h2>
           <p className="mt-1 max-w-[70ch] text-sm text-black/60">
@@ -909,7 +681,7 @@ export default function AiAgentsPage() {
 
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            04 · агенты
+            03 · агенты
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Ваши агенты</h2>
           <p className="mt-1 max-w-[70ch] text-sm text-black/60">
@@ -1197,7 +969,7 @@ export default function AiAgentsPage() {
 
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            05 · назначение
+            04 · назначение
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">
             Кто отвечает в каком аккаунте
@@ -1282,6 +1054,234 @@ export default function AiAgentsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
+            05 · расход
+          </p>
+          <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">
+            Куда ушли деньги за {usageDays} дн.
+          </h2>
+          <p className="mt-1 max-w-[70ch] text-sm text-black/60">
+            Списания с кошелька: сначала по агентам, затем по каналам, где агент отвечал.
+          </p>
+
+          <div className="mt-4">
+            <p
+              id="usage-period-label"
+              className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45"
+            >
+              Период
+            </p>
+            <div
+              role="group"
+              aria-labelledby="usage-period-label"
+              className="mt-1 flex flex-wrap gap-2"
+            >
+              {[7, 30, 90].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  aria-pressed={days === preset}
+                  disabled={usageBusy}
+                  onClick={() => {
+                    if (days === preset) return;
+                    setUsageBusy(true);
+                    setDays(preset);
+                  }}
+                  className={cn(
+                    'min-h-9 min-w-9 rounded-lg border px-3 text-sm tabular-nums transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-50',
+                    days === preset
+                      ? 'border-black/40 bg-[#faf8f5] font-semibold text-black'
+                      : 'border-black/10 text-black/70 hover:border-black/30',
+                  )}
+                >
+                  {preset} дн.
+                </button>
+              ))}
+            </div>
+            <p aria-live="polite" className="mt-2 text-xs text-black/55">
+              {usageBusy ? 'Пересчитываем расход за выбранный период…' : `Показан расход за ${usageDays} дн.`}
+            </p>
+          </div>
+
+          <div className="mt-5">
+            <h3 className="text-sm font-semibold text-black">По агентам</h3>
+            {byAgentRows.length === 0 ? (
+              <p className="mt-2 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
+                За этот период списаний не было. Как только агент ответит клиенту, здесь появится
+                строка с суммой.
+              </p>
+            ) : (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full min-w-[720px] border-collapse text-sm">
+                  <thead>
+                    <tr className="text-left">
+                      <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                        Агент
+                      </th>
+                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                        Запросов
+                      </th>
+                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                        Токенов
+                      </th>
+                      <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                        Списано
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byAgentRows.map((row) => (
+                      <tr key={row.aiAgentId || 'none'}>
+                        <td className="border-t border-black/5 px-3 py-2.5 font-medium">
+                          {row.name}
+                        </td>
+                        <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
+                          {row.requests.toLocaleString('ru-RU')}
+                        </td>
+                        <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
+                          {row.tokens.toLocaleString('ru-RU')}
+                        </td>
+                        <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
+                          {formatRub(row.chargedRub)} ₽
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold text-black">По каналам</h3>
+            {byChannelRows.length === 0 ? (
+              <p className="mt-2 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
+                Разбивки по каналам за этот период нет.
+              </p>
+            ) : (
+              <>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[720px] border-collapse text-sm">
+                    <thead>
+                      <tr className="text-left">
+                        <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                          Канал
+                        </th>
+                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                          Запросов
+                        </th>
+                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                          Списано
+                        </th>
+                        <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                          Доля
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {byChannelRows.map((row) => (
+                        <tr key={row.channel || 'unknown'}>
+                          <td className="border-t border-black/5 px-3 py-2.5">
+                            {row.channel ? (
+                              <span className="font-medium">{row.label}</span>
+                            ) : (
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-medium">Не определён</span>
+                                <Badge variant="secondary">старые списания</Badge>
+                              </span>
+                            )}
+                          </td>
+                          <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
+                            {row.requests.toLocaleString('ru-RU')}
+                          </td>
+                          <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
+                            {formatRub(row.chargedRub)} ₽
+                          </td>
+                          <td className="border-t border-black/5 px-3 py-2.5 text-right tabular-nums text-black/70">
+                            {channelTotalRub > 0
+                              ? `${Math.round((row.chargedRub / channelTotalRub) * 100)}%`
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {byChannelRows.some((row) => !row.channel) && (
+                  <p className="mt-2 text-xs leading-snug text-black/55">
+                    Строка «Не определён» — списания, сделанные до того, как мы начали записывать
+                    канал. Восстановить их канал уже нельзя, поэтому они показаны отдельно и не
+                    приписаны ни к одному каналу.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
+            06 · история
+          </p>
+          <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Последние списания</h2>
+          <p className="mt-1 max-w-[70ch] text-sm text-black/60">
+            До 40 последних операций — чтобы можно было сверить конкретный ответ AI с суммой.
+          </p>
+
+          {recentRows.length === 0 ? (
+            <p className="mt-4 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
+              Операций пока нет. Назначьте агента на канал выше — и здесь появятся списания за
+              каждый его ответ.
+            </p>
+          ) : (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[720px] border-collapse text-sm">
+                <thead>
+                  <tr className="text-left">
+                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                      Когда
+                    </th>
+                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                      Агент
+                    </th>
+                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                      Модель
+                    </th>
+                    <th className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                      Тип запроса
+                    </th>
+                    <th className="px-3 pb-2 text-right text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+                      Списано
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentRows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="border-t border-black/5 px-3 py-2.5 whitespace-nowrap tabular-nums text-black/70">
+                        {formatDateTime(row.createdAt)}
+                      </td>
+                      <td className="border-t border-black/5 px-3 py-2.5 font-medium">
+                        {row.agentName}
+                      </td>
+                      <td className="border-t border-black/5 px-3 py-2.5 font-mono text-xs text-black/60">
+                        {row.model}
+                      </td>
+                      <td className="border-t border-black/5 px-3 py-2.5 text-black/70">
+                        {REQUEST_TYPE_LABEL[row.requestType] ?? row.requestType}
+                      </td>
+                      <td className="border-t border-black/5 px-3 py-2.5 text-right font-semibold tabular-nums text-[#c2410c]">
+                        {formatRub(row.chargedRub)} ₽
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
