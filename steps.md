@@ -79,9 +79,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 |---|---|
 | CRM (подписка) | 500 ₽/мес, скидки за 3/6/12/24 мес |
 | Доп. пользователь | 300 ₽/мес (в базе 10 юзеров) |
-| Gift-бот | 500 ₽/мес за канал |
-| AI-агент Telegram | 1000 ₽/мес до 10 аккаунтов + AI-usage с markup |
-| AI-агент WhatsApp | 1000 ₽/мес за номер + AI-usage с markup |
+| Бот выдачи подарков | 500 ₽/мес за канал |
+| Телеграм Секретарь | 1000 ₽/мес до 10 аккаунтов; +200 ₽/слот сверх |
+| AI-агент (слот) | 500 ₽/мес за агента + AI-usage с markup с баланса |
+| Telegram (личный / GramJS) | 500 ₽/мес за аккаунт + AI-usage |
+| WhatsApp | 500 ₽/мес за номер + AI-usage |
 | Сквозная аналитика | 500 ₽/мес за платформу (Метрика/GA4/FB/VK) |
 | AI markup | по умолчанию 50%, настраивается супер-админом + per-tenant |
 
@@ -89,6 +91,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-01** — Local: IA кабинета — меню (AI-агенты → WhatsApp → Telegram → Телеграм Секретарь → Бот выдачи подарков → Рассылка); `/dashboard/ai` = единый Телеграм Секретарь (+ redirect `[botId]`); GramJS в стиле WhatsApp; SKU `ai_agent` 500₽ + grandfather migration `20260731220000`; deploy pending.
 - **2026-07-31** — **Prod:** INC-079 fix — scheduler crash protection (`safeJob` wrapper for all timer jobs) + `prisma migrate deploy` автоматически в `prod-deploy.sh` до пересоздания контейнеров; backup `20260731-154611`; prisma «No pending migrations to apply»; container restarts=0; smoke portal/API/partners/ai **200**.
 - **2026-07-31** — **Prod:** супер-админ `/admin/partners` (партнёры, индивидуальные правила вознаграждения, ручные выплаты `ReferralTransaction`, блокировка) + `/api/admin/referrals`; уникальность реферальных кодов (409 + `code-available`); миграция `20260731140000_referral_admin` (аддитивная: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`) применена через `prisma migrate deploy` в `docker-saas-api-1`; backup `20260731-131927`; smoke портал/API/`/admin/partners` **200**, `GET /api/admin/referrals` без токена **401**.
 - **2026-07-30** — CRM portal defaults for all tenants: `/dashboard/crm`, invite+credentials, hard lock ADR-023, shell-ux «CRM · slug»+«Вы:», chat operator names, crm-chat **0.1.23**; provision installs latest chat + skip install-apps (owner+invite).
@@ -526,7 +529,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/078**. **2026-07-31 вечер** полный деплой: партнёрский баланс (hold + withdraw + redeem), каналы AI (AiUsageLog.channel), атомарное списание AI-кошелька (INC-075), Robokassa идемпотентность (INC-076), productScope/durationMonths enforcement (INC-077), WA handoff при нуле баланса (INC-074). 4 миграции на проде. Все 5 сервисов (saas-api, saas-portal, ai-telegram-worker, ai-whatsapp-worker, gift-bot-worker) задеплоены и smoke-тестированы. Backup 20260731-151337. **Portal:** shadcn **indigo** + amber `/dashboard/crm` **on prod**. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite mail deferred; GramJS outbound media; gift no sales LLM; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 local (не на проде):** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + migration grandfather; GramJS UI как WhatsApp. **2026-07-31 вечер prod:** партнёрский баланс, каналы AI, атомарный AI-кошелёк, Robokassa идемпотентность, productScope, WA handoff. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: deploy AI IA; SMTP invite deferred; GramJS outbound media; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

@@ -1,3 +1,15 @@
+### 2026-08-01 — Телеграм Секретарь IA + AI-агент SKU + GramJS как WhatsApp
+
+- Goal: кабинетное меню и AI-поверхности по продуктовой модели — «Телеграм Секретарь» / Telegram / WhatsApp / AI-агенты; агент 500₽/мес; секретарь 1000₽/10 акк.
+- Changes:
+  - Nav (`app-shell.tsx` + home products): Дашборд → Партнерская → CRM → AI-агенты → WhatsApp → Telegram → Телеграм Секретарь → Бот выдачи подарков → Рассылка.
+  - `/dashboard/ai` — единая страница секретаря (тариф, connect, аккаунты, агент, диалоги); `[botId]` → redirect `?bot=`; hero `ai-secretary-hero.tsx`.
+  - `/dashboard/ai/gramjs` — landing как WhatsApp (`ai-gramjs-hero.tsx`); label Telegram.
+  - SKU `ai_agent` 500₽: `PRODUCT_CODES`/`PRICING`/`getAiAgentSlots`, checkout+fulfil, POST create 402, GET `capacity`, grandfather runtime + migration `20260731220000_ai_agent_slots_grandfather`.
+  - Agents page: слоты + оплата + top-up остаётся здесь.
+- Verify: `tsc --noEmit` shared/saas-api/saas-portal OK; shared vitest green. Deploy не делался.
+- Next: commit + `./scripts/prod-deploy.sh` (shared, saas-api, saas-portal) с migrate deploy для grandfather.
+
 ### 2026-07-31 — Admin `/admin/partners` + per-tenant referral rules + referral transactions (prod)
 
 - Goal: супер-админский surface для партнёрской программы — обзор партнёров, индивидуальные правила вознаграждения, ручные выплаты/корректировки, блокировка; плюс уникальность реферальных кодов в кабинете.

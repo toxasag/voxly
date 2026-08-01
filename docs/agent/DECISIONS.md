@@ -285,11 +285,11 @@ Webhook path prod: `/tg/{tenantId}/{botId}` (gift), manager labels на Traefik.
 
 | Surface | Что это | SKU / note |
 |---|---|---|
-| **GramJS** | Личный Telegram → CRM (как WA) | `ai_gramjs` ~500 ₽/акк |
-| **WhatsApp** | Connected accounts (Evolution QR) | `ai_wa` ~500 ₽/акк |
-| **Gift bot** | Отдельный продукт | unchanged |
-| **Business bot** | User creates bot in @BotFather (+ Business Mode), pastes token in portal; ≤10 Business accounts | «Автоматизация чатов» ~1000 ₽/10 |
-| **AI-агенты** | Ортогональный слой: prompt/settings, вешается на любой чат/аккаунт | wallet usage |
+| **GramJS** | Личный Telegram → CRM (как WA); UI «Telegram» | `ai_gramjs` 500 ₽/акк |
+| **WhatsApp** | Connected accounts (Evolution QR) | `ai_wa` 500 ₽/акк |
+| **Gift bot** | Бот выдачи подарков | unchanged |
+| **Телеграм Секретарь** | BotFather + Business Mode token; ≤10 Business-аккаунтов; UI `/dashboard/ai` | `ai_tg` 1000 ₽/10; extra `ai_tg_extra_conn` 200 ₽/слот |
+| **AI-агенты** | Ортогональный слой: prompt/settings на любой канал | **`ai_agent` 500 ₽/слот** (addon `config.agentSlots`) + wallet usage за ответы |
 
 ### Assignment model
 
