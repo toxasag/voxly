@@ -72,7 +72,11 @@ export function AiSecretaryHero({
           </dl>
         </div>
 
-        <div className="w-full rounded-xl border border-black/15 bg-white/70 p-4 backdrop-blur-sm lg:w-[360px]">
+        <div
+          role="status"
+          aria-live="polite"
+          className="w-full rounded-xl border border-black/15 bg-white/70 p-4 backdrop-blur-sm lg:w-[360px]"
+        >
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
               Состояние канала

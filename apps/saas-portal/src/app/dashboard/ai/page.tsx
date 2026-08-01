@@ -557,6 +557,10 @@ function TelegramSecretaryPageInner() {
   const requiresPayment = !aiBusiness.isActive;
   const trialAvailable = Boolean(aiBusiness.trialAvailable);
   const subActive = aiBusiness.isActive;
+  const isTrial = aiBusiness.isActive && aiBusiness.isTrial;
+  const daysRemaining = aiBusiness.activeUntil
+    ? Math.max(0, Math.ceil((new Date(aiBusiness.activeUntil).getTime() - Date.now()) / 86_400_000))
+    : null;
   const needsReviewCount = conversations.filter((c) => c.needsReview).length;
   const activeConv = conversations.find((c) => c.id === activeConvId) || null;
 
@@ -572,29 +576,47 @@ function TelegramSecretaryPageInner() {
     ? trialAvailable
       ? 'Подписка не включена'
       : 'Подписка закончилась'
-    : aiBots.length === 0
-      ? 'Бот не подключён'
-      : activeAccounts === 0
-        ? 'Ждём аккаунт Telegram'
-        : 'Секретарь работает';
+    : isTrial
+      ? aiBots.length === 0
+        ? 'Бот не подключён'
+        : activeAccounts === 0
+          ? 'Ждём аккаунт Telegram'
+          : 'Пробный период активен'
+      : aiBots.length === 0
+        ? 'Бот не подключён'
+        : activeAccounts === 0
+          ? 'Ждём аккаунт Telegram'
+          : 'Секретарь работает';
 
   const heroStateHint = !subActive
     ? trialAvailable
       ? `Включите ${TRIAL_PERIOD_DAYS} бесплатных дней или оплатите тариф — без подписки бот не примет сообщения.`
-      : `Оплатите ${formatInt(tgPrice)} ₽/мес, чтобы снова принимать сообщения.`
-    : aiBots.length === 0
-      ? 'Создайте бота в @BotFather и вставьте токен — это займёт пару минут.'
-      : activeAccounts === 0
-        ? 'Подключите бота в Telegram → Настройки → Бизнес → Автоматизация чатов.'
-        : 'Входящие в личку попадают в CRM. AI ответит, если назначен агент и есть баланс.';
+      : 'Пробный период истёк. Оплатите тариф, чтобы снова принимать сообщения. Переписка и контакты в CRM сохранены.'
+    : isTrial
+      ? aiBots.length === 0
+        ? 'Создайте бота в @BotFather и вставьте токен — это займёт пару минут.'
+        : activeAccounts === 0
+          ? 'Подключите бота в Telegram → Настройки → Бизнес → Автоматизация чатов.'
+          : daysRemaining !== null && daysRemaining <= 3
+            ? `Через ${daysRemaining} ${plural(daysRemaining, ['день', 'дня', 'дней'])} бот перестанет принимать сообщения. Оплатите, чтобы продолжить.`
+            : 'Всё работает. После окончания пробного периода бот остановится — оплатите заранее, чтобы не прерывать приём сообщений.'
+      : aiBots.length === 0
+        ? 'Создайте бота в @BotFather и вставьте токен — это займёт пару минут.'
+        : activeAccounts === 0
+          ? 'Подключите бота в Telegram → Настройки → Бизнес → Автоматизация чатов.'
+          : 'Входящие в личку попадают в CRM. AI ответит, если назначен агент и есть баланс.';
 
   const heroTitle = !subActive
-    ? 'Телеграм Секретарь ждёт подписку'
+    ? trialAvailable
+      ? 'Телеграм Секретарь ждёт подписку'
+      : 'Пробный период закончился'
     : aiBots.length === 0
       ? 'Подключите бота-секретаря'
       : activeAccounts === 0
         ? 'Бот есть — подключите аккаунт'
-        : 'Телеграм Секретарь на связи';
+        : isTrial
+          ? 'Телеграм Секретарь работает'
+          : 'Телеграм Секретарь на связи';
 
   const heroActionLabel = !subActive
     ? trialAvailable
@@ -602,7 +624,11 @@ function TelegramSecretaryPageInner() {
       : `Оплатить ${formatInt(tgPrice)} ₽/мес`
     : aiBots.length === 0 || showTokenForm
       ? 'Подключить бота'
-      : 'Добавить бота';
+      : activeAccounts === 0
+        ? 'Добавить аккаунт'
+        : isTrial
+          ? `Оплатить ${formatInt(tgPrice)} ₽/мес`
+          : 'Добавить бота';
 
   const focusConnect = () => {
     connectSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -626,14 +652,18 @@ function TelegramSecretaryPageInner() {
               value: `${activeAccounts} из ${maxConn}`,
             },
             {
-              label: 'Подписка',
-              value: subActive
-                ? aiBusiness.activeUntil
-                  ? `до ${formatDate(aiBusiness.activeUntil)}`
-                  : 'активна'
-                : trialAvailable
-                  ? `${TRIAL_PERIOD_DAYS} дней бесплатно`
-                  : 'не активна',
+              label: isTrial ? 'Пробный период' : 'Подписка',
+              value: isTrial
+                ? daysRemaining !== null
+                  ? `осталось ${daysRemaining} ${plural(daysRemaining, ['день', 'дня', 'дней'])}`
+                  : 'активен'
+                : subActive
+                  ? aiBusiness.activeUntil
+                    ? `до ${formatDate(aiBusiness.activeUntil)}`
+                    : 'активна'
+                  : trialAvailable
+                    ? `${TRIAL_PERIOD_DAYS} дней бесплатно`
+                    : 'не активна',
             },
             {
               label: 'Баланс AI',
@@ -651,6 +681,10 @@ function TelegramSecretaryPageInner() {
               else void paySubscription();
               return;
             }
+            if (isTrial && aiBots.length > 0 && activeAccounts > 0) {
+              void paySubscription();
+              return;
+            }
             focusConnect();
           }}
           footerLabel="Тариф канала"
@@ -660,10 +694,68 @@ function TelegramSecretaryPageInner() {
         {error ? <Alert variant="error">{error}</Alert> : null}
         {info ? <Alert variant="info">{info}</Alert> : null}
 
-        {subActive && aiBots.length > 0 && overview.accounts.agents === 0 ? (
+        {isTrial && aiBots.length > 0 && activeAccounts > 0 ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-2xl border border-[#f5a623]/30 bg-[#fffaf0] px-5 py-4"
+          >
+            <p className="text-sm font-semibold text-black">
+              Пробный период — {daysRemaining !== null ? `${daysRemaining} ${plural(daysRemaining, ['день', 'дня', 'дней'])} до` : 'до'}{' '}
+              {aiBusiness.activeUntil ? formatDate(aiBusiness.activeUntil) : 'окончания'}
+            </p>
+            <p className="mt-1 text-sm text-black/65">
+              После окончания бот перестанет принимать новые сообщения. Переписка и контакты в CRM сохранятся — вы ничего не потеряете.
+            </p>
+            <button
+              type="button"
+              disabled={busy === 'pay'}
+              onClick={() => void paySubscription()}
+              className="land-btn-amber mt-3 min-h-11 cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'pay' ? 'Переходим к оплате…' : `Оплатить ${formatInt(tgPrice)} ₽/мес`}
+            </button>
+          </div>
+        ) : null}
+
+        {!subActive && !trialAvailable ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-2xl border border-black/10 bg-[#faf8f5] px-5 py-4"
+          >
+            <p className="text-sm font-semibold text-black">Пробный период закончился</p>
+            <p className="mt-1 text-sm text-black/65">
+              Бот не принимает сообщения. Переписка и контакты в CRM на месте — оплатите, чтобы продолжить.
+            </p>
+            <button
+              type="button"
+              disabled={busy === 'pay'}
+              onClick={() => void paySubscription()}
+              className="land-btn-amber mt-3 min-h-11 cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'pay' ? 'Переходим к оплате…' : `Оплатить ${formatInt(tgPrice)} ₽/мес`}
+            </button>
+          </div>
+        ) : null}
+
+        {subActive && aiBots.length > 0 && activeAccounts === 0 ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-2xl border border-[#f5a623]/30 bg-[#fffaf0] px-5 py-4"
+          >
+            <p className="text-sm font-semibold text-black">Следующий шаг — подключите аккаунт Telegram</p>
+            <p className="mt-1 text-sm text-black/65">
+              Бот создан, но пока никому не отвечает. Откройте Telegram → Настройки → Бизнес → Автоматизация чатов и добавьте @{selectedBot?.botUsername || '…'}.
+            </p>
+          </div>
+        ) : null}
+
+        {subActive && aiBots.length > 0 && activeAccounts > 0 && overview.accounts.agents === 0 ? (
           <Alert variant="info">
             <div className="space-y-1">
-              <p className="font-semibold">Бот подключён, но AI-агента нет</p>
+              <p className="font-semibold">Следующий шаг — создайте AI-агента</p>
               <p>
                 Пока агент не создан и не назначен, секретарь не отвечает — переписка копится в CRM.{' '}
                 <Link
@@ -704,7 +796,11 @@ function TelegramSecretaryPageInner() {
               title="Тариф Телеграм Секретарь"
               description="Подписка даёт право принимать сообщения в личных чатах. Ответы нейросети она не включает — их оплачивает общий баланс AI на странице агентов."
             />
-            <Badge variant={subBadge.variant}>{subBadge.text}</Badge>
+            <Badge variant={subBadge.variant}>
+              {isTrial && daysRemaining !== null
+                ? `Пробный период · ${daysRemaining} ${plural(daysRemaining, ['день', 'дня', 'дней'])}`
+                : subBadge.text}
+            </Badge>
           </div>
 
           <div className="mt-4 rounded-xl border border-black/10 bg-[#faf8f5] px-4 py-4">
@@ -742,14 +838,16 @@ function TelegramSecretaryPageInner() {
                 disabled={busy === 'pay'}
                 onClick={() => void paySubscription()}
                 className={`min-h-11 cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50 ${
-                  !subActive && !trialAvailable ? 'land-btn-amber' : 'land-btn-ghost'
+                  !subActive && !trialAvailable ? 'land-btn-amber' : isTrial ? 'land-btn-amber' : 'land-btn-ghost'
                 }`}
               >
                 {busy === 'pay'
                   ? 'Переходим к оплате…'
-                  : subActive
-                    ? `Продлить на месяц · ${formatInt(tgPrice)} ₽`
-                    : `Оплатить ${formatInt(tgPrice)} ₽/мес`}
+                  : isTrial
+                    ? `Оплатить ${formatInt(tgPrice)} ₽/мес`
+                    : subActive
+                      ? `Продлить на месяц · ${formatInt(tgPrice)} ₽`
+                      : `Оплатить ${formatInt(tgPrice)} ₽/мес`}
               </button>
             </div>
           </div>

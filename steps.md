@@ -529,7 +529,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 local (не на проде):** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + migration grandfather; GramJS UI как WhatsApp. **2026-07-31 вечер prod:** партнёрский баланс, каналы AI, атомарный AI-кошелёк, Robokassa идемпотентность, productScope, WA handoff. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: deploy AI IA; SMTP invite deferred; GramJS outbound media; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
