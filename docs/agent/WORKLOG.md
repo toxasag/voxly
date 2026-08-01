@@ -1,14 +1,15 @@
-### 2026-08-01 — Телеграм Секретарь IA + AI-агент SKU + GramJS как WhatsApp
+### 2026-08-01 — Телеграм Секретарь IA + AI-агент SKU + GramJS как WhatsApp (prod)
 
 - Goal: кабинетное меню и AI-поверхности по продуктовой модели — «Телеграм Секретарь» / Telegram / WhatsApp / AI-агенты; агент 500₽/мес; секретарь 1000₽/10 акк.
 - Changes:
   - Nav (`app-shell.tsx` + home products): Дашборд → Партнерская → CRM → AI-агенты → WhatsApp → Telegram → Телеграм Секретарь → Бот выдачи подарков → Рассылка.
-  - `/dashboard/ai` — единая страница секретаря (тариф, connect, аккаунты, агент, диалоги); `[botId]` → redirect `?bot=`; hero `ai-secretary-hero.tsx`.
-  - `/dashboard/ai/gramjs` — landing как WhatsApp (`ai-gramjs-hero.tsx`); label Telegram.
-  - SKU `ai_agent` 500₽: `PRODUCT_CODES`/`PRICING`/`getAiAgentSlots`, checkout+fulfil, POST create 402, GET `capacity`, grandfather runtime + migration `20260731220000_ai_agent_slots_grandfather`.
-  - Agents page: слоты + оплата + top-up остаётся здесь.
-- Verify: `tsc --noEmit` shared/saas-api/saas-portal OK; shared vitest green. Deploy не делался.
-- Next: commit + `./scripts/prod-deploy.sh` (shared, saas-api, saas-portal) с migrate deploy для grandfather.
+  - `/dashboard/ai` — единая страница секретаря; `[botId]` → redirect `?bot=`; Suspense вокруг `useSearchParams` (иначе next build падает).
+  - `/dashboard/ai/gramjs` — landing как WhatsApp; label Telegram.
+  - SKU `ai_agent` 500₽ + grandfather migration `20260731220000_ai_agent_slots_grandfather`.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal`. Первый прогон: migrate applied, portal build FAIL (missing Suspense) → fix `c7883f3` → повторный деплой OK. Backup **`/opt/voxly/backups/20260801-205426/`** (+ второй backup на ретрае).
+- Verify: migrate `20260731220000` applied; 1× `Addon type=ai_agent` grandfathered. Smoke `/` `/dashboard/ai` `/agents` `/gramjs` `/whatsapp` `/dashboard/ai/<oldBotId>` + API health **200**. HTML содержит «Телеграм Секретарь» / «Партнерская» / «Бот выдачи подарков».
+- Broken: nothing lasting (first portal build failed, fixed before second ship).
+- Next: ротировать root SSH пароль (светился в чате).
 
 ### 2026-07-31 — Admin `/admin/partners` + per-tenant referral rules + referral transactions (prod)
 
