@@ -525,7 +525,10 @@ export default function WhatsappChannelPage() {
               <p>
                 Номер остаётся подключённым и входящие сохраняются, но нейросеть не отвечает, пока
                 баланс не пополнен.{' '}
-                <Link href="/dashboard/ai" className="font-semibold underline underline-offset-2">
+                <Link
+                  href="/dashboard/ai/agents"
+                  className="font-semibold underline underline-offset-2"
+                >
                   Пополнить баланс
                 </Link>
                 .
@@ -919,7 +922,7 @@ export default function WhatsappChannelPage() {
                 Из него оплачивается каждый ответ нейросети. Тариф канала баланс не пополняет.
               </p>
               <Link
-                href="/dashboard/ai"
+                href="/dashboard/ai/agents"
                 className="land-btn-ghost mt-3 min-h-11 cursor-pointer px-4 text-sm"
               >
                 Пополнить баланс

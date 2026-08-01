@@ -1,44 +1,40 @@
 'use client';
 
-import { Wallet } from 'lucide-react';
+import { QrCode } from 'lucide-react';
 
-export function AiOverviewHero({
-  eyebrow = 'AI-модуль',
+export function AiGramjsHero({
   title,
   subtitle,
   facts,
-  balanceValue,
-  balanceTone,
-  balanceHint,
-  topUpLabel,
-  onTopUp,
+  stateLabel,
+  stateTone,
+  stateHint,
+  actionLabel,
+  onAction,
+  actionDisabled = false,
   footerLabel,
   footerValue,
 }: {
-  eyebrow?: string;
   title: string;
   subtitle: string;
   facts: Array<{ label: string; value: string }>;
-  balanceValue: string;
-  balanceTone: 'ok' | 'low' | 'empty';
-  balanceHint: string;
-  topUpLabel: string;
-  onTopUp: () => void;
+  stateLabel: string;
+  stateTone: 'connected' | 'pending' | 'off';
+  stateHint: string;
+  actionLabel: string;
+  onAction: () => void;
+  actionDisabled?: boolean;
   footerLabel: string;
   footerValue: string;
 }) {
   const toneText =
-    balanceTone === 'empty'
-      ? 'text-[#b91c1c]'
-      : balanceTone === 'low'
+    stateTone === 'connected'
+      ? 'text-[#166534]'
+      : stateTone === 'pending'
         ? 'text-[#c2410c]'
         : 'text-black';
-  const toneBadge =
-    balanceTone === 'empty'
-      ? 'Пусто'
-      : balanceTone === 'low'
-        ? 'Заканчивается'
-        : 'Хватает';
+  const toneNote =
+    stateTone === 'connected' ? 'на связи' : stateTone === 'pending' ? 'нужно действие' : 'выключен';
 
   return (
     <section className="relative isolate overflow-hidden rounded-2xl bg-[#f5a623] px-5 py-6 sm:px-8 sm:py-8">
@@ -53,8 +49,8 @@ export function AiOverviewHero({
       />
       <div className="relative z-10 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
         <div className="min-w-0">
-          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            {eyebrow}
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
+            AI-канал · Telegram
           </p>
           <h1 className="land-display land-rise mt-2 text-[clamp(1.75rem,3.5vw,2.5rem)] leading-[1.1] tracking-[-0.04em]">
             {title}
@@ -79,27 +75,28 @@ export function AiOverviewHero({
         <div className="w-full rounded-xl border border-black/15 bg-white/70 p-4 backdrop-blur-sm lg:w-[360px]">
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
-              Баланс AI
+              Состояние канала
             </p>
-            <span className="text-xs font-semibold text-black/55">{toneBadge}</span>
+            <span className="text-xs font-semibold text-black/55">{toneNote}</span>
           </div>
           <p
-            className={`land-display mt-2 text-[32px] tabular-nums leading-none tracking-[-0.03em] ${toneText}`}
+            className={`land-display mt-2 text-[22px] leading-tight tracking-[-0.03em] ${toneText}`}
           >
-            {balanceValue} ₽
+            {stateLabel}
           </p>
-          <p className="mt-2 text-xs leading-snug text-black/60">{balanceHint}</p>
+          <p className="mt-2 text-xs leading-snug text-black/60">{stateHint}</p>
           <button
             type="button"
-            onClick={onTopUp}
-            className="land-btn mt-3 min-h-11 w-full cursor-pointer text-sm"
+            onClick={onAction}
+            disabled={actionDisabled}
+            className="land-btn mt-3 min-h-11 w-full cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {topUpLabel}
-            <Wallet className="h-4 w-4" aria-hidden />
+            {actionLabel}
+            <QrCode className="h-4 w-4" aria-hidden />
           </button>
           <p className="mt-3 flex items-baseline justify-between gap-2 border-t border-black/10 pt-3 text-sm">
             <span className="text-black/55">{footerLabel}</span>
-            <span className="land-display text-right text-[17px] tabular-nums leading-tight tracking-[-0.03em] text-black">
+            <span className="land-display text-right text-[17px] leading-tight tracking-[-0.03em] text-black">
               {footerValue}
             </span>
           </p>

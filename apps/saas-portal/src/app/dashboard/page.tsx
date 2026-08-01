@@ -438,15 +438,29 @@ export default function DashboardPage() {
               }
             />
             <ProductRow
-              title="Gift-боты"
-              href="/dashboard/bots"
-              active={p.gift.isActive}
-              trial={p.gift.isTrial}
-              until={p.gift.activeUntil}
-              detail={`${data.accounts.giftBots} бот.`}
+              title="AI-агенты"
+              href="/dashboard/ai/agents"
+              active={data.accounts.agents > 0}
+              detail={`${data.accounts.agents} активных · 500 ₽/мес за агента`}
             />
             <ProductRow
-              title="Telegram Business"
+              title="WhatsApp"
+              href="/dashboard/ai/whatsapp"
+              active={p.whatsapp.isActive}
+              trial={p.whatsapp.isTrial}
+              until={p.whatsapp.activeUntil}
+              detail={`${data.accounts.whatsapp} акк.`}
+            />
+            <ProductRow
+              title="Telegram"
+              href="/dashboard/ai/gramjs"
+              active={p.gramjs.isActive}
+              trial={p.gramjs.isTrial}
+              until={p.gramjs.activeUntil}
+              detail={`${data.accounts.gramjs} акк.`}
+            />
+            <ProductRow
+              title="Телеграм Секретарь"
               href="/dashboard/ai"
               active={p.aiBusiness.isActive}
               trial={p.aiBusiness.isTrial}
@@ -458,20 +472,12 @@ export default function DashboardPage() {
               }`}
             />
             <ProductRow
-              title="WhatsApp"
-              href="/dashboard/ai/whatsapp"
-              active={p.whatsapp.isActive}
-              trial={p.whatsapp.isTrial}
-              until={p.whatsapp.activeUntil}
-              detail={`${data.accounts.whatsapp} акк.`}
-            />
-            <ProductRow
-              title="Личный Telegram"
-              href="/dashboard/ai/gramjs"
-              active={p.gramjs.isActive}
-              trial={p.gramjs.isTrial}
-              until={p.gramjs.activeUntil}
-              detail={`${data.accounts.gramjs} акк.`}
+              title="Бот выдачи подарков"
+              href="/dashboard/bots"
+              active={p.gift.isActive}
+              trial={p.gift.isTrial}
+              until={p.gift.activeUntil}
+              detail={`${data.accounts.giftBots} бот.`}
             />
             <ProductRow
               title="Рассылка ботом"
@@ -496,12 +502,6 @@ export default function DashboardPage() {
               trial={p.mailingStories?.isTrial}
               until={p.mailingStories?.activeUntil}
               detail="1000 ₽/мес"
-            />
-            <ProductRow
-              title="AI-агенты"
-              href="/dashboard/ai/agents"
-              active={data.accounts.agents > 0}
-              detail={`${data.accounts.agents} активных · ответы с баланса`}
             />
           </CardContent>
         </Card>
@@ -556,7 +556,7 @@ export default function DashboardPage() {
                 </div>
               )}
               <Button asChild variant="link" size="sm" className="mt-2 h-auto p-0">
-                <Link href="/dashboard/partners">Партнёрская программа →</Link>
+                <Link href="/dashboard/partners">Партнерская →</Link>
               </Button>
             </div>
           </CardContent>
@@ -579,7 +579,7 @@ export default function DashboardPage() {
           )}
           <div className="mt-4">
             <Button asChild variant="outline" size="sm">
-              <Link href="/dashboard/bots">Открыть Gift-боты</Link>
+              <Link href="/dashboard/bots">Открыть бота выдачи подарков</Link>
             </Button>
           </div>
         </CardContent>
@@ -597,7 +597,7 @@ export default function DashboardPage() {
               disabled={trialBusy === 'gramjs'}
               onClick={() => void startChannelTrial('gramjs')}
             >
-              Trial · Личный Telegram
+              Trial · Telegram
             </Button>
           )}
           {!p.whatsapp.isActive && p.whatsapp.trialAvailable !== false && (

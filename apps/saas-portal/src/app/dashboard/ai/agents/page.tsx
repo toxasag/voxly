@@ -5,6 +5,7 @@ import { cn, selectClassName } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Bot, Loader2, Plus, Trash2, Upload, RefreshCw } from 'lucide-react';
+import { PRICING } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
 import { Badge } from '@/components/ui/badge';
@@ -96,6 +97,13 @@ interface UsageResponse {
   recent?: UsageRecentRow[];
 }
 
+interface AgentCapacity {
+  agentSlots: number;
+  activeAgents: number;
+  freeSlots: number;
+  priceMonthly: number;
+}
+
 const REQUEST_TYPE_LABEL: Record<string, string> = {
   text: 'Текст',
   transcribe: 'Расшифровка голоса',
@@ -157,6 +165,7 @@ export default function AiAgentsPage() {
   const [topupAmount, setTopupAmount] = useState('1000');
   const [days, setDays] = useState(30);
   const [usageBusy, setUsageBusy] = useState(false);
+  const [capacity, setCapacity] = useState<AgentCapacity | null>(null);
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
@@ -173,6 +182,9 @@ export default function AiAgentsPage() {
       if (!agentsRes.ok) throw new Error('Не удалось загрузить агентов');
       const agentsJson = await agentsRes.json();
       setAgents(agentsJson.agents || []);
+      if (agentsJson.capacity) {
+        setCapacity(agentsJson.capacity as AgentCapacity);
+      }
       if (typeof agentsJson.defaultChatModel === 'string' && agentsJson.defaultChatModel) {
         setDefaultChatModel(agentsJson.defaultChatModel);
       }
@@ -240,6 +252,12 @@ export default function AiAgentsPage() {
       setError('Укажите имя агента');
       return;
     }
+    if (capacity && capacity.freeSlots < 1) {
+      setError(
+        `Нет свободных слотов. Оплатите AI-агента (${capacity.priceMonthly} ₽/мес) и повторите.`,
+      );
+      return;
+    }
     setBusy('create');
     setError('');
     try {
@@ -252,7 +270,10 @@ export default function AiAgentsPage() {
         }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Не удалось создать');
+      if (!res.ok) {
+        if (json.capacity) setCapacity(json.capacity as AgentCapacity);
+        throw new Error(json.error || 'Не удалось создать');
+      }
       setName('');
       setPrompt('');
       await load();
@@ -261,6 +282,15 @@ export default function AiAgentsPage() {
     } finally {
       setBusy('');
     }
+  };
+
+  const buyAgentSlot = () => {
+    setBusy('buy-agent');
+    setError('');
+    void startCheckout({ productCode: 'ai_agent', quantity: 1, periodMonths: 1 }).catch((e) => {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy('');
+    });
   };
 
   const assignToBot = async (botId: string, aiAgentId: string | null) => {
@@ -448,10 +478,19 @@ export default function AiAgentsPage() {
       <div className="landing-root space-y-6">
         <AiAgentsPortalHero
           headline="AI-агенты, которые отвечают вашим клиентам"
-          subtitle="Задайте характер агента, дайте ему файлы с информацией о вашем бизнесе и обучите на успешных сделках из CRM. Пока агент не назначен на бота — он молчит."
+          subtitle="Один агент — 500 ₽/мес. Задайте характер, дайте файлы о бизнесе и обучите на успешных сделках. Пока агент не назначен на канал — он молчит. Ответы списываются с баланса AI."
           facts={[
-            { label: 'Агентов создано', value: String(agents.length) },
+            {
+              label: 'Слоты агентов',
+              value: capacity
+                ? `${capacity.activeAgents}/${capacity.agentSlots}`
+                : String(agents.length),
+            },
             { label: `Расход за ${usageDays} дн.`, value: `${formatRub(spentRub)} ₽` },
+            {
+              label: 'Цена агента',
+              value: `${(capacity?.priceMonthly ?? PRICING.AI_AGENT_MONTHLY).toLocaleString('ru-RU')} ₽/мес`,
+            },
           ]}
           balanceLabel={formatRub(balanceRub)}
           balanceState={balanceState}
@@ -460,9 +499,41 @@ export default function AiAgentsPage() {
 
         {error && <Alert variant="error">{error}</Alert>}
 
+        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
+            00 · тариф агента
+          </p>
+          <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Слоты AI-агентов</h2>
+          <p className="mt-1 max-w-[70ch] text-sm text-black/60">
+            Каждый агент занимает один оплаченный слот ({PRICING.AI_AGENT_MONTHLY} ₽/мес). Свободных
+            слотов:{' '}
+            <span className="font-semibold text-black tabular-nums">
+              {capacity?.freeSlots ?? '—'}
+            </span>
+            . Ответы клиентам по-прежнему списываются с баланса AI ниже.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={buyAgentSlot}
+              disabled={busy === 'buy-agent'}
+              className="land-btn-amber min-h-11 cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'buy-agent' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  Открываем оплату…
+                </>
+              ) : (
+                `Оплатить агента · ${PRICING.AI_AGENT_MONTHLY} ₽/мес`
+              )}
+            </button>
+          </div>
+        </section>
+
         <section id="balance" className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            00 · пополнение
+            01 · пополнение
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Пополнить баланс AI</h2>
           <p className="mt-1 max-w-[70ch] text-sm text-black/60">
@@ -809,7 +880,11 @@ export default function AiAgentsPage() {
               <button
                 type="button"
                 onClick={() => void createAgent()}
-                disabled={busy === 'create' || !name.trim()}
+                disabled={
+                  busy === 'create' ||
+                  !name.trim() ||
+                  Boolean(capacity && capacity.freeSlots < 1)
+                }
                 className="land-btn-amber min-h-11 cursor-pointer text-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy === 'create' ? (
@@ -822,9 +897,11 @@ export default function AiAgentsPage() {
               <p aria-live="polite" className="mt-2 text-xs text-black/55">
                 {busy === 'create'
                   ? 'Создаём агента…'
-                  : !name.trim()
-                    ? 'Кнопка станет активной, когда вы укажете имя агента.'
-                    : 'После создания назначьте агента на аккаунт в блоке ниже — иначе он не отвечает.'}
+                  : capacity && capacity.freeSlots < 1
+                    ? `Сначала оплатите слот агента (${capacity.priceMonthly} ₽/мес) в блоке «Тариф агента».`
+                    : !name.trim()
+                      ? 'Кнопка станет активной, когда вы укажете имя агента.'
+                      : 'После создания назначьте агента на канал ниже — иначе он не отвечает.'}
               </p>
             </div>
           </div>
@@ -1134,11 +1211,11 @@ export default function AiAgentsPage() {
             <div className="mt-4 rounded-xl bg-[#faf8f5] p-4 text-sm text-black/60">
               Подключённых аккаунтов нет — агенту негде отвечать. Подключите{' '}
               <Link href="/dashboard/ai" className="underline underline-offset-2">
-                Telegram Business
+                Телеграм Секретарь
               </Link>
               ,{' '}
               <Link href="/dashboard/ai/gramjs" className="underline underline-offset-2">
-                личный Telegram
+                Telegram
               </Link>{' '}
               или{' '}
               <Link href="/dashboard/ai/whatsapp" className="underline underline-offset-2">
@@ -1151,10 +1228,10 @@ export default function AiAgentsPage() {
               {bots.map((b) => {
                 const channelLabel =
                   b.botType === 'ai_gramjs'
-                    ? 'Личный Telegram'
+                    ? 'Telegram'
                     : b.botType === 'ai_wa'
                       ? 'WhatsApp'
-                      : 'Telegram Business';
+                      : 'Телеграм Секретарь';
                 const accountLabel =
                   b.botType === 'ai_wa'
                     ? b.displayName || b.botUsername || '…'
