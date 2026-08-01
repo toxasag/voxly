@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -179,6 +179,20 @@ function SectionHead({
 }
 
 export default function TelegramSecretaryPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell maxWidth="6xl">
+          <LoadingState label="Загружаем Телеграм Секретарь…" />
+        </AppShell>
+      }
+    >
+      <TelegramSecretaryPageInner />
+    </Suspense>
+  );
+}
+
+function TelegramSecretaryPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const botParam = searchParams.get('bot');
