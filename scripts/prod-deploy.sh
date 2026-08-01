@@ -23,7 +23,8 @@
 #   VOXLY_PROD_HOST   default 150.241.98.135
 #   VOXLY_PROD_USER   default root
 #   VOXLY_PROD_DIR    default /opt/voxly
-#   SSHPASS           optional; if set, uses sshpass -e
+#   SSHPASS           password auth (sshpass -e); falls back to macOS keychain
+#                     item: account $(id -un), service voxly-prod-ssh
 # =============================================================================
 
 set -euo pipefail
@@ -73,6 +74,18 @@ if [[ -z "$SERVICES_RAW" ]]; then
 fi
 
 # --- SSH helpers ---
+# SSHPASS is exported from ~/.zshrc, which non-interactive shells never read —
+# fall back to the macOS keychain item so agent/CI-style runs still authenticate.
+if [[ -z "${SSHPASS:-}" ]] && command -v security >/dev/null 2>&1; then
+  SSHPASS="$(security find-generic-password -a "$(id -un)" -s voxly-prod-ssh -w 2>/dev/null || true)"
+  export SSHPASS
+fi
+if [[ -z "${SSHPASS:-}" && "$DRY_RUN" -eq 0 ]]; then
+  echo "No SSH password. Export SSHPASS, or store it once in the keychain:" >&2
+  echo "  security add-generic-password -a \"\$(id -un)\" -s voxly-prod-ssh -w '<password>'" >&2
+  exit 1
+fi
+
 ssh_base=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 rsync_ssh="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 if [[ -n "${SSHPASS:-}" ]]; then

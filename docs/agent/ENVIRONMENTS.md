@@ -41,7 +41,7 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 | Item | Notes |
 |---|---|
 | Twenty app re-apply | If CRM chat front already installed on workspaces, re-apply after `chat-panel` bake |
-| Root SSH | Password auth via `SSHPASS` only (no laptop key) — rotate to key |
+| Root SSH | Password auth via `SSHPASS` only (no laptop key) — rotate to key. If `SSHPASS` is unset, `prod-deploy.sh` / `prod-diff.sh` read it from the macOS keychain (account `$(id -un)`, service `voxly-prod-ssh`), so non-interactive runs work without `~/.zshrc` |
 | Hard Robokassa `ai_gramjs` | Soft trial only; SKU payment later |
 | Robokassa cabinet `crmgetvoxly` | SHA256; Result POST `/api/billing/result`; Success/Fail GET; **test** passwords in prod `.env`, `IS_TEST=1` until modules ready → then live + `IS_TEST=0` |
 

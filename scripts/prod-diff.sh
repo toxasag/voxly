@@ -27,6 +27,18 @@ USER="${VOXLY_PROD_USER:-root}"
 REMOTE_DIR="${VOXLY_PROD_DIR:-/opt/voxly}"
 SERVICES_RAW="${1:-all-apps}"
 
+# SSHPASS is exported from ~/.zshrc, which non-interactive shells never read —
+# fall back to the macOS keychain item so agent/CI-style runs still authenticate.
+if [[ -z "${SSHPASS:-}" ]] && command -v security >/dev/null 2>&1; then
+  SSHPASS="$(security find-generic-password -a "$(id -un)" -s voxly-prod-ssh -w 2>/dev/null || true)"
+  export SSHPASS
+fi
+if [[ -z "${SSHPASS:-}" ]]; then
+  echo "No SSH password. Export SSHPASS, or store it once in the keychain:" >&2
+  echo "  security add-generic-password -a \"\$(id -un)\" -s voxly-prod-ssh -w '<password>'" >&2
+  exit 1
+fi
+
 ssh_base=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 if [[ -n "${SSHPASS:-}" ]]; then
   if ! command -v sshpass >/dev/null 2>&1; then
