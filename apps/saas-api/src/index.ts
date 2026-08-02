@@ -1,6 +1,7 @@
 // Voxly SaaS API — main entry point
 // Control plane: auth, billing, provisioning, admin
 
+import { pathToFileURL } from 'node:url';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -24,7 +25,7 @@ import { analyticsRoutes } from './routes/analytics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
 import { assertCrmAccessAllowed } from './services/crm-access.js';
-import './jobs/queues.js'; // Start BullMQ workers
+import './jobs/queues.js'; // Start BullMQ workers (skipped when VOXLY_DISABLE_WORKERS=1)
 
 const PORT = parseInt(process.env.API_PORT || '3002', 10);
 const VOXLY_DOMAIN = process.env.VOXLY_DOMAIN || 'getvoxly.ru';
@@ -36,7 +37,7 @@ function isAllowedCorsOrigin(origin: string): boolean {
   return new RegExp(`^https://[a-z0-9-]+\\.${escaped}(?::\\d+)?$`).test(origin);
 }
 
-async function buildServer() {
+export async function buildServer() {
   const fastify = Fastify({
     logger: {
       level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
@@ -247,4 +248,9 @@ async function main() {
   }
 }
 
-main();
+const isDirectRun =
+  process.argv[1] != null && pathToFileURL(process.argv[1]).href === import.meta.url;
+
+if (isDirectRun) {
+  main();
+}

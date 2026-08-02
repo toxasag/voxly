@@ -72,6 +72,21 @@ export function isProductInReferralScope(
 }
 
 /**
+ * `durationMonths` («первые N мес.») for percent_recurring: window starts at the client's
+ * first payment, not at attribution. No first payment yet → still inside the window.
+ */
+export function isAfterReferralPayoutWindow(
+  firstPaymentAt: Date | string | null | undefined,
+  durationMonths: number,
+  now: Date = new Date(),
+): boolean {
+  if (!firstPaymentAt || !durationMonths) return false;
+  const windowEnd = new Date(firstPaymentAt);
+  windowEnd.setMonth(windowEnd.getMonth() + durationMonths);
+  return now.getTime() >= windowEnd.getTime();
+}
+
+/**
  * Where an AI charge came from. Values mirror the SKU codes of the products that own each
  * channel (`ai_tg` / `ai_gramjs` / `ai_wa` / `gift_bot`) so a channel key can be read against
  * the catalogue without a translation table. `system` covers billed work that is not a
@@ -352,6 +367,24 @@ export function getAiAgentSlots(config: unknown): number {
   if (!config || typeof config !== 'object') return 0;
   const n = Number((config as { agentSlots?: unknown }).agentSlots);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Stable primary tenant membership for JWT login.
+ * Prefer owner role; break ties by earliest createdAt so multi-membership users
+ * do not jump tenants across logins when DB order is undefined.
+ */
+export function pickPrimaryMembership<T extends { role: string; createdAt?: Date | string | null }>(
+  members: T[],
+): T | undefined {
+  if (members.length === 0) return undefined;
+  const owners = members.filter((m) => m.role === 'owner');
+  const pool = owners.length > 0 ? owners : members;
+  return [...pool].sort((a, b) => {
+    const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return ta - tb;
+  })[0];
 }
 
 export type AddonType = (typeof ADDON_TYPES)[number];

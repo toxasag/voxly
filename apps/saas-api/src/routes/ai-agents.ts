@@ -41,6 +41,8 @@ function canManageTenant(user: { role?: string; tenantRole?: string }): boolean 
  * Paid agent seats live on the `ai_agent` addon. Tenants who already had agents before
  * the SKU shipped are grandfathered: slots are raised to at least the current active count.
  */
+/** Read-only capacity. Grandfathering of existing agents is a one-shot migration — never
+ * create or expand a paid `ai_agent` addon from a GET/list request. */
 async function resolveAgentCapacity(
   prisma: any,
   tenantId: string,
@@ -51,34 +53,7 @@ async function resolveAgentCapacity(
   const addon = await prisma.addon.findUnique({
     where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_AGENT } },
   });
-  let agentSlots = getAiAgentSlots(addon?.config);
-  if (activeAgents > agentSlots) {
-    const nextSlots = activeAgents;
-    const config = { ...((addon?.config as object) || {}), agentSlots: nextSlots };
-    const far = new Date();
-    far.setFullYear(far.getFullYear() + 10);
-    if (addon) {
-      await prisma.addon.update({
-        where: { id: addon.id },
-        data: {
-          config,
-          status: 'active',
-          activeUntil: addon.activeUntil > far ? addon.activeUntil : far,
-        },
-      });
-    } else {
-      await prisma.addon.create({
-        data: {
-          tenantId,
-          type: PRODUCT_CODES.AI_AGENT,
-          config,
-          activeUntil: far,
-          status: 'active',
-        },
-      });
-    }
-    agentSlots = nextSlots;
-  }
+  const agentSlots = getAiAgentSlots(addon?.config);
   return {
     agentSlots,
     activeAgents,

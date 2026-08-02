@@ -4,6 +4,7 @@ import {
   RobokassaClient,
   calculateSubscriptionPrice,
   calculateProratedSeatPrice,
+  paymentAmountMatchesOutSum,
 } from '../src/index';
 
 const config = {
@@ -166,6 +167,14 @@ describe('RobokassaClient signatures', () => {
       items: [],
     });
     expect(new URL(url).searchParams.get('Description')!.length).toBe(100);
+  });
+
+  it('rejects OutSum that does not match the invoice amount', () => {
+    expect(paymentAmountMatchesOutSum(1000, '1000.00')).toBe(true);
+    expect(paymentAmountMatchesOutSum(1000, '1000')).toBe(true);
+    expect(paymentAmountMatchesOutSum('500.50', '500.50')).toBe(true);
+    expect(paymentAmountMatchesOutSum(1000, '1.00')).toBe(false);
+    expect(paymentAmountMatchesOutSum(1000, 'not-a-number')).toBe(false);
   });
 
   it('supports md5 when configured to match Robokassa cabinet', () => {

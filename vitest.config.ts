@@ -10,5 +10,11 @@ export default defineConfig({
     include: ['packages/**/tests/**/*.test.ts', 'apps/**/tests/**/*.test.ts'],
     environment: 'node',
     globals: false,
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
+    fileParallelism: false,
+    env: {
+      VOXLY_DISABLE_WORKERS: '1',
+    },
   },
 });

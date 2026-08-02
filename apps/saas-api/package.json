@@ -7,7 +7,8 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "VOXLY_DISABLE_WORKERS=1 vitest run --config ../../vitest.config.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.0",

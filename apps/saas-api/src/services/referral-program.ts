@@ -208,6 +208,7 @@ export async function buildReferralDashboard(
     prisma.referralCampaign.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
+      take: 200,
     }),
     prisma.referral.findMany({
       where: { referrerTenantId: tenantId },
@@ -217,6 +218,7 @@ export async function buildReferralDashboard(
         earnings: true,
       },
       orderBy: { attributedAt: 'desc' },
+      take: 500,
     }),
     prisma.referralEarning.findMany({
       where: {
@@ -246,10 +248,12 @@ export async function buildReferralDashboard(
     prisma.referralWithdrawal.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
+      take: 100,
     }),
     prisma.referralTransaction.findMany({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
+      take: 200,
     }),
     // Выплачено считаем за всё время на сервере: срез transactions[] по периоду
     // или количеству не должен занижать итог в кабинете

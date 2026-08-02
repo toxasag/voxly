@@ -10,8 +10,9 @@ import {
   getAiTgExtraSlots,
   getAiAgentSlots,
   isProductInReferralScope,
+  isAfterReferralPayoutWindow,
 } from '@voxly/shared';
-import { calculateSubscriptionPrice } from '@voxly/billing';
+import { calculateSubscriptionPrice, paymentAmountMatchesOutSum } from '@voxly/billing';
 import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { resolveRuleForReferrer } from '../services/referral-admin.js';
 import { releaseBalanceHold } from '../services/referral-program.js';
@@ -383,6 +384,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
     if (existing.status === 'paid') {
       return reply.type('text/plain').send(`OK${invId}`);
+    }
+
+    // OutSum is the cash Robokassa collected; Payment.amount stores that same net figure.
+    if (!paymentAmountMatchesOutSum(Number(existing.amount), String(outSum))) {
+      fastify.log.warn(
+        { invId, outSum, expected: String(existing.amount) },
+        'Robokassa OutSum does not match payment.amount',
+      );
+      return reply.code(400).send('amount mismatch');
     }
 
     const ctx = await loadFulfilPaymentContext(prisma, existing, customData);
@@ -825,21 +835,6 @@ async function fulfilPayment(
   await creditReferralForPayment(tx, payment);
 }
 
-/**
- * `durationMonths` («первые N мес.») counts paid months, so the window opens with the client's
- * first payment, not with `attributedAt`: anchoring on attribution would deny the very first
- * commission of a client who registered long ago and leave the referral stuck in `attributed`.
- */
-function isAfterReferralPayoutWindow(
-  referral: { firstPaymentAt: Date | null },
-  durationMonths: number,
-): boolean {
-  if (!referral.firstPaymentAt) return false;
-  const windowEnd = new Date(referral.firstPaymentAt);
-  windowEnd.setMonth(windowEnd.getMonth() + durationMonths);
-  return Date.now() >= windowEnd.getTime();
-}
-
 async function creditReferralForPayment(
   tx: any,
   payment: { id: string; tenantId: string; amount: any; productCode: string },
@@ -862,7 +857,12 @@ async function creditReferralForPayment(
   const isFirst = !referral.firstPaymentAt;
 
   if (rule.type === 'percent_recurring') {
-    if (rule.durationMonths && isAfterReferralPayoutWindow(referral, rule.durationMonths)) return;
+    if (
+      rule.durationMonths &&
+      isAfterReferralPayoutWindow(referral.firstPaymentAt, rule.durationMonths)
+    ) {
+      return;
+    }
     earningAmount = (amount * Number(rule.value)) / 100;
   } else if (rule.type === 'percent_first_payment' && isFirst) {
     earningAmount = (amount * Number(rule.value)) / 100;

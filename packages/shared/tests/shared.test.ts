@@ -19,6 +19,11 @@ import {
   parseTelegramClientMd,
   buildVoxlyBotUsername,
   evaluateCrmAccess,
+  pickPrimaryMembership,
+  isProductInReferralScope,
+  isAfterReferralPayoutWindow,
+  normalizeReferralProductScope,
+  REFERRAL_PRODUCT_SCOPES,
 } from '../src/index';
 
 describe('@voxly/shared exports', () => {
@@ -179,5 +184,52 @@ describe('Telegram client Markdown → MarkdownV2', () => {
     if (nodes[0].type === 'bold') {
       expect(nodes[0].children.some((c) => c.type === 'italic')).toBe(true);
     }
+  });
+});
+
+describe('referral productScope', () => {
+  it('excludes ai_topup via REFERRAL_EXCLUDED_PRODUCTS before scope', () => {
+    expect(REFERRAL_EXCLUDED_PRODUCTS.has(PRODUCT_CODES.AI_TOPUP)).toBe(true);
+  });
+
+  it('crm scope allows only CRM SKUs', () => {
+    expect(isProductInReferralScope(PRODUCT_CODES.CRM_BASE, 'crm')).toBe(true);
+    expect(isProductInReferralScope(PRODUCT_CODES.EXTRA_SEAT, 'crm')).toBe(true);
+    expect(isProductInReferralScope(PRODUCT_CODES.AI_TELEGRAM, 'crm')).toBe(false);
+    expect(isProductInReferralScope(PRODUCT_CODES.GIFT_BOT, REFERRAL_PRODUCT_SCOPES.CRM)).toBe(false);
+  });
+
+  it('all scope allows non-CRM SKUs (caller still applies AI top-up exclusion)', () => {
+    expect(isProductInReferralScope(PRODUCT_CODES.AI_TELEGRAM, 'all')).toBe(true);
+    expect(normalizeReferralProductScope('subscriptions')).toBe(REFERRAL_PRODUCT_SCOPES.ALL);
+  });
+
+  it('durationMonths window starts at firstPaymentAt', () => {
+    const first = new Date('2025-01-01T00:00:00.000Z');
+    expect(isAfterReferralPayoutWindow(null, 3, new Date('2025-06-01T00:00:00.000Z'))).toBe(false);
+    expect(isAfterReferralPayoutWindow(first, 3, new Date('2025-03-15T00:00:00.000Z'))).toBe(false);
+    expect(isAfterReferralPayoutWindow(first, 3, new Date('2025-05-01T00:00:00.000Z'))).toBe(true);
+  });
+});
+
+describe('pickPrimaryMembership', () => {
+  it('prefers owner over earlier member', () => {
+    const primary = pickPrimaryMembership([
+      { role: 'member', createdAt: '2020-01-01T00:00:00.000Z', tenantId: 'a' },
+      { role: 'owner', createdAt: '2024-01-01T00:00:00.000Z', tenantId: 'b' },
+    ]);
+    expect(primary?.tenantId).toBe('b');
+  });
+
+  it('breaks ties by earliest createdAt', () => {
+    const primary = pickPrimaryMembership([
+      { role: 'owner', createdAt: '2024-06-01T00:00:00.000Z', tenantId: 'new' },
+      { role: 'owner', createdAt: '2023-01-01T00:00:00.000Z', tenantId: 'old' },
+    ]);
+    expect(primary?.tenantId).toBe('old');
+  });
+
+  it('returns undefined for empty list', () => {
+    expect(pickPrimaryMembership([])).toBeUndefined();
   });
 });

@@ -529,6 +529,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         _count: { select: { users: true } },
       },
       orderBy: { createdAt: 'desc' },
+      take: 1_000,
     });
 
     const subSeatsMap = new Map(

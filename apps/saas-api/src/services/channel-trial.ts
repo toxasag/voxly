@@ -10,6 +10,8 @@ type AddonConfig = {
 export type ChannelTrialType =
   | 'ai_gramjs'
   | 'ai_wa'
+  | 'ai_tg'
+  | 'gift_bot'
   | 'mailing_bot'
   | 'mailing_accounts'
   | 'mailing_stories';
@@ -23,6 +25,7 @@ export async function startChannelTrial(
   prisma: PrismaClient,
   tenantId: string,
   type: ChannelTrialType,
+  extraConfig: Record<string, unknown> = {},
 ) {
   const now = new Date();
   const existing = await prisma.addon.findUnique({
@@ -54,6 +57,7 @@ export async function startChannelTrial(
   activeUntil.setDate(activeUntil.getDate() + TRIAL_PERIOD_DAYS);
   const config = {
     ...((existing?.config as AddonConfig) || {}),
+    ...extraConfig,
     trial: true,
     trialConsumed: true,
   } as Prisma.InputJsonValue;

@@ -32,6 +32,7 @@
 | `OBS.md` | `docker logs`, health URL, логирование |
 | `DEPLOY.md` | Безопасный prod deploy (`scripts/prod-deploy.sh`) |
 | `ENVIRONMENTS.md` | Local vs prod; last verified code drift |
+| `RELEASE-CHECKLIST.md` | Предрелизный / клиентский go/no-go по 7 направлениям + `pnpm verify` |
 | `../specs/AI-AGENTS-TZ.md` | Черновик ТЗ AI (TG Business + GramJS + WA) |
 
 ## После значимой работы

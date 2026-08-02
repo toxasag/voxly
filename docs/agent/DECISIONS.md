@@ -1,5 +1,25 @@
 # Решения (короткие ADR)
 
+## ADR-024 — Release verification: local DB tests + hybrid gate
+
+**Статус:** ✅ 2026-08-02
+
+| Вопрос | Выбор |
+|---|---|
+| Contour | Local `voxly_test` on postgres-control; **no** separate staging for now |
+| Automate first | Money (webhook/wallet/balance), tenant isolation, status transitions |
+| Manual / hybrid | Integrations with live TG/WA/Robokassa; client acceptance |
+| API test entry | `export buildServer()` + `app.inject()`; `VOXLY_DISABLE_WORKERS=1` |
+| Scheduler multi-replica | Redis NX lock (`withSchedulerLock`); fail-open if Redis down |
+| OutSum | Must match `Payment.amount` (net cash) or ResultURL rejected |
+| ai_tg / gift trial | One-shot via `startChannelTrial` + `trialConsumed` |
+| Agent slots | `resolveAgentCapacity` **read-only** on GET (grandfather = migration) |
+| Gate command | `pnpm verify`; CI `.github/workflows/ci.yml`; methodology `RELEASE-CHECKLIST.md` |
+
+**Отклонено:** full e2e of every surface before money tests; prod load testing; staging on the same VPS as prod.
+
+---
+
 ## ADR-023 — Hard CRM lock when subscription ends
 
 **Статус:** ✅ 2026-07-30

@@ -1,3 +1,14 @@
+### 2026-08-02 — Release verification scenario (tests + Phase-0 hardening)
+
+- Goal: сценарий предрелизной проверки по 7 направлениям — закрыть найденные дыры в деньгах/доступах, заложить фундамент API-тестов, CI и методику.
+- Changes:
+  - **Phase 0 fixes:** Robokassa `OutSum` vs `Payment.amount` (`paymentAmountMatchesOutSum`); `ai_tg`/`gift_bot` trials через `startChannelTrial` + `trialConsumed`; `resolveAgentCapacity` read-only (no free addon on GET); login `pickPrimaryMembership` (owner + earliest `createdAt`); scheduler Redis NX lock (`scheduler-lock.ts`); `take` caps on broadcast audience + partner dashboard + admin tenants + gift schedules.
+  - **Test foundation:** `export buildServer`, `VOXLY_DISABLE_WORKERS`, `scripts/test-db.sh`, helpers/factories, vitest for `apps/saas-api/tests/*` (skipIf DB down).
+  - **Coverage:** money/idempotency/tenant isolation, status matrix, integration degradation, unit-econ invariants, findMany guards, configurability; Playwright e2e stubs; `pnpm verify`; `.github/workflows/ci.yml`; expanded prod smoke; `docs/agent/RELEASE-CHECKLIST.md`; `scripts/unit-econ-report.ts`, `scripts/perf-seed-and-measure.ts`.
+- Verify: `pnpm --filter @voxly/shared --filter @voxly/billing build && pnpm test` (DB tests skip without Postgres); typecheck API after build.
+- Broken: local Colima/Docker was down during implementation — integration tests skip until `pnpm test:db`.
+- Next: поднять postgres-control, прогнать полный `pnpm verify` + e2e против локального API/portal; задеплоить Phase-0 фиксы на prod после проверки числа тенантов с «вечным» ai_tg trial.
+
 ### 2026-08-02 — Явный пробный период в Телеграм Секретаре + порядок секций AI-агентов (prod)
 
 - Goal: сделать триал заметным на `/dashboard/ai` (раньше хиро писал просто «Подписка до <дата>», признаком триала был мелкий бейдж в секции 01, а кнопка звала «Продлить на месяц», хотя на триале это первая оплата) и выстроить `/dashboard/ai/agents` по реальному порядку работы.

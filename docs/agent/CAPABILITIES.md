@@ -50,6 +50,20 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 
 ---
 
+## Quality / release gate
+
+| Surface | Статус | Где |
+|---|---|---|
+| Unit tests (shared/billing/crypto/ai-core) | ✅ vitest | `packages/*/tests` |
+| API integration tests (money, trial, RBAC, degradation) | ✅ vitest + `voxly_test`; skipIf DB down | `apps/saas-api/tests` |
+| Playwright cabinet smoke | ✅ skip without `.auth` / `SKIP_E2E=1` | `apps/saas-portal/e2e` |
+| `pnpm verify` | ✅ typecheck + test + portal lint | root `package.json` |
+| CI | ✅ Postgres+Redis services | `.github/workflows/ci.yml` |
+| Release methodology | ✅ 7 направлений + client acceptance | `docs/agent/RELEASE-CHECKLIST.md` |
+| Prod smoke | ✅ landing, api/health(+body), 4 cabinet URLs | `scripts/prod-deploy.sh` |
+
+---
+
 ## API (`apps/saas-api` → prefix в `src/index.ts`)
 
 ### Auth `/api/auth`

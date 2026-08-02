@@ -4,7 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
-import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS, pickPrimaryMembership } from '@voxly/shared';
 import { encrypt, generateSecret } from '@voxly/crypto';
 import { provisionWorkspace } from '../services/provisioning.js';
 import { provisionTwentyMemberForTenant } from '../services/twenty-member-provision.js';
@@ -177,7 +177,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
-        tenantMembers: { include: { tenant: true } },
+        tenantMembers: {
+          include: { tenant: true },
+          orderBy: { createdAt: 'asc' },
+        },
       },
     });
 
@@ -185,7 +188,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
-    const primaryMembership = user.tenantMembers[0];
+    const primaryMembership = pickPrimaryMembership(user.tenantMembers);
     const token = fastify.jwt.sign({
       sub: user.id,
       email: user.email,

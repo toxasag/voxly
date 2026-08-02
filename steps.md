@@ -529,7 +529,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**.
+**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **2026-08-02 local:** release-verification — Phase-0 hardening (OutSum, trialConsumed, agent capacity read-only, login membership, scheduler Redis lock, findMany caps) + `apps/saas-api/tests`, Playwright e2e stubs, `pnpm verify`, CI, `docs/agent/RELEASE-CHECKLIST.md`. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**; deploy Phase-0 fixes after counting «eternal» ai_tg trials.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -567,8 +567,9 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-0. **Robokassa store activation:** legal pages **на prod** (`https://getvoxly.ru/terms` …). Подать заявку в ЛК Robokassa → после одобрения прописать боевые ключи в prod `.env`. **Сменить root SSH пароль** (светился в чате).
-0b. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS (was 100%). Optional: WA ack→read wiring.
+0. **Release gate:** `pnpm test:db` (поднять postgres-control) → полный `pnpm verify`; задеплоить Phase-0 фиксы (`saas-api`+packages) после подсчёта тенантов с ai_tg trial без `trialConsumed`. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
+0b. **Robokassa store activation:** legal pages **на prod**. **Сменить root SSH пароль** (светился в чате).
+0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
 
 
 1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).
@@ -579,8 +580,9 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓
-- `pnpm --filter @voxly/shared test` — 33 ✓; typecheck ai-telegram-worker + gramjs-bridge ✓
-- Full `pnpm typecheck` / `build` — not re-run entire turbo this session
+- `pnpm test` — **80 passed / 15 skipped** (DB integration skip без Postgres); unit+guards+status+econ ✓
+- `pnpm verify` = typecheck + test + portal lint
+- CI: `.github/workflows/ci.yml` (Postgres+Redis services)
 
 ### Чек-лист фаз
 

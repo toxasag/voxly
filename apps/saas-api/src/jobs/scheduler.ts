@@ -1,53 +1,80 @@
 // Scheduled jobs: grace period checker, subscription expiry, AI balance alerts
 
 import { GRACE_PERIOD_DAYS } from '@voxly/shared';
+import { withSchedulerLock } from './scheduler-lock.js';
 
-// In production, use BullMQ with Redis. For now, simple setInterval-based scheduler.
-// Will be replaced with BullMQ workers when Redis is available.
+// In production, use BullMQ with Redis. For now, simple setInterval-based scheduler
+// with a Redis NX lock so multiple saas-api replicas do not double-run jobs.
 
 let intervals: NodeJS.Timeout[] = [];
 
 /** Wrap an async job so timer callbacks never produce unhandled rejections. */
-function safeJob(name: string, fn: () => Promise<void>): () => void {
+function safeJob(name: string, fn: () => Promise<void>, ttlSeconds: number): () => void {
   return () => {
-    fn().catch((err) => console.warn(`[scheduler] ${name} failed`, err));
+    withSchedulerLock(name, ttlSeconds, fn).catch((err) =>
+      console.warn(`[scheduler] ${name} failed`, err),
+    );
   };
 }
 
 export function startScheduledJobs() {
   // Check expired subscriptions every hour
-  const subInterval = setInterval(safeJob('check expired subscriptions', checkExpiredSubscriptions), 60 * 60 * 1000);
+  const subInterval = setInterval(
+    safeJob('check-expired-subscriptions', checkExpiredSubscriptions, 50 * 60),
+    60 * 60 * 1000,
+  );
   intervals.push(subInterval);
 
   // Check AI wallet balance alerts every 6 hours
-  const aiInterval = setInterval(safeJob('check AI wallet alerts', checkAiWalletAlerts), 6 * 60 * 60 * 1000);
+  const aiInterval = setInterval(
+    safeJob('check-ai-wallet-alerts', checkAiWalletAlerts, 5 * 60 * 60),
+    6 * 60 * 60 * 1000,
+  );
   intervals.push(aiInterval);
 
   // Won-deal sales learning for AI agents (~10 min)
-  const salesLearnInterval = setInterval(() => {
-    void import('../services/ai-sales-learn.js')
-      .then((m) => m.ingestWonDealsAllTenants())
-      .catch((err) => console.warn('[scheduler] sales learn failed', err));
-  }, 10 * 60 * 1000);
+  const salesLearnInterval = setInterval(
+    safeJob(
+      'ingest-won-deals',
+      async () => {
+        const m = await import('../services/ai-sales-learn.js');
+        await m.ingestWonDealsAllTenants();
+      },
+      8 * 60,
+    ),
+    10 * 60 * 1000,
+  );
   intervals.push(salesLearnInterval);
 
   // Gift project schedules: start/stop by window (every minute)
-  const giftScheduleInterval = setInterval(safeJob('sync gift campaign schedules', syncGiftCampaignSchedules), 60 * 1000);
+  const giftScheduleInterval = setInterval(
+    safeJob('sync-gift-campaign-schedules', syncGiftCampaignSchedules, 50),
+    60 * 1000,
+  );
   intervals.push(giftScheduleInterval);
 
   // Release abandoned partner-balance holds every hour
-  const holdSweepInterval = setInterval(safeJob('release stale balance holds', releaseStaleBalanceHolds), 60 * 60 * 1000);
+  const holdSweepInterval = setInterval(
+    safeJob('release-stale-balance-holds', releaseStaleBalanceHolds, 50 * 60),
+    60 * 60 * 1000,
+  );
   intervals.push(holdSweepInterval);
 
   // Run initial check after 10 seconds
-  setTimeout(safeJob('check expired subscriptions', checkExpiredSubscriptions), 10_000);
-  setTimeout(safeJob('sync gift campaign schedules', syncGiftCampaignSchedules), 15_000);
-  setTimeout(safeJob('release stale balance holds', releaseStaleBalanceHolds), 30_000);
-  setTimeout(() => {
-    void import('../services/ai-sales-learn.js')
-      .then((m) => m.ingestWonDealsAllTenants())
-      .catch((err) => console.warn('[scheduler] sales learn failed', err));
-  }, 45_000);
+  setTimeout(safeJob('check-expired-subscriptions', checkExpiredSubscriptions, 50 * 60), 10_000);
+  setTimeout(safeJob('sync-gift-campaign-schedules', syncGiftCampaignSchedules, 50), 15_000);
+  setTimeout(safeJob('release-stale-balance-holds', releaseStaleBalanceHolds, 50 * 60), 30_000);
+  setTimeout(
+    safeJob(
+      'ingest-won-deals',
+      async () => {
+        const m = await import('../services/ai-sales-learn.js');
+        await m.ingestWonDealsAllTenants();
+      },
+      8 * 60,
+    ),
+    45_000,
+  );
 }
 
 export function stopScheduledJobs() {
@@ -194,6 +221,7 @@ async function syncGiftCampaignSchedules() {
       scheduledEndAt: true,
       name: true,
     },
+    take: 5_000,
   });
 
   for (const c of campaigns) {

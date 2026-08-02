@@ -317,7 +317,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
     echo "[dry-run] would: cd ${REMOTE_DIR}/docker && docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build ${BUILD_SVCS[*]}"
   fi
-  echo "[dry-run] would smoke-wait (up to 60s per endpoint, retries every 3s) https://getvoxly.ru/ and https://api.getvoxly.ru/health"
+  echo "[dry-run] would smoke-wait (up to 60s per endpoint) landing, api/health (+ body), /dashboard/{partners,crm,ai,ai/agents}"
   exit 0
 fi
 
@@ -453,12 +453,25 @@ echo "=== Smoke (waiting up to ${SMOKE_TIMEOUT}s per endpoint) ==="
 fail=0
 for url in \
   'https://getvoxly.ru/' \
-  'https://api.getvoxly.ru/health'
+  'https://api.getvoxly.ru/health' \
+  'https://getvoxly.ru/dashboard/partners' \
+  'https://getvoxly.ru/dashboard/crm' \
+  'https://getvoxly.ru/dashboard/ai' \
+  'https://getvoxly.ru/dashboard/ai/agents'
 do
   if ! smoke_wait "$url"; then
     fail=1
   fi
 done
+
+# Public health body must report status ok (not only HTTP 200).
+health_body="$(curl -fsS --max-time 15 'https://api.getvoxly.ru/health' 2>/dev/null || true)"
+if ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_body"; then
+  echo "  FAIL api health body unexpected: ${health_body:0:200}" >&2
+  fail=1
+else
+  echo "  OK   https://api.getvoxly.ru/health body"
+fi
 
 # Extra smoke if twenty rebuilt
 if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then

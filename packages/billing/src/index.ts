@@ -189,6 +189,20 @@ export class RobokassaClient {
 }
 
 /**
+ * Robokassa ResultURL OutSum must match the invoice amount charged via the gateway
+ * (`Payment.amount` = net after partner-balance redemption). Allow 1 kopeck float noise.
+ */
+export function paymentAmountMatchesOutSum(
+  expectedAmount: number | string,
+  outSum: string,
+): boolean {
+  const expected = Number(expectedAmount);
+  const received = Number(String(outSum).replace(',', '.'));
+  if (!Number.isFinite(expected) || !Number.isFinite(received)) return false;
+  return Math.abs(expected - received) < 0.01;
+}
+
+/**
  * Calculate subscription price with period discount
  */
 export function calculateSubscriptionPrice(

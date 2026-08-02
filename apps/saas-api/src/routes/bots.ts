@@ -227,6 +227,7 @@ async function resolveChannelBroadcastAudience(input: {
       platformUserId: true,
       twentyOpportunityId: true,
     },
+    take: 10_000,
   });
 
   let audience = conversations;
@@ -843,35 +844,19 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can start gift bot trial' });
     }
 
-    const prisma = fastify.prisma;
-    const now = new Date();
-    const activeUntil = new Date(now);
-    activeUntil.setDate(activeUntil.getDate() + TRIAL_PERIOD_DAYS);
-
-    const addon = await prisma.addon.upsert({
-      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
-      create: {
-        tenantId,
-        type: PRODUCT_CODES.GIFT_BOT,
-        config: { trial: true },
-        activeUntil,
-        status: 'active',
-      },
-      update: {
-        status: 'active',
-        activeUntil,
-        config: { trial: true },
-      },
-    });
-
+    const result = await startChannelTrial(fastify.prisma, tenantId, PRODUCT_CODES.GIFT_BOT);
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error, addon: result.addon });
+    }
     return reply.send({
       addon: {
-        id: addon.id,
-        type: addon.type,
-        status: addon.status,
-        activeUntil: addon.activeUntil,
+        id: result.addon.id,
+        type: result.addon.type,
+        status: result.addon.status,
+        activeUntil: result.addon.activeUntil,
         isTrial: true,
       },
+      days: result.days,
     });
   });
 
@@ -883,35 +868,21 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(403).send({ error: 'Only owners can start AI bot trial' });
     }
 
-    const prisma = fastify.prisma;
-    const now = new Date();
-    const activeUntil = new Date(now);
-    activeUntil.setDate(activeUntil.getDate() + TRIAL_PERIOD_DAYS);
-
-    const addon = await prisma.addon.upsert({
-      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
-      create: {
-        tenantId,
-        type: PRODUCT_CODES.AI_TELEGRAM,
-        config: { trial: true, maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS },
-        activeUntil,
-        status: 'active',
-      },
-      update: {
-        status: 'active',
-        activeUntil,
-        config: { trial: true, maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS },
-      },
+    const result = await startChannelTrial(fastify.prisma, tenantId, PRODUCT_CODES.AI_TELEGRAM, {
+      maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
     });
-
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error, addon: result.addon });
+    }
     return reply.send({
       addon: {
-        id: addon.id,
-        type: addon.type,
-        status: addon.status,
-        activeUntil: addon.activeUntil,
+        id: result.addon.id,
+        type: result.addon.type,
+        status: result.addon.status,
+        activeUntil: result.addon.activeUntil,
         isTrial: true,
       },
+      days: result.days,
     });
   });
 
