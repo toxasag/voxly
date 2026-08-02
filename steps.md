@@ -567,7 +567,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-0. **Release gate:** `pnpm test:db` (поднять postgres-control) → полный `pnpm verify`; задеплоить Phase-0 фиксы (`saas-api`+packages) после подсчёта тенантов с ai_tg trial без `trialConsumed`. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
+0. **Release gate:** локально `pnpm test:db` при Docker; backfill `trialConsumed` на prod (5 addon) — SQL в WORKLOG 2026-08-02 deploy; `git push`. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
 0b. **Robokassa store activation:** legal pages **на prod**. **Сменить root SSH пароль** (светился в чате).
 0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
 
