@@ -1147,7 +1147,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId, sub: userId } = (request as any).user;
     const prisma = fastify.prisma;
 
-    const [bots, addon, aiAddon, gramjsAddon, waAddon, user, subCounts, conversationCounts, businessAccountGroups, businessConnGroups] =
+    const [bots, addon, aiAddon, gramjsAddon, waAddon, user, subCounts, giftedCounts, conversationCounts, businessAccountGroups, businessConnGroups] =
       await Promise.all([
         prisma.botInstance.findMany({
           where: { tenantId },
@@ -1173,6 +1173,11 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         prisma.giftSubscriber.groupBy({
           by: ['botInstanceId'],
           where: { tenantId },
+          _count: { _all: true },
+        }),
+        prisma.giftSubscriber.groupBy({
+          by: ['botInstanceId'],
+          where: { tenantId, giftDelivered: true },
           _count: { _all: true },
         }),
         prisma.conversation.groupBy({
@@ -1207,6 +1212,9 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
     const subscribersByBot = new Map(
       subCounts.map((row) => [row.botInstanceId, row._count._all]),
+    );
+    const giftedByBot = new Map(
+      giftedCounts.map((row) => [row.botInstanceId, row._count._all]),
     );
     const conversationsByBot = new Map(
       conversationCounts.map((row) => [row.botInstanceId, row._count._all]),
@@ -1277,6 +1285,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           telegramShortDescription: b.telegramShortDescription ?? null,
           hasGiftCampaign: campaigns.length > 0,
           subscriberCount: subscribersByBot.get(b.id) ?? 0,
+          giftedCount: giftedByBot.get(b.id) ?? 0,
           conversationCount: conversationsByBot.get(b.id) ?? 0,
           businessConnectionCount: businessConnectionsByBot.get(b.id) ?? 0,
           campaigns: campaigns.map(serializeCampaign),
