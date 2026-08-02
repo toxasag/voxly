@@ -1225,16 +1225,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
-    const serializeAddon = (a: typeof addon) =>
-      a
-        ? {
-            id: a.id,
-            status: a.status,
-            activeUntil: a.activeUntil,
-            isTrial: Boolean((a.config as any)?.trial),
-            isActive: a.status === 'active' && a.activeUntil > new Date(),
-          }
-        : null;
+    const serializeAddon = (a: typeof addon) => {
+      const meta = trialMeta(a);
+      if (!a) return null;
+      return {
+        id: a.id,
+        status: a.status,
+        activeUntil: a.activeUntil,
+        isTrial: meta.isTrial,
+        isActive: meta.isActive,
+        trialAvailable: meta.trialAvailable,
+      };
+    };
 
     return reply.send({
       telegramLinked: Boolean(user?.telegramUserId),

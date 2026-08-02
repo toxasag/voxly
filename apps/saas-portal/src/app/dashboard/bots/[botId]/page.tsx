@@ -6,6 +6,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Megaphone, Trash2, Upload } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
+import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -17,6 +18,13 @@ import { Alert } from '@/components/portal/alert';
 import { ProjectPicker } from '@/components/portal/project-picker';
 import { TELEGRAM_CLIENT_MD_HINT } from '@voxly/shared';
 import { TelegramPreview } from '@/components/telegram-preview';
+
+type GiftAddonState = {
+  isActive: boolean;
+  isTrial: boolean;
+  trialAvailable?: boolean;
+  activeUntil: string | null;
+};
 
 interface GiftFunnelMessage {
   delayMinutes: number;
@@ -165,6 +173,8 @@ export default function BotSettingsPage() {
   const [funnelLocalPreviews, setFunnelLocalPreviews] = useState<Record<string, string>>({});
   const [funnelPreviewKey, setFunnelPreviewKey] = useState<FunnelPreviewKey>('start');
   const [subscribers, setSubscribers] = useState<any[]>([]);
+  const [giftAddon, setGiftAddon] = useState<GiftAddonState | null>(null);
+  const [giftPrice, setGiftPrice] = useState(500);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<
     { id: string; role: string; content: string; sentAt: string }[]
@@ -206,6 +216,10 @@ export default function BotSettingsPage() {
       const row = (json.bots as BotRow[]).find((b) => b.id === botId);
       if (!row) throw new Error('Бот не найден');
       setBot(row);
+      setGiftAddon(json.giftAddon ?? null);
+      if (typeof json.giftBotPriceMonthly === 'number') {
+        setGiftPrice(json.giftBotPriceMonthly);
+      }
       if (refreshForm) {
         setBotDescription(row.telegramDescription || '');
         setBotShortDescription(row.telegramShortDescription || '');
@@ -264,6 +278,43 @@ export default function BotSettingsPage() {
 
   const subscribeLabel = funnel?.subscribeButton?.confirmLabel || 'Я подписался ✅';
   const botPreviewName = bot?.botUsername ? `@${bot.botUsername}` : undefined;
+
+  const channelReady = Boolean(channelId && channelId !== 'pending');
+  const startReady = Boolean(funnel?.start?.text?.trim());
+  const giftReady = Boolean(
+    funnel &&
+      (funnel.gift.telegramFileId ||
+        (funnel.gift.type === 'link' && funnel.gift.url) ||
+        (funnel.gift.url && /^https?:\/\//i.test(funnel.gift.url))),
+  );
+  const promoPublished = Boolean(promo.publishedAt);
+  const hasSubscribers = subscribers.length > 0;
+  const setupSteps = [
+    { id: 'section-channel', label: 'Канал привязан', done: channelReady },
+    { id: 'section-start', label: 'Стартовое сообщение', done: startReady },
+    { id: 'section-funnel', label: 'Подарок задан', done: giftReady },
+    { id: 'section-promo', label: 'Пост опубликован', done: promoPublished },
+    { id: 'section-subs', label: 'Есть подписчики', done: hasSubscribers },
+  ] as const;
+  const nextStep = setupSteps.find((s) => !s.done) ?? null;
+  const trialAvailable = giftAddon?.trialAvailable ?? giftAddon == null;
+  const subActive = Boolean(giftAddon?.isActive);
+  const isTrial = Boolean(subActive && giftAddon?.isTrial);
+
+  const payGift = async () => {
+    setBusy('pay');
+    setError('');
+    try {
+      await startCheckout({ productCode: 'gift_bot', periodMonths: 1 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy('');
+    }
+  };
+
+  const scrollToSection = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   const setFunnelLocal = (key: string, url?: string) => {
     setFunnelLocalPreviews((prev) => {
@@ -686,20 +737,83 @@ export default function BotSettingsPage() {
             {channelUsername && (
               <Badge variant="outline">@{channelUsername.replace(/^@/, '')}</Badge>
             )}
+            {isTrial && <Badge variant="warning">пробный период</Badge>}
+            {subActive && !isTrial && <Badge variant="success">тариф</Badge>}
+            {!subActive && <Badge variant="warning">тариф выкл</Badge>}
           </div>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/dashboard/mailing/bot">
-            <Megaphone className="h-4 w-4" /> Рассылки
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {(!subActive || isTrial) && (
+            <Button
+              variant="solid"
+              size="sm"
+              onClick={() => void payGift()}
+              disabled={busy === 'pay'}
+            >
+              {busy === 'pay' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {isTrial ? `Оплатить ${giftPrice} ₽` : `Оплатить ${giftPrice} ₽`}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/dashboard/mailing/bot">
+              <Megaphone className="h-4 w-4" /> Рассылки
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {error && <Alert variant="error">{error}</Alert>}
       {ok && <Alert variant="success">{ok}</Alert>}
 
+      <section className="rounded-2xl border border-border px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Готовность воронки
+            </p>
+            <p className="mt-1 text-sm text-foreground">
+              {nextStep
+                ? `Следующий шаг: ${nextStep.label}`
+                : 'Воронка готова — можно вести трафик в пост'}
+            </p>
+            {(!subActive || isTrial) && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isTrial
+                  ? `Пробный период до ${giftAddon?.activeUntil ? new Date(giftAddon.activeUntil).toLocaleDateString('ru-RU') : '—'}. На оплате можно списать партнёрский баланс.`
+                  : trialAvailable
+                    ? 'Сначала активируйте trial или оплатите тариф на странице списка ботов.'
+                    : `Тариф выключен — оплатите ${giftPrice} ₽/мес. На оплате можно списать партнёрский баланс.`}
+              </p>
+            )}
+          </div>
+          {nextStep && (
+            <Button variant="secondary" size="sm" onClick={() => scrollToSection(nextStep.id)}>
+              Перейти к шагу
+            </Button>
+          )}
+        </div>
+        <ul className="mt-3 flex flex-wrap gap-2">
+          {setupSteps.map((step) => (
+            <li key={step.id}>
+              <button
+                type="button"
+                onClick={() => scrollToSection(step.id)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                  step.done
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                    : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {step.done ? '✓ ' : '○ '}
+                {step.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       {/* Projects / campaigns — only one active at a time */}
-      <Card className="overflow-hidden shadow-[var(--elevation-1)]">
+      <Card id="section-projects" className="overflow-hidden shadow-[var(--elevation-1)]">
         <CardHeader className="border-b border-border/80 bg-secondary/25">
           <CardTitle>Проекты</CardTitle>
           <CardDescription>
@@ -726,7 +840,7 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 1.1 Channel */}
-      <Card>
+      <Card id="section-channel">
         <CardHeader>
           <CardTitle>1.1 Канал</CardTitle>
           <CardDescription>
@@ -803,7 +917,7 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 1.3 Start message — after /start in chat */}
-      <Card>
+      <Card id="section-start">
         <CardHeader>
           <CardTitle>1.3 Стартовое сообщение бота</CardTitle>
           <CardDescription>
@@ -914,7 +1028,7 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 2. Promo post */}
-      <Card>
+      <Card id="section-promo">
         <CardHeader>
           <CardTitle>2. Пост в канале об акции</CardTitle>
           <CardDescription>
@@ -1027,13 +1141,13 @@ export default function BotSettingsPage() {
         </CardContent>
       </Card>
 
-      {/* 3. Funnel / warmup — remaining steps (start is in 1.2) */}
-      <Card>
+      {/* 3. Funnel / warmup — remaining steps (start is in 1.3) */}
+      <Card id="section-funnel">
         <CardHeader>
           <CardTitle>3. Дальнейшие сообщения бота</CardTitle>
           <CardDescription>
             Что бот пишет после /start: напоминания, подарок, follow-up. Стартовое сообщение — в блоке
-            1.2. Справа — превью в Telegram. Текст: {TELEGRAM_CLIENT_MD_HINT}
+            1.3. Справа — превью в Telegram. Текст: {TELEGRAM_CLIENT_MD_HINT}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1322,7 +1436,7 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* Subscribers */}
-      <Card>
+      <Card id="section-subs">
         <CardHeader>
           <CardTitle>Подписчики и переписка</CardTitle>
         </CardHeader>
