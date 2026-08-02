@@ -1,3 +1,10 @@
+### 2026-08-02 — Gift bot detail в стиле partners
+
+- Goal: `[botId]` как partners — orange hero, шаги 1–2–3, land-секции.
+- Changes: `gift-bot-detail-hero.tsx`; readiness grid; секции `land-display` / `border-black/10`.
+- Deploy: `./scripts/prod-deploy.sh saas-portal`. Commit `02df37e`.
+- Verify: smoke portal **200**. Hard-refresh `/dashboard/bots/<id>`.
+
 ### 2026-08-02 — Gift bots UX (partners-style hero + billing + checklist)
 
 - Goal: `/dashboard/bots` и `[botId]` информативнее, в стиле partners; честный биллинг `gift_bot`; next-step checklist.
