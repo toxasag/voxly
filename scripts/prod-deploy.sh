@@ -42,7 +42,7 @@ usage() {
 Usage: ./scripts/prod-deploy.sh [--dry-run] [--skip-backup] <service[,service…]>
 
 Services:
-  saas-portal | saas-api | gift-bot-worker | manager-bot-service
+  saas-portal | saas-api | gift-bot-worker | manager-bot-service | platform-bot-service
   ai-telegram-worker | ai-whatsapp-worker | gramjs-bridge | evolution-api | twenty | compose | all-apps
 
 Examples:
@@ -155,6 +155,11 @@ paths_for_service() {
       echo "packages/"
       echo "apps/manager-bot-service/"
       ;;
+    platform-bot-service)
+      printf '%s\n' "${ROOT_MANIFESTS[@]}"
+      echo "packages/"
+      echo "apps/platform-bot-service/"
+      ;;
     ai-telegram-worker)
       printf '%s\n' "${ROOT_MANIFESTS[@]}"
       echo "packages/"
@@ -178,6 +183,7 @@ paths_for_service() {
       echo "docker/patch-twenty-functions-url.cjs"
       echo "docker/patch-twenty-front-component-url.cjs"
       echo "docker/patch-twenty-file-base64.cjs"
+      echo "docker/patch-twenty-workspace-limit.cjs"
       echo "docker/set-opportunity-kanban-default.sql"
       echo "docker/set-opportunity-kanban-card-defaults.sql"
       echo "docker/set-chat-tab-position.sql"
@@ -197,6 +203,7 @@ paths_for_service() {
       paths_for_service saas-api
       paths_for_service gift-bot-worker
       paths_for_service manager-bot-service
+      paths_for_service platform-bot-service
       paths_for_service ai-telegram-worker
       paths_for_service ai-whatsapp-worker
       paths_for_service twenty
@@ -216,13 +223,14 @@ compose_services_for() {
     saas-api) echo "saas-api" ;;
     gift-bot-worker) echo "gift-bot-worker" ;;
     manager-bot-service) echo "manager-bot-service" ;;
+    platform-bot-service) echo "platform-bot-service" ;;
     ai-telegram-worker) echo "ai-telegram-worker" ;;
     ai-whatsapp-worker) echo "ai-whatsapp-worker" ;;
     gramjs-bridge) echo "gramjs-bridge" ;;
     evolution-api) echo "evolution-api" ;;
     twenty) echo "twenty-server twenty-worker" ;;
     compose) echo "" ;; # files only
-    all-apps) echo "saas-api saas-portal gift-bot-worker manager-bot-service ai-telegram-worker ai-whatsapp-worker twenty-server twenty-worker" ;;
+    all-apps) echo "saas-api saas-portal gift-bot-worker manager-bot-service platform-bot-service ai-telegram-worker ai-whatsapp-worker twenty-server twenty-worker" ;;
     *) echo "" ;;
   esac
 }
@@ -306,7 +314,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   NEEDS_MIGRATE=0
   for svc in "${BUILD_SVCS[@]}"; do
     case "$svc" in
-      saas-api|gift-bot-worker|manager-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
+      saas-api|gift-bot-worker|manager-bot-service|platform-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
         NEEDS_MIGRATE=1; break ;;
     esac
   done
@@ -373,7 +381,7 @@ remote "rm -f '${REMOTE_DIR}/docker/docker-compose.override.yml' || true"
 NEEDS_MIGRATE=0
 for svc in "${BUILD_SVCS[@]}"; do
   case "$svc" in
-    saas-api|gift-bot-worker|manager-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
+    saas-api|gift-bot-worker|manager-bot-service|platform-bot-service|ai-telegram-worker|ai-whatsapp-worker|gramjs-bridge)
       NEEDS_MIGRATE=1; break ;;
   esac
 done

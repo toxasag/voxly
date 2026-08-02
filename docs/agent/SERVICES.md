@@ -7,6 +7,7 @@
 | **saas-api** | `apps/saas-api` | 3002 | Control plane: auth, billing, tenant, bots, admin, analytics, BullMQ | PG-control, Redis, Twenty GQL, TG Manager token |
 | **saas-portal** | `apps/saas-portal` | 3001 | Лендинг, login/register, dashboard, bots UI, `/admin` | saas-api (`/api` rewrite) |
 | **manager-bot-service** | `apps/manager-bot-service` | 3003 | Managed Bots: provision link, `getManagedBotToken`, encrypt token | PG-control, Redis, TG Manager Bot |
+| **platform-bot-service** | `apps/platform-bot-service` | 3009 | `@GetVoxlybot`: OTP deep-link webhook + support inbox → saas-api | saas-api service token, PLATFORM_BOT_TOKEN |
 | **gift-bot-worker** | `apps/gift-bot-worker` | 3004 | Воронка, подписка, gift, promo clicks, broadcasts, CRM sync, fireGoal | PG-control, Redis, Twenty, bot tokens |
 | **ai-telegram-worker** | `apps/ai-telegram-worker` | 3005 | AI Telegram Business + OpenRouter + ASR/vision + `/internal/inbound` | PG-control, OpenRouter, Twenty |
 | **gramjs-bridge** | `apps/gramjs-bridge` | 3008 | Personal TG QR session (profile `gramjs`) → AI worker | PG-control, Telegram api_id/hash, ai-telegram-worker |

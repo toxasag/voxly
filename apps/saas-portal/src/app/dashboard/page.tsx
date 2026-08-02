@@ -331,7 +331,7 @@ export default function DashboardPage() {
     (p.aiBusiness.includedSlots || 10) + (p.aiBusiness.extraSlots || 0);
   const phaseEntries = Object.entries(data.traffic.giftPhases || {});
   const refLink = data.money.referralCode
-    ? `https://getvoxly.ru/r/${data.money.referralCode}`
+    ? `https://getvoxly.ru/?ref=${encodeURIComponent(data.money.referralCode)}`
     : null;
 
   return (
@@ -396,6 +396,21 @@ export default function DashboardPage() {
           </div>
         </Alert>
       )}
+
+      <Alert className="mb-6" variant="info">
+        <p>
+          Техподдержка — напишите боту{' '}
+          <a
+            href="https://t.me/GetVoxlybot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold underline underline-offset-2"
+          >
+            @GetVoxlybot
+          </a>
+          . Ответим в Telegram.
+        </p>
+      </Alert>
 
       <section className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat

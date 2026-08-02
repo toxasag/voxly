@@ -12,8 +12,8 @@
 |---|---|---|
 | `/` лендинг | ✅ AIDA conversion landing; industrial-tech art direction; маскот **Voxly**; Unbounded + Manrope; 7 дней free, CRM от 500 ₽; mobile sticky CTA; реквизиты ИП | `page.tsx` + `components/landing/vox-relay.tsx` |
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
-| `/login`, `/register` | ✅ shadcn Card/Input; register: shadcn Checkbox оферта + ПДн | `login/page.tsx`, `register/page.tsx` |
-| `/dashboard` | ✅ **stats overview**: messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; link → partners | `dashboard/page.tsx` |
+| `/login`, `/register` | ✅ OTP через `@GetVoxlybot` (`register/start`→`confirm`, `login`→`login/confirm`); superadmin login без OTP; checkbox оферта+ПДн на register | `login/page.tsx`, `register/page.tsx` |
+| `/dashboard` | ✅ **stats overview** + teaser техподдержки `@GetVoxlybot`; messages, dialogs, leads, AI spend, tariffs, gift funnel; CRM open; partners | `dashboard/page.tsx` |
 | `/dashboard/partners` | ✅ реферальная программа: основная ссылка/код; проекты (campaign links); stats за период; расходы по проекту; pending/earned/net; **резервы баланса** (holds), **заявки на вывод**, **транзакции**, **«Оплатить балансом»** (applyBalanceRub через checkout) | `dashboard/partners/page.tsx` |
 | `/dashboard/crm` | ✅ amber CRM portal: Trial/seats, URL+SSO, Robokassa, invite; **hard lock paywall** when sub ended (ADR-023) | `dashboard/crm/page.tsx` |
 | `/dashboard/bots` | ✅ список gift-ботов | `dashboard/bots/page.tsx` |
@@ -31,6 +31,7 @@
 | `/dashboard/ai/agents` | ✅ list/create/**edit**; **SKU `ai_agent` 500₽/слот** (gate 402 + grandfather); assign; **usage** byAgent+byChannel; KB + won-deal; **пополнение баланса AI**; hero | `dashboard/ai/agents/page.tsx` |
 | `/dashboard/ai/[botId]` | ✅ thin redirect → `/dashboard/ai?bot=` | `dashboard/ai/[botId]/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar супер-админ **Обзор** + **CRM портал** (не кабинет) | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
+| `/admin/bot` | ✅ GetVoxlybot: подписчики, очередь поддержки (reply), рассылки, notify trial/paid expiry | `admin/bot/page.tsx` |
 | `/admin/crm` | ✅ платформенные цены + per-tenant pricing; отчёт CRM (trial/paid/revenue); ресурсы (RAM оценка + диск по клиентам, 60s refresh); purge; CRM-login; impersonate | `admin/crm/page.tsx` |
 | `/admin/partners` | ✅ супер-админ партнёрской программы: список партнёров + метрики за период, карточка партнёра (рефералы, коды, проекты, транзакции), дефолтное правило вознаграждения + **индивидуальное правило на тенанта** (+ **productScope**), ручные выплаты/корректировки (`ReferralTransaction`), **очередь заявок на вывод** (`admin-withdrawals-queue.tsx`), вкл/выкл кодов и проектов, блокировка партнёра | `admin/partners/page.tsx` + `components/portal/admin-partners-rule.tsx`, `admin-partners-detail.tsx`, `admin-withdrawals-queue.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
@@ -40,7 +41,7 @@
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off; **dedupe** shell + SQL | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/dedupe-cabinet-nav.sql`) |
 | Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
 | Sidebar workspace vs user clarity | ✅ top-left «CRM · {slug}» + chip «Вы: {member}» (workspace ≠ profile); Chat operator = Twenty member name (not «Менеджер») | `twenty-shell-ux.js` + `crm-chat` **0.1.23** + `resolveTwentyOperatorLabel` |
-| Сделки views = «Канбан» + «Списком» | ✅ default INDEX **Канбан** (KANBAN, `openRecordIn=SIDE_PANEL`, width 320); secondary TABLE **Списком**; stages = john golden; **locked** Новый лид / Успешная / Провалена (PG trigger); middle stages editable; card fields name/createdAt/amount/…/noteTargets | SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` + `twenty-client.applyWorkspaceDefaults` |
+| Сделки views = «Канбан» + «Списком» | ✅ default INDEX **Канбан** (`type=KANBAN`, stage groupBy, `openRecordIn=SIDE_PANEL`, width 320); secondary TABLE **Списком**; stages = john golden; **locked** Новый лид / Успешная / Провалена (PG trigger); middle stages editable; card fields name/createdAt/amount/…/noteTargets | SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` (INC-081) + `twenty-client.applyWorkspaceDefaults` |
 | Person «Социальные сети» | ✅ LinkedIn + Telegram/WhatsApp/OK/VK/Instagram/Facebook/Threads/**Сайт (website)**; WA business profile fills email + website (+ IG/FB if URLs in profile) | `twenty-client.ensureSocialFields` |
 | Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
 
@@ -69,9 +70,19 @@ Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-previe
 ### Auth `/api/auth`
 | Method | Path | ✅ |
 |---|---|---|
-| POST | `/register`, `/login` | ✅ |
+| POST | `/register/start`, `/register/confirm` | ✅ Telegram OTP via `@GetVoxlybot`; confirm создаёт User/Tenant + provision |
+| POST | `/register` | ✅ legacy → 400 (use start/confirm) |
+| POST | `/login`, `/login/confirm` | ✅ OTP каждый логин; **superadmin** — сразу JWT без OTP |
 | GET | `/me` | ✅ flat `user.tenant` |
 | POST | `/invite` | ✅ Voxly+Twenty user; returns `crmUrl`+`tempPassword` (SMTP deferred); skips `/install-apps` for new member; **blocked when CRM locked** (ADR-023) |
+
+### Platform bot (internal + admin)
+| Method | Path | ✅ |
+|---|---|---|
+| POST | `/api/internal/platform-bot/bind-auth` | ✅ service-token: bind nonce → send OTP |
+| POST | `/api/internal/platform-bot/ensure-subscriber` | ✅ `/start` без auth payload |
+| POST | `/api/internal/platform-bot/support-inbound` | ✅ DM → inbox |
+| GET/POST | `/api/admin/platform-bot/*` | ✅ stats, subscribers, support reply/read, broadcasts, notify-expiring |
 
 ### Billing `/api/billing`
 | Method | Path | ✅ |
@@ -174,7 +185,9 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 |---|---|---|
 | GET | `/`, `/dashboard?from=&to=` | ✅ stats, campaigns, expenses, referrals list |
 | POST | `/campaigns`, `/campaigns/:id/expenses` | ✅ project links + manual spend |
-| GET | `/rules`, `/click/:code` → `/register?ref=` | ✅ |
+| GET | `/rules`, `/click/:code` → `/register?ref=` | ✅ (legacy; landing also calls click) |
+| Portal | `GET /r/:code` → `/?ref=` | ✅ legacy short links |
+| Portal | `/?ref=` + CTA → `/register?ref=` | ✅ partner links; sessionStorage + click once |
 | POST | `/rules` (superadmin) | ✅ |
 | GET | `/campaigns/code-available?code=` | ✅ inline-валидация; `POST /campaigns` отдаёт **409** на занятый кастомный код |
 
@@ -253,7 +266,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | GramJS portal UI | saas-portal `/dashboard/ai/gramjs` | ✅ QR + status + accounts; browser never hits bridge |
 | Twenty App SDK deal chat | twenty-app/voxly-crm-chat + `/api/crm/chat` | ✅ tab + format toolbar + multi-📎 (INC-017/018/020 JPEG shrink) + pinned composer (INC-019) + remount (INC-016) + photo preview (INC-014); inject off |
 | `installApp` in provisioning | queues + twenty-client | ✅ private `uploadAppTarball` + `installApplication` + set `WORKSPACE_ORIGIN`/`VOXLY_API_URL` (tarball in saas-api image / `VOXLY_CRM_CHAT_TARBALL`) |
-| Skip `/install-apps` onboarding | `twenty-client.skipInstallAppsOnboarding` | ✅ empty `triggerInstallAppsOnboardingStep` on **owner provision** and **invited member** sign-up |
+| Skip `/install-apps` onboarding | `twenty-client.skipInstallAppsOnboarding` + SQL `clearTwentyOnboardingFlags` | ✅ GraphQL skip (owner + invite) + SQL DELETE all `ONBOARDING_*_PENDING` early/late in provision (INC-080) |
 | RU object labels on provision | `applyWorkspaceDefaults` + SQL | ✅ GraphQL labels Сделка/Сделки; SQL `ensureOpportunityRuDefaults` / `set-opportunity-kanban-default.sql` sets `isLabelSyncedWithName=false` + INDEX **Канбан** + TABLE **Списком** (strips poisoned kanban `overrides`); shell-ux CTA → «Новая Сделка» |
 | `VOXLY_SERVICE_TOKEN` on Twenty | compose twenty-server/worker | ✅ LOCAL logic → saas-api (INC-026) |
 

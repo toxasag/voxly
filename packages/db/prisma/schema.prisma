@@ -72,13 +72,15 @@ model User {
   role            UserRole   @default(member)
   firstName       String?
   lastName        String?
-  telegramUserId  BigInt?    @unique // for Managed Bots linking
+  telegramUserId  BigInt?    @unique // Managed Bots + GetVoxlybot OTP
+  telegramLinkedAt DateTime?
   isEmailVerified Boolean    @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
   tenantMembers   TenantMember[]
   auditLogs       AuditLog[]
+  platformSubscriber PlatformBotSubscriber?
 
   @@index([email])
 }
@@ -887,6 +889,72 @@ model TelegramSighting {
   @@index([telegramUserId])
   @@index([peerId])
   @@index([sourceTenantId])
+}
+
+// ============================================================
+// Platform bot (@GetVoxlybot): OTP, support, broadcasts
+// ============================================================
+
+model AuthOtpChallenge {
+  id              String    @id @default(cuid())
+  nonce           String    @unique
+  purpose         String    // register | login | link
+  codeHash        String?
+  telegramUserId  BigInt?
+  chatId          BigInt?
+  userId          String?
+  pendingPayload  Json?
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  attempts        Int       @default(0)
+  createdAt       DateTime  @default(now())
+
+  @@index([telegramUserId, purpose])
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+model PlatformBotSubscriber {
+  id              String    @id @default(cuid())
+  telegramUserId  BigInt    @unique
+  chatId          BigInt
+  userId          String?   @unique
+  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  username        String?
+  blocked         Boolean   @default(false)
+  linkedAt        DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model PlatformSupportMessage {
+  id              String    @id @default(cuid())
+  telegramUserId  BigInt
+  chatId          BigInt
+  direction       String    // inbound | outbound
+  text            String
+  username        String?
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([telegramUserId, createdAt])
+  @@index([readAt])
+}
+
+model PlatformBroadcast {
+  id           String    @id @default(cuid())
+  text         String
+  status       String    @default("draft") // draft | scheduled | sending | sent | failed
+  scheduledAt  DateTime?
+  sentCount    Int       @default(0)
+  failCount    Int       @default(0)
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sentAt       DateTime?
+
+  @@index([status, scheduledAt])
 }
 
 // ============================================================

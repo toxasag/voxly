@@ -215,6 +215,8 @@ services:
       ROBOKASSA_HASH_ALG: ${ROBOKASSA_HASH_ALG:-sha256}
       TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
       TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
+      PLATFORM_BOT_TOKEN: ${PLATFORM_BOT_TOKEN:-}
+      PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:-GetVoxlybot}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
@@ -278,6 +280,36 @@ services:
       - "traefik.http.routers.portal-portals.priority=10"
       - "traefik.http.routers.twenty-wildcard.priority=20"
       - "traefik.http.services.saas-portal.loadbalancer.server.port=3001"
+    networks:
+      - voxly-net
+
+  # --- Platform Bot (@GetVoxlybot OTP + support) ---
+  platform-bot-service:
+    build:
+      context: ..
+      dockerfile: apps/platform-bot-service/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      saas-api:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      PLATFORM_BOT_TOKEN: ${PLATFORM_BOT_TOKEN}
+      PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:-GetVoxlybot}
+      PLATFORM_WEBHOOK_URL: https://api.getvoxly.ru/bots/platform/webhook
+      PLATFORM_BOT_PORT: "3009"
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      SAAS_API_URL: http://saas-api:3002
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.platform-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/bots/platform`)"
+      - "traefik.http.routers.platform-bot.entrypoints=websecure"
+      - "traefik.http.routers.platform-bot.service=platform-bot-service"
+      - "traefik.http.services.platform-bot-service.loadbalancer.server.port=3009"
     networks:
       - voxly-net
 

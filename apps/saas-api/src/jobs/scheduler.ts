@@ -25,6 +25,41 @@ export function startScheduledJobs() {
   );
   intervals.push(subInterval);
 
+  // Trial/paid expiry Telegram reminders (daily) + platform broadcasts scanner
+  const expiryNotifyInterval = setInterval(
+    safeJob(
+      'notify-expiring-subscriptions',
+      async () => {
+        const { notifyExpiringSubscriptions } = await import(
+          '../services/platform-expiry-notify.js'
+        );
+        const r = await notifyExpiringSubscriptions(
+          (await import('@voxly/db')).prisma,
+          { days: 3, kind: 'both' },
+        );
+        console.log('[scheduler] expiry notify', r);
+      },
+      20 * 60 * 60,
+    ),
+    24 * 60 * 60 * 1000,
+  );
+  intervals.push(expiryNotifyInterval);
+
+  const platformBroadcastInterval = setInterval(
+    safeJob(
+      'platform-broadcasts',
+      async () => {
+        const { processDuePlatformBroadcasts } = await import(
+          '../services/platform-broadcasts.js'
+        );
+        await processDuePlatformBroadcasts((await import('@voxly/db')).prisma);
+      },
+      50,
+    ),
+    30 * 1000,
+  );
+  intervals.push(platformBroadcastInterval);
+
   // Check AI wallet balance alerts every 6 hours
   const aiInterval = setInterval(
     safeJob('check-ai-wallet-alerts', checkAiWalletAlerts, 5 * 60 * 60),

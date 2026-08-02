@@ -4,7 +4,16 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowRight, Loader2 } from 'lucide-react';
+import { ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
+import { REF_STORAGE_KEY } from '@/lib/referral-ref';
+
+type OtpChallenge = {
+  needsOtp: true;
+  nonce: string;
+  botDeepLink: string;
+  botUsername: string;
+  message?: string;
+};
 
 /** Cyrillic → latin for URL slug; latin/digits kept. */
 function toCompanySlug(raw: string): string {
@@ -82,14 +91,30 @@ function RegisterForm() {
   const [workspaceName, setWorkspaceName] = useState('');
   const [refCode, setRefCode] = useState('');
   const [acceptedLegal, setAcceptedLegal] = useState(false);
+  const [otp, setOtp] = useState<OtpChallenge | null>(null);
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const companySlug = useMemo(() => toCompanySlug(workspaceName), [workspaceName]);
 
   useEffect(() => {
-    const ref = searchParams.get('ref')?.trim();
-    if (ref) setRefCode(ref);
+    const fromUrl = searchParams.get('ref')?.trim();
+    if (fromUrl) {
+      setRefCode(fromUrl);
+      try {
+        sessionStorage.setItem(REF_STORAGE_KEY, fromUrl);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      const stored = sessionStorage.getItem(REF_STORAGE_KEY)?.trim();
+      if (stored) setRefCode(stored);
+    } catch {
+      /* ignore */
+    }
   }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -109,14 +134,42 @@ function RegisterForm() {
       return;
     }
 
-    if (!acceptedLegal) {
+    if (!otp && !acceptedLegal) {
       setError('Нужно принять оферту и согласие на обработку персональных данных.');
       setLoading(false);
       return;
     }
 
     try {
-      const res = await fetch('/api/auth/register', {
+      if (otp) {
+        const res = await fetch('/api/auth/register/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nonce: otp.nonce, code: otpCode.trim() }),
+        });
+        const text = await res.text();
+        let data: { token?: string; error?: unknown } | null = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          throw new Error(text || 'Не удалось подтвердить код');
+        }
+        if (!res.ok) {
+          const errMsg =
+            typeof data?.error === 'string'
+              ? data.error
+              : data?.error
+                ? JSON.stringify(data.error)
+                : 'Не удалось подтвердить код';
+          throw new Error(errMsg);
+        }
+        if (!data?.token) throw new Error('Нет токена в ответе');
+        localStorage.setItem('voxly_token', data.token);
+        router.push('/dashboard');
+        return;
+      }
+
+      const res = await fetch('/api/auth/register/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -129,7 +182,7 @@ function RegisterForm() {
       });
 
       const text = await res.text();
-      let data: { token?: string; error?: unknown } | null = null;
+      let data: (OtpChallenge & { token?: string; error?: unknown }) | null = null;
       try {
         data = text ? JSON.parse(text) : null;
       } catch {
@@ -146,9 +199,11 @@ function RegisterForm() {
         throw new Error(errMsg);
       }
 
-      if (!data?.token) throw new Error('Нет токена в ответе');
-      localStorage.setItem('voxly_token', data.token);
-      router.push('/dashboard');
+      if (data?.needsOtp && data.nonce) {
+        setOtp(data);
+        return;
+      }
+      throw new Error('Ожидался шаг подтверждения через Telegram');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Ошибка регистрации');
     } finally {
@@ -207,9 +262,13 @@ function RegisterForm() {
 
         <section className="flex bg-white px-5 py-8 sm:px-10 sm:py-12 lg:items-center lg:px-14 lg:py-12">
           <div className="land-rise mx-auto w-full max-w-[420px]">
-            <h2 className="text-2xl tracking-[-0.03em] sm:text-3xl">Регистрация</h2>
+            <h2 className="text-2xl tracking-[-0.03em] sm:text-3xl">
+              {otp ? 'Код из Telegram' : 'Регистрация'}
+            </h2>
             <p className="mt-2 text-sm text-[var(--land-muted)]">
-              Заполни поля — и сразу в кабинет.
+              {otp
+                ? otp.message || 'Откройте @GetVoxlybot и введите код'
+                : 'Заполни поля, подтверди код в боте — и в кабинет.'}
             </p>
 
             {error ? (
@@ -222,6 +281,48 @@ function RegisterForm() {
             ) : null}
 
             <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+              {otp ? (
+                <>
+                  <a
+                    href={otp.botDeepLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="land-btn flex w-full items-center justify-center gap-2"
+                  >
+                    Открыть @{otp.botUsername}
+                    <ExternalLink className="h-4 w-4" aria-hidden />
+                  </a>
+                  <div>
+                    <label htmlFor="otp" className="land-label">
+                      Код из бота
+                    </label>
+                    <input
+                      id="otp"
+                      name="otp"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="6 цифр"
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value)}
+                      required
+                      className="land-input tracking-widest"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="text-sm font-medium text-[var(--land-muted)] underline-offset-4 hover:underline"
+                    onClick={() => {
+                      setOtp(null);
+                      setOtpCode('');
+                      setError('');
+                    }}
+                  >
+                    ← Изменить данные
+                  </button>
+                </>
+              ) : null}
+              {!otp ? (
+              <>
               <div>
                 <label htmlFor="firstName" className="land-label">
                   Имя
@@ -350,14 +451,16 @@ function RegisterForm() {
                   .
                 </span>
               </label>
+              </>
+              ) : null}
 
               <button
                 type="submit"
                 className="land-btn w-full"
-                disabled={loading || !acceptedLegal}
+                disabled={loading || (!otp && !acceptedLegal)}
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                {loading ? 'Создаём…' : 'Создать аккаунт'}
+                {loading ? 'Проверяем…' : otp ? 'Подтвердить и создать' : 'Продолжить'}
                 {!loading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
               </button>
             </form>

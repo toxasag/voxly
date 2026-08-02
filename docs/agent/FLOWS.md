@@ -2,25 +2,31 @@
 
 Пути — точки входа; детали — graphify/code.
 
-## 1. Регистрация → trial CRM → SSO
+## 1. Регистрация → OTP GetVoxlybot → trial CRM → SSO
 
 ```mermaid
 sequenceDiagram
   participant P as saas-portal
   participant A as saas-api
+  participant B as GetVoxlybot
   participant Q as BullMQ
   participant T as Twenty
-  P->>A: POST /api/auth/register
-  A->>A: Tenant + User + Subscription crm_base 7d trial
+  P->>A: POST /api/auth/register/start
+  A-->>P: nonce + t.me/GetVoxlybot?start=auth_nonce
+  P->>B: user opens deep-link /start
+  B->>A: bind-auth → send 6-digit OTP
+  P->>A: POST /api/auth/register/confirm
+  A->>A: Tenant + User + telegramUserId + Subscription crm_base 7d trial
   A->>Q: enqueueProvisioning
   Q->>T: signUp / workspace + ru-RU defaults
   P->>A: GET /api/tenant/crm-login
   A-->>P: short-lived SSO URL → new tab :3007
 ```
 
-- Auth: `apps/saas-api/src/routes/auth.ts`
+- Auth OTP: `apps/saas-api/src/routes/auth.ts`, `services/auth-otp.ts`; bot webhook `apps/platform-bot-service`
+- Login: `POST /login` → `{ needsOtp, nonce }` (superadmin — сразу JWT); `POST /login/confirm`
 - Provision: `apps/saas-api/src/services/provisioning.ts`, `jobs/queues.ts`
-- Portal: `apps/saas-portal/src/app/register/page.tsx`, dashboard CRM button
+- Portal: `apps/saas-portal/src/app/register/page.tsx`, `login/page.tsx`, dashboard CRM button
 - **Hard lock (ADR-023):** after trial end or paid endsAt+grace / `tenant.suspended` → SSO/`crm-login` 402|403, invite blocked, CRM chat+media gated; Twenty workspace `activationStatus=INACTIVE` (reversible on pay). Shared: `evaluateCrmAccess`. Portal: `/dashboard/crm` paywall.
 
 ## 2. Gift-бот: trial → Managed Bot → кампания
@@ -100,7 +106,7 @@ Signatures (hash = `ROBOKASSA_HASH_ALG`, must match ЛК): pay `MerchantLogin:Ou
 | Prod env | `ROBOKASSA_LOGIN`, `PASSWORD1/2` (test или live), `ROBOKASSA_IS_TEST=0\|1` |
 | SKUs reuse | `crm_base`+`extraSeats`, `extra_seat`, `mailing_*`, `ai_*`, `ai_topup` — один Result webhook |
 
-Секреты только в `/opt/voxly/.env` (не в git). Перед боем: live Password#1/#2 + `ROBOKASSA_IS_TEST=0`.
+Секреты только в `/opt/voxly/.env` (не в git). **Live (2026-08-02):** Password#1/#2 + `ROBOKASSA_IS_TEST=0` на prod.
 
 ## 8. Аналитика S2S
 

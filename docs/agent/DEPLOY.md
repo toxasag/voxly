@@ -69,6 +69,7 @@ This is automated by `prod-deploy.sh` when deploying any prisma-using service (s
 | `saas-api` | root manifests, `packages/`, `apps/saas-api/`, `twenty-app/voxly-crm-chat/` | `saas-api` |
 | `gift-bot-worker` | manifests, `packages/`, `apps/gift-bot-worker/` | `gift-bot-worker` |
 | `manager-bot-service` | manifests, `packages/`, `apps/manager-bot-service/` | `manager-bot-service` |
+| `platform-bot-service` | manifests, `packages/`, `apps/platform-bot-service/` | `platform-bot-service` (webhook `/bots/platform`) |
 | `ai-telegram-worker` | manifests, `packages/`, `apps/ai-telegram-worker/` | `ai-telegram-worker` |
 | `gramjs-bridge` | manifests, `packages/`, `apps/gramjs-bridge/` | `gramjs-bridge` (needs compose `--profile gramjs` + `TELEGRAM_API_ID/HASH` on server; do not force if missing) |
 | `twenty` | `docker/twenty.Dockerfile`, patch `*.cjs` | `twenty-server` `twenty-worker` |

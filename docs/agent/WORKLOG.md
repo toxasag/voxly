@@ -1,3 +1,58 @@
+### 2026-08-02 — GetVoxlybot OTP + admin bot + live Robokassa
+
+- Goal: Telegram OTP register/login via `@GetVoxlybot`, `/admin/bot`, cabinet support teaser, live Robokassa, deploy + GitHub.
+- Changes: `apps/platform-bot-service` (:3009, webhook `/bots/platform`); Prisma `AuthOtpChallenge` / subscribers / support / broadcasts; auth `register|login` start/confirm; portal OTP UI; dashboard support blurb; admin bot page; scheduler expiry notify + broadcast scanner; compose + `prod-npm` Traefik `entrypoints=web`; prod `.env` `PLATFORM_BOT_*` + live Robokassa `IS_TEST=0` (secrets not in git).
+- Deploy: backup `/opt/voxly/backups/20260802-203458/`; `prod-deploy.sh saas-api,saas-portal,platform-bot-service,compose` (+ compose label fix).
+- Verify: migrate up to date (23); `/bots/platform/health` **200**; `register/start` → `needsOtp` + `@GetVoxlybot` deep-link; container `ROBOKASSA_IS_TEST=0`; sample URL `OutSum=5.00` **without** `IsTest`; johntest `crm_base` override **5 ₽**.
+- Broken: none known at ship; rotate bot token / Robokassa passwords after chat exposure.
+- Next: user completes real 5₽ pay → Result `OK{InvId}`; restore johntest CRM price; full OTP E2E in Telegram.
+
+### 2026-08-02 — Smoke: новый портал без install-apps + Канбан
+
+- Goal: подтвердить provision path после INC-080/081.
+- Verify: register `smokekan224944` → active ~15s; `onboardingStatus=COMPLETED`, 0 ONBOARDING keys; INDEX «Канбан» type=KANBAN + 6 groups; logs `cleared 2` + `kanban=1`. Tenant purged (control + Twenty).
+- Side-fix: `purge-tenant` hard-drop — null application file FKs before DELETE file/workspace (RESTRICT).
+- Deploy: `saas-api` (purge fix).
+
+### 2026-08-02 — INC-081: Канбан был TABLE со значком
+
+- Goal: Сделки INDEX = реальный KANBAN, не список с подписью «Канбан».
+- Changes: `ensureOpportunityRuDefaults` + `set-opportunity-kanban-default.sql` — type/groupBy/viewGroups; no `fm.deletedAt`.
+- Fix johntest: SQL UPDATE → KANBAN + 6 groups; Redis view cache flush.
+- Deploy: `saas-api` → backup `/opt/voxly/backups/20260802-194338/`.
+- Verify: hard-refresh johntest-crm `/objects/opportunities` → колонки этапов.
+
+### 2026-08-02 — INC-080: skip `/install-apps` после провижининга
+
+- Goal: новые CRM не показывают экран установки приложений.
+- Changes: `twenty-clear-onboarding.ts` (SQL DELETE `ONBOARDING_*_PENDING`); call early + after chat install in `queues.ts`; log GraphQL skip failures; `skipSyncEmailOnboardingStep` in twenty-client.
+- Verify: johntest `onboardingStatus=COMPLETED`, 0 onboarding keys — hard-refresh CRM. Deploy `saas-api` → backup `/opt/voxly/backups/20260802-192427/`.
+- Next: боевая Robokassa (live P1/P2).
+
+### 2026-08-02 — INC-077: снять лимит 5 Twenty workspaces
+
+- Goal: новые клиенты получают CRM после 5-го workspace без enterprise JWT.
+- Changes: `docker/patch-twenty-workspace-limit.cjs` (5→100000); `twenty.Dockerfile` + `prod-deploy.sh` whitelist.
+- Deploy: `./scripts/prod-deploy.sh twenty` → backup `/opt/voxly/backups/20260802-185015/`. Re-enqueue johntest provision job 7 → **Completed**.
+- Verify: `johntest` `twentyWorkspaceId` set; 6 workspaces ACTIVE; CRM chat installed.
+- Next: hard-refresh `/dashboard/crm` у johntest; боевая Robokassa когда будут live Password#1/#2.
+
+### 2026-08-02 — Partner links → `/?ref=` (landing → register)
+
+- Goal: реф-ссылка ведёт на лендинг; «Попробовать» несёт код в регистрацию.
+- Changes: API/UI links `https://domain/?ref=CODE`; landing `ReferralCapture` + `RegisterLink`; register sessionStorage fallback; `/r/CODE` → `/?ref=CODE`.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup `/opt/voxly/backups/20260802-174526/`; portal SSR-fix `/?ref=` in CTA.
+- Verify: `curl https://getvoxly.ru/?ref=JOHNTEST` содержит `/register?ref=JOHNTEST`; `/r/CODE` → `/?ref=CODE`.
+- Next: регистрация по рефу + demo Robokassa → баланс партнёра.
+
+### 2026-08-02 — Fix `/r/{CODE}` referral short links 404 (INC-076)
+
+- Goal: короткие партнёрские ссылки `getvoxly.ru/r/CODE` открываются, а не 404.
+- Changes: `apps/saas-portal/src/app/r/[code]/route.ts` (click via API + 302 `/register?ref=`); CAPABILITIES + INC-076.
+- Deploy: `./scripts/prod-deploy.sh saas-portal` → backup `/opt/voxly/backups/20260802-173336/`.
+- Verify: `curl -sI https://getvoxly.ru/r/JOHNA130` → 302 → `https://getvoxly.ru/register?ref=JOHNA130` (same for JOHNTEST). Redeploy fixed localhost Location (x-forwarded-host).
+- Next: регистрация по реф-коду + demo Robokassa → баланс партнёра.
+
 ### 2026-08-02 — Gift bots list: информативность как у partners
 
 - Goal: `/dashboard/bots` понятнее для оператора — итоги + next-step по каждому боту.

@@ -94,6 +94,15 @@ services:
       # Fix: portal container listens on PORT=3000 (base compose wrongly said 3001)
       - "traefik.http.services.saas-portal.loadbalancer.server.port=3000"
 
+  platform-bot-service:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.platform-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/bots/platform`)"
+      - "traefik.http.routers.platform-bot.entrypoints=web"
+      - "traefik.http.routers.platform-bot.service=platform-bot-service"
+      - "traefik.http.services.platform-bot-service.loadbalancer.server.port=3009"
+      - "traefik.http.routers.platform-bot.priority=30"
+
   manager-bot-service:
     labels: !override
       - "traefik.enable=true"

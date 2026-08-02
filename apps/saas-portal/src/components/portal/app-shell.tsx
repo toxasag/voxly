@@ -20,6 +20,7 @@ import {
   Bell,
   HelpCircle,
   Building2,
+  Bot,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -135,6 +136,12 @@ const ADMIN_NAV: NavItem[] = [
     label: 'Партнёрка',
     match: (p) => p.startsWith('/admin/partners'),
     icon: Share2,
+  },
+  {
+    href: '/admin/bot',
+    label: 'GetVoxlybot',
+    match: (p) => p.startsWith('/admin/bot'),
+    icon: Bot,
   },
 ];
 

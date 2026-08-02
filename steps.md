@@ -91,6 +91,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-02** — INC-081: INDEX «Канбан» был TABLE → SQL type=KANBAN+groups; johntest fixed; deploy `saas-api` (`20260802-194338`).
+- **2026-08-02** — INC-080: SQL `clearTwentyOnboardingFlags` early+late в provision; deploy `saas-api` (backup `20260802-192427`); johntest `onboardingStatus=COMPLETED` — hard-refresh CRM.
+- **2026-08-02** — INC-077: Twenty workspace limit 5→100000; johntest CRM `d8c9bf10-…` ACTIVE + chat installed.
+- **2026-08-02** — Referral short links → landing `/?ref=`; partner attribution JOHNTEST→john.
+- **2026-08-02** — **GetVoxlybot OTP + `/admin/bot` + live Robokassa:** `platform-bot-service` `:3009`, auth start/confirm, portal OTP UI, cabinet support teaser, migrate `20260802220000_platform_bot_otp`, prod `ROBOKASSA_IS_TEST=0`.
 - **2026-08-01** — **Prod:** IA кабинета — меню + Телеграм Секретарь + GramJS как WhatsApp + SKU `ai_agent` 500₽; migrate `20260731220000` applied; backup `20260801-205426`; Suspense-fix для next build; smoke AI pages **200**.
 - **2026-07-31** — **Prod:** INC-079 fix — scheduler crash protection (`safeJob` wrapper for all timer jobs) + `prisma migrate deploy` автоматически в `prod-deploy.sh` до пересоздания контейнеров; backup `20260731-154611`; prisma «No pending migrations to apply»; container restarts=0; smoke portal/API/partners/ai **200**.
 - **2026-07-31** — **Prod:** супер-админ `/admin/partners` (партнёры, индивидуальные правила вознаграждения, ручные выплаты `ReferralTransaction`, блокировка) + `/api/admin/referrals`; уникальность реферальных кодов (409 + `code-available`); миграция `20260731140000_referral_admin` (аддитивная: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`) применена через `prisma migrate deploy` в `docker-saas-api-1`; backup `20260731-131927`; smoke портал/API/`/admin/partners` **200**, `GET /api/admin/referrals` без токена **401**.
@@ -529,7 +534,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-02:** release-verification (`b77c375`); prod `saas-api` Phase-0 (backup `20260802-111009`); backfill `trialConsumed` 5 addon; **push** `ui/indigo-shadcn-dashboard`. Gaps: SMTP invite; GramJS outbound media; **rotate root SSH**; локально `pnpm test:db`.
+**Статус кода:** CRM chat + INC-024…**/081**. **2026-08-02:** `@GetVoxlybot` OTP auth + `/admin/bot` + live Robokassa (`IS_TEST=0`); johntest CRM; `/install-apps` clear; referral `/?ref=`. Gaps: SMTP invite; **rotate root SSH** + rotate bot/Robokassa secrets exposed in chat.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -568,7 +573,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Следующие шаги (приоритет)**
 0. **Release gate:** локально `pnpm test:db` при Docker. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
-0b. **Robokassa store activation:** legal pages **на prod**. **Сменить root SSH пароль** (светился в чате).
+0b. **Robokassa live:** `IS_TEST=0` + live P1/P2 на prod (2026-08-02). **Сменить root SSH пароль** и ротировать секреты, светившиеся в чате.
 0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
 
 

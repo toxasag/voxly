@@ -15,6 +15,8 @@ import { billingRoutes } from './routes/billing.js';
 import { tenantRoutes } from './routes/tenant.js';
 import { adminRoutes } from './routes/admin.js';
 import { adminReferralRoutes } from './routes/admin-referrals.js';
+import { adminPlatformBotRoutes } from './routes/admin-platform-bot.js';
+import { platformBotInternalRoutes } from './routes/platform-bot-internal.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
 import { gramjsRoutes } from './routes/gramjs.js';
@@ -222,6 +224,8 @@ export async function buildServer() {
   await fastify.register(tenantRoutes, { prefix: '/api/tenant' });
   await fastify.register(adminRoutes, { prefix: '/api/admin' });
   await fastify.register(adminReferralRoutes, { prefix: '/api/admin/referrals' });
+  await fastify.register(adminPlatformBotRoutes, { prefix: '/api/admin/platform-bot' });
+  await fastify.register(platformBotInternalRoutes, { prefix: '/api/internal/platform-bot' });
   await fastify.register(referralRoutes, { prefix: '/api/referrals' });
   await fastify.register(botRoutes, { prefix: '/api/bots' });
   await fastify.register(gramjsRoutes, { prefix: '/api/bots/gramjs' });

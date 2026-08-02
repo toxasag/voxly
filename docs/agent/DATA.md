@@ -14,7 +14,9 @@
 
 | Модель | Назначение | R/W |
 |---|---|---|
-| `Tenant`, `User`, `TenantMember` | мультитенант + auth | saas-api |
+| `Tenant`, `User`, `TenantMember` | мультитенант + auth; `User.telegramUserId` / `telegramLinkedAt` | saas-api |
+| `AuthOtpChallenge` | register/login OTP nonce + codeHash + pending JSON | saas-api + platform-bot |
+| `PlatformBotSubscriber`, `PlatformSupportMessage`, `PlatformBroadcast` | `@GetVoxlybot` подписчики / support inbox / рассылки | saas-api admin + platform-bot |
 | `Subscription`, `Payment`, `Addon` | биллинг / trial CRM **7д** (`TRIAL_PERIOD_DAYS`) | saas-api (Robokassa) |
 | `AiWallet`, `AiUsageLog`, `TenantBalance` | AI billing + markup | saas-api, ai-core, AI workers |
 | `BotInstance`, `BotProvisionRequest` | Managed Bots tokens (AES); `defaultAiAgentId` | saas-api, manager-bot R/W token |
