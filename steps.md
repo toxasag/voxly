@@ -529,7 +529,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **2026-08-02 local:** release-verification — Phase-0 hardening (OutSum, trialConsumed, agent capacity read-only, login membership, scheduler Redis lock, findMany caps) + `apps/saas-api/tests`, Playwright e2e stubs, `pnpm verify`, CI, `docs/agent/RELEASE-CHECKLIST.md`. **Prod:** `150.241.98.135` `/opt/voxly`. Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**; deploy Phase-0 fixes after counting «eternal» ai_tg trials.
+**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **2026-08-02:** release-verification закоммичен (`b77c375`); **prod deploy `saas-api`** Phase-0 hardening (backup `20260802-111009`, smoke 200). Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**; backfill `trialConsumed` на 5 addon (1 ai_tg + 4 gift_bot); локально `pnpm test:db`.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

@@ -1,3 +1,21 @@
+### 2026-08-02 — Prod deploy Phase-0 hardening (`saas-api`)
+
+- Goal: выкатить на prod фиксы release-gate (OutSum, trialConsumed, read-only agent capacity, login membership, scheduler lock, findMany caps) после коммита `b77c375`.
+- Deploy: `./scripts/prod-diff.sh saas-api` (drift queues.ts, auth.ts) → `./scripts/prod-deploy.sh saas-api`. Backup **`/opt/voxly/backups/20260802-111009/`** (`voxly_control.dump` 298K + `twenty.dump` 2.4M). Prisma migrate: no pending migrations. Пересоздан `docker-saas-api-1`.
+- Pre-check: на prod **1× `ai_tg` + 4× `gift_bot`** с `trial=true` без `trialConsumed` — после деплоя могут снова получить trial, если не проставить `trialConsumed` вручную.
+- Verify: smoke **200** — `/`, `api/health` (+ body), `/dashboard/partners`, `/dashboard/crm`, `/dashboard/ai`, `/dashboard/ai/agents`.
+- Broken: ничего.
+- Next: backfill `trialConsumed` на 5 addon (SQL в WORKLOG ниже); `git push` 16 коммитов; локально `pnpm test:db` при поднятом Docker.
+
+```sql
+-- prod postgres-control / voxly_control (один раз)
+UPDATE "Addon"
+SET config = config::jsonb || '{"trialConsumed": true}'::jsonb
+WHERE type IN ('ai_tg', 'gift_bot')
+  AND (config::jsonb->>'trial') = 'true'
+  AND (config::jsonb->>'trialConsumed') IS DISTINCT FROM 'true';
+```
+
 ### 2026-08-02 — Release verification scenario (tests + Phase-0 hardening)
 
 - Goal: сценарий предрелизной проверки по 7 направлениям — закрыть найденные дыры в деньгах/доступах, заложить фундамент API-тестов, CI и методику.
