@@ -425,7 +425,7 @@ model ReferralCode {
 
 model Referral {
   id                 String    @id @default(cuid())
-  referrerTenant     Tenant    @relation("ReferrerTenant", fields: [referrerTenantId], references: [id])
+  referrerTenant     Tenant    @relation("ReferrerTenant", fields: [referrerTenantId], references: [id], onDelete: Cascade)
   referrerTenantId   String
   referredTenant     Tenant    @relation("ReferredTenant", fields: [referredTenantId], references: [id], onDelete: Cascade)
   referredTenantId   String    @unique

@@ -1,3 +1,10 @@
+### 2026-08-03 — INC-084: purge fails when tenant is referral partner
+
+- Goal: admin delete `john` / `john-crm` actually removes control Tenant.
+- Cause: `Referral.referrerTenantId` RESTRICT; john → johntest referral blocked `DELETE Tenant` after Twenty hard-drop.
+- Fix: `purge-tenant` deletes referrer Referral rows; migration `20260803010000_referral_referrer_cascade`.
+- Deploy: `saas-api` (+ migrate). Verify: purge john → gone from admin list / DB.
+
 ### 2026-08-02 — Post-pay check: lexx purge, disk prune, Result P2
 
 - Goal: после live-платежа проверить тенантов, purge `lexx`, диск VPS, задеплоить/залить GitHub.

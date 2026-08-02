@@ -156,6 +156,10 @@ export async function purgeTenantFully(opts: {
     data: { subscriptionId: null },
   });
 
+  // Belt-and-suspenders: referrer FK is CASCADE (migration 20260803010000), but
+  // delete partner Referral rows explicitly so purge works even before migrate.
+  await db.referral.deleteMany({ where: { referrerTenantId: tenant.id } });
+
   // Cascade deletes control-plane children (bots, chats, billing, AI, …).
   await db.tenant.delete({ where: { id: tenant.id } });
 

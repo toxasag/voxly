@@ -5,6 +5,13 @@
 
 ---
 
+### INC-084 — Admin purge tenant fails for referral partners (`john`)
+- **Симптом:** `/admin/crm` → Удалить `john` — UI не убирает портал; CRM workspace уже стёрт, control `Tenant` остаётся. AuditLog `purge_tenant` пишется несколько раз.
+- **Причина:** `Referral.referrerTenantId` → `Tenant` был `ON DELETE RESTRICT`. `john` — реферер `johntest` → `DELETE Tenant` падает после hard-drop Twenty + audit.
+- **Фикс:** `purge-tenant` `referral.deleteMany({ referrerTenantId })` перед `tenant.delete`; Prisma/migration → `ON DELETE CASCADE` на referrer FK.
+- **Verify:** purge `john` → нет в `Tenant`, нет workspace `657134a2-…`.
+- **Дата:** 2026-08-03.
+
 ### INC-083 — Robokassa live ResultURL «Invalid signature» (Password#2)
 - **Симптом:** после реальной оплаты SuccessURL → `/dashboard/crm?paid=ok`, но `Payment` остаётся `pending`; в логах `Invalid Robokassa signature` на `POST /api/billing/result` (InvId 1025, gesha, 5 ₽).
 - **Диагноз:** SuccessURL Signature (Password#1) совпадает с `.env` P1 `z1y5…`; ResultURL от Robokassa **не** совпадает с `.env` P2 `fvOG…`. Self-test Result с подписью от нашего P2 → `OK1025` (код верификации ок). Значит в ЛК Robokassa Password#2 ≠ значение в `/opt/voxly/.env`.
