@@ -1,3 +1,9 @@
+### 2026-08-02 — Gift bots list: информативность как у partners
+
+- Goal: `/dashboard/bots` понятнее для оператора — итоги + next-step по каждому боту.
+- Changes: шаги 1–2–3, блок «Итоги» (каналы/посты/клики/подарки), RU-статусы, CTA по пробелу; API `giftedCount`.
+- Deploy: `saas-api,saas-portal`. Commit `4eba6d6`. Smoke **200**.
+
 ### 2026-08-02 — Gift bot detail в стиле partners
 
 - Goal: `[botId]` как partners — orange hero, шаги 1–2–3, land-секции.
