@@ -534,7 +534,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/081**. **2026-08-02:** `@GetVoxlybot` OTP auth + `/admin/bot` + live Robokassa (`IS_TEST=0`); johntest CRM; `/install-apps` clear; referral `/?ref=`. Gaps: SMTP invite; **rotate root SSH** + rotate bot/Robokassa secrets exposed in chat.
+**Статус кода:** CRM chat + INC-024…**/083**. **2026-08-02:** `@GetVoxlybot` OTP auth + `/admin/bot` + live Robokassa (`IS_TEST=0`); johntest CRM; `/install-apps` clear; referral `/?ref=`; disk prune (~61GB images); lexx purged. **Blocker:** Robokassa Password#2 в prod `.env` ≠ ЛК (INC-083) — ResultURL падает, SuccessURL ок. Gaps: SMTP invite; **rotate root SSH** + sync/rotate Robokassa P2.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -573,7 +573,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Следующие шаги (приоритет)**
 0. **Release gate:** локально `pnpm test:db` при Docker. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
-0b. **Robokassa live:** `IS_TEST=0` + live P1/P2 на prod (2026-08-02). **Сменить root SSH пароль** и ротировать секреты, светившиеся в чате.
+0b. **Robokassa live:** `IS_TEST=0` + P1 ок; **синхронизировать Password#2 из ЛК** → recreate `saas-api` (INC-083). **Сменить root SSH пароль** и ротировать секреты, светившиеся в чате.
 0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
 
 
