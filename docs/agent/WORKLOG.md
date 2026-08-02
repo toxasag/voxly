@@ -1,3 +1,11 @@
+### 2026-08-02 — Gift bots UX (partners-style hero + billing + checklist)
+
+- Goal: `/dashboard/bots` и `[botId]` информативнее, в стиле partners; честный биллинг `gift_bot`; next-step checklist.
+- Changes: `gift-bots-hero.tsx`; list page CTA trial/оплата/`startCheckout`; detail readiness strip + pay; API `trialAvailable` via `trialMeta`; copy без «500 за канал».
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` → backup under `/opt/voxly/backups/` (script run). Smoke `/` partners crm ai agents **200**; `/dashboard/bots` **200**.
+- Commit: `ad77bf9` pushed `ui/indigo-shadcn-dashboard`.
+- Next: hard-refresh bots pages; проверить CTA оплаты на trial.
+
 ### 2026-08-02 — Prod deploy Phase-0 hardening (`saas-api`)
 
 - Goal: выкатить на prod фиксы release-gate (OutSum, trialConsumed, read-only agent capacity, login membership, scheduler lock, findMany caps) после коммита `b77c375`.
