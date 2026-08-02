@@ -529,7 +529,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-01 prod:** кабинетное меню и AI IA — Телеграм Секретарь `/dashboard/ai`, Telegram=gramjs, SKU `ai_agent` 500₽ + grandfather migrate; GramJS UI как WhatsApp. **2026-08-02:** release-verification закоммичен (`b77c375`); **prod deploy `saas-api`** Phase-0 hardening (backup `20260802-111009`, smoke 200). Gaps: SMTP invite deferred; GramJS outbound media; **rotate root SSH password**; backfill `trialConsumed` на 5 addon (1 ai_tg + 4 gift_bot); локально `pnpm test:db`.
+**Статус кода:** CRM chat + INC-024…**/079**. **2026-08-02:** release-verification (`b77c375`); prod `saas-api` Phase-0 (backup `20260802-111009`); backfill `trialConsumed` 5 addon; **push** `ui/indigo-shadcn-dashboard`. Gaps: SMTP invite; GramJS outbound media; **rotate root SSH**; локально `pnpm test:db`.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -567,7 +567,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-0. **Release gate:** локально `pnpm test:db` при Docker; backfill `trialConsumed` на prod (5 addon) — SQL в WORKLOG 2026-08-02 deploy; `git push`. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
+0. **Release gate:** локально `pnpm test:db` при Docker. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
 0b. **Robokassa store activation:** legal pages **на prod**. **Сменить root SSH пароль** (светился в чате).
 0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
 
