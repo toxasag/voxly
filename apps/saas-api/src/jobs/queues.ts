@@ -9,6 +9,7 @@ import { TwentyClient, workspaceUrlToOrigin } from '@voxly/twenty-client';
 import { decrypt } from '@voxly/crypto';
 import { ensureTwentyCustomDomain } from '../services/twenty-custom-domain.js';
 import { ensureOpportunityRuDefaults } from '../services/twenty-opportunity-ru-defaults.js';
+import { clearTwentyOnboardingFlags } from '../services/twenty-clear-onboarding.js';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 /** Integration tests import the API without starting BullMQ workers. */
@@ -73,6 +74,16 @@ async function runProvisioningJob(job: { data: ProvisioningJobData }) {
   await ensureTwentyCustomDomain(workspace.workspaceId, customDomainHost);
   // Standard-object isLabelSyncedWithName + INDEX view name need SQL (GraphQL blocked).
   await ensureOpportunityRuDefaults(workspace.workspaceId);
+  // Clear ONBOARDING_* early (GraphQL skip inside provisionWorkspace can race signup).
+  try {
+    await clearTwentyOnboardingFlags(workspace.workspaceId);
+  } catch (error) {
+    console.warn(
+      `[provisioning] early clearTwentyOnboardingFlags failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
   // 2. Install voxly-crm-chat from private server registry (upload tarball if needed)
   const publicBase = process.env.TWENTY_SERVER_URL?.trim() || '';
@@ -141,8 +152,24 @@ async function runProvisioningJob(job: { data: ProvisioningJobData }) {
   // Marketplace install can re-surface /install-apps; dismiss again after chat install.
   try {
     await twentyClient.skipInstallAppsOnboarding();
-  } catch {
-    // optional
+  } catch (error) {
+    console.warn(
+      `[provisioning] skipInstallAppsOnboarding failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  // SQL clears all ONBOARDING_*_PENDING keys (install-apps / profile / sync / invite).
+  // GraphQL skip alone races signup and only covers INSTALL_APPS.
+  try {
+    await clearTwentyOnboardingFlags(workspace.workspaceId);
+  } catch (error) {
+    console.warn(
+      `[provisioning] clearTwentyOnboardingFlags failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
   // 3. Update tenant with workspace ID

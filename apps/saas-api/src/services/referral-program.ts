@@ -267,7 +267,7 @@ export async function buildReferralDashboard(
     throw Object.assign(new Error('No referral code found'), { statusCode: 404 });
   }
 
-  const linkFor = (code: string) => `https://${voxlyDomain}/r/${code}`;
+  const linkFor = (code: string) => `https://${voxlyDomain}/?ref=${encodeURIComponent(code)}`;
 
   const campaignStats = campaigns.map((c) => {
     const campRefs = referrals.filter((r) => r.campaignId === c.id);

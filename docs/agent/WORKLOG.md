@@ -1,3 +1,11 @@
+### 2026-08-02 — Post-pay check: lexx purge, disk prune, Result P2
+
+- Goal: после live-платежа проверить тенантов, purge `lexx`, диск VPS, задеплоить/залить GitHub.
+- Verify: 6 tenants active (lexx gone); AuditLog `purge_tenant` 21:42Z + Twenty workspace `633dc627-…` absent; CRM `*-crm` 200; API health ok; johntest addons paid; gesha InvId **1025** Result fail → INC-083, затем fulfilled → sub active → 2026-09-09.
+- Disk: 92% → **27%** via `docker image prune -af` (~61GB) + journal vacuum (repeat of INC-052 pattern). Volumes untouched.
+- Deploy/git: commit remaining onboarding/kanban/referral/purge + Result fail logging; `prod-deploy.sh saas-api,saas-portal`.
+- Broken / Next: **обновить Robokassa Password#2 в prod `.env`** (P1 ok, P2 mismatch); убрать 5 ₽ override у gesha/johntest когда smoke закончен.
+
 ### 2026-08-02 — GetVoxlybot OTP + admin bot + live Robokassa
 
 - Goal: Telegram OTP register/login via `@GetVoxlybot`, `/admin/bot`, cabinet support teaser, live Robokassa, deploy + GitHub.

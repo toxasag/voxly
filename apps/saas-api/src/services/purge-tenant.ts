@@ -25,20 +25,26 @@ async function dropTwentyWorkspaceHard(workspaceId: string): Promise<void> {
     if (schema && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) {
       await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     }
-    await client.query(`DELETE FROM core.application WHERE "workspaceId" = $1::uuid`, [
+    // application.packageJson/yarnLock → file is ON DELETE RESTRICT.
+    await client.query(
+      `UPDATE core.application
+       SET "packageJsonFileId" = NULL,
+           "yarnLockFileId" = NULL,
+           "logoFileId" = NULL
+       WHERE "workspaceId" = $1::uuid`,
+      [workspaceId],
+    );
+    await client.query(`DELETE FROM core.file WHERE "workspaceId" = $1::uuid`, [
+      workspaceId,
+    ]);
+    await client.query(`DELETE FROM core."keyValuePair" WHERE "workspaceId" = $1::uuid`, [
       workspaceId,
     ]);
     await client.query(`DELETE FROM core."userWorkspace" WHERE "workspaceId" = $1::uuid`, [
       workspaceId,
     ]);
-    await client.query(
-      `UPDATE core.workspace
-       SET "deletedAt" = COALESCE("deletedAt", now()),
-           "activationStatus" = 'INACTIVE',
-           "updatedAt" = now()
-       WHERE id = $1::uuid`,
-      [workspaceId],
-    );
+    // workspace → application (custom app) is NOT NULL; delete workspace and let
+    // ON DELETE CASCADE remove applications (file FKs already cleared).
     await client.query(`DELETE FROM core.workspace WHERE id = $1::uuid`, [workspaceId]);
   } finally {
     await client.end();

@@ -12,6 +12,7 @@ COPY docker/twenty-shell-ux.js /tmp/twenty-shell-ux.js
 COPY docker/patch-twenty-functions-url.cjs /tmp/patch-twenty-functions-url.cjs
 COPY docker/patch-twenty-file-base64.cjs /tmp/patch-twenty-file-base64.cjs
 COPY docker/patch-twenty-front-component-url.cjs /tmp/patch-twenty-front-component-url.cjs
+COPY docker/patch-twenty-workspace-limit.cjs /tmp/patch-twenty-workspace-limit.cjs
 RUN sed -i \
   -e 's#<html lang="en"#<html lang="ru"#' \
   -e 's#<title>Twenty</title>#<title>Voxly</title>#' \
@@ -35,5 +36,6 @@ RUN sed -i \
   && node /tmp/patch-twenty-functions-url.cjs \
   && node /tmp/patch-twenty-file-base64.cjs \
   && node /tmp/patch-twenty-front-component-url.cjs \
-  && rm -f /tmp/twenty-cabinet-link.js /tmp/twenty-deal-chat.js /tmp/twenty-shell-ux.js /tmp/patch-twenty-functions-url.cjs /tmp/patch-twenty-file-base64.cjs /tmp/patch-twenty-front-component-url.cjs
+  && node /tmp/patch-twenty-workspace-limit.cjs \
+  && rm -f /tmp/twenty-cabinet-link.js /tmp/twenty-deal-chat.js /tmp/twenty-shell-ux.js /tmp/patch-twenty-functions-url.cjs /tmp/patch-twenty-file-base64.cjs /tmp/patch-twenty-front-component-url.cjs /tmp/patch-twenty-workspace-limit.cjs
 USER 1000

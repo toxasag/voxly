@@ -1,7 +1,8 @@
 /**
  * Opportunity RU defaults that GraphQL cannot fully apply on standard objects:
  * - isLabelSyncedWithName is rejected by Twenty metadata API
- * - INDEX view name «Канбан» (seeded All Opportunities / By Stage)
+ * - INDEX view «Канбан»: must be type=KANBAN + stage groupBy (not TABLE with
+ *   kanban icon — that shows a list while the picker says Канбан; INC-081).
  * - Secondary list view «Списком»: GraphQL updateView often writes type/icon into
  *   view.overrides while columns stay TABLE/IconList — UI then shows a second
  *   kanban labelled «All Сделки». SQL clears those overrides.
@@ -280,12 +281,15 @@ async function ensureOpportunityStagePipeline(
        SELECT
          v.id AS view_id,
          v."workspaceId" AS workspace_id,
-         (
-           SELECT vg."applicationId"
-           FROM core."viewGroup" vg
-           WHERE vg."viewId" = v.id
-             AND vg."deletedAt" IS NULL
-           LIMIT 1
+         COALESCE(
+           (
+             SELECT vg."applicationId"
+             FROM core."viewGroup" vg
+             WHERE vg."viewId" = v.id
+               AND vg."deletedAt" IS NULL
+             LIMIT 1
+           ),
+           v."applicationId"
          ) AS application_id
        FROM core.view AS v
        JOIN core."objectMetadata" AS o ON o.id = v."objectMetadataId"
@@ -399,12 +403,31 @@ export async function ensureOpportunityRuDefaults(
       [workspaceId],
     );
 
+    // INDEX must be a real KANBAN (not TABLE renamed «Канбан» — INC-081).
+    // GraphQL updateView often fails or only writes overrides; SQL is SoT.
     const kanbanViews = await client.query(
       `UPDATE core.view AS v
        SET name = 'Канбан',
+           type = 'KANBAN',
            icon = 'IconLayoutKanban',
            "openRecordIn" = 'SIDE_PANEL',
-           overrides = COALESCE(v.overrides, '{}'::jsonb) || '{"kanbanColumnWidth": 320}'::jsonb,
+           "mainGroupByFieldMetadataId" = COALESCE(
+             v."mainGroupByFieldMetadataId",
+             (
+               SELECT fm.id
+               FROM core."fieldMetadata" fm
+               WHERE fm."objectMetadataId" = o.id
+                 AND fm.name = 'stage'
+               LIMIT 1
+             )
+           ),
+           "kanbanColumnWidth" = COALESCE(v."kanbanColumnWidth", 320),
+           overrides = (
+             COALESCE(v.overrides, '{}'::jsonb)
+             - 'type'
+             - 'icon'
+             - 'mainGroupByFieldMetadataId'
+           ) || '{"kanbanColumnWidth": 320}'::jsonb,
            "updatedAt" = now()
        FROM core."objectMetadata" AS o
        WHERE v."objectMetadataId" = o.id
@@ -413,12 +436,57 @@ export async function ensureOpportunityRuDefaults(
          AND v."deletedAt" IS NULL
          AND v.key = 'INDEX'
          AND (
-           v.name IS DISTINCT FROM 'Канбан'
+           v.type IS DISTINCT FROM 'KANBAN'
+           OR v.name IS DISTINCT FROM 'Канбан'
            OR v.icon IS DISTINCT FROM 'IconLayoutKanban'
            OR v."openRecordIn" IS DISTINCT FROM 'SIDE_PANEL'
+           OR v."mainGroupByFieldMetadataId" IS NULL
            OR COALESCE(v.overrides->>'kanbanColumnWidth', '') IS DISTINCT FROM '320'
+           OR COALESCE(v.overrides->>'type', '') <> ''
          )
-       RETURNING v.id, v.name, v.type, v.key, v.icon`,
+       RETURNING v.id, v.name, v.type, v.key, v.icon, v."mainGroupByFieldMetadataId"`,
+      [workspaceId],
+    );
+
+    // Seed all pipeline columns when INDEX board has none (stage pipeline
+    // insert previously required an existing viewGroup for applicationId).
+    await client.query(
+      `WITH index_views AS (
+         SELECT
+           v.id AS view_id,
+           v."workspaceId" AS workspace_id,
+           v."applicationId" AS application_id
+         FROM core.view AS v
+         JOIN core."objectMetadata" AS o ON o.id = v."objectMetadataId"
+         WHERE o."workspaceId" = $1::uuid
+           AND o."nameSingular" = 'opportunity'
+           AND v.key = 'INDEX'
+           AND v.type = 'KANBAN'
+           AND v."deletedAt" IS NULL
+           AND v."applicationId" IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM core."viewGroup" vg
+             WHERE vg."viewId" = v.id AND vg."deletedAt" IS NULL
+           )
+       ),
+       wanted(value, pos) AS (
+         VALUES
+           ('NOVYY_LID', 0::float8),
+           ('SCREENING', 1::float8),
+           ('MEETING', 2::float8),
+           ('PROPOSAL', 3::float8),
+           ('USPESHNAYA_SDELKA', 4::float8),
+           ('SDELKA_PROVALENA', 5::float8)
+       )
+       INSERT INTO core."viewGroup" (
+         id, "universalIdentifier", "fieldValue", position, "isVisible",
+         "viewId", "workspaceId", "applicationId", "createdAt", "updatedAt"
+       )
+       SELECT
+         gen_random_uuid(), gen_random_uuid(), w.value, w.pos, true,
+         iv.view_id, iv.workspace_id, iv.application_id, now(), now()
+       FROM index_views iv
+       CROSS JOIN wanted w`,
       [workspaceId],
     );
 

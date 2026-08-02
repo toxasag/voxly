@@ -940,6 +940,22 @@ export class TwentyClient {
       { universalIdentifiers: [] },
       headers,
     );
+    // Also clear sync-email step when present (no-op if already cleared).
+    try {
+      await this.authClient.request(
+        gql`
+          mutation SkipSyncEmailOnboardingStep {
+            skipSyncEmailOnboardingStep {
+              success
+            }
+          }
+        `,
+        undefined,
+        headers,
+      );
+    } catch {
+      // Optional — SQL clearTwentyOnboardingFlags is the backstop.
+    }
   }
 
   /** Apply Voxly locale/branding defaults to the currently authenticated workspace. */

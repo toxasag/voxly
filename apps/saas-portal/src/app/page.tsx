@@ -1,6 +1,8 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowDown, ArrowRight, Check, MessageCircle, ShieldCheck } from 'lucide-react';
+import { ReferralCapture } from '@/components/landing/referral-capture';
+import { RegisterLink } from '@/components/landing/register-link';
 import { VoxRelay } from '@/components/landing/vox-relay';
 import {
   Accordion,
@@ -86,15 +88,17 @@ const FAQ = [
 function PrimaryCta({
   label = 'Попробовать 7 дней бесплатно',
   variant = 'ink',
+  refCode,
 }: {
   label?: string;
   variant?: 'ink' | 'amber';
+  refCode?: string | null;
 }) {
   return (
-    <Link href="/register" className={variant === 'amber' ? 'land-btn-amber' : 'land-btn'}>
+    <RegisterLink className={variant === 'amber' ? 'land-btn-amber' : 'land-btn'} refCode={refCode}>
       {label}
       <ArrowRight className="h-4 w-4" aria-hidden />
-    </Link>
+    </RegisterLink>
   );
 }
 
@@ -139,9 +143,17 @@ function MascotStage({
   );
 }
 
-export default function LandingPage() {
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ref?: string }>;
+}) {
+  const { ref: rawRef } = await searchParams;
+  const refCode = rawRef?.trim() || null;
+
   return (
     <main className="landing-root min-h-screen pb-[5.5rem] md:pb-0">
+      <ReferralCapture />
       {/* ATTENTION */}
       <section className="relative isolate bg-[#f5a623]">
         <div
@@ -176,9 +188,9 @@ export default function LandingPage() {
               <Link href="/login" className="hidden min-h-11 items-center px-2 text-sm font-semibold sm:inline-flex">
                 Войти
               </Link>
-              <Link href="/register" className="land-btn min-h-11 px-4 py-2.5 text-sm sm:px-5">
+              <RegisterLink className="land-btn min-h-11 px-4 py-2.5 text-sm sm:px-5" refCode={refCode}>
                 Попробовать
-              </Link>
+              </RegisterLink>
             </div>
           </div>
         </header>
@@ -199,7 +211,7 @@ export default function LandingPage() {
               Voxly собирает это в одном месте. 7 дней бесплатно. Карта не нужна.
             </p>
             <div className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-5">
-              <PrimaryCta />
+              <PrimaryCta refCode={refCode} />
               <span className="text-sm font-medium text-black/55">Без карты · без автосписаний</span>
             </div>
           </div>
@@ -285,7 +297,7 @@ export default function LandingPage() {
               <span>Рассылки</span>
             </div>
             <div className="mt-8">
-              <PrimaryCta label="Посмотреть, как это выглядит" variant="amber" />
+              <PrimaryCta label="Посмотреть, как это выглядит" variant="amber" refCode={refCode} />
             </div>
           </div>
           <VoxRelay size="lg" pose="solution" light caption="Это Voxly. Он как раз про каналы и сделки." />
@@ -352,7 +364,7 @@ export default function LandingPage() {
           </ol>
 
           <div className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-5">
-            <PrimaryCta label="Начать с первого шага" />
+            <PrimaryCta label="Начать с первого шага" refCode={refCode} />
             <p className="text-sm text-[var(--land-muted)]">Кабинет поднимается за минуту</p>
           </div>
         </div>
@@ -426,7 +438,7 @@ export default function LandingPage() {
               Если нет — просто не оплачиваешь. Всё.
             </p>
             <div className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-5">
-              <PrimaryCta />
+              <PrimaryCta refCode={refCode} />
               <Link href="/login" className="min-h-11 py-3 text-sm font-bold underline underline-offset-4">
                 Уже есть аккаунт
               </Link>
@@ -465,10 +477,10 @@ export default function LandingPage() {
       </footer>
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-black/15 bg-[#f5a623] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">
-        <Link href="/register" className="land-btn w-full">
+        <RegisterLink className="land-btn w-full" refCode={refCode}>
           7 дней бесплатно
           <ArrowRight className="h-4 w-4" aria-hidden />
-        </Link>
+        </RegisterLink>
       </div>
 
       <a

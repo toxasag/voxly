@@ -5,6 +5,48 @@
 
 ---
 
+### INC-083 — Robokassa live ResultURL «Invalid signature» (Password#2)
+- **Симптом:** после реальной оплаты SuccessURL → `/dashboard/crm?paid=ok`, но `Payment` остаётся `pending`; в логах `Invalid Robokassa signature` на `POST /api/billing/result` (InvId 1025, gesha, 5 ₽).
+- **Диагноз:** SuccessURL Signature (Password#1) совпадает с `.env` P1 `z1y5…`; ResultURL от Robokassa **не** совпадает с `.env` P2 `fvOG…`. Self-test Result с подписью от нашего P2 → `OK1025` (код верификации ок). Значит в ЛК Robokassa Password#2 ≠ значение в `/opt/voxly/.env`.
+- **Mitigation:** вручную доставлен InvId 1025 (signed Result self-test) → gesha `crm_base` active до 2026-09-09; Result fail log расширен (`outSum`, `shpKeys`, `sigPref`).
+- **Next:** скопировать **актуальный Password#2** из ЛК Robokassa → `/opt/voxly/.env` → recreate `saas-api`; новый живой платёж должен дать Result `OK{InvId}` без ручной доставки.
+- **Дата:** 2026-08-02.
+
+### INC-082 — Robokassa live → error 29 (Signature)
+- **Симптом:** после `ROBOKASSA_IS_TEST=0` + live Password#1/#2 checkout → «Код ошибки: 29 / Оплата счетов недоступна».
+- **Диагноз:** тот же код + **тестовые** Password#1/#2 + `IsTest=1` открывает pay UI. Live-пароли со скриншота совпадают с `.env`, но Robokassa отклоняет Signature в боевом режиме. OTP не при чём.
+- **Mitigation:** вернули test passwords + `IS_TEST=1` из `.env.bak.20260802-203443`, recreate `saas-api`.
+- **Next:** перегенерировать/сохранить боевые Password#1/#2 в ЛК (или подтвердить активацию магазина), обновить `.env`, `IS_TEST=0`, recreate saas-api.
+- **Дата:** 2026-08-02.
+
+### INC-081 — «Канбан» показывает список (TABLE)
+- **Симптом:** johntest Сделки — picker «Канбан», UI таблица; viewId INDEX.
+- **Причина:** `ensureOpportunityRuDefaults` переименовывал INDEX в «Канбан» + icon, **не** ставил `type=KANBAN` / `mainGroupByFieldMetadataId`. GraphQL convert не сработал; SQL с `fm.deletedAt` падал (`fieldMetadata` без soft-delete).
+- **Фикс:** SQL конвертит INDEX TABLE→KANBAN + stage groupBy + seed 6 `viewGroup`; `view.applicationId` для insert; убран `fm.deletedAt`. johntest починен вручную + flush Redis view cache. Deploy `saas-api`.
+- **Verify:** INDEX `Канбан` type=KANBAN, 6 groups; hard-refresh `johntest-crm` → колонки этапов.
+- **Дата:** 2026-08-02.
+
+### INC-080 — `/install-apps` после провижининга CRM
+- **Симптом:** после создания workspace первый заход на `{slug}-crm` показывает «Установите свои первые приложения» (`/install-apps`).
+- **Причина:** signup пишет `ONBOARDING_*_PENDING` в `core.keyValuePair`; GraphQL `triggerInstallAppsOnboardingStep([])` только claim’ит `INSTALL_APPS` и может **опередить** запись флагов (silent catch). SPA остаётся на `/install-apps` даже после `onboardingStatus=COMPLETED`.
+- **Фикс:** `clearTwentyOnboardingFlags(workspaceId)` (SQL DELETE всех `ONBOARDING_*_PENDING`) early + after chat install в `queues.ts`; логирование GraphQL skip; `skipSyncEmailOnboardingStep` best-effort в twenty-client.
+- **Verify (johntest):** keys=0, GraphQL `onboardingStatus=COMPLETED` → hard-refresh CRM или «Пропустить».
+- **Дата:** 2026-08-02.
+
+### INC-077 — Twenty: 6-й workspace blocked («enterprise key»)
+- **Симптом:** новый тенант (`johntest`) — подписка active, UI «CRM создаётся…», `twentyWorkspaceId` NULL. `johntest-crm.getvoxly.ru` 200 без workspace.
+- **Причина:** Twenty v2.22 `assertWorkspaceCountWithinLimit` — без `ENTERPRISE_KEY` макс. **5** workspace (`MAX_WORKSPACES_WITHOUT_ENTERPRISE_KEY`). Job: `Cannot create more than 5 workspaces without a valid enterprise key`.
+- **Фикс:** `docker/patch-twenty-workspace-limit.cjs` → лимит **100000**; wired в `twenty.Dockerfile` + `prod-deploy.sh`. Deploy `twenty`. Re-enqueue `provision-workspace` для johntest → workspace `d8c9bf10-…` ACTIVE.
+- **Verify:** 6 workspaces в `core.workspace`; tenant `johntest` has `twentyWorkspaceId`; hard-refresh `/dashboard/crm`.
+- **Дата:** 2026-08-02.
+
+### INC-076 — `/r/{CODE}` referral short links 404
+- **Симптом:** `https://getvoxly.ru/r/JOHNA130` (и коды кампаний) → Next.js 404. `/register?ref=` и `GET /api/referrals/click/:code` работали.
+- **Причина:** UI строил `https://{domain}/r/{code}`, но в portal не было маршрута `/r/[code]` — только API-редирект клика.
+- **Фикс:** `apps/saas-portal/src/app/r/[code]/route.ts` — best-effort click через API, затем 302 на `/register?ref=`. Deploy `saas-portal`.
+- **Verify:** `curl -sI https://getvoxly.ru/r/JOHNA130` → 302 → `/register?ref=JOHNA130`.
+- **Дата:** 2026-08-02.
+
 ### INC-072 — CRM Chat author «Менеджер» + sidebar «john» vs Тест2
 - **Симптом:** (1) top-left CRM shows pink «J» + «john» while logged in as `test2@voxly.ru` (profile «Тест2 ФИОтест2»); (2) Chat outbound bubble labeled «Менеджер» instead of «Тест2».
 - **Причина:** (1) Twenty `MultiWorkspaceDropdown` = workspace `displayName` (= slug `john`), **not** current user — session is correct (`createdBy` = Тест2). (2) Chat `/s/*` proxy uses `VOXLY_SERVICE_TOKEN` → `sub=twenty-app`; saas-api `formatOperatorName` fell back to «Менеджер» (Voxly User names for invitees often empty; Twenty member names ignored).

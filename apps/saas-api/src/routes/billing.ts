@@ -366,7 +366,17 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     if (!isValid) {
-      fastify.log.warn({ invId }, 'Invalid Robokassa signature');
+      const shpKeys = Object.keys(customData).sort();
+      fastify.log.warn(
+        {
+          invId,
+          outSum: String(outSum),
+          shpKeys,
+          sigLen: String(signatureValue).length,
+          sigPref: String(signatureValue).slice(0, 12).toLowerCase(),
+        },
+        'Invalid Robokassa signature',
+      );
       return reply.code(400).send('bad signature');
     }
 

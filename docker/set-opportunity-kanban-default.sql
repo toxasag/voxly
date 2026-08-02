@@ -49,11 +49,30 @@ WHERE v."objectMetadataId" = o.id
       AND v2.key = 'INDEX'
   );
 
--- Rename default Opportunity INDEX board to «Канбан» (view selector label).
+-- Rename + convert Opportunity INDEX to real «Канбан» board (not TABLE with kanban label).
 UPDATE core.view AS v
 SET
   name = 'Канбан',
+  type = 'KANBAN',
   icon = 'IconLayoutKanban',
+  "openRecordIn" = 'SIDE_PANEL',
+  "mainGroupByFieldMetadataId" = COALESCE(
+    v."mainGroupByFieldMetadataId",
+    (
+      SELECT fm.id
+      FROM core."fieldMetadata" fm
+      WHERE fm."objectMetadataId" = o.id
+        AND fm.name = 'stage'
+      LIMIT 1
+    )
+  ),
+  "kanbanColumnWidth" = COALESCE(v."kanbanColumnWidth", 320),
+  overrides = (
+    COALESCE(v.overrides, '{}'::jsonb)
+    - 'type'
+    - 'icon'
+    - 'mainGroupByFieldMetadataId'
+  ) || '{"kanbanColumnWidth": 320}'::jsonb,
   "updatedAt" = now()
 FROM core."objectMetadata" AS o
 WHERE v."objectMetadataId" = o.id
@@ -61,8 +80,10 @@ WHERE v."objectMetadataId" = o.id
   AND v."deletedAt" IS NULL
   AND v.key = 'INDEX'
   AND (
-    v.name IS DISTINCT FROM 'Канбан'
+    v.type IS DISTINCT FROM 'KANBAN'
+    OR v.name IS DISTINCT FROM 'Канбан'
     OR v.icon IS DISTINCT FROM 'IconLayoutKanban'
+    OR v."mainGroupByFieldMetadataId" IS NULL
   )
   AND (
     v.name = 'Канбан'

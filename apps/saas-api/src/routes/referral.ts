@@ -137,7 +137,7 @@ export const referralRoutes: FastifyPluginAsync = async (fastify) => {
         });
         return reply.code(201).send({
           ...campaign,
-          link: `https://${fastify.voxlyDomain}/r/${campaign.code}`,
+          link: `https://${fastify.voxlyDomain}/?ref=${encodeURIComponent(campaign.code)}`,
         });
       } catch (err) {
         if (!isUniqueViolation(err)) {
