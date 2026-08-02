@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { selectClassName } from '@/lib/utils';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, Megaphone, Trash2, Upload } from 'lucide-react';
+import { Loader2, Megaphone, Trash2, Upload } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
@@ -12,12 +12,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { ProjectPicker } from '@/components/portal/project-picker';
+import { GiftBotDetailHero } from '@/components/portal/gift-bot-detail-hero';
 import { TELEGRAM_CLIENT_MD_HINT } from '@voxly/shared';
 import { TelegramPreview } from '@/components/telegram-preview';
+
+const LAND_SECTION =
+  'rounded-2xl border border-black/10 bg-white shadow-none';
+const LAND_TITLE = 'land-display text-xl tracking-[-0.03em] text-black';
+const LAND_DESC = 'text-sm leading-snug text-black/55';
 
 type GiftAddonState = {
   isActive: boolean;
@@ -720,109 +725,160 @@ export default function BotSettingsPage() {
     );
   }
 
+  const giftedCount = subscribers.filter((s) => s.giftDelivered).length;
+  const promoClicks = promo.clickCount || 0;
+  const channelLabel = channelUsername
+    ? `Канал @${channelUsername.replace(/^@/, '')}`
+    : 'Канал ещё не привязан';
+
+  let heroStateLabel = nextStep?.label ?? 'Воронка готова';
+  let heroStateTone: 'connected' | 'pending' | 'off' = nextStep ? 'pending' : 'connected';
+  let heroStateHint = nextStep
+    ? 'Настройте шаг ниже — после этого можно вести трафик в пост канала.'
+    : 'Пост в канале и бот настроены. Ведите аудиторию на кнопку «Получить подарок».';
+  let heroActionLabel = nextStep ? 'Перейти к шагу' : 'Открыть пост';
+  let heroOnAction = () => {
+    if (nextStep) scrollToSection(nextStep.id);
+    else scrollToSection('section-promo');
+  };
+  let heroSecondary: string | undefined;
+  let heroSecondaryAction: (() => void) | undefined;
+  let heroFooterLabel = 'Тариф';
+  let heroFooterValue = subActive
+    ? isTrial
+      ? `trial · ${giftAddon?.activeUntil ? new Date(giftAddon.activeUntil).toLocaleDateString('ru-RU') : '—'}`
+      : `до ${giftAddon?.activeUntil ? new Date(giftAddon.activeUntil).toLocaleDateString('ru-RU') : '—'}`
+    : 'выкл';
+
+  if (!subActive) {
+    heroStateLabel = trialAvailable ? 'Нужен тариф или trial' : 'Тариф выключен';
+    heroStateTone = 'off';
+    heroStateHint = trialAvailable
+      ? 'Активируйте пробный период на странице списка ботов или оплатите тариф.'
+      : `Оформите ${giftPrice} ₽/мес — на оплате можно списать партнёрский баланс.`;
+    heroActionLabel = busy === 'pay' ? 'Переходим…' : `Оплатить ${giftPrice} ₽`;
+    heroOnAction = () => void payGift();
+    heroSecondary = 'К списку ботов';
+    heroSecondaryAction = () => router.push('/dashboard/bots');
+  } else if (isTrial) {
+    heroSecondary = busy === 'pay' ? 'Переходим…' : `Оплатить ${giftPrice} ₽`;
+    heroSecondaryAction = () => void payGift();
+    if (!nextStep) {
+      heroStateHint =
+        'Воронка готова. Пробный период ограничен — оплатите, чтобы не потерять приём лидов.';
+    }
+  }
+
   return (
-    <AppShell className="space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Link
-            href="/dashboard/bots"
-            className="inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground transition-colors duration-[var(--duration-fast)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden /> Все боты
-          </Link>
-          <h1 className="mt-2 text-[1.65rem] font-semibold tracking-tight">@{bot.botUsername}</h1>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant={bot.status === 'active' ? 'success' : 'warning'}>{bot.status}</Badge>
-            {projectName && <Badge variant="secondary">{projectName}</Badge>}
-            {channelUsername && (
-              <Badge variant="outline">@{channelUsername.replace(/^@/, '')}</Badge>
-            )}
-            {isTrial && <Badge variant="warning">пробный период</Badge>}
-            {subActive && !isTrial && <Badge variant="success">тариф</Badge>}
-            {!subActive && <Badge variant="warning">тариф выкл</Badge>}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {(!subActive || isTrial) && (
-            <Button
-              variant="solid"
-              size="sm"
-              onClick={() => void payGift()}
-              disabled={busy === 'pay'}
-            >
-              {busy === 'pay' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {isTrial ? `Оплатить ${giftPrice} ₽` : `Оплатить ${giftPrice} ₽`}
-            </Button>
-          )}
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/dashboard/mailing/bot">
-              <Megaphone className="h-4 w-4" /> Рассылки
-            </Link>
-          </Button>
-        </div>
-      </div>
+    <AppShell maxWidth="6xl">
+      <div className="landing-root space-y-6">
+      <GiftBotDetailHero
+        botUsername={bot.botUsername || 'бот'}
+        channelLabel={channelLabel}
+        projectName={projectName}
+        facts={[
+          { label: 'Подписчики', value: String(subscribers.length) },
+          { label: 'Получили подарок', value: String(giftedCount) },
+          { label: 'Клики по посту', value: String(promoClicks) },
+        ]}
+        stateLabel={heroStateLabel}
+        stateTone={heroStateTone}
+        stateHint={heroStateHint}
+        actionLabel={heroActionLabel}
+        onAction={heroOnAction}
+        actionDisabled={busy === 'pay'}
+        secondaryActionLabel={heroSecondary}
+        onSecondaryAction={heroSecondaryAction}
+        botLink={bot.botLink}
+        footerLabel={heroFooterLabel}
+        footerValue={heroFooterValue}
+      />
 
       {error && <Alert variant="error">{error}</Alert>}
       {ok && <Alert variant="success">{ok}</Alert>}
 
-      <section className="rounded-2xl border border-border px-5 py-4">
+      <section className="grid gap-3 rounded-2xl border border-black/10 bg-white p-5 sm:grid-cols-3">
+        {[
+          {
+            n: '1',
+            title: 'Привяжите канал',
+            text: 'Добавьте бота админом канала и проверьте @username — без этого подарок не выдаётся.',
+          },
+          {
+            n: '2',
+            title: 'Настройте сообщения',
+            text: 'Старт после /start, сам подарок и напоминания. Справа всегда видно превью Telegram.',
+          },
+          {
+            n: '3',
+            title: 'Опубликуйте пост',
+            text: 'Кнопка в канале ведёт в бота. Клики и подписчики появятся в блоке ниже.',
+          },
+        ].map((step) => (
+          <div key={step.n} className="flex gap-3">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5a623] font-mono text-xs font-bold text-black">
+              {step.n}
+            </span>
+            <div className="min-w-0">
+              <p className="font-semibold text-black">{step.title}</p>
+              <p className="mt-1 text-sm leading-snug text-black/55">{step.text}</p>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Готовность воронки
-            </p>
-            <p className="mt-1 text-sm text-foreground">
+            <h2 className="land-display text-xl tracking-[-0.03em]">Готовность воронки</h2>
+            <p className="mt-1 text-sm text-black/55">
               {nextStep
-                ? `Следующий шаг: ${nextStep.label}`
-                : 'Воронка готова — можно вести трафик в пост'}
+                ? `Сейчас важно: ${nextStep.label.toLowerCase()}`
+                : 'Все шаги закрыты — можно гнать трафик'}
             </p>
-            {(!subActive || isTrial) && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {isTrial
-                  ? `Пробный период до ${giftAddon?.activeUntil ? new Date(giftAddon.activeUntil).toLocaleDateString('ru-RU') : '—'}. На оплате можно списать партнёрский баланс.`
-                  : trialAvailable
-                    ? 'Сначала активируйте trial или оплатите тариф на странице списка ботов.'
-                    : `Тариф выключен — оплатите ${giftPrice} ₽/мес. На оплате можно списать партнёрский баланс.`}
-              </p>
-            )}
           </div>
-          {nextStep && (
-            <Button variant="secondary" size="sm" onClick={() => scrollToSection(nextStep.id)}>
-              Перейти к шагу
-            </Button>
-          )}
+          <Link
+            href="/dashboard/mailing/bot"
+            className="land-btn-ghost inline-flex min-h-10 items-center gap-2 px-4 text-sm"
+          >
+            <Megaphone className="h-4 w-4" aria-hidden /> Рассылки
+          </Link>
         </div>
-        <ul className="mt-3 flex flex-wrap gap-2">
-          {setupSteps.map((step) => (
+        <ol className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          {setupSteps.map((step, i) => (
             <li key={step.id}>
               <button
                 type="button"
                 onClick={() => scrollToSection(step.id)}
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                className={`flex min-h-[72px] w-full cursor-pointer flex-col rounded-xl border px-3 py-3 text-left transition-colors ${
                   step.done
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                    : 'border-border bg-secondary/40 text-muted-foreground hover:text-foreground'
+                    ? 'border-black/10 bg-[#faf8f5]'
+                    : nextStep?.id === step.id
+                      ? 'border-[#f5a623] bg-[#fff8ec]'
+                      : 'border-black/10 bg-white hover:border-black/25'
                 }`}
               >
-                {step.done ? '✓ ' : '○ '}
-                {step.label}
+                <span className="font-mono text-[11px] font-semibold text-black/40">
+                  {step.done ? '✓' : i + 1}
+                </span>
+                <span className="mt-1 text-sm font-semibold text-black">{step.label}</span>
               </button>
             </li>
           ))}
-        </ul>
+        </ol>
       </section>
 
       {/* Projects / campaigns — only one active at a time */}
-      <Card id="section-projects" className="overflow-hidden shadow-[var(--elevation-1)]">
-        <CardHeader className="border-b border-border/80 bg-secondary/25">
-          <CardTitle>Проекты</CardTitle>
-          <CardDescription>
+      <Card id="section-projects" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>Проекты</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Несколько акций на одном боте. Одновременно активен только один. Можно задать расписание
             старта/стопа (день 1 / день 2…). Клик по карточке — редактирование; переключатель —
             вручную вкл/выкл.
           </CardDescription>
         </CardHeader>
-        <CardContent className="pt-5">
+        <CardContent className="pt-2">
           <ProjectPicker
             projects={campaigns}
             selectedId={campaignId}
@@ -840,10 +896,10 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 1.1 Channel */}
-      <Card id="section-channel">
-        <CardHeader>
-          <CardTitle>1.1 Канал</CardTitle>
-          <CardDescription>
+      <Card id="section-channel" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>1.1 Канал</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Добавьте @{bot.botUsername} админом канала или супергруппы (права: видеть участников и
             публиковать сообщения). Укажите публичный @username — не название чата и не invite-ссылку
             t.me/+…
@@ -876,10 +932,10 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 1.2 First message — Telegram bot description before /start */}
-      <Card>
-        <CardHeader>
-          <CardTitle>1.2 Первое сообщение бота</CardTitle>
-          <CardDescription>
+      <Card className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>1.2 Первое сообщение бота</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Текст на экране Telegram, когда человек перешёл по ссылке на бота, но ещё не нажал
             «Старт» / «Перезапустить». Это описание профиля бота (не сообщение в чате).
           </CardDescription>
@@ -917,10 +973,10 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 1.3 Start message — after /start in chat */}
-      <Card id="section-start">
-        <CardHeader>
-          <CardTitle>1.3 Стартовое сообщение бота</CardTitle>
-          <CardDescription>
+      <Card id="section-start" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>1.3 Стартовое сообщение бота</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Что бот напишет в чат сразу после /start. Обычно тут просят подписаться на канал и
             нажать кнопку ниже. Настройте до массового запуска.
           </CardDescription>
@@ -1028,10 +1084,10 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 2. Promo post */}
-      <Card id="section-promo">
-        <CardHeader>
-          <CardTitle>2. Пост в канале об акции</CardTitle>
-          <CardDescription>
+      <Card id="section-promo" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>2. Пост в канале об акции</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Картинка или видео + текст + кнопка. Файл загружается в Telegram (file_id), хостинг не нужен.
           </CardDescription>
         </CardHeader>
@@ -1142,10 +1198,10 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* 3. Funnel / warmup — remaining steps (start is in 1.3) */}
-      <Card id="section-funnel">
-        <CardHeader>
-          <CardTitle>3. Дальнейшие сообщения бота</CardTitle>
-          <CardDescription>
+      <Card id="section-funnel" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>3. Дальнейшие сообщения бота</CardTitle>
+          <CardDescription className={LAND_DESC}>
             Что бот пишет после /start: напоминания, подарок, follow-up. Стартовое сообщение — в блоке
             1.3. Справа — превью в Telegram. Текст: {TELEGRAM_CLIENT_MD_HINT}
           </CardDescription>
@@ -1436,9 +1492,12 @@ export default function BotSettingsPage() {
       </Card>
 
       {/* Subscribers */}
-      <Card id="section-subs">
-        <CardHeader>
-          <CardTitle>Подписчики и переписка</CardTitle>
+      <Card id="section-subs" className={LAND_SECTION}>
+        <CardHeader className="pb-2">
+          <CardTitle className={LAND_TITLE}>Подписчики и переписка</CardTitle>
+          <CardDescription className={LAND_DESC}>
+            Кто запустил бота и получил подарок. Отсюда можно открыть переписку.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {subscribers.length === 0 ? (
@@ -1502,6 +1561,7 @@ export default function BotSettingsPage() {
           )}
         </CardContent>
       </Card>
+      </div>
     </AppShell>
   );
 }
