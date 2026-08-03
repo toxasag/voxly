@@ -103,7 +103,8 @@
   --color-land-ink: #0a0a0a;
   --color-land-muted: #5c5c5c;
   --color-land-amber: #f5a623;
-  --color-land-mist: #ececec;
+  --color-land-mist: #f3f3f3;
+  --color-land-amber-soft: #fff4de;
   --color-land-teal: #0a0a0a; /* legacy alias → ink */
   --color-land-rust: #0a0a0a; /* legacy alias → ink (CTA) */
 }
@@ -381,7 +382,9 @@
   --land-ink: var(--color-land-ink);
   --land-muted: var(--color-land-muted);
   --land-amber: var(--color-land-amber);
+  --land-amber-soft: var(--color-land-amber-soft);
   --land-mist: var(--color-land-mist);
+  --land-line: rgba(0, 0, 0, 0.15);
   --land-teal: var(--color-land-ink);
   --land-rust: var(--color-land-ink);
   background: var(--land-canvas);
@@ -455,13 +458,14 @@
   gap: 0.5rem;
   min-height: 48px;
   padding: 0.75rem 1.5rem;
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--land-ink);
   color: #ffffff;
   font-family: var(--font-voxly-body), "Manrope", sans-serif;
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: -0.01em;
+  touch-action: manipulation;
   transition: background 200ms var(--ease-out), transform 200ms var(--ease-out), color 200ms var(--ease-out);
 }
 
@@ -481,13 +485,14 @@
   gap: 0.5rem;
   min-height: 48px;
   padding: 0.75rem 1.5rem;
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--land-amber);
   color: var(--land-ink);
   font-family: var(--font-voxly-body), "Manrope", sans-serif;
   font-size: 0.95rem;
   font-weight: 600;
   letter-spacing: -0.01em;
+  touch-action: manipulation;
   transition: filter 200ms var(--ease-out), transform 200ms var(--ease-out);
 }
 
@@ -505,11 +510,12 @@
   justify-content: center;
   min-height: 48px;
   padding: 0.75rem 1.25rem;
-  border-radius: 999px;
+  border-radius: 4px;
   border: 1px solid color-mix(in srgb, var(--land-ink) 18%, transparent);
   color: var(--land-ink);
   font-weight: 600;
   font-size: 0.95rem;
+  touch-action: manipulation;
   transition: background 200ms var(--ease-out), border-color 200ms var(--ease-out);
 }
 

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Manrope, Unbounded } from 'next/font/google';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { YandexMetrika } from '@/components/yandex-metrika';
 import './globals.css';
 
 const display = Unbounded({
@@ -19,16 +20,16 @@ const body = Manrope({
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://getvoxly.ru'),
-  title: 'Voxly — CRM, Telegram и WhatsApp в одном кабинете',
+  title: 'Voxly — командный центр продаж в CRM',
   description:
-    'Клиенты пишут в мессенджеры. Voxly держит CRM, ботов и AI вместе. 7 дней бесплатно, без карты. От 500 ₽/мес.',
+    'Сделки и чаты из Telegram и WhatsApp в одной CRM. В браузере с компьютера и телефона — без приложений. 7 дней бесплатно, от 500 ₽/мес.',
   openGraph: {
-    title: 'Voxly — один кабинет вместо трёх сервисов',
-    description: '7 дней бесплатно. CRM, боты и AI. От 500 ₽ за модуль.',
+    title: 'Voxly — командный центр продаж',
+    description:
+      'CRM + мессенджеры + AI. Работает в браузере на телефоне. 7 дней бесплатно, от 500 ₽.',
     siteName: 'Voxly',
     locale: 'ru_RU',
     type: 'website',
-    images: [{ url: '/mascot/voxly-hero-v5.png', width: 1024, height: 1536, alt: 'Voxly — робот-компаньон' }],
   },
 };
 
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru" className={`${display.variable} ${body.variable}`}>
       <body className="font-sans antialiased">
+        <YandexMetrika />
         <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
       </body>
     </html>

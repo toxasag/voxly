@@ -1,10 +1,20 @@
 # Landing `/`
 
+## Active design lock
+
+**Source of truth for next rebuild:** [`landing-awwwards-v2.md`](./landing-awwwards-v2.md) (PROMPT v2 — Awwwards / conversion).
+
+Until that file is implemented in `apps/saas-portal/src/app/page.tsx`, production may still show the AIDA industrial page (mascot hero). Do not mix thesis: **CRM command center + mobile web without apps** wins over “трёх сервисов” alone.
+
 ## Positioning (locked)
 
-**Offer:** полный нужный контур (CRM + боты + AI TG/WA + рассылки) → **7 дней бесплатно**, после оплаты **~в 3 раза дешевле** типичной рыночной сборки.
+**Primary:** VoxlyCRM — командный центр продаж. Каналы, диалоги, AI и рассылки управляются из CRM. Мобильный веб, apps не нужны.
 
-**Audience:** владельцы малого/среднего бизнеса и агентства, которые сейчас платят за Salebot/BotHelp + Wazzup/Pact + amo/Kommo (или AI-пакеты 7sales/Botseller).
+**Secondary:** модули как оружие CRM (не каталог трафика).
+
+**Tertiary:** от 500 ₽ · 7 дней без карты · hard lock после trial.
+
+**Vs market:** конкуренты (GramGPT / TraffSoft / Easy AI / DarkTelegram craft only) продают трафик в TG; Voxly продаёт закрытие лида в CRM.
 
 ## Market anchors (public tariffs, mid-2026)
 
@@ -12,22 +22,19 @@
 |---|---|---|
 | TG funnel builder | BotHelp ~1 599, Salebot ~2 999 | Gift 500/канал |
 | AI + CRM bundle | 7sales ~3 990, Botseller Start ~4 900 | CRM 500 + AI channel 500–1 000 |
-| WA in CRM | Wazzup ~1 000–6 000, Pact from ~2 000, Chat2Desk ~7–8 000 | WA 500/акк |
+| WA in CRM | Wazzup ~1 000–6 000, Pact from ~2 000 | WA 500/акк |
 | CRM seats | amo/Kommo per seat → 10 seats easily 10k+ | CRM Base 500 / 10 users |
 
-Stack example on page: market ~8–15k vs Voxly ~1.5–2k. Always label as ориентир; disclaimer that competitor prices change.
+Stack example: market ~8–15k vs Voxly from 500 (CRM) / ~1.5–2k typical contour. Label as ориентир.
 
-## Hero
+## Visual (marketing)
 
-- Brand: Voxly
-- H1: free 7 days + 3× cheaper (benefit, not feature list)
-- Primary CTA: «Попробовать 7 дней бесплатно» → `/register`
-- One product preview (deal chat), no decorative card grid
+- Swiss Modernism 2.0 × Industrial Editorial
+- Tokens: ink `#0A0A0A`, paper, mist `#F3F3F3`, amber `#F5A623` — **not** ServiceApp blue, **not** purple AI
+- Type: Unbounded + Manrope + JetBrains Mono
+- Signature: phone CRM chat + ambient desktop kanban
+- No cards in hero; one pin section = Mobile Proof
 
-## Visual
+## Components
 
-**Theme:** shadcn indigo (ADR-020) — primary indigo CTAs, zinc surfaces (`globals.css`). No fake social proof numbers.
-
-## Components (shadcn)
-
-Landing uses `@/components/ui/*`: Button, Badge, Card, Separator, Table, Accordion, Alert. Keep marketing copy in `page.tsx`.
+Landing uses `@/components/ui/*` sparingly (Button patterns via land-btn, Accordion FAQ). Prefer editorial rows over Card grids. Keep `RegisterLink`, `ReferralCapture`, `LEGAL`.
