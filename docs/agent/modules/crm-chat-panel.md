@@ -1,5 +1,7 @@
 # CRM chat panel (voxly-crm-chat)
 
+**Status: WORKING / FROZEN baseline 2026-08-06** (user-confirmed)
+
 Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card chat UI).
 
 ## Paths
@@ -39,5 +41,5 @@ Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card
 
 ## Last verified / deploy
 
-- **2026-08-06:** crm-chat **0.1.27** on prod; INC-103 GramJS-from-Person.telegram in saas-api; backup `20260806-125415` (+ earlier `090344`/`093403`); refresh-crm-chat **voxly** ok
+- **2026-08-06 (user-confirmed WORKING):** multi-channel chat/media/write-as ok; crm-chat **0.1.27**; INC-103; backups `20260806-132913` + `20260806-125415`; PR #1 `263e4ef`
 - Deploy: `./scripts/prod-deploy.sh saas-api,gramjs-bridge` then refresh-crm-chat when tarball bumped

@@ -1,5 +1,7 @@
 # WA → CRM sync (ai-whatsapp-worker + Evolution)
 
+**Status: WORKING / FROZEN baseline 2026-08-06** (user-confirmed)
+
 Golden path detail: `docs/agent/CHAT.md` §2. Product surface: `CAPABILITIES.md` (WA private chat sync).
 
 ## Paths
@@ -40,5 +42,5 @@ Golden path detail: `docs/agent/CHAT.md` §2. Product surface: `CAPABILITIES.md`
 
 ## Last verified / deploy
 
-- **2026-08-06:** prod-diff match `ai-whatsapp-worker`; containers Up; backups `20260806-123456`, `20260806-102034`, `20260806-093403`
-- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` (+ `saas-api` if routes/`twenty-client` changed; `compose`/`evolution-api` only if Dockerfile/patch changed)
+- **2026-08-06 (user-confirmed WORKING):** Evolution + ai-whatsapp-worker sync/send ok; tip backup `20260806-132913`; PR #1 `263e4ef`
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` (+ `saas-api` if routes/`twenty-client` changed; `compose`/`evolution-api` only if Dockerfile/patch changed). Never wipe volumes / Evolution sessions casually.

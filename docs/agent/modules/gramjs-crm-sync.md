@@ -1,5 +1,7 @@
 # GramJS / TG personal → CRM
 
+**Status: WORKING / FROZEN baseline 2026-08-06** (user-confirmed)
+
 Golden path: `CHAT.md` (GramJS section). Surface: `CAPABILITIES.md` (GramJS bridge + portal).
 
 ## Paths
@@ -41,5 +43,5 @@ Golden path: `CHAT.md` (GramJS section). Surface: `CAPABILITIES.md` (GramJS brid
 
 ## Last verified / deploy
 
-- **2026-08-06:** INC-103 send+ImportContacts; backup `20260806-125415`; earlier media/UI `084234`/`082647`/`090344`
+- **2026-08-06 (user-confirmed WORKING):** personal TG accounts sync/send ok; INC-103; backups `20260806-132913` + `20260806-125415`; PR #1 `263e4ef`
 - Deploy: `./scripts/prod-deploy.sh gramjs-bridge,saas-api` (bridge needs compose profile + `TELEGRAM_API_*` on server)

@@ -153,6 +153,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - **2026-07-26** — INC-065 unread badges UX + media 0.1.13 workers shipped prod (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-190111`.
 - **2026-07-26** — Prod: INC-063 media + INC-064 prompt filter → `saas-api` (crm-chat 0.1.9), `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`; backup `20260726-022902`; smoke 200.
 
+### 2026-08-06 — Baseline freeze (docs)
+
+- User confirmed WORKING: CRM chats, WhatsApp, GramJS personal, gift bot, AI agent, Telegram secretary.
+- Docs/rules only: `docs/agent/modules/*` + CAPABILITIES Verified baseline + module-freeze rule. PR #1 on main `263e4ef`.
+
 ### 2026-07-26 — INC-059 WA LID→PN (Evolution v2.3.7-lid shipped)
 - WA UI can show phone without address book; avatar invent OFF. Prod Evolution upgraded to **v2.3.7-lid** (backup `20260726-002454`); session restored without QR; webhook + `PRESENCE_UPDATE` re-applied. Next: confirm LID inbound fills Person via `remoteJidAlt`/`senderPn`.
 
@@ -562,7 +567,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/103** (GramJS send from Person.telegram userId even without prior Conversation) + **/102** (`/open/tg/{id}`) + **/101** + **/100** + **/099** (crm-chat **0.1.27**) + **/098** + **/097 v7** + ADR-026 + **ADR-027**. **Module freeze:** `docs/agent/modules/` (WA/GramJS/chat/social/gift/dedupe). **2026-08-06:** open link ≠ send; GramJS binds peer from LINKS + ImportContacts phone fallback. **MAX** ADR-025 pending. **Blocker:** Robokassa Password#2 (INC-083). Gaps: TG→WA IsOnWhatsApp; SMTP; rotate root SSH.
+**Статус кода:** CRM chat + INC-024…**/103** (GramJS send from Person.telegram userId even without prior Conversation) + **/102** (`/open/tg/{id}`) + **/101** + **/100** + **/099** (crm-chat **0.1.27**) + **/098** + **/097 v7** + ADR-026 + **ADR-027**. **Baseline locked 2026-08-06 (user-confirmed WORKING):** CRM chats, WhatsApp, GramJS personal, gift bot, AI agent, Telegram secretary — freeze cards in `docs/agent/modules/` (+ social/dedupe supporting). PR #1 merged `263e4ef`; prod tip backup `20260806-132913` (+ INC-103 `20260806-125415`). Open link ≠ send; GramJS binds peer from LINKS + ImportContacts phone fallback. **MAX** ADR-025 pending. **Blocker:** Robokassa Password#2 (INC-083). Gaps: TG→WA IsOnWhatsApp; SMTP; rotate root SSH. Other modules may proceed **without regressing** the frozen baseline.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

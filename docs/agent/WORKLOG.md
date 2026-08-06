@@ -1,3 +1,11 @@
+### 2026-08-06 — Freeze WORKING baseline (chats / WA / TG / gift / AI / secretary)
+
+- Goal: Lock in user-confirmed working surfaces so future module work does not regress them («все остальное сохрани»).
+- Changes: **docs/rules only** — `docs/agent/modules/` cards (+ new `ai-agent.md`, `telegram-secretary.md`); index Status **WORKING / FROZEN baseline 2026-08-06**; `CAPABILITIES.md` Verified baseline section; `steps.md` §4; strengthen `.cursor/rules/module-freeze.mdc`. No product code, no deploy.
+- Verify: user-confirmed 2026-08-06; PR #1 already on main as `263e4ef`; prod tip backup `20260806-132913` (+ INC-103 `20260806-125415`).
+- Broken: none.
+- Next: other modules without regressing freeze; always read card + run smoke before/after edits to frozen surfaces.
+
 ### 2026-08-06 — Tip redeploy + PR for feature/getvoxlybot-otp-live-robokassa
 
 - Goal: GitHub auth restored → open PR; ship tip `cb36ecf` to prod so CRM/TG/WA/portal match branch.

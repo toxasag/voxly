@@ -1,4 +1,6 @@
-# Gift-bot setup UX (ADR-027)
+# Gift bot (setup UX + gift-bot-worker)
+
+**Status: WORKING / FROZEN baseline 2026-08-06** (user-confirmed)
 
 Canonical for **all** tenants/bots. Details: `CAPABILITIES.md` «Gift bot detail» + `DECISIONS.md` ADR-027. Cursor rule: `.cursor/rules/gift-bot-setup-ux.mdc`.
 
@@ -16,6 +18,9 @@ Canonical for **all** tenants/bots. Details: `CAPABILITIES.md` «Gift bot detail
 - Emoji under step-2 preview; unified TG preview chrome; partners amber **page** chrome only (not inside TG preview)
 - Media via `file_id` + media-file proxy after reload; Markdown client → MarkdownV2 path
 - Same UX for every tenant — polish on one prod bot is the product standard
+- Funnel runtime (subscribe → gift → after-gift / broadcasts) must keep working via `gift-bot-worker`
+- CRM «Пишем от» gift/gift_max **only if** GiftSubscriber/conv on **that** bot — do not offer gift for non-subscribers
+- Do not casually refactor preview/text/media paths (ADR-027)
 
 ## Frozen paths
 
@@ -37,5 +42,5 @@ Canonical for **all** tenants/bots. Details: `CAPABILITIES.md` «Gift bot detail
 
 ## Last verified / deploy
 
-- **2026-08-06:** gift-bot-worker on prod-diff match; container Up; included in backup deploys `20260806-123456` (open/tg writers) — UX not intentionally changed that day
+- **2026-08-06 (user-confirmed WORKING):** бот выдачи подарков ok; tip backup `20260806-132913` included gift-bot-worker; PR #1 `263e4ef`
 - Deploy: `./scripts/prod-deploy.sh saas-portal,saas-api,gift-bot-worker` when gift surface changes

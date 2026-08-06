@@ -4,7 +4,22 @@
 
 Обновляй этот файл при изменении API/UI/worker surface.
 
-**Module freeze:** before editing WA sync / GramJS CRM / chat panel / social links / gift-bot / deal dedupe → read `docs/agent/modules/README.md` + the module card; run its smoke after changes.
+**Module freeze:** before editing WA sync / GramJS CRM / chat panel / social links / gift-bot / AI agent / Telegram secretary / deal dedupe → read `docs/agent/modules/README.md` + the module card; run its smoke after changes.
+
+## Verified baseline 2026-08-06 (user-confirmed WORKING)
+
+User lock: keep these green; do not break with other module work. Cards: `docs/agent/modules/`. PR #1 merged `263e4ef`; prod tip backup `20260806-132913` (+ INC-103 `20260806-125415`).
+
+| Surface | Status | Freeze card |
+|---|---|---|
+| CRM chats (panel, media, write-as, multi-channel) | 🟢 WORKING | [`crm-chat-panel.md`](modules/crm-chat-panel.md) |
+| WhatsApp (Evolution + ai-whatsapp-worker) | 🟢 WORKING | [`wa-crm-sync.md`](modules/wa-crm-sync.md) |
+| Telegram GramJS personal | 🟢 WORKING | [`gramjs-crm-sync.md`](modules/gramjs-crm-sync.md) |
+| Gift bot (бот выдачи подарков) | 🟢 WORKING | [`gift-bot.md`](modules/gift-bot.md) |
+| AI agent | 🟢 WORKING | [`ai-agent.md`](modules/ai-agent.md) |
+| Telegram secretary (телеграм секретарь) | 🟢 WORKING | [`telegram-secretary.md`](modules/telegram-secretary.md) |
+
+Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source; never wipe prod volumes.
 
 ---
 
