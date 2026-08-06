@@ -1,9 +1,60 @@
 // Voxly AI Core — OpenAI wrapper with per-tenant wallet deduction + markup
 
 import { prisma } from '@voxly/db';
+import type { AiUsageChannel } from '@voxly/shared';
 import { applyMarkup } from './markup.js';
-
-export { applyMarkup };
+export {
+  applyMarkup,
+};
+export {
+  costUsdFromOpenRouter,
+  resolveProviderCostRub,
+  usdToProviderCostRub,
+  getUsdRubRate,
+  loadOpenRouterModelPricing,
+  resetOpenRouterPricingCache,
+  type CostSource,
+  type OpenRouterUsageLike,
+  type ModelTokenPricing,
+} from './openrouter-cost.js';
+export {
+  chunkText,
+  cosineSimilarity,
+  embedTexts,
+  embedAndCharge,
+  retrieveAgentContext,
+  formatRagPromptBlock,
+  parseAgentLearnSettings,
+  DEFAULT_WON_STAGES,
+  type AgentLearnSettings,
+} from './rag.js';
+export {
+  createInboundDebouncer,
+  humanBubbleGapMs,
+  normalizeAiBubbles,
+  filterHistoryAfterAgentUpdate,
+  filterMediaCapabilityRefusals,
+  isMediaCapabilityRefusal,
+  hasEnrichedMediaTag,
+  isNearDuplicateReply,
+  AGENT_PROMPT_PRIORITY_HINT,
+  MEDIA_INBOUND_HINT,
+  MEDIA_REFUSAL_RETRY_USER,
+  DEFAULT_INBOUND_DEBOUNCE_MS,
+  type InboundDebouncer,
+} from './inbound-debounce.js';
+export {
+  DOC_TEXT_MAX_CHARS,
+  DOC_MEDIA_MAX_BYTES,
+  detectDocumentKind,
+  extractDocumentText,
+  formatDocumentAiText,
+  type DocumentKind,
+} from './document-text.js';
+export {
+  extractAudioFromVideo,
+  type ExtractedAudio,
+} from './extract-audio.js';
 
 export interface ChargeAiUsageParams {
   tenantId: string;
@@ -12,6 +63,9 @@ export interface ChargeAiUsageParams {
   model: string;
   requestType: 'text' | 'transcribe' | 'vision';
   addonId?: string;
+  aiAgentId?: string | null;
+  /** Which surface consumed the tokens; omitted only by callers that predate the breakdown. */
+  channel?: AiUsageChannel;
 }
 
 export interface ChargeResult {
@@ -58,33 +112,55 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
       throw new Error(`No AI wallet for tenant ${params.tenantId}`);
     }
 
-    const currentBalance = Number(wallet.balanceRub);
-    const newBalance = currentBalance - chargedRub;
-
-    // Update wallet (can go negative slightly, but flag for pause)
-    const updatedWallet = await tx.aiWallet.update({
-      where: { tenantId: params.tenantId },
-      data: { balanceRub: Math.max(0, newBalance) },
+    // Conditional decrement keeps concurrent charges from overwriting each other
+    const debited = await tx.aiWallet.updateMany({
+      where: { tenantId: params.tenantId, balanceRub: { gte: chargedRub } },
+      data: { balanceRub: { decrement: chargedRub } },
     });
+
+    let balance: number;
+    let uncollectedRub = 0;
+
+    if (debited.count > 0) {
+      const updatedWallet = await tx.aiWallet.findUnique({
+        where: { tenantId: params.tenantId },
+      });
+      balance = Number(updatedWallet?.balanceRub ?? 0);
+    } else {
+      // Wallet cannot cover the charge: lock the row, collect what is actually there
+      const locked = await tx.$queryRaw<Array<{ balanceRub: unknown }>>`
+        SELECT "balanceRub" FROM "AiWallet" WHERE "tenantId" = ${params.tenantId} FOR UPDATE
+      `;
+      const collected = Number(locked[0]?.balanceRub ?? 0);
+      uncollectedRub = Math.round((chargedRub - collected) * 10000) / 10000;
+      await tx.aiWallet.update({
+        where: { tenantId: params.tenantId },
+        data: { balanceRub: 0 },
+      });
+      balance = 0;
+    }
 
     // Log usage
     await tx.aiUsageLog.create({
       data: {
         tenantId: params.tenantId,
         addonId: params.addonId,
+        aiAgentId: params.aiAgentId || undefined,
         aiWalletId: wallet.id,
         model: params.model,
         tokens: params.tokens,
         providerCostRub: params.providerCostRub,
         markupPercent,
         chargedRub,
+        uncollectedRub: uncollectedRub > 0 ? uncollectedRub : undefined,
         requestType: params.requestType,
+        channel: params.channel,
       },
     });
 
     return {
-      balance: Number(updatedWallet.balanceRub),
-      paused: newBalance <= 0,
+      balance,
+      paused: balance <= 0,
     };
   });
 

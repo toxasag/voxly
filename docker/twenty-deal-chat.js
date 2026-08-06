@@ -97,7 +97,11 @@
   }
 
   function formatContent(src) {
-    var s = esc(src);
+    var normalized = String(src || '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/\u00a0/g, ' ')
+      .replace(/nbsp;/gi, ' ');
+    var s = esc(normalized);
     s = s.replace(/```([\s\S]*?)```/g, function (_, code) {
       return (
         '<pre style="margin:4px 0;padding:6px;background:rgba(0,0,0,0.06);border-radius:6px;overflow:auto;font-size:12px">' +
@@ -116,6 +120,30 @@
       /\|\|([^|]+)\|\|/g,
       '<span style="background:#333;color:#333;border-radius:3px;padding:0 2px">$1</span>',
     );
+    s = s
+      .split(/(<[^>]+>)/g)
+      .map(function (part) {
+        if (!part || part.charAt(0) === '<') return part;
+        return part.replace(/(https?:\/\/[^\s<]+)/g, function (rawUrl) {
+          var url = rawUrl;
+          var trail = '';
+          while (url.length > 0 && /[.,);:!?\]}'"]/.test(url.charAt(url.length - 1))) {
+            trail = url.charAt(url.length - 1) + trail;
+            url = url.slice(0, -1);
+          }
+          if (!/^https?:\/\//i.test(url)) return rawUrl;
+          var href = esc(url);
+          return (
+            '<a href="' +
+            href +
+            '" target="_blank" rel="noopener noreferrer" style="color:#1961ed;text-decoration:underline;word-break:break-all">' +
+            href +
+            '</a>' +
+            trail
+          );
+        });
+      })
+      .join('');
     return s;
   }
 

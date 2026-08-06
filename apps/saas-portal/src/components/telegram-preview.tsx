@@ -1,81 +1,244 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
-import { parseTelegramClientMd, type TgMdNode } from '@voxly/shared';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  detectStoredMediaKind,
+  normalizeGiftMediaType,
+  parseTelegramClientMd,
+  type GiftPromoMediaType,
+  type TgMdNode,
+} from '@voxly/shared';
 import { cn } from '@/lib/utils';
+import {
+  TG_CHAT_BG,
+  TG_CHAT_WALLPAPER,
+  TG_INLINE_BTN,
+  TG_PREVIEW_FRAME,
+  TgPreviewHeader,
+} from '@/components/portal/telegram-preview-chrome';
 
-/** Minimal Telegram-like bubble for portal previews (light theme). */
+function mediaPlaceholderLabel(mediaType: GiftPromoMediaType): string {
+  switch (mediaType) {
+    case 'video':
+      return 'Видео загружено';
+    case 'video_note':
+      return 'Кружочек загружен';
+    case 'voice':
+      return 'Голосовое загружено';
+    case 'audio':
+      return 'Аудио загружено';
+    case 'document':
+      return 'Файл загружен';
+    default:
+      return 'Медиа загружено';
+  }
+}
+
+function isVisualMediaKind(kind: GiftPromoMediaType): boolean {
+  return kind === 'photo' || kind === 'video' || kind === 'video_note';
+}
+
+/**
+ * Prefer local/HTTPS URL; else fetch authenticated bot media proxy for file_id
+ * (img/video cannot send Authorization — same pattern as bot avatar).
+ */
+function useResolvedMediaSrc(opts: {
+  mediaUrl?: string;
+  imageUrl?: string;
+  botId?: string;
+  telegramFileId?: string;
+  mediaType: GiftPromoMediaType;
+}): string | undefined {
+  const local = opts.mediaUrl || opts.imageUrl || undefined;
+  const [remoteSrc, setRemoteSrc] = useState<string | undefined>();
+  const remoteRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const revokeRemote = () => {
+      if (remoteRef.current) {
+        URL.revokeObjectURL(remoteRef.current);
+        remoteRef.current = null;
+      }
+    };
+
+    if (local || !isVisualMediaKind(opts.mediaType) || !opts.botId || !opts.telegramFileId) {
+      revokeRemote();
+      setRemoteSrc(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    revokeRemote();
+    setRemoteSrc(undefined);
+
+    void (async () => {
+      try {
+        const token =
+          typeof window !== 'undefined' ? localStorage.getItem('voxly_token') : null;
+        if (!token || cancelled) return;
+        const url = `/api/bots/${encodeURIComponent(opts.botId!)}/media-file?fileId=${encodeURIComponent(opts.telegramFileId!)}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok || cancelled) return;
+        const blob = await res.blob();
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        remoteRef.current = objectUrl;
+        setRemoteSrc(objectUrl);
+      } catch {
+        /* keep placeholder */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      revokeRemote();
+    };
+  }, [local, opts.botId, opts.telegramFileId, opts.mediaType]);
+
+  return local || remoteSrc;
+}
+
+function ExternalLinkIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 12 12"
+      aria-hidden
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3.5 8.5L8.5 3.5" />
+      <path d="M5 3.5h3.5V7" />
+    </svg>
+  );
+}
+
+const tgInlineBtnClass =
+  'relative flex w-full items-center justify-center rounded-[10px] px-3 py-2.5 text-center text-[14px] font-medium leading-tight text-white shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.12)]';
+
+/** Telegram-like chat preview for portal gift-bot / broadcast blocks. */
 export function TelegramPreview({
   text,
   imageUrl,
   mediaUrl,
   mediaType = 'photo',
   mediaPlaceholder = false,
+  telegramFileId,
+  botId,
   buttonLabel,
+  /** Extra URL buttons above the callback button (e.g. «Перейти в канал») */
+  linkButtons,
   botName,
+  botAvatarUrl,
   className,
 }: {
   text: string;
   /** @deprecated use mediaUrl */
   imageUrl?: string;
   mediaUrl?: string;
-  mediaType?: 'photo' | 'video';
-  /** Shown when file_id exists but no local/HTTPS preview URL */
+  mediaType?: GiftPromoMediaType;
+  /** Shown when file_id exists but no local/HTTPS/proxy preview URL yet */
   mediaPlaceholder?: boolean;
+  /** Telegram file_id — resolved via authenticated `/api/bots/:botId/media-file` when no mediaUrl */
+  telegramFileId?: string;
+  botId?: string;
   buttonLabel?: string;
+  linkButtons?: Array<{ label: string; href?: string }>;
   botName?: string;
+  botAvatarUrl?: string | null;
   className?: string;
 }) {
-  const src = mediaUrl || imageUrl;
+  // Prefer Telegram file_id prefix over caller mediaType (gift type=file often hinted as document).
+  const kind: GiftPromoMediaType = telegramFileId
+    ? detectStoredMediaKind(telegramFileId, normalizeGiftMediaType(mediaType) || mediaType)
+    : normalizeGiftMediaType(mediaType) || 'photo';
+  const src = useResolvedMediaSrc({
+    mediaUrl,
+    imageUrl,
+    botId,
+    telegramFileId,
+    mediaType: kind,
+  });
+  const hasButtons = Boolean(buttonLabel) || (linkButtons && linkButtons.length > 0);
 
   return (
-    <div
-      className={cn(
-        'rounded-xl border border-[#dfe5ec] bg-[#8ca8c3]/[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.12)_0,transparent_40%),radial-gradient(circle_at_80%_0%,rgba(255,255,255,0.1)_0,transparent_35%)] p-3',
-        className,
-      )}
-    >
-      <div className="mx-auto max-w-[280px]">
-        {botName && (
-          <p className="mb-1.5 text-center text-[11px] font-medium text-white/90">{botName}</p>
-        )}
-        <div className="overflow-hidden rounded-2xl rounded-bl-md bg-white shadow-sm">
-          {src ? (
-            mediaType === 'video' ? (
-              <video
-                src={src}
-                className="max-h-40 w-full bg-black object-contain"
-                controls
-                muted
-                playsInline
-                preload="metadata"
-              />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={src} alt="" className="max-h-40 w-full object-cover" />
-            )
-          ) : mediaPlaceholder ? (
-            <div className="flex h-28 items-center justify-center bg-[#eef2f5] text-[13px] text-[#5a6a7a]">
-              {mediaType === 'video' ? 'Видео загружено' : 'Медиа загружено'}
+    <div className={cn(TG_PREVIEW_FRAME, className)}>
+      {botName ? <TgPreviewHeader name={botName} avatarUrl={botAvatarUrl} /> : null}
+
+      <div
+        className="p-3"
+        style={{
+          backgroundColor: TG_CHAT_BG,
+          backgroundImage: TG_CHAT_WALLPAPER,
+          backgroundSize: '160px 160px',
+        }}
+      >
+        <div className="mx-auto max-w-[280px]">
+          <div className="overflow-hidden rounded-[14px] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.08)]">
+            {src ? (
+              kind === 'video' || kind === 'video_note' ? (
+                <video
+                  src={src}
+                  className={cn(
+                    'w-full bg-black object-contain',
+                    kind === 'video_note' ? 'mx-auto max-h-40 max-w-[10rem] rounded-full' : 'max-h-40',
+                  )}
+                  controls
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+              ) : kind === 'photo' ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={src} alt="" className="max-h-44 w-full object-cover" />
+              ) : (
+                <div className="flex h-20 items-center justify-center bg-[#eef2f5] text-[13px] text-[#5a6a7a]">
+                  {mediaPlaceholderLabel(kind)}
+                </div>
+              )
+            ) : mediaPlaceholder || Boolean(telegramFileId) ? (
+              <div className="flex h-28 items-center justify-center bg-[#eef2f5] text-[13px] text-[#5a6a7a]">
+                {mediaPlaceholderLabel(kind)}
+              </div>
+            ) : null}
+            <div className="relative px-2.5 pb-1.5 pt-2">
+              <div className="whitespace-pre-wrap pb-3.5 text-[14.5px] leading-[1.35] text-[#0f0f0f]">
+                {renderTelegramText(text)}
+              </div>
+              <p className="absolute bottom-1.5 right-2.5 text-[11px] tabular-nums leading-none text-[#a0a0a0]">
+                {new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+          </div>
+
+          {hasButtons ? (
+            <div className="mt-1.5 flex flex-col gap-[3px]">
+              {(linkButtons || []).map((b) => (
+                <a
+                  key={b.label}
+                  href={b.href || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(tgInlineBtnClass, TG_INLINE_BTN)}
+                  onClick={(e) => {
+                    if (!b.href) e.preventDefault();
+                  }}
+                >
+                  <span className="px-3">{b.label}</span>
+                  <ExternalLinkIcon className="pointer-events-none absolute right-2 top-1.5 h-3 w-3 text-white/90" />
+                </a>
+              ))}
+              {buttonLabel ? (
+                <button type="button" className={cn(tgInlineBtnClass, TG_INLINE_BTN)}>
+                  {buttonLabel}
+                </button>
+              ) : null}
             </div>
           ) : null}
-          <div className="space-y-2 px-3 py-2.5">
-            <div className="whitespace-pre-wrap text-[14px] leading-[1.35] text-[#0f0f0f]">
-              {renderTelegramText(text)}
-            </div>
-            <p className="text-right text-[11px] text-[#8a8a8a]">
-              {new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
-            </p>
-          </div>
         </div>
-        {buttonLabel ? (
-          <button
-            type="button"
-            className="mt-1.5 w-full rounded-xl border border-[#d0d7de] bg-[#f1f3f5] px-3 py-2.5 text-center text-[14px] font-medium text-[#2481cc]"
-          >
-            {buttonLabel}
-          </button>
-        ) : null}
       </div>
     </div>
   );
@@ -124,6 +287,18 @@ function renderNodes(nodes: TgMdNode[]): ReactNode[] {
         );
       case 'spoiler':
         return <Spoiler key={i}>{renderNodes(node.children)}</Spoiler>;
+      case 'link':
+        return (
+          <a
+            key={i}
+            href={node.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#2481cc] underline underline-offset-2"
+          >
+            {renderNodes(node.children)}
+          </a>
+        );
       case 'code':
         return (
           <code

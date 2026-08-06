@@ -14,16 +14,21 @@
 
 | Модель | Назначение | R/W |
 |---|---|---|
-| `Tenant`, `User`, `TenantMember` | мультитенант + auth | saas-api |
-| `Subscription`, `Payment`, `Addon` | биллинг / trial CRM 14д | saas-api (Robokassa) |
+| `Tenant`, `User`, `TenantMember` | мультитенант + auth; `User.telegramUserId` / `telegramLinkedAt` | saas-api |
+| `AuthOtpChallenge` | register/login OTP nonce + codeHash + pending JSON | saas-api + platform-bot |
+| `PlatformBotSubscriber`, `PlatformSupportMessage`, `PlatformBroadcast` | `@GetVoxlybot` подписчики / support inbox / рассылки | saas-api admin + platform-bot |
+| `Subscription`, `Payment`, `Addon` | биллинг / trial CRM **7д** (`TRIAL_PERIOD_DAYS`) | saas-api (Robokassa) |
 | `AiWallet`, `AiUsageLog`, `TenantBalance` | AI billing + markup | saas-api, ai-core, AI workers |
-| `BotInstance`, `BotProvisionRequest` | Managed Bots tokens (AES) | saas-api, manager-bot R/W token |
+| `BotInstance`, `BotProvisionRequest` | Managed Bots tokens (AES); `defaultAiAgentId` | saas-api, manager-bot R/W token |
+| `AiAgent` | Tenant AI agents (prompt/settings); assign via bot/conversation | saas-api + ai-telegram-worker |
+| `Conversation`, `ChatMessage` | **SoT чата** (+ `aiAgentId` override; null+null default = AI off; **`lastOperatorReadAt`** for CRM unread badges). `content` may hold media extracts (`[голос|кружочек|видео|фото|документ …]:`); `attachments` JSON for CRM preview | gift/AI workers + saas-api reply |
 | `GiftCampaignConfig` | funnelJson, promoPost, channel | saas-api R/W; gift-worker R |
 | `GiftSubscriber` | фаза воронки, phone, twenty ids | gift-worker R/W; saas-api R (+ reply) |
 | `Broadcast` | рассылки | saas-api create; gift-worker send |
-| `Conversation`, `ChatMessage` | **SoT чата** (portal + будущий CRM tab) | gift/AI workers + saas-api reply |
+| `MailingStageRule` | auto-send on Opportunity stage enter | saas-api R/W; fire → Broadcast |
 | `ReferralCode/Referral/…` | рефералка | saas-api |
 | `AnalyticsIntegration`, `AttributionSession`, `ConversionEvent`, `TrackingLink` | S2S аналитика; у ConversionEvent есть `campaignId`/`botInstanceId` | saas-api, gift-worker `fireGoal`, analytics-dispatchers |
+| `FormWebhookEndpoint`, `FormLead` | web form intake (Tilda/WP/JSON) → Twenty + attribution; unique `(tenantId,source,externalId)` | saas-api routes + BullMQ `form-leads` |
 | `PlatformSetting`, `PricingOverride`, `AuditLog` | супер-админ | saas-api |
 
 ## Twenty CRM (не Prisma control)

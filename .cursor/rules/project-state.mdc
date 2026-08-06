@@ -10,7 +10,8 @@ This project keeps lean agent memory under `docs/agent/` and a progress journal 
 2. For the task at hand, skim only the relevant `docs/agent/` files (`DATA.md`, `FLOWS.md`, `SERVICES.md`, `DECISIONS.md`, `STACK.md`).
 3. Read `steps.md` section 4 «Текущее состояние» as the session snapshot / next-steps source of truth. Do not re-derive project state by scanning files unless `steps.md` or `docs/agent/CAPABILITIES.md` is clearly stale.
 4. When debugging runtime failures: read `docs/agent/INCIDENTS.md` **before** broad exploration.
-5. Verify the phase checklist in `steps.md` against reality before starting non-trivial work — if the file says a phase is done but the code disagrees, trust the code and then update `steps.md` + `CAPABILITIES.md`.
+5. When deploying or comparing local vs prod: read `docs/agent/DEPLOY.md` + `docs/agent/ENVIRONMENTS.md`; use `./scripts/prod-diff.sh` / `./scripts/prod-deploy.sh` only (never ad-hoc rsync).
+6. Verify the phase checklist in `steps.md` against reality before starting non-trivial work — if the file says a phase is done but the code disagrees, trust the code and then update `steps.md` + `CAPABILITIES.md`.
 
 **After completing significant work (new phase, bugfix, architectural change, new package, new product surface):**
 1. Append an entry to `docs/agent/WORKLOG.md` (use the template at the top of that file: Goal / Changes / Verify / Broken / Next).
@@ -20,7 +21,7 @@ This project keeps lean agent memory under `docs/agent/` and a progress journal 
 5. Run `source $HOME/.local/bin/env && graphify . --code-only --update` to refresh the knowledge graph (AST-only, no API cost).
 
 **Memory cascade (do not waste tokens re-scanning):**
-1. `docs/agent/` — especially `CAPABILITIES.md`, plus `WORKLOG.md` / `INCIDENTS.md` when relevant
+1. `docs/agent/` — especially `CAPABILITIES.md`, plus `WORKLOG.md` / `INCIDENTS.md` when relevant; `DEPLOY.md` / `ENVIRONMENTS.md` for prod
 2. `steps.md` — session snapshot & phase checklist (§4)
 3. Graphify `graphify-out/` — codebase knowledge graph (query/path/explain before Read/Grep/Glob)
 4. `docs/ARCHITECTURE.md` — full architecture for deep dives

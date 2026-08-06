@@ -27,7 +27,7 @@ RUN pnpm --filter @voxly/ai-whatsapp-worker... build
 
 # --- Runtime ---
 FROM node:20-alpine AS runtime
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl ffmpeg
 WORKDIR /voxly
 ENV NODE_ENV=production
 COPY --from=builder /voxly ./

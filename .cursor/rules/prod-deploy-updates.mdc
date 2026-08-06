@@ -1,0 +1,45 @@
+---
+description: Safe production deploy and updates without losing client data
+alwaysApply: true
+---
+
+# Production updates (preserve client data)
+
+Local Voxly and production are **separate**. Clients live only in **prod DB volumes**. Never treat local DB as source of truth for prod.
+
+## Non-negotiables
+
+- **Never** `docker compose down -v` (or any volume wipe) on prod.
+- **Never** restore/overwrite prod Postgres from a local dump unless the user explicitly orders a destructive reset.
+- **Never** commit or copy local `.env` over prod secrets; prod `.env` stays on the server only.
+- **Never** use `docker-compose.override.yml` on prod.
+- **Never** ad-hoc `rsync`/`scp` of loose files into a parent directory (e.g. two `page.tsx` into `src/app/` — that overwrites the landing). Use the deploy script.
+- Deploys update **code/images only**; named volumes for control Postgres, Twenty Postgres, Redis data, and uploads **must persist**.
+
+## Allowed update flow
+
+1. Develop + verify locally → **commit** on a branch.
+2. Check drift: `./scripts/prod-diff.sh <service>`.
+3. Dry-run then deploy: `./scripts/prod-deploy.sh --dry-run <service>` → `./scripts/prod-deploy.sh <service>`.
+4. Script backs up control + twenty DBs, rsyncs a **whitelist** of paths, rebuilds via:
+   `docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build …`
+5. Smoke: `https://getvoxly.ru/`, `https://api.getvoxly.ru/health` (+ app healthz if Twenty).
+6. Note backup + commands in `docs/agent/WORKLOG.md` when significant.
+
+Full runbook: `docs/agent/DEPLOY.md`.
+
+## Data layout to protect
+
+| Store | Role |
+|---|---|
+| Control Postgres | tenants, users, bots, ChatMessage, billing |
+| Twenty Postgres | CRM workspaces / records |
+| Redis | queues/cache (lossy OK; DBs are not) |
+| Upload/media volumes | bot/CRM files if used |
+
+## Agent behavior
+
+- If a deploy/update command would delete volumes, drop schemas, force-push over prod DB, or sync local→prod data: **stop and refuse** unless the user clearly confirms data loss is intended.
+- Prefer `scripts/prod-deploy.sh` over hand-rolled SSH/rsync.
+- Prefer backup + migrate + rolling recreate over rebuild-from-scratch.
+- After prod changes: note backup taken + commands run in `docs/agent/WORKLOG.md` when significant.

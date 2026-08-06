@@ -1,4 +1,4 @@
-# Design System Master File
+# Design System Master File — ServiceApp UI Design System
 
 > **LOGIC:** When building a specific page, first check `design-system/voxly/pages/[page-name].md`.
 > If that file exists, its rules **override** this Master file.
@@ -6,220 +6,121 @@
 
 ---
 
-**Project:** Voxly
-**Generated:** 2026-07-18 01:15:33 (ui-ux-pro-max)
-**Category:** CRM & Client Management
+**Project:** Voxly (ServiceApp UI Design System)
+**Updated:** 2026-07-27
+**Target Framework:** React / Tailwind CSS
+**Component Library:** shadcn/ui
+**Icon Library:** lucide-react
+**Primary Brand Color:** `#2563EB` (Brand Blue)
+**Category:** B2B SaaS CRM & Client Management
 **Design Dials:** Variance 3/10 (Centered / Minimal) | Motion 4/10 (Standard) | Density 7/10 (Standard)
 
-## Voxly override (source of truth for tokens)
+## ServiceApp UI Design System (Source of Truth)
 
-Skill-generated blue SaaS palette / Plus Jakarta **are not applied**.
-Portal tokens live in `apps/saas-portal/src/app/globals.css` — **Twenty light**:
-gray canvas `#f8f8f8`, ink CTAs, hairline borders, sparse emerald only for “active/accepting leads”.
-No indigo/purple AI-slop. System/Inter stack (no Google Fonts fetch in Docker).
-
-Use this file for **structure, UX checklist, density, motion, anti-patterns** — not for replacing CSS variables.
+Portal tokens live in `apps/saas-portal/src/app/globals.css` and `apps/saas-portal/tailwind.config.ts`:
+- **Brand Primary:** `#2563EB` (Blue), Hover: `#1D4ED8`, Light: `#EFF6FF`
+- **Brand Slate:** `#1E293B` (Dark Slate), Hover: `#0F172A`
+- **Neutrals:** Canvas `#F8FAFC`, Surface `#FFFFFF`, Subtle `#F1F5F9`, Border Default `#E2E8F0`
+- **Text:** Main `#0F172A`, Body `#334155`, Muted `#64748B`, Placeholder `#94A3B8`
+- **Status colors:**
+  - Success: Text `#059669` / BG `#ECFDF5` / Border `#A7F3D0`
+  - In Progress: Text `#2563EB` / BG `#EFF6FF` / Border `#BFDBFE`
+  - Warning: Text `#D97706` / BG `#FFFBEB` / Border `#FDE68A`
+  - Danger: Text `#DC2626` / BG `#FEF2F2` / Border `#FECACA`
+  - Info: Text `#6366F1` / BG `#EEF2FF` / Border `#C7D2FE`
+  - Neutral Badge: Text `#475569` / BG `#F1F5F9` / Border `#E2E8F0`
 
 ---
 
 ## Global Rules
 
-### Color Palette (implemented — Twenty)
+### Color Palette
 
-| Role | Approx | Token |
-|------|--------|-------|
-| Background | `#f8f8f8` | `--background` |
-| Foreground / Primary CTA | `#1c1c1c` | `--foreground` / `--primary` |
-| Card | `#ffffff` | `--card` |
-| Muted text | ~38% gray | `--muted-foreground` |
-| Border | ~86% gray | `--border` |
-| Active project status | emerald-600/700 | utility classes only |
-| Destructive | red | `--destructive` |
+| Role | Hex | Token | Usage |
+|------|-----|-------|-------|
+| Background Canvas | `#F8FAFC` | `--neutral-bg-canvas` | Page background |
+| Surface / Card | `#FFFFFF` | `--neutral-bg-surface` | Cards, modals, panels |
+| Text Main | `#0F172A` | `--neutral-text-main` | Headlines |
+| Text Body | `#334155` | `--neutral-text-body` | Descriptions |
+| Text Muted | `#64748B` | `--neutral-text-muted` | Meta, captions |
+| Border Default | `#E2E8F0` | `--neutral-border-default` | Hairline borders |
+| Primary CTA | `#2563EB` | `--brand-primary` | Main buttons, active links |
+| Primary Hover | `#1D4ED8` | `--brand-primary-hover` | Button hover state |
+| Primary Light | `#EFF6FF` | `--brand-primary-light` | Light badges, highlight BG |
 
-### Typography (implemented)
+### Typography
 
-- **Font:** Inter / system UI stack via `--font-sans` in `globals.css`
-- **Mood:** clean, professional, B2B, CRM-adjacent (Twenty)
+- **Font Family:** `Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`
+- **Scale:**
+  - `xs`: 0.6875rem (11px)
+  - `sm`: 0.75rem (12px)
+  - `base`: 0.8125rem (13px)
+  - `md`: 0.875rem (14px)
+  - `lg`: 1rem (16px)
+  - `xl`: 1.25rem (20px)
+  - `2xl`: 1.5rem (24px)
+  - `kpi`: 1.875rem (30px)
+- **Weights:** Regular 400 | Medium 500 | Semibold 600 | Bold 700
 
-### Spacing Variables
-
-*Density: 7/10 — Standard*
+### Spacing & Layout
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--space-xs` | `4px` / `0.25rem` | Tight gaps |
-| `--space-sm` | `8px` / `0.5rem` | Icon gaps, inline spacing |
-| `--space-md` | `16px` / `1rem` | Standard padding |
-| `--space-lg` | `24px` / `1.5rem` | Section padding |
-| `--space-xl` | `32px` / `2rem` | Large gaps |
-| `--space-2xl` | `48px` / `3rem` | Section margins |
-| `--space-3xl` | `64px` / `4rem` | Hero padding |
+| `--spacing-sidebar-slim` | `64px` | Collapsed sidebar |
+| `--spacing-sidebar-sub` | `200px` | Secondary sub-sidebar |
+| `--spacing-header-height` | `60px` | Header height |
+| `--spacing-card-padding` | `20px` | Card internal padding |
+| `--spacing-grid-gap` | `16px` | Grid gap |
 
-### Shadow Depths
+### Border Radius
 
-| Level | Value | Usage |
+| Token | Value | Usage |
 |-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | Subtle lift |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Cards, buttons |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | Modals, dropdowns |
-| `--shadow-xl` | `0 20px 25px rgba(0,0,0,0.15)` | Hero images, featured cards |
+| `--radius-button` | `8px` | Buttons, inputs |
+| `--radius-input` | `8px` | Form inputs |
+| `--radius-card` | `12px` | Cards |
+| `--radius-banner` | `16px` | Hero banners |
+| `--radius-badge` | `9999px` | Badges |
+
+### Shadows
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--shadow-card` | `0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05)` | Card lift |
+| `--shadow-drawer` | `-4px 0 24px rgba(0, 0, 0, 0.12)` | Slide-over drawer |
 
 ---
 
 ## Component Specs
 
-### Buttons
+### Header
+- Height: 60px
+- Search Box: `#F1F5F9`, Shortcut `"Ctrl K"`, Icon `Search`
+- Profile Avatar: BG `#0F172A`, Text `#FFFFFF`, Initials `"AC"`
 
-```css
-/* Primary Button */
-.btn-primary {
-  background: #059669;
-  color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
+### Hero Banner
+- Background: Gradient Hero (`linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)`)
+- Radius: `16px`
+- CTA Buttons: White glass, Primary light
 
-.btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-}
+### KPI Card
+- Background: `#FFFFFF`, Border: `1px solid #E2E8F0`, Radius: `12px`
+- Value Style: `font-bold text-slate-900 text-2xl`
+- Sparkline: Stroke `#10B981`, Fill `rgba(16, 185, 129, 0.1)`
 
-/* Secondary Button */
-.btn-secondary {
-  background: transparent;
-  color: #2563EB;
-  border: 2px solid #2563EB;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-```
+### Data Table
+- Header BG: `#FAFAFA`, Text: `#64748B`, Row Height: `56px`
+- Row Hover BG: `#F8FAFC`, Border: `1px solid #F1F5F9`
 
-### Cards
-
-```css
-.card {
-  background: #F8FAFC;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.card:hover {
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
-}
-```
-
-### Inputs
-
-```css
-.input {
-  padding: 12px 16px;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  font-size: 16px;
-  transition: border-color 200ms ease;
-}
-
-.input:focus {
-  border-color: #2563EB;
-  outline: none;
-  box-shadow: 0 0 0 3px #2563EB20;
-}
-```
-
-### Modals
-
-```css
-.modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.modal {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: var(--shadow-xl);
-  max-width: 500px;
-  width: 90%;
-}
-```
+### Slide-Over Drawer
+- Width: `540px`, Position: Right, Backdrop: `rgba(15, 23, 42, 0.4)`
+- Sticky Footer: Primary (Создать) | Outline | Ghost
 
 ---
 
-## Style Guidelines
+## AI Prompt Rules
 
-**Style:** Exaggerated Minimalism
-
-**Keywords:** Bold minimalism, oversized typography, high contrast, negative space, loud minimal, statement design
-
-**Best For:** Fashion, architecture, portfolios, agency landing pages, luxury brands, editorial
-
-**Key Effects:** font-size: clamp(3rem 10vw 12rem), font-weight: 900, letter-spacing: -0.05em, massive whitespace
-
-### Page Pattern
-
-**Pattern Name:** Minimal Single Column
-
-- **Conversion Strategy:** Single CTA focus. Large typography. Lots of whitespace. No nav clutter. Mobile-first.
-- **CTA Placement:** Center, large CTA button
-- **Section Order:** 1. Hero headline, 2. Short description, 3. Benefit bullets (3 max), 4. CTA, 5. Footer
-
----
-
-## Motion
-
-**Page Transition** (Standard) — Trigger: route change | Duration: 400-600ms | Easing: `power2.inOut`
-
-```js
-const tl = gsap.timeline(); tl.to('.transition-overlay', { yPercent: 0, duration: 0.4, ease: 'power2.inOut' }).call(navigate).to('.transition-overlay', { yPercent: -100, duration: 0.4, ease: 'power2.inOut', delay: 0.1 });
-```
-
-**Framework notes:** Keep the overlay element mounted at the layout root (outside the page component) so it survives the route swap
-
-- ✅ Show a lightweight loading indicator if the destination route's data fetch outlasts the overlay
-- ❌ Don't tie the overlay's reveal directly to data-fetch completion without a max-wait timeout; a slow API stalls the whole transition
-- ⚡ Prefer CSS transform (yPercent) over top/left to keep the overlay animation on the compositor thread
-
----
-
-## Anti-Patterns (Do NOT Use)
-
-- ❌ Excessive decoration
-- ❌ Complex shadows
-- ❌ 3D effects
-
-### Additional Forbidden Patterns
-
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
-- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
-- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
-- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
-- ❌ **Instant state changes** — Always use transitions (150-300ms)
-- ❌ **Invisible focus states** — Focus states must be visible for a11y
-
----
-
-## Pre-Delivery Checklist
-
-Before delivering any UI code, verify:
-
-- [ ] No emojis used as icons (use SVG instead)
-- [ ] All icons from consistent icon set (Heroicons/Lucide)
-- [ ] `cursor-pointer` on all clickable elements
-- [ ] Hover states with smooth transitions (150-300ms)
-- [ ] Light mode: text contrast 4.5:1 minimum
-- [ ] Focus states visible for keyboard navigation
-- [ ] `prefers-reduced-motion` respected
-- [ ] Responsive: 375px, 768px, 1024px, 1440px
-- [ ] No content hidden behind fixed navbars
-- [ ] No horizontal scroll on mobile
+1. Strictly adhere to ServiceApp tokens (`serviceapp_design_system.json`).
+2. Use Tailwind utility classes corresponding to colors, border radius, and typography scales defined in tokens.
+3. Keep buttons `rounded-[8px]`, cards `rounded-[12px]`, banners `rounded-[16px]`.
+4. Maintain 60px header height, 20px card padding, 16px grid gap.

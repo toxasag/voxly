@@ -1,0 +1,22 @@
+---
+description: Before editing frozen product modules, read docs/agent/modules freeze cards
+alwaysApply: true
+---
+
+# Module freeze cards
+
+Working surfaces have lean freeze cards under `docs/agent/modules/`.
+
+## Before editing
+
+If the task touches WA→CRM sync, GramJS/TG personal→CRM, CRM chat panel, Person social links, gift-bot setup (ADR-027), or deal/Opp dedupe:
+
+1. Open `docs/agent/modules/README.md` → the matching card.
+2. Skim `docs/agent/CAPABILITIES.md` (+ `CHAT.md` for chat/WA/TG).
+3. Respect **Contract** and **Frozen paths**; do not “simplify” them away.
+
+## After editing
+
+Run the card’s **Smoke** (~1–2 min). On significant work: update the card’s **Last verified / deploy** + `WORKLOG.md`.
+
+Gift-bot UX details: also `.cursor/rules/gift-bot-setup-ux.mdc`.

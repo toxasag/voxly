@@ -77,13 +77,15 @@ function sleep(ms: number) {
 async function setManagerWebhook() {
   const webhookUrl = process.env.MANAGER_WEBHOOK_URL || `http://manager-bot-service:${WEBHOOK_PORT}/webhook`;
   const url = `${TELEGRAM_API}/setWebhook`;
+  // Keep pending updates (ManagedBotUpdated) unless explicitly dropping.
+  const dropPending = process.env.MANAGER_WEBHOOK_DROP_PENDING === 'true';
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: webhookUrl,
       allowed_updates: ['message', 'managed_bot'],
-      drop_pending_updates: true,
+      drop_pending_updates: dropPending,
     }),
   });
   const data = (await response.json()) as any;
@@ -94,10 +96,20 @@ async function setManagerWebhook() {
   }
 }
 
+function requestPath(url: string | undefined): string {
+  return (url || '').split('?')[0] || '';
+}
+
+/** Public Traefik path is /bots/manager/webhook; local/dev may hit /webhook. */
+function isManagerWebhookPath(pathname: string): boolean {
+  return pathname === '/webhook' || pathname === '/bots/manager/webhook';
+}
+
 async function startNodeServer() {
   const http = await import('node:http');
   const server = http.createServer(async (req, res) => {
-    if (req.method === 'POST' && req.url === '/webhook') {
+    const pathname = requestPath(req.url);
+    if (req.method === 'POST' && isManagerWebhookPath(pathname)) {
       let body = '';
       for await (const chunk of req) body += chunk;
       try {
@@ -110,7 +122,7 @@ async function startNodeServer() {
         res.writeHead(500);
         res.end('error');
       }
-    } else if (req.method === 'GET' && req.url === '/health') {
+    } else if (req.method === 'GET' && (pathname === '/health' || pathname === '/bots/manager/health')) {
       res.writeHead(200);
       res.end('ok');
     } else {
@@ -145,6 +157,119 @@ async function handleUpdate(update: any) {
 }
 
 /**
+ * Move Telegram user id onto the tenant owner (unique constraint).
+ * Clears the id from any other User first — one TG account = one portal owner.
+ */
+async function assignTelegramToTenantOwner(
+  telegramUserId: number | bigint,
+  tenantId: string,
+): Promise<void> {
+  const tgId = BigInt(telegramUserId);
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId, role: 'owner' },
+    select: { userId: true },
+  });
+  if (!owner) return;
+
+  await prisma.user.updateMany({
+    where: { telegramUserId: tgId, NOT: { id: owner.userId } },
+    data: { telegramUserId: null },
+  });
+  await prisma.user.update({
+    where: { id: owner.userId },
+    data: { telegramUserId: tgId },
+  });
+}
+
+/**
+ * Resolve which BotProvisionRequest a ManagedBotUpdated belongs to.
+ *
+ * INC-046: Telegram may already be linked to another tenant (e.g. antontest)
+ * while the user provisions from john and picks a custom @username that does
+ * not match suggestedUsername. Prefer username match, then pending on the
+ * linked tenant, then a uniquely attributable pending (single tenant / single
+ * ai_tg pending) so custom usernames still attach.
+ */
+async function resolveProvisionForManagedBot(opts: {
+  creatorId: number;
+  username?: string;
+}): Promise<{ tenantId: string; provisionReq: { id: string; tenantId: string; botType: string } | null } | null> {
+  const { creatorId, username } = opts;
+  const uname = username?.replace(/^@/, '') || '';
+
+  // 1) Strongest: pending suggestedUsername matches the bot Telegram created
+  let provisionReq = uname
+    ? await prisma.botProvisionRequest.findFirst({
+        where: {
+          status: 'pending',
+          expiresAt: { gt: new Date() },
+          OR: [{ suggestedUsername: uname }, { suggestedUsername: username! }],
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+    : null;
+
+  const linkedUser = await prisma.user.findFirst({
+    where: { telegramUserId: BigInt(creatorId) },
+    include: { tenantMembers: { where: { role: 'owner' }, take: 1 } },
+  });
+  const linkedTenantId = linkedUser?.tenantMembers[0]?.tenantId as string | undefined;
+
+  // 2) Linked tenant has any pending (user changed @username in Telegram UI)
+  if (!provisionReq && linkedTenantId) {
+    provisionReq = await prisma.botProvisionRequest.findFirst({
+      where: {
+        tenantId: linkedTenantId,
+        status: 'pending',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // 3) Linked tenant has no pending (wrong workspace linked) — if all live
+  //    pendings belong to one tenant, use that tenant's newest request.
+  if (!provisionReq) {
+    const pending = await prisma.botProvisionRequest.findMany({
+      where: { status: 'pending', expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    const tenantIds = [...new Set(pending.map((p) => p.tenantId))];
+    if (tenantIds.length === 1) {
+      provisionReq = pending[0] ?? null;
+    } else if (pending.length > 0) {
+      const aiOnly = pending.filter((p) => p.botType === 'ai_tg');
+      const aiTenants = [...new Set(aiOnly.map((p) => p.tenantId))];
+      if (aiTenants.length === 1) {
+        provisionReq = aiOnly[0] ?? null;
+      }
+    }
+  }
+
+  const tenantId = provisionReq?.tenantId || linkedTenantId;
+  if (!tenantId) return null;
+
+  if (!provisionReq) {
+    provisionReq = await prisma.botProvisionRequest.findFirst({
+      where: {
+        tenantId,
+        status: 'pending',
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  return {
+    tenantId,
+    provisionReq: provisionReq
+      ? { id: provisionReq.id, tenantId: provisionReq.tenantId, botType: provisionReq.botType }
+      : null,
+  };
+}
+
+/**
  * Process ManagedBotUpdated (Bot API 9.6+):
  * shape is { user: User, bot: User } — creator + managed bot.
  * getManagedBotToken(user_id) expects the managed bot's telegram id.
@@ -171,19 +296,21 @@ async function handleManagedBotUpdated(managedBot: any) {
     return;
   }
 
-  const user = await prisma.user.findFirst({
-    where: { telegramUserId: BigInt(creatorId) },
-    include: {
-      tenantMembers: { where: { role: 'owner' }, take: 1 },
-    },
-  });
-
-  if (!user || !user.tenantMembers[0]) {
-    console.warn(`[manager-bot-service] No tenant found for telegram creator_id=${creatorId}`);
+  const resolved = await resolveProvisionForManagedBot({ creatorId, username });
+  if (!resolved) {
+    console.warn(
+      `[manager-bot-service] No tenant for telegram creator_id=${creatorId} username=@${username}`,
+    );
     return;
   }
 
-  const tenantId = user.tenantMembers[0].tenantId;
+  const { tenantId } = resolved;
+  let { provisionReq } = resolved;
+
+  await assignTelegramToTenantOwner(creatorId, tenantId);
+  console.log(
+    `[manager-bot-service] Telegram ${creatorId} → tenant ${tenantId} (provision=${provisionReq?.id || 'none'})`,
+  );
 
   const existing = await prisma.botInstance.findFirst({
     where: {
@@ -202,21 +329,19 @@ async function handleManagedBotUpdated(managedBot: any) {
         botUsername: username || existing.botUsername,
         managedBotUserId: BigInt(managedBotId),
         status: 'active',
+        tenantId, // reclaim if previously on wrong tenant
       },
     });
+    if (provisionReq) {
+      await prisma.botProvisionRequest.update({
+        where: { id: provisionReq.id },
+        data: { status: 'confirmed' },
+      });
+    }
     await registerChildBotWebhook(token, tenantId, existing.id, existing.botType);
     console.log(`[manager-bot-service] Bot @${username} token refreshed for tenant ${tenantId}`);
     return;
   }
-
-  const provisionReq = await prisma.botProvisionRequest.findFirst({
-    where: {
-      tenantId,
-      status: 'pending',
-      expiresAt: { gt: new Date() },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
 
   if (!provisionReq) {
     console.warn(`[manager-bot-service] No pending provision request for tenant ${tenantId}`);
@@ -245,6 +370,17 @@ async function handleManagedBotUpdated(managedBot: any) {
   await prisma.botProvisionRequest.update({
     where: { id: provisionReq.id },
     data: { status: 'confirmed' },
+  });
+
+  // Cancel sibling pending duplicates for this tenant+type (multi-click in portal)
+  await prisma.botProvisionRequest.updateMany({
+    where: {
+      tenantId,
+      botType: provisionReq.botType,
+      status: 'pending',
+      id: { not: provisionReq.id },
+    },
+    data: { status: 'cancelled' },
   });
 
   await registerChildBotWebhook(token, tenantId, botInstance.id, provisionReq.botType);
@@ -299,13 +435,25 @@ async function registerChildBotWebhook(
     return;
   }
 
+  const allowed_updates =
+    botType === 'ai_tg'
+      ? [
+          'message',
+          'callback_query',
+          'business_connection',
+          'business_message',
+          'edited_business_message',
+          'deleted_business_messages',
+        ]
+      : ['message', 'callback_query', 'chat_member'];
+
   const response = await fetch(`${botApi}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secretToken,
-      allowed_updates: ['message', 'callback_query', 'chat_member'],
+      allowed_updates,
       drop_pending_updates: true,
     }),
   });
@@ -351,7 +499,13 @@ async function linkTelegramUser(telegramUserId: number, nonce: string) {
   // Find provision request by nonce
   const provisionReq = await prisma.botProvisionRequest.findFirst({
     where: { nonce: nonce.replace('voxly_', ''), status: 'pending' },
-    include: { tenant: { include: { users: { include: { user: true }, where: { role: 'owner' }, take: 1 } } } },
+    include: {
+      tenant: {
+        include: {
+          users: { include: { user: true }, where: { role: 'owner' }, take: 1 },
+        },
+      },
+    },
   });
 
   if (!provisionReq) {
@@ -359,14 +513,7 @@ async function linkTelegramUser(telegramUserId: number, nonce: string) {
     return;
   }
 
-  // Update the platform user with telegram_user_id
-  const ownerUser = provisionReq.tenant.users[0]?.user;
-  if (ownerUser) {
-    await prisma.user.update({
-      where: { id: ownerUser.id },
-      data: { telegramUserId: BigInt(telegramUserId) },
-    });
-  }
+  await assignTelegramToTenantOwner(telegramUserId, provisionReq.tenantId);
 
   await sendManagerMessage(telegramUserId, (
     '✅ Аккаунт привязан!\n\n' +

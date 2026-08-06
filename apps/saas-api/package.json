@@ -7,13 +7,15 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "VOXLY_DISABLE_WORKERS=1 vitest run --config ../../vitest.config.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.0",
     "@fastify/multipart": "^8.3.0",
     "@fastify/rate-limit": "^9.0.0",
+    "@voxly/ai-core": "workspace:*",
     "@voxly/analytics-dispatchers": "workspace:*",
     "@voxly/billing": "workspace:*",
     "@voxly/crypto": "workspace:*",
@@ -26,12 +28,15 @@
     "ioredis": "^5.4.0",
     "nanoid": "^5.0.0",
     "nodemailer": "^6.9.0",
+    "pdf-parse": "^1.1.1",
+    "pg": "^8.13.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^6.4.16",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

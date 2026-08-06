@@ -1,0 +1,131 @@
+# ============================================================
+# Voxly — Production overlay for Nginx Proxy Manager edge
+# ============================================================
+# Use when host :80/:443 are already taken by NPM.
+# Traefik listens on host 8880 (HTTP only); NPM terminates TLS
+# and forwards HTTP to Traefik. Do NOT use docker-compose.override.yml.
+#
+#   cd /opt/voxly/docker
+#   docker compose -f docker-compose.yml -f docker-compose.prod-npm.yml \
+#     --env-file ../.env up -d --build
+#
+# NPM → Forward Hostname/IP: docker-traefik-1 (same automation_automation_net)
+#       Forward Port: 80 (container; host map 8880 is for Host-header smoke only)
+#       SSL: Let's Encrypt HTTP-01 for getvoxly.ru/www/api/app (wildcard needs DNS-01)
+#       Live: NPM proxy host id 5, cert id 8 — see docs/NPM-EDGE.md / STACK.md
+# ============================================================
+
+services:
+  traefik:
+    # v3.6.1+ negotiates Docker API (Engine 29 requires min API 1.44)
+    image: traefik:v3.6.6
+    command: !override
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      # Prefer voxly-net when Traefik is on multiple networks
+      - "--providers.docker.network=docker_voxly-net"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      # HTTP only — NPM terminates TLS on 443
+      - "--entryPoints.web.address=:80"
+      # Default readTimeout is 60s — kills large gift media uploads mid-body (INC-090)
+      - "--entryPoints.web.transport.respondingTimeouts.readTimeout=300s"
+      - "--entryPoints.web.transport.respondingTimeouts.writeTimeout=300s"
+      - "--entryPoints.web.transport.respondingTimeouts.idleTimeout=300s"
+      # No websecure, no HTTP→HTTPS redirect (NPM handles that)
+    ports: !override
+      # Publish Traefik HTTP for NPM (host 80/443 already owned by NPM)
+      - "8880:80"
+      # Dashboard away from NPM / common 8080 conflicts
+      - "127.0.0.1:8088:8080"
+    networks:
+      - voxly-net
+      - automation_net
+
+  # Do not expose DBs/Redis on the public interface
+  postgres-control:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+
+  postgres-twenty:
+    ports: !override
+      - "127.0.0.1:5434:5432"
+
+  redis:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+
+  twenty-server:
+    # Local-only image tag — never try to pull from Docker Hub
+    pull_policy: build
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.twenty-app.rule=Host(`app.getvoxly.ru`)"
+      - "traefik.http.routers.twenty-app.entrypoints=web"
+      - "traefik.http.routers.twenty-app.service=twenty-server"
+      - "traefik.http.routers.twenty-app.priority=25"
+      - "traefik.http.services.twenty-server.loadbalancer.server.port=3000"
+      # Traefik v3 HostRegexp uses Go regexp (not v2 {name:pattern})
+      - "traefik.http.routers.twenty-wildcard.rule=HostRegexp(`^[a-z0-9-]+-crm\\.getvoxly\\.ru$`)"
+      - "traefik.http.routers.twenty-wildcard.entrypoints=web"
+      - "traefik.http.routers.twenty-wildcard.service=twenty-server"
+      - "traefik.http.routers.twenty-wildcard.priority=20"
+
+  twenty-worker:
+    pull_policy: build
+
+  saas-api:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.saas-api.rule=Host(`api.getvoxly.ru`)"
+      - "traefik.http.routers.saas-api.entrypoints=web"
+      - "traefik.http.routers.saas-api.service=saas-api"
+      - "traefik.http.services.saas-api.loadbalancer.server.port=3002"
+
+  saas-portal:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.portal-landing.rule=Host(`getvoxly.ru`) || Host(`www.getvoxly.ru`)"
+      - "traefik.http.routers.portal-landing.entrypoints=web"
+      - "traefik.http.routers.portal-landing.service=saas-portal"
+      # Tenant portals only — exclude app/api/www (Twenty + API own those hosts)
+      - "traefik.http.routers.portal-portals.rule=HostRegexp(`^[a-z0-9-]+\\.getvoxly\\.ru$`) && !Host(`app.getvoxly.ru`) && !Host(`api.getvoxly.ru`) && !Host(`www.getvoxly.ru`)"
+      - "traefik.http.routers.portal-portals.entrypoints=web"
+      - "traefik.http.routers.portal-portals.service=saas-portal"
+      - "traefik.http.routers.portal-portals.priority=10"
+      # Fix: portal container listens on PORT=3000 (base compose wrongly said 3001)
+      - "traefik.http.services.saas-portal.loadbalancer.server.port=3000"
+
+  platform-bot-service:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.platform-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/bots/platform`)"
+      - "traefik.http.routers.platform-bot.entrypoints=web"
+      - "traefik.http.routers.platform-bot.service=platform-bot-service"
+      - "traefik.http.services.platform-bot-service.loadbalancer.server.port=3009"
+      - "traefik.http.routers.platform-bot.priority=30"
+
+  manager-bot-service:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.manager-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/bots/manager`)"
+      - "traefik.http.routers.manager-bot.entrypoints=web"
+      - "traefik.http.routers.manager-bot.service=manager-bot-service"
+      - "traefik.http.services.manager-bot-service.loadbalancer.server.port=3003"
+      - "traefik.http.routers.manager-bot.priority=30"
+
+  gift-bot-worker:
+    labels: !override
+      - "traefik.enable=true"
+      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && (PathPrefix(`/tg`) || PathPrefix(`/max`))"
+      - "traefik.http.routers.gift-bot.entrypoints=web"
+      - "traefik.http.routers.gift-bot.service=gift-bot-worker"
+      - "traefik.http.services.gift-bot-worker.loadbalancer.server.port=3004"
+      - "traefik.http.routers.gift-bot.priority=30"
+
+networks:
+  automation_net:
+    external: true
+    name: automation_automation_net

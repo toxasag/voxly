@@ -79,15 +79,187 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 |---|---|
 | CRM (подписка) | 500 ₽/мес, скидки за 3/6/12/24 мес |
 | Доп. пользователь | 300 ₽/мес (в базе 10 юзеров) |
-| Gift-бот | 500 ₽/мес за канал |
-| AI-агент Telegram | 1000 ₽/мес до 10 аккаунтов + AI-usage с markup |
-| AI-агент WhatsApp | 1000 ₽/мес за номер + AI-usage с markup |
+| Бот подарков Telegram | 500 ₽/мес за бота (`gift_bot`) |
+| Бот подарков MAX | 500 ₽/мес за бота (`gift_bot_max`) |
+| Телеграм Секретарь | 1000 ₽/мес до 10 аккаунтов; +200 ₽/слот сверх |
+| AI-агент (слот) | 500 ₽/мес за агента + AI-usage с markup с баланса |
+| Telegram (личный / GramJS) | 500 ₽/мес за аккаунт + AI-usage |
+| WhatsApp | 500 ₽/мес за номер + AI-usage |
 | Сквозная аналитика | 500 ₽/мес за платформу (Метрика/GA4/FB/VK) |
 | AI markup | по умолчанию 50%, настраивается супер-админом + per-tenant |
 
 ---
 
 ## 3. История разработки (timeline)
+
+- **2026-08-06** — **INC-102:** TG open without `@username` → `/open/tg/{userId}`→`tg://user?id=` (label deep link); never `t.me/+`; backfill voxly Conversations + Кувалдин `928954961`.
+- **2026-08-06** — **INC-101:** social LINKS `primaryLinkLabel`=URL (not "WhatsApp"/"Telegram"); Кувалдин `+79850868825` TG empty — ImportContacts exists, no `@username`, never `t.me/+`; Opp 399≠400; deploy+migrate backup `20260806-102034`.
+- **2026-08-06** — **INC-100:** WA sync race → two Opps on one Person (noname100); reuse open Opp + soft-delete orphans; Person social TEXT→**LINKS** (`wa.me`/`t.me/@`); deploy workers+saas-api; prod repair 67 orphan WA Opps + migrate voxly socials.
+- **2026-08-06** — **INC-099:** «Пишем от» gift gating + WA from Person.whatsapp + save-time dedupe (crm-chat **0.1.27**); backup `20260806-093403`.
+- **2026-08-06** — **INC-098:** CRM Chat stale `[media]` after GramJS backfill — soft-refresh id-only sig + `isMediaPlaceholder`; crm-chat **0.1.26**; deploy `saas-api` backup `20260806-090344` + refresh-crm-chat voxly.
+- **2026-08-05** — **INC-097 v7:** `resolveLidPhoneFromEvolution()` (Message.key → Redis lid-mapping → IsOnWhatsapp → whatsappNumbers → profile-index); `mergeWaLidPnTwinConversations` + `repairOnly`; deploy `ai-whatsapp-worker` backup `20260805-150848`; Boomerservice 1 conv / `+79262625252` / 1 msg (= Evolution LID).
+- **2026-08-05** — **INC-097 v6:** profile-index LID→PN (email/website/pic); fetchAll messages + LID/PN merge; noname Person + `{seq} · WA · {account}` deals; default 500 msgs; deploy `ai-whatsapp-worker` backup `20260805-141016`; force sync peopleSynced=14; Boomerservice phone `+79262625252`.
+- **2026-08-05** — **INC-097 v5:** never create «WhatsApp» CRM shells without E.164; business-derived names kept (4); soft-delete 10 garbage cards → Conversation-only; Evolution cannot map LID→PN (0 phones); deploy `ai-whatsapp-worker` backups `20260805-105239`/`105544`/`105823`.
+- **2026-08-05** — **INC-097 v4:** after Twenty wipe, WA sync recreates Person+Opportunity for open LID chats with messages (`needsReview`); clear stale CRM ids; repair zero-msg only; deploy `ai-whatsapp-worker` backup `20260805-103459`; force sync peopleSynced=14.
+- **2026-08-05** — **INC-097 v3:** WA open-chats-only sync (not Contact book); no fake `t.me/+`; ImportContacts→`@username` + GetFullUser profile enrich; Chat Opportunity→Person SQL fallback; deploy `ai-whatsapp-worker,saas-api,gramjs-bridge` backup `20260805-101610`; refresh-crm-chat voxly+efim1.
+- **2026-08-05** — **INC-097 v2:** WA Contact-book sync (PN dialogs + unique name) + Telegram phone check + CRM Chat Opportunity→Person resolve; deploy `ai-whatsapp-worker,saas-api,gramjs-bridge,compose`.
+- **2026-08-05** — GramJS manual sync chats button (no QR) — mirror WA; `POST …/gramjs/…/sync-history`; deploy `saas-api,saas-portal,gramjs-bridge` backup `20260805-090834`.
+- **2026-08-05** — **INC-095:** `sanitizeFunnel` dropped `extraButtons` on campaign save; fix + step-4 CTA «Сохранить»; deploy `saas-api,saas-portal` backup `20260805-071948`.
+- **2026-08-04** — Gift-bot `extraButtons` (URL) under steps 4–6 + Дожим; deploy `saas-api,saas-portal,gift-bot-worker` backup `20260804-160301`.
+- **2026-08-04** — **INC-094:** gift photo/video quality — stage as `sendDocument`, deliver download→`sendPhoto`/`sendVideo`; deploy `saas-api,gift-bot-worker,saas-portal`.
+- **2026-08-04** — On GramJS connect: auto CRM enrich + phone soft-merge (BullMQ); new leads keep enrich; all portals.
+- **2026-08-04** — GramJS profile enrich → Person (phone/about/birthday); bridge `/users/full`; admin backfill; needs `ai_gramjs` connected.
+- **2026-08-04** — INC-021 reopen: kanban note chip = body (title←body triggers missing); `ensureOpportunityKanbanCardDefaults` on provision/reapply; deploy `saas-api`.
+- **2026-08-04** — **INC-092:** prod disk 100% (dangling images ~68GB) → control PG recovery + Redis MISCONF → login 500; prune + restart PG/API/workers (no `-v`); login smoke 401.
+- **2026-08-04** — voxly CRM fixes: CREATE_PROFILE kept on provision; sidebar order SQL+SDK; redis flush after defaults; owner name sync; deploy `saas-api`.
+- **2026-08-03** — INC-089: NPM `proxy_request_buffering off` + portal upload timeout 300s; deploy `saas-portal` backup `20260803-155457`.
+- **2026-08-03** — INC-088: gift promo/post media (photo/video/document) — direct API + NPM 300s; deploy `saas-api,saas-portal,gift-bot-worker` backup `20260803-153618`.
+- **2026-08-03** — `/dashboard` amber industrial hub: hero, alerts, KPI, product grid, partner strip, gift funnel collapsed (deploy pending).
+- **2026-08-03** — Web form lead intake Phase 1 (ADR-026): Tilda/WP/JSON → FormLead → Twenty + AttributionSession + `web_form_lead`; UI `/dashboard/crm`; migrate `20260803160000_form_lead_intake` (deploy pending).
+- **2026-08-03** — Landing Awwwards v3 live (CRM + free Tilda/WP forms); v2 archived under `app/_archive/landing-v2/`; deploy `saas-portal`.
+- **2026-08-03** — Landing Awwwards v2 live on getvoxly.ru (CRM thesis + mobile web); deploy `saas-portal` backup `20260803-112800`.
+- **2026-08-03** — Admin `/admin/ai-balance`: global + per-tenant AI markup %, usage/margin/topup stats; nav; API `admin-ai-balance.ts`; deploy pending `saas-api`+`saas-portal`.
+- **2026-08-02** — INC-081: INDEX «Канбан» был TABLE → SQL type=KANBAN+groups; johntest fixed; deploy `saas-api` (`20260802-194338`).
+- **2026-08-02** — INC-080: SQL `clearTwentyOnboardingFlags` early+late в provision; deploy `saas-api` (backup `20260802-192427`); johntest `onboardingStatus=COMPLETED` — hard-refresh CRM.
+- **2026-08-02** — INC-077: Twenty workspace limit 5→100000; johntest CRM `d8c9bf10-…` ACTIVE + chat installed.
+- **2026-08-02** — Referral short links → landing `/?ref=`; partner attribution JOHNTEST→john.
+- **2026-08-02** — **GetVoxlybot OTP + `/admin/bot` + live Robokassa:** `platform-bot-service` `:3009`, auth start/confirm, portal OTP UI, cabinet support teaser, migrate `20260802220000_platform_bot_otp`, prod `ROBOKASSA_IS_TEST=0`.
+- **2026-08-01** — **Prod:** IA кабинета — меню + Телеграм Секретарь + GramJS как WhatsApp + SKU `ai_agent` 500₽; migrate `20260731220000` applied; backup `20260801-205426`; Suspense-fix для next build; smoke AI pages **200**.
+- **2026-07-31** — **Prod:** INC-079 fix — scheduler crash protection (`safeJob` wrapper for all timer jobs) + `prisma migrate deploy` автоматически в `prod-deploy.sh` до пересоздания контейнеров; backup `20260731-154611`; prisma «No pending migrations to apply»; container restarts=0; smoke portal/API/partners/ai **200**.
+- **2026-07-31** — **Prod:** супер-админ `/admin/partners` (партнёры, индивидуальные правила вознаграждения, ручные выплаты `ReferralTransaction`, блокировка) + `/api/admin/referrals`; уникальность реферальных кодов (409 + `code-available`); миграция `20260731140000_referral_admin` (аддитивная: `ReferralRule.tenantId`, `ReferralTransaction`, enum `ReferralTxKind`) применена через `prisma migrate deploy` в `docker-saas-api-1`; backup `20260731-131927`; smoke портал/API/`/admin/partners` **200**, `GET /api/admin/referrals` без токена **401**.
+- **2026-07-30** — CRM portal defaults for all tenants: `/dashboard/crm`, invite+credentials, hard lock ADR-023, shell-ux «CRM · slug»+«Вы:», chat operator names, crm-chat **0.1.23**; provision installs latest chat + skip install-apps (owner+invite).
+- **2026-07-30** — INC-072: sidebar «john» = workspace (shell-ux «CRM · john» + «Вы: …»); Chat author from Twenty member (not «Менеджер»); crm-chat **0.1.23** on prod.
+- **2026-07-29** — Лендинг getvoxly.ru пересобран по AIDA: official mascot Voxly, industrial-tech art direction, Unbounded+Manrope, story-first вместо comparison-table-first, mobile sticky CTA; portal build green.
+- **2026-07-27** — ServiceApp UI Design System: созданы `serviceapp_design_system.json` и `serviceapp_design_system.md` (в корень и в `design-system/voxly/`), обновлен `MASTER.md`.
+- **2026-07-27** — Local: mailing UX **0.1.21** composer+preview+history+delete; accounts CRM/gift/read filters; stage multi-channel; BroadcastRecipient migrate pending deploy.
+- **2026-07-27** — Prod: «Рассылка» FOLDER live — migrate `MailingStageRule`; refresh john/lexx/antontest/antontest3; john nav = FOLDER + 4 PAGE_LAYOUT; tarball **0.1.20**.
+- **2026-07-27** — INC-070: CRM side-panel «Чат» tab missing — voxly-crm-chat uninstalled after ENOSPC/partial refresh; refresh-crm-chat all tenants + Redis flatLayout flush; metadata confirms Chat @15.
+- **2026-07-27** — INC-069: CRM Chat empty — missing `deliveryStatus` migration on prod (mailing receipts); applied; WA/TG refusal retry + near-dupe skip; deploy workers; backups `20260726-220746` + `20260726-221209`.
+- **2026-07-27** — INC-068: WA/TG sync CRM before ASR (personal voice after wipe); deploy `ai-whatsapp-worker,ai-telegram-worker`; **rotate root SSH password**.
+- **2026-07-27** — INC-067: WA video ASR used by LLM; PDF/DOCX CRM signed URL (0.1.20); typing clear; personal WA stale link cleared; deploy `saas-api,ai-tg/wa`; backup `20260726-210924`; **rotate root SSH password**.
+- **2026-07-26** — Media parity E2E: Business = GramJS = WA = Gift CRM enrich (ADR-021); gift `video_note` + OpenRouter/ffmpeg; docs + deploy workers/`gift-bot-worker`/`saas-api`/compose; **rotate root SSH password**.
+- **2026-07-26** — Local: crm-chat **0.1.18** FOLDER «Рассылка» → Бот / Аккаунты / Сторис / По этапу сделки; stage rules API; no prod deploy.
+- **2026-07-26** — Prod ship: crm-chat **0.1.17** in-CRM «Рассылка» (`saas-api`); backup `20260726-202005`; refresh john/lexx/antontest/antontest3; john nav = PAGE_LAYOUT.
+- **2026-07-26** — ADR-018 amend: «Рассылка» = in-CRM STANDALONE_PAGE + front-component (crm-chat 0.1.17); portal LINKs removed. No prod deploy.
+- **2026-07-26** — Prod: «Рассылка» (`saas-api,saas-portal,gift-bot-worker,gramjs-bridge,ai-tg/wa,compose`); CRM LINKs absolute → `getvoxly.ru/dashboard/mailing/*`; refresh-crm-chat; backup `20260726-192410`; hub+4 routes **200**.
+- **2026-07-26** — Prod deploy `saas-portal` (legal `/terms|/privacy|/consent|/refund` + реквизиты); backup `20260726-190018`; smoke 200. Conflict recreate saas-api fixed; AI workers restarted.
+- **2026-07-26** — Portal **indigo shadcn** theme + dashboard big-bang (branch `ui/indigo-shadcn-dashboard`; ADR-020; **prod** backup `20260726-200859`; PR link pending `gh auth`).
+- **2026-07-26** — Portal shadcn expand: landing Table/Accordion; AppShell Sheet; register Checkbox; typecheck+build OK (deploy portal pending).
+- **2026-07-26** — Robokassa legal surface: `/terms|/privacy|/consent|/refund` + реквизиты ИП на лендинге + checkbox на `/register` (local; deploy portal pending).
+- **2026-07-26** — INC-063: regular video ASR (TG/GramJS/WA) — tags `[видео]:`; caps 8MB/90s; deploy workers+gramjs-bridge.
+- **2026-07-26** — INC-063 reopen: Fastify media token `maxParamLength` 404 + video_note AI tagging/fallback — CRM Chat **0.1.15**; deploy `saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`; backup `20260726-192410`; refresh-crm-chat; media 206 video/mp4 verified.
+- **2026-07-26** — Prod: INC-063 media playback MIME sniff/Range + video_note ASR — CRM Chat **0.1.13** (`saas-api,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-185249`; refresh-crm-chat; smoke 200.
+- **2026-07-26** — Prod: media signed-url CRM chat **0.1.11** + unread badges (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); migrate `lastOperatorReadAt`; backup `20260726-182032`; smoke 200.
+- **2026-07-26** — INC-065 unread badges UX + media 0.1.13 workers shipped prod (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-190111`.
+- **2026-07-26** — Prod: INC-063 media + INC-064 prompt filter → `saas-api` (crm-chat 0.1.9), `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`; backup `20260726-022902`; smoke 200.
+
+### 2026-07-26 — INC-059 WA LID→PN (Evolution v2.3.7-lid shipped)
+- WA UI can show phone without address book; avatar invent OFF. Prod Evolution upgraded to **v2.3.7-lid** (backup `20260726-002454`); session restored without QR; webhook + `PRESENCE_UPDATE` re-applied. Next: confirm LID inbound fills Person via `remoteJidAlt`/`senderPn`.
+
+### 2026-07-24 — INC-050 CRM chat links + gift 1.2/1.3
+- Chat: clickable http(s) in «Чат»; no `nbsp;` garbage (app **0.1.3** on john).
+- Gift setup: **1.2** Telegram description / **1.3** /start funnel (code; gift deploy still pending).
+
+### 2026-07-24 — INC-042 WA CRM sync after wipe
+- Stale Conversation twenty ids after deleting all People/Opps → sync skipped; toast without valid Chat.
+- Fix: personExists/opportunityExists → clear+recreate; sync every inbound; toast no-nav without ids.
+
+### 2026-07-24 — INC-044 TG↔WA Person merge by phone
+- `findPersonByPhone` in twenty-client; GramJS passes `User.phone`; TG/WA sync merge before create; ambiguous → needsReview. Deploy `ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`.
+
+### 2026-07-24 — INC-043 WA phones empty on LID-only webhook
+- Evolution Contact book resolve (profilePic / unique pushName) → Person phones + whatsapp; backfill john → `+79150946944`; composer placeholder channel-aware (crm-chat 0.1.2). Deploy `ai-whatsapp-worker,saas-api`; backup `20260724-121355`.
+
+### 2026-07-24 — INC-041 inbound toasts silent (sed guard)
+- Dockerfile sed made shell-ux toast poll always return; fix apiUrlReady + `/s/crm-chat/inbound-toasts` via Twenty session (no portal hop). Deploy twenty + saas-api; re-ensure john chat app.
+
+### 2026-07-24 — CRM toast / social / cabinet / kanban notes
+- Left inbound toast (shell-ux poll); Person social fields + WA→whatsapp; cabinet dedupe; note body on kanban via title sync.
+- Deploy: `saas-api,ai-whatsapp-worker,twenty` + SQL backfill john.
+
+### 2026-07-24 — INC-039 WA media + LID name/phone + typing
+- CRM media reply for WA via Evolution `sendMedia`; presence/read on open/reply; Person phone from `remoteJidAlt`/`senderPn`; no LID in Twenty name (INC-039). Deploy `saas-api,ai-whatsapp-worker`.
+
+### 2026-07-24 — INC-038 WA CRM reply 400 (@lid)
+- Evolution + worker: LID peers send as `digits@lid`; Evolution image patched (all tsup chunks).
+- Verify: reply for opportunity `1a0beec2-…` → **200**.
+
+### 2026-07-23 — INC-037 WA inbound → CRM Chat
+- Webhook/ChatMessage OK; `createPerson(phone=WA lid)` crashed worker → no Person link.
+- Fix createPerson phone fallback + WA sync try/catch; CRM `threads[]` switcher; deploy saas-api+WA worker; backup `20260723-163144`; backfill john WA Persons.
+
+### 2026-07-23 — INC-032 CRM Chat GramJS reply
+- Root cause: saas-api looked only at GiftSubscriber; GramJS CRM ids on Conversation → `/reply` 404. Host `/s/crm-chat` was correct.
+- Fix + prod deploy `saas-api,gramjs-bridge` (backup `20260723-132306`).
+
+### 2026-07-25 — Billing close + admin health
+- Business: capacity + unlink + `ai_tg_extra_conn` 200₽/slot; GramJS/WA hard pay + QR 402; `ai_topup`; usage-by-agent; referral 20% excl. top-up; `GET /api/admin/health`.
+- Portal wired; shared tests green. Prod migrate+deploy pending.
+
+### 2026-07-23 — WhatsApp QR INC-035 (prod)
+- Evolution `CONFIG_SESSION_PHONE_VERSION` bump → QR base64 returns; Cyrillic name → ascii hash slug.
+- Deploy worker/portal/compose; recreate evolution-api (no volume wipe). Backup `20260723-160032`.
+
+### 2026-07-23 — GramJS bridge up on prod
+- `prod-deploy.sh gramjs-bridge`; backup `20260723-130943`.
+- Fixed prod `GRAMJS_BRIDGE_URL` `:3010` → `:3008`; recreated saas-api; bridge `/health` ok.
+
+### 2026-07-23 — Business AI prod deploy
+- SSH unblocked via session `SSHPASS` (no laptop SSH key).
+- `prod-deploy.sh` shipped saas-api/portal/ai-telegram/gift/manager + compose; backup `20260723-122938`.
+- Prod `.env` append: `TELEGRAM_API_ID/HASH`, `GRAMJS_BRIDGE_URL` (no `--profile gramjs`).
+- Control DB Conversation AI/CRM columns applied; smoke portal+API **200**.
+
+### 2026-07-23 — Portal GramJS QR + soft gaps
+- Portal `/dashboard/ai/gramjs`: QR start/poll/png/2FA; accounts list; soft trial.
+- saas-api proxy `/api/bots/gramjs/*` (JWT → bridge Bearer); human outbound 1h pause in bridge.
+- Local `.env` secrets wired (gitignored); later prod ship succeeded (see above).
+- `prod-deploy.sh` gained `ai-telegram-worker` / `gramjs-bridge`.
+
+### 2026-07-23 — AI Agents media + gramjs-bridge
+- `ai-telegram-worker`: Whisper ASR (OpenRouter STT) + vision (multimodal chat); placeholders on failure; `/internal/inbound` for GramJS.
+- NEW `apps/gramjs-bridge`: QR login, encrypted session on `BotInstance` (`ai_gramjs`), text → AI worker → MTProto send.
+- Shared: `PRODUCT_CODES.AI_GRAMJS` / 500₽; compose profile `gramjs` :3008.
+
+### 2026-07-23 — AI Agents portal + CRM leads + SKU
+- Portal `/dashboard/ai` (+ `[botId]`): provision `ai_tg`, dialogs, handoff вкл/выкл/пауза.
+- API: `ai/start-trial`, conversations list/messages, addon gate on provision, `needsReview` PATCH.
+- Worker: Twenty Person+Opportunity on inbound; ambiguous dedupe → `needsReview`; ≤10 Business connections.
+- Schema: Conversation CRM ids + `needsReview` migration.
+
+### 2026-07-23 — AI Agents Phase 1 foundation
+- Schema Conversation handoff/Business fields + migration; OpenRouter seed defaults.
+- Adapted `ai-telegram-worker` (`ai_tg`, Business updates, multi-bubble, pause/disable).
+- gift-bot forwards `ai_tg` webhooks; manager registers Business `allowed_updates`.
+- PATCH conversation controls; CRM/portal reply auto-pause 1h.
+
+### 2026-07-23 — AI-агент ТЗ v0.2
+- `docs/specs/AI-AGENTS-TZ.md`: Telegram Business + GramJS + WA (Evolution); reuse-first (адапт существующих AI workers); имитация человека из n8n; managed bot; медиа в MVP.
+
+### 2026-07-23 — AI Agents TZ v0.3
+- `docs/specs/AI-AGENTS-TZ.md` готов к старту Фазы 1 (reuse `ai-telegram-worker` + новый gramjs-bridge). Код не начат — ждём «гоу».
+
+### 2026-07-22 — Safe prod deploy path
+- `scripts/prod-deploy.sh` / `prod-diff.sh` + `docs/agent/DEPLOY.md` + `ENVIRONMENTS.md` (ADR-013): whitelist rsync, DB backup, no `-v`, smoke. Live diff: portal OK; api/chat-panel/twenty-client still drift until intentional `saas-api` deploy.
+
+### 2026-07-22 — Landing CTA text white on black (prod)
+- `globals.css`: `a { color: inherit }` → `@layer base` so solid buttons keep white label.
+- Redeployed `saas-portal` on VPS (no volume wipe). Live on `https://getvoxly.ru/`.
+
+### 2026-07-22 — Wildcard tenant HTTPS (`*.getvoxly.ru`)
+- LE DNS-01 via reg.ru API + certbot on VPS; NPM host **6** + cert **npm-9**; deploy hook for renew.
+- Public **200**: `demo` / `demo-crm` / `test2` + apex/api/app.
+
+### 2026-07-22 — NPM HTTPS edge live (getvoxly.ru)
+- NPM proxy host **5** → `docker-traefik-1:80` (automation net); LE cert **8** for getvoxly.ru / www / api / app; Force SSL + websockets.
+- Public curl **200** on apex/www/api/app. Wildcard later same day (см. выше).
+- **Осталось:** DNS-01 wildcard для tenant subdomains; rotate root SSH; сменить `SUPERADMIN_PASSWORD`; commit/push overlay.
+
+### 2026-07-22 — Prod deploy VPS + NPM edge
+- Voxly на `150.241.98.135` в `/opt/voxly` рядом с n8n/Baserow/NocoDB/NPM (volumes не трогали).
+- Overlay `docker/docker-compose.prod-npm.yml`: Traefik **v3.6.6** → host **8880**, dashboard `127.0.0.1:8088`, entrypoint `web`, portal LB **3000**, DB/Redis localhost-only, сеть `automation_automation_net`.
+- Control DB: `prisma db push` + seed (`admin@getvoxly.ru`). Health via Host→:8880 all **200**.
+- NPM Proxy Hosts: см. запись выше (2026-07-22 — NPM HTTPS edge live).
 
 ### 2026-07-18 — ui-ux-pro-max skill
 - Установлен Cursor skill: `uipro init --ai cursor` → `.cursor/skills/ui-ux-pro-max/` (+ design-system persist `design-system/voxly/`).
@@ -136,8 +308,8 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Форма регистрации шлёт `companySlug` (не `workspaceName`); проверка пароля ≥8.
 - Регистрация через UI/прокси проверена: HTTP 201.
 - Фикс дашборда: `/api/auth/me` отдаёт flat `user.tenant` (subscription/addons/aiWallet/referralCode); убран невалидный HTML `pattern` в register.
-- Регистрация создаёт реальную подписку `crm_base` на 14 дней (`periodMonths=0`); существующие trial-tenant'ы локально backfill'нуты.
-- Дашборд показывает пробный период и дату окончания; trial завершается ровно через 14 дней без paid grace.
+- Регистрация создаёт реальную подписку `crm_base` на 7 дней (`periodMonths=0`); существующие trial-tenant'ы локально backfill'нуты.
+- Дашборд показывает пробный период и дату окончания; trial завершается ровно через 7 дней без paid grace.
 - Локально подняты Twenty server + worker + PostgreSQL; CRM доступна на `http://localhost:3007`.
 - Исправлен Twenty 2.21 provisioning: `signUp` → workspace-agnostic token → `signUpInNewWorkspace`; повторный запуск возобновляется через `signIn`.
 - CRM-пароль генерируется отдельно, хранится AES-256-GCM; `/api/tenant/crm-login` выдаёт короткоживущую SSO-ссылку в конкретный workspace.
@@ -146,7 +318,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Добавлен white-label образ Twenty с title `Voxly` и `lang="ru"`.
 - Исправлена SaaS superadmin-страница `/admin`: статистика и список tenant теперь соответствуют фактическому API.
 - Seed создаёт superadmin `admin@getvoxly.ru` с bcrypt-хешем (пароль из `SUPERADMIN_PASSWORD`, по умолчанию `changeme`).
-- Gift-бот Phase 2 (клиентский онбординг): trial 14 дней, Managed Bots provision, мастер `/dashboard/bots` (канал, линейная воронка, рассылки), `GiftSubscriber`, delayed jobs в gift-bot-worker, CRM Person+Сделка на `/start`, long-poll локально (`GIFT_BOT_USE_POLLING`).
+- Gift-бот Phase 2 (клиентский онбординг): trial 7 дней, Managed Bots provision, мастер `/dashboard/bots` (канал, линейная воронка, рассылки), `GiftSubscriber`, delayed jobs в gift-bot-worker, CRM Person+Сделка на `/start`, long-poll локально (`GIFT_BOT_USE_POLLING`).
 - Webhook Managed Bot выровнен на `/tg/{tenantId}/{botId}`; локально polling вместо public HTTPS.
 - Manager Bot локально: реальный токен в `.env`, username **`@VoxlyGiftbot`**, Bot Management Mode ON; `manager-bot-service` в long-poll (`MANAGER_USE_POLLING` / `GIFT_BOT_USE_POLLING`); `getMe` проверен.
 - **Чекпоинт перед E2E gift-бота (2026-07-15):** пользователь продолжает с test2 → `/dashboard/bots`. См. §4 «Снимок сессии».
@@ -156,7 +328,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Чат оператора в портале + `GET .../messages` + reply → Telegram + Conversation.mode=human; заметки на Person в Twenty (custom ChatMessage App не ставится).
 - Рассылки: отдельная страница `/dashboard/bots/broadcasts` (сегмент, медиа, schedule, история); worker шлёт mediaUrl.
 - test2: `@voxlycmrm0vuatmbot` + кампания готовы; ждём Start для Person/Сделка.
-- **UI:** Tailwind v4 + shadcn; тема Twenty (Inter, soft gray canvas, outline buttons, pastel KPI); `/dashboard` — 4 блока; боты = список → `/dashboard/bots/[botId]`; skills: refero / 21st-shadcn / karpathy.
+- **UI:** Tailwind v4 + shadcn **indigo** (ADR-020); `/dashboard` — 4 блока; боты = список → `/dashboard/bots/[botId]`; skills: refero / 21st-shadcn / karpathy.
 - **Пост акции в канале:** `GiftCampaignConfig.promoPost` (JSON); API `PUT/POST /api/bots/:id/promo[/publish]`; кнопка `Текст · N` + deep-link `?start=g_{campaignId}`; worker считает клики и обновляет markup; портал — редактор + Telegram-превью + публикация.
 - **Фикс:** polling страницы бота не затирает несохранённые правки воронки/поста (обновляет подписчиков и счётчик кликов).
 - **Дефолтная воронка:** тексты/тайминги из настроенной кампании test2 (`DEFAULT_GIFT_FUNNEL` в shared).
@@ -361,6 +533,22 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Nest JSON body limit 10MB → 500 `"request entity too large"` on large `fileBase64` (common with 2 photos).
 - Fix: host JPEG shrink in `patch-twenty-file-base64.cjs`; chat-panel top-level `event.files` + size preflight; front `c93f55cd…` on test2.
 
+### 2026-07-30 — CRM портал (prod)
+- `/dashboard/crm`: Trial, «осталось мест», amber UI, invite→Twenty + modal пароль, member sidebar только CRM.
+- API: `GET /tenant/crm`, invite Twenty sync, crm-login per-member password; Robokassa → `?paid=`.
+- Deployed `saas-api` + migrate `twentyPasswordEncrypted` + `saas-portal`. SMTP deferred.
+
+
+
+**2026-07-31 (вечер) — Полный деплой: партнёрский баланс, каналы AI, фиксы биллинга**
+- 6 коммитов: схема+миграции, shared constants, billing+referral logic, AI atomic charge+channels, portal UX, incidents doc.
+- Deploy: saas-api, saas-portal, ai-telegram-worker, ai-whatsapp-worker, gift-bot-worker. Backup 20260731-151337.
+- 4 миграции: uncollectedRub+unique paymentId, productScope normalise, AiUsageLog.channel, ReferralWithdrawal+balanceAppliedRub.
+- Smoke: все страницы 200. Логи чисты после restart.
+
+**2026-07-31 (ночь) -- Smoke-test retry в prod-deploy.sh**
+- smoke_wait: retry каждые 3 с до HTTP 200 или таймаута 60 с. Прогресс-вывод. При таймауте -- exit 1 с последним кодом.
+- Deploy saas-api. Smoke OK 200 (0s) для обоих эндпоинтов. Backup 20260731-203332.
 
 ---
 
@@ -368,25 +556,29 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Снимок сессии (читать перед продолжением)
 
-**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
+**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; **`CHAT.md`** — golden path CRM/AI chat (WA эталон); `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
 
 **Design reference (вне монорепо):** Open WebUI → `/Users/antonsagajdak/Desktop/open-webui` (shallow clone; смотреть `src/tailwind.css`, `src/app.css`, `src/lib/components/common|layout`, `src/routes/auth`). Не runtime-зависимость.
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat = Twenty Apps SDK tab «Чат» (`twenty-app/voxly-crm-chat`, applied on **test2**, front `c93f55cd…`) + `/api/crm/chat` (+ `/file/:fileId` preview via **compressed** base64 logic, INC-014); attach = **host `dataBase64` + JPEG shrink** (INC-017/018/020, `patch-twenty-file-base64.cjs`); composer = **pinned** via shell scroll-lock + absolute flex (INC-019) + remount `composerKey` (INC-016); **format = toolbar** (not ПКМ); inject disabled (`DISABLE_FLOATING_CHAT`). **Bot funnel photos** now logged with `attachments.fileId` (INC-024; gift-bot-worker rebuilt 2026-07-22). Сайдбар «Кабинет Voxly» (LINK → portal dashboard); floating cabinet inject off (`DISABLE_FLOATING_CABINET`). Shell UX: hide create-workspace + chat pin + note 5-line clamp (`voxly-shell-ux.js`); Сделки default = kanban **By Stage** INDEX, **width 320**, card fields; note chip = **body via title sync** (INC-021, not bodyV2 label); «Чат» tab **position 15** (after Home). Checkpoint **закоммичен** `371a4ac` на `feature/twenty-crm-chat-tab` (2026-07-21); uncommitted: INC-024 + phone sync. `.cursor/skills/` не в git. Security: 0 critical/high, 2 medium → SEC-001.
+**Статус кода:** CRM chat + INC-024…**/103** (GramJS send from Person.telegram userId even without prior Conversation) + **/102** (`/open/tg/{id}`) + **/101** + **/100** + **/099** (crm-chat **0.1.27**) + **/098** + **/097 v7** + ADR-026 + **ADR-027**. **Module freeze:** `docs/agent/modules/` (WA/GramJS/chat/social/gift/dedupe). **2026-08-06:** open link ≠ send; GramJS binds peer from LINKS + ImportContacts phone fallback. **MAX** ADR-025 pending. **Blocker:** Robokassa Password#2 (INC-083). Gaps: TG→WA IsOnWhatsApp; SMTP; rotate root SSH.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
 - API: `http://localhost:3002`
 - Gift-бот UI: `http://localhost:3001/dashboard/bots`
-- CRM: `http://localhost:3007` / `{slug}.localhost:3007` (SSO с дашборда, **новая вкладка**) — **Twenty v2.22.0** (образ готов; на момент ADR Colima/Docker были down — поднять перед scaffold)
+- CRM: `http://localhost:3007` / `{slug}.localhost:3007` (SSO с дашборда, **новая вкладка**) — **Twenty v2.22.0**
 - Manager bot service: `:3003`, gift-bot-worker: `:3004`
 
+**Prod URL**
+- Live HTTPS: `https://getvoxly.ru` / `www` → portal; `https://api.getvoxly.ru` → API; `https://app.getvoxly.ru` → Twenty.
+- Tenant HTTPS: `https://{slug}.getvoxly.ru`, `https://{slug}-crm.getvoxly.ru` (wildcard LE). Internal: Host → `http://127.0.0.1:8880`.
+
 **Аккаунты**
-- Клиенты: `test1@test.ru`, `test2@test.ru` (и др. test*) — роль `member`; CRM workspace у test1/test2 есть; locale `ru-RU`, время `HOUR_24`, объект opportunity → «Сделки».
-- Супер-админ: `admin@getvoxly.ru` / `changeme` (или `SUPERADMIN_PASSWORD`) → `/admin` (+ блок «Воронки gift-ботов»).
-- Для E2E gift-бота выбран **test2** (test1 занят проверкой CRM).
+- Клиенты (local): `test1@test.ru`, `test2@test.ru` — роль `member`.
+- Супер-админ **prod**: `admin@getvoxly.ru` / пароль в `/opt/voxly/.env` (`SUPERADMIN_PASSWORD`) — сменить сразу.
+- Для E2E gift-бота выбран **test2** (local).
 
 **Telegram Manager Bot**
 - Username: `@VoxlyGiftbot` (Manager Bot, не child gift-бот клиента).
@@ -396,7 +588,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Что уже в коде (gift + портал)** — ключевые файлы
 - API (`apps/saas-api`): trial, provision-link, campaign, channel/verify, promo draft/publish, `POST .../media`, broadcasts, subscribers, messages/reply; `GET /api/admin/funnels`; `GET /api/bots` → `subscriberCount` + `promoPost`.
-- Портал (`apps/saas-portal`): `/dashboard` (4 блока + CRM в новой вкладке + подсказка/popup-blocker); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг/login/register в Twenty light; `AppShell` + motion/UX (Alert, CopyButton, PageHeader).
+- Портал (`apps/saas-portal`): `/dashboard` amber hub (`DashboardPortalHero` + KPI + разделы + партнёрка); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг industrial amber; `AppShell` (Sheet mobile) + motion/UX (Alert, CopyButton, PageHeader).
 - Shared: `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO`, `buildVoxlyBotUsername`, `telegram-md.ts`, `resolveTelegramMedia`.
 - Worker (`apps/gift-bot-worker`): воронка + delays + broadcasts + promo clicks; `detectStoredMediaKind`; BullMQ `jobId` без `:`; напоминания `not_gifted` / `not_subscribed` / `after_gift` (см. сводку §3); Person/Opportunity + notes; `fireGoal` + `campaignId`/`botInstanceId`; MarkdownV2.
 - Username новых ботов: `voxly_{slug}_{01}_bot`.
@@ -408,18 +600,22 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - Пост акции: `/dashboard/bots/<botId>` → блок 2 → файл + опубликовать.
 
 **Следующие шаги (приоритет)**
-1. **Seats = CRM users:** portal 1/10 + limit must track Twenty workspace members (not only Voxly `/invite`) — ADR-011.
-2. **Install `voxly-crm-chat` on gift-bot activation** (parity with test2 chat tab) — ADR-011 / INC-006 syncApplication.
-3. **Provisioning = test2 defaults:** auto-run note title-sync SQL triggers for new workspace schema — ADR-010/011.
-4. Security follow-ups (medium): per-tenant service identity; bind `fileId` to conversation attachments.
-5. Rebuild Twenty image so shell-ux + file-base64 + `DISABLE_FLOATING_*` survive recreate.
+0. **Release gate:** локально `pnpm test:db` при Docker. Методика: `docs/agent/RELEASE-CHECKLIST.md`.
+0b. **Robokassa live:** `IS_TEST=0` + P1 ок; **синхронизировать Password#2 из ЛК** → recreate `saas-api` (INC-083). **Сменить root SSH пароль** и ротировать секреты, светившиеся в чате.
+0c. **Mailing UX 0.1.22 on prod:** hard-refresh john-crm → «Рассылка». Disk monitor on VPS. Optional: WA ack→read wiring.
+
+
+1. Retest WA LID peer → Person phone from `remoteJidAlt`/`senderPn` after Evolution **v2.3.7-lid** (done 2026-07-26; no QR needed on reconnect).
+2. Superadmin `/admin` → «Удалить» tenant `john` (confirm slug) → зарегистрироваться заново → проверить CRM Chat кнопки AI + создание сделок.
+3. Telegram Business: включить «Отвечать на сообщения» для AI-бота (`can_reply=true`) — иначе ответы не уходят в TG (INC-056).
+4. Smoke prod QR login on `/dashboard/ai/gramjs` (tenant account).
+5. Rotate VPS root SSH + `SUPERADMIN_PASSWORD`.
 
 ### Пайплайн (всё зелёное на момент последней проверки)
 - `pnpm install` ✓
-- `pnpm typecheck` — 20/20 ✓
-- `pnpm build` — 13/13 ✓
-- `pnpm test` — 32/32 ✓ (billing 11, ai-core 5, shared 8+, crypto 8)
-- `pnpm --filter @voxly/db prisma:generate` ✓
+- `pnpm test` — **80 passed / 15 skipped** (DB integration skip без Postgres); unit+guards+status+econ ✓
+- `pnpm verify` = typecheck + test + portal lint
+- CI: `.github/workflows/ci.yml` (Postgres+Redis services)
 
 ### Чек-лист фаз
 
@@ -428,42 +624,48 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | phase1-infra | Docker Compose + Traefik + PostgreSQL + Redis | ✅ DONE |
 | phase1-control | Control plane: Prisma, auth, Robokassa, provisioning | ✅ DONE |
 | phase1-portal | Клиентский портал + супер-админка | ✅ DONE |
-| phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) | ✅ DONE |
+| phase1-referral | Реферальная программа (коды, атрибуция, вознаграждения) + супер-админ `/admin/partners` (per-tenant правила, ручные выплаты) | ✅ DONE |
 | phase1-manager-bot | Telegram Manager Bot (Managed Bots) | ✅ DONE |
 | phase1-twenty-app | Twenty App voxly-platform (объекты stub) | ✅ DONE (stub archived; chat = voxly-crm-chat) |
 | phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |
 | phase2-analytics | Сквозная аналитика (Метрика/GA4/FB/VK) | ✅ DONE |
-| phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | ⬜ PENDING |
-| phase3-ai-telegram | ai-telegram-worker (Business API, OpenAI, wallet) | ✅ DONE |
-| phase4-ai-whatsapp | ai-whatsapp-worker (Cloud API, ai-core) | ✅ DONE |
+| phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | 🟡 PORTAL+SOFT+PROD (bridge up on prod; hard Robokassa SKU open) |
+| phase2-max | MAX personal (`ai_max` + max-bridge) + gift_max | 🟡 P1+P2+UX (ADR-025; QR/token E2E pending; AI/media Phase 3) |
+| phase3-ai-telegram | ai-telegram-worker Business + OpenRouter + handoff | 🟡 IN PROGRESS (media ✅; portal split ADR-014 ✅; AiAgent schema ✅; **default AI OFF**; OPENROUTER/E2E + prod migrate open) |
+| phase4-ai-whatsapp | ai-whatsapp-worker + Evolution QR | 🟡 IN PROGRESS (QR works on prod INC-035; soft trial; needs phone-scan E2E + hard Robokassa) |
 | final-polish | Dockerfiles, тесты, сборка | ✅ DONE |
 | encryption | AES-256-GCM для секретов | ✅ DONE |
 | twenty-2.22 | Upgrade CRM 2.21 → 2.22.0 + white-label Voxly | ✅ DONE |
 | twenty-deal-chat | Чат в карточке (SDK tab + `/api/crm/chat`; inject off) | ✅ DONE 20.07 (test2) |
 
-**Закрыто: 13/14 отмеченных пунктов.** Открыт: GramJS (опц.).
+**Закрыто: 12/14 отмеченных пунктов.** GramJS scaffolded; AI Telegram Phase 1 media done.
 
 ---
 
 ## 5. Что осталось сделать
 
+### Prod (срочно)
+- Rotate root SSH password; change prod `SUPERADMIN_PASSWORD` in `/opt/voxly/.env`; rotate reg.ru API password.
+
 ### Следующий крупный кусок
+- **AI Agents Phase 1** — portal/CRM/SKU ✅; Whisper/vision ✅; FAQ/prompt UI; paid Robokassa `ai_tg` / `ai_gramjs`.
 - Gift E2E + UI verify SDK tab: CRM → Opportunity/Person → «Чат» → photo preview + reply → Telegram.
-- Multi-tenant: install `voxly-crm-chat` в provisioning (сейчас PoC на test2).
 
 ### Опциональное
-- **Phase 2b: GramJS bridge** — переписка с личного Telegram-аккаунта (не Bot API).
+- **Phase 2b: GramJS bridge** — portal QR ✅; soft SKU/trial ✅; **prod bridge up** ✅; hard Robokassa remaining.
+- **MAX** — live QR (`ai_max`) + gift token (`gift_max`) E2E per `docs/agent/MAX-SMOKE.md`; media/AI agent later.
 - Tenant UI метрик воронки на `/dashboard/bots` (сейчас только супер-админ `/admin`).
 
 ### Известные TODO / пробелы
 - `emailWorker` в `saas-api` — logging-stub → SMTP (nodemailer + `.env.example`).
 - `notifyHumanOperator` в AI-воркерах — не реализован.
-- **Gift-бот E2E** — живой прогон на test2.
+- **AI Phase 1** — prod Business AI shipped 2026-07-23; media parity ADR-021 ✅; optional prod `--profile gramjs` already used.
+- **Gift-бот E2E** — живой прогон media enrich + funnel на test2.
 - **Чат** — SDK tab «Чат» (test2) + портал + notes; inject off (rollback file kept).
 - **Superadmin** — готов (`admin@getvoxly.ru`); воронки: `/admin` + `GET /api/admin/funnels`. Счётчик «Проверки» только из новых `ConversionEvent` с `campaignId`.
 - **Prisma migrations** — схема через `db push`; перед продом `pnpm db:migrate`. Есть `GiftSubscriber`, у `ConversionEvent` — `campaignId`/`botInstanceId`.
-- **Коммит** — checkpoint `371a4ac` (chat/shell/kanban); непушить без просьбы.
 - **Docker runtime** — Colima; TG polling локально (`GIFT_BOT_USE_POLLING` / `MANAGER_USE_POLLING`).
+- **GramJS outbound media** — still text-only from CRM.
 
 ### Перед продакшеном
 - Заполнить `.env` реальными кредами (Robokassa, Telegram Manager Bot, OpenAI, SMTP, `ENCRYPTION_KEY` через `openssl rand -hex 32`).

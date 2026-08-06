@@ -14,6 +14,8 @@ export interface FireGoalParams {
   botInstanceId?: string;
   /** GiftCampaignConfig id when the goal belongs to a gift funnel */
   campaignId?: string;
+  /** Link ConversionEvent → AttributionSession when known */
+  attributionId?: string;
   attribution?: {
     yclid?: string;
     ymUid?: string;
@@ -25,6 +27,8 @@ export interface FireGoalParams {
     utmMedium?: string;
     utmCampaign?: string;
   };
+  /** Extra fields stored on ConversionEvent.payload (merged with attribution) */
+  payload?: Record<string, unknown>;
   value?: number;
   currency?: string;
 }
@@ -108,13 +112,17 @@ export async function fireGoal(params: FireGoalParams): Promise<PlatformResult[]
       subscriberId: params.subscriberId,
       botInstanceId: params.botInstanceId,
       campaignId: params.campaignId,
+      attributionId: params.attributionId || undefined,
       platformsStatus,
       status: results.every((r) => r.status === 'sent')
         ? 'sent'
         : results.some((r) => r.status === 'sent')
           ? 'partial'
           : 'failed',
-      payload: params.attribution as any,
+      payload: {
+        ...(params.attribution || {}),
+        ...(params.payload || {}),
+      } as any,
     },
   });
 

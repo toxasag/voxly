@@ -46,11 +46,24 @@ model Tenant {
   referralsMade     Referral[]     @relation("ReferrerTenant")
   referralReceived  Referral?      @relation("ReferredTenant")
   referralEarnings  ReferralEarning[]
+  referralCampaigns ReferralCampaign[]
+  referralCampaignExpenses ReferralCampaignExpense[]
+  referralRules     ReferralRule[]
+  referralServiceRates ReferralServiceRate[]
+  referralTransactions ReferralTransaction[]
+  referralWithdrawals ReferralWithdrawal[]
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
+  mailingStageRules MailingStageRule[]
   conversations     Conversation[]
   aiUsageLog        AiUsageLog[]
+  aiAgents          AiAgent[]
+  knowledgeFiles    AiKnowledgeFile[]
+  knowledgeChunks   AiKnowledgeChunk[]
+  salesExamples     AiSalesExample[]
+  formWebhookEndpoints FormWebhookEndpoint[]
+  formLeads         FormLead[]
 
   @@index([status])
 }
@@ -62,13 +75,15 @@ model User {
   role            UserRole   @default(member)
   firstName       String?
   lastName        String?
-  telegramUserId  BigInt?    @unique // for Managed Bots linking
+  telegramUserId  BigInt?    @unique // Managed Bots + GetVoxlybot OTP
+  telegramLinkedAt DateTime?
   isEmailVerified Boolean    @default(false)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
   tenantMembers   TenantMember[]
   auditLogs       AuditLog[]
+  platformSubscriber PlatformBotSubscriber?
 
   @@index([email])
 }
@@ -80,6 +95,7 @@ model TenantMember {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   role      UserRole @default(member) // owner or member within tenant
+  twentyPasswordEncrypted String?
   createdAt DateTime @default(now())
 
   @@unique([tenantId, userId])
@@ -120,7 +136,9 @@ model Payment {
   subscriptionId  String?
   robokassaInvId  Int          @unique
   amount          Decimal      @db.Decimal(10, 2)
-  status          String       @default("pending") // pending, paid, failed, refunded
+  /// Сколько закрыто партнёрским балансом; amount = gross - balanceAppliedRub
+  balanceAppliedRub Decimal    @db.Decimal(10, 2) @default(0)
+  status          String       @default("pending") // pending, paid, failed, refunded, cancelled (released hold)
   productCode     String
   periodMonths    Int?
   description     String
@@ -145,7 +163,7 @@ model Addon {
   id          String    @id @default(cuid())
   tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId    String
-  type        String    // gift_bot, ai_tg, ai_wa, analytics_metrika, analytics_ga4, analytics_facebook, analytics_vk
+  type        String    // gift_bot, ai_tg, ai_gramjs, ai_wa, ai_agent, analytics_*
   config      Json      // platform-specific config
   activeUntil DateTime
   status      String    @default("active") // active, expired, suspended
@@ -183,6 +201,8 @@ model AiUsageLog {
   tenantId        String
   addon           Addon?   @relation(fields: [addonId], references: [id])
   addonId         String?
+  aiAgent         AiAgent? @relation(fields: [aiAgentId], references: [id], onDelete: SetNull)
+  aiAgentId       String?
   aiWallet        AiWallet @relation(fields: [aiWalletId], references: [id])
   aiWalletId      String
   model           String   // gpt-4o, gpt-4o-mini, etc.
@@ -190,12 +210,108 @@ model AiUsageLog {
   providerCostRub Decimal  @db.Decimal(10, 4)
   markupPercent   Int
   chargedRub      Decimal  @db.Decimal(10, 4)
+  uncollectedRub  Decimal? @db.Decimal(10, 4) // part of chargedRub the wallet could not cover
   requestType     String   // text, transcribe, vision
+  /// ai_tg | ai_gramjs | ai_max | ai_wa | gift_bot | system (AI_USAGE_CHANNELS); null = charge predates channel tracking
+  channel         String?
   createdAt       DateTime @default(now())
 
   @@index([tenantId])
   @@index([aiWalletId])
+  @@index([aiAgentId])
   @@index([createdAt])
+  @@index([tenantId, channel, createdAt])
+}
+
+/// Tenant-scoped AI agent (prompt/settings). Orthogonal to channels.
+/// Null assignment on bot/conversation = AI OFF (ADR-014).
+model AiAgent {
+  id           String   @id @default(cuid())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId     String
+  name         String
+  systemPrompt String?
+  settings     Json?
+  /// active | archived
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  defaultForBots   BotInstance[]       @relation("BotDefaultAiAgent")
+  conversations    Conversation[]
+  aiUsageLog       AiUsageLog[]
+  knowledgeFiles   AiKnowledgeFile[]
+  knowledgeChunks  AiKnowledgeChunk[]
+  salesExamples    AiSalesExample[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+/// Uploaded knowledge file for an agent (txt/md/pdf).
+model AiKnowledgeFile {
+  id             String   @id @default(cuid())
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId       String
+  aiAgent        AiAgent  @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId      String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  storagePath    String
+  extractedChars Int      @default(0)
+  /// processing | ready | failed
+  status         String   @default("processing")
+  error          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  chunks AiKnowledgeChunk[]
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([status])
+}
+
+/// Embedded chunk of a knowledge file.
+model AiKnowledgeChunk {
+  id            String          @id @default(cuid())
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId      String
+  aiAgent       AiAgent         @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId     String
+  file          AiKnowledgeFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  fileId        String
+  ordinal       Int
+  content       String
+  /// float[] embedding as JSON
+  embedding     Json
+  tokenEstimate Int             @default(0)
+  createdAt     DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([fileId])
+}
+
+/// Operator↔user pairs from successfully closed CRM deals (won stage).
+model AiSalesExample {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  aiAgent         AiAgent  @relation(fields: [aiAgentId], references: [id], onDelete: Cascade)
+  aiAgentId       String
+  conversationId  String?
+  opportunityId   String?
+  userText        String
+  operatorText    String
+  embedding       Json
+  sourceMessageId String   @unique
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([aiAgentId])
+  @@index([opportunityId])
 }
 
 // ============================================================
@@ -250,15 +366,23 @@ model BotInstance {
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   tenantId          String
   managedBotUserId  BigInt?           @unique // telegram user_id of managed bot creator
-  botUsername       String?
-  botTokenEncrypted String?           // AES-256 encrypted token
+  botUsername       String?           // TG @username OR WA Evolution slug (ascii)
+  displayName       String?           // Human label (WA Cyrillic OK); UI prefers this over botUsername
+  botTokenEncrypted String?           // AES-256: bot token OR GramJS StringSession OR MAX session marker
   webhookSecret     String            @default(cuid())
   provisionedVia    BotProvisionVia   @default(managed)
-  botType           String            @default("gift") // gift, ai_tg, ai_wa
+  botType           String            @default("gift") // gift, gift_max, ai_tg, ai_gramjs, ai_max, ai_wa
   status            String            @default("active") // active, inactive, suspended
+  /// Telegram setMyDescription — shown when user opens bot link before /start (max 512)
+  telegramDescription String?
+  /// Telegram setMyShortDescription — profile / share blurb (max 120)
+  telegramShortDescription String?
   addon             Addon?            @relation(fields: [addonId], references: [id])
   addonId           String?
-  phoneNumberId     String?           // WhatsApp Cloud API phone_number_id
+  phoneNumberId     String?           // WhatsApp phone_number_id OR GramJS/MAX user id
+  /// Account-level default AI agent (nullable = AI off until conversation override or assign).
+  defaultAiAgent    AiAgent?          @relation("BotDefaultAiAgent", fields: [defaultAiAgentId], references: [id], onDelete: SetNull)
+  defaultAiAgentId  String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
@@ -267,6 +391,7 @@ model BotInstance {
 
   @@index([tenantId])
   @@index([status])
+  @@index([defaultAiAgentId])
 }
 
 model BotProvisionRequest {
@@ -303,10 +428,13 @@ model ReferralCode {
 
 model Referral {
   id                 String    @id @default(cuid())
-  referrerTenant     Tenant    @relation("ReferrerTenant", fields: [referrerTenantId], references: [id])
+  referrerTenant     Tenant    @relation("ReferrerTenant", fields: [referrerTenantId], references: [id], onDelete: Cascade)
   referrerTenantId   String
   referredTenant     Tenant    @relation("ReferredTenant", fields: [referredTenantId], references: [id], onDelete: Cascade)
   referredTenantId   String    @unique
+  /// Project/campaign link used at registration (null = main referral code)
+  campaign           ReferralCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignId         String?
   attributedAt       DateTime  @default(now())
   firstPaymentAt     DateTime?
   status             String    @default("attributed") // attributed, earned, cancelled
@@ -316,18 +444,40 @@ model Referral {
   earnings           ReferralEarning[]
 
   @@index([referrerTenantId])
+  @@index([campaignId])
+  @@index([attributedAt])
+  @@index([firstPaymentAt])
 }
 
 model ReferralRule {
   id              String          @id @default(cuid())
+  tenant          Tenant?         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String?         // null = global rule (isDefault); set = personal partner rate
   type            ReferralRuleType
   value           Decimal         @db.Decimal(10, 2) // fixed amount or percentage
   durationMonths  Int?            // for percent_recurring
-  productScope    String          @default("all") // all, crm
+  productScope    String          @default("all") // REFERRAL_PRODUCT_SCOPES: all (кроме ai_topup) | crm
   isDefault       Boolean         @default(false)
   isActive        Boolean         @default(true)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+
+  @@unique([tenantId])
+}
+
+/// Per-partner percent for a single SKU. Wins over ReferralRule.value for that productCode;
+/// if absent, crediting falls back to the resolved personal/global rule.
+model ReferralServiceRate {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  productCode String // REFERRAL_COMMISSION_SKUS
+  percent     Decimal  @db.Decimal(5, 2) // 0–100
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, productCode])
+  @@index([tenantId])
 }
 
 model ReferralEarning {
@@ -342,8 +492,81 @@ model ReferralEarning {
   ruleApplied     String
   creditedAt      DateTime  @default(now())
 
+  @@unique([paymentId])
   @@index([tenantId])
   @@index([referralId])
+}
+
+/// Per-project referral link (e.g. different Telegram channels)
+model ReferralCampaign {
+  id          String   @id @default(cuid())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  name        String
+  code        String   @unique
+  clicksCount Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  referrals   Referral[]
+  expenses    ReferralCampaignExpense[]
+
+  @@index([tenantId])
+}
+
+model ReferralCampaignExpense {
+  id         String           @id @default(cuid())
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String
+  campaign   ReferralCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId String
+  amountRub  Decimal          @db.Decimal(10, 2)
+  note       String?
+  spentAt    DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+
+  @@index([tenantId])
+  @@index([campaignId])
+  @@index([spentAt])
+}
+
+/// Admin-side movements of TenantBalance: payouts and manual corrections
+model ReferralTransaction {
+  id          String         @id @default(cuid())
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId    String
+  kind        ReferralTxKind
+  amountRub   Decimal        @db.Decimal(10, 2) // always positive; kind decides the sign
+  note        String?
+  adminUserId String?
+  createdAt   DateTime       @default(now())
+
+  @@index([tenantId])
+  @@index([createdAt])
+}
+
+/// Заявка партнёра на вывод партнёрского баланса деньгами
+model ReferralWithdrawal {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  amountRub       Decimal  @db.Decimal(10, 2)
+  status          ReferralWithdrawalStatus @default(pending)
+  /// Куда перевести: карта / счёт / телефон СБП — свободный текст
+  payoutDetails   String
+  /// Комментарий партнёра к заявке
+  comment         String?
+  /// Причина отказа (обязательна при rejected) либо пометка о переводе
+  decisionNote    String?
+  decidedAt       DateTime?
+  decidedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 // ============================================================
@@ -416,6 +639,67 @@ model ConversionEvent {
   @@index([tenantId, goalName])
 }
 
+// ============================================================
+// Web form lead intake (Tilda / WordPress / generic JSON)
+// ============================================================
+
+model FormWebhookEndpoint {
+  id            String   @id @default(cuid())
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId      String
+  name          String   @default("Сайт")
+  /// Unguessable public path token (nanoid)
+  token         String   @unique
+  /// Shared secret (hex). Verified via header / body / query when set.
+  secret        String?
+  /// reuse_open = one open Opportunity per Person; always_new = create each time
+  dedupeMode    String   @default("reuse_open")
+  /// Optional Twenty Opportunity.stage GraphQL value; null = workspace default (Новый лид)
+  defaultStage  String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  leads         FormLead[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+}
+
+model FormLead {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  endpoint        FormWebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  endpointId      String
+  /// tilda | wordpress | generic
+  source          String
+  /// Tilda tranid / WP entry id — idempotency key when present
+  externalId      String?
+  formId          String?
+  name            String?
+  phone           String?
+  email           String?
+  comment         String?
+  pageUrl         String?
+  referer         String?
+  /// Full normalized + raw payload for CRM note / debug
+  payload         Json
+  status          String   @default("received") // received | processed | failed | duplicate | needs_review
+  error           String?
+  personId        String?
+  opportunityId   String?
+  attributionId   String?
+  needsReview     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, source, externalId])
+  @@index([tenantId, createdAt])
+  @@index([endpointId, createdAt])
+  @@index([status])
+}
+
 model TrackingLink {
   id           String   @id @default(cuid())
   tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -454,6 +738,9 @@ model GiftCampaignConfig {
   analyticsConfig Json?      // goal mappings per platform
   /// Off = paused: no new /start via bare link; deep-link g_{id} also requires isActive
   isActive      Boolean      @default(true)
+  /// Optional window: scheduler flips isActive (and enforces one active project per bot)
+  scheduledStartAt DateTime?
+  scheduledEndAt   DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -461,6 +748,8 @@ model GiftCampaignConfig {
 
   @@index([tenantId])
   @@index([botInstanceId, isActive])
+  @@index([scheduledStartAt])
+  @@index([scheduledEndAt])
 }
 
 /// Subscriber state for gift-bot funnels / broadcasts (synced to Twenty CRM)
@@ -480,8 +769,13 @@ model GiftSubscriber {
   funnelPhase        String             @default("started") // started, awaiting_sub, gifted, not_gifted
   twentyPersonId     String?
   twentyOpportunityId String?
+  /// Operator opted out (or deal deleted): do not auto-create a new Opportunity.
+  suppressDealCreation Boolean          @default(false)
   conversationId     String?
   lastMessageAt      DateTime?
+  /// Last bot mailing that reached this subscriber (effectiveness attribution).
+  lastMailingBroadcastId String?
+  lastMailingAt          DateTime?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -492,6 +786,7 @@ model GiftSubscriber {
   @@index([subscribed])
   @@index([twentyOpportunityId])
   @@index([twentyPersonId])
+  @@index([lastMailingAt])
 }
 
 model Broadcast {
@@ -510,6 +805,26 @@ model Broadcast {
   @@index([status])
 }
 
+/// Auto-send when Opportunity enters a pipeline stage (in-CRM «По этапу сделки»).
+model MailingStageRule {
+  id         String   @id @default(cuid())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId   String
+  botId      String
+  channel    String   @default("gift") // gift | gramjs | wa
+  name       String   @default("")
+  stageValue String
+  text       String
+  mediaUrl   String?
+  mediaType  String?
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([tenantId, stageValue, enabled])
+}
+
 // ============================================================
 // Conversations & Chat Messages (AI agents)
 // ============================================================
@@ -520,12 +835,38 @@ model Conversation {
   tenantId        String
   botInstance     BotInstance? @relation(fields: [botInstanceId], references: [id])
   botInstanceId   String?
-  platform        String   // telegram, whatsapp
+  platform        String   // telegram, whatsapp, max
   platformUserId  String
   platformUsername String?
   platformFirstName String?
   status          String   @default("open") // open, waiting_for_human, resolved, closed
-  mode            String   @default("ai") // ai, human
+  /// Preferred: ai | human. Legacy gift/portal may use bot (= ai).
+  /// Mode alone does NOT enable AI — requires AiAgent assignment (ADR-014).
+  mode            String   @default("ai")
+  /// Auto or manual pause: AI silent until this time (unless aiDisabled).
+  pausedUntil     DateTime?
+  /// Full disable until manually re-enabled (no auto-resume).
+  aiDisabled      Boolean  @default(false)
+  /// e.g. telegram_business, telegram_private, telegram_gramjs, max_personal, whatsapp
+  channel         String?
+  businessConnectionId String?
+  /// Chat-level agent override; null → fall back to BotInstance.defaultAiAgentId; both null = AI off.
+  aiAgent         AiAgent? @relation(fields: [aiAgentId], references: [id], onDelete: SetNull)
+  aiAgentId       String?
+  /// Twenty CRM Person / Opportunity linked on first inbound (AI leads)
+  twentyPersonId       String?
+  twentyOpportunityId  String?
+  /// Operator opted out (or deal was deleted): do not auto-create a new Opportunity.
+  suppressDealCreation Boolean @default(false)
+  /// Ambiguous Person dedupe → manual review in portal
+  needsReview          Boolean  @default(false)
+  /// Set after won-deal sales examples were ingested for this conversation
+  salesLearnedAt       DateTime?
+  /// CRM operator last opened this thread in Twenty «Чат» (unread = user msgs after).
+  lastOperatorReadAt   DateTime?
+  /// Last mailing/broadcast that reached this peer (effectiveness attribution).
+  lastMailingBroadcastId String?
+  lastMailingAt          DateTime?
   lastAiMessageAt DateTime?
   assignedToUserId String?
   createdAt       DateTime @default(now())
@@ -537,6 +878,13 @@ model Conversation {
   @@index([botInstanceId])
   @@index([status])
   @@index([platformUserId])
+  @@index([businessConnectionId])
+  @@index([aiDisabled])
+  @@index([needsReview])
+  @@index([twentyPersonId])
+  @@index([twentyOpportunityId])
+  @@index([aiAgentId])
+  @@index([lastMailingAt])
 }
 
 model ChatMessage {
@@ -548,6 +896,10 @@ model ChatMessage {
   /// Telegram media: [{ type, fileId, fileUniqueId?, fileName?, mimeType?, fileSize? }]
   attachments     Json?
   externalMessageId String? // Telegram/WhatsApp message ID
+  /// sent | delivered | read | failed — mailing/outbound receipts (Phase 2)
+  deliveryStatus  String?
+  deliveredAt     DateTime?
+  readAt          DateTime?
   tokensUsed      Int?
   modelUsed       String?
   providerCostRub Decimal? @db.Decimal(10, 4)
@@ -557,6 +909,135 @@ model ChatMessage {
 
   @@index([conversationId])
   @@index([role])
+  @@index([externalMessageId])
+  @@index([deliveryStatus])
+}
+
+/// Per-recipient delivery for channel mailings (GramJS / WA).
+model BroadcastRecipient {
+  id               String   @id @default(cuid())
+  broadcastId      String
+  conversationId   String?
+  giftSubscriberId String?
+  externalMessageId String?
+  status           String   @default("pending") // pending | sent | delivered | read | failed
+  error            String?
+  sentAt           DateTime?
+  deliveredAt      DateTime?
+  readAt           DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([broadcastId])
+  @@index([conversationId])
+  @@index([externalMessageId])
+  @@index([status])
+}
+
+// ============================================================
+// Shared Telegram audience / overlap graph (platform SoT)
+// See docs/specs/TG-AUDIENCE-GRAPH-TZ.md — no message text stored.
+// ============================================================
+
+model TelegramPeer {
+  id        String   @id @default(cuid())
+  /// Telegram peer id as string (channel / chat / user / bot)
+  peerId    String   @unique
+  /// channel | group | bot | user
+  peerType  String
+  username  String?
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([peerType])
+  @@index([username])
+}
+
+model TelegramSighting {
+  id                   String   @id @default(cuid())
+  telegramUserId       String
+  peerId               String
+  /// member | seen_in | admin
+  relation             String
+  firstSeenAt          DateTime @default(now())
+  lastSeenAt           DateTime @default(now())
+  sourceTenantId       String
+  sourceBotInstanceId  String?
+  confidence           Float?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([telegramUserId, peerId, relation])
+  @@index([telegramUserId])
+  @@index([peerId])
+  @@index([sourceTenantId])
+}
+
+// ============================================================
+// Platform bot (@GetVoxlybot): OTP, support, broadcasts
+// ============================================================
+
+model AuthOtpChallenge {
+  id              String    @id @default(cuid())
+  nonce           String    @unique
+  purpose         String    // register | login | link
+  codeHash        String?
+  telegramUserId  BigInt?
+  chatId          BigInt?
+  userId          String?
+  pendingPayload  Json?
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  attempts        Int       @default(0)
+  createdAt       DateTime  @default(now())
+
+  @@index([telegramUserId, purpose])
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+model PlatformBotSubscriber {
+  id              String    @id @default(cuid())
+  telegramUserId  BigInt    @unique
+  chatId          BigInt
+  userId          String?   @unique
+  user            User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  username        String?
+  blocked         Boolean   @default(false)
+  linkedAt        DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model PlatformSupportMessage {
+  id              String    @id @default(cuid())
+  telegramUserId  BigInt
+  chatId          BigInt
+  direction       String    // inbound | outbound
+  text            String
+  username        String?
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([telegramUserId, createdAt])
+  @@index([readAt])
+}
+
+model PlatformBroadcast {
+  id           String    @id @default(cuid())
+  text         String
+  status       String    @default("draft") // draft | scheduled | sending | sent | failed
+  scheduledAt  DateTime?
+  sentCount    Int       @default(0)
+  failCount    Int       @default(0)
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  sentAt       DateTime?
+
+  @@index([status, scheduledAt])
 }
 
 // ============================================================
@@ -616,4 +1097,19 @@ enum ReferralRuleType {
   percent_recurring
   credit_discount
   credit
+}
+
+enum ReferralTxKind {
+  payout
+  manual_credit
+  manual_debit
+  /// баланс зачтён в собственный счёт тенанта
+  redeem
+}
+
+enum ReferralWithdrawalStatus {
+  pending
+  paid
+  rejected
+  cancelled
 }

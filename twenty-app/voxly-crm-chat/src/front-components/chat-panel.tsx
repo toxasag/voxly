@@ -14,6 +14,7 @@ type ChatAttachment = {
   type: string;
   fileId: string;
   fileName?: string;
+  mimeType?: string;
 };
 
 type ChatMessage = {
@@ -22,17 +23,72 @@ type ChatMessage = {
   content: string;
   attachments?: ChatAttachment[];
   sentAt: string;
+  senderLabel?: string | null;
+};
+
+type ChatPresence = {
+  online?: boolean;
+  lastSeenAt?: string | null;
+  approx?: 'recently' | 'last_week' | 'last_month' | null;
 };
 
 type ChatPayload = {
   messages?: ChatMessage[];
   username?: string | null;
   firstName?: string | null;
-  formatHint?: string;
   error?: string;
+  /** Soft empty-state (no linked Telegram lead yet) — not a hard failure. */
+  info?: string;
+  channel?: string | null;
+  channelLabel?: string | null;
+  identityLabel?: string | null;
+  peerLabel?: string | null;
+  contactName?: string | null;
+  botAgentLabel?: string | null;
+  operatorName?: string | null;
+  botType?: string | null;
+  botId?: string | null;
+  supportsAttachments?: boolean;
+  mode?: string | null;
+  aiDisabled?: boolean;
+  suppressDealCreation?: boolean;
+  pausedUntil?: string | null;
+  aiControls?: boolean;
+  conversationId?: string | null;
+  subscriberId?: string | null;
+  threads?: ChatThread[];
+  sendFromOptions?: SendFromOption[];
+  presence?: ChatPresence | null;
+};
+
+type ChatThread = {
+  id: string;
+  source: string;
+  conversationId?: string | null;
+  giftSubscriberId?: string | null;
+  botId?: string;
+  channelLabel: string;
+  identityLabel: string;
+  peerLabel: string;
+};
+
+type SendFromOption = {
+  botId: string;
+  botType: string;
+  label: string;
+  channelLabel: string;
+  identityLabel: string;
+  available: boolean;
+  unavailableReason?: string;
+  conversationId?: string | null;
+  giftSubscriberId?: string | null;
+  threadId?: string | null;
+  isDefault?: boolean;
 };
 
 type FilePayload = {
+  /** Preferred: signed saas-api URL (video/audio/photo; bypasses Twenty /s size cap). */
+  url?: string;
   dataBase64?: string;
   contentType?: string;
   error?: string;
@@ -51,10 +107,17 @@ type PendingAttachment = {
 function isMediaPlaceholder(content: string): boolean {
   const t = (content || '').trim();
   if (!t) return true;
-  return /^\[(фото|видео|стикер|голосовое|аудио|файл(?::[^\]]*)?)\]$/i.test(t);
+  // Include legacy GramJS `[media]` so history backfills never leave bare text
+  // when attachment previews are present.
+  return /^\[(media|фото|видео|кружочек|стикер|голосовое|аудио|файл(?::[^\]]*)?|документ)\]$/i.test(
+    t,
+  );
 }
 
 function attachmentLabel(a: ChatAttachment): string {
+  if (a.fileName === 'video_note.mp4' || /video_note/i.test(a.fileName || '')) {
+    return 'Кружочек';
+  }
   if (a.fileName) return a.fileName;
   if (a.type === 'video' || a.type === 'animation') return 'Видео';
   if (a.type === 'voice') return 'Голосовое';
@@ -66,7 +129,32 @@ function attachmentLabel(a: ChatAttachment): string {
 
 function isImageType(type: string, contentType?: string): boolean {
   if (type === 'photo' || type === 'sticker') return true;
+  // GramJS often stores photos as document + image/* mime.
   return !!contentType && contentType.startsWith('image/');
+}
+
+function isVideoType(type: string, contentType?: string, fileName?: string): boolean {
+  if (type === 'video' || type === 'animation') return true;
+  if (fileName && /video_note|\.(mp4|webm|mov)$/i.test(fileName)) return true;
+  // Mis-tagged video notes (GramJS) still need <video>, not <audio>
+  if (type === 'audio' && contentType?.startsWith('video/')) return true;
+  return !!contentType && contentType.startsWith('video/');
+}
+
+function isAudioType(type: string, contentType?: string): boolean {
+  if (contentType?.startsWith('video/')) return false;
+  if (type === 'voice' || type === 'audio') return true;
+  return !!contentType && contentType.startsWith('audio/');
+}
+
+function isVideoNoteAttachment(a: ChatAttachment): boolean {
+  return (
+    a.fileName === 'video_note.mp4' ||
+    /video_note/i.test(a.fileName || '') ||
+    /video_note/i.test(a.mimeType || '') ||
+    // GramJS sometimes stored video_note as audio+video/mp4 without fileName
+    (a.mimeType === 'video/mp4' && a.type === 'audio')
+  );
 }
 
 function ChatAttachmentView({
@@ -80,29 +168,69 @@ function ChatAttachmentView({
   muted: string;
   ink: string;
 }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string>('');
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setMediaUrl(null);
+    setContentType('');
+    setFailed(false);
     if (!attachment.fileId) {
       setFailed(true);
       return;
     }
+    const preferSignedUrl =
+      isVideoType(attachment.type, attachment.mimeType, attachment.fileName) ||
+      isVideoNoteAttachment(attachment) ||
+      isAudioType(attachment.type, attachment.mimeType) ||
+      // PDF/DOCX exceed Twenty /s ~96KB base64 cap — use signed URL like video/audio.
+      attachment.type === 'document';
     void (async () => {
       try {
+        if (preferSignedUrl) {
+          const data = await api.get<FilePayload>(
+            `/s/crm-chat/${recordId}/file-url/${encodeURIComponent(attachment.fileId)}`,
+          );
+          if (cancelled) return;
+          if (data.error || !data.url) {
+            setFailed(true);
+            return;
+          }
+          setContentType(
+            data.contentType ||
+              attachment.mimeType ||
+              (isVideoType(attachment.type, undefined, attachment.fileName)
+                ? 'video/mp4'
+                : isAudioType(attachment.type)
+                  ? 'audio/ogg'
+                  : ''),
+          );
+          setMediaUrl(data.url);
+          return;
+        }
         const data = await api.get<FilePayload>(
           `/s/crm-chat/${recordId}/file/${encodeURIComponent(attachment.fileId)}`,
         );
         if (cancelled) return;
-        if (data.error || !data.dataBase64) {
+        if (data.error) {
           setFailed(true);
           return;
         }
-        const ct = data.contentType || 'application/octet-stream';
-        setContentType(ct);
-        setDataUrl(`data:${ct};base64,${data.dataBase64}`);
+        if (data.url) {
+          setContentType(data.contentType || attachment.mimeType || '');
+          setMediaUrl(data.url);
+          return;
+        }
+        if (data.dataBase64) {
+          const ct =
+            data.contentType || attachment.mimeType || 'application/octet-stream';
+          setContentType(ct);
+          setMediaUrl(`data:${ct};base64,${data.dataBase64}`);
+          return;
+        }
+        setFailed(true);
       } catch {
         if (!cancelled) setFailed(true);
       }
@@ -110,24 +238,49 @@ function ChatAttachmentView({
     return () => {
       cancelled = true;
     };
-  }, [recordId, attachment.fileId]);
+  }, [
+    recordId,
+    attachment.fileId,
+    attachment.type,
+    attachment.mimeType,
+    attachment.fileName,
+  ]);
 
   const label = attachmentLabel(attachment);
+  const videoNote = isVideoNoteAttachment(attachment);
+  const effectiveType =
+    contentType || attachment.mimeType || '';
 
   if (failed) {
     return (
-      <div style={{ marginTop: 6, fontSize: 12, color: muted }}>📎 {label}</div>
+      <div style={{ marginTop: 6, fontSize: 12, color: muted }}>
+        📎 {label}
+        {mediaUrl ? (
+          <>
+            {' · '}
+            <a
+              href={mediaUrl}
+              download={attachment.fileName || label}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: ink, textDecoration: 'underline' }}
+            >
+              скачать
+            </a>
+          </>
+        ) : null}
+      </div>
     );
   }
-  if (!dataUrl) {
+  if (!mediaUrl) {
     return (
       <div style={{ marginTop: 6, fontSize: 12, color: muted }}>Загрузка…</div>
     );
   }
-  if (isImageType(attachment.type, contentType)) {
+  if (isImageType(attachment.type, effectiveType)) {
     return (
       <img
-        src={dataUrl}
+        src={mediaUrl}
         alt={label}
         style={{
           display: 'block',
@@ -138,10 +291,74 @@ function ChatAttachmentView({
       />
     );
   }
+  if (isVideoType(attachment.type, effectiveType, attachment.fileName) || videoNote) {
+    const videoType =
+      contentType && contentType.startsWith('video/')
+        ? contentType
+        : 'video/mp4';
+    return (
+      <div style={{ marginTop: 6 }}>
+        <video
+          key={mediaUrl}
+          src={mediaUrl}
+          controls
+          playsInline
+          preload="metadata"
+          onError={() => setFailed(true)}
+          style={{
+            display: 'block',
+            maxWidth: videoNote ? 220 : '100%',
+            width: videoNote ? 220 : undefined,
+            height: videoNote ? 220 : undefined,
+            objectFit: videoNote ? 'cover' : undefined,
+            borderRadius: videoNote ? '50%' : 8,
+            background: '#111',
+          }}
+        >
+          <source src={mediaUrl} type={videoType} />
+        </video>
+        <a
+          href={mediaUrl}
+          download={attachment.fileName || label}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: 4,
+            fontSize: 11,
+            color: muted,
+            textDecoration: 'underline',
+          }}
+        >
+          Скачать {label}
+        </a>
+      </div>
+    );
+  }
+  if (isAudioType(attachment.type, contentType)) {
+    const audioType =
+      contentType && contentType.startsWith('audio/')
+        ? contentType
+        : 'audio/ogg';
+    return (
+      <div style={{ marginTop: 6 }}>
+        <audio
+          controls
+          preload="metadata"
+          onError={() => setFailed(true)}
+          style={{ display: 'block', width: '100%' }}
+        >
+          <source src={mediaUrl} type={audioType} />
+        </audio>
+      </div>
+    );
+  }
   return (
     <a
-      href={dataUrl}
+      href={mediaUrl}
       download={attachment.fileName || label}
+      target="_blank"
+      rel="noreferrer"
       style={{
         display: 'inline-block',
         marginTop: 6,
@@ -157,15 +374,23 @@ function ChatAttachmentView({
 
 /**
  * Worker fetch requires absolute URLs (relative → "Failed to parse URL").
- * hostFetch allowlists only TWENTY_API_URL / TWENTY_FUNCTIONS_URL origins.
- * Local multiworkspace needs `{slug}.localhost` Host — set WORKSPACE_ORIGIN app var
- * and keep Twenty functionsBaseUrl patched to the same origin (see docker/patch-twenty-functions-url.cjs).
+ * hostFetch allowlists TWENTY_API_URL / TWENTY_FUNCTIONS_URL origins.
+ * Prefer WORKSPACE_ORIGIN (custom CRM host). Rewrite bare localhost and the
+ * SERVER_URL host (app.getvoxly.ru) → workspace origin for /s/* (INC-011/029).
  */
 function resolveWorkspaceOrigin(): string | null {
   const fromVar = (getApplicationVariable('WORKSPACE_ORIGIN') || '')
     .trim()
     .replace(/\/+$/, '');
   if (fromVar) return fromVar;
+
+  try {
+    if (typeof location !== 'undefined' && location?.origin) {
+      return location.origin.replace(/\/+$/, '');
+    }
+  } catch {
+    // Worker / sandbox may lack location
+  }
 
   const functionsUrl = (process.env.TWENTY_FUNCTIONS_URL || '').trim();
   if (functionsUrl) {
@@ -174,6 +399,23 @@ function resolveWorkspaceOrigin(): string | null {
       if (u.hostname.includes('.localhost') || (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1')) {
         return u.origin;
       }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function serverUrlOrigin(): string | null {
+  for (const raw of [
+    process.env.TWENTY_API_URL,
+    process.env.TWENTY_FUNCTIONS_URL,
+    process.env.REACT_APP_SERVER_BASE_URL,
+  ]) {
+    const v = (raw || '').trim();
+    if (!v) continue;
+    try {
+      return new URL(v).origin;
     } catch {
       // ignore
     }
@@ -204,15 +446,20 @@ function workspaceAwareFetch(
 
     const url = new URL(absolute);
     const workspaceOrigin = resolveWorkspaceOrigin();
-    if (
-      workspaceOrigin &&
-      (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
-    ) {
+    if (workspaceOrigin) {
       const ws = new URL(workspaceOrigin);
-      url.protocol = ws.protocol;
-      url.hostname = ws.hostname;
-      url.port = ws.port;
-      absolute = url.toString();
+      const serverOrigin = serverUrlOrigin();
+      const isLocalHost =
+        url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+      const isServerUrlHost =
+        Boolean(serverOrigin) && url.origin === serverOrigin && url.origin !== ws.origin;
+      const isLogicPath = url.pathname.startsWith('/s/');
+      if (isLocalHost || (isLogicPath && isServerUrlHost)) {
+        url.protocol = ws.protocol;
+        url.hostname = ws.hostname;
+        url.port = ws.port;
+        absolute = url.toString();
+      }
     }
   } catch {
     return impl(input as RequestInfo, init);
@@ -223,10 +470,22 @@ function workspaceAwareFetch(
 
 const api = new RestApiClient({ fetch: workspaceAwareFetch });
 
-function roleLabel(role: string): string {
-  if (role === 'user') return 'Клиент';
-  if (role === 'operator') return 'Менеджер';
-  if (role === 'assistant' || role === 'bot') return 'Бот';
+function roleLabel(
+  role: string,
+  opts?: {
+    contactName?: string | null;
+    botAgentLabel?: string | null;
+    operatorName?: string | null;
+    senderLabel?: string | null;
+  },
+): string {
+  if (role === 'user') return opts?.contactName || 'Клиент';
+  if (role === 'operator') {
+    return opts?.senderLabel || opts?.operatorName || 'Менеджер';
+  }
+  if (role === 'assistant' || role === 'bot') {
+    return opts?.botAgentLabel || 'Бот';
+  }
   return role || '';
 }
 
@@ -236,6 +495,89 @@ function escapeHtml(src: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function sameCalendarDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** Russian relative/absolute last-seen for CRM chat header. */
+function formatRuLastSeen(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  if (diffMs < 60_000) return 'только что';
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `${mins} мин. назад`;
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (sameCalendarDay(d, now)) return `сегодня в ${time}`;
+  const yest = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+  if (sameCalendarDay(d, yest)) return `вчера в ${time}`;
+  if (diffMs < 7 * 86_400_000) {
+    const days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    return `${days[d.getDay()]} в ${time}`;
+  }
+  return d.toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Hide when unknown — never invent status. */
+function formatPresenceLine(presence?: ChatPresence | null): string | null {
+  if (!presence) return null;
+  if (presence.online) return 'онлайн';
+  if (presence.approx === 'recently') return 'был(а) недавно';
+  if (presence.approx === 'last_week') return 'был(а) на этой неделе';
+  if (presence.approx === 'last_month') return 'был(а) в этом месяце';
+  if (presence.lastSeenAt) {
+    const when = formatRuLastSeen(presence.lastSeenAt);
+    return when ? `был(а) в сети ${when}` : null;
+  }
+  return null;
+}
+
+/** Normalize pasted/TG HTML leftovers before escape (INC-050). */
+function normalizeMessageText(src: string): string {
+  return String(src || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/nbsp;/gi, ' ');
+}
+
+/**
+ * Turn bare http(s) URLs into links. Only touch text nodes (skip tags / already-linked).
+ */
+function linkifyHtml(html: string): string {
+  return html
+    .split(/(<[^>]+>)/g)
+    .map((part) => {
+      if (!part || part.startsWith('<')) return part;
+      return part.replace(/(https?:\/\/[^\s<]+)/g, (rawUrl) => {
+        let url = rawUrl;
+        let trail = '';
+        while (url.length > 0 && /[.,);:!?\]}'"]/.test(url.slice(-1))) {
+          trail = url.slice(-1) + trail;
+          url = url.slice(0, -1);
+        }
+        if (!/^https?:\/\//i.test(url)) return rawUrl;
+        const href = escapeHtml(url);
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:#1961ed;text-decoration:underline;word-break:break-all">${href}</a>${trail}`;
+      });
+    })
+    .join('');
 }
 
 /** Inline client-MD → HTML (single line; newlines handled by the caller). */
@@ -257,21 +599,22 @@ function formatInlineMarkdown(src: string): string {
     /\|\|([^|]+)\|\|/g,
     '<span style="background:rgba(0,0,0,0.12);border-bottom:1px dashed rgba(0,0,0,0.35);border-radius:3px;padding:0 2px">$1</span>',
   );
-  return s;
+  return linkifyHtml(s);
 }
 
 /**
  * Full message HTML. Remote DOM often drops bare `<br/>` / collapses newlines inside
  * a single HTML blob — split lines into block rows instead (INC-023).
+ * Empty rows use min-height only (not `&nbsp;`) — Remote DOM can strip `&` and show `nbsp;` (INC-050).
  */
 function formatContent(src: string): string {
-  const raw = String(src || '');
+  const raw = normalizeMessageText(src);
   if (!raw) return '';
   return raw
     .split('\n')
     .map((line) => {
       const html = formatInlineMarkdown(line);
-      return `<div style="min-height:1.2em">${html || '&nbsp;'}</div>`;
+      return `<div style="min-height:1.2em">${html}</div>`;
     })
     .join('');
 }
@@ -362,6 +705,7 @@ function extractPendingAttachments(event: unknown): {
 
 function replyErrorMessage(err: unknown): string {
   if (!(err instanceof Error)) return 'Не удалось отправить';
+  // RestApiClientError attaches parsed JSON on `.body` ({ error: string }).
   const body = (err as Error & { body?: unknown }).body;
   const bodyText =
     typeof body === 'string'
@@ -369,11 +713,17 @@ function replyErrorMessage(err: unknown): string {
       : body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
         ? (body as { error: string }).error
         : '';
+  const raw = bodyText || err.message;
   if (
-    /request entity too large/i.test(err.message) ||
-    /request entity too large/i.test(bodyText)
+    /request entity too large/i.test(raw) ||
+    /request entity too large/i.test(err.message)
   ) {
     return 'Файл слишком большой для отправки (лимит ~7 МБ). Сожмите изображение или отправьте по одному.';
+  }
+  // Prefer API `error` string over generic "Request to … failed with status 400".
+  if (bodyText) return bodyText;
+  if (/failed with status\s*\d+/i.test(err.message)) {
+    return 'Не удалось отправить сообщение';
   }
   return err.message;
 }
@@ -387,16 +737,52 @@ const ChatPanel = () => {
   const colorScheme = useColorScheme();
   const dark = colorScheme === 'dark';
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [meta, setMeta] = useState<{ title: string; hint: string }>({
+  const [meta, setMeta] = useState<{
+    title: string;
+    presenceLine: string | null;
+    channelLabel: string;
+    identityLabel: string;
+    supportsAttachments: boolean;
+    conversationId: string;
+    giftSubscriberId: string;
+    aiControls: boolean;
+    mode: string;
+    aiDisabled: boolean;
+    suppressDealCreation: boolean;
+    pausedUntil: string | null;
+    contactName: string;
+    botAgentLabel: string;
+    operatorName: string;
+  }>({
     title: 'Чат',
-    hint: '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`',
+    presenceLine: null,
+    channelLabel: '',
+    identityLabel: '',
+    supportsAttachments: true,
+    conversationId: '',
+    giftSubscriberId: '',
+    aiControls: false,
+    mode: 'ai',
+    aiDisabled: false,
+    suppressDealCreation: false,
+    pausedUntil: null,
+    contactName: 'Клиент',
+    botAgentLabel: 'Бот',
+    operatorName: 'Менеджер',
   });
+  const [aiBusy, setAiBusy] = useState(false);
+  const [suppressBusy, setSuppressBusy] = useState(false);
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [sendFromOptions, setSendFromOptions] = useState<SendFromOption[]>([]);
+  const [sendFromBotId, setSendFromBotId] = useState('');
+  const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [draft, setDraft] = useState('');
   /** Remount composer after send — Remote DOM often ignores controlled `value=""` (INC-016). */
   const [composerKey, setComposerKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -404,6 +790,10 @@ const ChatPanel = () => {
   const lastSig = useRef('');
   /** Selection must live in a ref — button click clears DOM selection before onClick. */
   const selRef = useRef({ start: 0, end: 0 });
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
 
   const syncSelection = (t: {
     selectionStart: number | null;
@@ -423,42 +813,175 @@ const ChatPanel = () => {
     selRef.current = { start, end };
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (threadOverride?: ChatThread | null) => {
     if (!recordId) return;
-    setLoading(true);
+    // Soft host refresh (shell-ux) reuses this button — skip spinner if we already have a list.
+    const initialLoad = !lastSig.current;
+    if (initialLoad) setLoading(true);
     try {
-      const data = await api.get<ChatPayload>(`/s/crm-chat/${recordId}`);
+      const preferred =
+        threadOverride ||
+        threadsRef.current.find((t) => t.id === activeThreadIdRef.current) ||
+        null;
+      const qs = new URLSearchParams();
+      if (preferred?.conversationId) qs.set('conversationId', preferred.conversationId);
+      if (preferred?.giftSubscriberId) qs.set('giftSubscriberId', preferred.giftSubscriberId);
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      const data = await api.get<ChatPayload>(`/s/crm-chat/${recordId}${suffix}`);
       if (data.error && !data.messages?.length) {
         setError(data.error);
+        setInfo(null);
         setMessages([]);
         lastSig.current = '';
         return;
       }
       setError(null);
+      setInfo(data.info || null);
+      const nextThreads = data.threads || [];
+      setThreads(nextThreads);
+      const nextSendFrom = data.sendFromOptions || [];
+      setSendFromOptions(nextSendFrom);
+      const currentId =
+        (preferred && nextThreads.find((t) => t.id === preferred.id)?.id) ||
+        (data.conversationId
+          ? nextThreads.find((t) => t.conversationId === data.conversationId)?.id
+          : '') ||
+        (data.subscriberId
+          ? nextThreads.find((t) => t.giftSubscriberId === data.subscriberId)?.id
+          : '') ||
+        nextThreads[0]?.id ||
+        '';
+      if (currentId) setActiveThreadId(currentId);
+      const defaultSend =
+        nextSendFrom.find((o) => o.isDefault)?.botId ||
+        data.botId ||
+        nextThreads.find((t) => t.id === currentId)?.botId ||
+        nextSendFrom[0]?.botId ||
+        '';
+      setSendFromBotId((prev) => {
+        if (prev && nextSendFrom.some((o) => o.botId === prev)) return prev;
+        return defaultSend;
+      });
       const next = data.messages || [];
-      const sig = next.map((m) => m.id).join(',');
+      // Fingerprint content + attachments too — history backfill keeps same ids
+      // but rewrites `[media]` → `[файл:…]` + attachment meta (soft refresh must pick up).
+      const sig = `${currentId}:${next
+        .map((m) => {
+          const attKey = (m.attachments || [])
+            .map((a) => `${a?.fileId || ''}:${a?.type || ''}`)
+            .join('+');
+          return `${m.id}|${m.content || ''}|${attKey}`;
+        })
+        .join(',')}`;
       if (sig !== lastSig.current) {
         lastSig.current = sig;
         setMessages(next);
       }
-      const who = data.username
-        ? `@${data.username}`
-        : data.firstName || 'Telegram';
-      setMeta((prev) => ({
+      const who =
+        data.contactName ||
+        data.peerLabel ||
+        (data.username ? `@${data.username}` : data.firstName || 'Клиент');
+      const selectedOpt =
+        nextSendFrom.find((o) => o.botId === (defaultSend || data.botId)) ||
+        nextSendFrom.find((o) => o.isDefault);
+      setMeta({
         title: who,
-        hint: data.formatHint || prev.hint,
-      }));
+        presenceLine: formatPresenceLine(data.presence),
+        channelLabel: selectedOpt?.channelLabel || data.channelLabel || '',
+        identityLabel: selectedOpt?.identityLabel || data.identityLabel || '',
+        supportsAttachments:
+          typeof data.supportsAttachments === 'boolean' ? data.supportsAttachments : true,
+        conversationId: data.conversationId || '',
+        giftSubscriberId: data.subscriberId || '',
+        aiControls: data.aiControls === true,
+        mode: data.mode || 'ai',
+        aiDisabled: data.aiDisabled === true,
+        suppressDealCreation: data.suppressDealCreation === true,
+        pausedUntil: data.pausedUntil || null,
+        contactName: who,
+        botAgentLabel: data.botAgentLabel || data.identityLabel || 'Бот',
+        operatorName: data.operatorName || 'Менеджер',
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Не удалось загрузить чат');
+      const msg = err instanceof Error ? err.message : 'Не удалось загрузить чат';
+      if (/status 404/i.test(msg) || /No (Telegram )?chat linked/i.test(msg)) {
+        setError(null);
+        setInfo(
+          'Нет чата для этой записи. Напишите клиенту в Telegram / WhatsApp или дождитесь входящего сообщения.',
+        );
+        setMessages([]);
+        lastSig.current = '';
+      } else {
+        setInfo(null);
+        setError(msg);
+      }
     } finally {
-      setLoading(false);
+      if (initialLoad) setLoading(false);
     }
   }, [recordId]);
 
+  const setAiAction = async (action: 'enable' | 'pause' | 'disable') => {
+    if (!recordId || !meta.conversationId || aiBusy) return;
+    setAiBusy(true);
+    try {
+      await api.post(`/s/crm-chat/${recordId}/ai`, {
+        conversationId: meta.conversationId,
+        action,
+      });
+      await enqueueSnackbar({
+        message:
+          action === 'enable'
+            ? 'AI включён'
+            : action === 'pause'
+              ? 'AI на паузе ~1 час'
+              : 'AI отключён',
+        variant: 'success',
+      });
+      lastSig.current = '';
+      await load();
+    } catch (err) {
+      await enqueueSnackbar({
+        message: err instanceof Error ? err.message : 'Не удалось изменить AI',
+        variant: 'error',
+      });
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const toggleSuppressDeal = async () => {
+    if (!recordId || suppressBusy) return;
+    if (!meta.conversationId && !meta.giftSubscriberId) return;
+    setSuppressBusy(true);
+    const next = !meta.suppressDealCreation;
+    try {
+      await api.post(`/s/crm-chat/${recordId}/suppress-deal`, {
+        conversationId: meta.conversationId || undefined,
+        giftSubscriberId: meta.giftSubscriberId || undefined,
+        suppress: next,
+      });
+      setMeta((m) => ({ ...m, suppressDealCreation: next }));
+      await enqueueSnackbar({
+        message: next
+          ? 'Сделки при новых сообщениях отключены'
+          : 'Автосоздание сделок снова включено',
+        variant: 'success',
+      });
+    } catch (err) {
+      await enqueueSnackbar({
+        message:
+          err instanceof Error ? err.message : 'Не удалось изменить настройку сделки',
+        variant: 'error',
+      });
+    } finally {
+      setSuppressBusy(false);
+    }
+  };
+
   // Remote DOM sandbox: no window.setInterval / requestAnimationFrame.
-  // Refresh on open, after send, and via «Обновить».
+  // Refresh on open, after send, «Обновить», and host soft-click (~4.5s while Chat open).
   useEffect(() => {
-    void load();
+    void load(null);
   }, [load]);
 
   useEffect(() => {
@@ -473,22 +996,49 @@ const ChatPanel = () => {
 
   const readComposerText = (): string => {
     // Remote DOM: host textarea value can diverge from React `draft` (INC-016).
+    // Prefer non-empty host value; otherwise fall back to draft (empty "" must NOT win).
     const el = inputRef.current as { value?: string } | null;
-    if (el && typeof el.value === 'string') return el.value;
+    const fromEl = el && typeof el.value === 'string' ? el.value : '';
+    if (fromEl.trim()) return fromEl;
     return draft;
   };
 
   const send = async () => {
     if (!recordId || sending) return;
     const text = readComposerText().trim();
-    const files = [...pendingFiles];
-    if (!text && files.length === 0) return;
+    const files = meta.supportsAttachments ? [...pendingFiles] : [];
+    if (!meta.supportsAttachments && pendingFiles.length > 0) {
+      await enqueueSnackbar({
+        message: 'Вложения из CRM для этого канала пока не поддерживаются — отправьте текст',
+        variant: 'error',
+      });
+      return;
+    }
+    if (!text && files.length === 0) {
+      await enqueueSnackbar({
+        message: 'Введите текст сообщения',
+        variant: 'error',
+      });
+      return;
+    }
+    const selected = sendFromOptions.find((o) => o.botId === sendFromBotId);
+    if (selected && !selected.available) {
+      await enqueueSnackbar({
+        message: selected.unavailableReason || 'Нельзя отправить с этого аккаунта',
+        variant: 'error',
+      });
+      return;
+    }
     setSending(true);
     try {
+      const threadKeys: Record<string, string> = {};
+      if (meta.conversationId) threadKeys.conversationId = meta.conversationId;
+      if (meta.giftSubscriberId) threadKeys.giftSubscriberId = meta.giftSubscriberId;
+      if (sendFromBotId) threadKeys.sendFromBotId = sendFromBotId;
       // saas-api accepts one file per /reply — send sequentially (caption on first).
       // dataBase64 already encoded on host file-change (INC-017); never FileReader here.
       if (files.length === 0) {
-        await api.post(`/s/crm-chat/${recordId}/reply`, { text });
+        await api.post(`/s/crm-chat/${recordId}/reply`, { text, ...threadKeys });
       } else {
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
@@ -505,6 +1055,7 @@ const ChatPanel = () => {
             fileBase64: file.dataBase64,
             fileName: file.name,
             mimeType: file.type || 'application/octet-stream',
+            ...threadKeys,
           });
         }
       }
@@ -591,6 +1142,7 @@ const ChatPanel = () => {
   const ink = dark ? '#f3f3f3' : '#1a1a1a';
   const muted = dark ? '#a0a0a0' : '#666666';
   const border = dark ? '#333' : '#e6e6e6';
+  const accent = dark ? '#60a5fa' : '#2563eb';
   const bubbleIn = dark ? '#2e2e2e' : '#ececec';
   const bubbleOut = dark ? '#1f3a2e' : '#e8f5ee';
 
@@ -604,6 +1156,7 @@ const ChatPanel = () => {
 
   return (
     <div
+      data-voxly-crm-chat="1"
       style={{
         // Fill the host widget box; never grow with messages (outer scroll-wrapper
         // would then move the composer — pin via absolute + host CSS in shell-ux).
@@ -635,12 +1188,135 @@ const ChatPanel = () => {
       >
         <div>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.title}</div>
-          <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-            Формат: {meta.hint}
-          </div>
+          {sendFromOptions.length > 0 ? (
+            <div style={{ marginTop: 4 }}>
+              <label
+                style={{
+                  fontSize: 12,
+                  color: muted,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>Пишем от:</span>
+                <select
+                  value={sendFromBotId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const opt = sendFromOptions.find((o) => o.botId === nextId);
+                    setSendFromBotId(nextId);
+                    if (opt) {
+                      setMeta((m) => ({
+                        ...m,
+                        channelLabel: opt.channelLabel,
+                        identityLabel: opt.identityLabel,
+                        supportsAttachments:
+                          opt.botType !== 'ai_gramjs' &&
+                          opt.botType !== 'ai_max' &&
+                          opt.botType !== 'gift_max',
+                      }));
+                      if (opt.threadId) {
+                        const thr = threads.find((t) => t.id === opt.threadId);
+                        if (thr) {
+                          setActiveThreadId(thr.id);
+                          lastSig.current = '';
+                          void load(thr);
+                          return;
+                        }
+                      }
+                      if (!opt.available && opt.unavailableReason) {
+                        setError(opt.unavailableReason);
+                      } else {
+                        setError(null);
+                      }
+                    }
+                  }}
+                  style={{
+                    maxWidth: 280,
+                    fontSize: 12,
+                    border: `1px solid ${border}`,
+                    borderRadius: 8,
+                    padding: '3px 6px',
+                    background: panel,
+                    color: ink,
+                  }}
+                >
+                  {sendFromOptions.map((o) => (
+                    <option key={o.botId} value={o.botId} disabled={!o.available}>
+                      {o.label}
+                      {!o.available ? ' (недоступно)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(() => {
+                const cur = sendFromOptions.find((o) => o.botId === sendFromBotId);
+                if (cur && !cur.available && cur.unavailableReason) {
+                  return (
+                    <div style={{ fontSize: 11, color: '#b45309', marginTop: 4, maxWidth: 360 }}>
+                      {cur.unavailableReason}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+            </div>
+          ) : (
+            (meta.channelLabel || meta.identityLabel) && (
+              <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+                Пишем от: {meta.channelLabel}
+                {meta.identityLabel ? ` · ${meta.identityLabel}` : ''}
+              </div>
+            )
+          )}
+          {threads.length > 1 && (
+            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {threads.map((t) => {
+                const active = t.id === activeThreadId;
+                const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveThreadId(t.id);
+                      if (t.botId) setSendFromBotId(t.botId);
+                      lastSig.current = '';
+                      void load(t);
+                    }}
+                    style={{
+                      border: `1px solid ${active ? accent : border}`,
+                      background: active ? (dark ? '#1e293b' : '#eff6ff') : panel,
+                      color: ink,
+                      borderRadius: 8,
+                      padding: '4px 8px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      maxWidth: 220,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={`${label} → ${t.peerLabel}`}
+                  >
+                    {label}
+                    {t.peerLabel ? ` → ${t.peerLabel}` : ''}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {meta.presenceLine ? (
+            <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+              {meta.presenceLine}
+            </div>
+          ) : null}
         </div>
         <button
           type="button"
+          data-voxly-chat-refresh="1"
           onClick={() => void load()}
           style={{
             border: `1px solid ${border}`,
@@ -655,6 +1331,101 @@ const ChatPanel = () => {
           Обновить
         </button>
       </div>
+
+      {(meta.aiControls && meta.conversationId) ||
+      meta.conversationId ||
+      meta.giftSubscriberId ? (
+        <div
+          data-voxly-ai-controls="1"
+          style={{
+            flexShrink: 0,
+            padding: '8px 16px',
+            borderBottom: `1px solid ${border}`,
+            background: dark ? '#0f172a' : '#f8fafc',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            alignItems: 'center',
+          }}
+        >
+          {meta.aiControls && meta.conversationId
+            ? (() => {
+                const paused =
+                  Boolean(meta.pausedUntil) &&
+                  new Date(meta.pausedUntil!).getTime() > Date.now();
+                const status = meta.aiDisabled
+                  ? 'AI выкл'
+                  : paused
+                    ? 'AI пауза'
+                    : meta.mode === 'human'
+                      ? 'AI пауза'
+                      : 'AI вкл';
+                return (
+                  <span
+                    style={{ fontSize: 12, color: muted, marginRight: 4, fontWeight: 600 }}
+                  >
+                    {status}
+                  </span>
+                );
+              })()
+            : null}
+          {meta.aiControls && meta.conversationId
+            ? (
+                [
+                  { action: 'enable' as const, label: 'Вкл AI' },
+                  { action: 'pause' as const, label: 'Пауза' },
+                  { action: 'disable' as const, label: 'Выкл AI' },
+                ] as const
+              ).map((btn) => (
+                <button
+                  key={btn.action}
+                  type="button"
+                  disabled={aiBusy || sending}
+                  onClick={() => void setAiAction(btn.action)}
+                  style={{
+                    border: `1px solid ${border}`,
+                    background: panel,
+                    color: ink,
+                    borderRadius: 8,
+                    padding: '5px 10px',
+                    cursor: aiBusy ? 'wait' : 'pointer',
+                    fontSize: 12,
+                    opacity: aiBusy ? 0.6 : 1,
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))
+            : null}
+          {(meta.conversationId || meta.giftSubscriberId) && (
+            <button
+              type="button"
+              disabled={suppressBusy || sending}
+              onClick={() => void toggleSuppressDeal()}
+              title="Если сделка удалена — новые сообщения не создадут новую, пока флаг включён"
+              style={{
+                border: `1px solid ${meta.suppressDealCreation ? '#b45309' : border}`,
+                background: meta.suppressDealCreation
+                  ? dark
+                    ? '#422006'
+                    : '#fff7ed'
+                  : panel,
+                color: meta.suppressDealCreation ? '#c2410c' : ink,
+                borderRadius: 8,
+                padding: '5px 10px',
+                cursor: suppressBusy ? 'wait' : 'pointer',
+                fontSize: 12,
+                opacity: suppressBusy ? 0.6 : 1,
+                marginLeft: meta.aiControls ? 4 : 0,
+              }}
+            >
+              {meta.suppressDealCreation
+                ? 'Сделку не создавать ✓'
+                : 'Не создавать сделку'}
+            </button>
+          )}
+        </div>
+      ) : null}
 
       <div
         ref={listRef}
@@ -675,7 +1446,10 @@ const ChatPanel = () => {
         {error && (
           <div style={{ color: '#b42318', fontSize: 13 }}>{error}</div>
         )}
-        {!error && !loading && messages.length === 0 && (
+        {!error && info && !loading && messages.length === 0 && (
+          <div style={{ color: muted, fontSize: 13, lineHeight: 1.45 }}>{info}</div>
+        )}
+        {!error && !info && !loading && messages.length === 0 && (
           <div style={{ color: muted, fontSize: 13 }}>
             Нет сообщений по этой записи.
           </div>
@@ -697,7 +1471,13 @@ const ChatPanel = () => {
               }}
             >
               <div style={{ fontSize: 11, color: muted, marginBottom: 4 }}>
-                {roleLabel(m.role)} · {new Date(m.sentAt).toLocaleString()}
+                {roleLabel(m.role, {
+                  contactName: meta.contactName,
+                  botAgentLabel: meta.botAgentLabel,
+                  operatorName: meta.operatorName,
+                  senderLabel: m.senderLabel,
+                })}{' '}
+                · {new Date(m.sentAt).toLocaleString()}
               </div>
               {!hidePlaceholder && m.content ? (
                 <div
@@ -866,7 +1646,11 @@ const ChatPanel = () => {
                 void send();
               }
             }}
-            placeholder="Ответ в Telegram… (⌘/Ctrl+Enter — отправить)"
+            placeholder={`Ответ в ${
+              meta.channelLabel?.trim()
+                ? meta.channelLabel.split('·')[0].trim()
+                : 'чат'
+            }… (⌘/Ctrl+Enter — отправить)`}
             rows={3}
             style={{
               flex: 1,
@@ -891,6 +1675,7 @@ const ChatPanel = () => {
               alignItems: 'stretch',
             }}
           >
+            {meta.supportsAttachments ? (
             <label
               style={{
                 border: `1px solid ${border}`,
@@ -949,6 +1734,7 @@ const ChatPanel = () => {
                 }}
               />
             </label>
+            ) : null}
             <button
               type="button"
               disabled={sending || !canSend}

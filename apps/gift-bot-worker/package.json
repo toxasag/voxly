@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@voxly/ai-core": "workspace:*",
     "@voxly/analytics-dispatchers": "workspace:*",
     "@voxly/crypto": "workspace:*",
     "@voxly/db": "workspace:*",

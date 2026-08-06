@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "ServiceApp UI Design System Tokens",
+  "version": "1.0.0",
+  "author": "ServiceApp UI Team",
+  "description": "Design system tokens and component specs extracted for AI coding assistants (Cursor, v0, Bolt, Lovable)",
+  "meta": {
+    "target_framework": "React / Tailwind CSS",
+    "icon_library": "lucide-react",
+    "component_library": "shadcn/ui"
+  },
+  "tokens": {
+    "colors": {
+      "brand": {
+        "primary": "#2563EB",
+        "primary_hover": "#1D4ED8",
+        "primary_light": "#EFF6FF",
+        "dark_slate": "#1E293B",
+        "dark_slate_hover": "#0F172A"
+      },
+      "neutral": {
+        "bg_canvas": "#F8FAFC",
+        "bg_surface": "#FFFFFF",
+        "bg_subtle": "#F1F5F9",
+        "border_default": "#E2E8F0",
+        "border_light": "#F1F5F9",
+        "text_main": "#0F172A",
+        "text_body": "#334155",
+        "text_muted": "#64748B",
+        "text_placeholder": "#94A3B8"
+      },
+      "status": {
+        "success": {
+          "text": "#059669",
+          "bg": "#ECFDF5",
+          "border": "#A7F3D0",
+          "label": "Готов / Завершен"
+        },
+        "in_progress": {
+          "text": "#2563EB",
+          "bg": "#EFF6FF",
+          "border": "#BFDBFE",
+          "label": "Принят / В работе"
+        },
+        "warning": {
+          "text": "#D97706",
+          "bg": "#FFFBEB",
+          "border": "#FDE68A",
+          "label": "В процессе / Европрот."
+        },
+        "danger": {
+          "text": "#DC2626",
+          "bg": "#FEF2F2",
+          "border": "#FECACA",
+          "label": "Просрочено / Ошибка"
+        },
+        "neutral_badge": {
+          "text": "#475569",
+          "bg": "#F1F5F9",
+          "border": "#E2E8F0",
+          "label": "В архиве"
+        },
+        "info": {
+          "text": "#6366F1",
+          "bg": "#EEF2FF",
+          "border": "#C7D2FE",
+          "label": "Новый лид / Канал"
+        }
+      },
+      "gradients": {
+        "hero_banner": "linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)"
+      }
+    },
+    "typography": {
+      "fontFamily": "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      "fontSize": {
+        "xs": "0.6875rem",
+        "sm": "0.75rem",
+        "base": "0.8125rem",
+        "md": "0.875rem",
+        "lg": "1rem",
+        "xl": "1.25rem",
+        "2xl": "1.5rem",
+        "kpi": "1.875rem"
+      },
+      "fontWeight": {
+        "regular": "400",
+        "medium": "500",
+        "semibold": "600",
+        "bold": "700"
+      }
+    },
+    "spacing": {
+      "sidebar_slim_width": "64px",
+      "sidebar_sub_width": "200px",
+      "header_height": "60px",
+      "card_padding": "20px",
+      "grid_gap": "16px"
+    },
+    "borderRadius": {
+      "button": "8px",
+      "input": "8px",
+      "card": "12px",
+      "banner": "16px",
+      "badge": "9999px"
+    },
+    "shadows": {
+      "card": "0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05)",
+      "drawer": "-4px 0 24px rgba(0, 0, 0, 0.12)"
+    }
+  },
+  "components": {
+    "header": {
+      "search_box": {
+        "bg": "#F1F5F9",
+        "shortcut": "Ctrl K",
+        "icon": "Search"
+      },
+      "profile": {
+        "avatar_bg": "#0F172A",
+        "avatar_text": "#FFFFFF",
+        "initials": "AC"
+      }
+    },
+    "hero_banner": {
+      "bg": "gradient-hero",
+      "border_radius": "16px",
+      "text_color": "#FFFFFF",
+      "cta_buttons": [
+        {
+          "label": "+ Новый документ",
+          "variant": "white_glass"
+        },
+        {
+          "label": "+ Заказ",
+          "variant": "primary_light"
+        },
+        {
+          "label": "+ Контрагент",
+          "variant": "primary_light"
+        }
+      ]
+    },
+    "kpi_card": {
+      "bg": "#FFFFFF",
+      "border": "1px solid #E2E8F0",
+      "border_radius": "12px",
+      "value_style": "font-bold text-slate-900 text-2xl",
+      "sparkline": {
+        "stroke": "#10B981",
+        "fill": "rgba(16, 185, 129, 0.1)"
+      }
+    },
+    "data_table": {
+      "bg": "#FFFFFF",
+      "border": "1px solid #E2E8F0",
+      "header_bg": "#FAFAFA",
+      "header_text": "#64748B",
+      "row_hover_bg": "#F8FAFC",
+      "row_border": "1px solid #F1F5F9",
+      "row_height": "56px"
+    },
+    "slide_over_drawer": {
+      "width": "540px",
+      "position": "right",
+      "backdrop": "rgba(15, 23, 42, 0.4)",
+      "footer": {
+        "sticky": true,
+        "buttons": [
+          "Primary (Создать)",
+          "Outline (Создать и еще один)",
+          "Ghost (Отменить)"
+        ]
+      }
+    },
+    "chat_inbox": {
+      "split_ratio": "320px 1fr",
+      "channel_badge_avito": {
+        "bg": "#EBF5FF",
+        "text": "#0066FF"
+      },
+      "message_composer": {
+        "send_button": "bg-slate-800 text-white rounded-lg px-4 py-2"
+      }
+    }
+  },
+  "ai_prompt_rules": {
+    "system_instruction": "Generate React components adhering strictly to the design system tokens. Use Tailwind CSS utility classes corresponding to colors, border radius, and typography scales defined in this JSON.",
+    "tailwind_config_extend": {
+      "colors": {
+        "brand-blue": "#2563EB",
+        "brand-dark": "#1E293B",
+        "canvas": "#F8FAFC"
+      }
+    }
+  }
+}

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: voxly
+          POSTGRES_PASSWORD: voxly_pass
+          POSTGRES_DB: voxly_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U voxly -d voxly_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://voxly:voxly_pass@127.0.0.1:5433/voxly_test?schema=public
+      REDIS_URL: redis://127.0.0.1:6379
+      VOXLY_DISABLE_WORKERS: '1'
+      JWT_SECRET: ci-jwt-secret
+      ROBOKASSA_LOGIN: test
+      ROBOKASSA_PASSWORD1: pass1
+      ROBOKASSA_PASSWORD2: pass2
+      ROBOKASSA_IS_TEST: '1'
+      SKIP_E2E: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @voxly/db exec prisma generate
+
+      - name: Migrate + seed test DB
+        run: bash scripts/test-db.sh
+
+      - name: Build packages
+        run: pnpm --filter @voxly/shared --filter @voxly/crypto --filter @voxly/billing --filter @voxly/db --filter @voxly/ai-core --filter @voxly/twenty-client --filter @voxly/analytics-dispatchers build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit + integration tests
+        run: pnpm test
+
+      - name: Lint portal
+        run: pnpm --filter @voxly/saas-portal lint
+
+      - name: Build API + portal
+        run: pnpm --filter @voxly/saas-api --filter @voxly/saas-portal build

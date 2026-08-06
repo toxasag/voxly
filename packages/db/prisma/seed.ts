@@ -12,14 +12,21 @@ async function main() {
   // =====================================
   const settings = [
     { key: 'ai_markup_percent', value: '50', description: 'AI token markup percentage (default 50%)' },
-    { key: 'ai_default_model', value: 'gpt-4o-mini', description: 'Default AI model for tenants without override' },
+    { key: 'usd_rub_rate', value: '90', description: 'USD→RUB rate for OpenRouter provider cost (override via USD_RUB_RATE env)' },
+    // OpenRouter model matrix (TZ v0.3.1) — upsert updates value so re-seed picks new defaults
+    { key: 'ai_default_model', value: 'google/gemini-2.5-flash', description: 'Default OpenRouter chat model' },
+    { key: 'ai_chat_model', value: 'google/gemini-2.5-flash', description: 'Primary chat model (OpenRouter id)' },
+    { key: 'ai_chat_model_economy', value: 'openai/gpt-4o-mini', description: 'Economy chat model (OpenRouter id)' },
+    { key: 'ai_chat_model_fallback', value: 'openai/gpt-4o', description: 'Premium / fallback chat model (OpenRouter id)' },
+    { key: 'ai_embedding_model', value: 'openai/text-embedding-3-small', description: 'Embeddings model (OpenRouter id)' },
+    { key: 'ai_asr_model', value: 'openai/whisper-1', description: 'ASR / whisper model id' },
     { key: 'ai_default_system_prompt', value: 'Ты — дружелюбный ассистент, который помогает клиентам. Отвечай кратко, по делу и на русском языке.', description: 'Default system prompt' },
     { key: 'subscription_base_price', value: '500', description: 'Base subscription price (RUB/month)' },
     { key: 'subscription_seats_included', value: '10', description: 'Seats included in base subscription' },
     { key: 'extra_seat_price', value: '300', description: 'Price per extra seat (RUB/month)' },
     { key: 'gift_bot_price', value: '500', description: 'Gift bot add-on price (RUB/month per channel)' },
-    { key: 'ai_telegram_price', value: '1000', description: 'AI Telegram add-on price (RUB/month per 10 accounts)' },
-    { key: 'ai_whatsapp_price', value: '1000', description: 'AI WhatsApp add-on price (RUB/month per number)' },
+    { key: 'ai_telegram_price', value: '1000', description: 'AI Telegram add-on price (RUB/month per 10 Business accounts)' },
+    { key: 'ai_whatsapp_price', value: '500', description: 'AI WhatsApp add-on price (RUB/month per number)' },
     { key: 'analytics_price', value: '500', description: 'Analytics add-on price (RUB/month per platform)' },
     { key: 'subscription_grace_days', value: '7', description: 'Grace period before suspending expired subscription' },
     { key: 'ai_low_balance_threshold', value: '50', description: 'Low balance threshold for AI wallet (RUB)' },
@@ -32,7 +39,7 @@ async function main() {
     await prisma.platformSetting.upsert({
       where: { key: s.key },
       create: s,
-      update: { description: s.description },
+      update: { value: s.value, description: s.description },
     });
   }
   console.log(`✓ Seeded ${settings.length} platform settings`);
@@ -44,15 +51,21 @@ async function main() {
     where: { id: 'default' },
     create: {
       id: 'default',
-      type: 'credit',
-      value: 500,
+      type: 'percent_recurring',
+      value: 20,
       productScope: 'all',
       isDefault: true,
       isActive: true,
     },
-    update: {},
+    update: {
+      type: 'percent_recurring',
+      value: 20,
+      productScope: 'all',
+      isDefault: true,
+      isActive: true,
+    },
   });
-  console.log('✓ Seeded default referral rule');
+  console.log('✓ Seeded default referral rule (20% recurring, excl. AI top-up)');
 
   // =====================================
   // Super-admin user

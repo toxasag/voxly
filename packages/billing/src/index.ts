@@ -1,22 +1,45 @@
 // Voxly Robokassa billing client
-// Handles payment URL generation, webhook signature verification, fiscal receipts (54-ФЗ)
+// Pay interface + Result/Success signatures per docs.robokassa.ru
+// Fiscal Receipt (54-ФЗ) included in payment signature when present
 
 import { createHash } from 'node:crypto';
+
+export type RobokassaHashAlgorithm = 'md5' | 'sha256';
 
 export interface RobokassaConfig {
   merchantLogin: string;
   password1: string;
   password2: string;
   isTest: boolean;
+  /** Must match «Алгоритм расчета хеша» in Robokassa merchant settings. */
+  hashAlgorithm?: RobokassaHashAlgorithm;
 }
+
+/** Robokassa Receipt.payment_method values (54-ФЗ) */
+export type RobokassaPaymentMethod =
+  | 'full_payment'
+  | 'full_prepayment'
+  | 'prepayment'
+  | 'advance'
+  | 'partial_payment'
+  | 'credit'
+  | 'credit_payment';
+
+/** Robokassa Receipt.payment_object values */
+export type RobokassaPaymentObject =
+  | 'service'
+  | 'commodity'
+  | 'intellectual_activity'
+  | 'payment'
+  | 'another';
 
 export interface CheckoutItem {
   name: string;
   quantity: number;
   price: number;
-  tax: 'none' | 'vat0' | 'vat10' | 'vat20';
-  paymentMethod: 'full' | 'partial' | 'prepayment';
-  paymentObject: 'service' | 'commodity' | 'intellectual';
+  tax: 'none' | 'vat0' | 'vat10' | 'vat20' | 'vat22' | 'vat5' | 'vat7';
+  paymentMethod: RobokassaPaymentMethod;
+  paymentObject: RobokassaPaymentObject;
 }
 
 export interface CheckoutParams {
@@ -30,29 +53,44 @@ export interface CheckoutParams {
 
 export class RobokassaClient {
   private readonly config: RobokassaConfig;
+  private readonly hashAlgorithm: RobokassaHashAlgorithm;
   private readonly baseUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx';
 
   constructor(config: RobokassaConfig) {
     this.config = config;
+    this.hashAlgorithm = config.hashAlgorithm === 'md5' ? 'md5' : 'sha256';
   }
 
   /**
-   * Generate payment URL for redirect
+   * Generate payment URL for redirect.
+   * Signature (pay-interface):
+   *   MerchantLogin:OutSum:InvId[:Receipt]:Password#1[:Shp_*=…]
+   * Receipt in the signature string is the raw JSON (UTF-8). Empirically
+   * encodeURIComponent(Receipt) causes Robokassa error 29 for crmgetvoxly;
+   * URLSearchParams encodes the query param once for the wire format.
    */
   generatePaymentUrl(params: CheckoutParams): string {
+    const outSum = params.amount.toFixed(2);
     const shpSuffix = this.buildShpSuffix(params.customData);
-    const signature = this.computeSignature(
-      params.amount,
-      params.invId,
-      this.config.password1,
-      shpSuffix,
-    );
+    const receipt = this.buildReceipt(params.items, params.email);
+    const receiptJson = receipt ? JSON.stringify(receipt) : null;
+
+    const signature = receiptJson
+      ? this.hash(
+          `${this.config.merchantLogin}:${outSum}:${params.invId}:${receiptJson}:${this.config.password1}${shpSuffix}`,
+        )
+      : this.hash(
+          `${this.config.merchantLogin}:${outSum}:${params.invId}:${this.config.password1}${shpSuffix}`,
+        );
 
     const url = new URL(this.baseUrl);
     url.searchParams.set('MerchantLogin', this.config.merchantLogin);
-    url.searchParams.set('OutSum', params.amount.toFixed(2));
+    url.searchParams.set('OutSum', outSum);
     url.searchParams.set('InvId', String(params.invId));
-    url.searchParams.set('Description', params.description);
+    url.searchParams.set(
+      'Description',
+      params.description.slice(0, 100).replace(/[<>&"']/g, ''),
+    );
     url.searchParams.set('SignatureValue', signature);
 
     if (params.email) {
@@ -63,25 +101,14 @@ export class RobokassaClient {
       url.searchParams.set('IsTest', '1');
     }
 
-    // Fiscal receipt data (54-ФЗ)
-    const receipt = this.buildReceipt(params.items, params.email);
-    if (receipt) {
-      url.searchParams.set('Receipt', JSON.stringify(receipt));
-      // For fiscal receipts, signature includes receipt JSON before shp
-      const fiscalSig = this.computeFiscalSignature(
-        params.amount,
-        params.invId,
-        JSON.stringify(receipt),
-        this.config.password1,
-        shpSuffix,
-      );
-      url.searchParams.set('SignatureValue', fiscalSig);
+    if (receiptJson) {
+      url.searchParams.set('Receipt', receiptJson);
     }
 
-    // Append shp_* params
     if (params.customData) {
       for (const [key, value] of Object.entries(params.customData)) {
-        url.searchParams.set(`shp_${key}`, value);
+        // Docs: prefix is Shp_ (case-sensitive; shp_ ≠ Shp_ → error 29).
+        url.searchParams.set(`Shp_${key}`, value);
       }
     }
 
@@ -89,8 +116,9 @@ export class RobokassaClient {
   }
 
   /**
-   * Verify Result URL webhook signature (Password #2)
-   * Robokassa sends: OutSum, InvId, SignatureValue, shp_*
+   * Verify ResultURL webhook (Password #2).
+   * Docs: OutSum:InvId:Password#2[:Shp_*] — use OutSum exactly as received
+   * (prod may send 6 decimal places; test often 2).
    */
   verifyResultSignature(params: {
     outSum: string;
@@ -99,17 +127,15 @@ export class RobokassaClient {
     customData?: Record<string, string>;
   }): boolean {
     const shpSuffix = this.buildShpSuffix(params.customData);
-    const expected = this.computeSignature(
-      parseFloat(params.outSum),
-      parseInt(params.invId, 10),
-      this.config.password2,
-      shpSuffix,
+    const expected = this.hash(
+      `${params.outSum}:${params.invId}:${this.config.password2}${shpSuffix}`,
     );
     return this.safeCompare(expected, params.signatureValue.toLowerCase());
   }
 
   /**
-   * Verify Success URL redirect signature (Password #1)
+   * Verify SuccessURL redirect (Password #1).
+   * Docs: OutSum:InvId:Password#1[:Shp_*]
    */
   verifySuccessSignature(params: {
     outSum: string;
@@ -118,41 +144,22 @@ export class RobokassaClient {
     customData?: Record<string, string>;
   }): boolean {
     const shpSuffix = this.buildShpSuffix(params.customData);
-    const expected = this.computeSignature(
-      parseFloat(params.outSum),
-      parseInt(params.invId, 10),
-      this.config.password1,
-      shpSuffix,
+    const expected = this.hash(
+      `${params.outSum}:${params.invId}:${this.config.password1}${shpSuffix}`,
     );
     return this.safeCompare(expected, params.signatureValue.toLowerCase());
   }
 
-  private computeSignature(
-    amount: number,
-    invId: number,
-    password: string,
-    shpSuffix: string,
-  ): string {
-    const stringToSign = `${this.config.merchantLogin}:${amount.toFixed(2)}:${invId}:${password}${shpSuffix}`;
-    return createHash('sha256').update(stringToSign).digest('hex');
+  private hash(stringToSign: string): string {
+    return createHash(this.hashAlgorithm).update(stringToSign).digest('hex');
   }
 
-  private computeFiscalSignature(
-    amount: number,
-    invId: number,
-    receiptJson: string,
-    password: string,
-    shpSuffix: string,
-  ): string {
-    const stringToSign = `${this.config.merchantLogin}:${amount.toFixed(2)}:${invId}:${receiptJson}:${password}${shpSuffix}`;
-    return createHash('sha256').update(stringToSign).digest('hex');
-  }
-
+  /** Shp_* sorted alphabetically by full param name; format :Shp_key=value */
   private buildShpSuffix(customData?: Record<string, string>): string {
     if (!customData || Object.keys(customData).length === 0) return '';
     return Object.keys(customData)
-      .sort()
-      .map((k) => `:shp_${k}=${customData[k]}`)
+      .sort((a, b) => a.localeCompare(b))
+      .map((k) => `:Shp_${k}=${customData[k]}`)
       .join('');
   }
 
@@ -160,9 +167,9 @@ export class RobokassaClient {
     if (items.length === 0) return null;
     return {
       items: items.map((item) => ({
-        name: item.name,
+        name: item.name.slice(0, 128),
         quantity: item.quantity,
-        sum: item.price * item.quantity,
+        sum: Math.round(item.price * item.quantity * 100) / 100,
         payment_method: item.paymentMethod,
         payment_object: item.paymentObject,
         tax: item.tax,
@@ -179,6 +186,20 @@ export class RobokassaClient {
     }
     return result === 0;
   }
+}
+
+/**
+ * Robokassa ResultURL OutSum must match the invoice amount charged via the gateway
+ * (`Payment.amount` = net after partner-balance redemption). Allow 1 kopeck float noise.
+ */
+export function paymentAmountMatchesOutSum(
+  expectedAmount: number | string,
+  outSum: string,
+): boolean {
+  const expected = Number(expectedAmount);
+  const received = Number(String(outSum).replace(',', '.'));
+  if (!Number.isFinite(expected) || !Number.isFinite(received)) return false;
+  return Math.abs(expected - received) < 0.01;
 }
 
 /**
