@@ -343,6 +343,24 @@ export async function processFormLead(formLeadId: string): Promise<void> {
     console.warn('[form-lead] createNoteForPerson failed', err);
   }
 
+  // Cross-channel enrich: phone → TG + MAX + WA (IsOnWhatsApp). Best-effort.
+  if (phone) {
+    try {
+      const { enrichPersonCrossChannelByPhone } = await import(
+        './enrich-person-by-phone.js'
+      );
+      await enrichPersonCrossChannelByPhone({
+        prisma,
+        twenty: client,
+        tenantId: lead.tenantId,
+        personId,
+        phone,
+      });
+    } catch (err) {
+      console.warn('[form-lead] cross-channel enrich failed', err);
+    }
+  }
+
   await prisma.formLead.update({
     where: { id: lead.id },
     data: {

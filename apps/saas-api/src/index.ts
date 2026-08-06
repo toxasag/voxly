@@ -26,6 +26,7 @@ import { gramjsRoutes } from './routes/gramjs.js';
 import { maxRoutes } from './routes/max.js';
 import { maxInternalRoutes } from './routes/max-internal.js';
 import { gramjsInternalRoutes } from './routes/gramjs-internal.js';
+import { crmEnrichInternalRoutes } from './routes/crm-enrich-internal.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { aiAgentRoutes } from './routes/ai-agents.js';
 import { audienceRoutes } from './routes/audience.js';
@@ -33,6 +34,7 @@ import { analyticsRoutes } from './routes/analytics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
 import { formsRoutes, formWebhookRoutes } from './routes/forms.js';
 import { openTgRoutes } from './routes/open-tg.js';
+import { openMaxRoutes } from './routes/open-max.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
 import { assertCrmAccessAllowed } from './services/crm-access.js';
 import './jobs/queues.js'; // Start BullMQ workers (skipped when VOXLY_DISABLE_WORKERS=1)
@@ -234,6 +236,7 @@ export async function buildServer() {
 
   // Public HTTPS → tg://user?id=… (Person Telegram LINKS without @username)
   await fastify.register(openTgRoutes, { prefix: '/open' });
+  await fastify.register(openMaxRoutes, { prefix: '/open' });
 
   // --- Routes ---
   await fastify.register(authRoutes, { prefix: '/api/auth' });
@@ -252,6 +255,7 @@ export async function buildServer() {
   await fastify.register(maxRoutes, { prefix: '/api/bots/max' });
   await fastify.register(maxInternalRoutes, { prefix: '/api/internal/max' });
   await fastify.register(gramjsInternalRoutes, { prefix: '/api/internal/gramjs' });
+  await fastify.register(crmEnrichInternalRoutes, { prefix: '/api/internal/crm' });
   await fastify.register(whatsappRoutes, { prefix: '/api/bots/whatsapp' });
   await fastify.register(aiAgentRoutes, { prefix: '/api/ai/agents' });
   await fastify.register(audienceRoutes, { prefix: '/api/audience' });

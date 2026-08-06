@@ -32,6 +32,7 @@ Cross-cutting (all cards): social TG link ≠ chat send; gift only for subscribe
 |---|---|---|
 | Person social links | [`person-social-links.md`](person-social-links.md) | LINKS URLs + `/open/tg/{id}` |
 | Deal / Opp dedupe | [`deal-dedupe.md`](deal-dedupe.md) | save-time soft-merge + Opp reuse |
+| MAX personal | [`max-personal.md`](max-personal.md) | `/dashboard/ai/max` + max-bridge (not frozen baseline; INC-104) |
 
 ## Card template (keep lean)
 

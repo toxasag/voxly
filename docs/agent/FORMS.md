@@ -41,6 +41,7 @@ Gravity Forms Webhooks Add-On / CF7 webhook / n8n → POST на URL + header с 
 
 1. Быстрый 200 + запись `FormLead`.
 2. Async: Person (дедуп телефон → email) + Opportunity (по умолчанию одна открытая на контакт).
+3. Если есть телефон — cross-channel enrich: Telegram (GramJS) + MAX + WhatsApp (IsOnWhatsApp → `wa.me`), при подключённых сессиях.
 3. `AttributionSession` + цель аналитики `web_form_lead` (клиентские Metrika/GA4/FB/VK из `/api/analytics`, не счётчик getvoxly.ru).
 
 Платформенная Метрика на лендинге Voxly ≠ интеграции тенанта.

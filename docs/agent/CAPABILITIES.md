@@ -46,7 +46,7 @@ Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never in
 | Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.23** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
 | `/dashboard/ai` | ✅ **Телеграм Секретарь** (единая страница): тариф `ai_tg` 1000₽/10 акк, BotFather+token, Business-аккаунты + unlink + `ai_tg_extra_conn` 200₽, назначение агента, диалоги/handoff; `?bot=`; **не** обзор всех каналов и **не** top-up | `dashboard/ai/page.tsx` + `ai-secretary-hero.tsx` |
 | `/dashboard/ai/gramjs` | ✅ **Telegram** (личный аккаунт): landing как WA; QR+2FA; trial/оплата `ai_gramjs` 500₽; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button + auto on connect (private only) | `dashboard/ai/gramjs/page.tsx` + `ai-gramjs-hero.tsx` |
-| `/dashboard/ai/max` | 🟡 **MAX** (личный): QR+2FA; trial/оплата `ai_max` 500₽; disclaimer неофициальный API; CRM reply text-only | `dashboard/ai/max/page.tsx` + `ai-max-hero.tsx` |
+| `/dashboard/ai/max` | ✅ **MAX** (личный, INC-104): QR+2FA; trial/оплата `ai_max` 500₽; disclaimer неофициальный API; CRM reply text-only; bridge waits `on_start` (not `start()` return) | `dashboard/ai/max/page.tsx` + `ai-max-hero.tsx` + `max-bridge` |
 | `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button + auto on connect (private only) | `dashboard/ai/whatsapp/page.tsx` |
 | `/dashboard/ai/agents` | ✅ list/create/**edit**; **SKU `ai_agent` 500₽/слот** (gate 402 + grandfather); assign; **usage** byAgent+byChannel; KB + won-deal; **пополнение баланса AI** + partner-balance opt-in на слот и `ai_topup`; hero | `dashboard/ai/agents/page.tsx` |
 | `/dashboard/ai/[botId]` | ✅ thin redirect → `/dashboard/ai?bot=` | `dashboard/ai/[botId]/page.tsx` |
@@ -65,7 +65,7 @@ Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never in
 | Hide CRM «Создать рабочее пространство» | ✅ inject `voxly-shell-ux.js` (baked + hot-patch) | `docker/twenty-shell-ux.js` |
 | Sidebar workspace vs user clarity | ✅ top-left «CRM · {slug}» + chip «Вы: {member}» (workspace ≠ profile); Chat operator = Twenty member name (not «Менеджер») | `twenty-shell-ux.js` + `crm-chat` **0.1.23** + `resolveTwentyOperatorLabel` |
 | Сделки views = «Канбан» + «Списком» | ✅ default INDEX **Канбан** (`type=KANBAN`, stage groupBy, `openRecordIn=SIDE_PANEL`, width 320); secondary TABLE **Списком**; stages = john golden; **locked** Новый лид / Успешная / Провалена (PG trigger); middle stages editable; card fields name/createdAt/amount/…/noteTargets; note chip = **body** via title←bodyV2Markdown | SQL `set-opportunity-kanban-default.sql` + `ensureOpportunityRuDefaults` + `ensureOpportunityKanbanCardDefaults` (INC-021) + `twenty-client.applyWorkspaceDefaults` |
-| Person «Социальные сети» | ✅ LinkedIn + Telegram/WhatsApp/OK/VK/Instagram/Facebook/Threads/**Сайт (website)** as **LINKS**; visible label = full URL (`primaryLinkLabel` = `primaryLinkUrl`); WA `wa.me`; TG `@username` → `https://t.me/{user}`; **no @username but MTProto userId** → clickable `https://api.getvoxly.ru/open/tg/{id}` (label `tg://user?id={id}`; page opens Telegram) — never invent `t.me/+phone`; WA business profile fills email + website (+ IG/FB if URLs in profile); migrate via `migrate-social-links` + admin `backfill-telegram-open-links` | `twenty-client.telegramOpenLink` + `ensureSocialFields` + `socialFieldToUrl` + `linksInput` + `open-tg.ts` |
+| Person «Социальные сети» | ✅ LinkedIn + **Telegram→WhatsApp→MAX** + OK/VK/Instagram/Facebook/Threads/**Сайт** as **LINKS** (force view order); visible label = full URL (`primaryLinkLabel` = `primaryLinkUrl`); WA `wa.me`; TG `@username` → `https://t.me/{user}`; **no @username but MTProto userId** → clickable `https://api.getvoxly.ru/open/tg/{id}` (label `tg://user?id={id}`; page opens Telegram) — never invent `t.me/+phone` / `max.ru/+phone`; WA business profile fills email + website (+ IG/FB if URLs in profile); migrate via `migrate-social-links` + admin `backfill-telegram-open-links`; layout drift → INC-107 | `twenty-client.telegramOpenLink` + `ensureSocialFields` + `socialFieldToUrl` + `linksInput` + `open-tg.ts` |
 | Вкладка «Чат» после «Главная» | ✅ `position: 15` Person+Opportunity | `page-layout-tabs/*-chat` + `set-chat-tab-position.sql` |
 
 Shared UI: `components/portal/*`, `components/ui/*`, `components/telegram-preview.tsx`.
@@ -223,6 +223,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | GET | `/auth/qr/status`, `/auth/qr/png` | 🟡 |
 | POST | `/auth/qr/password` | 🟡 2FA |
 | POST | `/sessions/connect` | 🟡 |
+| POST | `/accounts/:botId/sync-history` | 🟡 background → `runMaxPrivateChatSync` (DIALOG ×30 msgs; reuse open Opp; GET accounts `historySyncing`) |
 | DELETE | `/accounts/:botId` | 🟡 |
 
 ### MAX internal `/api/internal/max` (service token + `X-Voxly-Service: max-bridge`)
@@ -230,7 +231,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 |---|---|---|
 | GET | `/bots/active` | 🟡 restore sessions on boot |
 | POST | `/bots/upsert`, `/bots/delete` | 🟡 |
-| POST | `/inbound` | 🟡 Conversation+ChatMessage+CRM sync (no sales LLM) |
+| POST | `/inbound` | 🟡 Conversation+ChatMessage+CRM sync (no sales LLM; reuse open Opp) |
 
 ### WhatsApp proxy `/api/bots/whatsapp` (portal JWT → ai-whatsapp-worker + Evolution)
 | Method | Path | ✅ |
@@ -261,7 +262,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | PUT | `/crm/pricing` | ✅ CRM subset → same PlatformSetting keys via `platform-pricing` |
 | POST | `/tenants/:id/impersonate` | ✅ JWT as tenant owner → portal `/dashboard/crm` |
 | POST | `/tenants/:id/crm-login` | ✅ Twenty SSO URL as workspace owner |
-| POST | `.../suspend`, `.../pricing`, `.../credit`, `.../ai-credit`, `.../reapply-crm-defaults`, `.../refresh-crm-chat`, `.../enrich-telegram-profiles`, `.../backfill-telegram-open-links` | ✅ `ai-credit` = manual AI wallet top-up; `refresh-crm-chat` force-reinstalls voxly-crm-chat tarball; backfill TG open links from Conversation userId |
+| POST | `.../suspend`, `.../pricing`, `.../credit`, `.../ai-credit`, `.../reapply-crm-defaults`, `.../refresh-crm-chat`, `.../enrich-telegram-profiles`, `.../enrich-persons-by-phone`, `.../sync-opportunity-chat-activity`, `.../backfill-telegram-open-links` | ✅ `ai-credit` = manual AI wallet top-up; `refresh-crm-chat` force-reinstalls voxly-crm-chat tarball; `enrich-persons-by-phone` = phone → TG + MAX + WA IsOnWhatsApp; `sync-opportunity-chat-activity` = Opp.updatedAt ← max ChatMessage (Kanban sort); also `POST /api/admin/sync-opportunity-chat-activity` all tenants; backfill TG open links |
 | DELETE | `/tenants/:id` body `{ confirmSlug }` | ✅ full wipe ЛК+CRM+bots+chats (`purge-tenant.ts`) |
 | PATCH | `/settings` | ✅ |
 
@@ -357,7 +358,8 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Evolution API | compose `evolution-api` (profile `whatsapp`) | 🟡 Baileys QR; image `voxly-evolution-api:v2.3.7-lid` (INC-059 LID→PN); `EVOLUTION_API_KEY` + DB `evolution` |
 | AiAgent model | packages/db | ✅ tenant agents; bot default + conversation override; null = AI off |
 | AI CRM lead Person+Opportunity | ai-telegram-worker / ai-whatsapp-worker `syncLeadToCrm` | ✅ dedupe; **not for bot senders** (early return before CRM); **cross-channel merge by phone** (`findPersonByPhone` phones+whatsapp, INC-044); ambiguous → `needsReview`; **stale Twenty ids after wipe → clear+recreate (INC-042)**; WA E.164 from webhook/vCard/explicit Evolution fields only (no avatar invent, INC-059) |
-| Web form → CRM + attribution | saas-api `processFormLead` + BullMQ `form-leads` | ✅ Tilda/WP/JSON; Person phone→email dedupe; Opportunity reuse_open; `AttributionSession` + `fireGoal('web_form_lead')`; **not** gift funnel |
+| Web form → CRM + attribution | saas-api `processFormLead` + BullMQ `form-leads` | ✅ Tilda/WP/JSON; Person phone→email dedupe; Opportunity reuse_open; `AttributionSession` + `fireGoal('web_form_lead')`; phone → `enrichPersonCrossChannelByPhone` (TG+MAX+WA); **not** gift funnel |
+| Cross-channel enrich by phone | `enrichPersonCrossChannelByPhone` + `POST /api/internal/crm/enrich-by-phone` + WA `/internal/crm/check-on-whatsapp` | ✅ Shared hub: site / TG / GramJS sync / MAX / gift contact-share / admin; WA inbound keeps local TG+MAX; wa.me only if IsOnWhatsApp exists |
 | AI Business SKU | PRODUCT_CODES.AI_TELEGRAM + addon gate | ✅ Телеграм Секретарь 1000₽/10; extra `ai_tg_extra_conn` 200₽/slot |
 | AI agent SKU | PRODUCT_CODES.AI_AGENT + `config.agentSlots` | ✅ 500₽/slot; create gated 402; grandfather `20260731220000` |
 | AI usage by agent + channel | AiUsageLog.aiAgentId + **channel** + GET `/api/ai/agents/usage` | ✅ charge on reply; portal breakdown **byAgent** + **byChannel**; `uncollectedRub` for shortfall tracking |
@@ -372,7 +374,9 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | suppressDealCreation | Conversation + GiftSubscriber | ✅ Manual CRM chat toggle «Не создавать сделку» only (never auto-set on Opportunity delete); honored in TG/WA/gift syncLead + GramJS/WA connect import |
 | WA private chat sync on connect | ai-whatsapp-worker `runWhatsAppPrivateChatSync` | ✅ On CONNECTION_UPDATE/`authorized` + portal button; Evolution **findChats + fetchAllEvoMessagesForJid** (open private dialogs with history, default **500** msgs/chat); Contact book **enrich only** — not dialog source (INC-097 v6); LID→PN via `resolveLidPhoneFromEvolution()` (Message.key → Redis lid-mapping → IsOnWhatsapp → whatsappNumbers → book → profile-index) (INC-097 v7); **merge LID↔PN twin Conversations** (`mergeWaLidPnTwinConversations`, `repairOnly`); after twin merge soft-delete orphan Opps; before createOpportunity **reuse** open Opp on Person (`findOpenOpportunityByPerson`, INC-100); LID+PN message merge; skip 0-msg rows; skip groups/self/`0@`; always Person+Opportunity per chat (`nonameN` if no name); Opportunity `{seq} · WA · {bot.displayName}`; phone in Person.phones+whatsapp when resolvable; repair soft-deletes legacy shells; TG presence after phone (no `t.me/+`); concurrency 1 + sleep |
 | Save-time CRM deal dedupe | `crm-deal-dedupe` + crm-chat LFs ≥**0.1.27** | ✅ On Opportunity create/update + Person phones/whatsapp update → soft-merge People by phone/whatsapp + collapse duplicate open Opps on same Person (keep Conversation-linked) |
-| Telegram presence by phone | gramjs-bridge `POST /users/by-phone` + `/users/full` + WA `enrichTelegramPresenceFromPhone` | ✅ ImportContacts → `@username` **or** MTProto `userId` → `telegramOpenLink` (`t.me/{user}` / `/open/tg/{id}`→`tg://`); GetFullUser open-profile; phone only if matches WA E.164; **never** invent `https://t.me/+{phone}`; leave empty if not on TG; repair clears false phone deep-links |
+| Telegram presence by phone | gramjs-bridge `POST /users/by-phone` (+ GetFullUser) + `/users/full` + WA `enrichTelegramPresenceFromPhone` + admin `enrich-persons-by-phone` | ✅ ImportContacts → `@username` **or** MTProto `userId` → `telegramOpenLink` (`t.me/{user}` / `/open/tg/{id}`→`tg://`); GetFullUser name/about/birthday (replace only `nonameN`/empty); phone only if matches WA E.164; **never** invent `https://t.me/+{phone}`; scrape never discards known userId (INC-106); leave empty if not on TG |
+| MAX presence by phone | max-bridge `POST /users/by-phone` + WA `enrichMaxPresenceFromPhone` + admin/shared enrich (`channels:["max"]`) + sync/inbound `applyMaxProfile` | ✅ PyMax `search_by_phone` → `import_contacts` fallback; WA/site/TG paths enrich when `ai_max` connected; live MAX inbound merges Person/Opp by phone + reverse TG/WA enrich; Person.`max` LINKS only when `User.link` is real `max.ru/…`; name placeholder-guard; about from `description`; **birthday N/A**; never invent `max.ru/+{phone}` |
+| WhatsApp presence by phone | WA worker `POST /internal/crm/check-on-whatsapp` + `enrichOnePersonWhatsappByPhone` | ✅ Evolution `whatsappNumbers` / IsOnWhatsApp; writes `wa.me` only when `exists`; used from site/TG/MAX/gift (not invent from phone alone) |
 | GramJS → AI handoff | `POST /internal/inbound` on ai-telegram-worker | ✅ Bearer `VOXLY_SERVICE_TOKEN`; returns bubbles |
 | GramJS portal UI | saas-portal `/dashboard/ai/gramjs` | ✅ QR + status + accounts; browser never hits bridge |
 | Twenty App SDK deal chat | twenty-app/voxly-crm-chat + `/api/crm/chat` | ✅ tab + format toolbar + multi-📎 (INC-017/018/020 JPEG shrink) + pinned composer (INC-019) + remount (INC-016) + photo preview (INC-014); inject off |

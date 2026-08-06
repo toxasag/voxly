@@ -92,6 +92,11 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-06** — **Opp chat activity sort:** `touchOpportunityActivity` on inbound/reply; admin SQL backfill Opp.updatedAt from ChatMessage; MAX enrich backfill for phones with empty max.
+- **2026-08-06** — **Symmetric cross-channel enrich:** `enrichPersonCrossChannelByPhone` (TG+MAX+WA IsOnWhatsApp) on site form-lead, MAX/TG/GramJS sync, gift contact-share; WA `/internal/crm/check-on-whatsapp`; internal `/api/internal/crm/enrich-by-phone`.
+- **2026-08-06** — **MAX cross-channel finish (voxly):** images `20260806-152806` OK (WA→MAX enrich, inbound phone merge); **INC-107** reapply JWT≠service token + Social order via SQL + twenty recreate; MAX under WhatsApp confirmed GraphQL+SQL.
+- **2026-08-06** — **MAX by-phone enrich:** PyMax `search_by_phone`/`import_contacts` → max-bridge `/users/by-phone` + Person.`max` LINKS; admin enrich TG+MAX; history sync already live on prod; birthday N/A on User.
+- **2026-08-06** — **INC-106:** WA→TG enrich — scrape early-return discarded userId (noname98→Оксана); GetFullUser in `/users/by-phone`; placeholder name guard; admin `enrich-persons-by-phone`; deploy gramjs+WA+saas-api.
 - **2026-08-06** — **INC-102:** TG open without `@username` → `/open/tg/{userId}`→`tg://user?id=` (label deep link); never `t.me/+`; backfill voxly Conversations + Кувалдин `928954961`.
 - **2026-08-06** — **INC-101:** social LINKS `primaryLinkLabel`=URL (not "WhatsApp"/"Telegram"); Кувалдин `+79850868825` TG empty — ImportContacts exists, no `@username`, never `t.me/+`; Opp 399≠400; deploy+migrate backup `20260806-102034`.
 - **2026-08-06** — **INC-100:** WA sync race → two Opps on one Person (noname100); reuse open Opp + soft-delete orphans; Person social TEXT→**LINKS** (`wa.me`/`t.me/@`); deploy workers+saas-api; prod repair 67 orphan WA Opps + migrate voxly socials.
@@ -152,6 +157,10 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - **2026-07-26** — Prod: media signed-url CRM chat **0.1.11** + unread badges (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); migrate `lastOperatorReadAt`; backup `20260726-182032`; smoke 200.
 - **2026-07-26** — INC-065 unread badges UX + media 0.1.13 workers shipped prod (`saas-api,twenty,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge`); backup `20260726-190111`.
 - **2026-07-26** — Prod: INC-063 media + INC-064 prompt filter → `saas-api` (crm-chat 0.1.9), `ai-telegram-worker`, `ai-whatsapp-worker`, `gramjs-bridge`; backup `20260726-022902`; smoke 200.
+
+### 2026-08-06 — INC-104 MAX login stuck «Проверяем пароль…»
+
+- Root: PyMax `start()` never returns → bridge never set `authorized`. Deploy `max-bridge,saas-portal`; backup `20260806-135432`. Frozen modules untouched.
 
 ### 2026-08-06 — Baseline freeze (docs)
 
@@ -567,7 +576,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/103** (GramJS send from Person.telegram userId even without prior Conversation) + **/102** (`/open/tg/{id}`) + **/101** + **/100** + **/099** (crm-chat **0.1.27**) + **/098** + **/097 v7** + ADR-026 + **ADR-027**. **Baseline locked 2026-08-06 (user-confirmed WORKING):** CRM chats, WhatsApp, GramJS personal, gift bot, AI agent, Telegram secretary — freeze cards in `docs/agent/modules/` (+ social/dedupe supporting). PR #1 merged `263e4ef`; prod tip backup `20260806-132913` (+ INC-103 `20260806-125415`). Open link ≠ send; GramJS binds peer from LINKS + ImportContacts phone fallback. **MAX** ADR-025 pending. **Blocker:** Robokassa Password#2 (INC-083). Gaps: TG→WA IsOnWhatsApp; SMTP; rotate root SSH. Other modules may proceed **without regressing** the frozen baseline.
+**Статус кода:** CRM chat + INC-024…**/107** + **/106** + cross-channel enrich hub (site/TG/MAX/WA IsOnWhatsApp) + **/105**/104 MAX QR + **/103**…**/097 v7** + ADR-026 + **ADR-027**. **Baseline locked 2026-08-06 (user-confirmed WORKING):** CRM chats, WhatsApp, GramJS personal, gift bot, AI agent, Telegram secretary — freeze cards in `docs/agent/modules/` (+ social/dedupe + `max-personal.md`). PR #1 merged `263e4ef`. **MAX** ADR-025 + symmetric phone enrich across sources. **Blocker:** Robokassa Password#2 (INC-083). Gaps: SMTP; rotate root SSH; MAX bot. Other modules may proceed **without regressing** the frozen baseline.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -635,7 +644,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |
 | phase2-analytics | Сквозная аналитика (Метрика/GA4/FB/VK) | ✅ DONE |
 | phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | 🟡 PORTAL+SOFT+PROD (bridge up on prod; hard Robokassa SKU open) |
-| phase2-max | MAX personal (`ai_max` + max-bridge) + gift_max | 🟡 P1+P2+UX (ADR-025; QR/token E2E pending; AI/media Phase 3) |
+| phase2-max | MAX personal (`ai_max` + max-bridge) + gift_max | 🟡 P1+P2+UX (ADR-025; INC-104 login fix deployed; live QR user smoke; AI/media Phase 3) |
 | phase3-ai-telegram | ai-telegram-worker Business + OpenRouter + handoff | 🟡 IN PROGRESS (media ✅; portal split ADR-014 ✅; AiAgent schema ✅; **default AI OFF**; OPENROUTER/E2E + prod migrate open) |
 | phase4-ai-whatsapp | ai-whatsapp-worker + Evolution QR | 🟡 IN PROGRESS (QR works on prod INC-035; soft trial; needs phone-scan E2E + hard Robokassa) |
 | final-polish | Dockerfiles, тесты, сборка | ✅ DONE |
@@ -658,7 +667,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Опциональное
 - **Phase 2b: GramJS bridge** — portal QR ✅; soft SKU/trial ✅; **prod bridge up** ✅; hard Robokassa remaining.
-- **MAX** — live QR (`ai_max`) + gift token (`gift_max`) E2E per `docs/agent/MAX-SMOKE.md`; media/AI agent later.
+- **Cross-channel enrich** — deploy saas-api + WA/TG/gift workers; smoke site lead / TG phone / MAX phone → social fields; gift_max E2E later.
 - Tenant UI метрик воронки на `/dashboard/bots` (сейчас только супер-админ `/admin`).
 
 ### Известные TODO / пробелы

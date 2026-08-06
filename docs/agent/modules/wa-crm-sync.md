@@ -15,6 +15,7 @@ Golden path detail: `docs/agent/CHAT.md` §2. Product surface: `CAPABILITIES.md`
 - Deals = **open private** `findChats` **with messages**; Contact book = **enrich only** (not dialog source)
 - Always Person + open Opportunity (`nonameN` if no name); title `{seq} · WA · {bot.displayName}`
 - Phone → Person.phones + whatsapp when Evolution/mapping gives E.164 — **never invent** from avatar/pushName (INC-059)
+- After phone: GramJS ImportContacts → telegram LINKS + name/birthday when better than `nonameN` (INC-106); never apply probe `Voxly`/`Check`; never invent `t.me/+phone`
 - LID↔PN twin Conversations merge; reuse open Opp on Person before create (INC-100)
 - Groups/self/status/newsletter skipped; no `t.me/+{phone}`; `suppressDealCreation` **manual only**
 - Profile-index/repair scoped to open findChats (no contact-book OOM)
@@ -30,6 +31,7 @@ Golden path detail: `docs/agent/CHAT.md` §2. Product surface: `CAPABILITIES.md`
 
 - INC-097 (v6…v8.x) — empty shells / LID→PN honesty
 - INC-100 — duplicate Opps on one Person
+- INC-106 — WA→TG enrich early-return on scrape discarded userId (noname98)
 - INC-059 — avatar twin phone invent
 - INC-043 / INC-039 — Contact-book phone / media LID
 
@@ -42,5 +44,5 @@ Golden path detail: `docs/agent/CHAT.md` §2. Product surface: `CAPABILITIES.md`
 
 ## Last verified / deploy
 
-- **2026-08-06 (user-confirmed WORKING):** Evolution + ai-whatsapp-worker sync/send ok; tip backup `20260806-132913`; PR #1 `263e4ef`
+- **2026-08-06 INC-106:** WA→TG enrich fix deployed (`ai-whatsapp-worker` + bridge/saas-api); backup `20260806-143720`; noname98→Оксана + open/tg. Core sync contract unchanged.
 - Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` (+ `saas-api` if routes/`twenty-client` changed; `compose`/`evolution-api` only if Dockerfile/patch changed). Never wipe volumes / Evolution sessions casually.

@@ -1134,6 +1134,9 @@ async function resolveUserByPhone(
   firstName?: string;
   lastName?: string;
   phone?: string;
+  about?: string;
+  birthday?: string;
+  personalChannelUrl?: string;
 } | null> {
   const digits = String(phoneRaw || '').replace(/\D/g, '');
   if (digits.length < 10 || digits.length > 15) return null;
@@ -1186,8 +1189,9 @@ async function resolveUserByPhone(
       }
     }
 
-    // Best-effort cleanup so we do not pollute the account address book.
-    // Skip when about to send — access_hash must stay in session.
+    // ImportContacts temporarily overlays User.firstName/lastName with our probe
+    // ("Voxly"/"Check"). Delete the contact first, then GetFullUser for real ФИО.
+    // When keepContact (send path), skip profile names — access_hash must remain.
     if (!opts?.keepContact) {
       try {
         const input = await client.getInputEntity(user);
@@ -1196,13 +1200,45 @@ async function resolveUserByPhone(
         /* ignore */
       }
     }
+
+    let firstName: string | undefined;
+    let lastName: string | undefined;
+    let about: string | undefined;
+    let birthday: string | undefined;
+    let personalChannelUrl: string | undefined;
+    if (!opts?.keepContact) {
+      try {
+        const full = await fetchUserFullProfile(client, {
+          userId: String(user.id),
+          username,
+        });
+        if (full) {
+          username = full.username || username;
+          const fn = String(full.firstName || '').trim();
+          const ln = String(full.lastName || '').trim();
+          const probe = /^voxly$/i.test(fn) && /^check$/i.test(ln);
+          if (!probe) {
+            firstName = fn || undefined;
+            lastName = ln || undefined;
+          }
+          about = full.about;
+          birthday = full.birthday;
+          personalChannelUrl = full.personalChannelUrl;
+        }
+      } catch {
+        /* ignore — still return userId */
+      }
+    }
     return {
       exists: true,
       userId: String(user.id),
       username,
-      firstName: user.firstName || undefined,
-      lastName: user.lastName || undefined,
+      firstName,
+      lastName,
       phone: typeof user.phone === 'string' && user.phone ? user.phone : digits,
+      about,
+      birthday,
+      personalChannelUrl,
     };
   } catch (err) {
     console.warn(
@@ -1666,6 +1702,9 @@ async function main() {
           firstName: resolved.firstName,
           lastName: resolved.lastName,
           phone: resolved.phone,
+          about: resolved.about,
+          birthday: resolved.birthday,
+          personalChannelUrl: resolved.personalChannelUrl,
           ...(publicLink ? { link: publicLink } : {}),
         });
         return;
