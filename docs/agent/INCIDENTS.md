@@ -5,6 +5,185 @@
 
 ---
 
+### INC-103 — GramJS «Пишем от» greyed despite Person Telegram link (Кувалдин)
+- **Симптом:** Person «Кувалдин» has Telegram `tg://user?id=928954961` + WA; Chat «Пишем от» shows both GramJS accounts **(недоступно)**; only WA sendable.
+- **Причина:** `resolveOutboundPeer` for `ai_gramjs` required GiftSubscriber / telegram Conversation / non-WA `baseTarget.telegramId`. WA-opened cards never read Person.telegram LINKS (`/open/tg/{id}`). Open-profile link ≠ send peer bind.
+- **Фикс:** `parseTelegramPeerFromLink` + `resolvePersonTelegramPeerFromTwentyDb` → enable GramJS when Person has userId/@username; first send creates Conversation; bridge `/messages/send` ImportContacts(`phone`, keepContact) if `getEntity` fails. Gift gate unchanged.
+- **Deploy:** `saas-api,gramjs-bridge` (this session).
+- **Verify:** hard-refresh Кувалдин Chat → select GramJS → send text; Conversation appears for that bot.
+- **Дата:** 2026-08-06.
+
+### INC-102 — Open Telegram Person without public @username
+- **Симптом:** GramJS chat peer `7083659060` / Кувалдин (`+79850868825`, userId `928954961`) — чат работает, но Person.telegram пустой (нет `@nickname`). User wants clickable open-in-Telegram.
+- **Причина:** product forbade inventing `t.me/+phone` (INC-097/101); WA→TG / sync only wrote `@username`. Raw `tg://user?id=` stores via Zod `.url()`, but Twenty front `ensureAbsoluteUrl` mangles `tg://` → `https://tg://…` so LINKS pills are not clickable.
+- **Фикс:** `telegramOpenLink({ username?, userId? })` → `https://t.me/{user}` or HTTPS bridge `GET /open/tg/:userId` (HTML → `tg://user?id=`); label = `tg://user?id=…`. Wired gramjs-chat-sync / ai-tg / ai-wa enrich / gift; admin `POST …/backfill-telegram-open-links`. Never `t.me/+phone`.
+
+### INC-101 — Social LINKS showed button label "WhatsApp"/"Telegram" instead of URL
+- **Симптом:** Person «Социальные сети» pills showed only **WhatsApp** / **Telegram** (field name), not `https://wa.me/…` / `https://t.me/Ann_fire`. Кувалдин Сергей (`+79850868825`) had WA filled, Telegram empty — user expected `https://t.me/+79850868825`.
+- **Причина (UI):** `linksInput` / migrate set `primaryLinkLabel` to generic `"WhatsApp"`/`"Telegram"` (or empty → Twenty falls back to field label). URL was in `primaryLinkUrl` but not shown as text.
+- **Причина (Кувалдин TG empty):** WA→TG path OK. Live GramJS `ImportContacts` + `GetFullUser` → userId `928954961`, name «Сергей», **no public `@username`**. Scrape `t.me/+79850868825` → Telegram error/"Join group chat" page, not a handle. Product **forbids** storing `t.me/+phone` (deep-link ≠ @username).
+- **Фикс:** `linksInput` → `primaryLinkLabel = url`; migrate backfill label=url; admin reapply calls migrate. No invent `t.me/+`. Follow-up INC-102: open via `/open/tg/{userId}` when id known.
+- **Prod:** backup `20260806-102034`; deploy saas-api + WA/TG workers; migrate voxly → **196** WA + **321** TG labels = URL (0 generic). Opp **399** vs **400**: different People (Ольга vs Кувалдин) — not a dupe.
+- **Verify:** hard-refresh Анна → visible `https://t.me/Ann_fire`; noname122 → `https://wa.me/79995742245`; Кувалдин Telegram stays empty.
+- **Дата:** 2026-08-06.
+
+### INC-100 — WA sync left two Opportunities on one Person (noname100)
+- **Симптом:** Person **noname100** (voxly) showed two open deals `171 · WA · 9150946944` and `352 · WA · 9150946944` after WA sync. Title `· WA · 9150946944` = our account display name (expected); bug = duplicate Opps on same Person.
+- **Причина:** race — two Opps created ~223ms apart (LID/PN twin or parallel sync) before reuse; Conversation kept only Opp `352`; orphan `171` stayed on Person. Writers stored WhatsApp as plain TEXT → not clickable.
+- **Фикс:** reuse `findOpenOpportunityByPerson` before create (WA+TG workers); soft-delete orphan Opps after twin merge; save-time collapse in `crm-deal-dedupe`; Person social → **LINKS** + `socialFieldToUrl` / migrate SQL (wa.me / t.me/@user only).
+- **Prod repair:** soft-delete orphan `4eb97672-…`; bulk collapse **67** leftover WA dup Opps (keep Conversation-linked) → **0** remaining; migrate voxly social TEXT→LINKS; noname100 `https://wa.me/6281351989740`.
+- **Deploy:** rebuild saas-api + ai-whatsapp-worker + ai-telegram-worker; restart twenty-server/worker. Volumes untouched.
+- **Verify:** hard-refresh noname100 → one Opp; WhatsApp is a link; re-sync does not add a second open WA Opp.
+- **Дата:** 2026-08-06.
+
+### INC-099 — «Пишем от» offered gift bot for non-subscribed GramJS peers
+- **Симптом:** CRM Chat on GramJS personal deal (e.g. `@varivan · AI · @genadich_agency`) shows gift bot in «Пишем от»; send would fail (peer not a GiftSubscriber).
+- **Причина:** `resolveOutboundPeer` treated `gift`/`gift_max` like `ai_gramjs` — any Telegram peer / baseTarget telegramId marked gift **available**.
+- **Фикс:** gift only if `GiftSubscriber` or Conversation on **that** gift bot; unavailable gift options omitted from `sendFromOptions`. Also: WA send allowed when Person.whatsapp filled (no prior WA dialog required; no invent from phones alone). Save-time dedupe: Twenty LFs → `POST /api/crm/chat/dedupe` (INC companion product ask).
+- **Deploy:** saas-api rebuild + backup `20260806-093403` + crm-chat **0.1.27** refresh voxly.
+- **Verify:** hard-refresh CRM → GramJS-only deal → no gift in dropdown; contact with WhatsApp field → WA option; save deal with shared phone → soft-merge notes / retarget.
+- **Дата:** 2026-08-06.
+
+### INC-098 — CRM Chat still shows `[media]` after GramJS attachment backfill
+- **Симптом:** `@kahlenko` Aug 23 bubbles = literal `[media]` after sync + hard-refresh; DB already had `[файл: IMG_…]` + attachments.
+- **Причина:** (1) ChatPanel soft-refresh `lastSig` = message **ids only** → content/attachment backfill ignored while panel open / soft «Обновить»; (2) `isMediaPlaceholder` did not match legacy `[media]`.
+- **Не причина:** API/bridge media 401 — `GET …/signed-url` + `/media/*` for `gramjs:149487687:679` returned **200** `image/jpeg`.
+- **Фикс:** crm-chat **0.1.26** — fingerprint content+fileIds; hide `[media]`/`[документ]` when attachments present; document+image mime → `<img>`.
+- **Deploy:** saas-api backup `20260806-090344` + `refresh-crm-chat` voxly.
+- **Verify:** hard-refresh CRM → open deal → Чат → photos, not `[media]`.
+- **Дата:** 2026-08-06.
+
+### INC-097 — WA history sync created empty Person/Opportunity shells
+- **Симптом:** после «Синхронизировать» на `/dashboard/ai/whatsapp` — пачка сделок `WhatsApp · WA · {ownDisplayName}` (напр. `9855014040`); Person «WhatsApp» без Phones / WhatsApp social / ФИО; пользователь видит пустые поля («Нет данных»). Chat tab для этих карточек может казаться пустым/битым; API chat при живых links + messages **работает**.
+- **Причина:** Evolution `findChats` отдаёт почти только `@lid` без `remoteJidAlt`/`senderPn`/имени; Contact book (PN + pushName) **не связан** с LID chats; history sync звал `syncLeadToCrm` без E.164 → Person `firstName=WhatsApp`, phone skipped (INC-037/039). `9855014040` в title = **bot displayName**, не телефон контакта. Доп. баг: `lastMessage.pushName=Você` (fromMe) принимался за имя контакта.
+- **Фикс (v1):** history sync — resolve PN via message extractors + Contact/Chat + Redis Baileys `lid-mapping-*_reverse`; skip system/self/`0@`; skip CRM shell без E.164 и без реального имени; business profile как inbound; `repairEmptyWaHistoryLeads` soft-delete пустых shells + clear Conversation CRM ids (messages keep). `Você`/`You` → not a name.
+- **Регрессия:** v1 skip → **0 deals** после sync (все LID без E.164/имени). `repairEmptyWaHistoryLeads` ещё и сносил LID-лиды с именем.
+- **Фикс (v2, 2026-08-05):** preload Evolution Contact book; sync **PN `@s.whatsapp.net` contacts** as dialogs; LID→PN via book row + **unique pushName** (letter names only); PN `findMessages` fallback; repair только без phone **и** без real name; after phone → Telegram presence (`gramjs /users/by-phone` ImportContacts + `t.me/+` scrape) → Person.telegram; CRM Chat resolves Opportunity → `pointOfContact` Person when Conversation linked only by personId.
+- **Регрессия v2:** Contact book как primary source → **100+ deals** из адресной книги (не open chats); Chat «Нет данных» на пустых shells.
+- **Фикс (v3, 2026-08-05):** reverse — dialog source = **findChats + findMessages only**; Contact book **enrich only**; skip 0-message rows (no Conversation/CRM); repair soft-deletes CRM-linked WA Conversations with **zero** ChatMessages (+ legacy empty identity); crm-chat SQL fallback for Opportunity.pointOfContactId; prefer threads with messages. **TG presence:** write Person.telegram **only** on positive confirm (`ImportContacts` exists + `@username`, or scrape yielding real @handle); **never** invent `https://t.me/+{phone}` (deep-link ≠ account); repair clears false `t.me/+` fields.
+- **Регрессия v3:** после wipe всех People/Opportunities в Twenty → sync `peopleSynced=0`. Open chats = 14× `@lid` без E.164/имени/Redis `lid-mapping`; v3 `emptyIdentity` skip не звал `syncLeadToCrm`; repair ещё и soft-delete'ил LID chats **с** messages. Contact book 1439 PN — msgs=0, не диалоги.
+- **Фикс (v4, 2026-08-05):** open chats **with messages** always recreate Person+Opportunity (LID-only → `needsReview`); `clearStaleWaConversationCrmIds` before sync; repair **only** zero-message shells; reuse Conversation `platformUsername`/`platformFirstName` cache.
+- **Регрессия v4:** 14 карточек `WhatsApp · WA · 9855014040`, Person «WhatsApp», **phones empty** (email/website с business profile ок). Пользователь отказался от безымянных shells.
+- **Фикс (v5, 2026-08-05):** **никогда** не создавать Person `firstName=WhatsApp` без E.164; CRM только при phone **или** real name (pushName / business verifiedName / website host / description); LID без identity → **Conversation-only** (messages keep); `repairEmptyWaHistoryLeads` soft-delete live «WhatsApp»+empty-phone shells (не только zero-msg); business name → rename Person+Opportunity; skip punycode `xn--` hosts as names. **Prod truth for bot 79855014040:** Evolution Message keys = 0×`remoteJidAlt`/`senderPn`; Redis `lid-mapping` empty for peer LIDs; Contact book не связан с 14 LID chats → **0 phones resolvable** until Baileys mapping or inbound PN twin.
+- **Verify (v5):** force sync → `peopleSynced=4` (Boomerservice, Polimeroom, АВТОСЕРВИС, Ремонт…), `skippedEmptyIdentity=10`, `repairedEmptyLeads=10`; live WhatsApp-named people/opps = **0**; phones still **0/14** (Evolution cannot map); 10 Conversation-only open chats.
+- **Фикс (v6, 2026-08-05):** profile-index `buildWaProfilePnIndex` (PN `fetchProfile` → email/website/pic→E.164; match LID profile — Boomerservice `+79262625252` shares email/website/pic with PN but LID JSON has no E.164); `fetchAllEvoMessagesForJid` + LID/PN merge; always CRM Person+Opportunity (`nonameN`); Opportunity `{seq} · WA · {bot.displayName}`; default messageLimit **500**; stop renaming opps to `{contactName} · WA · {bot}`.
+- **Честность:** если Evolution не сохранил PDF/outbound под LID или PN — CRM **не может** выдумать эти сообщения; телефон восстанавливается через profile-index когда совпадают email/website/pic.
+- **Verify (v6):** force sync bot `cmsfsbnei00028n4dkn9cgwkq` → `peopleSynced=14`; Boomerservice Person phones/whatsapp `+79262625252`; Opp `28 · WA · 9855014040`; 14 live WA opps; CRM msgs for Boomerservice = **1** (Evolution LID-only history).
+- **Фикс (v6.1, 2026-08-05):** LID↔PN **Conversation split** после v6 profile-index: один peer = **два LID** (stale outbound-only `75351208272113` без email/pic + rich `20774874288269` → `+79262625252`) → две Conversation + дубли CRM. `mergeWaLidPnTwinConversations` (history sync, `syncLeadToCrm`, `repairOnly`): siblings по LID/+E.164/Redis `lid-mapping`/CRM ids; stale outbound LID → rich `+phone` thread; move ChatMessages (dedupe `externalMessageId`); canonical LID `platformUserId` + `platformUsername` +E.164; twin `closed`.
+- **Verify (v6.1):** backup `/opt/voxly/backups/20260805-153229/`; Boomerservice canonical `cmsfuzk8q004t9gwm4piiqywh` **4 msgs** (3 outbound stale LID + 1 inbound), `+79262625252`, LID `20774874288269`; closed twin `75351208272113` 0 msgs; one Person/Opp on canonical.
+- **Фикс (v7, 2026-08-05):** wire **official** Evolution LID→PN paths worker skipped: `Message.key` `remoteJidAlt`/`senderPn` SQL; Redis `lid-mapping-*_reverse` (unchanged); `IsOnWhatsapp.jidOptions` (Evolution `saveOnWhatsappCache` on inbound with `addressingMode=lid`); `POST /chat/whatsappNumbers` (cache + Baileys). Consolidated `resolveLidPhoneFromEvolution()` — profile-index stays last fallback. **Evolution source refs:** `whatsapp.baileys.service.ts` `signalRepository.lidMapping.getPNForLID` (calls only, not REST); `onWhatsappCache.ts` `saveOnWhatsappCache`/`getOnWhatsappCache`; Message webhook `remoteJidAlt`/`senderPn` in `waInboundIdentityCandidates`. Chat/Contact Prisma **have no** `remoteJidAlt` columns — only runtime webhook + Message.key JSON.
+- **Verify (v7):** deploy `ai-whatsapp-worker`; force sync — expect `is_on_whatsapp` / `message_key` / `whatsapp_numbers` logs when Evolution has stored twins; Boomerservice still resolvable via profile-index if DB twins absent.
+- **Регрессия v7:** `repairOnly` + force sync OOM (exit **137**) — `buildWaProfilePnIndex` + `repairWaLidPnSplit` walked **~418** contact-book-era Conversations and bulk Contact-table PN candidates (1400+), not ~14 open `findChats`.
+- **Фикс (v7.1, 2026-08-05):** profile-index candidates = open `findChats` PN + scoped Message/IsOnWhatsapp for those JIDs only (Contact table **not** primary fill); `repairWaLidPnSplitConversationsForBot` scoped to open peers + convs with messages; `repairOnly` loads open chats first; aggressive `fetchCap` tied to open-chat count.
+- **Фикс (v8, 2026-08-05):** Evolution image patch `docker/patch-evolution-lid-pn.cjs` on `voxly-evolution-api:v2.3.7-lid`: `fetchProfile` + `findChats` enrich `@lid` with `remoteJidAlt`/`senderPn` via Baileys `signalRepository.lidMapping.getPNForLID`, then **Redis fallback** `this.cache.hGet(instanceId, lid-mapping-{lid}_reverse)` (Evolution instance hash DB 6 — **not** `baileysCache`). Worker **unchanged** — reuses existing `extractWaPhoneE164` / `resolveLidPhoneFromEvolution()` (no avatar twin, INC-059).
+- **Регрессия v8 (first deploy):** `fetchChats` patch matched literal `dm(r)` in `FETCH_CHATS_FROM`, but **runtime** module `whatsapp.baileys.service.mjs` minifies guard as `yp(r)` — patch landed only in unused `main.mjs` chunk; controller `fetchChats` never enriched. Symptom: `fetchProfile(@lid)` OK for mapped LIDs, `findChats` **0/14** `remoteJidAlt`.
+- **Фикс (v8.1, 2026-08-05):** `docker/patch-evolution-lid-pn.cjs` — regex `\w+\(r\)` for service `fetchChats` (75 files incl. `whatsapp.baileys.service.mjs`); `for…of` + `Array.isArray`; controller wrapper `voxly-lid-pn-ctrl` enriches after `waInstances[s].fetchChats` (150 files); `baileysCache` Redis fallback on `fetchProfile` too. Worker **unchanged**.
+- **Честность (v8.1 prod):** Redis `evolution:instance:9cd3ff77-ca34-41ac-bba3-eb1270e52ed4` has **3** `lid-mapping-*_reverse` (2 peer PN + bot self). `getPNForLID` empty for most historical LIDs. `findChats` now **2/14** `remoteJidAlt` (`20774874288269`→`79262625252`, `159004152090810`→`79032692646`). Message.key still **0** `remoteJidAlt`/`senderPn`. **12/14** open chats: no Baileys/Redis mapping → CRM phone empty unless profile-index (email/website/pic) or future inbound with `senderPn`.
+- **Фикс (v8.2, 2026-08-05):** worker — poisoned `fetchProfile` on unmapped `@lid` (returns **own** business `79855014040` / `anton@genadich.com`); `pnPhones` from `remoteJidAlt`; profile-index `fetched=0` bug; pic-only profile-index **disabled** (false 7× `79032692646` Redis maps, cleaned HDEL). `presenceSubscribe` poke before resolve — **no new mappings**. **Still 2/14** phones — companion lacks Baileys `lidMapping` for 12 peers; WA UI number = phone client local mapping / address book, not Evolution.
+- **Verify (v8.2):** deploy `ai-whatsapp-worker` backups `20260805-212256/`, `20260805-212636/`; force sync **57s** → `peopleSynced=14`; CRM **2/14** (`+79262625252` Boomerservice, `+79032692646` Пашка). User action for remaining: open each chat on linked phone or wait inbound with `senderPn`.
+- **Verify (v8.1):** deploy `evolution-api` backup `/opt/voxly/backups/20260805-210810/`; WA session **no QR** (reconnect ~15s). Force sync bot `cmsfsbnei00028n4dkn9cgwkq` **39s** → `dialogs=14 peopleSynced=14`; CRM `platformUsername` phone **2/14** (same two LIDs). Profile-index did not add phones for remaining 12 on this run.
+- **Deploy:** v1 `…092457/`; v2 `…095059/`; v3 `…101610/`; v4 `…103459/`; v5 `ai-whatsapp-worker` backups `/opt/voxly/backups/20260805-105239/` (+ `105544/`, `105823/`); v6 `ai-whatsapp-worker` backup `/opt/voxly/backups/20260805-141016/`; v7 `ai-whatsapp-worker` backup `/opt/voxly/backups/20260805-150848/`; v7.1 `ai-whatsapp-worker` backup `/opt/voxly/backups/20260805-153506/`; v8 `evolution-api` backups `20260805-161407/`, `20260805-161718/`, `20260805-161822/`; **v8.1** `evolution-api` backup `20260805-210810/`.
+- **Re-sync:** portal «Синхронизировать» or `POST …/whatsapp/accounts/:botId/sync-history` (force).
+- **Дата:** 2026-08-05.
+
+### INC-096 — GramJS group message created CRM deal (MG 8855743233)
+- **Симптом:** в CRM voxly сделка `8855743233 · AI · @toxasagmsk`, контакт `MG 8855743233`; сообщения нет в личке Telegram. Параллельно `@igor_dev_ru · AI · @genadich_agency` — чат пустой в CRM.
+- **Причина:** (1) GramJS `NewMessage` обрабатывал **любого** `Api.User` sender, в т.ч. сообщения **в группе/мегагруппе** → `syncLeadToCrm` создавал Person+Opportunity. User id `8855743233`, firstName `MG`. `ReadHistory` на peer падал (`Could not find the input entity`) — типично для non-DM. (2) Igor: реальное private inbound (фото + «Чем они отличаеться?» + vision), но `Conversation.botInstanceId=null` после reconnect/delete → CRM chat `listCrmChatTargets` пропускал тред (`botInstanceId: { not: null }`).
+- **Фикс:** GramJS — AI/CRM только если `getChat() instanceof Api.User` (private 1:1); group/channel → audience sighting only. `suppressDealCreation` на Conversation/GiftSubscriber — **только** ручной CRM toggle «Не создавать сделку» (не auto-set при delete Opportunity). Orphan threads: fallback bot + relink on sole GramJS connect. Private dialog sync on connect (**all** private dialogs × **30** msgs).
+- **Verify:** сообщение в группе не создаёт сделку; DM создаёт; после delete deal + inbound — сделка может пересоздаться, пока флаг не включён вручную; sync button / reconnect показывает историю private.
+- **Deploy:** `gramjs-bridge,saas-api,ai-telegram-worker,ai-whatsapp-worker,gift-bot-worker` + crm-chat **0.1.25**.
+- **Дата:** 2026-08-05.
+
+### INC-095 — Gift extra URL buttons vanish on save (step 4+)
+- **Симптом:** на шаге 4 («пост после старта») пользователь добавляет доп. кнопку (текст + https), превью показывает её, «Сохранить» → строка исчезает, в `funnelJson` нет `extraButtons`. То же для gift / afterGift / дожим при общем `saveCampaign`.
+- **Причина:** zod `campaignSchema` принимал `extraButtons`, portal слал их, но API `sanitizeFunnel()` пересобирал `start` / `gift` / `mapMsg` **без** копирования `extraButtons` → запись в `funnelJson` теряла поле; `load({ refreshForm: true })` после save подтягивал пустой список.
+- **Фикс:** `sanitizeFunnel` + helper `sanitizeExtraButtons` сохраняют валидные http(s) кнопки на start/gift/MessageList; portal кнопка шага 4 → «Сохранить».
+- **Verify:** добавить кнопку на шаге 4 → сохранить → reload → кнопка на месте; `/start` в TG показывает канал + custom + «Я подписался».
+- **Deploy:** `saas-api,saas-portal` (worker уже читал `extraButtons` из JSON).
+- **Дата:** 2026-08-05.
+
+### INC-094 — Gift media quality loss on upload (sendPhoto staging)
+- **Симптом:** фото/видео после загрузки в gift-бот выглядят хуже оригинала; посты в канале/воронке тоже «мыльные».
+- **Причина:** `POST …/media` staging шёл через Telegram `sendPhoto`/`sendVideo` → TG сразу пережимает и отдаёт сжатый `file_id` (AgAC/BAAC). Клиент **не** рекомпрессил пост-медиа (`fileToJpegFile` только для аватара). Повторный `sendPhoto` с тем же file_id не сжимал второй раз — оригинал уже потерян на staging.
+- **Фикс:** staging photo/video → `sendDocument` first (оригинал, BQAC); `mediaType` остаётся photo/video; `detectStoredMediaKind(BQAC, photo|video)` → intent; publish/worker: download (`getFile` ≤20 МБ) → `sendPhoto`/`sendVideo` (одно сжатие TG при доставке). Если getFile недоступен → fallback `sendDocument` (оригинал без inline-photo UX).
+- **Verify:** новый upload JPEG/PNG/MP4 → `mediaType` photo/video + BQAC file_id; превью через media-file показывает оригинал; publish/воронка — photo/video в TG; PDF по-прежнему document.
+- **Deploy:** `saas-api,gift-bot-worker,saas-portal` (shared).
+- **Дата:** 2026-08-04.
+
+### INC-093 — Gift TelegramPreview shows «Медиа загружено» instead of photo/video
+- **Симптом:** `/dashboard/bots/:id` шаги 3–4: слева «Файл сохранён в Telegram · photo» / «Файл в Telegram», справа серый блок «Медиа загружено».
+- **Причина:** после staging в Telegram UI хранит только `telegramFileId`; `mediaUrl`/`imageUrl` очищаются; blob preview живёт только в session state. `TelegramPreview` при `mediaPlaceholder` без `src` рисовал placeholder. Reload / другой блок без blob → нет displayable URL (`file_id` не публичный). Доп.: gift `type=file` дефолтил `mediaType: document` → `useResolvedMediaSrc` не фетчил photo/video; `detectStoredMediaKind` раньше отдавал hint `document` приоритетнее префикса `AgAC`.
+- **Фикс:** `GET /api/bots/:botId/media-file?fileId=` (auth + tenant) → Telegram `getFile` proxy (как avatar); `TelegramPreview` принимает `botId`+`telegramFileId` и резолвит blob URL для photo/video/video_note; document/voice/audio — текстовые индикаторы. Blob после upload по-прежнему preferred. Follow-up: prefixes authoritative in `detectStoredMediaKind`; TelegramPreview всегда резолвит kind по `file_id`; gift preview больше не дефолтит document.
+- **Verify:** hard-refresh bot с уже сохранённым photo/video → превью показывает картинку/видео; новый upload → сразу blob; PDF → «Файл загружен»; gift file photo с AgAC+legacy document hint → photo.
+- **Deploy:** `saas-api,saas-portal` (media-file); follow-up `saas-portal` backup `/opt/voxly/backups/20260804-111207/`.
+- **Дата:** 2026-08-04.
+
+### INC-092 — Login 500: disk full → control PG recovery loop + Redis MISCONF
+- **Симптом:** `/login` → Internal Server Error; `POST /api/auth/login` **500** for any email (incl. `anton@genadich.com`). Health API still 200.
+- **Evidence:** saas-api `PrismaClientUnknownRequestError` / `FATAL: the database system is in recovery mode` on `user.findUnique`; Redis `MISCONF` / AOF+RDB `No space left on device`; `postgres-control` **unhealthy**, crash-loop: redo OK → checkpoint `PANIC: … replorigin_checkpoint.tmp: No space left`; `df /` **100%** (0 avail). Recurrence of INC-052.
+- **Причина:** root disk filled by **~68GB dangling Docker images** after many same-day rebuilds (not auth/JWT/code). PG could not finish end-of-recovery checkpoint; Redis stopped writes.
+- **Фикс (no volume wipe, no code deploy):** truncate large `*-json.log`; `journalctl --vacuum-size=50M`; `docker image prune -f` (reclaimed **68GB** → `df` ~26% / 70G free); `restart postgres-control` → `pg_is_in_recovery=f`, healthy; Redis BGSAVE ok; `restart saas-api` (+ gift/platform/manager/ai workers) to drop dead Prisma pools (P1017 after PG bounce).
+- **Verify:** `POST /api/auth/login` → **401** `Invalid credentials` (not 500); user `anton@genadich.com` present; `/login` 200; api/health 200; control PG healthy.
+- **Backup:** prior deploy backups still at `/opt/voxly/backups/20260804-103952/` (and earlier today); no new dump required for this ops fix.
+- **Prevention:** prune dangling images after heavy deploy days; keep ≥15GB free before rebuilds (same as INC-052).
+- **Дата:** 2026-08-04.
+
+### INC-091 — Gift media: PDF/DOC coerced to photo; voice/video_note unsupported
+- **Симптом:** после загрузки PDF/DOC/XLS save/publish поста слали `mediaType: photo`; голосовые и кружочки уходили как document/video.
+- **Причина:** UI `normalizePromo` / save/publish: `mediaType === 'video' ? 'video' : 'photo'`; staging только photo|video|document.
+- **Фикс:** `detectUploadMediaKind` + kinds `voice`/`video_note`/`audio`; API staging `sendVoice`/`sendVideoNote`/`sendAudio`; worker `sendBotStoredMedia`; portal accept + checkbox «кружочек»; preserve `document` on save.
+- **Verify:** unit tests shared; upload PDF/DOC/XLS/OGG/MP3/photo/MP4 + кружочек ≤48МБ → file_id + publish.
+- **Дата:** 2026-08-04.
+
+### INC-090 — Gift media upload 499 at ~57%: Traefik readTimeout 60s
+- **Симптом (после INC-089):** UI «Отправка/Загружено 57%» → abort. Bot `cms3bdwkj000aq8b1wyygzspl`.
+- **Evidence (2026-08-03 ~16:01–16:03 UTC):** NPM `proxy-host-5`: OPTIONS 204 then POST **499** exactly **~60s** later (`16:01:05→16:02:05`, `16:02:52→16:03:52`); `[Length 21]`; Sent-to `docker-traefik-1`. saas-api **did receive POST** (`req-i1`, `req-jr`) but never `request completed`. Live Traefik entrypoint `web` had `respondingTimeouts.readTimeout: 1m0s`. NPM `proxy_request_buffering off` still live.
+- **Причина:** Traefik default **readTimeout 60s** aborts reading the multipart body mid-stream; XHR upload progress (~57%) is client-side bytes sent before the connection dies — not server processing %. Portal timeout already 300s (INC-089).
+- **Фикс:** `docker-compose.prod-npm.yml` → `entryPoints.web.transport.respondingTimeouts.{read,write,idle}Timeout=300s`; recreate traefik only. NPM custom: `proxy_connect_timeout`/`client_body_timeout` 300s + keep buffering off. Verified entrypoints API `readTimeout: 5m0s`; health/landing/OPTIONS media 200/200/204.
+- **Backup:** NPM conf `${CONF}.bak-20260803-1908-inc090`; compose rsync via `prod-deploy.sh --skip-backup compose`.
+- **Verify:** hard-refresh → re-upload video; expect POST to complete (200) in saas-api; NPM status not 499 before ~5m.
+
+### INC-089 — Gift media upload 499: NPM request buffering + portal 180s timeout
+- **Симптом (после INC-088):** POST `api.getvoxly.ru/api/bots/…/media` → **499** ~189s; saas-api получил только OPTIONS (zero POST); progress UI шёл, затем abort.
+- **Причина:** (1) NPM `proxy_request_buffering on` — тело буферится во временный файл до проксирования в API; (2) portal XHR `DEFAULT_TIMEOUT_MS = 180_000` → client abort совпал с wall clock ~189s. INC-088 path (direct API) + 300s proxy timeouts были ок, buffering оставался.
+- **Фикс:** NPM `/opt/automation/npm_data/nginx/custom/server_proxy.conf` → `proxy_request_buffering off;` (keep `client_max_body_size 64m`, `proxy_*_timeout 300s`); portal `DEFAULT_TIMEOUT_MS = 300_000`; nginx `-t` + reload (no volume wipe).
+- **Deploy:** backup `/opt/voxly/backups/20260803-155457/`; `saas-portal` only; nginx conf bak `server_proxy.conf.bak-20260803-185446`.
+- **Verify:** nginx conf shows buffering `off`; smoke landing/health 200; OPTIONS media 204. User: hard-refresh → re-upload; saas-api should see POST before finish.
+- **Дата:** 2026-08-03.
+
+### INC-088 — Gift promo/post media upload abort (rewrite 500 + document kind)
+- **Симптом:** на `/dashboard/bots/:id` блок «Пост в канале» видео грузится с прогрессом и обрывается; file_id не сохраняется. То же для фото/файлов в рассылках.
+- **Evidence (NPM access):** клиент YaBrowser `POST getvoxly.ru/api/bots/cms3bdwkj…/media` → **500** (~36–91с); после INC-086 Mac → `api.getvoxly.ru` **499** (client abort во время Telegram staging). Broadcasts всё ещё слали multipart через Next rewrite.
+- **Причина:** (1) длинный upload через portal rewrite; (2) `sendVideo→document` fallback оставлял `mediaType: video`; (3) promo/publish/funnel не умели `document` / `sendDocument`; (4) NPM `proxy_read_timeout` 90s мало для staging в Telegram.
+- **Фикс:** harden `uploadBotMedia` (never relative on prod); broadcasts → XHR direct API + progress; shared `detectStoredMediaKind` + `document` в schema/publish/worker; trust Telegram extracted kind; NPM custom `server_proxy.conf` timeouts 300s / body 64m; promo clears preview on error.
+- **Deploy:** backup `/opt/voxly/backups/20260803-153618/`; `saas-api,saas-portal,gift-bot-worker`; smoke 200; OPTIONS media 204.
+- **Verify:** hard-refresh bot page → MP4/фото/PDF ≤48МБ → progress → «Файл в Telegram» → Save/Publish.
+- **Follow-up:** INC-089 — buffering still `on` + client 180s timeout → 499 without POST reaching saas-api.
+- **Дата:** 2026-08-03.
+
+### INC-087 — Admin `/admin/pricing` не сохраняет 0 ₽ для клиента
+- **Симптом:** в «Индивидуальные цены» ставят `0` (бесплатно) → «Сохранить для клиента» не применяет override; остаётся «платформа».
+- **Причина:** UI (`n < 1`) и API (`PRICE_MIN_RUB = 1` / zod `.min(1)`) запрещали 0; ошибка «от 1 ₽» уходила в Alert наверху страницы.
+- **Фикс:** tenant overrides `0…1_000_000`; platform defaults остаются `≥1`; CRM tenant PUT + `crm-tenant-pricing` тоже `≥0`; checkout при `netAmount === 0` fulfills без Robokassa (free list price или баланс).
+- **Verify:** `/admin/pricing` → клиент → CRM база `0` → Save → badge `custom`, «сейчас 0 ₽»; typecheck saas-api + saas-portal.
+- **Дата:** 2026-08-03.
+
+### INC-086 — CRM «Сделки» kanban blank (gesha) — Redis flat-map cache
+- **Симптом:** `gesha-crm` → Сделки: шапка/«Канбан · 6» живы, область доски белая (0 колонок). Данные в PG есть (6 opportunity, 6 viewGroup, type=KANBAN).
+- **Причина:** битый/протухший Redis flat-map cache workspace (`engine:workspace:flat-maps:*:005bad75-…`). UI монтирует `record-board`, но колонки не гидратятся.
+- **Фикс:** `redis-cli` DEL keys `*005bad75*` (+ bump `core.workspace.metadataVersion`); hard-refresh CRM.
+- **Verify:** board показывает «Новый лид / Screening / …» + карточки.
+- **Prevention:** after SQL view/group fixes always flush workspace Redis flat-maps; if blank board + good SQL → flush first.
+- **Дата:** 2026-08-03.
+
+### INC-085 — Partners copy «Зачесть партнёрский баланс» but AI/gift checkout had no opt-in
+- **Симптом:** `/dashboard/partners` блок «Оплатить свой счёт» обещает checkbox на шаге оплаты для CRM/мест/AI; пользователь не видит/не может зачесть баланс (кроме скрытого CRM-only UI).
+- **Причина:** API `applyBalanceRub` + CRM checkbox существовали; CTA вёл на `/dashboard/crm` без `#oplata`; AI/gift/agent pay кнопки звали `startCheckout` без `applyBalanceRub` и без UI. Full-cover redirect всегда `/dashboard/crm?paid=ok`.
+- **Фикс:** shared `PartnerBalanceApply` + `usePartnerBalanceApply`; CRM refactor; AI TG/GramJS/WA/agents + gift list/detail; partners CTA → `#oplata`; product-aware balance-only redirect.
+- **Follow-up (same day):** mailing banner + `ai_topup` opt-in; mailing 402/`?pay=1` no longer silent-checkout when free balance > 0; partners copy = any own Voxly services; withdrawal min verified 1000 ₽ (`REFERRAL_WITHDRAWAL_MIN_RUB`).
+- **Verify:** typecheck saas-portal + saas-api; local smoke: balance > 0 → checkbox on CRM `#oplata`, AI, gift, mailing, AI topup; opt-in off by default.
+- **Дата:** 2026-08-03.
+
 ### INC-084 — Admin purge tenant fails for referral partners (`john`)
 - **Симптом:** `/admin/crm` → Удалить `john` — UI не убирает портал; CRM workspace уже стёрт, control `Tenant` остаётся. AuditLog `purge_tenant` пишется несколько раз.
 - **Причина:** `Referral.referrerTenantId` → `Tenant` был `ON DELETE RESTRICT`. `john` — реферер `johntest` → `DELETE Tenant` падает после hard-drop Twenty + audit.
@@ -36,9 +215,10 @@
 ### INC-080 — `/install-apps` после провижининга CRM
 - **Симптом:** после создания workspace первый заход на `{slug}-crm` показывает «Установите свои первые приложения» (`/install-apps`).
 - **Причина:** signup пишет `ONBOARDING_*_PENDING` в `core.keyValuePair`; GraphQL `triggerInstallAppsOnboardingStep([])` только claim’ит `INSTALL_APPS` и может **опередить** запись флагов (silent catch). SPA остаётся на `/install-apps` даже после `onboardingStatus=COMPLETED`.
-- **Фикс:** `clearTwentyOnboardingFlags(workspaceId)` (SQL DELETE всех `ONBOARDING_*_PENDING`) early + after chat install в `queues.ts`; логирование GraphQL skip; `skipSyncEmailOnboardingStep` best-effort в twenty-client.
-- **Verify (johntest):** keys=0, GraphQL `onboardingStatus=COMPLETED` → hard-refresh CRM или «Пропустить».
-- **Дата:** 2026-08-02.
+- **Фикс:** `clearTwentyOnboardingFlags(workspaceId)` (SQL DELETE install-apps/sync-email/invite/connect — **не** CREATE_PROFILE) early + after chat install в `queues.ts`; `syncOwnerProfileFromControlDb` для уже созданных порталов с пустым ФИО.
+- **Регрессия (voxly 2026-08-04):** ранний фикс удалял `ONBOARDING_CREATE_PROFILE_PENDING` → экран ФИО пропускался; исправлено.
+- **Verify:** install-apps keys=0; CREATE_PROFILE остаётся до ввода ФИО (или backfill из control User); hard-refresh CRM.
+- **Дата:** 2026-08-02 (amend 2026-08-04).
 
 ### INC-077 — Twenty: 6-й workspace blocked («enterprise key»)
 - **Симптом:** новый тенант (`johntest`) — подписка active, UI «CRM создаётся…», `twentyWorkspaceId` NULL. `johntest-crm.getvoxly.ru` 200 без workspace.
@@ -462,12 +642,13 @@
 - **Фикс:** Enter inserts newline; **Cmd/Ctrl+Enter** sends. `readComposerText()` prefers textarea DOM value (Remote DOM vs React draft). Format fallback wraps last word on the **current line** only. Placeholder hint.
 - **Дата:** 2026-07-21.
 
-### INC-021 — Kanban note chip shows `[object Object]`
+### INC-021 — Kanban note chip shows `[object Object]` / short title instead of body
 - **Симптом:** Сделки kanban (test2): chip `noteTargets` = literal `[object Object]` instead of note body (e.g. «Тестовая заметка…»). After SQL fix still two `[object Object]` chips until Redis flushed.
 - **Причина:** (1) `labelIdentifier` was set to Note.`bodyV2` (RICH_TEXT) → stringify = `[object Object]`. (2) Postgres update alone is **not enough** — Redis flat-map `object-metadata` kept stale `bodyV2` id (`143cedd1…`) while DB already had `title` (`94a308d4…`).
 - **Диагностика:** Compare `objectMetadata.labelIdentifierFieldMetadataId` in PG vs Redis `engine:workspace:flat-maps:object-metadata:<workspaceId>:data`; note rows already had correct TEXT `title` ← `bodyV2Markdown`.
 - **Фикс:** labelIdentifier → `title`; sync `title ← bodyV2Markdown` on **every** INSERT/UPDATE (not only body column — Twenty often overwrites title with first line after body save); latest note first via `noteTarget.position`; **flush Redis object-metadata**; shell-ux hide 2nd+ chips + widen noteTargets 280. `ensureNoteTitleAsLabel` in twenty-client.
 - **Дата:** 2026-07-21.
+- **Reopen 2026-08-04 (voxly):** chip showed short title (`мм`) while body was `мсмчмчмч` — triggers missing after workspace recreate; GraphQL `reapply-crm-defaults` did not reinstall them. Fix: apply `set-opportunity-kanban-card-defaults.sql` + `ensureOpportunityKanbanCardDefaults` on provision/reapply.
 
 ### SEC-001 — Global service token + unbound fileId (review 2026-07-21)
 - **Severity:** Medium (not shipping-blockers for local PoC).
@@ -607,6 +788,13 @@
 - **Причина:** rewrite на `localhost` без префикса `/api` или без Docker DNS.
 - **Фикс:** `next.config.ts` → `SAAS_API_URL` + `/api/:path*` → `${apiBase}/api/:path*`.
 - **Дата:** 2026-07-15 (зафиксировано в steps.md).
+
+### INC-086 — Gift bot video upload hangs / Premature close (~30s)
+- **Симптом:** в кабинете «Загрузка…» на медиа /start; видео так и не появляется; в API логах `ERR_STREAM_PREMATURE_CLOSE` на `POST /api/bots/:id/media` ровно ~30с.
+- **Причина:** браузер слал multipart через Next rewrite (`getvoxly.ru/api` → `saas-api`). Прокси Next обрывал длинный upload. Плюс `sendVideo` капризен к MOV/WebM.
+- **Фикс:** portal `uploadBotMedia` → напрямую `NEXT_PUBLIC_API_URL` (`api.getvoxly.ru`) с XHR progress; API — fallback video→document, таймауты, понятные 413/Premature close; UI progress bar.
+- **Follow-up:** INC-088 — promo/broadcasts still incomplete; document kind + NPM 300s.
+- **Дата:** 2026-08-03.
 
 ### INC-005 — Gift media silent fail (photo vs document)
 - **Симптом:** подарок/медиа не уходит в Telegram.

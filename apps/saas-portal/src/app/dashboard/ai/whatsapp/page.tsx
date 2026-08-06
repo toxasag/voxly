@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { RefreshCw, Smartphone, Trash2 } from 'lucide-react';
-import { TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { Pencil, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
+import { PRICING, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
 import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { AiWhatsappHero } from '@/components/portal/ai-whatsapp-hero';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
 
 interface WaAccount {
   id: string;
@@ -147,9 +149,14 @@ export default function WhatsappChannelPage() {
   const [qrStatus, setQrStatus] = useState<QrStatus | null>(null);
   const [phase, setPhase] = useState<ConnectPhase>('idle');
   const [deleteConfirmId, setDeleteConfirmId] = useState('');
+  const [renameId, setRenameId] = useState('');
+  const [renameValue, setRenameValue] = useState('');
+  const [syncHint, setSyncHint] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollNameRef = useRef('default');
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const invoiceRub = data?.priceMonthly ?? PRICING.AI_WHATSAPP_MONTHLY;
+  const balanceApply = usePartnerBalanceApply(invoiceRub);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -293,7 +300,11 @@ export default function WhatsappChannelPage() {
     setBusy('pay');
     setError('');
     try {
-      await startCheckout({ productCode: 'ai_wa', periodMonths: 1 });
+      await startCheckout({
+        productCode: 'ai_wa',
+        periodMonths: 1,
+        ...balanceApply.applyBalancePayload,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось перейти к оплате');
       setBusy('');
@@ -314,6 +325,67 @@ export default function WhatsappChannelPage() {
       await loadAccounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка отключения');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const syncHistory = async (account: WaAccount) => {
+    setBusy(`sync:${account.id}`);
+    setError('');
+    setSyncHint('');
+    try {
+      const res = await fetch(`/api/bots/whatsapp/accounts/${account.id}/sync-history`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        dialogs?: number;
+        messagesUpserted?: number;
+        skippedGroups?: number;
+        error?: string;
+        message?: string;
+        note?: string;
+      };
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.message || json.error || 'Не удалось синхронизировать переписку');
+      }
+      setSyncHint(
+        `Импорт: ${json.dialogs ?? 0} личных чатов, ${json.messagesUpserted ?? 0} сообщений` +
+          (json.skippedGroups ? ` (групп пропущено: ${json.skippedGroups})` : '') +
+          (json.note ? `. ${json.note}` : ''),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка синхронизации');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const startRename = (account: WaAccount) => {
+    setDeleteConfirmId('');
+    setRenameId(account.id);
+    setRenameValue(account.displayName || account.name || '');
+  };
+
+  const saveRename = async (account: WaAccount) => {
+    setBusy(`rename:${account.id}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/bots/whatsapp/accounts/${account.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ displayName: renameValue }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось переименовать');
+      setRenameId('');
+      setRenameValue('');
+      await loadAccounts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка переименования');
     } finally {
       setBusy('');
     }
@@ -357,7 +429,7 @@ export default function WhatsappChannelPage() {
     );
   }
 
-  const price = data.priceMonthly ?? 500;
+  const price = data.priceMonthly ?? PRICING.AI_WHATSAPP_MONTHLY;
   const accounts = data.accounts || [];
   const connectedAccounts = accounts.filter((a) => a.connected);
   const subActive = Boolean(data.waAddon?.isActive);
@@ -568,7 +640,20 @@ export default function WhatsappChannelPage() {
                   ? `Пробный период включается одной кнопкой и сразу открывает QR. Списаний в эти ${TRIAL_PERIOD_DAYS} дней не будет.`
                   : 'Пока подписки нет, QR-код недоступен, а подключённые номера не принимают сообщения. Данные и переписка сохраняются.'}
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 space-y-3">
+              <PartnerBalanceApply
+                availableRub={balanceApply.availableRub}
+                invoiceRub={price}
+                useBalance={balanceApply.useBalance}
+                onUseBalanceChange={balanceApply.setUseBalance}
+                balanceInput={balanceApply.balanceInput}
+                onBalanceInputChange={balanceApply.setBalanceInput}
+                appliedRub={balanceApply.appliedRub}
+                netRub={balanceApply.netRub}
+                disabled={busy === 'pay' || busy === 'trial'}
+                idPrefix="ai-wa-balance"
+              />
+              <div className="flex flex-wrap gap-2">
               {!subActive && trialAvailable ? (
                 <button
                   type="button"
@@ -588,11 +673,16 @@ export default function WhatsappChannelPage() {
                 }`}
               >
                 {busy === 'pay'
-                  ? 'Переходим к оплате…'
-                  : subActive
-                    ? `Продлить на месяц · ${formatRub(price)} ₽`
-                    : `Оплатить ${formatRub(price)} ₽/мес`}
+                  ? balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                    ? 'Оформляем…'
+                    : 'Переходим к оплате…'
+                  : balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                    ? 'Оформить за 0 ₽ — с баланса'
+                    : subActive
+                      ? `Продлить на месяц · ${formatRub(balanceApply.netRub || price)} ₽`
+                      : `Оплатить ${formatRub(balanceApply.netRub || price)} ₽/мес`}
               </button>
+              </div>
             </div>
           </div>
 
@@ -741,6 +831,11 @@ export default function WhatsappChannelPage() {
                   >
                     Назначить AI-агента
                   </Link>
+                  <p className="w-full text-xs leading-snug text-black/55">
+                    Все личные чаты (не группы) подтягиваются в CRM — до 30 последних
+                    сообщений в каждом. Если сделок мало — нажмите «Синхронизировать» у
+                    номера ниже (повтор безопасен).
+                  </p>
                 </div>
               ) : null}
 
@@ -790,6 +885,11 @@ export default function WhatsappChannelPage() {
             </div>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-xl border border-black/10">
+              {syncHint ? (
+                <p className="border-b border-black/10 bg-[#faf8f5] px-3 py-2 text-xs text-black/65">
+                  {syncHint}
+                </p>
+              ) : null}
               <table className="w-full min-w-[720px] border-collapse text-left">
                 <thead className="bg-[#faf8f5]">
                   <tr>
@@ -809,12 +909,44 @@ export default function WhatsappChannelPage() {
                         className="transition-colors duration-200 hover:bg-[#faf8f5]"
                       >
                         <td className="px-3 py-3">
-                          <p className="font-medium text-black">{label}</p>
-                          {account.slug && account.slug !== label ? (
-                            <p className="mt-0.5 truncate font-mono text-xs text-black/45">
-                              {account.slug}
-                            </p>
-                          ) : null}
+                          {renameId === account.id ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                value={renameValue}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                maxLength={80}
+                                className="min-h-9 min-w-[10rem] flex-1 rounded-lg border border-black/15 bg-white px-2 text-sm text-black"
+                                aria-label="Новое название номера"
+                              />
+                              <button
+                                type="button"
+                                disabled={busy === `rename:${account.id}`}
+                                onClick={() => void saveRename(account)}
+                                className="land-btn-amber inline-flex min-h-9 cursor-pointer items-center px-3 text-xs"
+                              >
+                                {busy === `rename:${account.id}` ? 'Сохраняем…' : 'Сохранить'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRenameId('');
+                                  setRenameValue('');
+                                }}
+                                className="inline-flex min-h-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65"
+                              >
+                                Отмена
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="font-medium text-black">{label}</p>
+                              {account.slug && account.slug !== label ? (
+                                <p className="mt-0.5 truncate font-mono text-xs text-black/45">
+                                  {account.slug}
+                                </p>
+                              ) : null}
+                            </>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-sm tabular-nums text-black/70">
                           {account.phoneNumberId || (
@@ -858,16 +990,42 @@ export default function WhatsappChannelPage() {
                                 Отмена
                               </button>
                             </div>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={Boolean(busy)}
-                              onClick={() => setDeleteConfirmId(account.id)}
-                              aria-label={`Отключить номер ${label}`}
-                              className="inline-flex h-9 w-9 min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 transition-colors duration-200 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <Trash2 className="h-4 w-4" aria-hidden />
-                            </button>
+                          ) : renameId === account.id ? null : (
+                            <div className="flex items-center justify-end gap-1.5">
+                              {account.connected ? (
+                                <button
+                                  type="button"
+                                  disabled={Boolean(busy)}
+                                  onClick={() => void syncHistory(account)}
+                                  aria-label={`Синхронизировать чаты ${label}`}
+                                  title="Синхронизировать все личные чаты в CRM (до 30 сообщений в каждом)"
+                                  className="inline-flex h-9 w-9 min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 transition-colors duration-200 hover:border-black/35 hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <RefreshCw
+                                    className={`h-4 w-4 ${busy === `sync:${account.id}` ? 'animate-spin' : ''}`}
+                                    aria-hidden
+                                  />
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                disabled={Boolean(busy)}
+                                onClick={() => startRename(account)}
+                                aria-label={`Переименовать ${label}`}
+                                className="inline-flex h-9 w-9 min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 transition-colors duration-200 hover:border-black/35 hover:text-black disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <Pencil className="h-4 w-4" aria-hidden />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={Boolean(busy)}
+                                onClick={() => setDeleteConfirmId(account.id)}
+                                aria-label={`Отключить номер ${label}`}
+                                className="inline-flex h-9 w-9 min-h-9 min-w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 transition-colors duration-200 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <Trash2 className="h-4 w-4" aria-hidden />
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>

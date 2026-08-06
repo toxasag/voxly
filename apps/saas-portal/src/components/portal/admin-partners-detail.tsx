@@ -5,8 +5,11 @@ import { AlertTriangle, Loader2, ShieldOff, ShieldCheck } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import {
+  REFERRAL_COMMISSION_SKUS,
+  REFERRAL_COMMISSION_SKU_LABELS,
   REFERRAL_PRODUCT_SCOPES,
   normalizeReferralProductScope,
+  type ReferralCommissionSku,
   type ReferralProductScope,
 } from '@voxly/shared';
 import {
@@ -34,6 +37,12 @@ type PartnerDetail = {
     productScope: string;
     isOverride: boolean;
   };
+  serviceRates?: Array<{
+    id: string;
+    productCode: string;
+    label: string;
+    percent: number;
+  }>;
   balanceRub: number;
   earnedAllTimeRub: number;
   paidOutRub: number;
@@ -145,6 +154,8 @@ export function AdminPartnerDetail({
 
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const [ruleScope, setRuleScope] = useState<ReferralProductScope>(REFERRAL_PRODUCT_SCOPES.ALL);
+  const [serviceSku, setServiceSku] = useState<ReferralCommissionSku>(REFERRAL_COMMISSION_SKUS[0]);
+  const [servicePercent, setServicePercent] = useState('20');
   const [txKind, setTxKind] = useState<TxKind>('payout');
   const [txAmount, setTxAmount] = useState('');
   const [txNote, setTxNote] = useState('');
@@ -182,7 +193,7 @@ export function AdminPartnerDetail({
   const mutate = async (
     key: string,
     url: string,
-    method: 'PUT' | 'POST' | 'PATCH',
+    method: 'PUT' | 'POST' | 'PATCH' | 'DELETE',
     body: unknown,
     notice: string,
   ) => {
@@ -190,7 +201,11 @@ export function AdminPartnerDetail({
     onError('');
     onNotice('');
     try {
-      const res = await fetch(url, { method, headers: authHeaders(), body: JSON.stringify(body) });
+      const res = await fetch(url, {
+        method,
+        headers: authHeaders(),
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'Не удалось выполнить операцию');
       onNotice(notice);
@@ -346,6 +361,108 @@ export function AdminPartnerDetail({
               {busy === 'rule-reset' ? 'Сбрасываем…' : 'Вернуть общую ставку'}
             </button>
           ) : null}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-black/10 bg-white p-4">
+        <SubHeading
+          title="Ставки по сервисам"
+          note="Индивидуальный процент для конкретного SKU. Если задан — начисление по этой оплате идёт по нему; иначе действует общая или персональная ставка выше. Уже начисленное не пересчитывается."
+        />
+        {(detail.serviceRates ?? []).length > 0 ? (
+          <ul className="mt-3 divide-y divide-black/10 rounded-xl border border-black/10">
+            {(detail.serviceRates ?? []).map((rate) => (
+              <li
+                key={rate.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-black">{rate.label}</p>
+                  <p className="font-mono text-[11px] text-black/45">{rate.productCode}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold tabular-nums text-black">
+                    {rate.percent}%
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy === `svc-del-${rate.productCode}`}
+                    onClick={() =>
+                      void mutate(
+                        `svc-del-${rate.productCode}`,
+                        `/api/admin/referrals/partners/${tenantId}/service-rates/${rate.productCode}`,
+                        'DELETE',
+                        undefined,
+                        `Удалена ставка ${rate.label} · ${detail.tenant.slug}`,
+                      )
+                    }
+                    className="land-btn-ghost min-h-9 cursor-pointer px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === `svc-del-${rate.productCode}` ? '…' : 'Удалить'}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs leading-snug text-black/55">
+            Пока нет отдельных ставок — все сервисы идут по правилу выше.
+          </p>
+        )}
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <label className="block text-sm" htmlFor={`svc-sku-${tenantId}`}>
+            <span className={LABEL}>Сервис</span>
+            <select
+              id={`svc-sku-${tenantId}`}
+              value={serviceSku}
+              disabled={busy === 'svc-save'}
+              onChange={(e) => setServiceSku(e.target.value as ReferralCommissionSku)}
+              className={`${FIELD} cursor-pointer disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              {REFERRAL_COMMISSION_SKUS.map((sku) => (
+                <option key={sku} value={sku}>
+                  {REFERRAL_COMMISSION_SKU_LABELS[sku]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm" htmlFor={`svc-pct-${tenantId}`}>
+            <span className={LABEL}>Ставка, %</span>
+            <input
+              id={`svc-pct-${tenantId}`}
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              value={servicePercent}
+              disabled={busy === 'svc-save'}
+              onChange={(e) => setServicePercent(e.target.value)}
+              className={`${FIELD} tabular-nums disabled:cursor-not-allowed disabled:opacity-50`}
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              disabled={
+                busy === 'svc-save' ||
+                !Number.isFinite(Number(servicePercent)) ||
+                Number(servicePercent) < 0 ||
+                Number(servicePercent) > 100
+              }
+              onClick={() =>
+                void mutate(
+                  'svc-save',
+                  `/api/admin/referrals/partners/${tenantId}/service-rates`,
+                  'PUT',
+                  { productCode: serviceSku, percent: Number(servicePercent) },
+                  `Ставка ${REFERRAL_COMMISSION_SKU_LABELS[serviceSku]}: ${servicePercent}% · ${detail.tenant.slug}`,
+                )
+              }
+              className="land-btn min-h-11 w-full cursor-pointer px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy === 'svc-save' ? 'Сохраняем…' : 'Сохранить ставку сервиса'}
+            </button>
+          </div>
         </div>
       </section>
 

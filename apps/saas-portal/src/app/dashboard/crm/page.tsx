@@ -7,12 +7,15 @@ import { GRACE_PERIOD_DAYS, PERIOD_DISCOUNTS } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
 import { computeCrmCheckoutTotals } from '@/lib/crm-pricing';
+import { computeAppliedBalanceRub } from '@/lib/partner-balance';
 import { openCrmWorkspace } from '@/lib/open-crm';
 import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
 import { CrmPortalHero } from '@/components/portal/crm-portal-hero';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { FormLeadsSection } from '@/components/portal/form-leads-section';
 
 interface CrmPayload {
   tenantRole: string;
@@ -509,9 +512,12 @@ export default function CrmPortalPage() {
 
   const partnerBalance = data.partnerBalanceRub ?? 0;
   const balanceCap = Math.min(partnerBalance, checkoutTotals.combinedTotal);
-  const appliedBalance = useBalance
-    ? Math.max(0, Math.min(balanceCap, Math.round((Number(balanceInput) || 0) * 100) / 100))
-    : 0;
+  const appliedBalance = computeAppliedBalanceRub({
+    useBalance,
+    availableRub: partnerBalance,
+    invoiceRub: checkoutTotals.combinedTotal,
+    inputRub: Number(balanceInput) || 0,
+  });
   const appliedToSeats = Math.min(appliedBalance, checkoutTotals.extraTotal);
   const netTotal = Math.round((checkoutTotals.combinedTotal - appliedBalance) * 100) / 100;
   const netSeatsTotal = Math.round((checkoutTotals.extraTotal - appliedToSeats) * 100) / 100;
@@ -880,73 +886,22 @@ export default function CrmPortalPage() {
                 </div>
 
                 {partnerBalance > 0 ? (
-                  <div className="mt-3 rounded-lg border border-black/10 bg-white px-3 py-2.5">
-                    <label
-                      htmlFor="use-partner-balance"
-                      className="flex cursor-pointer items-start gap-2 text-sm text-black"
-                    >
-                      <input
-                        id="use-partner-balance"
-                        type="checkbox"
-                        checked={useBalance}
-                        disabled={Boolean(checkoutBusy)}
-                        onChange={(e) => {
-                          const on = e.target.checked;
-                          setUseBalance(on);
-                          setBalanceInput(on ? String(balanceCap) : '');
-                        }}
-                        className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-[#f5a623] disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                      <span className="leading-snug">
-                        Зачесть партнёрский баланс
-                        <span className="block text-xs text-black/50">
-                          доступно {formatRub(partnerBalance)} ₽ · по умолчанию не тратится
-                        </span>
-                      </span>
-                    </label>
-
-                    {useBalance ? (
-                      <div className="mt-2 flex items-end gap-2">
-                        <div className="min-w-0 flex-1">
-                          <label htmlFor="apply-balance-rub" className="text-xs text-black/45">
-                            Сколько зачесть, ₽
-                          </label>
-                          <input
-                            id="apply-balance-rub"
-                            type="number"
-                            inputMode="numeric"
-                            min={0}
-                            max={balanceCap}
-                            step={1}
-                            value={balanceInput}
-                            disabled={Boolean(checkoutBusy)}
-                            onChange={(e) => setBalanceInput(e.target.value)}
-                            className="mt-1 min-h-11 w-full rounded-md border border-black/15 bg-white px-3 text-sm tabular-nums text-black shadow-sm transition-colors duration-200 focus:border-black/40 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setBalanceInput(String(balanceCap))}
-                          disabled={Boolean(checkoutBusy)}
-                          className="land-btn-ghost min-h-11 min-w-9 cursor-pointer px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Всё
-                        </button>
-                      </div>
-                    ) : null}
-                    {useBalance ? (
-                      <p aria-live="polite" className="mt-2 text-xs leading-snug text-black/55">
-                        {(Number(balanceInput) || 0) > balanceCap
-                          ? `Зачтём только ${formatRub(balanceCap)} ₽ — больше по этому счёту нельзя. `
-                          : `Максимум по этому счёту — ${formatRub(balanceCap)} ₽${
-                              partnerBalance > checkoutTotals.combinedTotal
-                                ? ' (вся его сумма). '
-                                : ' (весь свободный баланс). '
-                            }`}
-                        Зачтённое сразу уходит в резерв и пропадает из «Доступно» на странице
-                        партнёрской программы, пока счёт не оплачен.
-                      </p>
-                    ) : null}
+                  <div className="mt-3">
+                    <PartnerBalanceApply
+                      availableRub={partnerBalance}
+                      invoiceRub={checkoutTotals.combinedTotal}
+                      useBalance={useBalance}
+                      onUseBalanceChange={(on) => {
+                        setUseBalance(on);
+                        setBalanceInput(on ? String(balanceCap) : '');
+                      }}
+                      balanceInput={balanceInput}
+                      onBalanceInputChange={setBalanceInput}
+                      appliedRub={appliedBalance}
+                      netRub={netTotal}
+                      disabled={Boolean(checkoutBusy)}
+                      idPrefix="crm-partner-balance"
+                    />
                   </div>
                 ) : null}
                 <div className="mt-3 flex items-center justify-between gap-3 border-t border-black/10 pt-3">
@@ -955,13 +910,6 @@ export default function CrmPortalPage() {
                     {formatRub(netTotal)} ₽
                   </span>
                 </div>
-                {appliedBalance > 0 ? (
-                  <p className="mt-1 text-xs leading-snug text-[#166534]">
-                    {balanceCoversAll
-                      ? 'Счёт полностью закрывается балансом — платить картой не нужно.'
-                      : `С баланса спишется ${formatRub(appliedBalance)} ₽, картой — ${formatRub(netTotal)} ₽.`}
-                  </p>
-                ) : null}
                 {extendsTo ? (
                   <p className="mt-2 text-xs text-black/55">
                     Подписка продлится до {formatDate(extendsTo)}.
@@ -1008,6 +956,8 @@ export default function CrmPortalPage() {
             </div>
           </section>
         ) : null}
+
+        {!data.crmAccessLocked ? <FormLeadsSection /> : null}
 
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <h2 className="land-display text-xl tracking-[-0.03em]">Команда CRM</h2>

@@ -9,22 +9,28 @@ import {
   REFERRAL_EXCLUDED_PRODUCTS,
   getAiTgExtraSlots,
   getAiAgentSlots,
+  getGiftBotSlots,
   isProductInReferralScope,
   isAfterReferralPayoutWindow,
 } from '@voxly/shared';
 import { calculateSubscriptionPrice, paymentAmountMatchesOutSum } from '@voxly/billing';
 import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { resolveRuleForReferrer } from '../services/referral-admin.js';
-import { releaseBalanceHold } from '../services/referral-program.js';
+import {
+  findReferralServicePercent,
+  releaseBalanceHold,
+} from '../services/referral-program.js';
 
 const checkoutSchema = z.object({
   productCode: z.enum([
     'crm_base',
     'extra_seat',
     'gift_bot',
+    'gift_bot_max',
     'ai_tg',
     'ai_tg_extra_conn',
     'ai_gramjs',
+    'ai_max',
     'ai_wa',
     'ai_agent',
     'mailing_bot',
@@ -39,8 +45,13 @@ const checkoutSchema = z.object({
   periodMonths: z.number().int().min(1).max(24).optional(),
   /** For ai_topup — amount in RUB (min AI_TOPUP_MIN_RUB) */
   amountRub: z.number().positive().optional(),
-  /** How many extra Business slots to buy (default 1) */
+  /** How many extra Business / gift / agent slots to buy (default 1) */
   quantity: z.number().int().min(1).max(50).optional(),
+  /**
+   * gift_bot: `add` increments botSlots by quantity; `renew` extends period only
+   * (quantity should equal current slots for pricing).
+   */
+  intent: z.enum(['add', 'renew']).optional(),
   extraSeats: z.number().int().min(0).optional(),
   email: z.string().email().optional(),
   /** How much of the partner balance to redeem against this invoice */
@@ -67,10 +78,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       periodMonths: periodRaw,
       amountRub,
       quantity = 1,
+      intent: intentRaw,
       extraSeats = 0,
       email,
       applyBalanceRub = 0,
     } = parsed.data;
+    const intent =
+      productCode === PRODUCT_CODES.GIFT_BOT || productCode === PRODUCT_CODES.GIFT_BOT_MAX
+        ? intentRaw || 'add'
+        : intentRaw;
     const { tenantId } = (request as any).user;
     const prisma = fastify.prisma;
     const robokassa = fastify.robokassa;
@@ -87,9 +103,12 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       ? `${tenant.crmSubdomain || `${tenant.slug}-crm`}.${process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru'}`
       : 'crm';
 
-    const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
+    const { loadPlatformPrices, loadTenantOverrideMap, resolveUnitPriceSync, toCrmPlatformPricing } =
+      await import('../services/platform-pricing.js');
     const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
-    const crmPlatformPricing = await loadCrmPlatformPricing(prisma);
+    const platformPrices = await loadPlatformPrices(prisma);
+    const tenantOverrides = await loadTenantOverrideMap(prisma, tenantId);
+    const crmPlatformPricing = toCrmPlatformPricing(platformPrices);
     const crmPricing = await loadTenantCrmPricing(prisma, tenantId, crmPlatformPricing);
 
     const isTopup = productCode === PRODUCT_CODES.AI_TOPUP;
@@ -129,13 +148,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         },
       ];
     } else {
-      const basePrice = getBasePrice(productCode, crmPricing);
+      const basePrice = resolveUnitPriceSync(productCode, platformPrices, tenantOverrides);
       const discount = PERIOD_DISCOUNTS[periodMonths] ?? 0;
       const seatCount =
         productCode === PRODUCT_CODES.EXTRA_SEAT ? Math.max(1, quantity) : 0;
       const unit =
         productCode === PRODUCT_CODES.AI_TG_EXTRA_CONN ||
-        productCode === PRODUCT_CODES.AI_AGENT
+        productCode === PRODUCT_CODES.AI_AGENT ||
+        productCode === PRODUCT_CODES.GIFT_BOT ||
+        productCode === PRODUCT_CODES.GIFT_BOT_MAX
           ? basePrice * quantity
           : productCode === PRODUCT_CODES.EXTRA_SEAT
             ? basePrice * seatCount
@@ -212,8 +233,9 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       appliedBalanceRub = roundRub(Math.max(0, Math.min(applyBalanceRub, freeBalance, grossAmount)));
     }
     const netAmount = roundRub(grossAmount - appliedBalanceRub);
-    // A gross of 0 without redemption is not a balance purchase — leave that path untouched.
-    const fullyCovered = netAmount === 0 && appliedBalanceRub > 0;
+    // Robokassa cannot process 0 ₽ — complete server-side when net is zero
+    // (partner balance cover OR admin free override / 0 ₽ list price).
+    const fullyCovered = netAmount === 0;
 
     if (appliedBalanceRub > 0) {
       description = fullyCovered
@@ -276,21 +298,26 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     if (fullyCovered) {
       // Robokassa cannot process a 0 ₽ invoice, so the purchase completes server-side. It goes
       // through `fulfilPaymentTransactional` so the post-commit Twenty CRM unlock still runs.
-      const ctx = await loadFulfilPaymentContext(prisma, payment, {});
+      const ctx = await loadFulfilPaymentContext(prisma, payment, {
+        quantity: String(quantity),
+        ...(intent ? { intent } : {}),
+      });
       const done = await fulfilPaymentTransactional(prisma, payment, ctx, async (tx: any) => {
         const claim = await tx.payment.updateMany({
           where: { id: payment.id, status: 'pending' },
           data: { status: 'paid', paidAt: new Date() },
         });
         if (claim.count === 0) return false;
-        await tx.referralTransaction.create({
-          data: {
-            tenantId,
-            kind: 'redeem',
-            amountRub: appliedBalanceRub,
-            note: `Счёт #${invId} оплачен партнёрским балансом`,
-          },
-        });
+        if (appliedBalanceRub > 0) {
+          await tx.referralTransaction.create({
+            data: {
+              tenantId,
+              kind: 'redeem',
+              amountRub: appliedBalanceRub,
+              note: `Счёт #${invId} оплачен партнёрским балансом`,
+            },
+          });
+        }
         return true;
       });
 
@@ -299,8 +326,10 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       fastify.log.info(
-        { invId, tenantId, appliedBalanceRub },
-        'Invoice fully covered by partner balance',
+        { invId, tenantId, appliedBalanceRub, grossAmount },
+        appliedBalanceRub > 0
+          ? 'Invoice fully covered by partner balance'
+          : 'Invoice fulfilled at 0 ₽ list price',
       );
       return reply.send({
         paid: true,
@@ -308,7 +337,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         amount: 0,
         grossAmount,
         appliedBalanceRub,
-        redirectUrl: '/dashboard/crm?paid=ok',
+        redirectUrl: checkoutPaidRedirect(productCode),
       });
     }
 
@@ -322,6 +351,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         tenant_id: tenantId,
         payment_id: payment.id,
         quantity: String(quantity),
+        ...(intent ? { intent } : {}),
         extra_seats: String(
           productCode === 'crm_base'
             ? Math.max(0, extraSeats)
@@ -527,9 +557,11 @@ interface FulfilmentPayment {
 
 /** Inputs the fulfilment body needs beyond the payment row itself. */
 interface FulfilPaymentContext {
-  /** Robokassa `Shp_*` payload (`quantity`, `extra_seats`); `{}` when there is no gateway. */
+  /** Robokassa `Shp_*` payload (`quantity`, `extra_seats`, `intent`); `{}` when there is no gateway. */
   customData: Record<string, string>;
   quantity: number;
+  /** gift_bot / gift_bot_max: add slots vs renew period only */
+  intent: 'add' | 'renew';
   tenantCrmPricing: { seatsIncluded: number };
 }
 
@@ -543,6 +575,8 @@ async function loadFulfilPaymentContext(
   customData: Record<string, string>,
 ): Promise<FulfilPaymentContext> {
   const quantity = Math.max(1, parseInt(customData.quantity || '1', 10) || 1);
+  const intentRaw = (customData.intent || 'add').toLowerCase();
+  const intent: 'add' | 'renew' = intentRaw === 'renew' ? 'renew' : 'add';
 
   const { loadCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
   const { loadTenantCrmPricing } = await import('../services/crm-tenant-pricing.js');
@@ -553,7 +587,7 @@ async function loadFulfilPaymentContext(
     crmPlatformPricing,
   );
 
-  return { customData, quantity, tenantCrmPricing };
+  return { customData, quantity, intent, tenantCrmPricing };
 }
 
 /**
@@ -605,7 +639,7 @@ async function fulfilPayment(
   payment: FulfilmentPayment,
   ctx: FulfilPaymentContext,
 ): Promise<void> {
-  const { customData, quantity, tenantCrmPricing } = ctx;
+  const { customData, quantity, intent, tenantCrmPricing } = ctx;
 
   const periodMonths = payment.periodMonths || 1;
   const now = new Date();
@@ -728,6 +762,64 @@ async function fulfilPayment(
         payments: { connect: { id: payment.id } },
       },
     });
+  } else if (
+    payment.productCode === PRODUCT_CODES.GIFT_BOT ||
+    payment.productCode === PRODUCT_CODES.GIFT_BOT_MAX
+  ) {
+    const giftType = payment.productCode;
+    const addon = await tx.addon.findUnique({
+      where: {
+        tenantId_type: { tenantId: payment.tenantId, type: giftType },
+      },
+    });
+    const prev = getGiftBotSlots(addon?.config);
+    const nextSlots =
+      intent === 'renew' ? Math.max(prev, quantity, 1) : prev + quantity;
+    let giftEndsAt = endsAt;
+    if (intent === 'renew' && addon && addon.activeUntil > now) {
+      giftEndsAt = new Date(addon.activeUntil);
+      giftEndsAt.setMonth(giftEndsAt.getMonth() + Math.max(1, periodMonths));
+    } else if (addon && addon.activeUntil > giftEndsAt) {
+      giftEndsAt = addon.activeUntil;
+    }
+    const config = {
+      ...((addon?.config as object) || {}),
+      botSlots: nextSlots,
+      trial: false,
+      trialConsumed: true,
+    };
+    if (addon) {
+      await tx.addon.update({
+        where: { id: addon.id },
+        data: {
+          config,
+          status: 'active',
+          activeUntil: giftEndsAt,
+        },
+      });
+    } else {
+      await tx.addon.create({
+        data: {
+          tenantId: payment.tenantId,
+          type: giftType,
+          config,
+          activeUntil: giftEndsAt,
+          status: 'active',
+        },
+      });
+    }
+    await tx.subscription.create({
+      data: {
+        tenantId: payment.tenantId,
+        productCode: payment.productCode,
+        periodMonths,
+        seatsIncluded: 0,
+        startsAt: now,
+        endsAt: giftEndsAt,
+        status: 'active',
+        payments: { connect: { id: payment.id } },
+      },
+    });
   } else if (payment.productCode === PRODUCT_CODES.EXTRA_SEAT) {
     const addSeats = Math.max(
       1,
@@ -798,9 +890,9 @@ async function fulfilPayment(
 
     if (
       payment.productCode.startsWith('analytics_') ||
-      payment.productCode === 'gift_bot' ||
       payment.productCode === PRODUCT_CODES.AI_TELEGRAM ||
       payment.productCode === PRODUCT_CODES.AI_GRAMJS ||
+      payment.productCode === PRODUCT_CODES.AI_MAX ||
       payment.productCode === PRODUCT_CODES.AI_WHATSAPP ||
       payment.productCode === PRODUCT_CODES.MAILING_BOT ||
       payment.productCode === PRODUCT_CODES.MAILING_ACCOUNTS ||
@@ -857,34 +949,60 @@ async function creditReferralForPayment(
   if (!referral) return;
 
   const rule = await resolveRuleForReferrer(tx, referral.referrerTenantId);
-  if (!rule) return;
-  if (!isProductInReferralScope(payment.productCode, rule.productScope)) return;
+  const servicePercent = await findReferralServicePercent(
+    tx,
+    referral.referrerTenantId,
+    payment.productCode,
+  );
+
+  // SKU override makes that product eligible even when the base rule scope would exclude it.
+  if (servicePercent == null) {
+    if (!rule) return;
+    if (!isProductInReferralScope(payment.productCode, rule.productScope)) return;
+  }
 
   // `payment.amount` is the NET money part. The redeemed part was already credited to another
   // partner, so paying commission on it again would disburse the same money twice.
   const amount = Number(payment.amount);
   let earningAmount = 0;
   const isFirst = !referral.firstPaymentAt;
+  let ruleApplied = rule?.type ?? 'percent_recurring';
 
-  if (rule.type === 'percent_recurring') {
+  if (servicePercent != null) {
+    // Per-SKU %: inherit first-payment / duration gates from the base percent rule when present.
+    if (rule?.type === 'percent_first_payment' && !isFirst) return;
     if (
+      rule?.type === 'percent_recurring' &&
       rule.durationMonths &&
       isAfterReferralPayoutWindow(referral.firstPaymentAt, rule.durationMonths)
     ) {
       return;
     }
-    earningAmount = (amount * Number(rule.value)) / 100;
-  } else if (rule.type === 'percent_first_payment' && isFirst) {
-    earningAmount = (amount * Number(rule.value)) / 100;
+    if (rule?.type === 'percent_first_payment') {
+      ruleApplied = 'percent_first_payment';
+    } else {
+      ruleApplied = 'percent_recurring';
+    }
+    earningAmount = (amount * servicePercent) / 100;
+  } else if (rule!.type === 'percent_recurring') {
+    if (
+      rule!.durationMonths &&
+      isAfterReferralPayoutWindow(referral.firstPaymentAt, rule!.durationMonths)
+    ) {
+      return;
+    }
+    earningAmount = (amount * Number(rule!.value)) / 100;
+  } else if (rule!.type === 'percent_first_payment' && isFirst) {
+    earningAmount = (amount * Number(rule!.value)) / 100;
   } else if (
     // `credit` duplicated `fixed_first_payment` verbatim and `credit_discount` had no branch at
     // all, so it earned nothing AND never stamped `firstPaymentAt` — the referral stayed pending.
-    (rule.type === 'fixed_first_payment' ||
-      rule.type === 'credit' ||
-      rule.type === 'credit_discount') &&
+    (rule!.type === 'fixed_first_payment' ||
+      rule!.type === 'credit' ||
+      rule!.type === 'credit_discount') &&
     isFirst
   ) {
-    earningAmount = Number(rule.value);
+    earningAmount = Number(rule!.value);
   }
 
   if (earningAmount <= 0) return;
@@ -902,7 +1020,8 @@ async function creditReferralForPayment(
       paymentId: payment.id,
       tenantId: referral.referrerTenantId,
       amountRub: earningAmount,
-      ruleApplied: rule.type,
+      ruleApplied:
+        servicePercent != null ? `${ruleApplied}:${payment.productCode}@${servicePercent}` : ruleApplied,
     },
   });
   await tx.tenantBalance.upsert({
@@ -912,38 +1031,55 @@ async function creditReferralForPayment(
   });
 }
 
-function getBasePrice(
-  productCode: string,
-  crmPricing?: { baseMonthly: number; extraSeatMonthly: number },
-): number {
-  const prices: Record<string, number> = {
-    crm_base: crmPricing?.baseMonthly ?? PRICING.CRM_BASE_MONTHLY,
-    extra_seat: crmPricing?.extraSeatMonthly ?? PRICING.EXTRA_SEAT_MONTHLY,
-    gift_bot: PRICING.GIFT_BOT_MONTHLY,
-    ai_tg: PRICING.AI_TELEGRAM_MONTHLY,
-    ai_tg_extra_conn: PRICING.AI_TG_EXTRA_CONN_MONTHLY,
-    ai_gramjs: PRICING.AI_GRAMJS_MONTHLY,
-    ai_wa: PRICING.AI_WHATSAPP_MONTHLY,
-    ai_agent: PRICING.AI_AGENT_MONTHLY,
-    mailing_bot: PRICING.MAILING_BOT_MONTHLY,
-    mailing_accounts: PRICING.MAILING_ACCOUNTS_MONTHLY,
-    mailing_stories: PRICING.MAILING_STORIES_MONTHLY,
-    analytics_metrika: PRICING.ANALYTICS_PLATFORM_MONTHLY,
-    analytics_ga4: PRICING.ANALYTICS_PLATFORM_MONTHLY,
-    analytics_facebook: PRICING.ANALYTICS_PLATFORM_MONTHLY,
-    analytics_vk: PRICING.ANALYTICS_PLATFORM_MONTHLY,
-  };
-  return prices[productCode] ?? 0;
+/** Where to send the browser after a balance-only (zero-card) checkout. */
+function checkoutPaidRedirect(productCode: string): string {
+  switch (productCode) {
+    case 'crm_base':
+    case 'extra_seat':
+      return '/dashboard/crm?paid=ok';
+    case 'gift_bot':
+      return '/dashboard/bots?paid=ok';
+    case 'gift_bot_max':
+      return '/dashboard/bots/max?paid=ok';
+    case 'ai_tg':
+    case 'ai_tg_extra_conn':
+      return '/dashboard/ai?paid=ok';
+    case 'ai_gramjs':
+      return '/dashboard/ai/gramjs?paid=ok';
+    case 'ai_max':
+      return '/dashboard/ai/max?paid=ok';
+    case 'ai_wa':
+      return '/dashboard/ai/whatsapp?paid=ok';
+    case 'ai_agent':
+    case 'ai_topup':
+      return '/dashboard/ai/agents?paid=ok';
+    case 'mailing_bot':
+      return '/dashboard/mailing/bot?paid=ok';
+    case 'mailing_accounts':
+      return '/dashboard/mailing/gramjs?paid=ok';
+    case 'mailing_stories':
+      return '/dashboard/mailing/stories?paid=ok';
+    default:
+      return '/dashboard?paid=ok';
+  }
 }
 
 function buildDescription(productCode: string, periodMonths: number, quantity = 1): string {
   const names: Record<string, string> = {
     crm_base: 'Voxly CRM',
     extra_seat: 'Voxly CRM — доп. место',
-    gift_bot: 'Voxly — бот выдачи подарков',
+    gift_bot:
+      quantity > 1
+        ? `Voxly — бот подарков Telegram ×${quantity}`
+        : 'Voxly — бот подарков Telegram',
+    gift_bot_max:
+      quantity > 1
+        ? `Voxly — бот подарков MAX ×${quantity}`
+        : 'Voxly — бот подарков MAX',
     ai_tg: 'Voxly — Телеграм Секретарь',
     ai_tg_extra_conn: `Voxly — доп. аккаунт секретаря ×${quantity}`,
     ai_gramjs: 'Voxly — Telegram',
+    ai_max: 'Voxly — MAX',
     ai_wa: 'Voxly — WhatsApp',
     ai_agent: quantity > 1 ? `Voxly — AI-агент ×${quantity}` : 'Voxly — AI-агент',
     mailing_bot: 'Voxly — рассылка ботом',

@@ -14,6 +14,7 @@
 | БД | PostgreSQL 16 ×2 (control + twenty) |
 | Платежи | Robokassa |
 | Telegram | Managed Bots (Bot API 9.6+), локально long-poll |
+| MAX | Personal: PyMax sidecar `max-bridge` (profile `max`); Gift: official Bot API in `gift-bot-worker` (`/max/…`, `GIFT_MAX_USE_POLLING`) |
 | AI | OpenAI + `@voxly/ai-core` wallet/markup |
 | Proxy (prod) | Traefik v3.6+ behind **Nginx Proxy Manager** (TLS) |
 | Crypto | AES-256-GCM (`@voxly/crypto`, `ENCRYPTION_KEY`) |
@@ -29,12 +30,17 @@
 | ai-telegram-worker | `:3005` | `GET /health` |
 | ai-whatsapp-worker | `:3006` | `GET /health` |
 | twenty-server | `:3007` → `:3000` | `/healthz` |
+| gramjs-bridge (profile) | `:3008` | `GET /health` |
+| platform-bot-service | `:3009` | `GET /health` |
+| max-bridge (profile) | `:3010` | `GET /health` |
 | postgres-control | `:5433` | `pg_isready` |
 | postgres-twenty | `:5434` | `pg_isready` |
 | redis | `:6379` | `redis-cli ping` |
 | traefik (prod-like) | `:80`/`:443`, dashboard `:8080` | — |
 
 Локально: Colima + Docker. TG: `GIFT_BOT_USE_POLLING` / `MANAGER_USE_POLLING` = true.
+MAX personal: `docker compose --profile max up -d max-bridge`.
+
 
 ## Prod (VPS + NPM) — 2026-07-22
 

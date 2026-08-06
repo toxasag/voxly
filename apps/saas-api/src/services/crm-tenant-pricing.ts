@@ -138,8 +138,11 @@ export async function saveTenantCrmPricing(
       return;
     }
     const rub = Math.round(Number(value));
-    if (!Number.isFinite(rub) || rub < 0) {
-      throw Object.assign(new Error(`${productCode}: price must be ≥ 0`), { statusCode: 400 });
+    // 0 ₽ is allowed (comp / free client); negative is not.
+    if (!Number.isFinite(rub) || rub < 0 || rub > 1_000_000) {
+      throw Object.assign(new Error(`${productCode}: price must be 0…1000000 ₽`), {
+        statusCode: 400,
+      });
     }
     await prisma.pricingOverride.upsert({
       where: { tenantId_productCode: { tenantId, productCode } },

@@ -10,7 +10,7 @@ export default defineNavigationMenuItem({
   universalIdentifier: CABINET_VOXLY_NAV_UNIVERSAL_IDENTIFIER,
   name: 'Кабинет Voxly',
   icon: 'IconHome',
-  position: 0,
+  position: 6,
   type: NavigationMenuItemType.LINK,
   link: voxlyCabinetUrl(),
 });

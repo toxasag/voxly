@@ -144,6 +144,20 @@ Process (1) is in place. Code (2) is **not fully equal** (see drift below). That
 - Cold start: saas-api first boot hit `releaseStaleBalanceHolds` 30s timer before migration → P2022 Payment.balanceAppliedRub; container restarted after migration applied, clean.
 - Smoke: `/`, API health, `/dashboard/partners`, `/dashboard/crm`, `/admin/partners`, `/dashboard/ai` — **200**. Logs clean after restart.
 
+### Deploy 2026-08-03 (web form lead intake ADR-026)
+
+- Services: `saas-api`, `saas-portal`.
+- Backup `/opt/voxly/backups/20260803-122358/`.
+- Control migrate: `20260803160000_form_lead_intake` (`FormWebhookEndpoint`, `FormLead`).
+- Smoke: `/`, api/health(+body), `/dashboard/crm` **200**; `POST /api/webhooks/forms/…` → 404 unknown token; `/api/forms/endpoints` → 401 without JWT.
+
+### Deploy 2026-08-06 (INC-103 GramJS send from Person.telegram + module freeze)
+
+- Services: `saas-api`, `gramjs-bridge` (also earlier same-day: WA/TG/gift workers, portal for social/open-tg).
+- Backup `/opt/voxly/backups/20260806-125415/` (+ `123456`, `102034`, `093403`, `090344`, `084234`, `082647`).
+- Smoke: portal + API health **200**; `GET /open/tg/928954961` **200**; containers saas-api/gramjs/WA/gift Up.
+- Code match: prod-diff hot paths for CRM/TG/WA matched before INC-103; post-deploy includes peer-from-LINKS + ImportContacts keepContact.
+
 ## Continue local work without breaking deploy
 
 1. Feature only in git working tree / branch.

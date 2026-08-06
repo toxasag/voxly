@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@voxly/db';
-import { TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { getGiftBotSlots, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 
 type AddonConfig = {
   trial?: boolean;
@@ -9,9 +9,11 @@ type AddonConfig = {
 
 export type ChannelTrialType =
   | 'ai_gramjs'
+  | 'ai_max'
   | 'ai_wa'
   | 'ai_tg'
   | 'gift_bot'
+  | 'gift_bot_max'
   | 'mailing_bot'
   | 'mailing_accounts'
   | 'mailing_stories';
@@ -55,11 +57,15 @@ export async function startChannelTrial(
 
   const activeUntil = new Date(now);
   activeUntil.setDate(activeUntil.getDate() + TRIAL_PERIOD_DAYS);
+  const prevConfig = (existing?.config as AddonConfig) || {};
   const config = {
-    ...((existing?.config as AddonConfig) || {}),
+    ...prevConfig,
     ...extraConfig,
     trial: true,
     trialConsumed: true,
+    ...(type === 'gift_bot' || type === 'gift_bot_max'
+      ? { botSlots: Math.max(1, getGiftBotSlots(prevConfig), Number(extraConfig.botSlots) || 0) }
+      : {}),
   } as Prisma.InputJsonValue;
 
   const addon = await prisma.addon.upsert({

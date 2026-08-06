@@ -2,8 +2,10 @@
 // Browser never talks to gramjs-bridge directly.
 
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
+import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -15,6 +17,44 @@ function bridgeBase(): string {
 
 function serviceToken(): string {
   return process.env.VOXLY_SERVICE_TOKEN || '';
+}
+
+/** In-process GramJS history-sync jobs (long-running; avoid nginx/browser timeout). */
+type GramjsHistorySyncJob = {
+  startedAt: number;
+  done: boolean;
+  summary?: {
+    ok: boolean;
+    dialogs?: number;
+    messagesUpserted?: number;
+    peopleCreated?: number;
+    opportunitiesCreated?: number;
+    skippedSuppressed?: number;
+    error?: string;
+  };
+  error?: string;
+};
+
+const gramjsHistorySyncJobs = new Map<string, GramjsHistorySyncJob>();
+
+function gramjsHistorySyncState(botId: string): {
+  historySyncing: boolean;
+  historySyncStartedAt: string | null;
+  historySyncResult: GramjsHistorySyncJob['summary'] | null;
+} {
+  const job = gramjsHistorySyncJobs.get(botId);
+  if (!job) {
+    return {
+      historySyncing: false,
+      historySyncStartedAt: null,
+      historySyncResult: null,
+    };
+  }
+  return {
+    historySyncing: !job.done,
+    historySyncStartedAt: new Date(job.startedAt).toISOString(),
+    historySyncResult: job.done ? job.summary || null : null,
+  };
 }
 
 async function bridgeFetch(
@@ -68,6 +108,7 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           id: true,
           botUsername: true,
+          displayName: true,
           phoneNumberId: true,
           status: true,
           botTokenEncrypted: true,
@@ -82,10 +123,16 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
 
     const meta = trialMeta(addon);
     const addonActive = meta.isActive;
+    const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+    const priceMonthly = await resolveUnitPrice(
+      fastify.prisma,
+      tenantId,
+      PRODUCT_CODES.AI_GRAMJS,
+    );
 
     return reply.send({
       ok: true,
-      priceMonthly: PRICING.AI_GRAMJS_MONTHLY,
+      priceMonthly,
       trialDays: TRIAL_PERIOD_DAYS,
       bridgeConfigured: Boolean(serviceToken()),
       gramjsAddon: addon
@@ -100,18 +147,26 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
       billingWarning: addonActive
         ? null
         : meta.trialAvailable
-          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${PRICING.AI_GRAMJS_MONTHLY} ₽/мес.`
-          : `Тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
+          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${priceMonthly} ₽/мес.`
+          : `Тариф «Личный Telegram» (${priceMonthly} ₽/мес) не активен. Оформите оплату.`,
       requiresPayment: !addonActive,
-      accounts: bots.map((b) => ({
-        id: b.id,
-        name: b.botUsername || 'default',
-        telegramUserId: b.phoneNumberId,
-        status: b.status,
-        connected: Boolean(b.botTokenEncrypted),
-        createdAt: b.createdAt,
-        updatedAt: b.updatedAt,
-      })),
+      accounts: bots.map((b) => {
+        const sync = gramjsHistorySyncState(b.id);
+        return {
+          id: b.id,
+          name: (b.displayName || '').trim() || b.botUsername || 'default',
+          displayName: (b.displayName || '').trim() || null,
+          username: b.botUsername,
+          telegramUserId: b.phoneNumberId,
+          status: b.status,
+          connected: Boolean(b.botTokenEncrypted),
+          createdAt: b.createdAt,
+          updatedAt: b.updatedAt,
+          historySyncing: sync.historySyncing,
+          historySyncStartedAt: sync.historySyncStartedAt,
+          historySyncResult: sync.historySyncResult,
+        };
+      }),
     });
   });
 
@@ -151,11 +206,17 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     });
     const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
     if (!addonActive) {
+      const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+      const priceMonthly = await resolveUnitPrice(
+        fastify.prisma,
+        tenantId,
+        PRODUCT_CODES.AI_GRAMJS,
+      );
       return reply.code(402).send({
         error: 'payment_required',
-        message: `Оплатите тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) или запустите trial`,
+        message: `Оплатите тариф «Личный Telegram» (${priceMonthly} ₽/мес) или запустите trial`,
         productCode: PRODUCT_CODES.AI_GRAMJS,
-        priceMonthly: PRICING.AI_GRAMJS_MONTHLY,
+        priceMonthly,
       });
     }
     const body = (request.body || {}) as { name?: string };
@@ -234,6 +295,162 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
     });
     return reply.code(result.status).send(result.json);
   });
+
+  /**
+   * Manual private-dialog CRM sync (no QR reconnect).
+   * Same engine as connect/enrich job step 1: bridge `/crm/private-dialogs`
+   * → Conversation/ChatMessage + People/Opportunities (all private × 30 msgs).
+   */
+  fastify.post(
+    '/accounts/:botId/sync-history',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can sync Telegram history' });
+      }
+      const { botId } = request.params as { botId: string };
+      const body = (request.body || {}) as {
+        dialogLimit?: number;
+        messageLimit?: number;
+      };
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'ai_gramjs' },
+        select: { id: true, status: true, botTokenEncrypted: true },
+      });
+      if (!bot) return reply.code(404).send({ ok: false, error: 'account not found' });
+      if (!bot.botTokenEncrypted || bot.status !== 'active') {
+        return reply.code(400).send({
+          ok: false,
+          error: 'account_not_connected',
+          message: 'Сначала подключите аккаунт (QR).',
+        });
+      }
+
+      const dialogLimit =
+        typeof body.dialogLimit === 'number' && body.dialogLimit > 0
+          ? Math.floor(body.dialogLimit)
+          : 0; // 0 = all private
+      const messageLimit =
+        typeof body.messageLimit === 'number' && body.messageLimit > 0
+          ? Math.floor(body.messageLimit)
+          : 30;
+
+      const existing = gramjsHistorySyncJobs.get(botId);
+      if (existing && !existing.done) {
+        return reply.send({
+          ok: true,
+          started: true,
+          alreadyRunning: true,
+          historySyncStartedAt: new Date(existing.startedAt).toISOString(),
+        });
+      }
+
+      // Long sync (flood waits) — run in background so portal/nginx do not time out
+      // and UI can show «Синхронизация…» via GET /accounts historySyncing.
+      const startedAt = Date.now();
+      gramjsHistorySyncJobs.set(botId, { startedAt, done: false });
+      void runGramjsPrivateChatSync({
+        prisma: fastify.prisma,
+        tenantId,
+        botId,
+        dialogLimit,
+        messageLimit,
+      })
+        .then((summary) => {
+          gramjsHistorySyncJobs.set(botId, {
+            startedAt,
+            done: true,
+            summary: {
+              ok: summary.ok,
+              dialogs: summary.dialogs,
+              messagesUpserted: summary.messagesUpserted,
+              peopleCreated: summary.peopleCreated,
+              opportunitiesCreated: summary.opportunitiesCreated,
+              skippedSuppressed: summary.skippedSuppressed,
+              error: summary.error,
+            },
+          });
+          // Drop finished job after 30m so accounts list stays lean.
+          setTimeout(() => {
+            const cur = gramjsHistorySyncJobs.get(botId);
+            if (cur && cur.done && cur.startedAt === startedAt) {
+              gramjsHistorySyncJobs.delete(botId);
+            }
+          }, 30 * 60 * 1000).unref?.();
+        })
+        .catch((err) => {
+          gramjsHistorySyncJobs.set(botId, {
+            startedAt,
+            done: true,
+            summary: {
+              ok: false,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+
+      return reply.code(202).send({
+        ok: true,
+        started: true,
+        historySyncStartedAt: new Date(startedAt).toISOString(),
+      });
+    },
+  );
+
+  fastify.patch(
+    '/accounts/:botId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can rename Telegram accounts' });
+      }
+      const { botId } = request.params as { botId: string };
+      const body = z
+        .object({
+          displayName: z.string().max(80),
+        })
+        .safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: body.error.flatten() });
+      }
+      const displayName = body.data.displayName.trim() || null;
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'ai_gramjs' },
+        select: { id: true, botUsername: true, displayName: true },
+      });
+      if (!bot) return reply.code(404).send({ ok: false, error: 'account not found' });
+
+      const updated = await fastify.prisma.botInstance.update({
+        where: { id: bot.id },
+        data: { displayName },
+        select: {
+          id: true,
+          botUsername: true,
+          displayName: true,
+          phoneNumberId: true,
+          status: true,
+          updatedAt: true,
+        },
+      });
+      return reply.send({
+        ok: true,
+        account: {
+          id: updated.id,
+          name: (updated.displayName || '').trim() || updated.botUsername || 'default',
+          displayName: (updated.displayName || '').trim() || null,
+          username: updated.botUsername,
+          telegramUserId: updated.phoneNumberId,
+          status: updated.status,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    },
+  );
 
   fastify.delete(
     '/accounts/:botId',

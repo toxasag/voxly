@@ -15,13 +15,13 @@ const STEPS: { screen: PhoneScreen; title: string; text: string }[] = [
     text: 'Сумма, этап и заметка без потери контекста.',
   },
   {
-    screen: 'chat',
-    title: 'Чат',
-    text: 'История канала. AI на паузе одним тапом.',
+    screen: 'form',
+    title: 'Заявка / чат',
+    text: 'Заявка с Tilda или переписка из мессенджера — в той же карточке.',
   },
   {
     screen: 'sent',
-    title: 'Отправка',
+    title: 'Ответ',
     text: 'Pinned composer, вложение, «отправлено».',
   },
 ];
@@ -82,7 +82,7 @@ export function MobileProof() {
             </h2>
             <p className="mt-6 max-w-[540px] text-base text-[var(--land-muted)] sm:text-lg">
               Это адаптивный веб-CRM, не урезанная «мобилка» и не обещание магазина приложений.
-              Канбан, сделка, чат, вложения, AI-контроль — в браузере телефона.
+              Канбан, сделка, заявка с сайта, чат и ответ — в браузере телефона.
             </p>
 
             <ol className="mt-8 space-y-3">
@@ -124,7 +124,7 @@ export function MobileProof() {
               Не нужно ставить iOS или Android приложение команде. Откройте CRM в браузере.
             </p>
             <p className="mt-2 text-sm text-[var(--land-muted)]">
-              Сделка и переписка в одном экране. Даже в метро.
+              Сделка, заявка с сайта и переписка — в одном экране. Даже в метро.
             </p>
           </div>
 

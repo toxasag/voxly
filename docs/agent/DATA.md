@@ -28,6 +28,7 @@
 | `MailingStageRule` | auto-send on Opportunity stage enter | saas-api R/W; fire → Broadcast |
 | `ReferralCode/Referral/…` | рефералка | saas-api |
 | `AnalyticsIntegration`, `AttributionSession`, `ConversionEvent`, `TrackingLink` | S2S аналитика; у ConversionEvent есть `campaignId`/`botInstanceId` | saas-api, gift-worker `fireGoal`, analytics-dispatchers |
+| `FormWebhookEndpoint`, `FormLead` | web form intake (Tilda/WP/JSON) → Twenty + attribution; unique `(tenantId,source,externalId)` | saas-api routes + BullMQ `form-leads` |
 | `PlatformSetting`, `PricingOverride`, `AuditLog` | супер-админ | saas-api |
 
 ## Twenty CRM (не Prisma control)

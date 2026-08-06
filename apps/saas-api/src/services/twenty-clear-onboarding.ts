@@ -1,6 +1,6 @@
 /**
  * Clear Twenty onboarding pending flags so new workspaces skip /install-apps,
- * /create/profile, /sync/emails, /invite-team.
+ * /sync/emails, /invite-team — but **keep** /create/profile (FIO required).
  *
  * GraphQL `triggerInstallAppsOnboardingStep([])` only deletes INSTALL_APPS and
  * can race workspace creation (flags written in the same signup transaction).
@@ -8,11 +8,13 @@
  */
 import pg from 'pg';
 
-const ONBOARDING_KEYS = [
+/** Keys to clear — CREATE_PROFILE intentionally excluded (ADR-010 amend). */
+const ONBOARDING_KEYS_TO_CLEAR = [
   'ONBOARDING_INSTALL_APPS_PENDING',
-  'ONBOARDING_CREATE_PROFILE_PENDING',
   'ONBOARDING_CONNECT_ACCOUNT_PENDING',
   'ONBOARDING_INVITE_TEAM_PENDING',
+  // Sync-email step (GraphQL skipSyncEmailOnboardingStep may no-op).
+  'ONBOARDING_SYNC_EMAIL_PENDING',
 ] as const;
 
 export async function clearTwentyOnboardingFlags(workspaceId: string): Promise<number> {
@@ -31,11 +33,11 @@ export async function clearTwentyOnboardingFlags(workspaceId: string): Promise<n
       `DELETE FROM core."keyValuePair"
        WHERE "workspaceId" = $1::uuid
          AND key = ANY($2::text[])`,
-      [workspaceId, [...ONBOARDING_KEYS]],
+      [workspaceId, [...ONBOARDING_KEYS_TO_CLEAR]],
     );
     const n = result.rowCount ?? 0;
     console.log(
-      `[provisioning] cleared ${n} onboarding flag(s) for workspace=${workspaceId}`,
+      `[provisioning] cleared ${n} onboarding flag(s) for workspace=${workspaceId} (CREATE_PROFILE kept)`,
     );
     return n;
   } finally {

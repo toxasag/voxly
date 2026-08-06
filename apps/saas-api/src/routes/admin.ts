@@ -4,12 +4,20 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { TenantStatus } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import { ensureOpportunityRuDefaults } from '../services/twenty-opportunity-ru-defaults.js';
+import { ensureOpportunityKanbanCardDefaults } from '../services/twenty-kanban-card-defaults.js';
+import { ensureWorkspaceNavOrder } from '../services/twenty-workspace-nav-order.js';
+import { flushTwentyWorkspaceRedisCache } from '../services/twenty-redis-flush.js';
+import { syncOwnerProfileFromControlDb } from '../services/twenty-owner-profile-sync.js';
+import { runTelegramCrmEnrich } from '../services/telegram-crm-enrich.js';
+import { enqueueGramjsCrmEnrich } from '../jobs/queues.js';
 import { collectPlatformHealth } from '../services/admin-health.js';
 import {
   purgeTenantFully,
   refreshCrmChatAppForTenant,
 } from '../services/purge-tenant.js';
 import { syncTwentyCrmLock } from '../services/crm-access.js';
+import { migratePersonSocialFieldsToLinks } from '../services/migrate-social-links.js';
+import { backfillTelegramOpenLinks } from '../services/backfill-telegram-open-links.js';
 import { z } from 'zod';
 
 /** JWT from auth/login uses `sub` (user id); never `userId`. */
@@ -47,17 +55,29 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       }),
     ]);
 
-    // MRR by product
+    // MRR estimate by product (current list prices — not historical paid amounts)
+    const {
+      loadPlatformPrices,
+      loadTenantOverrideMap,
+      resolveUnitPriceSync,
+    } = await import('../services/platform-pricing.js');
+    const platformPrices = await loadPlatformPrices(prisma);
     const activeSubs = await prisma.subscription.findMany({
       where: { status: 'active' },
-      select: { productCode: true, periodMonths: true },
+      select: { productCode: true, periodMonths: true, tenantId: true },
     });
-
+    const overrideCache = new Map<string, Map<string, number>>();
     const mrrByProduct: Record<string, number> = {};
     for (const sub of activeSubs) {
-      const monthlyPrice = getMonthlyPriceForProduct(sub.productCode);
-      const monthly = (monthlyPrice * sub.periodMonths) / sub.periodMonths;
-      mrrByProduct[sub.productCode] = (mrrByProduct[sub.productCode] || 0) + monthly;
+      if (!overrideCache.has(sub.tenantId)) {
+        overrideCache.set(sub.tenantId, await loadTenantOverrideMap(prisma, sub.tenantId));
+      }
+      const monthlyPrice = resolveUnitPriceSync(
+        sub.productCode,
+        platformPrices,
+        overrideCache.get(sub.tenantId),
+      );
+      mrrByProduct[sub.productCode] = (mrrByProduct[sub.productCode] || 0) + monthlyPrice;
     }
 
     const aiMarkup = await prisma.platformSetting.findUnique({
@@ -188,6 +208,42 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       );
       await ensureOpportunityRuDefaults(tenant.twentyWorkspaceId);
       try {
+        const socialMig = await migratePersonSocialFieldsToLinks(tenant.twentyWorkspaceId);
+        if (!socialMig.ok) {
+          fastify.log.warn(
+            { tenantId: id, error: socialMig.error },
+            'social LINKS migrate after reapply failed',
+          );
+        }
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'social LINKS migrate after reapply failed');
+      }
+      try {
+        await ensureOpportunityKanbanCardDefaults(tenant.twentyWorkspaceId);
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'kanban card defaults after reapply failed');
+      }
+      try {
+        await ensureWorkspaceNavOrder(tenant.twentyWorkspaceId);
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'nav order after defaults failed');
+      }
+      try {
+        await syncOwnerProfileFromControlDb({
+          workspaceId: tenant.twentyWorkspaceId,
+          ownerEmail: owner.email,
+          firstName: owner.firstName,
+          lastName: owner.lastName,
+        });
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'owner profile sync after defaults failed');
+      }
+      try {
+        await flushTwentyWorkspaceRedisCache(tenant.twentyWorkspaceId);
+      } catch (err) {
+        fastify.log.warn({ err, tenantId: id }, 'redis flush after defaults failed');
+      }
+      try {
         await refreshCrmChatAppForTenant({ tenantId: id, db: fastify.prisma });
       } catch (err) {
         fastify.log.warn({ err, tenantId: id }, 'CRM chat refresh after defaults failed');
@@ -197,6 +253,114 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.log.error({ err: error, tenantId: id }, 'Failed to reapply CRM defaults');
       return reply.code(502).send({ error: 'Could not apply CRM defaults' });
     }
+  });
+
+  /**
+   * Backfill Person phone/about/birthday + soft-merge duplicates by phone (GramJS).
+   * Body: { telegramId?, username?, personId?, limit?, async? }.
+   * Omit targets → all gift + telegram CRM links. `async:true` queues BullMQ job.
+   */
+  fastify.post('/tenants/:id/enrich-telegram-profiles', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as {
+      telegramId?: string;
+      username?: string;
+      personId?: string;
+      limit?: number;
+      async?: boolean;
+    };
+
+    const gramjs = await fastify.prisma.botInstance.findFirst({
+      where: {
+        tenantId: id,
+        botType: 'ai_gramjs',
+        status: 'active',
+        botTokenEncrypted: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!gramjs) {
+      return reply.code(409).send({
+        error: 'no_gramjs_session',
+        hint: 'Connect personal Telegram at /dashboard/ai/gramjs first',
+      });
+    }
+
+    if (body.async) {
+      try {
+        await enqueueGramjsCrmEnrich({
+          tenantId: id,
+          botId: gramjs.id,
+          limit: body.limit,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/already exists|JobId/i.test(msg)) {
+          return reply.code(500).send({ error: 'enqueue_failed', detail: msg });
+        }
+      }
+      return reply.send({ ok: true, queued: true, gramjsBotId: gramjs.id });
+    }
+
+    const targets =
+      body.telegramId || body.username || body.personId
+        ? [
+            {
+              telegramId: body.telegramId,
+              username: body.username,
+              personId: body.personId,
+            },
+          ]
+        : undefined;
+
+    const summary = await runTelegramCrmEnrich({
+      prisma: fastify.prisma,
+      twenty: fastify.twenty,
+      tenantId: id,
+      botId: gramjs.id,
+      limit: body.limit,
+      targets,
+    });
+    if (!summary.ok && summary.error === 'tenant_not_found') {
+      return reply.code(404).send({ error: 'Tenant not found' });
+    }
+    if (!summary.ok && summary.error === 'crm_not_provisioned') {
+      return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+    }
+    return reply.send(summary);
+  });
+
+  /**
+   * Backfill Person.telegram open links from Conversation/GiftSubscriber MTProto ids
+   * when no @username. Body: { limit?, extra?: [{ personId, userId }] }.
+   * Never invents t.me/+phone; does not overwrite https://t.me/{username}.
+   */
+  fastify.post('/tenants/:id/backfill-telegram-open-links', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as {
+      limit?: number;
+      extra?: Array<{ personId?: string; userId?: string }>;
+    };
+    const extra = (body.extra || [])
+      .map((e) => ({
+        personId: String(e.personId || '').trim(),
+        userId: String(e.userId || '').trim(),
+      }))
+      .filter((e) => e.personId && /^\d{1,20}$/.test(e.userId));
+
+    const summary = await backfillTelegramOpenLinks({
+      prisma: fastify.prisma,
+      tenantId: id,
+      limit: body.limit,
+      extra,
+    });
+    if (!summary.ok && summary.error === 'tenant_not_found') {
+      return reply.code(404).send({ error: 'Tenant not found' });
+    }
+    if (!summary.ok && summary.error === 'crm_not_provisioned') {
+      return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+    }
+    return reply.send(summary);
   });
 
   // --- Force-refresh Voxly CRM Chat app (AI buttons, etc.) ---
@@ -268,48 +432,50 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send({ message: 'Tenant suspended', tenant });
   });
 
-  // --- Set custom pricing ---
+  // --- Legacy pricing POST → use PUT /api/admin/pricing/tenants/:id ---
   fastify.post('/tenants/:id/pricing', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as {
-      productCode: string;
-      customPriceRub?: number;
-      freeUntil?: string;
-      aiMarkupPercent?: number;
-      note?: string;
+      productCode?: string;
+      customPriceRub?: number | null;
     };
-    const prisma = fastify.prisma;
-
-    const override = await prisma.pricingOverride.upsert({
-      where: {
-        tenantId_productCode: { tenantId: id, productCode: body.productCode },
-      },
-      create: {
-        tenantId: id,
-        productCode: body.productCode,
-        customPriceRub: body.customPriceRub,
-        freeUntil: body.freeUntil ? new Date(body.freeUntil) : null,
-        aiMarkupPercent: body.aiMarkupPercent,
-        note: body.note,
-      },
-      update: {
-        customPriceRub: body.customPriceRub,
-        freeUntil: body.freeUntil ? new Date(body.freeUntil) : null,
-        aiMarkupPercent: body.aiMarkupPercent,
-        note: body.note,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        tenantId: id,
-        actorUserId: actorUserId(request as any),
-        action: 'pricing_override',
-        payload: { overrideId: override.id, productCode: body.productCode },
-      },
-    });
-
-    return reply.send(override);
+    if (!body.productCode) {
+      return reply.code(400).send({
+        error: 'Deprecated. Use PUT /api/admin/pricing/tenants/:id with SKU fields.',
+      });
+    }
+    const { MONTHLY_PRICE_SKU_SET, saveTenantPrices } = await import(
+      '../services/platform-pricing.js'
+    );
+    if (!MONTHLY_PRICE_SKU_SET.has(body.productCode)) {
+      return reply.code(400).send({
+        error: `Unsupported productCode for list price. Use PUT /api/admin/pricing/tenants/:id`,
+      });
+    }
+    try {
+      const view = await saveTenantPrices(fastify.prisma, id, {
+        [body.productCode]: body.customPriceRub ?? null,
+      } as any);
+      await fastify.prisma.auditLog.create({
+        data: {
+          tenantId: id,
+          actorUserId: actorUserId(request as any),
+          action: 'pricing_tenant_update',
+          payload: {
+            legacyPost: true,
+            productCode: body.productCode,
+            customPriceRub: body.customPriceRub ?? null,
+            slug: view.slug,
+          },
+        },
+      });
+      return reply.send({ ok: true, deprecated: true, ...view });
+    } catch (err) {
+      const status = (err as { statusCode?: number }).statusCode || 500;
+      return reply.code(status).send({
+        error: err instanceof Error ? err.message : 'Failed to save pricing',
+      });
+    }
   });
 
   // --- Manual balance credit ---
@@ -690,12 +856,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put('/crm/pricing', async (request, reply) => {
     const body = z
       .object({
-        baseMonthly: z.number().min(0).max(1_000_000),
-        extraSeatMonthly: z.number().min(0).max(1_000_000),
+        baseMonthly: z.number().min(1).max(1_000_000),
+        extraSeatMonthly: z.number().min(1).max(1_000_000),
       })
       .safeParse(request.body);
     if (!body.success) {
-      return reply.code(400).send({ error: 'baseMonthly and extraSeatMonthly required (≥ 0)' });
+      return reply.code(400).send({ error: 'baseMonthly and extraSeatMonthly required (1…1000000)' });
     }
     const { saveCrmPlatformPricing } = await import('../services/crm-pricing-settings.js');
     try {
@@ -721,6 +887,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string };
     const actorId = actorUserId(request as any);
     const prisma = fastify.prisma;
+    const body = (request.body || {}) as { next?: string };
+    const nextRaw = typeof body.next === 'string' ? body.next.trim() : '';
+    const redirectUrl =
+      nextRaw.startsWith('/dashboard') && !nextRaw.includes('//')
+        ? nextRaw
+        : '/dashboard/crm';
 
     const tenant = await prisma.tenant.findUnique({
       where: { id },
@@ -750,13 +922,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         tenantId: id,
         actorUserId: actorId,
         action: 'impersonate',
-        payload: { ownerUserId: owner.id, ownerEmail: owner.email },
+        payload: { ownerUserId: owner.id, ownerEmail: owner.email, redirectUrl },
       },
     });
 
     return reply.send({
       token,
-      redirectUrl: '/dashboard/crm',
+      redirectUrl,
       owner: { email: owner.email, name: `${owner.firstName || ''} ${owner.lastName || ''}`.trim() },
       tenant: { id: tenant.id, slug: tenant.slug },
     });
@@ -829,21 +1001,6 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send(setting);
   });
 };
-
-function getMonthlyPriceForProduct(productCode: string): number {
-  const prices: Record<string, number> = {
-    crm_base: 500,
-    extra_seat: 300,
-    gift_bot: 500,
-    ai_tg: 1000,
-    ai_wa: 500,
-    analytics_metrika: 500,
-    analytics_ga4: 500,
-    analytics_facebook: 500,
-    analytics_vk: 500,
-  };
-  return prices[productCode] || 0;
-}
 
 function emptyFunnelTotals() {
   return {

@@ -33,17 +33,26 @@ import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNE
 import { TwentyClient } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
+import Redis from 'ioredis';
 
 const PORT = Number(process.env.AI_WHATSAPP_PORT || 3006);
 const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
 /**
- * Dangerous opt-in: map LID→phone by matching Contact profilePic CDN fingerprint.
- * Known wrong: avatar twin attached stranger's E.164 (7915… vs real 7985…).
- * Default OFF — WhatsApp UI can show PN without Contacts; Evolution 2.2.3 still
- * omits remoteJidAlt/senderPn until Baileys lidMapping (Evolution ≥2.3.6/2.3.7).
+ * Legacy opt-in for Contact-book-only avatar twin (history sync uses richer
+ * profile-index match: fetchProfile pic/email/website — INC-097 v6).
  */
 const ALLOW_AVATAR_PHONE_MATCH = process.env.WA_LID_AVATAR_PHONE_MATCH === '1';
+/** Max PN profiles to fetchProfile when resolving LID chats (force sync may raise). */
+const WA_PROFILE_INDEX_PN_CAP = Math.min(
+  Math.max(Number(process.env.WA_PROFILE_INDEX_PN_CAP || 800), 50),
+  3000,
+);
+/** Per-sync fetchProfile budget (IsOnWhatsapp/Message PN are prioritized first). */
+const WA_PROFILE_FETCH_CAP = Math.min(
+  Math.max(Number(process.env.WA_PROFILE_FETCH_CAP || 150), 30),
+  WA_PROFILE_INDEX_PN_CAP,
+);
 const WEBHOOK_PUBLIC_URL =
   (process.env.AI_WHATSAPP_WEBHOOK_URL || `http://ai-whatsapp-worker:${PORT}/webhook/evolution`).replace(
     /\/$/,
@@ -135,6 +144,29 @@ const WA_WEBHOOK_EVENTS = [
   'MESSAGES_UPSERT',
   'PRESENCE_UPDATE',
 ] as const;
+
+/** Debounce connect-triggered history sync (CONNECTION_UPDATE + QR poll both fire). */
+const waHistorySyncStartedAt = new Map<string, number>();
+const WA_HISTORY_SYNC_DEBOUNCE_MS = 2 * 60 * 1000;
+
+type WaChatSyncSummary = {
+  ok: boolean;
+  dialogs: number;
+  messagesUpserted: number;
+  peopleSynced: number;
+  skippedGroups: number;
+  skippedSuppressed: number;
+  skippedNoPhone: number;
+  /** findChats row (or contact) with no stored messages — not an open dialog. */
+  skippedNoMessages: number;
+  /** Open chats kept Conversation-only (no E.164/real name) or skipped system peers. */
+  skippedEmptyIdentity: number;
+  repairedEmptyLeads: number;
+  /** LID↔PN twin Conversations merged into one thread (INC-097 v6.1). */
+  mergedTwinConversations: number;
+  error?: string;
+  note?: string;
+};
 
 function waPresenceCacheKey(instanceName: string, peer: string): string {
   return `${instanceName}:${normalizeWaNumber(peer) || peer}`;
@@ -951,6 +983,7 @@ function extractPhoneFromEvoRow(row: any): string | undefined {
   if (!row || typeof row !== 'object') return undefined;
   // Never pass row.id — Evolution Contact ids are CUIDs; stripping non-digits yields
   // garbage like "20034505" from "cmrxq2epw003jt45it0gun5tz" (INC-060).
+  // Never pass row.owner here for Chat rows — owner is often the WA account's own number.
   return extractWaPhoneE164(
     row.remoteJidAlt,
     row.senderPn,
@@ -959,7 +992,6 @@ function extractPhoneFromEvoRow(row: any): string | undefined {
     row.phone,
     row.phoneNumber,
     row.number,
-    row.owner,
     // Only accept remoteJid when it is already @s.whatsapp.net / bare E.164 (not @lid).
     String(row.remoteJid || '').toLowerCase().includes('@lid') ? undefined : row.remoteJid,
   );
@@ -993,7 +1025,1278 @@ type LidPnSource =
   | 'chat_row'
   | 'avatar_twin'
   | 'cached'
+  | 'lid_mapping'
+  | 'is_on_whatsapp'
+  | 'whatsapp_numbers'
+  | 'message_key'
+  | 'message'
   | 'none';
+
+/** Evolution stores Baileys auth in Redis DB 6: hash `evolution:instance:{uuid}`. */
+function evolutionRedisUri(): string {
+  if (process.env.EVOLUTION_REDIS_URI?.trim()) {
+    return process.env.EVOLUTION_REDIS_URI.trim();
+  }
+  if (process.env.CACHE_REDIS_URI?.trim()) {
+    return process.env.CACHE_REDIS_URI.trim();
+  }
+  const base = process.env.REDIS_URL || 'redis://redis:6379';
+  try {
+    const u = new URL(base);
+    u.pathname = '/6';
+    return u.toString();
+  } catch {
+    return 'redis://redis:6379/6';
+  }
+}
+const EVOLUTION_REDIS_URI = evolutionRedisUri();
+
+let evolutionRedis: Redis | null = null;
+function getEvolutionRedis(): Redis {
+  if (!evolutionRedis) {
+    evolutionRedis = new Redis(EVOLUTION_REDIS_URI, {
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: false,
+      lazyConnect: true,
+    });
+  }
+  return evolutionRedis;
+}
+
+function evolutionDbUrl(): string | undefined {
+  if (process.env.EVOLUTION_DATABASE_URL?.trim()) {
+    return process.env.EVOLUTION_DATABASE_URL.trim();
+  }
+  const base = process.env.DATABASE_URL || '';
+  if (!base) return undefined;
+  try {
+    const u = new URL(base);
+    u.pathname = '/evolution';
+    u.search = '';
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const evolutionInstanceIdCache = new Map<string, string>();
+
+type WaPeerProfile = {
+  phone?: string;
+  lidDigits?: string;
+  email?: string;
+  websiteHost?: string;
+  picFp?: string;
+  name?: string;
+};
+
+type WaProfilePnIndex = {
+  byPic: Map<string, string>;
+  byEmail: Map<string, string>;
+  byWebsite: Map<string, string>;
+  profiles: Map<string, WaPeerProfile>;
+};
+
+type ContactBookEntry = {
+  remoteJid: string;
+  phone?: string;
+  lidDigits?: string;
+  pushName?: string;
+  profilePicUrl?: string;
+};
+
+type EvolutionContactBook = {
+  byLid: Map<string, ContactBookEntry>;
+  byPhone: Map<string, ContactBookEntry>;
+  /** Lowercased unique pushName → PN entry (only when name is unique across book). */
+  byUniqueName: Map<string, ContactBookEntry>;
+  phoneEntries: ContactBookEntry[];
+};
+
+function websiteHostKey(raw?: string | null): string | undefined {
+  const s = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0];
+  return s && s.includes('.') ? s : undefined;
+}
+
+/** fetchProfile/fetchBusinessProfile on unmapped @lid returns linked-account wuid/wid (INC-097 v8.2). */
+function isPoisonedWaLinkedAccountProfile(
+  wuidOrWid: string,
+  ownPhoneDigits?: string | null,
+  opts?: { asLid?: boolean; hasAltPn?: boolean; requestedDigits?: string },
+): boolean {
+  const own = ownPhoneDigits ? normalizeWaNumber(ownPhoneDigits) : undefined;
+  if (!own) return false;
+  const raw = String(wuidOrWid || '').toLowerCase();
+  const wuidPhone =
+    extractWaPhoneE164(raw) ||
+    normalizeWaNumber(raw.split('@')[0]?.split(':')[0] || '');
+  if (!wuidPhone || wuidPhone !== own) return false;
+  if (opts?.hasAltPn) return false;
+  if (opts?.asLid) return true;
+  const req = opts?.requestedDigits ? normalizeWaNumber(opts.requestedDigits) : undefined;
+  return !req || req !== own;
+}
+
+async function loadPnCandidatesFromEvolutionDb(
+  instanceName: string,
+  opts?: {
+    /** Scope Message / IsOnWhatsapp to open findChats JIDs (INC-097 v7.1). */
+    openRemoteJids?: string[];
+    /** Bulk Contact table — enrich-only; never primary profile-index fill. */
+    includeContactBook?: boolean;
+  },
+): Promise<string[]> {
+  const instanceId = await resolveEvolutionInstanceId(instanceName);
+  const uri = evolutionDbUrl();
+  if (!instanceId || !uri) return [];
+  const client = new pg.Client({ connectionString: uri });
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw?: string | null) => {
+    const p =
+      raw && isLikelyE164Phone(extractWaPhoneE164(raw) || raw)
+        ? extractWaPhoneE164(raw) || raw
+        : undefined;
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    ordered.push(p);
+  };
+  const openJids = (opts?.openRemoteJids || [])
+    .map((j) => String(j || '').trim().toLowerCase())
+    .filter(Boolean);
+  try {
+    await client.connect();
+    if (openJids.length) {
+      const pnJids = openJids.filter((j) => j.includes('@s.whatsapp.net'));
+      const lidJids = openJids.filter((j) => j.includes('@lid'));
+      for (const jid of pnJids) push(jid);
+      if (lidJids.length) {
+        const onWa = await client.query<{ remoteJid: string; jidOptions: string }>(
+          `SELECT "remoteJid", "jidOptions" FROM "IsOnWhatsapp"
+           WHERE "remoteJid" = ANY($1::text[])
+              OR "jidOptions" LIKE ANY($2::text[])
+           LIMIT 40`,
+          [lidJids, lidJids.map((l) => `%${l}%`)],
+        );
+        for (const row of onWa.rows) {
+          push(
+            phoneFromJidOptions(row.jidOptions, row.remoteJid) ||
+              extractWaPhoneE164(row.remoteJid),
+          );
+        }
+        const altRes = await client.query<{ alt: string | null; pn: string | null }>(
+          `SELECT DISTINCT ("key"->>'remoteJidAlt') AS alt, ("key"->>'senderPn') AS pn
+           FROM "Message"
+           WHERE "instanceId" = $1
+             AND lower(("key"->>'remoteJid')) = ANY($2::text[])
+           LIMIT 40`,
+          [instanceId, lidJids],
+        );
+        for (const row of altRes.rows) {
+          push(row.alt);
+          push(row.pn);
+        }
+      }
+    } else {
+      const msgs = await client.query<{ remoteJid: string }>(
+        `SELECT DISTINCT ("key"->>'remoteJid') AS "remoteJid"
+         FROM "Message"
+         WHERE "instanceId" = $1
+           AND ("key"->>'remoteJid') LIKE '%@s.whatsapp.net'
+         LIMIT $2`,
+        [instanceId, WA_PROFILE_INDEX_PN_CAP],
+      );
+      for (const row of msgs.rows) push(row.remoteJid);
+      const onWa = await client.query<{ remoteJid: string }>(
+        `SELECT "remoteJid" FROM "IsOnWhatsapp"
+         WHERE "remoteJid" LIKE '%@s.whatsapp.net'
+         ORDER BY "updatedAt" DESC NULLS LAST
+         LIMIT $1`,
+        [WA_PROFILE_INDEX_PN_CAP],
+      );
+      for (const row of onWa.rows) push(row.remoteJid);
+    }
+    if (opts?.includeContactBook) {
+      const contacts = await client.query<{ remoteJid: string }>(
+        `SELECT "remoteJid" FROM "Contact"
+         WHERE "instanceId" = $1 AND "remoteJid" LIKE '%@s.whatsapp.net'
+         LIMIT $2`,
+        [instanceId, WA_PROFILE_INDEX_PN_CAP],
+      );
+      for (const row of contacts.rows) push(row.remoteJid);
+    }
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] loadPnCandidatesFromEvolutionDb failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+  return ordered;
+}
+
+type OpenWaPrivateChat = { chat: any; remoteJid: string };
+
+/** Open private findChats peers — profile-index / repair scope (INC-097 v7.1). */
+type OpenWaChatPeers = {
+  lidDigits: Set<string>;
+  phones: Set<string>;
+  pnPhones: Set<string>;
+  remoteJids: Set<string>;
+};
+
+function collectOpenWaChatPeers(
+  chats: OpenWaPrivateChat[],
+  ownPhoneDigits?: string | null,
+): OpenWaChatPeers {
+  const lidDigits = new Set<string>();
+  const phones = new Set<string>();
+  const pnPhones = new Set<string>();
+  const remoteJids = new Set<string>();
+  const own = ownPhoneDigits ? normalizeWaNumber(ownPhoneDigits) : undefined;
+  for (const { chat, remoteJid } of chats) {
+    const j = String(remoteJid || '').trim();
+    if (!j) continue;
+    remoteJids.add(j.toLowerCase());
+    const pn =
+      extractWaPhoneE164(remoteJid, chat?.remoteJidAlt, chat?.senderPn) ||
+      extractPhoneFromEvoRow(chat);
+    if (pn && isLikelyE164Phone(pn) && pn !== own) {
+      phones.add(pn);
+      // remoteJidAlt on @lid chats must feed profile-index PN candidates (INC-097 v8.2).
+      if (j.toLowerCase().includes('@s.whatsapp.net') || isWhatsAppLid(j)) {
+        pnPhones.add(pn);
+      }
+    }
+    if (isWhatsAppLid(remoteJid)) {
+      lidDigits.add(normalizeWaNumber(remoteJid));
+    }
+  }
+  return { lidDigits, phones, pnPhones, remoteJids };
+}
+
+function openPeerConversationOr(
+  peers: OpenWaChatPeers,
+): Array<{ platformUserId: string } | { platformUsername: string }> {
+  const or: Array<{ platformUserId: string } | { platformUsername: string }> = [];
+  for (const lid of peers.lidDigits) or.push({ platformUserId: lid });
+  for (const phone of peers.phones) {
+    or.push({ platformUserId: phone });
+    or.push({ platformUsername: `+${phone}` });
+  }
+  return or;
+}
+
+async function fetchOpenWaPrivateChats(
+  instanceName: string,
+  ownPhoneDigits?: string | null,
+): Promise<{ chats: OpenWaPrivateChat[]; skippedGroups: number }> {
+  const chatsRes = await evoFetch(
+    `/chat/findChats/${encodeURIComponent(instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ where: {} }) },
+  );
+  if (!chatsRes.ok) {
+    return { chats: [], skippedGroups: 0 };
+  }
+  const allChats = unwrapEvoRows(chatsRes.json, ['chats', 'records', 'data']);
+  let skippedGroups = 0;
+  const chats = allChats
+    .map((c) => {
+      const remoteJid = String(
+        c?.remoteJid || c?.id || c?.key?.remoteJid || '',
+      ).trim();
+      return { chat: c, remoteJid };
+    })
+    .filter(({ remoteJid }) => {
+      if (!remoteJid) return false;
+      if (!isPrivateWaRemoteJid(remoteJid)) {
+        skippedGroups += 1;
+        return false;
+      }
+      if (isWaSystemOrSelfJid(remoteJid, ownPhoneDigits)) {
+        skippedGroups += 1;
+        return false;
+      }
+      return true;
+    });
+  chats.sort((a, b) => chatActivityTs(b.chat) - chatActivityTs(a.chat));
+  return { chats, skippedGroups };
+}
+
+/** Prioritize open-chat + message/IsOnWhatsapp PN before bulk Contact book (INC-097 v6). */
+function collectPnProfileIndexCandidates(opts: {
+  openPnPhones: Iterable<string>;
+  dbPhones: string[];
+}): string[] {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw?: string) => {
+    const p = raw && isLikelyE164Phone(raw) ? raw : undefined;
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    ordered.push(p);
+  };
+  for (const p of opts.openPnPhones) push(p);
+  for (const p of opts.dbPhones) push(p);
+  return ordered;
+}
+
+async function fetchWaPeerProfile(
+  instanceName: string,
+  numberOrLid: string,
+  ownPhoneDigits?: string | null,
+): Promise<WaPeerProfile | null> {
+  const raw = String(numberOrLid || '').trim();
+  if (!instanceName || !raw) return null;
+  const digits = normalizeWaNumber(raw);
+  const asLid = isWhatsAppLid(raw) || (digits.length > 14 && !raw.includes('@s.whatsapp.net'));
+  const number = asLid ? `${digits}@lid` : digits;
+  const profileRes = await evoFetch(
+    `/chat/fetchProfile/${encodeURIComponent(instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ number }) },
+  );
+  if (!profileRes.ok || !profileRes.json) return null;
+  const p = profileRes.json as Record<string, unknown>;
+  const wuid = String(p.wuid || '').toLowerCase();
+  const email = String(p.email || '')
+    .trim()
+    .toLowerCase();
+  const websiteRaw = Array.isArray(p.website)
+    ? String(p.website[0] || '')
+    : String(p.website || '');
+  const picture = String(p.picture || p.profilePicUrl || '');
+  const phoneFromAlt = extractWaPhoneE164(
+    p.remoteJidAlt as string | undefined,
+    p.senderPn as string | undefined,
+  );
+  const phoneFromWuid = extractWaPhoneE164(wuid);
+  const poisoned = isPoisonedWaLinkedAccountProfile(wuid, ownPhoneDigits, {
+    asLid,
+    hasAltPn: Boolean(phoneFromAlt),
+    requestedDigits: asLid ? undefined : digits,
+  });
+  const name = cleanWaContactName(
+    String(p.verifiedName || p.name || p.businessName || ''),
+    phoneFromAlt || phoneFromWuid || digits,
+  );
+  return {
+    phone:
+      (phoneFromAlt && isLikelyE164Phone(phoneFromAlt) ? phoneFromAlt : undefined) ||
+      (!poisoned && phoneFromWuid && isLikelyE164Phone(phoneFromWuid)
+        ? phoneFromWuid
+        : undefined),
+    lidDigits:
+      !poisoned && wuid.includes('@lid') ? normalizeWaNumber(wuid) : undefined,
+    email: !poisoned && email.includes('@') ? email : undefined,
+    websiteHost: !poisoned ? websiteHostKey(websiteRaw) : undefined,
+    picFp: profilePicFingerprint(picture),
+    name: !poisoned && name && name !== 'WhatsApp' ? name : undefined,
+  };
+}
+
+function indexPnProfile(index: WaProfilePnIndex, phone: string, profile: WaPeerProfile) {
+  index.profiles.set(phone, { ...profile, phone });
+  if (profile.picFp && !index.byPic.has(profile.picFp)) {
+    index.byPic.set(profile.picFp, phone);
+  }
+  if (profile.email && !index.byEmail.has(profile.email)) {
+    index.byEmail.set(profile.email, phone);
+  }
+  if (profile.websiteHost && !index.byWebsite.has(profile.websiteHost)) {
+    index.byWebsite.set(profile.websiteHost, phone);
+  }
+}
+
+function matchPhoneFromProfileIndex(
+  index: WaProfilePnIndex,
+  lidProfile: WaPeerProfile,
+  pushName?: string,
+): string | undefined {
+  if (lidProfile.email) {
+    const hit = index.byEmail.get(lidProfile.email);
+    if (hit) return hit;
+  }
+  if (lidProfile.websiteHost) {
+    const hit = index.byWebsite.get(lidProfile.websiteHost);
+    if (hit) return hit;
+  }
+  if (!ALLOW_AVATAR_PHONE_MATCH) return undefined;
+  if (lidProfile.picFp) {
+    const hit = index.byPic.get(lidProfile.picFp);
+    if (hit) return hit;
+  }
+  const hint = normalizeContactBookName(lidProfile.name || pushName).replace(/[\s-]+/g, '');
+  if (hint.length >= 4) {
+    const hostHits: string[] = [];
+    for (const [phone, profile] of index.profiles) {
+      const stem = profile.websiteHost?.split('.')[0] || '';
+      if (stem && (hint.includes(stem) || stem.includes(hint))) hostHits.push(phone);
+    }
+    if (hostHits.length === 1) return hostHits[0];
+    const nameKey = normalizeContactBookName(lidProfile.name || pushName);
+    if (nameKey && isUsefulContactBookName(nameKey)) {
+      const hits: string[] = [];
+      for (const [phone, profile] of index.profiles) {
+        if (normalizeContactBookName(profile.name) === nameKey) hits.push(phone);
+      }
+      if (hits.length === 1) return hits[0];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build PN profile index (pic/email/website → E.164) so LID chats can resolve
+ * the phone WhatsApp UI always shows (INC-097 v6). Product: phone is always
+ * visible in chat header even when not in the address book.
+ */
+async function buildWaProfilePnIndex(opts: {
+  instanceName: string;
+  contactBook: EvolutionContactBook;
+  openPnPhones?: Iterable<string>;
+  prefetchedDbPhones?: string[];
+  openRemoteJids?: string[];
+  fetchCap?: number;
+  force?: boolean;
+  ownPhoneDigits?: string | null;
+}): Promise<WaProfilePnIndex> {
+  const index: WaProfilePnIndex = {
+    byPic: new Map(),
+    byEmail: new Map(),
+    byWebsite: new Map(),
+    profiles: new Map(),
+  };
+  // Free: Contact book CDN fingerprints (no API) — pic match is last resort (INC-059).
+  for (const entry of opts.contactBook.phoneEntries) {
+    if (!entry.phone) continue;
+    const fp = profilePicFingerprint(entry.profilePicUrl);
+    if (fp && !index.byPic.has(fp)) index.byPic.set(fp, entry.phone);
+  }
+
+  const dbPhones =
+    opts.prefetchedDbPhones ||
+    (await loadPnCandidatesFromEvolutionDb(opts.instanceName, {
+      openRemoteJids: opts.openRemoteJids,
+    }));
+  const candidates = collectPnProfileIndexCandidates({
+    openPnPhones: opts.openPnPhones || [],
+    dbPhones,
+  });
+  const defaultCap = opts.force ? WA_PROFILE_FETCH_CAP : Math.min(WA_PROFILE_FETCH_CAP, 80);
+  const cap = opts.fetchCap ?? defaultCap;
+  let fetched = 0;
+  for (const phone of candidates) {
+    if (fetched >= cap) break;
+    if (index.profiles.has(phone)) continue;
+    const profile = await fetchWaPeerProfile(
+      opts.instanceName,
+      phone,
+      opts.ownPhoneDigits,
+    );
+    fetched += 1;
+    if (!profile) continue;
+    // fetchProfile(PN) returns wuid as PN — keep phone candidate.
+    indexPnProfile(index, phone, { ...profile, phone });
+    if (fetched % 25 === 0) {
+      await sleep(100);
+    } else {
+      await sleep(40);
+    }
+  }
+  console.log(
+    `[ai-whatsapp] profile-index instance=${opts.instanceName} fetched=${fetched} byPic=${index.byPic.size} byEmail=${index.byEmail.size} byWeb=${index.byWebsite.size}`,
+  );
+  return index;
+}
+
+async function rememberLidPhoneMapping(
+  instanceName: string,
+  lidDigits: string,
+  phoneE164: string,
+): Promise<void> {
+  const lid = normalizeWaNumber(lidDigits);
+  const phone = normalizeWaNumber(phoneE164);
+  if (!lid || !phone || !isWhatsAppLid(`${lid}@lid`) || !isLikelyE164Phone(phone)) return;
+  try {
+    const instanceId = await resolveEvolutionInstanceId(instanceName);
+    if (!instanceId) return;
+    const redis = getEvolutionRedis();
+    if (redis.status !== 'ready') {
+      await redis.connect().catch(() => undefined);
+    }
+    const key = `evolution:instance:${instanceId}`;
+    await redis.hset(key, `lid-mapping-${lid}_reverse`, phone);
+    await redis.hset(key, `lid-mapping-${phone}`, lid);
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** All LID digits Evolution Redis maps to the same E.164 (multi-LID same peer). */
+async function listLidDigitsMappedToPhone(
+  instanceName: string,
+  phoneE164: string,
+): Promise<string[]> {
+  const phone = normalizeWaNumber(phoneE164);
+  if (!instanceName || !isLikelyE164Phone(phone)) return [];
+  try {
+    const instanceId = await resolveEvolutionInstanceId(instanceName);
+    if (!instanceId) return [];
+    const redis = getEvolutionRedis();
+    if (redis.status !== 'ready') {
+      await redis.connect().catch(() => undefined);
+    }
+    const rows = await redis.hgetall(`evolution:instance:${instanceId}`);
+    const lids: string[] = [];
+    for (const [k, v] of Object.entries(rows)) {
+      if (!k.startsWith('lid-mapping-') || !k.endsWith('_reverse')) continue;
+      if (normalizeWaNumber(String(v)) !== phone) continue;
+      const lid = k.slice('lid-mapping-'.length, -'_reverse'.length);
+      if (lid && isWhatsAppLid(lid)) lids.push(normalizeWaNumber(lid));
+    }
+    return [...new Set(lids)];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchAllEvoMessagesForJid(
+  instanceName: string,
+  remoteJid: string,
+  maxMessages = 500,
+): Promise<any[]> {
+  const out: any[] = [];
+  const pageSize = 50;
+  let page = 1;
+  for (;;) {
+    const res = await evoFetch(
+      `/chat/findMessages/${encodeURIComponent(instanceName)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          where: { key: { remoteJid } },
+          page,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+        }),
+      },
+    );
+    if (!res.ok) break;
+    const envelope = res.json?.messages || res.json;
+    const rows = unwrapEvoRows(res.json, ['messages', 'records', 'data']);
+    const batch = Array.isArray(rows) ? rows : [];
+    out.push(...batch);
+    const total = Number(envelope?.total || envelope?.messages?.total || 0);
+    const pages = Number(envelope?.pages || envelope?.messages?.pages || 1);
+    if (batch.length === 0 || out.length >= maxMessages || page >= pages || page >= 20) {
+      break;
+    }
+    page += 1;
+    await sleep(80);
+  }
+  const byId = new Map<string, any>();
+  for (const m of out) {
+    const id = String(m?.key?.id || m?.id || '').trim();
+    if (id) byId.set(id, m);
+  }
+  return [...byId.values()].sort(
+    (a, b) => evoUnixSeconds(a?.messageTimestamp) - evoUnixSeconds(b?.messageTimestamp),
+  );
+}
+
+async function nextWaDealSequence(tenantId: string): Promise<number> {
+  const n = await prisma.conversation.count({
+    where: {
+      tenantId,
+      platform: 'whatsapp',
+      twentyOpportunityId: { not: null },
+    },
+  });
+  return n + 1;
+}
+
+async function nextNonameLabel(tenantId: string): Promise<string> {
+  const rows = await prisma.conversation.findMany({
+    where: {
+      tenantId,
+      platform: 'whatsapp',
+      platformFirstName: { startsWith: 'noname' },
+    },
+    select: { platformFirstName: true },
+  });
+  let max = 0;
+  for (const r of rows) {
+    const m = String(r.platformFirstName || '').match(/^noname(\d+)$/i);
+    if (m) max = Math.max(max, Number(m[1]) || 0);
+  }
+  return `noname${max + 1}`;
+}
+
+async function resolveEvolutionInstanceId(
+  instanceName: string,
+): Promise<string | undefined> {
+  const name = String(instanceName || '').trim();
+  if (!name) return undefined;
+  const cached = evolutionInstanceIdCache.get(name);
+  if (cached) return cached;
+
+  const uri = evolutionDbUrl();
+  if (!uri) return undefined;
+  const client = new pg.Client({ connectionString: uri });
+  try {
+    await client.connect();
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM "Instance" WHERE name = $1 LIMIT 1`,
+      [name],
+    );
+    const id = res.rows[0]?.id;
+    if (id) evolutionInstanceIdCache.set(name, id);
+    return id;
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] resolveEvolutionInstanceId failed',
+      err instanceof Error ? err.message : err,
+    );
+    return undefined;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+function parseLidMappingValue(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  let s = String(raw).trim();
+  for (let i = 0; i < 2; i += 1) {
+    if (
+      (s.startsWith('"') && s.endsWith('"')) ||
+      (s.startsWith("'") && s.endsWith("'"))
+    ) {
+      try {
+        s = JSON.parse(s);
+      } catch {
+        s = s.slice(1, -1);
+      }
+      continue;
+    }
+    break;
+  }
+  const digits = normalizeWaNumber(s);
+  return digits || undefined;
+}
+
+/**
+ * Baileys lidMapping in Evolution Redis (INC-059 / v2.3.7):
+ *   lid-mapping-{phone} → lid digits
+ *   lid-mapping-{lid}_reverse → phone digits
+ */
+async function resolvePhoneFromEvolutionLidMapping(
+  instanceName: string,
+  lidDigits: string,
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const lid = normalizeWaNumber(lidDigits);
+  if (!instanceName || !lid || !isWhatsAppLid(lid)) {
+    return { source: 'none' };
+  }
+  try {
+    const instanceId = await resolveEvolutionInstanceId(instanceName);
+    if (!instanceId) return { source: 'none' };
+    const redis = getEvolutionRedis();
+    if (redis.status !== 'ready') {
+      await redis.connect().catch(() => undefined);
+    }
+    const key = `evolution:instance:${instanceId}`;
+    const raw = await redis.hget(key, `lid-mapping-${lid}_reverse`);
+    const phone = parseLidMappingValue(raw);
+    if (phone && isLikelyE164Phone(phone)) {
+      console.log(
+        `[ai-whatsapp] LID→phone via lid_mapping lid=${lid} phone=+${phone}`,
+      );
+      return { phone, source: 'lid_mapping' };
+    }
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] lid_mapping lookup failed',
+      err instanceof Error ? err.message : err,
+    );
+  }
+  return { source: 'none' };
+}
+
+/** PN from Evolution IsOnWhatsapp.jidOptions (populated when inbound has remoteJidAlt). */
+function phoneFromJidOptions(
+  jidOptions: string | null | undefined,
+  lidJid?: string,
+): string | undefined {
+  const raw = String(jidOptions || '').trim();
+  if (!raw) return undefined;
+  const lid = lidJid?.toLowerCase();
+  const phones: string[] = [];
+  for (const part of raw.split(',')) {
+    const jid = part.trim().toLowerCase();
+    if (!jid || jid === lid || jid.includes('@lid')) continue;
+    const phone = extractWaPhoneE164(jid);
+    if (phone) phones.push(phone);
+  }
+  if (phones.length === 1) return phones[0];
+  return undefined;
+}
+
+async function resolvePhoneFromIsOnWhatsapp(
+  instanceName: string,
+  lidDigits: string,
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const lid = normalizeWaNumber(lidDigits);
+  if (!instanceName || !lid || !isWhatsAppLid(lid)) {
+    return { source: 'none' };
+  }
+  const uri = evolutionDbUrl();
+  if (!uri) return { source: 'none' };
+  const lidJid = `${lid}@lid`;
+  const client = new pg.Client({ connectionString: uri });
+  try {
+    await client.connect();
+    const res = await client.query<{ remoteJid: string; jidOptions: string }>(
+      `SELECT "remoteJid", "jidOptions" FROM "IsOnWhatsapp"
+       WHERE "remoteJid" = $1 OR "jidOptions" LIKE $2
+       ORDER BY "updatedAt" DESC NULLS LAST
+       LIMIT 5`,
+      [lidJid, `%${lidJid}%`],
+    );
+    for (const row of res.rows) {
+      const fromOptions = phoneFromJidOptions(row.jidOptions, lidJid);
+      const fromRemote =
+        row.remoteJid.toLowerCase().includes('@lid')
+          ? undefined
+          : extractWaPhoneE164(row.remoteJid);
+      const phone = fromOptions || fromRemote;
+      if (phone && isLikelyE164Phone(phone)) {
+        console.log(
+          `[ai-whatsapp] LID→phone via is_on_whatsapp lid=${lid} phone=+${phone}`,
+        );
+        return { phone, source: 'is_on_whatsapp' };
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] is_on_whatsapp lookup failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+  return { source: 'none' };
+}
+
+/** Evolution POST /chat/whatsappNumbers — uses IsOnWhatsapp cache + Baileys onWhatsApp. */
+async function resolvePhoneFromEvolutionWhatsappNumbers(
+  instanceName: string,
+  lidDigits: string,
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const lid = normalizeWaNumber(lidDigits);
+  if (!instanceName || !lid || !isWhatsAppLid(lid)) {
+    return { source: 'none' };
+  }
+  const res = await evoFetch(
+    `/chat/whatsappNumbers/${encodeURIComponent(instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ numbers: [`${lid}@lid`] }) },
+  );
+  if (!res.ok) return { source: 'none' };
+  const rows: any[] = Array.isArray(res.json) ? res.json : [];
+  const hit = rows[0];
+  if (!hit?.exists) return { source: 'none' };
+  const jid = String(hit.jid || '');
+  if (jid.toLowerCase().includes('@lid')) return { source: 'none' };
+  const phone = extractWaPhoneE164(jid, hit.number);
+  if (phone && isLikelyE164Phone(phone)) {
+    console.log(
+      `[ai-whatsapp] LID→phone via whatsapp_numbers lid=${lid} phone=+${phone} jid=${jid}`,
+    );
+    return { phone, source: 'whatsapp_numbers' };
+  }
+  return { source: 'none' };
+}
+
+/** Stored Message.key remoteJidAlt / senderPn when webhook omitted them (Evolution ≥2.3.7). */
+async function resolvePhoneFromMessageKeyAlt(
+  instanceName: string,
+  lidDigits: string,
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const lid = normalizeWaNumber(lidDigits);
+  if (!instanceName || !lid || !isWhatsAppLid(lid)) {
+    return { source: 'none' };
+  }
+  const instanceId = await resolveEvolutionInstanceId(instanceName);
+  const uri = evolutionDbUrl();
+  if (!instanceId || !uri) return { source: 'none' };
+  const lidJid = `${lid}@lid`.toLowerCase();
+  const client = new pg.Client({ connectionString: uri });
+  try {
+    await client.connect();
+    const res = await client.query<{ alt: string | null; pn: string | null }>(
+      `SELECT ("key"->>'remoteJidAlt') AS alt, ("key"->>'senderPn') AS pn
+       FROM "Message"
+       WHERE "instanceId" = $1
+         AND lower("key"->>'remoteJid') = $2
+         AND (
+           ("key"->>'remoteJidAlt') LIKE '%@s.whatsapp.net'
+           OR ("key"->>'senderPn') IS NOT NULL
+         )
+       ORDER BY "messageTimestamp" DESC
+       LIMIT 1`,
+      [instanceId, lidJid],
+    );
+    const phone = extractWaPhoneE164(res.rows[0]?.alt, res.rows[0]?.pn);
+    if (phone && isLikelyE164Phone(phone)) {
+      console.log(
+        `[ai-whatsapp] LID→phone via message_key lid=${lid} phone=+${phone}`,
+      );
+      return { phone, source: 'message_key' };
+    }
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] message_key lookup failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+  return { source: 'none' };
+}
+
+/** Official Evolution/Baileys LID→PN chain (profile-index is separate fallback). */
+async function resolveLidPhoneFromEvolution(
+  instanceName: string,
+  lidDigits: string,
+  hints?: { pushName?: string | null; profilePicUrl?: string | null },
+): Promise<{ phone?: string; source: LidPnSource }> {
+  const fromMsg = await resolvePhoneFromMessageKeyAlt(instanceName, lidDigits);
+  if (fromMsg.phone) return fromMsg;
+
+  const fromMap = await resolvePhoneFromEvolutionLidMapping(instanceName, lidDigits);
+  if (fromMap.phone) return fromMap;
+
+  const fromOnWa = await resolvePhoneFromIsOnWhatsapp(instanceName, lidDigits);
+  if (fromOnWa.phone) return fromOnWa;
+
+  const fromApi = await resolvePhoneFromEvolutionWhatsappNumbers(instanceName, lidDigits);
+  if (fromApi.phone) return fromApi;
+
+  const fromContacts = await resolvePhoneFromEvolutionContacts(
+    instanceName,
+    lidDigits,
+    hints,
+  );
+  if (fromContacts.phone) return fromContacts;
+
+  const fromChats = await resolvePhoneFromEvolutionDb(instanceName, lidDigits);
+  if (fromChats.phone) return fromChats;
+
+  return { source: 'none' };
+}
+
+async function resolveContactPushName(
+  instanceName: string,
+  phoneE164: string,
+): Promise<string | undefined> {
+  const phone = normalizeWaNumber(phoneE164);
+  if (!instanceName || !phone || !isLikelyE164Phone(phone)) return undefined;
+  const jid = `${phone}@s.whatsapp.net`;
+  const res = await evoFetch(`/chat/findContacts/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    body: JSON.stringify({ where: { remoteJid: jid } }),
+  });
+  if (!res.ok) return undefined;
+  const rows: EvoContactRow[] = Array.isArray(res.json)
+    ? res.json
+    : Array.isArray(res.json?.contacts)
+      ? res.json.contacts
+      : [];
+  const hit =
+    rows.find((c) => String(c.remoteJid || '').toLowerCase() === jid) || rows[0];
+  const name = String(hit?.pushName || '').trim();
+  if (!name) return undefined;
+  const cleaned = cleanWaContactName(name, phone);
+  return cleaned !== 'WhatsApp' ? cleaned : undefined;
+}
+
+function normalizeContactBookName(name?: string | null): string {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function isUsefulContactBookName(name?: string | null): boolean {
+  const cleaned = cleanWaContactName(name);
+  if (cleaned === 'WhatsApp') return false;
+  // Require a letter so we do not match "123" / emoji-only nicknames (INC-055).
+  return /[a-zа-яё]/i.test(cleaned) && cleaned.length >= 2;
+}
+
+async function loadEvolutionContactBook(
+  instanceName: string,
+): Promise<EvolutionContactBook> {
+  const empty: EvolutionContactBook = {
+    byLid: new Map(),
+    byPhone: new Map(),
+    byUniqueName: new Map(),
+    phoneEntries: [],
+  };
+  if (!instanceName) return empty;
+  const res = await evoFetch(`/chat/findContacts/${encodeURIComponent(instanceName)}`, {
+    method: 'POST',
+    body: JSON.stringify({ where: {} }),
+  });
+  if (!res.ok) return empty;
+  const rows: EvoContactRow[] = Array.isArray(res.json)
+    ? res.json
+    : Array.isArray(res.json?.contacts)
+      ? res.json.contacts
+      : [];
+  if (!rows.length) return empty;
+
+  const byLid = new Map<string, ContactBookEntry>();
+  const byPhone = new Map<string, ContactBookEntry>();
+  const nameCounts = new Map<string, number>();
+  const phoneEntries: ContactBookEntry[] = [];
+
+  for (const row of rows) {
+    const remoteJid = String(row.remoteJid || '').trim();
+    if (!remoteJid) continue;
+    const jidLower = remoteJid.toLowerCase();
+    if (jidLower.endsWith('@g.us') || jidLower.includes('@broadcast')) continue;
+
+    const phoneFromJid = jidLower.endsWith('@s.whatsapp.net')
+      ? extractWaPhoneE164(remoteJid)
+      : undefined;
+    const phoneFromFields = extractPhoneFromEvoRow(row);
+    const phone = phoneFromJid || phoneFromFields;
+    const lidDigits = isWhatsAppLid(remoteJid)
+      ? normalizeWaNumber(remoteJid)
+      : undefined;
+    const pushName = String(row.pushName || '').trim() || undefined;
+    const entry: ContactBookEntry = {
+      remoteJid,
+      phone: phone && isLikelyE164Phone(phone) ? phone : undefined,
+      lidDigits,
+      pushName,
+      profilePicUrl: row.profilePicUrl || undefined,
+    };
+
+    if (entry.lidDigits) byLid.set(entry.lidDigits, entry);
+    if (entry.phone) {
+      byPhone.set(entry.phone, entry);
+      if (jidLower.endsWith('@s.whatsapp.net')) phoneEntries.push(entry);
+    }
+    if (entry.phone && isUsefulContactBookName(pushName)) {
+      const key = normalizeContactBookName(pushName);
+      nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+    }
+  }
+
+  const byUniqueName = new Map<string, ContactBookEntry>();
+  for (const entry of phoneEntries) {
+    if (!entry.phone || !isUsefulContactBookName(entry.pushName)) continue;
+    const key = normalizeContactBookName(entry.pushName);
+    if ((nameCounts.get(key) || 0) !== 1) continue;
+    byUniqueName.set(key, entry);
+  }
+
+  return { byLid, byPhone, byUniqueName, phoneEntries };
+}
+
+/**
+ * Prefer Contact book for LID chats: explicit LID row fields, then unique pushName → PN.
+ * Avatar twin stays opt-in (WA_LID_AVATAR_PHONE_MATCH).
+ */
+function matchContactBookIdentity(
+  book: EvolutionContactBook,
+  opts: { lidDigits?: string; pushName?: string | null },
+): { phone?: string; name?: string; source: LidPnSource } {
+  const lid = opts.lidDigits ? normalizeWaNumber(opts.lidDigits) : '';
+  if (lid && book.byLid.has(lid)) {
+    const row = book.byLid.get(lid)!;
+    if (row.phone) {
+      return {
+        phone: row.phone,
+        name: isUsefulContactBookName(row.pushName) ? row.pushName : undefined,
+        source: 'contact_row',
+      };
+    }
+  }
+
+  const nameKey = normalizeContactBookName(opts.pushName);
+  if (nameKey && isUsefulContactBookName(opts.pushName) && book.byUniqueName.has(nameKey)) {
+    const hit = book.byUniqueName.get(nameKey)!;
+    if (hit.phone) {
+      console.log(
+        `[ai-whatsapp] LID→phone via unique_contact_name name=${opts.pushName} phone=+${hit.phone}`,
+      );
+      return {
+        phone: hit.phone,
+        name: hit.pushName,
+        source: 'contact_row',
+      };
+    }
+  }
+
+  return { source: 'none' };
+}
+
+/**
+ * After Person has E.164 — positively confirm Telegram presence, write @username,
+ * then run existing open-profile enrich (GetFullUser → applyTelegramProfile).
+ * Never invent `https://t.me/+{phone}`.
+ */
+async function enrichTelegramPresenceFromPhone(opts: {
+  tenantId: string;
+  personId: string;
+  phoneE164: string;
+  client: TwentyClient;
+}): Promise<void> {
+  const phone = normalizeWaNumber(opts.phoneE164);
+  if (!opts.personId || !phone || !isLikelyE164Phone(phone)) return;
+
+  let username: string | undefined;
+  let telegramUserId: string | undefined;
+
+  const bridge = (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(
+    /\/$/,
+    '',
+  );
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (token) {
+    try {
+      const res = await fetch(`${bridge}/users/by-phone`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tenantId: opts.tenantId, phone: `+${phone}` }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        exists?: boolean;
+        username?: string;
+        userId?: string;
+      };
+      if (res.ok && json.ok && json.exists === true) {
+        if (json.userId) telegramUserId = String(json.userId);
+        if (json.username) {
+          username = String(json.username).replace(/^@/, '');
+        } else if (!telegramUserId) {
+          console.log(
+            `[ai-whatsapp] telegram presence confirmed but no @username/userId person=${opts.personId} phone=+${phone}`,
+          );
+          return;
+        }
+        // No @username but userId → open via /open/tg bridge (never invent t.me/+phone).
+      } else if (res.ok && json.ok && json.exists === false) {
+        return;
+      }
+    } catch (err) {
+      console.warn(
+        '[ai-whatsapp] gramjs by-phone failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  // Scrape only accepts a real public @username — never treat t.me/+ phone pages as proof.
+  if (!username) {
+    try {
+      const url = `https://t.me/+${phone}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (compatible; VoxlyCRM/1.0; +https://getvoxly.ru)',
+          Accept: 'text/html',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(8000),
+      });
+      const html = await res.text();
+      if (
+        /tgme_page_error|If you have.+Telegram|user not found|не найден/i.test(html)
+      ) {
+        return;
+      }
+      const userMatch =
+        html.match(/tgme_username["'\s>]+@?([A-Za-z0-9_]{5,})/i) ||
+        html.match(
+          /property="og:url"\s+content="https:\/\/t\.me\/([A-Za-z0-9_]{5,})"/i,
+        );
+      const handle = userMatch?.[1];
+      if (
+        handle &&
+        !/^(share|addstickers|proxy|socks|setlanguage|\+?\d+)$/i.test(handle)
+      ) {
+        username = handle;
+      }
+    } catch {
+      /* optional */
+    }
+  }
+
+  if (!username && !telegramUserId) return;
+
+  try {
+    await opts.client.updatePersonTelegram(opts.personId, {
+      username,
+      userId: telegramUserId,
+    });
+    console.log(
+      `[ai-whatsapp] telegram presence person=${opts.personId} phone=+${phone} username=${username ? `@${username}` : '-'} userId=${telegramUserId || '-'}`,
+    );
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] update telegram social failed',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // Open-profile enrich (same path as TG/gift workers): GetFullUser → about/birthday/channel/name.
+  if (!token || (!username && !telegramUserId)) return;
+  try {
+    const fullRes = await fetch(`${bridge}/users/full`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tenantId: opts.tenantId,
+        username,
+        userId: telegramUserId,
+      }),
+    });
+    const fullJson = (await fullRes.json().catch(() => ({}))) as {
+      ok?: boolean;
+      profile?: {
+        username?: string;
+        userId?: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        about?: string;
+        birthday?: string;
+        personalChannelUrl?: string;
+      };
+      error?: string;
+    };
+    if (!fullRes.ok || !fullJson.ok || !fullJson.profile) {
+      if (fullJson.error) {
+        console.warn(
+          `[ai-whatsapp] telegram full profile skip person=${opts.personId} @${username || telegramUserId}: ${fullJson.error}`,
+        );
+      }
+      return;
+    }
+
+    const profile = { ...fullJson.profile };
+    // Prefer verified @username; else keep open-link via userId (never t.me/+).
+    if (username) profile.username = username;
+    if (telegramUserId) profile.userId = telegramUserId;
+
+    // Phone cross-check: only apply TG phone when it matches known WA E.164.
+    const tgPhone = profile.phone ? normalizeWaNumber(profile.phone) : '';
+    if (tgPhone && isLikelyE164Phone(tgPhone)) {
+      if (tgPhone === phone) {
+        profile.phone = `+${tgPhone}`;
+      } else {
+        console.warn(
+          `[ai-whatsapp] telegram phone mismatch person=${opts.personId} wa=+${phone} tg=+${tgPhone} — keep WA phone`,
+        );
+        delete profile.phone;
+      }
+    } else {
+      delete profile.phone;
+    }
+
+    await opts.client.applyTelegramProfile(opts.personId, profile);
+    console.log(
+      `[ai-whatsapp] telegram profile enrich person=${opts.personId} @${username || '-'} userId=${telegramUserId || '-'} fields=${[
+        (profile.username || profile.userId) && 'telegram',
+        profile.firstName && 'name',
+        profile.about && 'about',
+        profile.birthday && 'birthday',
+        profile.personalChannelUrl && 'website',
+        profile.phone && 'phone_verified',
+      ]
+        .filter(Boolean)
+        .join(',')}`,
+    );
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] telegram full profile enrich failed',
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/** Clear invented `https://t.me/+{digits}` Telegram fields (not a verified handle). */
+async function clearFalseTelegramPhoneLinks(opts: {
+  workspaceId: string;
+  personIds: string[];
+}): Promise<number> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !opts.workspaceId || !opts.personIds.length) return 0;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [opts.workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return 0;
+    const result = await client.query(
+      `UPDATE "${schema}".person
+       SET telegram = NULL, "updatedAt" = NOW()
+       WHERE id = ANY($1::uuid[])
+         AND "deletedAt" IS NULL
+         AND telegram IS NOT NULL
+         AND (
+           telegram ~* '^https?://t\\.me/\\+\\d+'
+           OR telegram ~* '^t\\.me/\\+\\d+'
+         )`,
+      [opts.personIds],
+    );
+    return result.rowCount || 0;
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] clearFalseTelegramPhoneLinks failed',
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** System / self chats that must never become CRM leads. */
+function isWaSystemOrSelfJid(
+  remoteJid: string,
+  ownPhoneDigits?: string | null,
+): boolean {
+  const j = String(remoteJid || '').toLowerCase().trim();
+  const digits = normalizeWaNumber(j);
+  if (!j) return true;
+  if (j === '0@s.whatsapp.net' || digits === '0') return true;
+  if (j.startsWith('status@') || j.endsWith('@broadcast')) return true;
+  if (ownPhoneDigits && digits && digits === normalizeWaNumber(ownPhoneDigits)) {
+    return true;
+  }
+  return false;
+}
 
 /** E.164 digits from Conversation.platformUsername (+7985… / 7985…). */
 function phoneFromPlatformUsername(username?: string | null): string | undefined {
@@ -1037,10 +2340,78 @@ async function resolvePhoneFromConversationCache(opts: {
   return { source: 'none' };
 }
 
-/** Business WA profile — email/website/address; IG/FB only if present as URLs. */
+/**
+ * Human label from WA business website host (e.g. boomerservice.ru → Boomerservice).
+ * Never invent phones; only a display name when Evolution omits verifiedName.
+ * Skip punycode/IDN hosts (xn--) — use description/email instead (INC-097 v5).
+ */
+function deriveNameFromWebsiteHost(website?: string | null): string | undefined {
+  const raw = String(website || '').trim();
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw.startsWith('http') ? raw : `https://${raw}`);
+    let host = u.hostname.replace(/^www\./i, '');
+    // Punycode IDN (e.g. xn--80a… for рен-авто.рф) is not a usable CRM name.
+    if (/^xn--/i.test(host) || host.split('.').some((p) => /^xn--/i.test(p))) {
+      return undefined;
+    }
+    const parts = host.split('.').filter(Boolean);
+    if (parts.length >= 2) {
+      host = parts.slice(0, -1).join('.');
+    }
+    host = host.replace(/[-_]+/g, ' ').trim();
+    if (!host || host.length < 2) return undefined;
+    const titled = host
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+    const cleaned = cleanWaContactName(titled);
+    return cleaned !== 'WhatsApp' ? cleaned : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Business WA profile — email/website/address/name; IG/FB only if present as URLs. */
+async function probePhoneFromBusinessHints(
+  instanceName: string,
+  pushName: string,
+  candidates: string[],
+  cap = 50,
+): Promise<string | undefined> {
+  const hint = normalizeContactBookName(pushName).replace(/[\s-]+/g, '');
+  if (hint.length < 4) return undefined;
+  let tried = 0;
+  for (const phone of candidates) {
+    if (!phone || tried >= cap) break;
+    tried += 1;
+    try {
+      const biz = await fetchWaBusinessProfile(instanceName, phone);
+      if (!biz) continue;
+      const hostStem = websiteHostKey(biz.website)?.split('.')[0] || '';
+      const nameNorm = normalizeContactBookName(biz.name).replace(/[\s-]+/g, '');
+      if (
+        (hostStem && (hint.includes(hostStem) || hostStem.includes(hint))) ||
+        (nameNorm && nameNorm === hint)
+      ) {
+        console.log(
+          `[ai-whatsapp] LID→phone via business-hint pushName=${pushName} phone=+${phone}`,
+        );
+        return phone;
+      }
+    } catch {
+      /* ignore */
+    }
+    if (tried % 10 === 0) await sleep(100);
+    else await sleep(40);
+  }
+  return undefined;
+}
+
 async function fetchWaBusinessProfile(
   instanceName: string,
   lidOrNumber: string,
+  ownPhoneDigits?: string | null,
 ): Promise<{
   email?: string;
   address?: string;
@@ -1048,6 +2419,8 @@ async function fetchWaBusinessProfile(
   website?: string;
   instagram?: string;
   facebook?: string;
+  /** verifiedName / business name / website-derived label — never «WhatsApp». */
+  name?: string;
 } | null> {
   const digits = normalizeWaNumber(lidOrNumber);
   if (!instanceName || !digits) return null;
@@ -1064,6 +2437,16 @@ async function fetchWaBusinessProfile(
 
   const biz = bizRes.ok ? bizRes.json || {} : {};
   const profile = profileRes.ok ? profileRes.json || {} : {};
+  const wid = String(biz.wid || profile.wuid || '').toLowerCase();
+  const asLid = isWhatsAppLid(lidOrNumber);
+  if (
+    isPoisonedWaLinkedAccountProfile(wid, ownPhoneDigits, {
+      asLid,
+      requestedDigits: digits,
+    })
+  ) {
+    return null;
+  }
   const isBusiness = Boolean(biz.isBusiness || profile.isBusiness);
   if (!isBusiness && !biz.email && !profile.email && !biz.website && !profile.website) {
     return null;
@@ -1077,6 +2460,34 @@ async function fetchWaBusinessProfile(
   const websiteUrls = collectWaWebsiteUrls(biz.website, profile.website, description);
   const social = pickSocialFromUrls(websiteUrls, description);
 
+  const rawName = String(
+    biz.verifiedName ||
+      biz.name ||
+      biz.businessName ||
+      profile.verifiedName ||
+      profile.name ||
+      profile.businessName ||
+      '',
+  ).trim();
+  let name = cleanWaContactName(rawName);
+  if (name === 'WhatsApp') name = '';
+  // Reject accidental punycode leftovers from older sync.
+  if (/^xn[\s-]/i.test(name) || /\bxn--/i.test(name)) name = '';
+  if (!name) {
+    name = deriveNameFromWebsiteHost(social.website) || '';
+  }
+  // Short first line of description as last-resort label (letter-bearing only).
+  if (!name && description) {
+    const firstLine = description
+      .split(/\n|\/|\|/)
+      .map((s) => s.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '').trim())
+      .find((s) => s.length >= 3 && /[a-zа-яё]/i.test(s));
+    if (firstLine) {
+      const cleaned = cleanWaContactName(firstLine.slice(0, 60));
+      if (cleaned !== 'WhatsApp' && !/^xn[\s-]/i.test(cleaned)) name = cleaned;
+    }
+  }
+
   return {
     email: email.includes('@') ? email : undefined,
     address: address || undefined,
@@ -1084,6 +2495,7 @@ async function fetchWaBusinessProfile(
     website: social.website,
     instagram: social.instagram,
     facebook: social.facebook,
+    name: name || undefined,
   };
 }
 
@@ -1312,8 +2724,30 @@ function extractWaPhoneE164(...candidates: Array<string | null | undefined>): st
 function extractPhoneFromInboundItem(item: any): string | undefined {
   return (
     extractWaPhoneE164(...waInboundIdentityCandidates(item)) ||
+    extractWaPhoneE164(item?.participant, item?.key?.participant) ||
     extractPhoneFromWaContactMessage(item?.message)
   );
+}
+
+/**
+ * If stored messages expose exactly one non-self E.164 participant (rare on LID
+ * chats, but cheap to check), use it as the peer phone.
+ */
+function extractUniqueParticipantPhone(
+  msgs: any[],
+  ownPhoneDigits?: string,
+): string | undefined {
+  const phones = new Set<string>();
+  for (const m of msgs) {
+    const phone =
+      extractPhoneFromInboundItem(m) ||
+      extractWaPhoneE164(m?.participant, m?.key?.participant);
+    if (!phone) continue;
+    if (ownPhoneDigits && phone === ownPhoneDigits) continue;
+    phones.add(phone);
+  }
+  if (phones.size === 1) return [...phones][0];
+  return undefined;
 }
 
 /** Source tag when phone came from shared contact card (for logs). */
@@ -1364,6 +2798,9 @@ function cleanWaContactName(
   // Strip accidental "Name 165274770739447" suffixes (14–16 digit LIDs)
   n = n.replace(/\s+\d{14,16}\s*$/, '').trim();
   if (!n || /^\d{14,16}$/.test(n)) return 'WhatsApp';
+  // Evolution / WA clients label the account itself on fromMe bubbles.
+  if (/^(você|voce|you|me|eu)$/i.test(n)) return 'WhatsApp';
+  if (/^whatsapp(\s+business)?$/i.test(n)) return 'WhatsApp';
   return n;
 }
 
@@ -1688,6 +3125,7 @@ async function handleQrStart(tenantId: string, nameRaw: string) {
       where: { id: bot.id },
       data: { status: 'active' },
     });
+    scheduleWhatsAppHistorySync({ tenantId, botId: bot.id });
   }
 
   const preparingHint = !qr && String(stateVal).toLowerCase() !== 'open'
@@ -1802,6 +3240,7 @@ async function handleQrStatus(tenantId: string, nameRaw: string) {
       where: { id: bot.id },
       data: { status: 'active' },
     });
+    scheduleWhatsAppHistorySync({ tenantId, botId: bot.id });
   }
 
   const billing = await softCheckAddon(tenantId);
@@ -1895,6 +3334,19 @@ async function sendWhatsAppMedia(opts: {
     fileName,
     mimeType,
   };
+}
+
+/** Best-effort presenceSubscribe via Evolution — may refresh Baileys lidMapping (INC-097 v8.2). */
+async function pokeWaLidMappingViaPresence(
+  instanceName: string,
+  lidDigits: string,
+): Promise<void> {
+  const lid = normalizeWaNumber(lidDigits);
+  if (!instanceName || !lid || !isWhatsAppLid(`${lid}@lid`)) return;
+  const jid = `${lid}@lid`;
+  await sendWhatsAppTyping(instanceName, jid, 800).catch(() => undefined);
+  await sleep(350);
+  await clearWhatsAppTyping(instanceName, jid).catch(() => undefined);
 }
 
 /** Best-effort typing indicator (Evolution presence = composing). */
@@ -2061,6 +3513,10 @@ async function syncLeadToCrm(opts: {
   conversationId: string;
   platformUserId: string;
   contactName?: string;
+  /** Explicit Person firstName (nonameN / real name); never «WhatsApp». */
+  personFirstName?: string;
+  /** Opportunity title — `{seq} · WA · {accountDisplayName}` (INC-097 v6). */
+  opportunityName?: string;
   /** Real E.164 digits when known (remoteJidAlt / senderPn); never LID. */
   phoneE164?: string;
   /** Optional email from WA business profile (LID peers often lack phone). */
@@ -2070,12 +3526,44 @@ async function syncLeadToCrm(opts: {
   facebook?: string;
   /** Optional Telegram @username for cross-channel hint merge. */
   telegramUsername?: string;
+  /**
+   * Mark needsReview (e.g. ambiguous phone match). Does NOT block Person create
+   * when personFirstName / phone is present (INC-097 v6).
+   */
+  forceNeedsReview?: boolean;
 }): Promise<void> {
   try {
     const conversation = await prisma.conversation.findUnique({
       where: { id: opts.conversationId },
     });
     if (!conversation) return;
+
+    const phoneForCrmEarly =
+      (opts.phoneE164 && isLikelyE164Phone(opts.phoneE164) ? opts.phoneE164 : undefined) ||
+      (isLikelyE164Phone(opts.platformUserId) ? opts.platformUserId : undefined) ||
+      phoneFromPlatformUsername(conversation.platformUsername);
+    const lidDigits = isWhatsAppLid(opts.platformUserId)
+      ? normalizeWaNumber(opts.platformUserId)
+      : isWhatsAppLid(conversation.platformUserId)
+        ? normalizeWaNumber(conversation.platformUserId)
+        : undefined;
+    if (phoneForCrmEarly || lidDigits) {
+      const merged = await mergeWaLidPnTwinConversations({
+        tenantId: opts.tenantId,
+        botId: opts.botId,
+        phoneE164: phoneForCrmEarly,
+        lidDigits,
+        preferConversationId: opts.conversationId,
+      });
+      if (merged && merged.canonicalId !== opts.conversationId) {
+        opts = { ...opts, conversationId: merged.canonicalId };
+      }
+    }
+
+    const conversationAfterMerge = await prisma.conversation.findUnique({
+      where: { id: opts.conversationId },
+    });
+    if (!conversationAfterMerge) return;
 
     const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
     if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) return;
@@ -2108,17 +3596,26 @@ async function syncLeadToCrm(opts: {
 
     const phoneForCrm =
       (opts.phoneE164 && isLikelyE164Phone(opts.phoneE164) ? opts.phoneE164 : undefined) ||
-      (isLikelyE164Phone(opts.platformUserId) ? opts.platformUserId : undefined);
+      (isLikelyE164Phone(opts.platformUserId) ? opts.platformUserId : undefined) ||
+      phoneFromPlatformUsername(conversationAfterMerge.platformUsername);
     const displayName = cleanWaContactName(opts.contactName, opts.platformUserId);
+    const personFirstName =
+      opts.personFirstName ||
+      (displayName !== 'WhatsApp' ? displayName : undefined) ||
+      (phoneForCrm ? `+${phoneForCrm}` : undefined);
     const whatsappValue = phoneForCrm ? `+${phoneForCrm}` : undefined;
 
     // INC-042: after CRM wipe, Conversation may still hold deleted Twenty ids.
     // Validate before early-return / updates; clear + recreate when missing.
     // Soft-deleted Opportunity still stored on Conversation looks “linked” until we check.
-    let personId = conversation.twentyPersonId || undefined;
-    let opportunityId = conversation.twentyOpportunityId || undefined;
+    // suppressDealCreation is manual only (CRM «Не создавать сделку») — never auto-set on delete.
+    let personId = conversationAfterMerge.twentyPersonId || undefined;
+    let opportunityId = conversationAfterMerge.twentyOpportunityId || undefined;
     let clearedStale = false;
-    let needsReview = conversation.needsReview;
+    let needsReview = conversationAfterMerge.needsReview || Boolean(opts.forceNeedsReview);
+    let suppressDeal =
+      (conversationAfterMerge as { suppressDealCreation?: boolean }).suppressDealCreation ===
+      true;
 
     if (personId) {
       const ok = await client.personExists(personId);
@@ -2135,7 +3632,7 @@ async function syncLeadToCrm(opts: {
       const ok = await client.opportunityExists(opportunityId);
       if (!ok) {
         console.warn(
-          `[ai-whatsapp] stale twentyOpportunityId=${opportunityId} conv=${opts.conversationId}; recreating`,
+          `[ai-whatsapp] deleted/stale twentyOpportunityId=${opportunityId} conv=${opts.conversationId}; clearing link`,
         );
         opportunityId = undefined;
         clearedStale = true;
@@ -2266,10 +3763,16 @@ async function syncLeadToCrm(opts: {
     };
 
     if (!personId) {
+      if (!personFirstName && !phoneForCrm) {
+        console.warn(
+          `[ai-whatsapp] syncLeadToCrm refuse Person create without identity conv=${opts.conversationId}`,
+        );
+        return;
+      }
       // Create without email first — soft-deleted Persons often still hold unique emails
       // in Twenty (IDX on emailsPrimaryEmail includes trash). Attach email after create.
       const created = await client.createPerson({
-        firstName: displayName,
+        firstName: personFirstName || (phoneForCrm ? `+${phoneForCrm}` : 'noname'),
         // Never put LID / platformUserId into lastName (shows as «Антон 165…», INC-039).
         lastName: undefined,
         email: undefined,
@@ -2307,7 +3810,7 @@ async function syncLeadToCrm(opts: {
       // Clear LID-looking lastName left by older sync (INC-039).
       try {
         await client.updatePersonName(personId, {
-          firstName: displayName,
+          firstName: personFirstName || `+${phoneForCrm}`,
           lastName: '',
         });
       } catch {
@@ -2315,10 +3818,10 @@ async function syncLeadToCrm(opts: {
       }
     } else {
       await applyBusinessSocial(personId);
-      if (displayName !== 'WhatsApp') {
+      if (personFirstName && personFirstName !== 'WhatsApp') {
         try {
           await client.updatePersonName(personId, {
-            firstName: displayName,
+            firstName: personFirstName,
             lastName: '',
           });
         } catch {
@@ -2328,19 +3831,40 @@ async function syncLeadToCrm(opts: {
     }
 
     if (personId && opportunityId && !clearedStale) {
+      if (phoneForCrm) {
+        try {
+          await client.updatePersonPhone(personId, `+${phoneForCrm}`);
+        } catch {
+          /* ignore */
+        }
+        try {
+          await client.updatePersonWhatsapp(personId, `+${phoneForCrm}`);
+        } catch {
+          /* ignore */
+        }
+      }
       await applyBusinessSocial(personId);
-      if (phoneForCrm || displayName !== 'WhatsApp' || needsReview || emailForCrm) {
+      if (opts.opportunityName && tenant.twentyWorkspaceId) {
+        await renameWhatsAppShellOpportunity({
+          workspaceId: tenant.twentyWorkspaceId,
+          opportunityId,
+          opportunityName: opts.opportunityName,
+        });
+      }
+      if (phoneForCrm || personFirstName || needsReview || emailForCrm) {
         await prisma.conversation.update({
           where: { id: opts.conversationId },
           data: {
             twentyPersonId: personId,
             twentyOpportunityId: opportunityId,
-            needsReview: needsReview || conversation.needsReview,
+            needsReview: needsReview || conversationAfterMerge.needsReview,
             platformFirstName:
-              displayName !== 'WhatsApp' ? displayName : conversation.platformFirstName,
+              personFirstName && personFirstName !== 'WhatsApp'
+                ? personFirstName
+                : conversationAfterMerge.platformFirstName,
             platformUsername: phoneForCrm
               ? `+${phoneForCrm}`
-              : conversation.platformUsername,
+              : conversationAfterMerge.platformUsername,
           },
         });
       }
@@ -2366,16 +3890,30 @@ async function syncLeadToCrm(opts: {
       }
     }
 
+    // Critical: reuse open Opportunity on Person in Twenty (covers LID↔PN race
+    // where two syncs create two Opps before either Conversation is linked).
     if (!opportunityId && personId) {
+      try {
+        const openOpp = await client.findOpenOpportunityByPerson(personId);
+        if (openOpp?.id) {
+          opportunityId = openOpp.id;
+          console.log(
+            `[ai-whatsapp] reuse open Opportunity ${opportunityId} for person=${personId} conv=${opts.conversationId}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          '[ai-whatsapp] findOpenOpportunityByPerson failed',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    if (!opportunityId && personId && !suppressDeal) {
       const botLabel = bot?.displayName || bot?.botUsername || 'WhatsApp';
-      const who =
-        displayName !== 'WhatsApp'
-          ? displayName
-          : phoneForCrm
-            ? `+${phoneForCrm}`
-            : 'WhatsApp';
+      const oppName = opts.opportunityName || `${botLabel} · WA`;
       const opportunity = await client.createOpportunity({
-        name: `${who} · WA · ${botLabel}`,
+        name: oppName,
         personId,
         stage: 'NEW',
       });
@@ -2386,6 +3924,10 @@ async function syncLeadToCrm(opts: {
         subscriberId: opts.platformUserId,
         botInstanceId: opts.botId,
       });
+    } else if (!opportunityId && personId && suppressDeal) {
+      console.log(
+        `[ai-whatsapp] skip Opportunity create conv=${opts.conversationId} (suppressDealCreation)`,
+      );
     }
 
     await prisma.conversation.update({
@@ -2393,11 +3935,15 @@ async function syncLeadToCrm(opts: {
       data: {
         twentyPersonId: personId || null,
         twentyOpportunityId: opportunityId || null,
-        needsReview: needsReview || conversation.needsReview,
-        platformFirstName: displayName !== 'WhatsApp' ? displayName : conversation.platformFirstName,
+        suppressDealCreation: suppressDeal,
+        needsReview: needsReview || conversationAfterMerge.needsReview,
+        platformFirstName:
+          personFirstName && personFirstName !== 'WhatsApp'
+            ? personFirstName
+            : conversationAfterMerge.platformFirstName,
         platformUsername: phoneForCrm
           ? `+${phoneForCrm}`
-          : conversation.platformUsername,
+          : conversationAfterMerge.platformUsername,
       },
     });
 
@@ -2411,7 +3957,23 @@ async function syncLeadToCrm(opts: {
       );
     }
 
-    if (personId && (clearedStale || !conversation.twentyPersonId)) {
+    if (personId && phoneForCrm) {
+      try {
+        await enrichTelegramPresenceFromPhone({
+          tenantId: opts.tenantId,
+          personId,
+          phoneE164: phoneForCrm,
+          client,
+        });
+      } catch (err) {
+        console.warn(
+          '[ai-whatsapp] telegram presence enrich failed',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    if (personId && (clearedStale || !conversationAfterMerge.twentyPersonId)) {
       try {
         const account =
           bot?.displayName ||
@@ -2502,22 +4064,17 @@ async function handleInboundMessage(opts: {
         (isLikelyE164Phone(from) ? from : undefined);
       const conv = already.conversation;
       if (twinPhone && conv.platformUsername !== `+${twinPhone}`) {
-        const preferPnId =
-          isWhatsAppLid(conv.platformUserId) && isLikelyE164Phone(twinPhone)
-            ? twinPhone
-            : conv.platformUserId;
         await prisma.conversation.update({
           where: { id: conv.id },
           data: {
             platformUsername: `+${twinPhone}`,
-            platformUserId: preferPnId,
           },
         });
         void syncLeadToCrm({
           tenantId: conv.tenantId,
           botId: resolved.id,
           conversationId: conv.id,
-          platformUserId: preferPnId,
+          platformUserId: conv.platformUserId,
           contactName: conv.platformFirstName || opts.contactName || opts.pushName || undefined,
           phoneE164: twinPhone,
         }).catch((err) => {
@@ -2537,7 +4094,18 @@ async function handleInboundMessage(opts: {
   let phoneSource: LidPnSource = phoneE164
     ? opts.phoneSource || 'webhook'
     : 'none';
-  // LID-only webhooks: resolve E.164 via Evolution Contact/Chat explicit fields only.
+  // LID-only webhooks: resolve E.164 via Contact book (incl. unique name) + Chat/Redis.
+  if (!phoneE164 && isWhatsAppLid(from)) {
+    const book = await loadEvolutionContactBook(opts.instanceName);
+    const fromBook = matchContactBookIdentity(book, {
+      lidDigits: from,
+      pushName: opts.contactName || opts.pushName,
+    });
+    if (fromBook.phone) {
+      phoneE164 = fromBook.phone;
+      phoneSource = fromBook.source;
+    }
+  }
   if (!phoneE164 && isWhatsAppLid(from)) {
     const fromContacts = await resolvePhoneFromEvolutionContacts(opts.instanceName, from, {
       pushName: opts.contactName || opts.pushName,
@@ -2547,10 +4115,13 @@ async function handleInboundMessage(opts: {
       phoneE164 = fromContacts.phone;
       phoneSource = fromContacts.source;
     } else {
-      const fromChats = await resolvePhoneFromEvolutionDb(opts.instanceName, from);
-      if (fromChats.phone) {
-        phoneE164 = fromChats.phone;
-        phoneSource = fromChats.source;
+      const fromEvolution = await resolveLidPhoneFromEvolution(opts.instanceName, from, {
+        pushName: opts.contactName || opts.pushName,
+        profilePicUrl: opts.profilePicUrl,
+      });
+      if (fromEvolution.phone) {
+        phoneE164 = fromEvolution.phone;
+        phoneSource = fromEvolution.source;
       }
     }
   }
@@ -2702,13 +4273,33 @@ async function handleInboundMessage(opts: {
       `[ai-whatsapp] phone resolved source=${phoneSource} lidOrFrom=${from} e164=+${phoneE164}`,
     );
   }
-  const displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
 
-  // Business profile: email / website / IG·FB URLs when Evolution exposes them.
+  const lidFrom = isWhatsAppLid(from) ? from : undefined;
+  if (phoneE164 || lidFrom) {
+    const merged = await mergeWaLidPnTwinConversations({
+      tenantId: resolved.tenantId,
+      botId: resolved.id,
+      phoneE164,
+      lidDigits: lidFrom,
+      preferConversationId: conversation?.id,
+    });
+    if (merged) {
+      const refreshed = await prisma.conversation.findFirst({
+        where: { id: merged.canonicalId },
+        include: {
+          messages: { orderBy: { createdAt: 'desc' }, take: CONTEXT_WINDOW },
+        },
+      });
+      if (refreshed) conversation = refreshed;
+    }
+  }
+
+  // Business profile: email / website / IG·FB URLs / display name when Evolution exposes them.
   let businessEmail: string | undefined;
   let businessWebsite: string | undefined;
   let businessInstagram: string | undefined;
   let businessFacebook: string | undefined;
+  let businessName: string | undefined;
   try {
     const bizPeer = phoneE164 || from;
     const biz = await fetchWaBusinessProfile(opts.instanceName, bizPeer);
@@ -2716,18 +4307,25 @@ async function handleInboundMessage(opts: {
     businessWebsite = biz?.website;
     businessInstagram = biz?.instagram;
     businessFacebook = biz?.facebook;
-    if (businessEmail || businessWebsite || businessInstagram || businessFacebook) {
+    businessName = biz?.name;
+    if (businessEmail || businessWebsite || businessInstagram || businessFacebook || businessName) {
       console.log(
-        `[ai-whatsapp] business profile peer=${bizPeer} email=${businessEmail || '-'} website=${businessWebsite || '-'} ig=${businessInstagram || '-'} fb=${businessFacebook || '-'}`,
+        `[ai-whatsapp] business profile peer=${bizPeer} name=${businessName || '-'} email=${businessEmail || '-'} website=${businessWebsite || '-'} ig=${businessInstagram || '-'} fb=${businessFacebook || '-'}`,
       );
     }
   } catch (err) {
     console.warn('[ai-whatsapp] fetchBusinessProfile failed', err);
   }
 
+  let displayName = cleanWaContactName(opts.contactName || opts.pushName, from);
+  if (displayName === 'WhatsApp' && businessName) {
+    displayName = businessName;
+  }
+
   if (!conversation) {
-    // Prefer dialable E.164 as platformUserId when known so LID/PN twins share one thread.
-    const platformUserId = phoneE164 && isLikelyE164Phone(phoneE164) ? phoneE164 : from;
+    // Keep LID on platformUserId for Evolution send; E.164 lives in platformUsername.
+    const platformUserId =
+      isWhatsAppLid(from) ? from : phoneE164 && isLikelyE164Phone(phoneE164) ? phoneE164 : from;
     const created = await prisma.conversation.create({
       data: {
         tenantId: resolved.tenantId,
@@ -2754,10 +4352,7 @@ async function handleInboundMessage(opts: {
     });
   } else if (
     (displayName !== 'WhatsApp' && conversation.platformFirstName !== displayName) ||
-    (phoneE164 && conversation.platformUsername !== `+${phoneE164}`) ||
-    (phoneE164 &&
-      isWhatsAppLid(conversation.platformUserId) &&
-      conversation.platformUserId !== phoneE164)
+    (phoneE164 && conversation.platformUsername !== `+${phoneE164}`)
   ) {
     await prisma.conversation.update({
       where: { id: conversation.id },
@@ -2765,15 +4360,8 @@ async function handleInboundMessage(opts: {
         platformFirstName:
           displayName !== 'WhatsApp' ? displayName : conversation.platformFirstName,
         platformUsername: phoneE164 ? `+${phoneE164}` : conversation.platformUsername,
-        platformUserId:
-          phoneE164 && isWhatsAppLid(conversation.platformUserId)
-            ? phoneE164
-            : conversation.platformUserId,
       },
     });
-    if (phoneE164 && isWhatsAppLid(conversation.platformUserId)) {
-      conversation = { ...conversation, platformUserId: phoneE164 };
-    }
   }
 
   // Persist + CRM sync BEFORE slow ASR/vision/doc extract so voice/video/image/doc
@@ -3149,6 +4737,1509 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
   }
 }
 
+function isPrivateWaRemoteJid(jid: string): boolean {
+  const j = String(jid || '').toLowerCase().trim();
+  if (!j) return false;
+  if (j.endsWith('@g.us')) return false;
+  if (j === 'status@broadcast' || j.endsWith('@broadcast')) return false;
+  if (j.endsWith('@newsletter')) return false;
+  return (
+    j.includes('@s.whatsapp.net') ||
+    j.includes('@lid') ||
+    Boolean(normalizeWaNumber(j))
+  );
+}
+
+function unwrapEvoRows(json: any, keys: string[] = ['chats', 'messages', 'records', 'data']): any[] {
+  if (Array.isArray(json)) return json;
+  for (const k of keys) {
+    const v = json?.[k];
+    if (Array.isArray(v)) return v;
+    if (Array.isArray(v?.records)) return v.records;
+  }
+  if (Array.isArray(json?.messages?.records)) return json.messages.records;
+  return [];
+}
+
+function evoUnixSeconds(raw: unknown): number {
+  if (raw == null) return 0;
+  if (typeof raw === 'object' && raw !== null && 'low' in (raw as object)) {
+    const n = Number((raw as { low?: number }).low);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+}
+
+function chatActivityTs(chat: any): number {
+  return (
+    evoUnixSeconds(chat?.updatedAt) ||
+    evoUnixSeconds(chat?.conversationTimestamp) ||
+    evoUnixSeconds(chat?.lastMsgTimestamp) ||
+    evoUnixSeconds(chat?.lastMessage?.messageTimestamp) ||
+    evoUnixSeconds(chat?.lastMessageTimestamp) ||
+    0
+  );
+}
+
+type WaTwinMergeResult = {
+  canonicalId: string;
+  mergedConvIds: string[];
+  messagesMoved: number;
+};
+
+function preferWaContactName(...names: (string | null | undefined)[]): string | undefined {
+  for (const raw of names) {
+    const n = String(raw || '').trim();
+    if (!n || n === 'WhatsApp') continue;
+    if (/^noname\d+$/i.test(n)) continue;
+    return n;
+  }
+  for (const raw of names) {
+    const n = String(raw || '').trim();
+    if (n && n !== 'WhatsApp') return n;
+  }
+  return undefined;
+}
+
+/**
+ * Merge sibling WA Conversations for the same peer (LID digits vs E.164 / +E.164).
+ * Keeps LID on platformUserId for Evolution send; platformUsername = +E.164 when known.
+ */
+async function mergeWaLidPnTwinConversations(opts: {
+  tenantId: string;
+  botId: string;
+  phoneE164?: string;
+  lidDigits?: string;
+  preferConversationId?: string;
+  instanceName?: string;
+  profileIndex?: WaProfilePnIndex;
+  /** Other LID digits known to map to phoneE164 (same sync pass). */
+  extraLidDigits?: string[];
+}): Promise<WaTwinMergeResult | null> {
+  const phone =
+    opts.phoneE164 && isLikelyE164Phone(opts.phoneE164)
+      ? normalizeWaNumber(opts.phoneE164)
+      : undefined;
+  const lidRaw = opts.lidDigits ? normalizeWaNumber(opts.lidDigits) : '';
+  const lid = lidRaw && isWhatsAppLid(lidRaw) ? lidRaw : undefined;
+  if (!phone && !lid) return null;
+
+  const or: Array<{ platformUserId: string } | { platformUsername: string }> = [];
+  if (phone) {
+    or.push({ platformUserId: phone });
+    or.push({ platformUsername: `+${phone}` });
+    or.push({ platformUsername: phone });
+  }
+  if (lid) {
+    or.push({ platformUserId: lid });
+  }
+  if (phone && opts.extraLidDigits?.length) {
+    for (const raw of opts.extraLidDigits) {
+      const d = normalizeWaNumber(raw);
+      if (d && isWhatsAppLid(d)) or.push({ platformUserId: d });
+    }
+  }
+  if (phone && opts.instanceName) {
+    const mappedLids = await listLidDigitsMappedToPhone(opts.instanceName, phone);
+    for (const d of mappedLids) {
+      or.push({ platformUserId: d });
+    }
+  }
+  if (!or.length) return null;
+
+  const siblingById = new Map<
+    string,
+    Awaited<ReturnType<typeof prisma.conversation.findMany>>[0] & {
+      _count: { messages: number };
+    }
+  >();
+
+  const addSiblings = (
+    rows: Array<
+      Awaited<ReturnType<typeof prisma.conversation.findMany>>[0] & {
+        _count: { messages: number };
+      }
+    >,
+  ) => {
+    for (const row of rows) siblingById.set(row.id, row);
+  };
+
+  addSiblings(
+    await prisma.conversation.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: opts.botId,
+        platform: 'whatsapp',
+        OR: or,
+      },
+      include: { _count: { select: { messages: true } } },
+      take: 30,
+    }),
+  );
+
+  // Expand: CRM-linked twins (same Person / Opportunity).
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    const personIds = [
+      ...new Set(
+        [...siblingById.values()]
+          .map((c) => c.twentyPersonId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const oppIds = [
+      ...new Set(
+        [...siblingById.values()]
+          .map((c) => c.twentyOpportunityId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (!personIds.length && !oppIds.length) break;
+    const more = await prisma.conversation.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: opts.botId,
+        platform: 'whatsapp',
+        id: { notIn: [...siblingById.keys()] },
+        OR: [
+          ...(personIds.length ? [{ twentyPersonId: { in: personIds } }] : []),
+          ...(oppIds.length ? [{ twentyOpportunityId: { in: oppIds } }] : []),
+        ],
+      },
+      include: { _count: { select: { messages: true } } },
+      take: 30,
+    });
+    if (more.length) {
+      addSiblings(more);
+      expanded = true;
+    }
+  }
+
+  // Expand: other LID threads mapped to the same E.164 (multi-LID same peer).
+  if (phone) {
+    const lidCandidates = await prisma.conversation.findMany({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: opts.botId,
+        platform: 'whatsapp',
+        id: { notIn: [...siblingById.keys()] },
+      },
+      select: {
+        id: true,
+        platformUserId: true,
+        platformUsername: true,
+        platformFirstName: true,
+      },
+      take: 50,
+    });
+    for (const lc of lidCandidates) {
+      if (!isWhatsAppLid(lc.platformUserId)) continue;
+      const lidDigits = normalizeWaNumber(lc.platformUserId);
+      let mappedPhone: string | undefined;
+      if (opts.instanceName) {
+        const fromMap = await resolvePhoneFromEvolutionLidMapping(
+          opts.instanceName,
+          lidDigits,
+        );
+        if (fromMap.phone && isLikelyE164Phone(fromMap.phone)) {
+          mappedPhone = normalizeWaNumber(fromMap.phone);
+        }
+      }
+      const fromUsername = phoneFromPlatformUsername(lc.platformUsername);
+      if (mappedPhone === phone || fromUsername === phone) {
+        const full = await prisma.conversation.findUnique({
+          where: { id: lc.id },
+          include: { _count: { select: { messages: true } } },
+        });
+        if (full) addSiblings([full]);
+      }
+    }
+  }
+
+  const siblings = [...siblingById.values()];
+  if (siblings.length <= 1) return null;
+
+  const score = (c: (typeof siblings)[0]): number => {
+    let s = 0;
+    if (opts.preferConversationId && c.id === opts.preferConversationId) s += 1000;
+    if (c.twentyPersonId && c.twentyOpportunityId && phone) {
+      const pu = phoneFromPlatformUsername(c.platformUsername);
+      if (pu === phone) s += 500;
+    }
+    if (c.twentyPersonId) s += 200;
+    if (c.twentyOpportunityId) s += 100;
+    s += Math.min(c._count.messages, 100) * 5;
+    s += c.updatedAt.getTime() / 1e12;
+    return s;
+  };
+
+  const sorted = [...siblings].sort((a, b) => score(b) - score(a));
+  const canonical = sorted[0]!;
+  const twins = sorted.slice(1);
+
+  let messagesMoved = 0;
+  let lidPlatformUserId = lid;
+  let personId = canonical.twentyPersonId;
+  let opportunityId = canonical.twentyOpportunityId;
+  let suppressDeal =
+    (canonical as { suppressDealCreation?: boolean }).suppressDealCreation === true;
+  let needsReview = canonical.needsReview;
+
+  for (const c of siblings) {
+    if (isWhatsAppLid(c.platformUserId)) {
+      const d = normalizeWaNumber(c.platformUserId);
+      const prev = lidPlatformUserId
+        ? siblings.find((s) => normalizeWaNumber(s.platformUserId) === lidPlatformUserId)
+        : undefined;
+      if (
+        !lidPlatformUserId ||
+        c._count.messages > (prev?._count.messages || 0)
+      ) {
+        lidPlatformUserId = d;
+      }
+    }
+    if (!personId && c.twentyPersonId) personId = c.twentyPersonId;
+    if (!opportunityId && c.twentyOpportunityId) opportunityId = c.twentyOpportunityId;
+    if ((c as { suppressDealCreation?: boolean }).suppressDealCreation) suppressDeal = true;
+    if (c.needsReview) needsReview = true;
+  }
+
+  const bestName = preferWaContactName(
+    canonical.platformFirstName,
+    ...twins.map((t) => t.platformFirstName),
+  );
+  const preferredPlatformUserId =
+    lidPlatformUserId ||
+    (phone && isLikelyE164Phone(phone) ? phone : canonical.platformUserId);
+
+  for (const twin of twins) {
+    const twinMsgs = await prisma.chatMessage.findMany({
+      where: { conversationId: twin.id },
+      select: { id: true, externalMessageId: true },
+    });
+    for (const msg of twinMsgs) {
+      if (msg.externalMessageId) {
+        const dup = await prisma.chatMessage.findFirst({
+          where: {
+            conversationId: canonical.id,
+            externalMessageId: msg.externalMessageId,
+          },
+          select: { id: true },
+        });
+        if (dup) {
+          await prisma.chatMessage.delete({ where: { id: msg.id } });
+          continue;
+        }
+      }
+      await prisma.chatMessage.update({
+        where: { id: msg.id },
+        data: { conversationId: canonical.id },
+      });
+      messagesMoved += 1;
+    }
+    await prisma.conversation.update({
+      where: { id: twin.id },
+      data: {
+        status: 'closed',
+        twentyPersonId: null,
+        twentyOpportunityId: null,
+      },
+    });
+  }
+
+  await prisma.conversation.update({
+    where: { id: canonical.id },
+    data: {
+      status: canonical.status === 'closed' ? 'open' : canonical.status,
+      platformUserId: preferredPlatformUserId,
+      platformUsername: phone ? `+${phone}` : canonical.platformUsername,
+      platformFirstName: bestName || canonical.platformFirstName,
+      twentyPersonId: personId,
+      twentyOpportunityId: opportunityId,
+      suppressDealCreation: suppressDeal,
+      needsReview,
+      botInstanceId: opts.botId,
+    },
+  });
+
+  // Soft-delete orphan Opportunities left on the same Person after twin merge
+  // (race: LID + PN each created an Opp; Person keeps both until cleanup).
+  const orphanOppIds = [
+    ...new Set(
+      siblings
+        .map((c) => c.twentyOpportunityId)
+        .filter((id): id is string => Boolean(id) && id !== opportunityId),
+    ),
+  ];
+  if (personId && orphanOppIds.length) {
+    try {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: opts.tenantId },
+        include: {
+          users: {
+            where: { role: 'owner' },
+            include: { user: true },
+            take: 1,
+          },
+        },
+      });
+      const owner = tenant?.users[0]?.user;
+      if (
+        tenant?.twentyWorkspaceId &&
+        tenant.twentyOwnerPasswordEncrypted &&
+        owner?.email
+      ) {
+        const client = new TwentyClient({
+          apiUrl:
+            process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+        });
+        await client.authenticateWorkspace(
+          owner.email,
+          decrypt(tenant.twentyOwnerPasswordEncrypted),
+          tenant.twentyWorkspaceId,
+        );
+        for (const orphanId of orphanOppIds) {
+          const stillLinked = await prisma.conversation.findFirst({
+            where: {
+              tenantId: opts.tenantId,
+              twentyOpportunityId: orphanId,
+              status: { not: 'closed' },
+            },
+            select: { id: true },
+          });
+          if (stillLinked) continue;
+          const poc = await client.getOpportunityPointOfContactId(orphanId);
+          if (poc && poc !== personId) continue;
+          const deleted = await client.softDeleteOpportunity(orphanId);
+          if (deleted) {
+            console.log(
+              `[ai-whatsapp] soft-deleted orphan Opportunity ${orphanId} after twin merge person=${personId}`,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(
+        '[ai-whatsapp] orphan Opportunity cleanup failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  console.log(
+    `[ai-whatsapp] merged LID↔PN twins canonical=${canonical.id} twins=${twins.map((t) => t.id).join(',')} movedMsgs=${messagesMoved} phone=+${phone || '-'} lid=${lidPlatformUserId || '-'}`,
+  );
+
+  return {
+    canonicalId: canonical.id,
+    mergedConvIds: twins.map((t) => t.id),
+    messagesMoved,
+  };
+}
+
+/** Bot-wide pass: merge open/closed twins that share the same resolved E.164. */
+async function repairWaLidPnSplitConversationsForBot(opts: {
+  tenantId: string;
+  botId: string;
+  instanceName?: string;
+  profileIndex?: WaProfilePnIndex;
+  /** Scope to open findChats peers + convs with messages — not contact-book shells (INC-097 v7.1). */
+  openPeers?: OpenWaChatPeers;
+}): Promise<number> {
+  const peerOr = opts.openPeers ? openPeerConversationOr(opts.openPeers) : undefined;
+  const convs = await prisma.conversation.findMany({
+    where: {
+      tenantId: opts.tenantId,
+      botInstanceId: opts.botId,
+      platform: 'whatsapp',
+      ...(peerOr?.length
+        ? {
+            OR: [{ messages: { some: {} } }, ...peerOr],
+          }
+        : {}),
+    },
+    select: {
+      id: true,
+      platformUserId: true,
+      platformUsername: true,
+    },
+    take: opts.openPeers ? 120 : 1000,
+  });
+
+  const byPhone = new Map<string, { phone: string; lids: Set<string> }>();
+  const addPhoneLid = (phoneRaw: string, lidRaw?: string) => {
+    const phone = normalizeWaNumber(phoneRaw);
+    if (!isLikelyE164Phone(phone)) return;
+    const entry = byPhone.get(phone) || { phone, lids: new Set<string>() };
+    if (lidRaw && isWhatsAppLid(lidRaw)) entry.lids.add(normalizeWaNumber(lidRaw));
+    byPhone.set(phone, entry);
+  };
+
+  for (const c of convs) {
+    const phone =
+      phoneFromPlatformUsername(c.platformUsername) ||
+      (isLikelyE164Phone(c.platformUserId)
+        ? normalizeWaNumber(c.platformUserId)
+        : undefined);
+    if (!phone) continue;
+    const lid = isWhatsAppLid(c.platformUserId)
+      ? normalizeWaNumber(c.platformUserId)
+      : undefined;
+    addPhoneLid(phone, lid);
+  }
+
+  // Profile-index: orphan LID-only threads → same E.164 bucket (open chats only).
+  if (opts.profileIndex && opts.instanceName) {
+    const orphanLids = convs.filter(
+      (c) =>
+        isWhatsAppLid(c.platformUserId) &&
+        !phoneFromPlatformUsername(c.platformUsername) &&
+        (!opts.openPeers ||
+          opts.openPeers.lidDigits.has(normalizeWaNumber(c.platformUserId))),
+    );
+    const orphanCap = opts.openPeers
+      ? Math.min(20, opts.openPeers.lidDigits.size + 2)
+      : 20;
+    for (const lc of orphanLids.slice(0, orphanCap)) {
+      const lidDigits = normalizeWaNumber(lc.platformUserId);
+      const lidProfile = await fetchWaPeerProfile(opts.instanceName, lidDigits);
+      const matched = matchPhoneFromProfileIndex(opts.profileIndex, lidProfile || {});
+      if (matched && isLikelyE164Phone(matched)) {
+        addPhoneLid(matched, lidDigits);
+      }
+    }
+    // Stale outbound-only LID (no email/pic in profile) paired with a rich +E.164 thread.
+    for (const lc of orphanLids.slice(0, orphanCap)) {
+      const lidDigits = normalizeWaNumber(lc.platformUserId);
+      const lidProfile = await fetchWaPeerProfile(opts.instanceName, lidDigits);
+      if (lidProfile?.email || lidProfile?.picFp) continue;
+      const msgs = await prisma.chatMessage.findMany({
+        where: { conversationId: lc.id },
+        select: { role: true },
+        take: 30,
+      });
+      if (!msgs.length || !msgs.every((m) => m.role === 'operator')) continue;
+      for (const pc of convs) {
+        const p = phoneFromPlatformUsername(pc.platformUsername);
+        if (!p || !isLikelyE164Phone(p)) continue;
+        const pnProf = opts.profileIndex.profiles.get(normalizeWaNumber(p));
+        if (!pnProf?.email && !pnProf?.picFp) continue;
+        addPhoneLid(p, lidDigits);
+        await rememberLidPhoneMapping(opts.instanceName, lidDigits, p);
+        console.log(
+          `[ai-whatsapp] stale outbound LID linked lid=${lidDigits} phone=+${p}`,
+        );
+        break;
+      }
+    }
+  }
+
+  let merges = 0;
+  for (const { phone, lids } of byPhone.values()) {
+    const lidList = [...lids];
+    const result = await mergeWaLidPnTwinConversations({
+      tenantId: opts.tenantId,
+      botId: opts.botId,
+      phoneE164: phone,
+      lidDigits: lidList[0],
+      extraLidDigits: lidList.slice(1),
+      instanceName: opts.instanceName,
+      profileIndex: opts.profileIndex,
+    });
+    if (result) merges += 1;
+  }
+  if (merges) {
+    console.log(
+      `[ai-whatsapp] repairWaLidPnSplit bot=${opts.botId} mergedGroups=${merges}`,
+    );
+  }
+  return merges;
+}
+
+/**
+ * After a Twenty CRM wipe, Conversations still hold trashed person/opportunity uuids.
+ * Clear those links so history sync can recreate (INC-042 / INC-097 wipe path).
+ * Does not touch suppressDealCreation.
+ */
+async function clearStaleWaConversationCrmIds(opts: {
+  tenantId: string;
+  botId: string;
+}): Promise<number> {
+  const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
+  if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) return 0;
+
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId: opts.tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (!owner?.user?.email) return 0;
+
+  const convs = await prisma.conversation.findMany({
+    where: {
+      tenantId: opts.tenantId,
+      botInstanceId: opts.botId,
+      platform: 'whatsapp',
+      OR: [{ twentyPersonId: { not: null } }, { twentyOpportunityId: { not: null } }],
+    },
+    select: {
+      id: true,
+      twentyPersonId: true,
+      twentyOpportunityId: true,
+    },
+    take: 500,
+  });
+  if (!convs.length) return 0;
+
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  try {
+    await client.authenticateWorkspace(
+      owner.user.email,
+      decrypt(tenant.twentyOwnerPasswordEncrypted),
+      tenant.twentyWorkspaceId,
+    );
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] clearStaleWaConversationCrmIds auth failed',
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  }
+
+  let cleared = 0;
+  for (const c of convs) {
+    let personId = c.twentyPersonId || null;
+    let opportunityId = c.twentyOpportunityId || null;
+    let changed = false;
+    if (personId && !(await client.personExists(personId))) {
+      personId = null;
+      opportunityId = null;
+      changed = true;
+    } else if (opportunityId && !(await client.opportunityExists(opportunityId))) {
+      opportunityId = null;
+      changed = true;
+    }
+    if (!changed) continue;
+    await prisma.conversation.update({
+      where: { id: c.id },
+      data: {
+        twentyPersonId: personId,
+        twentyOpportunityId: opportunityId,
+      },
+    });
+    cleared += 1;
+  }
+  if (cleared) {
+    console.log(
+      `[ai-whatsapp] cleared stale Twenty CRM ids on ${cleared} WA conversations bot=${opts.botId}`,
+    );
+  }
+  return cleared;
+}
+
+/**
+ * Soft-delete contact-book-only CRM shells: CRM-linked WA Conversation with
+ * **zero** ChatMessages (INC-097 v2 wrongly iterated the address book as dialogs).
+ * Never touch conversations that have messages — those are real open chats and must
+ * be recreatable after a Twenty wipe (even if still LID-only).
+ * Keeps Conversation rows; messages stay for later PN enrich.
+ */
+/**
+ * Soft-delete garbage WA CRM shells:
+ * 1) Conversations with CRM links but zero messages (contact-book noise).
+ * 2) Open chats linked to Person firstName=«WhatsApp» with empty phone (INC-097 v5) —
+ *    keep Conversation + ChatMessages; drop Person/Opportunity until E.164 known.
+ * Also clears invented t.me/+{phone} Telegram fields.
+ */
+async function repairEmptyWaHistoryLeads(opts: {
+  tenantId: string;
+  botId: string;
+}): Promise<number> {
+  const convs = await prisma.conversation.findMany({
+    where: {
+      tenantId: opts.tenantId,
+      botInstanceId: opts.botId,
+      platform: 'whatsapp',
+      OR: [{ twentyPersonId: { not: null } }, { twentyOpportunityId: { not: null } }],
+    },
+    include: { _count: { select: { messages: true } } },
+    take: 500,
+  });
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: opts.tenantId } });
+  if (!tenant?.twentyWorkspaceId) return 0;
+
+  // Clear invented t.me/+{phone} Telegram fields on any WA-linked Person for this bot.
+  const allPersonIds = [
+    ...new Set(
+      convs
+        .map((c) => c.twentyPersonId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const clearedTg = await clearFalseTelegramPhoneLinks({
+    workspaceId: tenant.twentyWorkspaceId,
+    personIds: allPersonIds,
+  });
+  if (clearedTg) {
+    console.log(
+      `[ai-whatsapp] cleared ${clearedTg} false t.me/+ telegram links bot=${opts.botId}`,
+    );
+  }
+
+  const zeroMsg = convs.filter((c) => c._count.messages === 0);
+  const shellPersonIds = [
+    ...new Set(
+      convs
+        .filter((c) => c._count.messages > 0 && c.twentyPersonId)
+        .map((c) => c.twentyPersonId!)
+        .filter(Boolean),
+    ),
+  ];
+  const whatsappShellIds = await findNamelessWhatsAppPersonIds({
+    workspaceId: tenant.twentyWorkspaceId,
+    personIds: shellPersonIds,
+  });
+
+  const toRepair = new Map<string, (typeof convs)[number]>();
+  for (const c of zeroMsg) toRepair.set(c.id, c);
+  for (const c of convs) {
+    if (
+      c._count.messages > 0 &&
+      c.twentyPersonId &&
+      whatsappShellIds.has(c.twentyPersonId)
+    ) {
+      toRepair.set(c.id, c);
+    }
+  }
+
+  if (!toRepair.size) return clearedTg > 0 ? clearedTg : 0;
+
+  let repaired = 0;
+  // Dedup: same twentyPersonId linked from multiple convs → soft-delete once.
+  const deletedPeople = new Set<string>();
+  const deletedOpps = new Set<string>();
+  for (const c of toRepair.values()) {
+    const personId = c.twentyPersonId;
+    const opportunityId = c.twentyOpportunityId;
+    await softDeleteTwentyLead({
+      workspaceId: tenant.twentyWorkspaceId,
+      personId:
+        personId && !deletedPeople.has(personId) ? personId : null,
+      opportunityId:
+        opportunityId && !deletedOpps.has(opportunityId) ? opportunityId : null,
+    });
+    if (personId) deletedPeople.add(personId);
+    if (opportunityId) deletedOpps.add(opportunityId);
+    await prisma.conversation.update({
+      where: { id: c.id },
+      data: {
+        twentyPersonId: null,
+        twentyOpportunityId: null,
+        needsReview: false,
+      },
+    });
+    repaired += 1;
+  }
+  if (repaired) {
+    console.log(
+      `[ai-whatsapp] repaired ${repaired} empty/WhatsApp-shell history-sync CRM cards bot=${opts.botId} (Conversation kept)`,
+    );
+  }
+  return repaired + clearedTg;
+}
+
+/** Person ids whose live row is named WhatsApp with no usable phone. */
+async function findNamelessWhatsAppPersonIds(opts: {
+  workspaceId: string;
+  personIds: string[];
+}): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!opts.personIds.length) return out;
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !opts.workspaceId) return out;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [opts.workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return out;
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM "${schema}".person
+       WHERE id = ANY($1::uuid[])
+         AND "deletedAt" IS NULL
+         AND lower(coalesce("nameFirstName", '')) IN ('whatsapp', 'whatsapp business')
+         AND (
+           "phonesPrimaryPhoneNumber" IS NULL
+           OR btrim("phonesPrimaryPhoneNumber") = ''
+         )`,
+      [opts.personIds],
+    );
+    for (const row of res.rows) out.add(row.id);
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] findNamelessWhatsAppPersonIds failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+  return out;
+}
+
+async function softDeleteTwentyLead(opts: {
+  workspaceId: string;
+  personId?: string | null;
+  opportunityId?: string | null;
+}): Promise<void> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !opts.workspaceId) return;
+  if (!opts.personId && !opts.opportunityId) return;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [opts.workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return;
+    if (opts.opportunityId) {
+      await client.query(
+        `UPDATE "${schema}".opportunity SET "deletedAt" = NOW(), "updatedAt" = NOW()
+         WHERE id = $1::uuid AND "deletedAt" IS NULL`,
+        [opts.opportunityId],
+      );
+    }
+    if (opts.personId) {
+      await client.query(
+        `UPDATE "${schema}".person SET "deletedAt" = NOW(), "updatedAt" = NOW()
+         WHERE id = $1::uuid AND "deletedAt" IS NULL`,
+        [opts.personId],
+      );
+    }
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] softDeleteTwentyLead failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** Rename legacy `WhatsApp ·%` Opportunity shells to seq-based title (INC-097 v6). */
+async function renameWhatsAppShellOpportunity(opts: {
+  workspaceId: string;
+  opportunityId?: string | null;
+  opportunityName: string;
+}): Promise<void> {
+  if (!opts.opportunityId || !opts.opportunityName) return;
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !opts.workspaceId) return;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [opts.workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return;
+    await client.query(
+      `UPDATE "${schema}".opportunity
+       SET name = $2, "updatedAt" = NOW()
+       WHERE id = $1::uuid
+         AND "deletedAt" IS NULL
+         AND (
+           name ILIKE 'WhatsApp ·%'
+           OR name ILIKE '% · WA · %' AND name NOT SIMILAR TO $3
+         )`,
+      [opts.opportunityId, opts.opportunityName, '^[0-9]+ · WA · .*'],
+    );
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] renameWhatsAppShellOpportunity failed',
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/**
+ * Best-effort private-chat history → Conversation + ChatMessage + CRM deals.
+ * Source of truth = Evolution findChats (open private dialogs) with findMessages
+ * history. Contact book is enrichment only (LID→PN / name) — never a dialog source.
+ * Groups (@g.us) and broadcasts are skipped. No Opportunity without messages.
+ * Default: all private dialogs × last 500 messages; concurrency 1 + sleep.
+ */
+async function runWhatsAppPrivateChatSync(opts: {
+  tenantId: string;
+  botId: string;
+  /** Positive = cap; omit/0 = all private dialogs. */
+  dialogLimit?: number;
+  messageLimit?: number;
+  force?: boolean;
+  /** Only run LID↔PN twin merge repair (no findChats / message upsert). */
+  repairOnly?: boolean;
+}): Promise<WaChatSyncSummary> {
+  const rawDialog = opts.dialogLimit;
+  const dialogLimit =
+    typeof rawDialog === 'number' && Number.isFinite(rawDialog) && rawDialog > 0
+      ? Math.floor(rawDialog)
+      : Number.POSITIVE_INFINITY;
+  const messageLimit = Math.min(Math.max(opts.messageLimit ?? 500, 1), 2000);
+  const note =
+    'Best-effort: only chats/messages already in Evolution DB (WA history sync may still be incomplete right after connect).';
+
+  const emptySummary = (extra: Partial<WaChatSyncSummary> = {}): WaChatSyncSummary => ({
+    ok: true,
+    dialogs: 0,
+    messagesUpserted: 0,
+    peopleSynced: 0,
+    skippedGroups: 0,
+    skippedSuppressed: 0,
+    skippedNoPhone: 0,
+    skippedNoMessages: 0,
+    skippedEmptyIdentity: 0,
+    repairedEmptyLeads: 0,
+    mergedTwinConversations: 0,
+    ...extra,
+  });
+
+  const last = waHistorySyncStartedAt.get(opts.botId) || 0;
+  if (!opts.force && Date.now() - last < WA_HISTORY_SYNC_DEBOUNCE_MS) {
+    return emptySummary({ note: 'debounced' });
+  }
+  waHistorySyncStartedAt.set(opts.botId, Date.now());
+
+  const bot = await prisma.botInstance.findFirst({
+    where: {
+      id: opts.botId,
+      tenantId: opts.tenantId,
+      botType: 'ai_wa',
+    },
+    select: {
+      id: true,
+      botTokenEncrypted: true,
+      displayName: true,
+      botUsername: true,
+      phoneNumberId: true,
+    },
+  });
+  if (!bot) {
+    return emptySummary({ ok: false, error: 'wa_bot_not_found' });
+  }
+  const session = decodeSession(bot.botTokenEncrypted);
+  if (!session?.instanceName) {
+    return emptySummary({ ok: false, error: 'wa_session_missing' });
+  }
+  if (!evolutionConfigured()) {
+    return emptySummary({
+      ok: false,
+      error: 'evolution_not_configured',
+      note: setupHint(),
+    });
+  }
+
+  const ownPhoneDigits =
+    (bot.phoneNumberId && isLikelyE164Phone(normalizeWaNumber(bot.phoneNumberId))
+      ? normalizeWaNumber(bot.phoneNumberId)
+      : undefined) ||
+    (bot.displayName && isLikelyE164Phone(normalizeWaNumber(bot.displayName))
+      ? normalizeWaNumber(bot.displayName)
+      : undefined);
+
+  if (opts.repairOnly) {
+    const { chats: openChats } = await fetchOpenWaPrivateChats(
+      session.instanceName,
+      ownPhoneDigits,
+    );
+    const openPeers = collectOpenWaChatPeers(openChats, ownPhoneDigits);
+    const openRemoteJids = [...openPeers.remoteJids];
+    const contactBook = await loadEvolutionContactBook(session.instanceName);
+    const scopedFetchCap = Math.min(
+      WA_PROFILE_FETCH_CAP,
+      Math.max(openPeers.lidDigits.size + openPeers.pnPhones.size + 8, 24),
+    );
+    const profileIndex = await buildWaProfilePnIndex({
+      instanceName: session.instanceName,
+      contactBook,
+      openPnPhones: openPeers.pnPhones,
+      openRemoteJids,
+      fetchCap: scopedFetchCap,
+      force: true,
+      ownPhoneDigits: ownPhoneDigits,
+    });
+    const mergedTwins = await repairWaLidPnSplitConversationsForBot({
+      tenantId: opts.tenantId,
+      botId: bot.id,
+      instanceName: session.instanceName,
+      profileIndex,
+      openPeers,
+    });
+    return emptySummary({
+      dialogs: openChats.length,
+      mergedTwinConversations: mergedTwins,
+      note: `repairOnly openChats=${openChats.length} mergedGroups=${mergedTwins}`,
+    });
+  }
+
+  const staleCleared = await clearStaleWaConversationCrmIds({
+    tenantId: opts.tenantId,
+    botId: bot.id,
+  });
+
+  const chatsRes = await evoFetch(
+    `/chat/findChats/${encodeURIComponent(session.instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ where: {} }) },
+  );
+  if (!chatsRes.ok) {
+    return emptySummary({
+      ok: false,
+      error: `findChats_http_${chatsRes.status}`,
+      note,
+    });
+  }
+
+  const allChats = unwrapEvoRows(chatsRes.json, ['chats', 'records', 'data']);
+  let skippedGroups = 0;
+  // Contact book enriches identity only — never a primary dialog source (INC-097 v3).
+  const contactBook = await loadEvolutionContactBook(session.instanceName);
+
+  const privateChats = allChats
+    .map((c) => {
+      const remoteJid = String(
+        c?.remoteJid || c?.id || c?.key?.remoteJid || '',
+      ).trim();
+      return { chat: c, remoteJid };
+    })
+    .filter(({ remoteJid }) => {
+      if (!remoteJid) return false;
+      if (!isPrivateWaRemoteJid(remoteJid)) {
+        skippedGroups += 1;
+        return false;
+      }
+      if (isWaSystemOrSelfJid(remoteJid, ownPhoneDigits)) {
+        skippedGroups += 1;
+        return false;
+      }
+      return true;
+    });
+
+  privateChats.sort((a, b) => chatActivityTs(b.chat) - chatActivityTs(a.chat));
+  const limitedChats = privateChats.slice(
+    0,
+    Number.isFinite(dialogLimit) ? dialogLimit : undefined,
+  );
+
+  const openPeers = collectOpenWaChatPeers(privateChats, ownPhoneDigits);
+  const openRemoteJids = [...openPeers.remoteJids];
+  const scopedFetchCap = Math.min(
+    WA_PROFILE_FETCH_CAP,
+    Math.max(openPeers.lidDigits.size + openPeers.pnPhones.size + 12, 32),
+  );
+
+  // INC-097 v6/v7.1: index PN profiles for open chats only — not bulk Contact book.
+  const pnCandidatePhones = await loadPnCandidatesFromEvolutionDb(session.instanceName, {
+    openRemoteJids,
+  });
+  const profileIndex = await buildWaProfilePnIndex({
+    instanceName: session.instanceName,
+    contactBook,
+    openPnPhones: openPeers.pnPhones,
+    prefetchedDbPhones: pnCandidatePhones,
+    openRemoteJids,
+    fetchCap: scopedFetchCap,
+    force: opts.force,
+    ownPhoneDigits: ownPhoneDigits,
+  });
+  let dealSeq = await nextWaDealSequence(opts.tenantId);
+  const botLabel = bot.displayName || bot.botUsername || 'WhatsApp';
+  let messagesUpserted = 0;
+  let peopleSynced = 0;
+  let skippedSuppressed = 0;
+  let skippedNoPhone = 0;
+  let skippedNoMessages = 0;
+  let skippedEmptyIdentity = 0;
+
+  for (let i = 0; i < limitedChats.length; i += 1) {
+    const { chat, remoteJid } = limitedChats[i]!;
+    if (i > 0) {
+      // Concurrency 1 + pause between Evolution findMessages calls.
+      await sleep(250 + Math.floor(Math.random() * 250));
+    }
+
+    // Never trust chat.owner / Chat.id (owner = own WA number; id = CUID, INC-060).
+    let phoneE164 =
+      extractPhoneFromEvoRow(chat) ||
+      extractWaPhoneE164(remoteJid, chat?.remoteJidAlt, chat?.senderPn) ||
+      (isLikelyE164Phone(normalizeWaNumber(remoteJid))
+        ? normalizeWaNumber(remoteJid)
+        : undefined);
+    if (phoneE164 && ownPhoneDigits && phoneE164 === ownPhoneDigits) {
+      phoneE164 = undefined;
+    }
+
+    let pushName = String(chat?.pushName || chat?.name || chat?.notify || '').trim();
+    const lastFromMe = Boolean(
+      chat?.lastMessage?.key?.fromMe || chat?.lastMessage?.fromMe,
+    );
+    if (!pushName && !lastFromMe) {
+      pushName = String(chat?.lastMessage?.pushName || '').trim();
+    }
+
+    const lidDigits = isWhatsAppLid(remoteJid)
+      ? normalizeWaNumber(remoteJid)
+      : undefined;
+
+    // INC-097 v6: fetchProfile on LID for email/website/name + profile-index phone match.
+    let lidProfile: WaPeerProfile | null = null;
+    if (lidDigits) {
+      lidProfile = await fetchWaPeerProfile(
+        session.instanceName,
+        lidDigits,
+        ownPhoneDigits,
+      );
+      if (
+        lidProfile?.name &&
+        (!pushName || cleanWaContactName(pushName, lidDigits) === 'WhatsApp')
+      ) {
+        pushName = lidProfile.name;
+      }
+    }
+
+    let historyMsgs = await fetchAllEvoMessagesForJid(
+      session.instanceName,
+      remoteJid,
+      messageLimit,
+    );
+
+    // Reuse inbound PN extractors on stored messages (remoteJidAlt / senderPn / vCard).
+    if (!phoneE164) {
+      for (const m of historyMsgs) {
+        const fromMsg = extractPhoneFromInboundItem(m);
+        if (fromMsg && (!ownPhoneDigits || fromMsg !== ownPhoneDigits)) {
+          phoneE164 = fromMsg;
+          break;
+        }
+      }
+    }
+    if (!phoneE164) {
+      phoneE164 = extractUniqueParticipantPhone(historyMsgs, ownPhoneDigits);
+    }
+
+    // Contact book first (LID row + unique pushName → PN), then Redis / Chat row.
+    if (!phoneE164 && (lidDigits || pushName)) {
+      const fromBook = matchContactBookIdentity(contactBook, {
+        lidDigits,
+        pushName,
+      });
+      if (fromBook.phone) phoneE164 = fromBook.phone;
+      if (fromBook.name && (!pushName || cleanWaContactName(pushName, lidDigits) === 'WhatsApp')) {
+        pushName = fromBook.name;
+      }
+    }
+
+    if (!phoneE164 && lidDigits) {
+      await pokeWaLidMappingViaPresence(session.instanceName, lidDigits);
+      const fromMapAfterPoke = await resolvePhoneFromEvolutionLidMapping(
+        session.instanceName,
+        lidDigits,
+      );
+      if (fromMapAfterPoke.phone) {
+        phoneE164 = fromMapAfterPoke.phone;
+        await rememberLidPhoneMapping(session.instanceName, lidDigits, phoneE164);
+        console.log(
+          `[ai-whatsapp] LID→phone via lid_mapping_after_poke lid=${lidDigits} phone=+${phoneE164}`,
+        );
+      }
+    }
+
+    if (!phoneE164 && lidDigits) {
+      const fromEvolution = await resolveLidPhoneFromEvolution(
+        session.instanceName,
+        lidDigits,
+        { pushName, profilePicUrl: chat?.profilePicUrl },
+      );
+      if (fromEvolution.phone) phoneE164 = fromEvolution.phone;
+    }
+
+    if (!phoneE164 && lidDigits) {
+      const fromIndex = matchPhoneFromProfileIndex(
+        profileIndex,
+        lidProfile || {},
+        pushName,
+      );
+      if (fromIndex && isLikelyE164Phone(fromIndex)) {
+        // Pic-only profile-index is opt-in (INC-059 / INC-097 v8.2 — false LID→PN twins).
+        const lidEmail = lidProfile?.email;
+        const lidWeb = lidProfile?.websiteHost;
+        const indexed = profileIndex.profiles.get(fromIndex);
+        const emailHit =
+          lidEmail && indexed?.email && lidEmail === indexed.email;
+        const webHit =
+          lidWeb && indexed?.websiteHost && lidWeb === indexed.websiteHost;
+        if (!emailHit && !webHit && !ALLOW_AVATAR_PHONE_MATCH) {
+          /* skip pic-only match */
+        } else {
+          phoneE164 = fromIndex;
+          await rememberLidPhoneMapping(session.instanceName, lidDigits, phoneE164);
+          console.log(
+            `[ai-whatsapp] LID→phone via profile-index lid=${lidDigits} phone=+${phoneE164}`,
+          );
+        }
+      }
+    }
+
+    if (!phoneE164 && lidProfile?.phone && isLikelyE164Phone(lidProfile.phone)) {
+      phoneE164 = lidProfile.phone;
+      await rememberLidPhoneMapping(session.instanceName, lidDigits!, phoneE164);
+      console.log(
+        `[ai-whatsapp] LID→phone via fetchProfile lid=${lidDigits} phone=+${phoneE164}`,
+      );
+    }
+
+    if (lidDigits && !phoneE164) {
+      console.warn(
+        `[ai-whatsapp] history-sync LID unresolved lid=${lidDigits} pushName=${pushName || '-'} — Evolution lidMapping/Redis/Message.key have no PN; CRM phone empty (needsReview). WA UI may show number Baileys has not persisted to mapping yet.`,
+      );
+    }
+
+    if (phoneE164 && ownPhoneDigits && phoneE164 === ownPhoneDigits) {
+      phoneE164 = undefined;
+    }
+
+    if (phoneE164 && (!pushName || cleanWaContactName(pushName, lidDigits) === 'WhatsApp')) {
+      const fromBookName =
+        contactBook.byPhone.get(phoneE164)?.pushName ||
+        profileIndex.profiles.get(phoneE164)?.name ||
+        (await resolveContactPushName(session.instanceName, phoneE164));
+      if (fromBookName) pushName = fromBookName;
+    }
+    if (!pushName || cleanWaContactName(pushName, lidDigits) === 'WhatsApp') {
+      for (const m of historyMsgs) {
+        const candidate = String(m?.pushName || '').trim();
+        if (!candidate || Boolean(m?.key?.fromMe || m?.fromMe)) continue;
+        const cleaned = cleanWaContactName(candidate, lidDigits || phoneE164);
+        if (cleaned !== 'WhatsApp') {
+          pushName = cleaned;
+          break;
+        }
+      }
+    }
+
+    // LID + resolved PN: merge messages from both JIDs (dedupe by message id).
+    if (phoneE164 && lidDigits) {
+      const pnJid = `${phoneE164}@s.whatsapp.net`;
+      const pnMsgs = await fetchAllEvoMessagesForJid(
+        session.instanceName,
+        pnJid,
+        messageLimit,
+      );
+      if (pnMsgs.length > 0) {
+        const byId = new Map<string, any>();
+        for (const m of [...historyMsgs, ...pnMsgs]) {
+          const id = String(m?.key?.id || m?.id || '').trim();
+          if (id) byId.set(id, m);
+        }
+        historyMsgs = [...byId.values()].sort(
+          (a, b) =>
+            evoUnixSeconds(a?.messageTimestamp) - evoUnixSeconds(b?.messageTimestamp),
+        );
+        if (historyMsgs.length > messageLimit) {
+          historyMsgs = historyMsgs.slice(-messageLimit);
+        }
+      }
+    } else if (
+      historyMsgs.length === 0 &&
+      phoneE164 &&
+      isWhatsAppLid(remoteJid)
+    ) {
+      historyMsgs = await fetchAllEvoMessagesForJid(
+        session.instanceName,
+        `${phoneE164}@s.whatsapp.net`,
+        messageLimit,
+      );
+    }
+
+    // Source of truth = open chats with message history — never Contact-book-only rows.
+    if (historyMsgs.length === 0) {
+      skippedNoMessages += 1;
+      continue;
+    }
+
+    const contactName = cleanWaContactName(pushName, lidDigits || phoneE164);
+    const preferredPlatformUserId =
+      lidDigits ||
+      phoneE164 ||
+      normalizeWaNumber(remoteJid) ||
+      String(remoteJid).split('@')[0];
+    if (!preferredPlatformUserId) {
+      skippedNoPhone += 1;
+      continue;
+    }
+
+    if (phoneE164 || lidDigits) {
+      await mergeWaLidPnTwinConversations({
+        tenantId: opts.tenantId,
+        botId: bot.id,
+        phoneE164,
+        lidDigits,
+        instanceName: session.instanceName,
+        profileIndex,
+      });
+    }
+
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: bot.id,
+        platform: 'whatsapp',
+        OR: [
+          { platformUserId: preferredPlatformUserId },
+          ...(phoneE164
+            ? [
+                { platformUserId: phoneE164 },
+                { platformUsername: `+${phoneE164}` },
+              ]
+            : []),
+          ...(lidDigits ? [{ platformUserId: lidDigits }] : []),
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          tenantId: opts.tenantId,
+          botInstanceId: bot.id,
+          platform: 'whatsapp',
+          platformUserId: preferredPlatformUserId,
+          platformUsername: phoneE164 ? `+${phoneE164}` : undefined,
+          platformFirstName: contactName !== 'WhatsApp' ? contactName : undefined,
+          channel: 'whatsapp',
+          status: 'open',
+          mode: 'ai',
+        },
+      });
+    } else {
+      const keepLid =
+        isWhatsAppLid(conversation.platformUserId) ? conversation.platformUserId : lidDigits;
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          botInstanceId: bot.id,
+          platformUserId: keepLid || conversation.platformUserId || preferredPlatformUserId,
+          platformUsername: phoneE164
+            ? `+${phoneE164}`
+            : conversation.platformUsername,
+          platformFirstName:
+            contactName !== 'WhatsApp'
+              ? contactName
+              : conversation.platformFirstName,
+        },
+      });
+    }
+
+    for (const m of historyMsgs) {
+      const key = m?.key || {};
+      const externalMessageId = String(key?.id || m?.id || '').trim();
+      if (!externalMessageId) continue;
+      const existing = await prisma.chatMessage.findFirst({
+        where: {
+          conversationId: conversation.id,
+          externalMessageId,
+        },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      const classified = classifyWaInbound(m?.message, externalMessageId);
+      const content = classified.text || '[media]';
+      const fromMe = Boolean(key?.fromMe || m?.fromMe);
+      const ts = evoUnixSeconds(m?.messageTimestamp);
+      const sentAt = ts > 0 ? new Date(ts * 1000) : new Date();
+
+      await prisma.chatMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: fromMe ? 'operator' : 'user',
+          content,
+          externalMessageId,
+          sentAt,
+          ...(classified.attachments.length
+            ? { attachments: classified.attachments }
+            : {}),
+        },
+      });
+      messagesUpserted += 1;
+    }
+
+    // Empty LID shells without phone/name: keep Conversation + messages, but do NOT
+    // create «WhatsApp» Person/Opportunity (INC-097 v5). Business profile name/website
+    // counts as identity when Evolution has no E.164.
+    const cachedPhone =
+      phoneFromPlatformUsername(conversation.platformUsername) ||
+      (
+        await resolvePhoneFromConversationCache({
+          tenantId: opts.tenantId,
+          botId: bot.id,
+          platformUserId: conversation.platformUserId,
+          conversationId: conversation.id,
+          platformUsername: conversation.platformUsername,
+        })
+      ).phone;
+    let effectivePhone = phoneE164 || cachedPhone;
+    const cachedName = cleanWaContactName(
+      conversation.platformFirstName,
+      conversation.platformUserId,
+    );
+    let effectiveName =
+      contactName !== 'WhatsApp'
+        ? contactName
+        : cachedName !== 'WhatsApp'
+          ? cachedName
+          : 'WhatsApp';
+
+    let businessEmail: string | undefined = lidProfile?.email;
+    let businessWebsite: string | undefined = lidProfile?.websiteHost
+      ? `https://${lidProfile.websiteHost}`
+      : undefined;
+    let businessInstagram: string | undefined;
+    let businessFacebook: string | undefined;
+    let businessName: string | undefined = lidProfile?.name;
+    try {
+      const biz = await fetchWaBusinessProfile(
+        session.instanceName,
+        effectivePhone || conversation.platformUserId,
+        ownPhoneDigits,
+      );
+      businessEmail = businessEmail || biz?.email;
+      businessWebsite = businessWebsite || biz?.website;
+      businessInstagram = biz?.instagram;
+      businessFacebook = biz?.facebook;
+      businessName = businessName || biz?.name;
+    } catch {
+      /* optional */
+    }
+    if (effectiveName === 'WhatsApp' && businessName) {
+      effectiveName = businessName;
+    }
+
+    const isSystemPeer =
+      preferredPlatformUserId === '0' ||
+      isWaSystemOrSelfJid(remoteJid, ownPhoneDigits);
+    if (isSystemPeer) {
+      skippedEmptyIdentity += 1;
+      console.warn(
+        `[ai-whatsapp] history-sync skip CRM system peer conv=${conversation.id} jid=${remoteJid}`,
+      );
+      continue;
+    }
+
+    let personFirstName =
+      effectiveName !== 'WhatsApp' ? effectiveName : undefined;
+    if (!personFirstName) {
+      personFirstName = await nextNonameLabel(opts.tenantId);
+    }
+    const opportunityName = `${dealSeq} · WA · ${botLabel}`;
+
+    try {
+      await syncLeadToCrm({
+        tenantId: opts.tenantId,
+        botId: bot.id,
+        conversationId: conversation.id,
+        platformUserId: conversation.platformUserId,
+        personFirstName,
+        opportunityName,
+        contactName: personFirstName,
+        phoneE164: effectivePhone,
+        email: businessEmail,
+        website: businessWebsite,
+        instagram: businessInstagram,
+        facebook: businessFacebook,
+        forceNeedsReview: !effectivePhone,
+      });
+      dealSeq += 1;
+      peopleSynced += 1;
+      const after = await prisma.conversation.findUnique({
+        where: { id: conversation.id },
+      });
+      const suppress =
+        (after as { suppressDealCreation?: boolean } | null)?.suppressDealCreation ===
+        true;
+      if (suppress && !after?.twentyOpportunityId) {
+        skippedSuppressed += 1;
+      }
+    } catch (err) {
+      console.error(
+        `[ai-whatsapp] history syncLead failed conv=${conversation.id}`,
+        err,
+      );
+    }
+  }
+
+  const repaired = await repairEmptyWaHistoryLeads({
+    tenantId: opts.tenantId,
+    botId: bot.id,
+  });
+  const mergedTwins = await repairWaLidPnSplitConversationsForBot({
+    tenantId: opts.tenantId,
+    botId: bot.id,
+    instanceName: session.instanceName,
+    profileIndex,
+    openPeers,
+  });
+
+  console.log(
+    `[ai-whatsapp] history-sync bot=${opts.botId} dialogs=${limitedChats.length} msgs=${messagesUpserted} people=${peopleSynced} groupsSkipped=${skippedGroups} noMsgs=${skippedNoMessages} emptyIdentity=${skippedEmptyIdentity} repaired=${repaired} mergedTwins=${mergedTwins} staleCleared=${staleCleared} suppress=${skippedSuppressed} contactBookEnrich=${contactBook.phoneEntries.length}`,
+  );
+
+  return {
+    ok: true,
+    dialogs: limitedChats.length,
+    messagesUpserted,
+    peopleSynced,
+    skippedGroups,
+    skippedSuppressed,
+    skippedNoPhone,
+    skippedNoMessages,
+    skippedEmptyIdentity,
+    repairedEmptyLeads: repaired,
+    mergedTwinConversations: mergedTwins,
+    note,
+  };
+}
+
+function scheduleWhatsAppHistorySync(opts: {
+  tenantId: string;
+  botId: string;
+  force?: boolean;
+}): void {
+  void runWhatsAppPrivateChatSync({
+    tenantId: opts.tenantId,
+    botId: opts.botId,
+    dialogLimit: 0,
+    messageLimit: 500,
+    force: opts.force,
+  }).catch((err) => {
+    console.error(
+      `[ai-whatsapp] history-sync failed bot=${opts.botId}`,
+      err,
+    );
+  });
+}
+
 async function handleEvolutionWebhook(payload: any) {
   const event = String(payload?.event || payload?.type || '').toLowerCase();
   const instanceName =
@@ -3183,6 +6274,8 @@ async function handleEvolutionWebhook(payload: any) {
           where: { id: bot.id },
           data: { status: 'active', phoneNumberId: phone || bot.phoneNumberId },
         });
+        // MVP: pull private chats already in Evolution → CRM (skip @g.us).
+        scheduleWhatsAppHistorySync({ tenantId: bot.tenantId, botId: bot.id });
       }
     }
     return;
@@ -3307,11 +6400,12 @@ async function backfillWaPhonesFromEvolution(opts?: {
       );
       let phone = contactHit.phone;
       if (!phone) {
-        const fromChat = await resolvePhoneFromEvolutionDb(
+        const fromEvolution = await resolveLidPhoneFromEvolution(
           session.instanceName,
           conv.platformUserId,
+          { pushName: conv.platformFirstName },
         );
-        phone = fromChat.phone;
+        phone = fromEvolution.phone;
       }
       if (!phone) {
         unresolved.push(`${conv.id}:lid=${conv.platformUserId}`);
@@ -3631,6 +6725,31 @@ async function main() {
         const tenantId = String(body.tenantId || '').trim() || undefined;
         const result = await backfillWaPhonesFromEvolution({ tenantId });
         return sendJson(res, 200, { ok: true, ...result });
+      }
+
+      // Private chat history → CRM (all private dialogs × up to 500 msgs; groups skipped).
+      if (req.method === 'POST' && url.pathname === '/internal/crm/sync-history') {
+        const body = await readJsonBody(req);
+        const tenantId = String(body.tenantId || '').trim();
+        const botId = String(body.botId || '').trim();
+        if (!tenantId || !botId) {
+          return sendJson(res, 400, { ok: false, error: 'tenantId and botId required' });
+        }
+        const rawDialog = Number(body.dialogLimit);
+        const dialogLimit =
+          Number.isFinite(rawDialog) && rawDialog > 0 ? Math.floor(rawDialog) : 0;
+        const rawMsg = Number(body.messageLimit);
+        const messageLimit =
+          Number.isFinite(rawMsg) && rawMsg > 0 ? Math.floor(rawMsg) : 500;
+        const result = await runWhatsAppPrivateChatSync({
+          tenantId,
+          botId,
+          dialogLimit,
+          messageLimit,
+          force: body.force !== false,
+          repairOnly: body.repairOnly === true,
+        });
+        return sendJson(res, result.ok ? 200 : 502, result);
       }
 
       if (req.method === 'GET' && url.pathname === '/internal/config') {

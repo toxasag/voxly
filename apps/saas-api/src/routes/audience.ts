@@ -2,19 +2,21 @@
 // Storage is platform-global; soft-gate ai_gramjs addon (see TG-AUDIENCE-GRAPH-TZ.md).
 
 import type { FastifyPluginAsync } from 'fastify';
-import { PRICING, PRODUCT_CODES } from '@voxly/shared';
+import { PRODUCT_CODES } from '@voxly/shared';
 
 async function softGramjsAddon(prisma: any, tenantId: string) {
   const addon = await prisma.addon.findUnique({
     where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
   });
   const isActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
+  const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+  const priceMonthly = await resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.AI_GRAMJS);
   return {
     addon,
     isActive,
     billingWarning: isActive
       ? null
-      : `Тариф «Личный Telegram» (${PRICING.AI_GRAMJS_MONTHLY} ₽/мес) ещё не оплачен — soft-режим.`,
+      : `Тариф «Личный Telegram» (${priceMonthly} ₽/мес) ещё не оплачен — soft-режим.`,
   };
 }
 

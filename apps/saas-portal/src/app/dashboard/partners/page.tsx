@@ -714,9 +714,10 @@ export default function PartnersPage() {
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <h2 className="land-display text-xl tracking-[-0.03em]">Баланс: потратить или вывести</h2>
           <p className="mt-1 max-w-[76ch] text-sm leading-snug text-black/55">
-            Заработанное лежит на одном счёте. Его можно зачесть в оплату собственной подписки
-            Voxly или вывести деньгами. Как только вы отправили заявку на вывод или создали счёт с
-            зачётом, сумма уходит в резерв: из «Доступно» она пропадает, но остаётся вашей.
+            Заработанное лежит на одном счёте. Его можно зачесть в оплату любых своих сервисов
+            Voxly или вывести деньгами (от {formatRub(minWithdrawal)} ₽). Как только вы отправили
+            заявку на вывод или создали счёт с зачётом, сумма уходит в резерв: из «Доступно» она
+            пропадает, но остаётся вашей.
           </p>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -750,15 +751,18 @@ export default function PartnersPage() {
             <div className="flex flex-col rounded-xl border border-black/10 bg-[#faf8f5] p-4">
               <p className="font-semibold text-black">Оплатить свой счёт</p>
               <p className="mt-1 text-sm leading-snug text-black/55">
-                Баланс принимается в оплату вашей же подписки Voxly — тарифа CRM, дополнительных
-                мест и AI-дополнений. На шаге «счёт» отметьте «Зачесть партнёрский баланс»: сумма
-                спишется с баланса, картой останется доплатить только разницу.
+                Балансом можно оплатить любые свои сервисы Voxly: CRM и места, AI-каналы и агентов,
+                пополнение баланса AI, gift-ботов и рассылки. На шаге оплаты отметьте «Зачесть
+                партнёрский баланс» — сумма спишется с баланса, картой останется только разница.
               </p>
               <p className="mt-2 text-sm leading-snug text-black/55">
                 Зачёт по умолчанию выключен — случайно потратить накопленное не получится.
+                {data.balanceRub <= 0
+                  ? ' Появится, когда на балансе будет свободная сумма.'
+                  : ''}
               </p>
               <Link
-                href="/dashboard/crm"
+                href="/dashboard/crm#oplata"
                 className="land-btn-ghost mt-4 inline-flex min-h-11 w-fit cursor-pointer items-center px-4 text-sm"
               >
                 Перейти к оплате CRM
@@ -771,8 +775,9 @@ export default function PartnersPage() {
             >
               <p className="font-semibold text-black">Вывести деньгами</p>
               <p className="mt-1 text-sm leading-snug text-black/55">
-                Заявку проверяет администратор. Сумма уходит в резерв сразу — пока заявка на
-                проверке, потратить её на оплату счёта нельзя.
+                Вывод доступен от {formatRub(minWithdrawal)} ₽. Заявку проверяет администратор.
+                Сумма уходит в резерв сразу — пока заявка на проверке, потратить её на оплату счёта
+                нельзя.
               </p>
 
               <div className="mt-3 space-y-3">

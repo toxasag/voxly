@@ -112,15 +112,15 @@ export default function LoginPage() {
               Email, пароль и код из Telegram-бота @GetVoxlybot.
             </p>
 
-            <div className="relative mx-auto mt-8 w-[min(52vw,200px)] sm:w-[220px] lg:mt-12 lg:w-[min(100%,280px)]">
-              <div className="land-mascot-float relative aspect-[3/4] w-full">
+            <div className="relative mx-auto mt-8 w-[min(58vw,220px)] sm:w-[240px] lg:mt-12 lg:w-[min(100%,300px)]">
+              <div className="land-mascot-float relative aspect-[5/6] w-full">
                 <Image
-                  src="/mascot/voxly-hero-v5.png"
-                  alt="Voxly"
+                  src="/mascot/voxly-mascot-v6.png"
+                  alt="Voxly — промышленный робот-маскот"
                   fill
                   priority
-                  sizes="(max-width: 1024px) 220px, 280px"
-                  className="object-contain object-bottom"
+                  sizes="(max-width: 1024px) 240px, 300px"
+                  className="object-contain object-bottom drop-shadow-[0_18px_28px_rgba(10,10,10,0.22)]"
                 />
               </div>
             </div>

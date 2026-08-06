@@ -54,11 +54,13 @@ async function resolveAgentCapacity(
     where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_AGENT } },
   });
   const agentSlots = getAiAgentSlots(addon?.config);
+  const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+  const priceMonthly = await resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.AI_AGENT);
   return {
     agentSlots,
     activeAgents,
     freeSlots: Math.max(0, agentSlots - activeAgents),
-    priceMonthly: PRICING.AI_AGENT_MONTHLY,
+    priceMonthly,
   };
 }
 

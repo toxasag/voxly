@@ -5,12 +5,18 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync, FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
+import pg from 'pg';
 import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
 import { clientMdToMarkdownV2, AI_HANDOFF_PAUSE_MS } from '@voxly/shared';
-import { TwentyClient } from '@voxly/twenty-client';
+import {
+  TwentyClient,
+  normalizePhoneToE164,
+  parseTelegramPeerFromLink,
+} from '@voxly/twenty-client';
 import { resolveTwentyOperatorLabel } from '../services/twenty-member-display-names.js';
 import { assertCrmAccessAllowed } from '../services/crm-access.js';
+import { runCrmSaveDedupe } from '../services/crm-deal-dedupe.js';
 
 /** Browser-reachable API origin for CRM media <video>/<audio>/<img> src (bypasses Twenty /s JSON size cap). */
 function publicApiBase(): string {
@@ -148,23 +154,31 @@ function channelMeta(opts: {
   const channelKind =
     botType === 'ai_gramjs'
       ? 'telegram_gramjs'
-      : botType === 'ai_tg'
-        ? 'telegram_business'
-        : botType === 'ai_wa'
-          ? 'whatsapp'
-          : botType === 'gift'
-            ? 'telegram_gift'
-            : opts.channel || 'telegram';
+      : botType === 'ai_max'
+        ? 'max_personal'
+        : botType === 'ai_tg'
+          ? 'telegram_business'
+          : botType === 'ai_wa'
+            ? 'whatsapp'
+            : botType === 'gift'
+              ? 'telegram_gift'
+              : botType === 'gift_max'
+                ? 'max_gift'
+                : opts.channel || 'telegram';
   const channelLabel =
     channelKind === 'telegram_gramjs'
       ? 'Telegram · личный аккаунт'
-      : channelKind === 'telegram_business'
-        ? 'Telegram · Business-бот'
-        : channelKind === 'whatsapp'
-          ? 'WhatsApp'
-          : channelKind === 'telegram_gift'
-            ? 'Telegram · бот подарков'
-            : 'Telegram';
+      : channelKind === 'max_personal'
+        ? 'MAX · личный'
+        : channelKind === 'telegram_business'
+          ? 'Telegram · Business-бот'
+          : channelKind === 'whatsapp'
+            ? 'WhatsApp'
+            : channelKind === 'telegram_gift'
+              ? 'Telegram · бот подарков'
+              : channelKind === 'max_gift'
+                ? 'MAX · бот подарков'
+                : 'Telegram';
   let identityLabel = 'бот';
   if (botType === 'ai_wa') {
     identityLabel =
@@ -173,9 +187,17 @@ function channelMeta(opts: {
       opts.botUsername ||
       'WhatsApp';
   } else if (botType === 'ai_gramjs') {
-    identityLabel = opts.botUsername
-      ? `@${opts.botUsername}`
-      : opts.phoneNumberId || 'личный аккаунт';
+    identityLabel =
+      opts.displayName ||
+      (opts.botUsername ? `@${opts.botUsername}` : null) ||
+      opts.phoneNumberId ||
+      'личный аккаунт';
+  } else if (botType === 'ai_max') {
+    identityLabel =
+      opts.displayName ||
+      opts.botUsername ||
+      opts.phoneNumberId ||
+      'личный MAX';
   } else if (opts.botUsername) {
     identityLabel = `@${opts.botUsername}`;
   }
@@ -195,11 +217,20 @@ async function listCrmChatTargets(
   prisma: FastifyInstance['prisma'],
   tenantId: string,
   recordId: string,
+  extraPersonIds: string[] = [],
 ): Promise<CrmChatTarget[]> {
+  const personOr = [
+    { twentyOpportunityId: recordId },
+    { twentyPersonId: recordId },
+    ...extraPersonIds
+      .filter((id) => id && id !== recordId)
+      .map((id) => ({ twentyPersonId: id })),
+  ];
+
   const subscribers = await prisma.giftSubscriber.findMany({
     where: {
       tenantId,
-      OR: [{ twentyOpportunityId: recordId }, { twentyPersonId: recordId }],
+      OR: personOr,
     },
     orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
     take: 20,
@@ -207,13 +238,34 @@ async function listCrmChatTargets(
   const conversations = await prisma.conversation.findMany({
     where: {
       tenantId,
-      botInstanceId: { not: null },
       channel: { not: 'telegram_business_account' },
-      OR: [{ twentyOpportunityId: recordId }, { twentyPersonId: recordId }],
+      OR: personOr,
     },
+    include: { _count: { select: { messages: true } } },
     orderBy: { updatedAt: 'desc' },
-    take: 20,
+    take: 40,
   });
+
+  // Prefer threads that actually have ChatMessages (empty contact-book shells last).
+  conversations.sort((a, b) => {
+    const msgDelta = (b._count.messages || 0) - (a._count.messages || 0);
+    if (msgDelta !== 0) return msgDelta;
+    return b.updatedAt.getTime() - a.updatedAt.getTime();
+  });
+
+  // Orphaned threads (bot deleted/reconnected) still have messages — resolve a fallback bot.
+  const fallbackBot =
+    conversations.some((c) => !c.botInstanceId)
+      ? await prisma.botInstance.findFirst({
+          where: {
+            tenantId,
+            status: 'active',
+            botType: { in: ['ai_gramjs', 'ai_tg', 'ai_wa', 'ai_max'] },
+          },
+          orderBy: { updatedAt: 'desc' },
+          select: { id: true },
+        })
+      : null;
 
   const giftConvIds = new Set(
     subscribers.map((s) => s.conversationId).filter((id): id is string => Boolean(id)),
@@ -236,9 +288,28 @@ async function listCrmChatTargets(
     });
   }
   for (const conversation of conversations) {
-    if (!conversation.botInstanceId) continue;
+    const botInstanceId = conversation.botInstanceId || fallbackBot?.id || null;
+    if (!botInstanceId) continue;
     // Avoid duplicating gift-owned conversation rows
     if (giftConvIds.has(conversation.id)) continue;
+
+    // Backfill opportunity link when we found the thread via Person on this deal.
+    if (
+      !conversation.twentyOpportunityId &&
+      conversation.twentyPersonId &&
+      extraPersonIds.includes(conversation.twentyPersonId)
+    ) {
+      try {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { twentyOpportunityId: recordId },
+        });
+        conversation.twentyOpportunityId = recordId;
+      } catch {
+        /* ignore */
+      }
+    }
+
     targets.push({
       source: 'conversation',
       telegramId: conversation.platformUserId,
@@ -246,8 +317,8 @@ async function listCrmChatTargets(
       firstName: conversation.platformFirstName,
       conversationId: conversation.id,
       twentyPersonId: conversation.twentyPersonId,
-      twentyOpportunityId: conversation.twentyOpportunityId,
-      botInstanceId: conversation.botInstanceId,
+      twentyOpportunityId: conversation.twentyOpportunityId || recordId,
+      botInstanceId,
       giftSubscriberId: null,
       businessConnectionId: conversation.businessConnectionId,
       updatedAt: conversation.updatedAt,
@@ -277,13 +348,282 @@ async function listCrmChatTargets(
   return deduped;
 }
 
+/** Resolve Person ids for an Opportunity so Chat tab finds threads linked only by person. */
+async function resolveExtraPersonIdsForRecord(
+  prisma: FastifyInstance['prisma'],
+  tenantId: string,
+  recordId: string,
+): Promise<string[]> {
+  const ids = new Set<string>();
+
+  // Already-linked control rows (person on same deal).
+  const linked = await prisma.conversation.findMany({
+    where: {
+      tenantId,
+      twentyOpportunityId: recordId,
+      twentyPersonId: { not: null },
+    },
+    select: { twentyPersonId: true },
+    take: 20,
+  });
+  for (const row of linked) {
+    if (row.twentyPersonId) ids.add(row.twentyPersonId);
+  }
+  const gifts = await prisma.giftSubscriber.findMany({
+    where: {
+      tenantId,
+      twentyOpportunityId: recordId,
+      twentyPersonId: { not: null },
+    },
+    select: { twentyPersonId: true },
+    take: 20,
+  });
+  for (const row of gifts) {
+    if (row.twentyPersonId) ids.add(row.twentyPersonId);
+  }
+
+  // Twenty Opportunity.pointOfContact — covers GramJS/WA deals where Conversation
+  // only stored twentyPersonId (Chat tab «Нет данных» on Opportunity).
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  try {
+    const owner = await prisma.tenantMember.findFirst({
+      where: { tenantId, role: 'owner' },
+      include: { user: true },
+    });
+    if (
+      tenant?.twentyWorkspaceId &&
+      tenant.twentyOwnerPasswordEncrypted &&
+      owner?.user?.email
+    ) {
+      const client = new TwentyClient({
+        apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+      });
+      await client.authenticateWorkspace(
+        owner.user.email,
+        decrypt(tenant.twentyOwnerPasswordEncrypted),
+        tenant.twentyWorkspaceId,
+      );
+      const personId = await client.getOpportunityPointOfContactId(recordId);
+      if (personId) ids.add(personId);
+    }
+  } catch {
+    /* GraphQL optional — SQL fallback below */
+  }
+
+  // SQL fallback when GraphQL shape differs / auth flakes (INC-097).
+  if (tenant?.twentyWorkspaceId) {
+    try {
+      const fromSql = await resolvePointOfContactFromTwentyDb(
+        tenant.twentyWorkspaceId,
+        recordId,
+      );
+      if (fromSql) ids.add(fromSql);
+    } catch {
+      /* soft empty still OK */
+    }
+  }
+
+  return [...ids];
+}
+
+async function resolvePointOfContactFromTwentyDb(
+  workspaceId: string,
+  opportunityId: string,
+): Promise<string | null> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !workspaceId || !opportunityId) return null;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    const row = await client.query<{ pointOfContactId: string | null }>(
+      `SELECT "pointOfContactId" FROM "${schema}".opportunity
+       WHERE id = $1::uuid AND "deletedAt" IS NULL
+       LIMIT 1`,
+      [opportunityId],
+    );
+    const id = row.rows[0]?.pointOfContactId;
+    return id ? String(id) : null;
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/**
+ * Read Person.whatsapp (+E.164) from Twenty workspace DB.
+ * Used to allow CRM «Пишем от: WhatsApp» when the field is already filled —
+ * never invents WA from phone alone.
+ */
+async function resolvePersonWhatsappFromTwentyDb(
+  workspaceId: string,
+  personId: string,
+): Promise<string | null> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !workspaceId || !personId) return null;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    const row = await client.query<{
+      whatsapp: string | null;
+      whatsappPrimaryLinkUrl: string | null;
+    }>(
+      `SELECT
+         whatsapp,
+         "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
+       FROM "${schema}".person
+       WHERE id = $1::uuid AND "deletedAt" IS NULL
+       LIMIT 1`,
+      [personId],
+    );
+    const raw = row.rows[0]?.whatsappPrimaryLinkUrl || row.rows[0]?.whatsapp;
+    const e164 = normalizePhoneToE164(raw);
+    return e164 || null;
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+type PersonTelegramPeer = {
+  userId?: string;
+  username?: string;
+  /** Optional E.164 for GramJS ImportContacts when entity not in session cache. */
+  phoneE164?: string;
+};
+
+/**
+ * Read Person.telegram LINKS (+ phone) from Twenty.
+ * Open/tg or tg:// link means we know the MTProto id for GramJS send —
+ * distinct from «есть ссылка открыть профиль» alone in the UI.
+ */
+async function resolvePersonTelegramPeerFromTwentyDb(
+  workspaceId: string,
+  personId: string,
+): Promise<PersonTelegramPeer | null> {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString || !workspaceId || !personId) return null;
+  const client = new pg.Client({ connectionString });
+  try {
+    await client.connect();
+    const ws = await client.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [workspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    const row = await client.query<{
+      telegram: string | null;
+      telegramPrimaryLinkUrl: string | null;
+      telegramPrimaryLinkLabel: string | null;
+      phonesPrimaryPhoneNumber: string | null;
+      whatsapp: string | null;
+      whatsappPrimaryLinkUrl: string | null;
+    }>(
+      `SELECT
+         telegram,
+         "telegramPrimaryLinkUrl" AS "telegramPrimaryLinkUrl",
+         "telegramPrimaryLinkLabel" AS "telegramPrimaryLinkLabel",
+         "phonesPrimaryPhoneNumber" AS "phonesPrimaryPhoneNumber",
+         whatsapp,
+         "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
+       FROM "${schema}".person
+       WHERE id = $1::uuid AND "deletedAt" IS NULL
+       LIMIT 1`,
+      [personId],
+    );
+    const p = row.rows[0];
+    if (!p) return null;
+    let peer: PersonTelegramPeer | null = null;
+    for (const raw of [
+      p.telegramPrimaryLinkUrl,
+      p.telegramPrimaryLinkLabel,
+      p.telegram,
+    ]) {
+      const parsed = parseTelegramPeerFromLink(raw);
+      if (parsed?.userId || parsed?.username) {
+        peer = { ...parsed };
+        break;
+      }
+    }
+    if (!peer) return null;
+    const phoneE164 =
+      normalizePhoneToE164(p.phonesPrimaryPhoneNumber) ||
+      normalizePhoneToE164(p.whatsappPrimaryLinkUrl) ||
+      normalizePhoneToE164(p.whatsapp) ||
+      undefined;
+    if (phoneE164) peer.phoneE164 = phoneE164;
+    return peer;
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+async function resolvePersonIdForRecord(
+  prisma: FastifyInstance['prisma'],
+  tenantId: string,
+  recordId: string,
+  baseTarget: CrmChatTarget,
+): Promise<string | null> {
+  let personId = baseTarget.twentyPersonId || null;
+  if (!personId && baseTarget.twentyOpportunityId) {
+    // recordId may be the Opportunity — still try base person first
+  }
+  if (!personId) {
+    const extras = await resolveExtraPersonIdsForRecord(prisma, tenantId, recordId);
+    personId = extras[0] || null;
+  }
+  if (!personId && recordId === baseTarget.twentyPersonId) {
+    personId = recordId;
+  }
+  // Opportunity card: recordId is opp id; resolve PoC if needed
+  if (!personId) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { twentyWorkspaceId: true },
+    });
+    if (tenant?.twentyWorkspaceId) {
+      personId = await resolvePointOfContactFromTwentyDb(
+        tenant.twentyWorkspaceId,
+        recordId,
+      );
+    }
+  }
+  return personId;
+}
+
 async function findCrmChatTarget(
   prisma: FastifyInstance['prisma'],
   tenantId: string,
   recordId: string,
   preferred?: { conversationId?: string | null; giftSubscriberId?: string | null },
 ): Promise<CrmChatTarget | null> {
-  const targets = await listCrmChatTargets(prisma, tenantId, recordId);
+  let targets = await listCrmChatTargets(prisma, tenantId, recordId);
+  if (!targets.length) {
+    const extraPersonIds = await resolveExtraPersonIdsForRecord(
+      prisma,
+      tenantId,
+      recordId,
+    );
+    if (extraPersonIds.length) {
+      targets = await listCrmChatTargets(prisma, tenantId, recordId, extraPersonIds);
+    }
+  }
   if (!targets.length) return null;
 
   if (preferred?.conversationId) {
@@ -295,6 +635,458 @@ async function findCrmChatTarget(
     if (hit) return hit;
   }
   return targets[0];
+}
+
+type CrmSendFromOption = {
+  botId: string;
+  botType: string;
+  label: string;
+  channelLabel: string;
+  identityLabel: string;
+  available: boolean;
+  unavailableReason?: string;
+  conversationId?: string | null;
+  giftSubscriberId?: string | null;
+  threadId?: string | null;
+  isDefault?: boolean;
+};
+
+type OutboundPeerResolve =
+  | {
+      ok: true;
+      peerId: string;
+      username: string | null;
+      firstName: string | null;
+      conversationId: string | null;
+      giftSubscriberId: string | null;
+      businessConnectionId: string | null;
+      twentyPersonId: string | null;
+      twentyOpportunityId: string | null;
+      /** E.164 for GramJS ImportContacts when peer entity missing from session. */
+      phoneE164?: string | null;
+    }
+  | { ok: false; error: string };
+
+function recordLinkFilter(recordId: string) {
+  return [{ twentyOpportunityId: recordId }, { twentyPersonId: recordId }];
+}
+
+async function resolveOutboundPeer(opts: {
+  prisma: FastifyInstance['prisma'];
+  tenantId: string;
+  recordId: string;
+  bot: {
+    id: string;
+    botType: string;
+  };
+  baseTarget: CrmChatTarget;
+}): Promise<OutboundPeerResolve> {
+  const { prisma, tenantId, recordId, bot, baseTarget } = opts;
+  const linkOr = recordLinkFilter(recordId);
+
+  if (bot.botType === 'ai_wa') {
+    const sameBot = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        botInstanceId: bot.id,
+        platform: 'whatsapp',
+        OR: linkOr,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (sameBot) {
+      return {
+        ok: true,
+        peerId: sameBot.platformUserId,
+        username: sameBot.platformUsername,
+        firstName: sameBot.platformFirstName,
+        conversationId: sameBot.id,
+        giftSubscriberId: null,
+        businessConnectionId: sameBot.businessConnectionId,
+        twentyPersonId: sameBot.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId: sameBot.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      };
+    }
+    const anyWa = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        platform: 'whatsapp',
+        OR: linkOr,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (anyWa) {
+      return {
+        ok: true,
+        peerId: anyWa.platformUserId,
+        username: anyWa.platformUsername,
+        firstName: anyWa.platformFirstName,
+        conversationId: null,
+        giftSubscriberId: null,
+        businessConnectionId: null,
+        twentyPersonId: anyWa.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId: anyWa.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      };
+    }
+
+    // Verified Person.whatsapp (filled in CRM) → allow first outbound without prior WA thread.
+    // Do not invent WA from phones alone / IsOnWhatsApp here.
+    let personId = baseTarget.twentyPersonId || null;
+    if (!personId) {
+      const extras = await resolveExtraPersonIdsForRecord(prisma, tenantId, recordId);
+      personId = extras[0] || null;
+    }
+    if (personId) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { twentyWorkspaceId: true },
+      });
+      if (tenant?.twentyWorkspaceId) {
+        const waE164 = await resolvePersonWhatsappFromTwentyDb(
+          tenant.twentyWorkspaceId,
+          personId,
+        );
+        if (waE164) {
+          const digits = waE164.replace(/\D/g, '');
+          return {
+            ok: true,
+            peerId: digits,
+            username: waE164,
+            firstName: baseTarget.firstName,
+            conversationId: null,
+            giftSubscriberId: null,
+            businessConnectionId: null,
+            twentyPersonId: personId,
+            twentyOpportunityId: baseTarget.twentyOpportunityId,
+          };
+        }
+      }
+    }
+
+    return {
+      ok: false,
+      error:
+        'Нет WhatsApp у этого контакта — нужен заполненный WhatsApp в карточке или существующий WA-диалог. С Telegram-лида без поля WhatsApp отправить нельзя.',
+    };
+  }
+
+  if (bot.botType === 'ai_tg') {
+    // Business replies need the same connection — only allow existing thread for this bot.
+    const same = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        botInstanceId: bot.id,
+        OR: linkOr,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (same?.businessConnectionId) {
+      return {
+        ok: true,
+        peerId: same.platformUserId,
+        username: same.platformUsername,
+        firstName: same.platformFirstName,
+        conversationId: same.id,
+        giftSubscriberId: null,
+        businessConnectionId: same.businessConnectionId,
+        twentyPersonId: same.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId: same.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      };
+    }
+    return {
+      ok: false,
+      error:
+        'Telegram Business: ответить можно только из уже связанного Business-диалога с этим контактом.',
+    };
+  }
+
+  // Gift bots: only when this peer is a GiftSubscriber / conversation on THIS bot.
+  // Do not reuse arbitrary GramJS private-chat telegramId (send would fail / wrong product).
+  if (bot.botType === 'gift' || bot.botType === 'gift_max') {
+    const giftForBot = await prisma.giftSubscriber.findFirst({
+      where: {
+        tenantId,
+        botInstanceId: bot.id,
+        OR: linkOr,
+      },
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+    });
+    if (giftForBot) {
+      return {
+        ok: true,
+        peerId: giftForBot.telegramId,
+        username: giftForBot.username,
+        firstName: giftForBot.firstName,
+        conversationId: giftForBot.conversationId,
+        giftSubscriberId: giftForBot.id,
+        businessConnectionId: null,
+        twentyPersonId: giftForBot.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId:
+          giftForBot.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      };
+    }
+    const convForBot = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        botInstanceId: bot.id,
+        OR: linkOr,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (convForBot) {
+      return {
+        ok: true,
+        peerId: convForBot.platformUserId,
+        username: convForBot.platformUsername,
+        firstName: convForBot.platformFirstName,
+        conversationId: convForBot.id,
+        giftSubscriberId: null,
+        businessConnectionId: convForBot.businessConnectionId,
+        twentyPersonId: convForBot.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId:
+          convForBot.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      };
+    }
+    return {
+      ok: false,
+      error:
+        'Этот контакт не подписан на gift-бота — писать от gift-бота нельзя. Выберите личный Telegram или WhatsApp.',
+    };
+  }
+
+  // Personal Telegram / MAX: prefer same-bot thread, else peer from any TG/gift link.
+  const convForBot = await prisma.conversation.findFirst({
+    where: {
+      tenantId,
+      botInstanceId: bot.id,
+      OR: linkOr,
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (convForBot) {
+    return {
+      ok: true,
+      peerId: convForBot.platformUserId,
+      username: convForBot.platformUsername,
+      firstName: convForBot.platformFirstName,
+      conversationId: convForBot.id,
+      giftSubscriberId: null,
+      businessConnectionId: convForBot.businessConnectionId,
+      twentyPersonId: convForBot.twentyPersonId || baseTarget.twentyPersonId,
+      twentyOpportunityId: convForBot.twentyOpportunityId || baseTarget.twentyOpportunityId,
+    };
+  }
+
+  const anyGift = await prisma.giftSubscriber.findFirst({
+    where: { tenantId, OR: linkOr },
+    orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+  });
+  if (anyGift && (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max')) {
+    return {
+      ok: true,
+      peerId: anyGift.telegramId,
+      username: anyGift.username,
+      firstName: anyGift.firstName,
+      conversationId: null,
+      giftSubscriberId: null,
+      businessConnectionId: null,
+      twentyPersonId: anyGift.twentyPersonId || baseTarget.twentyPersonId,
+      twentyOpportunityId: anyGift.twentyOpportunityId || baseTarget.twentyOpportunityId,
+    };
+  }
+
+  const anyTg = await prisma.conversation.findFirst({
+    where: {
+      tenantId,
+      platform: { in: ['telegram', 'max'] },
+      OR: linkOr,
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (anyTg && (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max')) {
+    return {
+      ok: true,
+      peerId: anyTg.platformUserId,
+      username: anyTg.platformUsername,
+      firstName: anyTg.platformFirstName,
+      conversationId: null,
+      giftSubscriberId: null,
+      businessConnectionId: null,
+      twentyPersonId: anyTg.twentyPersonId || baseTarget.twentyPersonId,
+      twentyOpportunityId: anyTg.twentyOpportunityId || baseTarget.twentyOpportunityId,
+    };
+  }
+
+  // Person.telegram LINKS (userId / @username) — enable GramJS even when chat opened from WA
+  // and there is no prior GramJS Conversation. Open/tg link ≠ gift; gift gate stays above.
+  if (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max') {
+    const personId = await resolvePersonIdForRecord(prisma, tenantId, recordId, baseTarget);
+    if (personId) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { twentyWorkspaceId: true },
+      });
+      if (tenant?.twentyWorkspaceId) {
+        const socialPeer = await resolvePersonTelegramPeerFromTwentyDb(
+          tenant.twentyWorkspaceId,
+          personId,
+        );
+        if (socialPeer?.userId || socialPeer?.username) {
+          return {
+            ok: true,
+            peerId: socialPeer.userId || socialPeer.username!,
+            username: socialPeer.username || null,
+            firstName: baseTarget.firstName,
+            conversationId: null,
+            giftSubscriberId: null,
+            businessConnectionId: null,
+            twentyPersonId: personId,
+            twentyOpportunityId: baseTarget.twentyOpportunityId,
+            phoneE164: socialPeer.phoneE164 || null,
+          };
+        }
+      }
+    }
+  }
+
+  if (
+    baseTarget.telegramId &&
+    (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max')
+  ) {
+    const botOfBase = await prisma.botInstance.findFirst({
+      where: { id: baseTarget.botInstanceId, tenantId },
+      select: { botType: true },
+    });
+    // Allow peer reuse from gift/TG/GramJS base threads; WA telegramId is often a phone JID — skip.
+    if (botOfBase && botOfBase.botType !== 'ai_wa') {
+      return {
+        ok: true,
+        peerId: baseTarget.telegramId,
+        username: baseTarget.username,
+        firstName: baseTarget.firstName,
+        conversationId: null,
+        giftSubscriberId: null,
+        businessConnectionId: null,
+        twentyPersonId: baseTarget.twentyPersonId,
+        twentyOpportunityId: baseTarget.twentyOpportunityId,
+      };
+    }
+  }
+
+  const channelName =
+    bot.botType === 'ai_gramjs'
+      ? 'личного Telegram'
+      : bot.botType === 'ai_max'
+        ? 'личного MAX'
+        : 'бота';
+  return {
+    ok: false,
+    error: `Нет Telegram ID контакта — нельзя отправить с ${channelName}. Нужен Telegram в карточке (user id / @username) или gift/Telegram-диалог.`,
+  };
+}
+
+async function buildSendFromOptions(opts: {
+  prisma: FastifyInstance['prisma'];
+  tenantId: string;
+  recordId: string;
+  baseTarget: CrmChatTarget;
+  threads: CrmChatThreadMeta[];
+}): Promise<CrmSendFromOption[]> {
+  const { prisma, tenantId, recordId, baseTarget, threads } = opts;
+  const threadByBot = new Map(threads.map((t) => [t.botId, t]));
+
+  const accounts = await prisma.botInstance.findMany({
+    where: {
+      tenantId,
+      status: 'active',
+      botType: { in: ['gift', 'gift_max', 'ai_gramjs', 'ai_wa', 'ai_max'] },
+      botTokenEncrypted: { not: null },
+    },
+    select: {
+      id: true,
+      botType: true,
+      botUsername: true,
+      displayName: true,
+      phoneNumberId: true,
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 40,
+  });
+
+  // Always include thread bots (incl. ai_tg) even if filtered above
+  const threadBotIds = threads.map((t) => t.botId).filter(Boolean);
+  const missingThreadBots = threadBotIds.filter((id) => !accounts.some((a) => a.id === id));
+  if (missingThreadBots.length) {
+    const extra = await prisma.botInstance.findMany({
+      where: { tenantId, id: { in: missingThreadBots } },
+      select: {
+        id: true,
+        botType: true,
+        botUsername: true,
+        displayName: true,
+        phoneNumberId: true,
+      },
+    });
+    accounts.push(...extra);
+  }
+
+  const options: CrmSendFromOption[] = [];
+  const seen = new Set<string>();
+
+  for (const bot of accounts) {
+    if (seen.has(bot.id)) continue;
+    seen.add(bot.id);
+    const meta = channelMeta({
+      botType: bot.botType,
+      botUsername: bot.botUsername,
+      displayName: bot.displayName,
+      phoneNumberId: bot.phoneNumberId,
+      channel: null,
+      peerUsername: baseTarget.username,
+      peerFirstName: baseTarget.firstName,
+      peerId: baseTarget.telegramId,
+    });
+    const thread = threadByBot.get(bot.id);
+    const resolved = await resolveOutboundPeer({
+      prisma,
+      tenantId,
+      recordId,
+      bot,
+      baseTarget,
+    });
+    const available = resolved.ok;
+    // Gift bots: hide entirely unless this peer is subscribed / has gift conversation.
+    if (
+      (bot.botType === 'gift' || bot.botType === 'gift_max') &&
+      !available
+    ) {
+      continue;
+    }
+    options.push({
+      botId: bot.id,
+      botType: bot.botType,
+      label: `${meta.channelLabel} · ${meta.identityLabel}`,
+      channelLabel: meta.channelLabel,
+      identityLabel: meta.identityLabel,
+      available,
+      unavailableReason: available ? undefined : resolved.error,
+      conversationId: thread?.conversationId ?? (resolved.ok ? resolved.conversationId : null),
+      giftSubscriberId:
+        thread?.giftSubscriberId ?? (resolved.ok ? resolved.giftSubscriberId : null),
+      threadId: thread?.id ?? null,
+      isDefault: bot.id === baseTarget.botInstanceId,
+    });
+  }
+
+  // Default first, then available, then rest
+  options.sort((a, b) => {
+    if (a.isDefault && !b.isDefault) return -1;
+    if (!a.isDefault && b.isDefault) return 1;
+    if (a.available && !b.available) return -1;
+    if (!a.available && b.available) return 1;
+    return a.label.localeCompare(b.label, 'ru');
+  });
+  return options;
 }
 
 function canReply(user: { role?: string; tenantRole?: string }): boolean {
@@ -531,6 +1323,12 @@ function formatBotAgentLabel(opts: {
       opts.displayName ||
       (opts.botUsername ? `@${opts.botUsername.replace(/^@/, '')}` : null) ||
       'Личный Telegram';
+  } else if (opts.botType === 'ai_max') {
+    botPart =
+      opts.displayName ||
+      opts.botUsername ||
+      opts.phoneNumberId ||
+      'Личный MAX';
   } else {
     botPart =
       (opts.botUsername ? `@${opts.botUsername.replace(/^@/, '')}` : null) ||
@@ -601,6 +1399,10 @@ function gramjsBridgeBase(): string {
   return (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
 }
 
+function maxBridgeBase(): string {
+  return (process.env.MAX_BRIDGE_URL || 'http://max-bridge:3010').replace(/\/$/, '');
+}
+
 function whatsappWorkerBase(): string {
   return (process.env.AI_WHATSAPP_WORKER_URL || 'http://ai-whatsapp-worker:3006').replace(
     /\/$/,
@@ -612,12 +1414,45 @@ async function sendViaGramjsBridge(opts: {
   botId: string;
   peerUserId: string;
   text: string;
+  /** Optional E.164 — bridge ImportContacts when peer not in session cache. */
+  phone?: string | null;
 }): Promise<void> {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
   const res = await fetch(`${gramjsBridgeBase()}/messages/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      peerUserId: opts.peerUserId,
+      text: opts.text,
+      ...(opts.phone ? { phone: opts.phone } : {}),
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+  };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
+  }
+}
+
+async function sendViaMaxBridge(opts: {
+  botId: string;
+  peerUserId: string;
+  text: string;
+}): Promise<void> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) {
+    throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  }
+  const res = await fetch(`${maxBridgeBase()}/messages/send`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -634,7 +1469,7 @@ async function sendViaGramjsBridge(opts: {
     error?: string;
   };
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
+    throw new Error(json.error || `MAX send failed (HTTP ${res.status})`);
   }
 }
 
@@ -1087,6 +1922,50 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   /**
+   * Save-time duplicate check (Twenty opportunity.created/updated + person.updated).
+   * Soft-merges People by filled phone / Person.whatsapp; never invents numbers.
+   */
+  fastify.post(
+    '/dedupe',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const body = (request.body || {}) as {
+        opportunityId?: string;
+        personId?: string;
+      };
+      const opportunityId = String(body.opportunityId || '').trim();
+      const personId = String(body.personId || '').trim();
+      if (!opportunityId && !personId) {
+        return reply
+          .code(400)
+          .send({ error: 'opportunityId or personId required' });
+      }
+      try {
+        const result = await runCrmSaveDedupe({
+          prisma: fastify.prisma,
+          tenantId,
+          opportunityId: opportunityId || undefined,
+          personId: personId || undefined,
+        });
+        if (!result.ok && result.error === 'tenant_not_found') {
+          return reply.code(404).send(result);
+        }
+        if (!result.ok && result.error === 'crm_not_provisioned') {
+          return reply.code(409).send(result);
+        }
+        return reply.send(result);
+      } catch (err) {
+        request.log.warn({ err }, 'CRM save dedupe failed');
+        return reply.code(500).send({
+          ok: false,
+          error: err instanceof Error ? err.message : 'dedupe_failed',
+        });
+      }
+    },
+  );
+
+  /**
    * Recent inbound ChatMessages for CRM left-snack toasts (shell-ux poll).
    * Auth: portal / crm-chat JWT or VOXLY_SERVICE_TOKEN + workspace header.
    */
@@ -1369,7 +2248,22 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       const prisma = fastify.prisma;
-      const allTargets = await listCrmChatTargets(prisma, tenantId, recordId);
+      let allTargets = await listCrmChatTargets(prisma, tenantId, recordId);
+      if (!allTargets.length) {
+        const extraPersonIds = await resolveExtraPersonIdsForRecord(
+          prisma,
+          tenantId,
+          recordId,
+        );
+        if (extraPersonIds.length) {
+          allTargets = await listCrmChatTargets(
+            prisma,
+            tenantId,
+            recordId,
+            extraPersonIds,
+          );
+        }
+      }
       const target = await findCrmChatTarget(prisma, tenantId, recordId, preferred);
       if (!target) {
         // 200 (not 404): RestApiClient in CRM Chat tab treats non-2xx as hard failure.
@@ -1386,6 +2280,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       let mode = 'bot';
       let channel: string | null = null;
       let aiDisabled = false;
+      let suppressDealCreation = false;
       let pausedUntil: string | null = null;
       let aiAgentId: string | null = null;
       let agentName: string | null = null;
@@ -1396,6 +2291,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             mode: true,
             channel: true,
             aiDisabled: true,
+            suppressDealCreation: true,
             pausedUntil: true,
             aiAgentId: true,
             aiAgent: { select: { name: true, status: true } },
@@ -1409,6 +2305,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         mode = conversation?.mode || 'bot';
         channel = conversation?.channel || null;
         aiDisabled = conversation?.aiDisabled === true;
+        suppressDealCreation = conversation?.suppressDealCreation === true;
         pausedUntil = conversation?.pausedUntil
           ? conversation.pausedUntil.toISOString()
           : null;
@@ -1419,6 +2316,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             ? conversation.botInstance.defaultAiAgent
             : null);
         agentName = agent?.name || null;
+      } else if (target.giftSubscriberId) {
+        const gift = await prisma.giftSubscriber.findFirst({
+          where: { id: target.giftSubscriberId, tenantId },
+          select: { suppressDealCreation: true },
+        });
+        suppressDealCreation = gift?.suppressDealCreation === true;
       }
 
       const jwtUser = (request as any).user as {
@@ -1564,6 +2467,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         peerUserId: target.telegramId,
       });
 
+      const sendFromOptions = await buildSendFromOptions({
+        prisma,
+        tenantId,
+        recordId,
+        baseTarget: target,
+        threads,
+      });
+
       return reply.send({
         recordId,
         opportunityId: target.twentyOpportunityId,
@@ -1577,13 +2488,15 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         conversationId,
         mode,
         aiDisabled,
+        suppressDealCreation,
         pausedUntil,
         aiAgentId,
         aiControls:
           Boolean(conversationId) &&
           (botType === 'ai_tg' ||
             botType === 'ai_wa' ||
-            botType === 'ai_gramjs'),
+            botType === 'ai_gramjs' ||
+            botType === 'ai_max'),
         channel: meta.channelKind,
         channelLabel: meta.channelLabel,
         identityLabel: meta.identityLabel,
@@ -1602,9 +2515,11 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         operatorName,
         botType,
-        supportsAttachments: botType !== 'ai_gramjs',
+        supportsAttachments:
+          botType !== 'ai_gramjs' && botType !== 'ai_max' && botType !== 'gift_max',
         presence,
         threads,
+        sendFromOptions,
         messages: messages.map((m) => ({
           id: m.id,
           role: m.role,
@@ -1657,7 +2572,6 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         where: {
           id: body.data.conversationId,
           tenantId,
-          botInstanceId: target.botInstanceId,
         },
       });
       if (!conversation) return reply.code(404).send({ error: 'Not found' });
@@ -1706,6 +2620,69 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         pausedUntil: updated.pausedUntil ? updated.pausedUntil.toISOString() : null,
         status: updated.status,
         action: body.data.action,
+      });
+    },
+  );
+
+  /** Toggle «Не создавать сделку при новых сообщениях» for this thread. */
+  fastify.post(
+    '/:recordId/suppress-deal',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canReply(user)) {
+        return reply.code(403).send({ error: 'Forbidden' });
+      }
+      const { recordId } = request.params as { recordId: string };
+      const body = z
+        .object({
+          conversationId: z.string().min(1).optional(),
+          giftSubscriberId: z.string().min(1).optional(),
+          suppress: z.boolean(),
+        })
+        .safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: body.error.flatten() });
+      }
+
+      const prisma = fastify.prisma;
+      const preferred = {
+        conversationId: body.data.conversationId,
+        giftSubscriberId: body.data.giftSubscriberId,
+      };
+      const target = await findCrmChatTarget(prisma, tenantId, recordId, preferred);
+      if (!target) {
+        return reply.code(404).send({ error: 'No chat linked to this CRM record' });
+      }
+
+      let suppressDealCreation = body.data.suppress;
+
+      if (target.conversationId) {
+        const updated = await prisma.conversation.update({
+          where: { id: target.conversationId },
+          data: { suppressDealCreation },
+          select: { id: true, suppressDealCreation: true },
+        });
+        suppressDealCreation = updated.suppressDealCreation;
+      }
+      if (target.giftSubscriberId) {
+        const updated = await prisma.giftSubscriber.update({
+          where: { id: target.giftSubscriberId },
+          data: { suppressDealCreation },
+          select: { id: true, suppressDealCreation: true },
+        });
+        suppressDealCreation = updated.suppressDealCreation;
+      }
+      if (!target.conversationId && !target.giftSubscriberId) {
+        return reply.code(404).send({ error: 'No conversation to update' });
+      }
+
+      return reply.send({
+        ok: true,
+        conversationId: target.conversationId,
+        giftSubscriberId: target.giftSubscriberId,
+        suppressDealCreation,
       });
     },
   );
@@ -2006,6 +2983,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       const contentType = String(request.headers['content-type'] || '');
       let preferredConversationId: string | null = null;
       let preferredGiftId: string | null = null;
+      let sendFromBotId: string | null = null;
 
       if (contentType.includes('multipart/form-data')) {
         const parts = request.parts();
@@ -2022,14 +3000,24 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             if (part.fieldname === 'giftSubscriberId') {
               preferredGiftId = String(part.value || '') || null;
             }
+            if (part.fieldname === 'sendFromBotId') {
+              sendFromBotId = String(part.value || '') || null;
+            }
           }
         }
-        const q = request.query as { conversationId?: string; giftSubscriberId?: string };
+        const q = request.query as {
+          conversationId?: string;
+          giftSubscriberId?: string;
+          sendFromBotId?: string;
+        };
         if (!preferredConversationId && typeof q.conversationId === 'string') {
           preferredConversationId = q.conversationId;
         }
         if (!preferredGiftId && typeof q.giftSubscriberId === 'string') {
           preferredGiftId = q.giftSubscriberId;
+        }
+        if (!sendFromBotId && typeof q.sendFromBotId === 'string') {
+          sendFromBotId = q.sendFromBotId;
         }
       } else {
         const body = z
@@ -2039,12 +3027,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             content: z.string().max(4000).optional(),
             conversationId: z.string().min(10).optional(),
             giftSubscriberId: z.string().min(10).optional(),
+            sendFromBotId: z.string().min(10).optional(),
           })
           .safeParse(request.body);
         if (!body.success) return reply.code(400).send({ error: body.error.flatten() });
         text = (body.data.text || body.data.message || body.data.content || '').trim();
         preferredConversationId = body.data.conversationId || null;
         preferredGiftId = body.data.giftSubscriberId || null;
+        sendFromBotId = body.data.sendFromBotId || null;
       }
 
       text = text.trim();
@@ -2056,35 +3046,97 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const prisma = fastify.prisma;
-      const target = await findCrmChatTarget(prisma, tenantId, recordId, {
+      const baseTarget = await findCrmChatTarget(prisma, tenantId, recordId, {
         conversationId: preferredConversationId,
         giftSubscriberId: preferredGiftId,
       });
-      if (!target) {
+      if (!baseTarget) {
         return reply.code(404).send({ error: 'No chat linked to this CRM record' });
       }
 
-      const bot = await prisma.botInstance.findFirst({
-        where: { id: target.botInstanceId, tenantId, status: 'active' },
+      let bot = await prisma.botInstance.findFirst({
+        where: { id: baseTarget.botInstanceId, tenantId, status: 'active' },
       });
       if (!bot) {
         return reply.code(404).send({ error: 'Bot not found or inactive' });
       }
 
+      // Outbound identity — defaults to the active thread bot (unchanged path).
+      let target: CrmChatTarget = { ...baseTarget };
+      let gramjsPhoneE164: string | null = null;
+      if (sendFromBotId && sendFromBotId !== baseTarget.botInstanceId) {
+        const altBot = await prisma.botInstance.findFirst({
+          where: { id: sendFromBotId, tenantId, status: 'active' },
+        });
+        if (!altBot) {
+          return reply.code(404).send({ error: 'Выбранный аккаунт не найден или неактивен' });
+        }
+        const resolved = await resolveOutboundPeer({
+          prisma,
+          tenantId,
+          recordId,
+          bot: altBot,
+          baseTarget,
+        });
+        if (!resolved.ok) {
+          return reply.code(400).send({ error: resolved.error });
+        }
+        bot = altBot;
+        gramjsPhoneE164 = resolved.phoneE164 || null;
+        target = {
+          source: resolved.giftSubscriberId ? 'gift_subscriber' : 'conversation',
+          telegramId: resolved.peerId,
+          username: resolved.username,
+          firstName: resolved.firstName,
+          conversationId: resolved.conversationId,
+          twentyPersonId: resolved.twentyPersonId,
+          twentyOpportunityId: resolved.twentyOpportunityId,
+          botInstanceId: altBot.id,
+          giftSubscriberId: resolved.giftSubscriberId,
+          businessConnectionId: resolved.businessConnectionId,
+          updatedAt: new Date(),
+        };
+      } else if (bot.botType === 'ai_gramjs' && target.twentyPersonId) {
+        // Same-bot GramJS send may still need phone to resolve peer entity.
+        const tenant = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { twentyWorkspaceId: true },
+        });
+        if (tenant?.twentyWorkspaceId) {
+          const socialPeer = await resolvePersonTelegramPeerFromTwentyDb(
+            tenant.twentyWorkspaceId,
+            target.twentyPersonId,
+          );
+          gramjsPhoneE164 = socialPeer?.phoneE164 || null;
+        }
+      }
+
       const isGramjs = bot.botType === 'ai_gramjs';
+      const isMax = bot.botType === 'ai_max';
+      const isGiftMax = bot.botType === 'gift_max';
       const isWhatsapp = bot.botType === 'ai_wa';
-      if (isGramjs && fileBuffer?.length) {
+      if ((isGramjs || isMax) && fileBuffer?.length) {
         return reply
           .code(400)
           .send({
-            error: 'Вложения из CRM для личного Telegram пока не поддерживаются',
+            error: isMax
+              ? 'Вложения из CRM для личного MAX пока не поддерживаются'
+              : 'Вложения из CRM для личного Telegram пока не поддерживаются',
           });
       }
-      if (!isGramjs && !isWhatsapp && !bot.botTokenEncrypted) {
+      if (isGiftMax && fileBuffer?.length) {
+        return reply
+          .code(400)
+          .send({ error: 'Вложения из CRM для MAX gift-бота пока не поддерживаются' });
+      }
+      if (!isGramjs && !isMax && !isWhatsapp && !bot.botTokenEncrypted) {
         return reply.code(404).send({ error: 'Bot not found or inactive' });
       }
       if (isGramjs && !bot.botTokenEncrypted) {
         return reply.code(404).send({ error: 'Личный Telegram не подключён (нет сессии)' });
+      }
+      if (isMax && !bot.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Личный MAX не подключён (нет сессии)' });
       }
       if (isWhatsapp && !bot.botTokenEncrypted) {
         return reply.code(404).send({ error: 'WhatsApp не подключён (нет сессии)' });
@@ -2110,7 +3162,37 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             botId: bot.id,
             peerUserId: chatId,
             text: text || '[файл]',
+            phone: gramjsPhoneE164,
           });
+        } else if (isMax) {
+          await sendViaMaxBridge({
+            botId: bot.id,
+            peerUserId: chatId,
+            text: text || '[файл]',
+          });
+        } else if (isGiftMax) {
+          const token = decrypt(bot.botTokenEncrypted!);
+          const maxBase = (
+            process.env.MAX_BOT_API_URL || 'https://platform-api2.max.ru'
+          ).replace(/\/$/, '');
+          const url = new URL(`${maxBase}/messages`);
+          url.searchParams.set('user_id', String(chatId));
+          const res = await fetch(url.toString(), {
+            method: 'POST',
+            headers: {
+              Authorization: token,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: text || '[файл]' }),
+          });
+          const json = (await res.json().catch(() => ({}))) as {
+            success?: boolean;
+            message?: string;
+            error?: string;
+          };
+          if (!res.ok || json.success === false) {
+            throw new Error(json.message || json.error || `MAX send HTTP ${res.status}`);
+          }
         } else if (isWhatsapp) {
           // Worker marks read + types + may split multi-bubble text.
           if (fileBuffer?.length) {
@@ -2225,7 +3307,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           data: {
             tenantId,
             botInstanceId: bot.id,
-            platform: isWhatsapp ? 'whatsapp' : 'telegram',
+            platform: isWhatsapp ? 'whatsapp' : isMax || isGiftMax ? 'max' : 'telegram',
             platformUserId: target.telegramId,
             platformUsername: target.username,
             platformFirstName: target.firstName,
@@ -2234,11 +3316,15 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             mode: 'ai',
             channel: isGramjs
               ? 'telegram_gramjs'
-              : isWhatsapp
-                ? 'whatsapp'
-                : bot.botType === 'ai_tg'
-                  ? 'telegram_business'
-                  : undefined,
+              : isMax
+                ? 'max_personal'
+                : isGiftMax
+                  ? 'max_gift'
+                  : isWhatsapp
+                    ? 'whatsapp'
+                    : bot.botType === 'ai_tg'
+                      ? 'telegram_business'
+                      : undefined,
             businessConnectionId: bizId || undefined,
             twentyPersonId: target.twentyPersonId || undefined,
             twentyOpportunityId: target.twentyOpportunityId || undefined,
@@ -2317,6 +3403,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({
         ok: true,
+        botId: bot.id,
+        conversationId,
         message: {
           id: message.id,
           role: message.role,

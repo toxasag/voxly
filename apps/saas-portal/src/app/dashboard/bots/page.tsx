@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ExternalLink, Loader2, Megaphone, Plus } from 'lucide-react';
+import { ExternalLink, Loader2, Plus } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,13 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { CopyButton } from '@/components/portal/copy-button';
 import { GiftBotsHero } from '@/components/portal/gift-bots-hero';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
+
+const SECTION =
+  'rounded-2xl border border-black/10 bg-[#faf8f5] p-5 sm:p-6';
+const SECTION_WARM =
+  'rounded-2xl border border-[#f5a623]/35 bg-[#fff8ec] p-5 sm:p-6';
 
 interface BotRow {
   id: string;
@@ -41,6 +48,8 @@ interface BotsResponse {
   telegramLinked?: boolean;
   managerBot?: string;
   giftBotPriceMonthly?: number;
+  giftBotSlots?: number;
+  giftBotsUsed?: number;
   giftAddon: GiftAddon | null;
   bots: BotRow[];
 }
@@ -66,6 +75,10 @@ function botStatusRu(status: string): string {
 }
 
 function botNextHint(bot: BotRow): string {
+  if (bot.botType === 'gift_max') {
+    if ((bot.subscriberCount ?? 0) === 0) return 'Ждём первых сообщений в MAX';
+    return 'Настроить воронку';
+  }
   const channelOk =
     Boolean(bot.campaign?.channelUsername) &&
     bot.campaign?.channelId !== 'pending' &&
@@ -89,7 +102,6 @@ export default function GiftBotsListPage() {
     suggestedUsername?: string;
     telegramLinked?: boolean;
   } | null>(null);
-
   const load = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) {
@@ -124,6 +136,11 @@ export default function GiftBotsListPage() {
   const subActive = Boolean(addon?.isActive);
   const isTrial = Boolean(subActive && addon?.isTrial);
   const daysLeft = daysRemaining(addon?.activeUntil);
+  const botSlots = Math.max(0, data?.giftBotSlots ?? 0);
+  const botsUsed = data?.giftBotsUsed ?? 0;
+  const renewTotal = Math.max(1, botSlots || 1) * price;
+  const slotsFull = subActive && botsUsed >= Math.max(1, botSlots);
+  const balanceApply = usePartnerBalanceApply(subActive ? renewTotal : price);
 
   const totalSubscribers = giftBots.reduce((n, b) => n + (b.subscriberCount ?? 0), 0);
   const totalGifted = giftBots.reduce((n, b) => n + (b.giftedCount ?? 0), 0);
@@ -156,11 +173,55 @@ export default function GiftBotsListPage() {
     }
   };
 
-  const pay = async () => {
+  const payRenew = async () => {
     setBusy('pay');
     setError('');
     try {
-      await startCheckout({ productCode: 'gift_bot', periodMonths: 1 });
+      const qty = Math.max(1, botSlots || 1);
+      await startCheckout({
+        productCode: 'gift_bot',
+        periodMonths: 1,
+        quantity: qty,
+        intent: 'renew',
+        ...balanceApply.applyBalancePayload,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy('');
+    }
+  };
+
+  const payAddSlot = async () => {
+    setBusy('pay-add');
+    setError('');
+    try {
+      await startCheckout({
+        productCode: 'gift_bot',
+        periodMonths: 1,
+        quantity: 1,
+        intent: 'add',
+        ...(balanceApply.useBalance
+          ? { applyBalanceRub: Math.min(balanceApply.appliedRub || 0, price) }
+          : {}),
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка оплаты');
+      setBusy('');
+    }
+  };
+
+  /** First activation after trial used: buy 1 slot. */
+  const payFirst = async () => {
+    setBusy('pay');
+    setError('');
+    try {
+      await startCheckout({
+        productCode: 'gift_bot',
+        periodMonths: 1,
+        quantity: 1,
+        intent: 'add',
+        ...balanceApply.applyBalancePayload,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy('');
@@ -189,7 +250,12 @@ export default function GiftBotsListPage() {
         body: JSON.stringify({ botType: 'gift', suggestedName: 'Voxly Gift Bot' }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Не удалось создать ссылку');
+      if (!res.ok) {
+        if (res.status === 402 && json.intent === 'add') {
+          throw new Error(json.error || 'Нужен ещё один слот — оплатите бота');
+        }
+        throw new Error(json.error || 'Не удалось создать ссылку');
+      }
       setProvision({
         deepLink: json.deepLink,
         deepLinkSimple: json.deepLinkSimple,
@@ -207,28 +273,28 @@ export default function GiftBotsListPage() {
 
   let heroTitle = 'Нужна оплата';
   let heroSubtitle =
-    'Пробный период уже использован. Оформите тариф, чтобы снова подключать ботов и принимать лидов.';
+    'Пробный период уже использован. Оформите оплату — 500 ₽/мес за одного Telegram-бота.';
   let stateLabel = 'Тариф выключен';
   let stateTone: 'connected' | 'pending' | 'off' = 'off';
-  let stateHint = `${price} ₽/мес · можно списать партнёрский баланс на шаге оплаты.`;
+  let stateHint = `${price} ₽/мес за одного Telegram-бота · можно списать партнёрский баланс.`;
   let actionLabel = busy === 'pay' ? 'Переходим…' : `Оплатить ${price} ₽`;
-  let onHeroAction = () => void pay();
+  let onHeroAction = () => void payFirst();
   let secondaryActionLabel: string | undefined;
   let onSecondaryAction: (() => void) | undefined;
   let footerLabel = 'Тариф';
-  let footerValue = `${price} ₽/мес`;
+  let footerValue = `${price} ₽/бот`;
 
   if (!subActive && trialAvailable) {
-    heroTitle = 'Подарок за подписку на канал';
+    heroTitle = 'Бот подарков Telegram';
     heroSubtitle =
-      'Пост в канале → бот проверяет подписку → выдаёт материал. Старт бесплатно на 7 дней.';
+      'Пост в канале → бот проверяет подписку → выдаёт материал. Старт бесплатно на 7 дней — один бот.';
     stateLabel = 'Пробный период доступен';
     stateTone = 'pending';
-    stateHint = `7 дней бесплатно, дальше ${price} ₽/мес за продукт (не за каждый канал).`;
+    stateHint = `7 дней бесплатно (1 бот), дальше ${price} ₽/мес за каждого Telegram-бота.`;
     actionLabel = busy === 'trial' ? 'Активируем…' : 'Активировать 7 дней';
     onHeroAction = () => void startTrial();
     secondaryActionLabel = `Или оплатить ${price} ₽`;
-    onSecondaryAction = () => void pay();
+    onSecondaryAction = () => void payFirst();
   } else if (isTrial) {
     heroTitle =
       botsNeedingAction > 0 ? 'Донастройте воронку до конца trial' : 'Пробный период активен';
@@ -238,21 +304,28 @@ export default function GiftBotsListPage() {
         : 'Воронка принимает лидов. После оплаты всё продолжит работать без паузы.';
     stateLabel = daysLeft != null ? `Пробный период · ${daysLeft} дн.` : 'Пробный период';
     stateTone = 'pending';
-    stateHint = `До ${formatUntil(addon?.activeUntil)}. Когда trial закончится, бот перестанет принимать лидов — переписка в CRM сохранится.`;
-    actionLabel = busy === 'pay' ? 'Переходим…' : `Оплатить ${price} ₽`;
-    onHeroAction = () => void pay();
+    stateHint = `Слоты ${botsUsed}/${Math.max(1, botSlots)} · до ${formatUntil(addon?.activeUntil)}. ${price} ₽/мес за бота.`;
+    actionLabel = busy === 'pay' ? 'Переходим…' : `Оплатить ${renewTotal} ₽`;
+    onHeroAction = () => void payRenew();
+    if (slotsFull) {
+      secondaryActionLabel = busy === 'pay-add' ? 'Переходим…' : `Ещё бот · ${price} ₽`;
+      onSecondaryAction = () => void payAddSlot();
+    }
     footerLabel = 'До';
     footerValue = formatUntil(addon?.activeUntil);
   } else if (subActive) {
     heroTitle =
       botsNeedingAction > 0 ? 'Есть боты без полной настройки' : 'Воронка подарков работает';
-    heroSubtitle =
-      'Один бот = один канал. Несколько проектов на боте — активен только один. Тариф покрывает gift-ботов аккаунта.';
+    heroSubtitle = slotsFull
+      ? `Использовано ${botsUsed} из ${botSlots} слотов. Чтобы подключить ещё Telegram-бота — купите слот.`
+      : `Слоты ${botsUsed}/${botSlots}. Один слот = один Telegram-бот · ${price} ₽/мес.`;
     stateLabel = 'Подписка активна';
-    stateTone = botsNeedingAction > 0 ? 'pending' : 'connected';
-    stateHint = `Оплачено до ${formatUntil(addon?.activeUntil)}.`;
-    actionLabel = busy === 'pay' ? 'Переходим…' : 'Продлить на месяц';
-    onHeroAction = () => void pay();
+    stateTone = botsNeedingAction > 0 || slotsFull ? 'pending' : 'connected';
+    stateHint = `Оплачено до ${formatUntil(addon?.activeUntil)}. Продление: ${renewTotal} ₽ за ${Math.max(1, botSlots)} бот(ов).`;
+    actionLabel = busy === 'pay' ? 'Переходим…' : `Продлить · ${renewTotal} ₽`;
+    onHeroAction = () => void payRenew();
+    secondaryActionLabel = busy === 'pay-add' ? 'Переходим…' : `Ещё бот · ${price} ₽`;
+    onSecondaryAction = () => void payAddSlot();
     footerLabel = 'До';
     footerValue = formatUntil(addon?.activeUntil);
   }
@@ -268,35 +341,12 @@ export default function GiftBotsListPage() {
   return (
     <AppShell maxWidth="6xl">
       <div className="landing-root space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            href="/dashboard"
-            className="inline-flex min-h-10 items-center gap-1 rounded-sm text-sm text-black/55 transition-colors hover:text-black"
-          >
-            ← Кабинет
-          </Link>
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href="/dashboard/mailing/bot"
-              className="land-btn-ghost inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm"
-            >
-              <Megaphone className="h-4 w-4" aria-hidden /> Рассылки
-            </Link>
-            <button
-              type="button"
-              onClick={() => void createBot()}
-              disabled={Boolean(busy) || (!subActive && !trialAvailable)}
-              className="land-btn inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busy === 'provision' ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              ) : (
-                <Plus className="h-4 w-4" aria-hidden />
-              )}
-              Подключить канал
-            </button>
-          </div>
-        </div>
+        <Link
+          href="/dashboard"
+          className="inline-flex min-h-10 items-center gap-1 rounded-sm text-sm text-black/55 transition-colors hover:text-black"
+        >
+          ← Кабинет
+        </Link>
 
         <GiftBotsHero
           title={heroTitle}
@@ -331,9 +381,51 @@ export default function GiftBotsListPage() {
           partnerHint
         />
 
-        {error ? <Alert variant="error">{error}</Alert> : null}
+        {error ? (
+          <Alert
+            variant="error"
+            className="border-[#c2410c]/35 bg-[#fff8ec] text-[#9a3412] animate-error"
+          >
+            {error}
+          </Alert>
+        ) : null}
 
-        <section className="grid gap-3 rounded-2xl border border-black/10 bg-white p-5 sm:grid-cols-3">
+        {balanceApply.availableRub > 0 ? (
+          <section className={SECTION}>
+            <h2 className="land-display text-xl tracking-[-0.03em]">Оплата тарифа</h2>
+            <p className="mt-1 text-sm text-black/55">
+              Перед оплатой можно зачесть партнёрский баланс — по умолчанию выключено.
+            </p>
+            <div className="mt-4 max-w-md space-y-3">
+              <PartnerBalanceApply
+                availableRub={balanceApply.availableRub}
+                invoiceRub={price}
+                useBalance={balanceApply.useBalance}
+                onUseBalanceChange={balanceApply.setUseBalance}
+                balanceInput={balanceApply.balanceInput}
+                onBalanceInputChange={balanceApply.setBalanceInput}
+                appliedRub={balanceApply.appliedRub}
+                netRub={balanceApply.netRub}
+                disabled={busy === 'pay'}
+                idPrefix="gift-bot-balance"
+              />
+              <button
+                type="button"
+                disabled={busy === 'pay'}
+                onClick={() => void (subActive ? payRenew() : payFirst())}
+                className="land-btn min-h-11 cursor-pointer px-4 text-sm disabled:opacity-50"
+              >
+                {busy === 'pay'
+                  ? 'Переходим…'
+                  : balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                    ? 'Оформить за 0 ₽ — с баланса'
+                    : `Оплатить ${balanceApply.netRub || (subActive ? renewTotal : price)} ₽`}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className={`grid gap-3 sm:grid-cols-3 ${SECTION_WARM}`}>
           {[
             {
               n: '1',
@@ -363,49 +455,13 @@ export default function GiftBotsListPage() {
           ))}
         </section>
 
-        {provision ? (
-          <section className="space-y-3 rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
-            <h2 className="land-display text-xl tracking-[-0.03em]">Создание бота в Telegram</h2>
-            <p className="text-sm text-black/55">
-              Откройте ссылку внутри Telegram (не в Safari/Chrome). Username: @
-              {provision.suggestedUsername}
-            </p>
-            {!provision.telegramLinked && !data?.telegramLinked ? (
-              <Button asChild variant="secondary">
-                <a href={provision.linkManager} target="_blank" rel="noreferrer">
-                  1. Привязать Telegram
-                </a>
-              </Button>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button asChild variant="solid">
-                <a href={provision.deepLink} target="_blank" rel="noreferrer">
-                  Создать бота <ExternalLink className="h-4 w-4" />
-                </a>
-              </Button>
-              <CopyButton value={provision.deepLink} label="Скопировать ссылку" />
-              {provision.deepLinkSimple ? (
-                <Button asChild variant="ghost">
-                  <a href={provision.deepLinkSimple} target="_blank" rel="noreferrer">
-                    Запасная ссылка
-                  </a>
-                </Button>
-              ) : null}
-            </div>
-            <Input readOnly value={provision.deepLink} className="font-mono text-xs" />
-            <p className="text-xs text-black/45">
-              После подтверждения в Telegram бот появится в списке ниже.
-            </p>
-          </section>
-        ) : null}
-
-        <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+        <section className={SECTION}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="land-display text-xl tracking-[-0.03em]">Итоги по воронкам</h2>
               <p className="mt-1 text-sm text-black/55">
-                Сводка по всем gift-ботам аккаунта · Manager{' '}
-                {data?.managerBot || '@VoxlyGiftbot'}
+                Сводка по ботам · слоты {botsUsed}/{Math.max(botSlots, botsUsed || 0) || '—'} ·
+                Manager {data?.managerBot || '@VoxlyGiftbot'}
               </p>
             </div>
           </div>
@@ -441,8 +497,8 @@ export default function GiftBotsListPage() {
                 key={stat.label}
                 className={`rounded-xl border p-4 ${
                   stat.accent
-                    ? 'border-[#f5a623]/40 bg-[#fff8ec]'
-                    : 'border-black/10 bg-[#faf8f5]'
+                    ? 'border-[#f5a623]/50 bg-[#fff8ec]'
+                    : 'border-black/10 bg-white/70'
                 }`}
               >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-black/45">
@@ -457,12 +513,89 @@ export default function GiftBotsListPage() {
           </div>
         </section>
 
+        <section className={`space-y-3 ${SECTION}`}>
+          {provision ? (
+            <>
+              <h2 className="land-display text-xl tracking-[-0.03em]">Создание бота в Telegram</h2>
+              <p className="text-sm text-black/55">
+                Один шаг: откройте ссылку внутри Telegram (не в Safari/Chrome). Username: @
+                {provision.suggestedUsername}
+              </p>
+              {!provision.telegramLinked && !data?.telegramLinked ? (
+                <Button asChild variant="secondary">
+                  <a href={provision.linkManager} target="_blank" rel="noreferrer">
+                    1. Привязать Telegram
+                  </a>
+                </Button>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={provision.deepLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="land-btn inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm"
+                >
+                  Создать бота <ExternalLink className="h-4 w-4" aria-hidden />
+                </a>
+                <CopyButton value={provision.deepLink} label="Скопировать ссылку" />
+                {provision.deepLinkSimple ? (
+                  <a
+                    href={provision.deepLinkSimple}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="land-btn-ghost inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm"
+                  >
+                    Запасная ссылка
+                  </a>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={Boolean(busy) || (!subActive && !trialAvailable)}
+                  onClick={() => void createBot()}
+                  className="land-btn-ghost inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {busy === 'provision' ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : null}
+                  Новая ссылка
+                </button>
+              </div>
+              <Input readOnly value={provision.deepLink} className="font-mono text-xs" />
+              <p className="text-xs text-black/45">
+                После подтверждения в Telegram бот появится в списке ниже. Manager → канал → пост →
+                подарок · {price} ₽/мес за бота.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="land-display text-xl tracking-[-0.03em]">Подключить Telegram-бота</h2>
+              <p className="text-sm text-black/55">
+                Manager Bot создаст бота и выдаст ссылку. Дальше: канал → пост с кнопкой → проверка
+                подписки → подарок. Отдельный продукт от MAX · {price} ₽/мес за бота.
+              </p>
+              <button
+                type="button"
+                disabled={Boolean(busy) || (!subActive && !trialAvailable)}
+                onClick={() => void createBot()}
+                className="land-btn inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === 'provision' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Plus className="h-4 w-4" aria-hidden />
+                )}
+                Создать через Manager
+              </button>
+            </>
+          )}
+        </section>
+
         {giftBots.length === 0 ? (
-          <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <section className={SECTION}>
             <h2 className="land-display text-xl tracking-[-0.03em]">С чего начать</h2>
             <p className="mt-1 max-w-[70ch] text-sm text-black/55">
-              Пока нет ни одного gift-бота. После подключения канала вы настроите сообщения и
-              опубликуете пост — лиды появятся здесь и в CRM.
+              Пока нет Telegram gift-ботов. Каждый бот — {price} ₽/мес. Для MAX откройте отдельный
+              продукт «Подарки MAX».
             </p>
             <ol className="mt-4 space-y-3 text-sm text-black/65">
               <li className="flex gap-3">
@@ -470,35 +603,35 @@ export default function GiftBotsListPage() {
                   1
                 </span>
                 <span className="pt-1">
-                  Активируйте пробный период или оплатите тариф ({price} ₽/мес на аккаунт).
+                  Активируйте пробный период (1 бот) или оплатите {price} ₽/мес.
                 </span>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5a623] font-mono text-xs font-bold text-black">
                   2
                 </span>
-                <span className="pt-1">
-                  Нажмите «Подключить канал» и создайте бота через Manager в Telegram.
-                </span>
+                <span className="pt-1">Создайте бота через Manager в Telegram.</span>
               </li>
               <li className="flex gap-3">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5a623] font-mono text-xs font-bold text-black">
                   3
                 </span>
-                <span className="pt-1">В карточке бота привяжите канал, подарок и пост.</span>
+                <span className="pt-1">В карточке привяжите канал, подарок и пост.</span>
               </li>
             </ol>
-            <button
-              type="button"
-              onClick={() => void createBot()}
-              disabled={Boolean(busy) || (!subActive && !trialAvailable)}
-              className="land-btn mt-5 inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Plus className="h-4 w-4" aria-hidden /> Подключить первый канал
-            </button>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void createBot()}
+                disabled={Boolean(busy) || (!subActive && !trialAvailable)}
+                className="land-btn inline-flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" aria-hidden /> Подключить бота
+              </button>
+            </div>
           </section>
         ) : (
-          <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
+          <section className={SECTION}>
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
                 <h2 className="land-display text-xl tracking-[-0.03em]">Ваши боты</h2>
@@ -510,7 +643,7 @@ export default function GiftBotsListPage() {
               </div>
             </div>
 
-            <ul className="stagger mt-4 divide-y divide-black/10 overflow-hidden rounded-xl border border-black/10">
+            <ul className="stagger mt-4 divide-y divide-black/10 overflow-hidden rounded-xl border border-black/10 bg-white/70">
               {giftBots.map((bot) => {
                 const channel = bot.campaign?.channelUsername
                   ? `@${bot.campaign.channelUsername.replace(/^@/, '')}`
@@ -523,24 +656,27 @@ export default function GiftBotsListPage() {
                   <li key={bot.id}>
                     <Link
                       href={`/dashboard/bots/${bot.id}`}
-                      className="flex cursor-pointer flex-col gap-3 px-4 py-4 transition-colors duration-200 hover:bg-[#faf8f5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5"
+                      className="flex cursor-pointer flex-col gap-3 px-4 py-4 transition-colors duration-200 hover:bg-[#fff8ec] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5"
                     >
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="truncate font-semibold tracking-tight text-black">
                             {channel}
                           </p>
+                          <span className="rounded-full bg-[#f5a623]/25 px-2 py-0.5 text-[11px] font-semibold text-black">
+                            Telegram
+                          </span>
                           <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                               bot.status === 'active'
                                 ? 'bg-[#ECFDF5] text-[#059669]'
-                                : 'bg-[#FFFBEB] text-[#D97706]'
+                                : 'bg-[#fff8ec] text-[#c2410c]'
                             }`}
                           >
                             {botStatusRu(bot.status)}
                           </span>
                           {published ? (
-                            <span className="rounded-full bg-[#F1F5F9] px-2 py-0.5 text-[11px] font-semibold text-[#475569]">
+                            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-semibold text-black/55">
                               пост
                             </span>
                           ) : null}
@@ -555,10 +691,10 @@ export default function GiftBotsListPage() {
                         className={`inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border px-4 text-sm font-semibold ${
                           needsWork
                             ? 'border-[#f5a623] bg-[#fff8ec] text-black'
-                            : 'border-black/15 text-black/70'
+                            : 'border-black/15 bg-white/50 text-black/70'
                         }`}
                       >
-                        {hint} →
+                        Настроить бота
                       </span>
                     </Link>
                   </li>

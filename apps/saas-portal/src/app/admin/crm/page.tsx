@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
@@ -350,6 +351,7 @@ function TenantPricingPanel({
           />
           <span className="mt-1 block text-[11px] text-black/45">
             Платформа: {formatRub(platform.baseMonthly)} ₽ · {inherits(tenant.pricing.customBase)}
+            {' · 0 = бесплатно'}
           </span>
         </label>
         <label className="block text-sm">
@@ -927,12 +929,15 @@ export default function AdminCrmPage() {
 
         <section className="rounded-2xl border border-black/10 bg-white p-5 sm:p-6">
           <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-            02 · Глобальные тарифы
+            02 · Глобальные тарифы CRM
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Стоимость по умолчанию</h2>
           <p className="mt-1 text-sm text-black/55">
-            Базовая цена платформы. Её берут Robokassa-checkout и все новые клиенты — кроме тех, у
-            кого задана индивидуальная цена.
+            CRM base и доп. место. Все продукты (AI, боты, mailing) — на{' '}
+            <Link href="/admin/pricing" className="underline underline-offset-2">
+              странице Тарифы
+            </Link>
+            . Действует на следующую оплату.
           </p>
 
           <div className="mt-4 rounded-xl border border-black/15 bg-[#faf8f5] p-4">
@@ -983,7 +988,7 @@ export default function AdminCrmPage() {
               </span>
               <input
                 type="number"
-                min={0}
+                min={1}
                 step={1}
                 value={baseMonthly}
                 onChange={(e) => setBaseMonthly(Number(e.target.value))}
@@ -996,7 +1001,7 @@ export default function AdminCrmPage() {
               </span>
               <input
                 type="number"
-                min={0}
+                min={1}
                 step={1}
                 value={extraSeatMonthly}
                 onChange={(e) => setExtraSeatMonthly(Number(e.target.value))}

@@ -30,6 +30,10 @@ services:
       - "--providers.file.watch=true"
       # HTTP only — NPM terminates TLS on 443
       - "--entryPoints.web.address=:80"
+      # Default readTimeout is 60s — kills large gift media uploads mid-body (INC-090)
+      - "--entryPoints.web.transport.respondingTimeouts.readTimeout=300s"
+      - "--entryPoints.web.transport.respondingTimeouts.writeTimeout=300s"
+      - "--entryPoints.web.transport.respondingTimeouts.idleTimeout=300s"
       # No websecure, no HTTP→HTTPS redirect (NPM handles that)
     ports: !override
       # Publish Traefik HTTP for NPM (host 80/443 already owned by NPM)
@@ -115,7 +119,7 @@ services:
   gift-bot-worker:
     labels: !override
       - "traefik.enable=true"
-      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/tg`)"
+      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && (PathPrefix(`/tg`) || PathPrefix(`/max`))"
       - "traefik.http.routers.gift-bot.entrypoints=web"
       - "traefik.http.routers.gift-bot.service=gift-bot-worker"
       - "traefik.http.services.gift-bot-worker.loadbalancer.server.port=3004"

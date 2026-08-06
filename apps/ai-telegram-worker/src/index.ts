@@ -1994,6 +1994,68 @@ async function isBusinessConnectionAllowed(
   return distinctOpen.length < max;
 }
 
+function gramjsBridgeBase(): string {
+  return (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
+}
+
+/** Enrich Person from MTProto full user (phone / about / birthday) when tenant has ai_gramjs. */
+async function enrichPersonFromGramjs(
+  tenantId: string,
+  client: TwentyClient,
+  personId: string,
+  opts: { telegramId?: string; username?: string },
+): Promise<void> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token || !personId) return;
+
+  const gramjsBotId = await prisma.botInstance
+    .findFirst({
+      where: {
+        tenantId,
+        botType: 'ai_gramjs',
+        status: 'active',
+        botTokenEncrypted: { not: null },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true },
+    })
+    .then((b) => b?.id);
+  if (!gramjsBotId) return;
+
+  try {
+    const res = await fetch(`${gramjsBridgeBase()}/users/full`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        botId: gramjsBotId,
+        tenantId,
+        userId: opts.telegramId,
+        username: opts.username,
+      }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      profile?: {
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        about?: string;
+        birthday?: string;
+        personalChannelUrl?: string;
+      };
+      error?: string;
+    };
+    if (!res.ok || !json.ok || !json.profile) return;
+    await client.applyTelegramProfile(personId, json.profile);
+  } catch (err) {
+    console.warn('[ai-telegram] GramJS profile enrich error', err);
+  }
+}
+
 /**
  * Upsert Twenty Person + Opportunity for an AI conversation.
  * Dedupe: platformUserId / gift / hint / **phone** (cross-channel WA↔TG).
@@ -2040,9 +2102,13 @@ async function syncLeadToCrm(opts: {
   );
 
   // INC-042: stale Twenty ids after CRM wipe must be cleared + recreated.
+  // suppressDealCreation is manual only (CRM «Не создавать сделку») — never auto-set on delete.
   let storedPersonId = conversation.twentyPersonId || undefined;
   let storedOpportunityId = conversation.twentyOpportunityId || undefined;
   let clearedStale = false;
+  let suppressDeal =
+    (conversation as { suppressDealCreation?: boolean }).suppressDealCreation ===
+    true;
   if (storedPersonId) {
     const ok = await client.personExists(storedPersonId);
     if (!ok) {
@@ -2058,7 +2124,7 @@ async function syncLeadToCrm(opts: {
     const ok = await client.opportunityExists(storedOpportunityId);
     if (!ok) {
       console.warn(
-        `[ai-telegram] stale twentyOpportunityId=${storedOpportunityId} conv=${opts.conversationId}; recreating`,
+        `[ai-telegram] deleted/stale twentyOpportunityId=${storedOpportunityId} conv=${opts.conversationId}; clearing link`,
       );
       storedOpportunityId = undefined;
       clearedStale = true;
@@ -2067,7 +2133,10 @@ async function syncLeadToCrm(opts: {
   if (clearedStale) {
     await prisma.conversation.update({
       where: { id: opts.conversationId },
-      data: { twentyPersonId: null, twentyOpportunityId: null },
+      data: {
+        twentyPersonId: storedPersonId || null,
+        twentyOpportunityId: null,
+      },
     });
   }
 
@@ -2080,12 +2149,23 @@ async function syncLeadToCrm(opts: {
         /* ignore */
       }
     }
-    if (opts.username && storedPersonId) {
+    if ((opts.username || opts.platformUserId) && storedPersonId) {
       try {
-        await client.updatePersonTelegram(storedPersonId, opts.username);
+        await client.updatePersonTelegram(storedPersonId, {
+          username: opts.username,
+          userId: opts.platformUserId,
+        });
       } catch {
         /* ignore */
       }
+    }
+    try {
+      await enrichPersonFromGramjs(opts.tenantId, client, storedPersonId, {
+        telegramId: opts.platformUserId,
+        username: opts.username,
+      });
+    } catch {
+      /* ignore */
     }
     return;
   }
@@ -2185,13 +2265,17 @@ async function syncLeadToCrm(opts: {
         ? `@${opts.username.replace(/^@/, '')}`
         : opts.platformUserId,
       telegram: opts.username,
+      telegramUserId: opts.platformUserId,
       phone: opts.phone,
     });
     personId = created?.id;
   } else {
-    if (opts.username) {
+    if (opts.username || opts.platformUserId) {
       try {
-        await client.updatePersonTelegram(personId, opts.username);
+        await client.updatePersonTelegram(personId, {
+          username: opts.username,
+          userId: opts.platformUserId,
+        });
       } catch {
         /* ignore */
       }
@@ -2249,6 +2333,15 @@ async function syncLeadToCrm(opts: {
   }
 
   if (!opportunityId && personId) {
+    try {
+      const openOpp = await client.findOpenOpportunityByPerson(personId);
+      if (openOpp?.id) opportunityId = openOpp.id;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (!opportunityId && personId && !suppressDeal) {
     const who = opts.username
       ? `@${opts.username.replace(/^@/, '')}`
       : opts.platformUserId;
@@ -2271,6 +2364,10 @@ async function syncLeadToCrm(opts: {
       subscriberId: opts.platformUserId,
       botInstanceId: opts.botId,
     });
+  } else if (!opportunityId && personId && suppressDeal) {
+    console.log(
+      `[ai-telegram] skip Opportunity create conv=${opts.conversationId} (suppressDealCreation)`,
+    );
   }
 
   await prisma.conversation.update({
@@ -2278,6 +2375,7 @@ async function syncLeadToCrm(opts: {
     data: {
       twentyPersonId: personId || null,
       twentyOpportunityId: opportunityId || null,
+      suppressDealCreation: suppressDeal,
       needsReview: needsReview || conversation.needsReview,
       platformUsername: opts.username
         ? opts.username.replace(/^@/, '')
@@ -2295,6 +2393,17 @@ async function syncLeadToCrm(opts: {
             ? ` Business-аккаунт: ${opts.businessAccountLabel}.`
             : ''
         }${opts.phone ? ` Телефон: ${opts.phone}.` : ''}`,
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (personId) {
+    try {
+      await enrichPersonFromGramjs(opts.tenantId, client, personId, {
+        telegramId: opts.platformUserId,
+        username: opts.username,
       });
     } catch {
       /* ignore */

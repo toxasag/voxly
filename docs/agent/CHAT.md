@@ -25,10 +25,19 @@
 ### Identity / CRM sync
 1. PN из `remoteJidAlt` / `senderPn` / vCard / explicit Contact|Chat — **не** avatar/pushName (default). Opt-in: `WA_LID_AVATAR_PHONE_MATCH=1`.
 2. **Не** трактовать Evolution Contact CUID как E.164 (INC-060).
-3. Dedupe LID↔PN conversations / messageId — один диалог.
+3. Dedupe LID↔PN conversations / messageId — один диалог; при resolve E.164 **merge sibling Conversations** (move ChatMessages, keep LID `platformUserId` + `platformUsername` +E.164, close twin) — INC-097 v6.1.
 4. `syncLeadToCrm`: Person phone + whatsapp `+E.164`; имя без LID в lastName (INC-039). **Before** ASR/vision/doc enrich (INC-068) — lead must not wait on media AI.
 5. Business profile (`fetchBusinessProfile`): **email**, **website** → Person; Instagram/Facebook **только** если URL есть в ответе Evolution или в website/description. Meta-linked IG в UI WA **не** в Baileys API — не выдумывать.
 6. Email unique в Twenty включает soft-delete: при fail → `releaseSoftDeletedPersonEmail` (SQL через `TWENTY_DATABASE_URL`) → retry `updatePersonEmail` (INC-062). Create Person без email, потом attach.
+
+### History sync (`runWhatsAppPrivateChatSync`, INC-097 v6)
+1. **Источник сделок** — только **открытые private** чаты из `findChats` **с историей** (`findMessages` / `fetchAllEvoMessagesForJid`). Contact book — **только enrich** (LID→PN, имя), **не** источник диалогов.
+2. **LID→PN (INC-097 v7 order):** `resolveLidPhoneFromEvolution()` — **findChats** `remoteJidAlt`/`senderPn` (Evolution v8.1 patch: Baileys `getPNForLID` + Redis `lid-mapping-*_reverse`) → Message.key SQL → Redis worker → `IsOnWhatsapp.jidOptions` → `POST /chat/whatsappNumbers` → Contact book → Chat DB → **profile-index last** (`fetchProfile` on open findChats PN-кандидаты only; email/website/pic→E.164; match на LID `fetchProfile`). WhatsApp UI **всегда** показывает телефон — если он есть в UI/profile, **запрещено** оставлять Phones пустым. **Честность:** только LIDs с Baileys/Redis mapping или profile-index hit получают E.164 — не выдумывать.
+3. **Сообщения:** пагинация до `messageLimit` (default **500**); для LID+PN — merge обоих JID, dedupe по `message.id`. CRM не выдумывает сообщения, которых нет в Evolution.
+4. **Person:** real name **или** `noname1`, `noname2`… — **никогда** `firstName=WhatsApp` без identity; phone всегда в `phones` + `whatsapp` (+E.164) когда известен.
+5. **Opportunity title:** `{seq} · WA · {accountDisplayName}` где `account` = `bot.displayName` подключённого WA-бота (не `{contactName} · WA · {ownNumber}`).
+6. Skip groups/channels/self/`0@`; один Person + одна open Opportunity на peer; `suppressDealCreation` — **только** ручной CRM toggle.
+7. **Telegram enrich:** `ImportContacts` → real `@username` + `GetFullUser`; without @username but with MTProto `userId` → open link via `/open/tg/{id}` → `tg://user?id=…` (label shows deep link); **никогда** `https://t.me/+{phone}`.
 
 ### AI pacing / typing (эталон «идеально»)
 1. Debounce **10s** + очередь пока идёт flush.
@@ -70,13 +79,26 @@
 
 При изменениях AI-ответов — тот же debounce + human pacing, что WA/TG Business.
 
+## 4a. MAX личный (`max-bridge` + PyMax) — ADR-025 Phase 1
+
+| Тема | Сейчас |
+|---|---|
+| Продукт | SKU `ai_max` (~500 ₽), UI `/dashboard/ai/max`, soft trial 7d |
+| Transport | Python sidecar `apps/max-bridge` (PyMax / неофициальный user API) |
+| CRM | `platform=max` / `channel=max_personal`; inbound → `/api/internal/max/inbound`; reply → bridge `POST /messages/send` **text-only** |
+| AI | OFF by default (ADR-014); agent assign Phase 3 |
+| Media / presence | Phase 3 |
+| Disclaimer | Portal warning: ban / breaking-change risk |
+
 ## 4b. Gift-бот (`gift-bot-worker`)
 
 | Тема | Сейчас |
 |---|---|
 | Продукт | Воронка подарков (не sales LLM). `botType=ai_tg` → forward на `ai-telegram-worker` |
-| CRM inbound media | attachments `file_id` + preview; **video_note** stored |
-| Media understanding | **Same extractors** as Business: voice/audio ASR, кружочек+video ASR, photo/sticker vision, PDF/DOCX text → enriched `ChatMessage.content` for operators; soft-charge AI wallet if present |
+| MAX gift | `botType=gift_max`, тот же SKU `gift_bot`; webhook `/max/{tenantId}/{botId}`; local `GIFT_MAX_USE_POLLING` |
+| Channel membership (MAX) | **gap** — нет паритета TG `getChatMember`; кнопка «Продолжить» выдаёт подарок |
+| CRM inbound media | attachments `file_id` + preview; **video_note** stored (TG); MAX text MVP |
+| Media understanding | **Same extractors** as Business: voice/audio ASR, кружочек+video ASR, photo/sticker vision, PDF/DOCX text → enriched `ChatMessage.content` for operators; soft-charge AI wallet if present (TG gift; MAX Phase 3) |
 | AI reply | Нет на gift funnel; только CRM display + notes |
 
 ## 5. AI-агенты (ортогональный слой)

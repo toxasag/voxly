@@ -16,15 +16,23 @@ import { tenantRoutes } from './routes/tenant.js';
 import { adminRoutes } from './routes/admin.js';
 import { adminReferralRoutes } from './routes/admin-referrals.js';
 import { adminPlatformBotRoutes } from './routes/admin-platform-bot.js';
+import { adminPricingRoutes } from './routes/admin-pricing.js';
+import { adminServicesRoutes } from './routes/admin-services.js';
+import { adminAiBalanceRoutes } from './routes/admin-ai-balance.js';
 import { platformBotInternalRoutes } from './routes/platform-bot-internal.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
 import { gramjsRoutes } from './routes/gramjs.js';
+import { maxRoutes } from './routes/max.js';
+import { maxInternalRoutes } from './routes/max-internal.js';
+import { gramjsInternalRoutes } from './routes/gramjs-internal.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { aiAgentRoutes } from './routes/ai-agents.js';
 import { audienceRoutes } from './routes/audience.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
+import { formsRoutes, formWebhookRoutes } from './routes/forms.js';
+import { openTgRoutes } from './routes/open-tg.js';
 import { startScheduledJobs } from './jobs/scheduler.js';
 import { assertCrmAccessAllowed } from './services/crm-access.js';
 import './jobs/queues.js'; // Start BullMQ workers (skipped when VOXLY_DISABLE_WORKERS=1)
@@ -47,6 +55,12 @@ export async function buildServer() {
     // Signed CRM media tokens are base64url.payload.sig — well over Fastify's
     // default maxParamLength (100), which otherwise 404s /media/:token (INC-063).
     maxParamLength: 8192,
+    // Gift media uploads (photo/video → Telegram file_id) up to ~48MB multipart.
+    bodyLimit: 52 * 1024 * 1024,
+    // Large video → Telegram can exceed default idle timeouts.
+    connectionTimeout: 0,
+    requestTimeout: 0,
+    keepAliveTimeout: 72_000,
   });
 
   // --- CORS (portal + Twenty CRM subdomain / localhost) ---
@@ -218,6 +232,9 @@ export async function buildServer() {
   // --- Health check ---
   fastify.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }));
 
+  // Public HTTPS → tg://user?id=… (Person Telegram LINKS without @username)
+  await fastify.register(openTgRoutes, { prefix: '/open' });
+
   // --- Routes ---
   await fastify.register(authRoutes, { prefix: '/api/auth' });
   await fastify.register(billingRoutes, { prefix: '/api/billing' });
@@ -225,15 +242,23 @@ export async function buildServer() {
   await fastify.register(adminRoutes, { prefix: '/api/admin' });
   await fastify.register(adminReferralRoutes, { prefix: '/api/admin/referrals' });
   await fastify.register(adminPlatformBotRoutes, { prefix: '/api/admin/platform-bot' });
+  await fastify.register(adminPricingRoutes, { prefix: '/api/admin' });
+  await fastify.register(adminServicesRoutes, { prefix: '/api/admin' });
+  await fastify.register(adminAiBalanceRoutes, { prefix: '/api/admin' });
   await fastify.register(platformBotInternalRoutes, { prefix: '/api/internal/platform-bot' });
   await fastify.register(referralRoutes, { prefix: '/api/referrals' });
   await fastify.register(botRoutes, { prefix: '/api/bots' });
   await fastify.register(gramjsRoutes, { prefix: '/api/bots/gramjs' });
+  await fastify.register(maxRoutes, { prefix: '/api/bots/max' });
+  await fastify.register(maxInternalRoutes, { prefix: '/api/internal/max' });
+  await fastify.register(gramjsInternalRoutes, { prefix: '/api/internal/gramjs' });
   await fastify.register(whatsappRoutes, { prefix: '/api/bots/whatsapp' });
   await fastify.register(aiAgentRoutes, { prefix: '/api/ai/agents' });
   await fastify.register(audienceRoutes, { prefix: '/api/audience' });
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
   await fastify.register(crmChatRoutes, { prefix: '/api/crm/chat' });
+  await fastify.register(formsRoutes, { prefix: '/api/forms' });
+  await fastify.register(formWebhookRoutes, { prefix: '/api/webhooks/forms' });
 
   return fastify;
 }

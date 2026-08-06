@@ -20,6 +20,12 @@ const API_HASH = String(process.env.TELEGRAM_API_HASH || process.env.API_HASH ||
 const SERVICE_TOKEN = process.env.VOXLY_SERVICE_TOKEN || '';
 const AI_WORKER_URL =
   process.env.AI_TELEGRAM_WORKER_URL || 'http://ai-telegram-worker:3005';
+/** saas-api for post-connect CRM enrich (docker DNS on prod). */
+const SAAS_API_URL = (
+  process.env.VOXLY_CHAT_API_URL ||
+  process.env.SAAS_API_URL ||
+  'http://saas-api:3002'
+).replace(/\/+$/, '');
 /** Dialog / audience sync interval (ms). */
 const AUDIENCE_SYNC_MS = Number(process.env.GRAMJS_AUDIENCE_SYNC_MS || 20 * 60 * 1000);
 /** Min gap between membership checks per (botId,user,peer) key. */
@@ -348,6 +354,130 @@ async function upsertSighting(opts: {
 }
 
 /** Sync dialogs → peers + memberships for the connected GramJS account. */
+/** Re-attach threads orphaned when an account was deleted/reconnected (sole session). */
+async function relinkOrphanedGramjsConversations(
+  tenantId: string,
+  botId: string,
+): Promise<number> {
+  const other = await prisma.botInstance.count({
+    where: {
+      tenantId,
+      botType: 'ai_gramjs',
+      status: 'active',
+      botTokenEncrypted: { not: null },
+      NOT: { id: botId },
+    },
+  });
+  if (other > 0) return 0;
+  const result = await prisma.conversation.updateMany({
+    where: {
+      tenantId,
+      botInstanceId: null,
+      channel: 'telegram_gramjs',
+    },
+    data: { botInstanceId: botId },
+  });
+  if (result.count > 0) {
+    console.log(
+      `[gramjs] relinked ${result.count} orphaned telegram_gramjs conversations → bot=${botId}`,
+    );
+  }
+  return result.count;
+}
+
+type PrivateDialogMessage = {
+  id: number;
+  out: boolean;
+  text: string;
+  date: number;
+  /** Present when message has media — CRM stores for /messages/media preview. */
+  attachment?: GramjsAttachment;
+};
+
+type PrivateDialogExport = {
+  userId: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  messages: PrivateDialogMessage[];
+};
+
+/**
+ * Export private (User) dialogs + last N messages for CRM import.
+ * Groups/channels/bots are excluded. dialogLimit<=0 → all private dialogs
+ * (GramJS paginates until done). Concurrency 1 + sleep between chats to
+ * reduce FloodWait risk.
+ */
+async function exportPrivateDialogsForCrm(
+  client: TelegramClient,
+  opts: { dialogLimit: number; messageLimit: number },
+): Promise<PrivateDialogExport[]> {
+  const allDialogs = opts.dialogLimit <= 0;
+  // Over-fetch when capped so groups/channels don't starve the private quota.
+  const fetchLimit = allDialogs
+    ? undefined
+    : Math.min(Math.max(opts.dialogLimit * 5, opts.dialogLimit), 2000);
+  const dialogs = await client.getDialogs({ limit: fetchLimit });
+  const out: PrivateDialogExport[] = [];
+  for (const d of dialogs) {
+    if (!allDialogs && out.length >= opts.dialogLimit) break;
+    const entity = d.entity;
+    if (!(entity instanceof Api.User) || entity.bot || entity.self) continue;
+
+    const userId = String(entity.id);
+    let messages: PrivateDialogMessage[] = [];
+    try {
+      const hist = await client.getMessages(entity, { limit: opts.messageLimit });
+      messages = hist
+        .filter((m) => m && typeof m.id === 'number')
+        .map((m) => {
+          const attachment = extractGramjsAttachment(m as any, userId);
+          const text = (m.message || '').trim();
+          const placeholder =
+            text ||
+            (attachment
+              ? gramjsAttachmentPlaceholder(
+                  attachment,
+                  (m as { videoNote?: unknown }).videoNote ? 'video_note' : undefined,
+                )
+              : m.media
+                ? '[media]'
+                : '');
+          return {
+            id: m.id,
+            out: Boolean(m.out),
+            text: placeholder,
+            date: m.date || 0,
+            ...(attachment ? { attachment } : {}),
+          };
+        })
+        .filter((m) => m.text)
+        .reverse(); // chronological
+    } catch (err) {
+      console.warn(
+        `[gramjs] private dialog history failed user=${userId}`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+    // Rate-limit before next peer (even if this chat had no text msgs).
+    await sleep(500 + Math.floor(Math.random() * 400));
+    if (messages.length === 0) continue;
+    out.push({
+      userId,
+      username: entity.username || undefined,
+      firstName: entity.firstName || undefined,
+      lastName: entity.lastName || undefined,
+      phone:
+        typeof entity.phone === 'string' && entity.phone.trim()
+          ? entity.phone.trim()
+          : undefined,
+      messages,
+    });
+  }
+  return out;
+}
+
 async function syncAudienceFromDialogs(
   client: TelegramClient,
   tenantId: string,
@@ -523,6 +653,40 @@ async function persistSession(botId: string, sessionStr: string, me: {
   });
 }
 
+/** Queue CRM Person enrich + phone soft-merge for this tenant (all portals). */
+async function notifySaasCrmEnrichOnConnect(
+  tenantId: string,
+  botId: string,
+): Promise<void> {
+  if (!SERVICE_TOKEN) {
+    console.warn('[gramjs] skip CRM enrich notify — VOXLY_SERVICE_TOKEN unset');
+    return;
+  }
+  try {
+    const res = await fetch(`${SAAS_API_URL}/api/internal/gramjs/connected`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${SERVICE_TOKEN}`,
+        'Content-Type': 'application/json',
+        'X-Voxly-Service': 'gramjs-bridge',
+      },
+      body: JSON.stringify({ tenantId, botId }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(
+        `[gramjs] CRM enrich notify HTTP ${res.status}: ${text.slice(0, 200)}`,
+      );
+      return;
+    }
+    console.log(`[gramjs] CRM enrich queued tenant=${tenantId} bot=${botId}`);
+  } catch (err) {
+    console.warn(
+      `[gramjs] CRM enrich notify failed: ${String((err as Error)?.message || err)}`,
+    );
+  }
+}
+
 async function loadClient(botId: string): Promise<TelegramClient | null> {
   const existing = clients.get(botId);
   if (existing?.connected) return existing;
@@ -541,6 +705,7 @@ async function loadClient(botId: string): Promise<TelegramClient | null> {
   await client.connect();
   clients.set(botId, client);
   attachInboundHandler(client, bot.tenantId, botId);
+  void relinkOrphanedGramjsConversations(bot.tenantId, botId);
   // Fire-and-forget audience sync on connect
   void syncAudienceFromDialogs(client, bot.tenantId, botId);
   return client;
@@ -582,16 +747,31 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         return;
       }
 
+      // Private 1:1 only for AI/CRM. Group/channel chatter must not create deals
+      // (INC: MG 8855743233 — group message became Person+Opportunity).
+      let chat: object | null = null;
       try {
-        const chat = await msg.getChat();
+        chat = (await msg.getChat()) ?? null;
+      } catch {
+        chat = null;
+      }
+      const isPrivateDm = chat instanceof Api.User && !chat.bot;
+      try {
         await recordInboundSighting({
           tenantId,
           botId,
           sender,
-          chat: chat || null,
+          chat,
         });
       } catch (sightErr) {
         console.warn('[gramjs] inbound sighting failed', sightErr);
+      }
+      if (!isPrivateDm) {
+        const info = chat ? classifyEntity(chat) : null;
+        console.log(
+          `[gramjs] skip non-private inbound from=${sender.id} chat=${info?.peerType || 'unknown'}:${info?.peerId || '-'}`,
+        );
+        return;
       }
 
       const peerId = String(sender.id);
@@ -798,6 +978,240 @@ async function resolvePeerEntity(client: TelegramClient, peerUserId: string) {
   }
 }
 
+type GramjsUserProfile = {
+  userId: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  about?: string;
+  /** ISO date YYYY-MM-DD when year known; else null (day/month only not stored). */
+  birthday?: string;
+  birthdayDay?: number;
+  birthdayMonth?: number;
+  birthdayYear?: number;
+  /** t.me link for personal channel when visible. */
+  personalChannelUrl?: string;
+};
+
+function formatBirthdayIso(raw: unknown): {
+  birthday?: string;
+  birthdayDay?: number;
+  birthdayMonth?: number;
+  birthdayYear?: number;
+} {
+  if (!raw || typeof raw !== 'object') return {};
+  const day = Number((raw as { day?: unknown }).day);
+  const month = Number((raw as { month?: unknown }).month);
+  const yearRaw = (raw as { year?: unknown }).year;
+  const year =
+    yearRaw == null || yearRaw === ''
+      ? undefined
+      : Number(yearRaw);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || day < 1 || month < 1) {
+    return {};
+  }
+  const out: {
+    birthday?: string;
+    birthdayDay?: number;
+    birthdayMonth?: number;
+    birthdayYear?: number;
+  } = {
+    birthdayDay: day,
+    birthdayMonth: month,
+  };
+  if (year != null && Number.isFinite(year) && year >= 1900 && year <= 2100) {
+    out.birthdayYear = year;
+    out.birthday = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  return out;
+}
+
+/** MTProto users.GetFullUser — phone/about/birthday when privacy allows (contacts). */
+async function fetchUserFullProfile(
+  client: TelegramClient,
+  opts: { userId?: string; username?: string },
+): Promise<GramjsUserProfile | null> {
+  const username = opts.username?.replace(/^@/, '').trim();
+  const userId = opts.userId?.trim();
+  if (!username && !userId) return null;
+
+  let entity: unknown = null;
+  if (username) {
+    try {
+      entity = await client.getEntity(username);
+    } catch {
+      try {
+        entity = await client.getEntity(`@${username}`);
+      } catch {
+        entity = null;
+      }
+    }
+  }
+  if (!entity && userId) {
+    entity = await resolvePeerEntity(client, userId);
+  }
+  if (!(entity instanceof Api.User) || entity.bot) return null;
+
+  let fullUser: any = null;
+  try {
+    const input = await client.getInputEntity(entity);
+    const res: any = await client.invoke(new Api.users.GetFullUser({ id: input }));
+    fullUser = res?.fullUser ?? null;
+  } catch (err) {
+    console.warn(
+      `[gramjs] GetFullUser failed user=${entity.id}: ${String((err as Error)?.message || err)}`,
+    );
+  }
+
+  const phoneRaw =
+    typeof entity.phone === 'string' && entity.phone.trim()
+      ? entity.phone.trim()
+      : undefined;
+  const about =
+    typeof fullUser?.about === 'string' && fullUser.about.trim()
+      ? fullUser.about.trim()
+      : undefined;
+  const bday = formatBirthdayIso(fullUser?.birthday);
+
+  let personalChannelUrl: string | undefined;
+  const channelId = fullUser?.personalChannelId;
+  if (channelId != null) {
+    try {
+      const ch = await client.getEntity(channelId);
+      const uname =
+        ch && typeof (ch as { username?: string }).username === 'string'
+          ? (ch as { username: string }).username
+          : undefined;
+      if (uname) personalChannelUrl = `https://t.me/${uname}`;
+    } catch {
+      /* privacy / not in dialogs */
+    }
+  }
+
+  return {
+    userId: String(entity.id),
+    username: extractTelegramUsername(entity) || entity.username || undefined,
+    firstName: entity.firstName || undefined,
+    lastName: entity.lastName || undefined,
+    phone: phoneRaw,
+    about,
+    ...bday,
+    personalChannelUrl,
+  };
+}
+
+/** Prefer Api.User.username; fall back to active entry in usernames[]. */
+function extractTelegramUsername(user: Api.User): string | undefined {
+  const direct = String(user.username || '').trim().replace(/^@/, '');
+  if (direct && /^[A-Za-z0-9_]{5,}$/.test(direct)) return direct;
+  const list = (user as { usernames?: Array<{ username?: string; active?: boolean }> })
+    .usernames;
+  if (Array.isArray(list)) {
+    const active =
+      list.find((u) => u?.active !== false && u?.username) || list.find((u) => u?.username);
+    const fromList = String(active?.username || '')
+      .trim()
+      .replace(/^@/, '');
+    if (fromList && /^[A-Za-z0-9_]{5,}$/.test(fromList)) return fromList;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve Telegram account by phone (contacts.ImportContacts).
+ * Returns @username when available — never invents t.me/+{phone}.
+ * `keepContact`: leave in address book (needed before sendMessage; default cleans up).
+ */
+async function resolveUserByPhone(
+  client: TelegramClient,
+  phoneRaw: string,
+  opts?: { keepContact?: boolean },
+): Promise<{
+  exists: boolean;
+  userId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+} | null> {
+  const digits = String(phoneRaw || '').replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) return null;
+  const phone = `+${digits}`;
+  try {
+    const imported: any = await client.invoke(
+      new Api.contacts.ImportContacts({
+        contacts: [
+          new Api.InputPhoneContact({
+            clientId: generateRandomLong(),
+            phone,
+            firstName: 'Voxly',
+            lastName: 'Check',
+          }),
+        ],
+      }),
+    );
+    const users: any[] = Array.isArray(imported?.users) ? imported.users : [];
+    let user = users.find((u) => u instanceof Api.User && !u.bot) as Api.User | undefined;
+    if (!user) {
+      // Some layers put only userId on imported[] — resolve entity for username.
+      const importedRows: any[] = Array.isArray(imported?.imported)
+        ? imported.imported
+        : [];
+      const userId = importedRows[0]?.userId;
+      if (userId != null) {
+        try {
+          const entity = await client.getEntity(userId);
+          if (entity instanceof Api.User && !entity.bot) user = entity;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (!(user instanceof Api.User) || user.bot) {
+      return { exists: false, phone: digits };
+    }
+
+    let username = extractTelegramUsername(user);
+    // Refresh entity before DeleteContacts — username sometimes filled on getEntity.
+    if (!username) {
+      try {
+        const fresh = await client.getEntity(user);
+        if (fresh instanceof Api.User) {
+          username = extractTelegramUsername(fresh);
+          user = fresh;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Best-effort cleanup so we do not pollute the account address book.
+    // Skip when about to send — access_hash must stay in session.
+    if (!opts?.keepContact) {
+      try {
+        const input = await client.getInputEntity(user);
+        await client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
+      } catch {
+        /* ignore */
+      }
+    }
+    return {
+      exists: true,
+      userId: String(user.id),
+      username,
+      firstName: user.firstName || undefined,
+      lastName: user.lastName || undefined,
+      phone: typeof user.phone === 'string' && user.phone ? user.phone : digits,
+    };
+  } catch (err) {
+    console.warn(
+      `[gramjs] ImportContacts phone=${phone} failed: ${String((err as Error)?.message || err)}`,
+    );
+    return null;
+  }
+}
+
 /** Contact online / last-seen from MTProto User.status (privacy-respecting). */
 function serializeUserPresence(entity: unknown): {
   online: boolean;
@@ -921,7 +1335,9 @@ async function startQrLogin(
       await persistSession(bot.id, sessionStr, user);
       clients.set(bot.id, client);
       attachInboundHandler(client, tenantId, bot.id);
+      void relinkOrphanedGramjsConversations(tenantId, bot.id);
       void syncAudienceFromDialogs(client, tenantId, bot.id);
+      void notifySaasCrmEnrichOnConnect(tenantId, bot.id);
       qrState.set(key, { status: 'authorized', user, botId: bot.id, tenantId });
       console.log(`[gramjs] authorized ${key} as @${user.username || user.id}`);
     } catch (e) {
@@ -1117,6 +1533,15 @@ async function main() {
           return;
         }
         const client = await loadClient(botId);
+        if (client?.connected) {
+          const bot = await prisma.botInstance.findUnique({
+            where: { id: botId },
+            select: { tenantId: true },
+          });
+          if (bot?.tenantId) {
+            void notifySaasCrmEnrichOnConnect(bot.tenantId, botId);
+          }
+        }
         sendJson(res, client ? 200 : 404, {
           ok: !!client,
           botId,
@@ -1135,6 +1560,178 @@ async function main() {
         }
         const result = await deleteAccount(tenantId, botId);
         sendJson(res, result.status, result.body);
+        return;
+      }
+
+      // Full Telegram profile (phone / about / birthday) when session can see it.
+      if (req.method === 'POST' && path === '/users/full') {
+        const body = await readJson(req);
+        let botId = String(body.botId || '').trim();
+        const tenantId = String(body.tenantId || '').trim();
+        const userId = String(body.userId || body.telegramUserId || '').trim();
+        const username = String(body.username || '').trim().replace(/^@/, '');
+        if (!botId && tenantId) {
+          const bot = await prisma.botInstance.findFirst({
+            where: {
+              tenantId,
+              botType: 'ai_gramjs',
+              status: 'active',
+              botTokenEncrypted: { not: null },
+            },
+            orderBy: { updatedAt: 'desc' },
+          });
+          botId = bot?.id || '';
+        }
+        if (!botId) {
+          sendJson(res, 404, {
+            ok: false,
+            error: 'no_gramjs_session',
+            hint: 'Connect personal Telegram (ai_gramjs) for this tenant',
+          });
+          return;
+        }
+        if (!userId && !username) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'userId or username required',
+          });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const profile = await fetchUserFullProfile(client, { userId, username });
+        if (!profile) {
+          sendJson(res, 404, { ok: false, error: 'user not found' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, botId, profile });
+        return;
+      }
+
+      // Resolve Telegram user by phone (ImportContacts) — WA/form enrich → Person.telegram.
+      if (req.method === 'POST' && path === '/users/by-phone') {
+        const body = await readJson(req);
+        let botId = String(body.botId || '').trim();
+        const tenantId = String(body.tenantId || '').trim();
+        const phone = String(body.phone || body.phoneE164 || '').trim();
+        if (!botId && tenantId) {
+          const bot = await prisma.botInstance.findFirst({
+            where: {
+              tenantId,
+              botType: 'ai_gramjs',
+              status: 'active',
+              botTokenEncrypted: { not: null },
+            },
+            orderBy: { updatedAt: 'desc' },
+          });
+          botId = bot?.id || '';
+        }
+        if (!botId) {
+          sendJson(res, 404, {
+            ok: false,
+            error: 'no_gramjs_session',
+            hint: 'Connect personal Telegram (ai_gramjs) for this tenant',
+          });
+          return;
+        }
+        if (!phone) {
+          sendJson(res, 400, { ok: false, error: 'phone required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        const resolved = await resolveUserByPhone(client, phone);
+        if (!resolved) {
+          sendJson(res, 502, { ok: false, error: 'import_contacts_failed' });
+          return;
+        }
+        // Never invent https://t.me/+{phone} — that is not proof of a TG account.
+        // Public link only when ImportContacts found a user with @username.
+        const publicLink =
+          resolved.exists && resolved.username
+            ? `https://t.me/${resolved.username.replace(/^@/, '')}`
+            : undefined;
+        sendJson(res, 200, {
+          ok: true,
+          botId,
+          exists: resolved.exists,
+          username: resolved.username,
+          userId: resolved.userId,
+          firstName: resolved.firstName,
+          lastName: resolved.lastName,
+          phone: resolved.phone,
+          ...(publicLink ? { link: publicLink } : {}),
+        });
+        return;
+      }
+
+      // Private 1:1 dialogs + recent messages for CRM import (groups/channels excluded).
+      // dialogLimit <= 0 (default) = all private dialogs; messageLimit capped (default 30).
+      if (req.method === 'POST' && path === '/crm/private-dialogs') {
+        const body = await readJson(req);
+        const botId = String(body.botId || '').trim();
+        const rawDialogLimit = Number(body.dialogLimit);
+        const dialogLimit =
+          Number.isFinite(rawDialogLimit) && rawDialogLimit > 0
+            ? Math.floor(rawDialogLimit)
+            : 0; // 0 = all private
+        const messageLimit = Math.min(
+          Math.max(Number(body.messageLimit) || 30, 1),
+          80,
+        );
+        if (!botId) {
+          sendJson(res, 400, { ok: false, error: 'botId required' });
+          return;
+        }
+        const bot = await prisma.botInstance.findUnique({ where: { id: botId } });
+        if (!bot || bot.botType !== 'ai_gramjs') {
+          sendJson(res, 404, { ok: false, error: 'account not found' });
+          return;
+        }
+        let client: TelegramClient | null = null;
+        try {
+          client = await loadClient(botId);
+        } catch (err) {
+          sendJson(res, 400, {
+            ok: false,
+            error: String((err as Error)?.message || err) || 'session not connected',
+          });
+          return;
+        }
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        try {
+          if (typeof (client as any).isUserAuthorized === 'function') {
+            const authed = await (client as any).isUserAuthorized();
+            if (!authed) {
+              sendJson(res, 400, { ok: false, error: 'session not authorized' });
+              return;
+            }
+          }
+          const dialogs = await exportPrivateDialogsForCrm(client, {
+            dialogLimit,
+            messageLimit,
+          });
+          sendJson(res, 200, {
+            ok: true,
+            botId,
+            dialogCount: dialogs.length,
+            dialogs,
+          });
+        } catch (err) {
+          sendJson(res, 500, {
+            ok: false,
+            error: String((err as Error)?.message || err),
+          });
+        }
         return;
       }
 
@@ -1197,6 +1794,7 @@ async function main() {
         const botId = String(body.botId || '').trim();
         const peerUserId = String(body.peerUserId || '').trim();
         const text = String(body.text || '').trim();
+        const phoneHint = String(body.phone || '').trim();
         if (!botId || !peerUserId || !text) {
           sendJson(res, 400, {
             ok: false,
@@ -1209,19 +1807,33 @@ async function main() {
           sendJson(res, 404, { ok: false, error: 'session not connected' });
           return;
         }
-        let entity;
-        try {
-          entity = await client.getEntity(peerUserId);
-        } catch {
-          try {
-            entity = await client.getEntity(Number(peerUserId));
-          } catch (err) {
-            sendJson(res, 404, {
-              ok: false,
-              error: `peer not found: ${String((err as Error)?.message || err)}`,
-            });
-            return;
+        let entity = await resolvePeerEntity(client, peerUserId);
+        // Peer known by id/@ from CRM social link but not in session (no prior dialog):
+        // ImportContacts by phone (WA→TG enrich path), then send. Do not require @username.
+        if (!entity && phoneHint) {
+          const imported = await resolveUserByPhone(client, phoneHint, {
+            keepContact: true,
+          });
+          if (imported?.exists && imported.userId) {
+            const wantNumeric = /^\d{1,20}$/.test(peerUserId);
+            if (!wantNumeric || imported.userId === peerUserId) {
+              entity = await resolvePeerEntity(client, imported.userId);
+            } else {
+              sendJson(res, 404, {
+                ok: false,
+                error: `peer not found: phone maps to ${imported.userId}, expected ${peerUserId}`,
+              });
+              return;
+            }
           }
+        }
+        if (!entity) {
+          sendJson(res, 404, {
+            ok: false,
+            error:
+              'peer not found: нет диалога/контакта в этом Telegram-аккаунте. Нужен телефон контакта для ImportContacts или переписка с этим peer.',
+          });
+          return;
         }
         try {
           await client.invoke(

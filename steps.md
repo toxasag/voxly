@@ -79,7 +79,8 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 |---|---|
 | CRM (подписка) | 500 ₽/мес, скидки за 3/6/12/24 мес |
 | Доп. пользователь | 300 ₽/мес (в базе 10 юзеров) |
-| Бот выдачи подарков | 500 ₽/мес за канал |
+| Бот подарков Telegram | 500 ₽/мес за бота (`gift_bot`) |
+| Бот подарков MAX | 500 ₽/мес за бота (`gift_bot_max`) |
 | Телеграм Секретарь | 1000 ₽/мес до 10 аккаунтов; +200 ₽/слот сверх |
 | AI-агент (слот) | 500 ₽/мес за агента + AI-usage с markup с баланса |
 | Telegram (личный / GramJS) | 500 ₽/мес за аккаунт + AI-usage |
@@ -91,6 +92,33 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-06** — **INC-102:** TG open without `@username` → `/open/tg/{userId}`→`tg://user?id=` (label deep link); never `t.me/+`; backfill voxly Conversations + Кувалдин `928954961`.
+- **2026-08-06** — **INC-101:** social LINKS `primaryLinkLabel`=URL (not "WhatsApp"/"Telegram"); Кувалдин `+79850868825` TG empty — ImportContacts exists, no `@username`, never `t.me/+`; Opp 399≠400; deploy+migrate backup `20260806-102034`.
+- **2026-08-06** — **INC-100:** WA sync race → two Opps on one Person (noname100); reuse open Opp + soft-delete orphans; Person social TEXT→**LINKS** (`wa.me`/`t.me/@`); deploy workers+saas-api; prod repair 67 orphan WA Opps + migrate voxly socials.
+- **2026-08-06** — **INC-099:** «Пишем от» gift gating + WA from Person.whatsapp + save-time dedupe (crm-chat **0.1.27**); backup `20260806-093403`.
+- **2026-08-06** — **INC-098:** CRM Chat stale `[media]` after GramJS backfill — soft-refresh id-only sig + `isMediaPlaceholder`; crm-chat **0.1.26**; deploy `saas-api` backup `20260806-090344` + refresh-crm-chat voxly.
+- **2026-08-05** — **INC-097 v7:** `resolveLidPhoneFromEvolution()` (Message.key → Redis lid-mapping → IsOnWhatsapp → whatsappNumbers → profile-index); `mergeWaLidPnTwinConversations` + `repairOnly`; deploy `ai-whatsapp-worker` backup `20260805-150848`; Boomerservice 1 conv / `+79262625252` / 1 msg (= Evolution LID).
+- **2026-08-05** — **INC-097 v6:** profile-index LID→PN (email/website/pic); fetchAll messages + LID/PN merge; noname Person + `{seq} · WA · {account}` deals; default 500 msgs; deploy `ai-whatsapp-worker` backup `20260805-141016`; force sync peopleSynced=14; Boomerservice phone `+79262625252`.
+- **2026-08-05** — **INC-097 v5:** never create «WhatsApp» CRM shells without E.164; business-derived names kept (4); soft-delete 10 garbage cards → Conversation-only; Evolution cannot map LID→PN (0 phones); deploy `ai-whatsapp-worker` backups `20260805-105239`/`105544`/`105823`.
+- **2026-08-05** — **INC-097 v4:** after Twenty wipe, WA sync recreates Person+Opportunity for open LID chats with messages (`needsReview`); clear stale CRM ids; repair zero-msg only; deploy `ai-whatsapp-worker` backup `20260805-103459`; force sync peopleSynced=14.
+- **2026-08-05** — **INC-097 v3:** WA open-chats-only sync (not Contact book); no fake `t.me/+`; ImportContacts→`@username` + GetFullUser profile enrich; Chat Opportunity→Person SQL fallback; deploy `ai-whatsapp-worker,saas-api,gramjs-bridge` backup `20260805-101610`; refresh-crm-chat voxly+efim1.
+- **2026-08-05** — **INC-097 v2:** WA Contact-book sync (PN dialogs + unique name) + Telegram phone check + CRM Chat Opportunity→Person resolve; deploy `ai-whatsapp-worker,saas-api,gramjs-bridge,compose`.
+- **2026-08-05** — GramJS manual sync chats button (no QR) — mirror WA; `POST …/gramjs/…/sync-history`; deploy `saas-api,saas-portal,gramjs-bridge` backup `20260805-090834`.
+- **2026-08-05** — **INC-095:** `sanitizeFunnel` dropped `extraButtons` on campaign save; fix + step-4 CTA «Сохранить»; deploy `saas-api,saas-portal` backup `20260805-071948`.
+- **2026-08-04** — Gift-bot `extraButtons` (URL) under steps 4–6 + Дожим; deploy `saas-api,saas-portal,gift-bot-worker` backup `20260804-160301`.
+- **2026-08-04** — **INC-094:** gift photo/video quality — stage as `sendDocument`, deliver download→`sendPhoto`/`sendVideo`; deploy `saas-api,gift-bot-worker,saas-portal`.
+- **2026-08-04** — On GramJS connect: auto CRM enrich + phone soft-merge (BullMQ); new leads keep enrich; all portals.
+- **2026-08-04** — GramJS profile enrich → Person (phone/about/birthday); bridge `/users/full`; admin backfill; needs `ai_gramjs` connected.
+- **2026-08-04** — INC-021 reopen: kanban note chip = body (title←body triggers missing); `ensureOpportunityKanbanCardDefaults` on provision/reapply; deploy `saas-api`.
+- **2026-08-04** — **INC-092:** prod disk 100% (dangling images ~68GB) → control PG recovery + Redis MISCONF → login 500; prune + restart PG/API/workers (no `-v`); login smoke 401.
+- **2026-08-04** — voxly CRM fixes: CREATE_PROFILE kept on provision; sidebar order SQL+SDK; redis flush after defaults; owner name sync; deploy `saas-api`.
+- **2026-08-03** — INC-089: NPM `proxy_request_buffering off` + portal upload timeout 300s; deploy `saas-portal` backup `20260803-155457`.
+- **2026-08-03** — INC-088: gift promo/post media (photo/video/document) — direct API + NPM 300s; deploy `saas-api,saas-portal,gift-bot-worker` backup `20260803-153618`.
+- **2026-08-03** — `/dashboard` amber industrial hub: hero, alerts, KPI, product grid, partner strip, gift funnel collapsed (deploy pending).
+- **2026-08-03** — Web form lead intake Phase 1 (ADR-026): Tilda/WP/JSON → FormLead → Twenty + AttributionSession + `web_form_lead`; UI `/dashboard/crm`; migrate `20260803160000_form_lead_intake` (deploy pending).
+- **2026-08-03** — Landing Awwwards v3 live (CRM + free Tilda/WP forms); v2 archived under `app/_archive/landing-v2/`; deploy `saas-portal`.
+- **2026-08-03** — Landing Awwwards v2 live on getvoxly.ru (CRM thesis + mobile web); deploy `saas-portal` backup `20260803-112800`.
+- **2026-08-03** — Admin `/admin/ai-balance`: global + per-tenant AI markup %, usage/margin/topup stats; nav; API `admin-ai-balance.ts`; deploy pending `saas-api`+`saas-portal`.
 - **2026-08-02** — INC-081: INDEX «Канбан» был TABLE → SQL type=KANBAN+groups; johntest fixed; deploy `saas-api` (`20260802-194338`).
 - **2026-08-02** — INC-080: SQL `clearTwentyOnboardingFlags` early+late в provision; deploy `saas-api` (backup `20260802-192427`); johntest `onboardingStatus=COMPLETED` — hard-refresh CRM.
 - **2026-08-02** — INC-077: Twenty workspace limit 5→100000; johntest CRM `d8c9bf10-…` ACTIVE + chat installed.
@@ -534,7 +562,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/083**. **2026-08-02:** `@GetVoxlybot` OTP auth + `/admin/bot` + live Robokassa (`IS_TEST=0`); johntest CRM; `/install-apps` clear; referral `/?ref=`; disk prune (~61GB images); lexx purged. **Blocker:** Robokassa Password#2 в prod `.env` ≠ ЛК (INC-083) — ResultURL падает, SuccessURL ок. Gaps: SMTP invite; **rotate root SSH** + sync/rotate Robokassa P2.
+**Статус кода:** CRM chat + INC-024…**/103** (GramJS send from Person.telegram userId even without prior Conversation) + **/102** (`/open/tg/{id}`) + **/101** + **/100** + **/099** (crm-chat **0.1.27**) + **/098** + **/097 v7** + ADR-026 + **ADR-027**. **Module freeze:** `docs/agent/modules/` (WA/GramJS/chat/social/gift/dedupe). **2026-08-06:** open link ≠ send; GramJS binds peer from LINKS + ImportContacts phone fallback. **MAX** ADR-025 pending. **Blocker:** Robokassa Password#2 (INC-083). Gaps: TG→WA IsOnWhatsApp; SMTP; rotate root SSH.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`
@@ -560,7 +588,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **Что уже в коде (gift + портал)** — ключевые файлы
 - API (`apps/saas-api`): trial, provision-link, campaign, channel/verify, promo draft/publish, `POST .../media`, broadcasts, subscribers, messages/reply; `GET /api/admin/funnels`; `GET /api/bots` → `subscriberCount` + `promoPost`.
-- Портал (`apps/saas-portal`): `/dashboard` (4 блока + CRM в новой вкладке + подсказка/popup-blocker); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг/login/register/legal + dashboard на shadcn **indigo**; `AppShell` (Sheet mobile) + motion/UX (Alert, CopyButton, PageHeader).
+- Портал (`apps/saas-portal`): `/dashboard` amber hub (`DashboardPortalHero` + KPI + разделы + партнёрка); `/dashboard/bots`, `/dashboard/bots/[botId]` (канал → пост акции → прогрев side-by-side → подписчики), `/dashboard/bots/broadcasts`; `/admin` воронки; лендинг industrial amber; `AppShell` (Sheet mobile) + motion/UX (Alert, CopyButton, PageHeader).
 - Shared: `DEFAULT_GIFT_FUNNEL` / `DEFAULT_GIFT_PROMO`, `buildVoxlyBotUsername`, `telegram-md.ts`, `resolveTelegramMedia`.
 - Worker (`apps/gift-bot-worker`): воронка + delays + broadcasts + promo clicks; `detectStoredMediaKind`; BullMQ `jobId` без `:`; напоминания `not_gifted` / `not_subscribed` / `after_gift` (см. сводку §3); Person/Opportunity + notes; `fireGoal` + `campaignId`/`botInstanceId`; MarkdownV2.
 - Username новых ботов: `voxly_{slug}_{01}_bot`.
@@ -602,6 +630,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 | phase2-gift-bot | gift-bot-worker (воронка, подписка, рассылки, promo, media file_id) | ✅ DONE |
 | phase2-analytics | Сквозная аналитика (Метрика/GA4/FB/VK) | ✅ DONE |
 | phase2-gramjs | GramJS bridge (личный аккаунт, опционально) | 🟡 PORTAL+SOFT+PROD (bridge up on prod; hard Robokassa SKU open) |
+| phase2-max | MAX personal (`ai_max` + max-bridge) + gift_max | 🟡 P1+P2+UX (ADR-025; QR/token E2E pending; AI/media Phase 3) |
 | phase3-ai-telegram | ai-telegram-worker Business + OpenRouter + handoff | 🟡 IN PROGRESS (media ✅; portal split ADR-014 ✅; AiAgent schema ✅; **default AI OFF**; OPENROUTER/E2E + prod migrate open) |
 | phase4-ai-whatsapp | ai-whatsapp-worker + Evolution QR | 🟡 IN PROGRESS (QR works on prod INC-035; soft trial; needs phone-scan E2E + hard Robokassa) |
 | final-polish | Dockerfiles, тесты, сборка | ✅ DONE |
@@ -624,6 +653,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Опциональное
 - **Phase 2b: GramJS bridge** — portal QR ✅; soft SKU/trial ✅; **prod bridge up** ✅; hard Robokassa remaining.
+- **MAX** — live QR (`ai_max`) + gift token (`gift_max`) E2E per `docs/agent/MAX-SMOKE.md`; media/AI agent later.
 - Tenant UI метрик воронки на `/dashboard/bots` (сейчас только супер-админ `/admin`).
 
 ### Известные TODO / пробелы

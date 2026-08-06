@@ -1,12 +1,18 @@
 // Admin-side aggregation of the referral program: partners overview, partner detail, effective rule
 
 import type { PrismaClient, ReferralRule } from '@voxly/db';
-import { REFERRAL_PRODUCT_SCOPES } from '@voxly/shared';
+import {
+  REFERRAL_COMMISSION_SKU_LABELS,
+  REFERRAL_PRODUCT_SCOPES,
+  isReferralCommissionSku,
+  type ReferralCommissionSku,
+} from '@voxly/shared';
 import {
   parsePeriod,
   resolveRuleForReferrer,
   withdrawalShape,
   type RuleDb,
+  type ServiceRateDb,
 } from './referral-program.js';
 
 export { resolveRuleForReferrer };
@@ -50,6 +56,55 @@ export async function resolveEffectiveRuleShape(db: RuleDb, tenantId: string) {
   });
   if (personal) return ruleShape(personal, true);
   return ruleShape(await findGlobalRule(db), false);
+}
+
+function serviceRateShape(row: {
+  id: string;
+  productCode: string;
+  percent: unknown;
+}) {
+  const code = row.productCode;
+  return {
+    id: row.id,
+    productCode: code,
+    label: isReferralCommissionSku(code)
+      ? REFERRAL_COMMISSION_SKU_LABELS[code]
+      : code,
+    percent: Number(row.percent),
+  };
+}
+
+export async function listPartnerServiceRates(db: ServiceRateDb, tenantId: string) {
+  const rows = await db.referralServiceRate.findMany({
+    where: { tenantId },
+    orderBy: { productCode: 'asc' },
+  });
+  return rows.map(serviceRateShape);
+}
+
+export async function upsertPartnerServiceRate(
+  db: ServiceRateDb,
+  tenantId: string,
+  productCode: ReferralCommissionSku,
+  percent: number,
+) {
+  const row = await db.referralServiceRate.upsert({
+    where: { tenantId_productCode: { tenantId, productCode } },
+    create: { tenantId, productCode, percent },
+    update: { percent },
+  });
+  return serviceRateShape(row);
+}
+
+export async function deletePartnerServiceRate(
+  db: ServiceRateDb,
+  tenantId: string,
+  productCode: string,
+): Promise<boolean> {
+  const result = await db.referralServiceRate.deleteMany({
+    where: { tenantId, productCode },
+  });
+  return result.count > 0;
 }
 
 export async function buildReferralAdminOverview(
@@ -230,6 +285,7 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
     transactions,
     rule,
     withdrawals,
+    serviceRates,
   ] = await Promise.all([
     prisma.referralCode.findUnique({ where: { tenantId } }),
     prisma.referralCampaign.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } }),
@@ -252,6 +308,7 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
     }),
+    listPartnerServiceRates(prisma, tenantId),
   ]);
 
   const earnedOf = (referralIds: Set<string>) =>
@@ -269,6 +326,7 @@ export async function buildReferralPartnerDetail(prisma: PrismaClient, tenantId:
       status: tenant.status,
     },
     rule,
+    serviceRates,
     balanceRub: round2(Number(balance?.balanceRub ?? 0)),
     earnedAllTimeRub: earnedOf(new Set(referrals.map((r) => r.id))),
     paidOutRub: round2(

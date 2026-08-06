@@ -245,15 +245,15 @@ function RegisterForm() {
               CRM, боты и мессенджеры в одном месте. Сначала пробуешь — потом решаешь, платить или нет.
             </p>
 
-            <div className="relative mx-auto mt-6 hidden w-[min(48vw,180px)] sm:block sm:w-[200px] lg:mt-10 lg:w-[min(100%,260px)]">
-              <div className="land-mascot-float relative aspect-[3/4] w-full">
+            <div className="relative mx-auto mt-8 w-[min(58vw,220px)] sm:w-[240px] lg:mt-12 lg:w-[min(100%,300px)]">
+              <div className="land-mascot-float relative aspect-[5/6] w-full">
                 <Image
-                  src="/mascot/voxly-cta-v5.png"
-                  alt="Voxly"
+                  src="/mascot/voxly-mascot-v6.png"
+                  alt="Voxly — промышленный робот-маскот"
                   fill
                   priority
-                  sizes="(max-width: 1024px) 200px, 260px"
-                  className="object-contain object-bottom"
+                  sizes="(max-width: 1024px) 240px, 300px"
+                  className="object-contain object-bottom drop-shadow-[0_18px_28px_rgba(10,10,10,0.22)]"
                 />
               </div>
             </div>

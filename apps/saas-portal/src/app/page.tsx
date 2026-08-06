@@ -3,11 +3,13 @@ import { ArrowRight, Check } from 'lucide-react';
 import { MobileProof } from '@/components/landing/mobile-proof';
 import {
   AnnotatedChatMock,
+  FormToDealMock,
   HeroSignature,
   KanbanMock,
   ModuleMini,
   TransformCompare,
 } from '@/components/landing/product-mocks';
+import { ProductTabs } from '@/components/landing/product-tabs';
 import { ReferralCapture } from '@/components/landing/referral-capture';
 import { RegisterLink } from '@/components/landing/register-link';
 import {
@@ -29,7 +31,7 @@ const CRM_CHAPTERS = [
     bullets: [
       'Виды: Канбан (по умолчанию) и Списком',
       'Сделка: сумма, этап, заметки, владелец',
-      'Этапы: зафиксированы «Новый лид» / «Успешная» / «Провалена»; середину настраивает команда',
+      'Этапы: «Новый лид» / «Успешная» / «Провалена» зафиксированы; середину настраивает команда',
       'Запись открывается в боковой панели — контекст канбана не теряется',
       'На карточке: имя, дата, сумма, заметки',
     ],
@@ -45,25 +47,42 @@ const CRM_CHAPTERS = [
     bullets: [
       'Чат на контакте и на сделке',
       'Multi-channel: gift-бот / Telegram Business / личный Telegram / WhatsApp / MAX',
-      'Переключатель тредов, если каналов несколько',
-      'Шапка: канал · от чьего имени · peer; presence / last-seen где канал умеет',
-      'Toolbar, MarkdownV2, кликабельные ссылки; вложения с preview PDF/DOCX',
+      'Переключатель тредов, шапка канала, presence / last-seen',
+      'Toolbar, MarkdownV2, вложения с preview PDF/DOCX',
       'Pinned composer; AI вкл / пауза / выкл; открыл чат = прочитано',
     ],
     punch: 'Ни один лид не должен ждать ответа в пустом мессенджере.',
     visual: 'chat' as const,
   },
   {
-    id: 'crm-contacts',
+    id: 'crm-forms',
     num: '03',
+    label: 'Сайт',
+    title: 'Заявки с Tilda и WordPress — бесплатно',
+    scenario:
+      'Заявка с лендинга → сразу контакт и сделка в той же CRM. Сколько сайтов — столько webhook’ов. Без доплаты.',
+    bullets: [
+      'Webhook из кабинета CRM («Приём заявок с сайта»)',
+      'Tilda: Формы → Webhook + «Посылать Cookie» (_ym_uid / TILDAUTM)',
+      'WordPress: Gravity Forms / Contact Form 7 / n8n → JSON POST',
+      'Дедуп телефон → email; одна открытая сделка или всегда новая',
+      'UTM + cookies → AttributionSession + цель web_form_lead',
+      'Идемпотентность (tranid / entry_id) — без дублей; сайтов без лимита',
+    ],
+    punch: 'Форма на Tilda или WordPress → сразу сделка в CRM. Сколько лендингов — без лимита. Без доплаты.',
+    visual: 'forms' as const,
+  },
+  {
+    id: 'crm-contacts',
+    num: '04',
     label: 'Контакты',
     title: 'Контакты и соцполя',
     scenario:
-      'Тот же человек написал в Telegram, потом в WhatsApp. В CRM это один контакт — не два «новых клиента».',
+      'Тот же человек оставил заявку на сайте, потом написал в WhatsApp. В CRM это один контакт.',
     bullets: [
       'Person: имя, телефоны, соцсети',
-      'Поля: Telegram, WhatsApp, VK, OK, Instagram, Facebook, Threads, LinkedIn, сайт',
-      'Входящее → контакт + сделка (не теряется в мессенджере)',
+      'Telegram, WhatsApp, VK, OK, Instagram, Facebook, Threads, LinkedIn, сайт',
+      'Входящее из мессенджера или формы → контакт + сделка',
       'Cross-channel merge по телефону (TG ↔ WA)',
       'Сообщения пишутся всегда; AI отвечает только если назначен агент',
     ],
@@ -71,7 +90,7 @@ const CRM_CHAPTERS = [
   },
   {
     id: 'crm-team',
-    num: '04',
+    num: '05',
     label: 'Команда',
     title: 'Команда — 10 человек в Base',
     scenario:
@@ -86,11 +105,11 @@ const CRM_CHAPTERS = [
   },
   {
     id: 'crm-mailing',
-    num: '05',
+    num: '06',
     label: 'Рассылки',
     title: 'Рассылки из CRM',
     scenario:
-      'Сделка перешла на этап «Догрев» — ушла отложенная серия. Всё из папки «Рассылка» внутри CRM, не из третьего кабинета.',
+      'Сделка перешла на этап «Догрев» — ушла отложенная серия. Всё из папки «Рассылка» внутри CRM.',
     bullets: [
       'Папка: бот / аккаунты / WhatsApp / сторис',
       'Фильтры: этап сделки, статусы, gift, прочитанность',
@@ -101,11 +120,11 @@ const CRM_CHAPTERS = [
   },
   {
     id: 'crm-signals',
-    num: '06',
+    num: '07',
     label: 'Сигналы',
     title: 'Badges и toasts',
     scenario:
-      'На канбане unread. Слева toast «новое входящее». Открытый чат подтягивает сообщение сам.',
+      'На канбане unread. Слева toast «новое входящее» или заявка с сайта. Открытый чат подтягивается сам.',
     bullets: [
       'Unread badges на карточках сделок и контактов',
       'Toast слева + автообновление открытого чата',
@@ -116,25 +135,17 @@ const CRM_CHAPTERS = [
 ] as const;
 
 const STEPS = [
-  {
-    number: '01',
-    title: 'Регистрация',
-    text: 'Минута. Кабинет уже на месте.',
-  },
-  {
-    number: '02',
-    title: 'CRM готова',
-    text: 'Рабочее пространство провижинится при регистрации.',
-  },
+  { number: '01', title: 'Регистрация', text: 'Минута. Кабинет уже на месте.' },
+  { number: '02', title: 'CRM готова', text: 'Рабочее пространство создаётся при регистрации.' },
   {
     number: '03',
-    title: 'Канал',
-    text: 'Бот, WhatsApp QR, Telegram или MAX — что используешь.',
+    title: 'Сайт и/или канал',
+    text: 'Webhook для Tilda/WP и/или бот, WhatsApp, Telegram, MAX.',
   },
   {
     number: '04',
-    title: 'Ответ из сделки',
-    text: 'С компьютера или с телефона — в том же чате.',
+    title: 'Работа из сделки',
+    text: 'Заявка, чат и ответ — с компьютера или с телефона.',
   },
 ] as const;
 
@@ -152,7 +163,7 @@ const MODULES = [
     num: '02',
     title: 'AI-агент',
     price: '500 ₽ / слот',
-    pain: 'Ночной лид без ответа.',
+    pain: 'Ночной лид или заявка без ответа.',
     does: 'KB + обучение на успешных сделках; пачки, «печатает», пауза/выкл.',
     inCrm: 'Тумблеры AI прямо в чате сделки.',
     punch: 'AI отвечает первым. Менеджер забирает диалог одним тапом.',
@@ -187,15 +198,67 @@ const MODULES = [
   },
 ] as const;
 
-const AUDIENCE = [
-  'Команда 2–10, продажи в мессенджерах',
-  'Уже есть трафик/лиды — нужна дисциплина закрытия',
-  'Не хотят три биллинга и три приложения',
-  'Нужен AI на первой линии с handoff человеку',
+const REPLACES = [
+  'Отдельный приём форм с сайта и ручной перенос лидов в CRM',
+  'Связку «коннектор мессенджера + CRM» для базового контура ответов',
+  'Третье приложение «только чтобы команда отвечала с телефона»',
 ] as const;
 
+const CONSTELLATION: { group: string; items: string[] }[] = [
+  {
+    group: 'CRM',
+    items: [
+      'Канбан сделок',
+      'Вид списком',
+      'Side panel',
+      'Контакты Person',
+      'Соцполя',
+      'Этапы воронки',
+      'Заметки на сделке',
+      'Владелец сделки',
+    ],
+  },
+  {
+    group: 'Сайт',
+    items: [
+      'Webhook Tilda',
+      'WordPress / JSON',
+      'Безлимит сайтов',
+      'Дедуп по телефону',
+      'UTM + cookies',
+      'Идемпотентность',
+      'web_form_lead',
+    ],
+  },
+  {
+    group: 'Мессенджеры',
+    items: [
+      'Чат в сделке',
+      'WhatsApp',
+      'Telegram Business',
+      'Личный Telegram',
+      'MAX',
+      'Gift-бот',
+      'Треды каналов',
+      'Вложения',
+    ],
+  },
+  {
+    group: 'AI',
+    items: ['Слот агента', 'База знаний', 'Обучение на won', 'Пауза / handoff', 'Human-like bubbles'],
+  },
+  {
+    group: 'Рассылки',
+    items: ['Бот', 'Аккаунты', 'WhatsApp', 'Сторис', 'Фильтр по этапу', 'Автоправила'],
+  },
+  {
+    group: 'Команда',
+    items: ['10 мест в Base', 'Инвайт', 'Кабинет Voxly', 'Unread badges', 'Toasts', 'Mobile web'],
+  },
+];
+
 const SKUS = [
-  { sku: 'CRM_BASE', price: '500 ₽ / 10 мест' },
+  { sku: 'CRM_BASE', price: '500 ₽ / 10 мест · формы free' },
   { sku: 'EXTRA_SEAT', price: '300 ₽' },
   { sku: 'AI_TG Секретарь', price: '1000 ₽ / 10 акк · +200' },
   { sku: 'AI_AGENT', price: '500 ₽ / слот' },
@@ -212,22 +275,30 @@ const FAQ = [
   },
   {
     q: 'Можно ли работать только с телефона?',
-    a: 'Да. Канбан, сделка, чат, ответ и вложения доступны в мобильном вебе.',
+    a: 'Да. Канбан, сделка, заявка, чат, ответ и вложения доступны в мобильном вебе.',
   },
   {
     q: 'Что входит в 500 ₽?',
-    a: 'CRM Base: рабочее пространство, канбан/список, чат в сделке, до 10 пользователей. Каналы и AI — отдельными модулями.',
+    a: 'CRM Base: рабочее пространство, канбан/список, чат в сделке, приём заявок с сайта (Tilda/WP/JSON) без лимита сайтов, до 10 пользователей. Каналы и AI — отдельными модулями.',
+  },
+  {
+    q: 'Tilda и WordPress платно отдельно? Сколько сайтов?',
+    a: 'Нет отдельного SKU. Заявки с сайта входят в CRM Base. Сайтов и webhook’ов — без лимита.',
+  },
+  {
+    q: 'Нужен ли плагин WordPress?',
+    a: 'Отдельный плагин Voxly не обязателен. Достаточно Gravity Forms / Contact Form 7 / n8n (или любого JSON POST) на ваш webhook URL из кабинета.',
   },
   {
     q: 'Чем это не amo/Bitrix + Wazzup?',
-    a: 'Не склеиваем чужие кабинеты. Чат, сделки и каналы изначально в одной CRM; биллинг модульный, без обязательного трио «места × коннектор × конструктор».',
+    a: 'Не склеиваем чужие кабинеты. Чат, сделки, заявки с сайта и каналы — в одной CRM; биллинг модульный.',
   },
   {
     q: 'AI обязателен?',
-    a: 'Нет. Сообщения пишутся в CRM всегда. AI отвечает только если назначен агент; в любой момент пауза или handoff.',
+    a: 'Нет. Сообщения и заявки попадают в CRM всегда. AI отвечает только если назначен агент.',
   },
   {
-    q: 'Куда падают лиды после сторис/рассылки?',
+    q: 'Куда падают лиды после сторис, рекламы или формы?',
     a: 'В контакты и сделки VoxlyCRM. Дальше — этап, чат, команда.',
   },
   {
@@ -274,6 +345,15 @@ function Eyebrow({ children, light = false }: { children: React.ReactNode; light
   );
 }
 
+function SectionCta({ refCode }: { refCode?: string | null }) {
+  return (
+    <div className="mt-10 flex flex-col items-start gap-3 border border-black/15 bg-[#fff4de] p-5 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm font-semibold sm:text-base">Открыть CRM на 7 дней · формы с сайта уже внутри</p>
+      <PrimaryCta label="Начать trial" refCode={refCode} />
+    </div>
+  );
+}
+
 export default async function LandingPage({
   searchParams,
 }: {
@@ -295,10 +375,7 @@ export default async function LandingPage({
       <header className="sticky top-0 z-40 border-b border-black/10 bg-white/95 backdrop-blur-sm">
         <div className="h-1 w-full bg-[#f5a623]" aria-hidden />
         <div className="mx-auto flex h-14 max-w-[1280px] items-center justify-between gap-3 px-5 sm:h-16 sm:px-8">
-          <Link
-            href="/"
-            className="land-display shrink-0 text-base font-bold uppercase tracking-[-0.04em]"
-          >
+          <Link href="/" className="land-display shrink-0 text-base font-bold uppercase tracking-[-0.04em]">
             Voxly
           </Link>
           <nav className="hidden items-center gap-6 text-sm font-medium lg:flex" aria-label="Основная навигация">
@@ -316,10 +393,7 @@ export default async function LandingPage({
             </a>
           </nav>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <Link
-              href="/login"
-              className="hidden min-h-11 items-center px-2 text-sm font-semibold sm:inline-flex"
-            >
+            <Link href="/login" className="hidden min-h-11 items-center px-2 text-sm font-semibold sm:inline-flex">
               Войти
             </Link>
             <RegisterLink className="land-btn min-h-11 px-4 py-2.5 text-sm touch-manipulation" refCode={refCode}>
@@ -331,22 +405,19 @@ export default async function LandingPage({
 
       {/* HERO */}
       <section className="relative isolate overflow-hidden bg-white">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-[#f5a623]"
-        />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-[#f5a623]" />
         <div className="mx-auto grid max-w-[1280px] items-center gap-10 px-5 pb-16 pt-10 sm:px-8 sm:pb-20 sm:pt-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-8 lg:pb-24">
           <div className="relative z-10 max-w-[720px]">
             <Eyebrow>01 · VoxlyCRM</Eyebrow>
             <p className="land-display land-rise mt-5 text-[clamp(3.5rem,10vw,8rem)] font-bold uppercase leading-[0.86] tracking-[-0.07em]">
               Voxly
             </p>
-            <h1 className="land-rise-delay mt-6 max-w-[680px] text-[clamp(1.75rem,4vw,3.25rem)] leading-[1.12] tracking-[-0.035em]">
-              Командный центр продаж. В браузере — с компьютера и с телефона.
+            <h1 className="land-rise-delay mt-6 max-w-[700px] text-[clamp(1.75rem,4vw,3.25rem)] leading-[1.12] tracking-[-0.035em]">
+              Командный центр продаж. Заявки с сайта и диалоги из мессенджеров — в одной CRM.
             </h1>
-            <p className="land-rise-delay-2 mt-5 max-w-[540px] text-base leading-relaxed text-[var(--land-muted)] sm:text-lg">
-              Клиент пишет в Telegram или WhatsApp — сделка и чат уже в CRM. Отвечай с компьютера
-              или с телефона. Приложения ставить не нужно.
+            <p className="land-rise-delay-2 mt-5 max-w-[560px] text-base leading-relaxed text-[var(--land-muted)] sm:text-lg">
+              Tilda и WordPress — бесплатно и без лимита сайтов. Telegram, WhatsApp и AI — в той же
+              сделке. С компьютера или с телефона. Приложения не нужны.
             </p>
             <div className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-4">
               <PrimaryCta refCode={refCode} />
@@ -355,7 +426,7 @@ export default async function LandingPage({
               </a>
             </div>
             <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.14em] text-black/45">
-              Без карты · CRM Base от 500 ₽ · 10 мест
+              7 дней · без карты · формы free в CRM · от 500 ₽
             </p>
           </div>
           <HeroSignature />
@@ -368,26 +439,26 @@ export default async function LandingPage({
           <div className="grid gap-8 lg:grid-cols-[minmax(0,0.4fr)_minmax(0,1.6fr)] lg:gap-16">
             <Eyebrow>02 · До</Eyebrow>
             <div className="min-w-0">
-              <h2 className="max-w-[900px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
-                Вкладки. Ночной лид. И ещё одно приложение «для команды».
+              <h2 className="max-w-[920px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
+                Сайт. Telegram. WhatsApp. CRM. Четыре вкладки — и потерянный контекст.
               </h2>
               <div className="mt-8 grid gap-6 text-[var(--land-muted)] md:grid-cols-2 md:gap-8">
                 <p>
-                  Воронка в одном сервисе. WhatsApp — в другом. Сделка — в третьем. Менеджер
-                  копирует сообщения руками и теряет контекст.
+                  Заявка с Tilda падает в почту. Диалог — в мессенджере. Сделка — «потом занесём».
+                  Менеджер копирует руками и теряет UTM.
                 </p>
                 <p>
-                  Ночью человек написал. Утром он уже у конкурента. А счёт за стек легко уходит за
-                  8–15 тысяч — ещё до AI.
+                  Ночью написали или оставили форму. Утром человек уже у конкурента. А стек легко
+                  уходит за 8–15 тысяч — ещё до AI. Плюс «поставь приложение» — команда не ставит.
                 </p>
               </div>
             </div>
           </div>
           <div className="mt-16 grid border-y border-black/15 sm:grid-cols-3">
             {[
-              ['3–4', 'сервиса вместо одного экрана'],
+              ['4+', 'вкладки вместо одного экрана'],
               ['8–15 тыс. ₽', 'типичный ориентир стека'],
-              ['1 лид', 'может стоить дороже подписки'],
+              ['1 заявка', 'может стоить дороже подписки'],
             ].map(([value, label], index) => (
               <div
                 key={label}
@@ -405,28 +476,59 @@ export default async function LandingPage({
       <section className="bg-[#f3f3f3]">
         <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 sm:py-28">
           <Eyebrow>03 · После</Eyebrow>
-          <h2 className="mt-6 max-w-[860px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
-            Одна VoxlyCRM вместо зоопарка вкладок.
+          <h2 className="mt-6 max-w-[900px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
+            Одно пространство продаж вместо зоопарка софта.
           </h2>
+          <p className="mt-6 max-w-[560px] text-base text-[var(--land-muted)]">
+            Заявки с сайта, диалоги и воронка живут в VoxlyCRM — не в четырёх кабинетах.
+          </p>
           <div className="mt-12">
             <TransformCompare />
           </div>
-          <p className="mt-6 max-w-[640px] text-sm text-[var(--land-muted)]">
-            Цены конкурентов — публичный ориентир; у всех меняются. Сравнивайте свой счёт.
-          </p>
+          <div className="mt-10 border border-black/15 bg-white p-6 sm:p-8">
+            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-black/45">
+              Replaces · для базового контура
+            </p>
+            <ul className="mt-5 space-y-3">
+              {REPLACES.map((item) => (
+                <li key={item} className="flex gap-2 text-sm sm:text-base">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#f5a623]" aria-hidden />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-6 text-sm text-[var(--land-muted)]">
+              Ориентир рынка 8–15 тыс. за разрозненный стек → Voxly от 500 ₽ за CRM-ядро. Цены
+              конкурентов меняются — сравнивайте свой счёт.
+            </p>
+          </div>
+          <SectionCta refCode={refCode} />
+        </div>
+      </section>
+
+      {/* PRODUCT TABS */}
+      <section className="bg-white">
+        <div className="mx-auto max-w-[1280px] px-5 py-16 sm:px-8 sm:py-20">
+          <Eyebrow>VoxlyCRM · обзор</Eyebrow>
+          <h2 className="mt-6 max-w-[820px] text-[clamp(1.75rem,4vw,3.5rem)] leading-[1.12] tracking-[-0.035em]">
+            Канбан. Чат. Заявки с сайта. Рассылки. AI.
+          </h2>
+          <div className="mt-10">
+            <ProductTabs />
+          </div>
         </div>
       </section>
 
       {/* CRM DEEP DIVE */}
       <section id="crm" className="bg-white">
-        <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 sm:py-28">
+        <div className="mx-auto max-w-[1280px] px-5 pb-20 pt-8 sm:px-8 sm:pb-28">
           <Eyebrow>04 · VoxlyCRM</Eyebrow>
           <h2 className="mt-6 max-w-[900px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
             Не табличка лидов. Рабочее пространство продаж.
           </h2>
           <p className="mt-6 max-w-[640px] text-base text-[var(--land-muted)] sm:text-lg">
-            Единое окно: контакты, сделки, переписка из мессенджеров, AI и рассылки — в одной
-            системе. Русские лейблы. Открывается в браузере на компьютере и на телефоне.
+            Контакты, сделки, заявки с сайта, переписка из мессенджеров, AI и рассылки — в одной
+            системе. Русские лейблы. Браузер на компьютере и телефоне.
           </p>
 
           <nav
@@ -467,14 +569,13 @@ export default async function LandingPage({
                     ))}
                   </ul>
                   {'punch' in ch && ch.punch ? (
-                    <p className="mt-6 border-l-2 border-[#f5a623] pl-4 text-sm font-semibold">
-                      {ch.punch}
-                    </p>
+                    <p className="mt-6 border-l-2 border-[#f5a623] pl-4 text-sm font-semibold">{ch.punch}</p>
                   ) : null}
                 </div>
                 <div className="min-w-0">
                   {ch.visual === 'kanban' ? <KanbanMock /> : null}
                   {ch.visual === 'chat' ? <AnnotatedChatMock /> : null}
+                  {ch.visual === 'forms' ? <FormToDealMock /> : null}
                   {ch.visual === 'mailing' ? <ModuleMini kind="mailing" /> : null}
                   {ch.visual === 'none' ? (
                     <div className="border border-black/15 bg-[#f3f3f3] p-6 font-mono text-[11px] uppercase tracking-[0.14em] text-black/40">
@@ -486,14 +587,11 @@ export default async function LandingPage({
             ))}
           </div>
 
-          <div className="mt-6 flex flex-col items-start gap-3 border border-black/15 bg-[#fff4de] p-6 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-            <p className="text-base font-semibold">Открыть CRM на 7 дней</p>
-            <PrimaryCta label="Начать trial" refCode={refCode} />
-          </div>
+          <SectionCta refCode={refCode} />
         </div>
       </section>
 
-      {/* MOBILE PROOF */}
+      {/* MOBILE */}
       <section id="mobile" className="bg-[#f3f3f3]">
         <MobileProof />
       </section>
@@ -530,9 +628,8 @@ export default async function LandingPage({
             Модули подключаются к сделке — не живут отдельной жизнью.
           </h2>
           <p className="mt-6 max-w-[560px] text-base text-[var(--land-muted)]">
-            Каждый модуль кормит одну воронку в VoxlyCRM.
+            Формы с сайта уже в CRM Base. Ниже — платные аддоны вокруг воронки.
           </p>
-
           <div className="mt-14 space-y-0">
             {MODULES.map((mod) => (
               <article
@@ -570,42 +667,52 @@ export default async function LandingPage({
               </article>
             ))}
           </div>
+        </div>
+      </section>
 
-          <div className="mt-12 border border-black/15 bg-white p-6 sm:p-8">
-            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-black/45">
-              Кому подходит
-            </p>
-            <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-              {AUDIENCE.map((item) => (
-                <li key={item} className="flex gap-2 text-sm">
-                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#f5a623]" aria-hidden />
-                  {item}
-                </li>
-              ))}
-            </ul>
+      {/* CONSTELLATION */}
+      <section id="features" className="bg-white">
+        <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 sm:py-28">
+          <Eyebrow>08 · Возможности одним взглядом</Eyebrow>
+          <h2 className="mt-6 max-w-[820px] text-[clamp(1.85rem,4.5vw,4rem)] leading-[1.12] tracking-[-0.035em]">
+            Не feature-dump в hero. Плотная карта после сути.
+          </h2>
+          <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {CONSTELLATION.map((block) => (
+              <div key={block.group} className="border-t border-black/15 pt-5">
+                <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-[#f5a623]">
+                  {block.group}
+                </p>
+                <ul className="mt-4 space-y-2">
+                  {block.items.map((item) => (
+                    <li key={item} className="text-sm text-[var(--land-muted)]">
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
       {/* PRICING */}
-      <section id="pricing" className="bg-white">
+      <section id="pricing" className="bg-[#f3f3f3]">
         <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 sm:py-28">
-          <Eyebrow>08 · Цены</Eyebrow>
+          <Eyebrow>09 · Цены</Eyebrow>
           <h2 className="mt-6 max-w-[860px] text-[clamp(1.85rem,4.5vw,4.25rem)] leading-[1.12] tracking-[-0.035em]">
             Собери свой контур. Плати за то, чем пользуешься.
           </h2>
-
           <div className="mt-12 grid gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start lg:gap-16">
             <div className="border border-black/15 bg-[#0a0a0a] p-6 text-white sm:p-8">
-              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#f5a623]">
-                CRM_BASE
-              </p>
+              <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#f5a623]">CRM_BASE</p>
               <p className="land-display mt-4 text-[clamp(2.75rem,7vw,5rem)] leading-none">500 ₽</p>
               <p className="mt-2 text-sm text-white/60">/ месяц · 10 мест</p>
               <p className="mt-4 text-sm text-white/70">Extra seat — 300 ₽</p>
-              <p className="mt-6 border-t border-white/15 pt-5 text-sm">
-                Trial 7 дней · без карты
+              <p className="mt-6 border-t border-white/15 pt-5 text-sm font-semibold text-[#f5a623]">
+                Включено: заявки с Tilda / WordPress, безлимит сайтов
               </p>
+              <p className="mt-4 text-sm text-white/70">Trial 7 дней · без карты</p>
               <p className="mt-3 text-sm text-white/55">
                 После trial доступ к CRM требует подписки (hard lock). Честно.
               </p>
@@ -613,7 +720,6 @@ export default async function LandingPage({
                 <PrimaryCta label="Собрать и начать 7 дней" variant="amber" refCode={refCode} />
               </div>
             </div>
-
             <div>
               <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-black/45">
                 Модульная сетка
@@ -629,9 +735,6 @@ export default async function LandingPage({
                   </li>
                 ))}
               </ul>
-              <p className="mt-6 text-sm text-[var(--land-muted)]">
-                Ориентир рынка 8–15 тыс. за разрозненный стек → Voxly от 500 ₽ за CRM-ядро.
-              </p>
             </div>
           </div>
         </div>
@@ -641,7 +744,7 @@ export default async function LandingPage({
       <section id="faq" className="bg-[#0a0a0a] text-white">
         <div className="mx-auto grid max-w-[1280px] gap-10 px-5 py-20 sm:px-8 sm:py-28 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-16">
           <div className="min-w-0">
-            <Eyebrow light>09 · FAQ</Eyebrow>
+            <Eyebrow light>10 · FAQ</Eyebrow>
             <h2 className="mt-6 text-[clamp(1.85rem,4.2vw,3.75rem)] leading-[1.12] tracking-[-0.035em]">
               Частые вопросы
             </h2>
@@ -665,11 +768,11 @@ export default async function LandingPage({
       <section className="bg-[#f5a623]">
         <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 sm:py-28">
           <Eyebrow>Последний шаг</Eyebrow>
-          <h2 className="mt-6 max-w-[840px] text-[clamp(2rem,5.2vw,5rem)] leading-[1.12] tracking-[-0.035em]">
-            Открой командный центр. С телефона — в браузере.
+          <h2 className="mt-6 max-w-[880px] text-[clamp(2rem,5.2vw,5rem)] leading-[1.12] tracking-[-0.035em]">
+            Открой командный центр. Формы free. С телефона — в браузере.
           </h2>
-          <p className="mt-6 max-w-[540px] text-base text-black/65 sm:text-lg">
-            7 дней на своих диалогах. Без карты. После trial — подписка на CRM, если оставляешь.
+          <p className="mt-6 max-w-[560px] text-base text-black/65 sm:text-lg">
+            7 дней на своих заявках и диалогах. Без карты. Tilda и WordPress — без доплаты к CRM.
           </p>
           <div className="mt-8 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:gap-5">
             <PrimaryCta refCode={refCode} />

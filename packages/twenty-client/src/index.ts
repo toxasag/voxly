@@ -24,11 +24,81 @@ export interface EnsureCrmChatAppOptions {
   forceReinstall?: boolean;
 }
 
-function formatTelegramHandle(raw?: string | null): string | undefined {
-  if (!raw) return undefined;
-  const cleaned = String(raw).trim().replace(/^@+/, '');
-  if (!cleaned) return undefined;
-  return `@${cleaned}`;
+/** Browser-reachable saas-api origin for /open/tg/:id (Twenty LINKS can't click raw tg://). */
+function publicApiBase(): string {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env;
+  return (
+    env?.VOXLY_PUBLIC_API_URL ||
+    env?.PUBLIC_API_URL ||
+    env?.NEXT_PUBLIC_API_URL ||
+    `https://api.${env?.VOXLY_DOMAIN || 'getvoxly.ru'}`
+  ).replace(/\/$/, '');
+}
+
+/**
+ * Open-in-Telegram link for Person social LINKS.
+ * - public @username → https://t.me/{user}
+ * - else numeric MTProto user id → HTTPS bridge that opens tg://user?id=…
+ * Never invents t.me/+{phone}.
+ */
+export function telegramOpenLink(opts: {
+  username?: string | null;
+  userId?: string | number | null;
+}): { url: string; label: string; deepLink?: string } | undefined {
+  const rawUser = String(opts.username || '')
+    .trim()
+    .replace(/^@+/, '')
+    .replace(/^https?:\/\/t\.me\//i, '');
+  if (rawUser && !/^\+?\d+$/.test(rawUser) && /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(rawUser)) {
+    const url = `https://t.me/${rawUser}`;
+    return { url, label: url };
+  }
+  const id = String(opts.userId ?? '').trim();
+  if (!id || !/^\d{1,20}$/.test(id)) return undefined;
+  const deepLink = `tg://user?id=${id}`;
+  const base = publicApiBase();
+  // Twenty front ensureAbsoluteUrl mangles tg:// → https://tg://… so store https bridge.
+  const url = base ? `${base}/open/tg/${id}` : deepLink;
+  return { url, label: deepLink, deepLink };
+}
+
+/** True when URL is a public @username profile (do not replace with tg:// bridge). */
+export function isTelegramUsernameLink(raw?: string | null): boolean {
+  const v = String(raw || '').trim();
+  if (!v) return false;
+  if (/t\.me\/\+\d/i.test(v)) return false;
+  return /^https?:\/\/t\.me\/[A-Za-z][A-Za-z0-9_]{3,31}\/?$/i.test(v);
+}
+
+/**
+ * Extract MTProto peer from Person.telegram LINKS / label / legacy text.
+ * Open-profile URL (`/open/tg/{id}`, `tg://user?id=`) ≠ send capability by itself —
+ * callers use userId/username to bind GramJS send. Never treats t.me/+phone as a peer.
+ */
+export function parseTelegramPeerFromLink(raw?: string | null): {
+  userId?: string;
+  username?: string;
+} | null {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+  if (/t\.me\/\+\d/i.test(v) || /^https?:\/\/t\.me\/\+\d/i.test(v)) return null;
+
+  const tgDeep = v.match(/tg:\/\/user\?id=(\d{1,20})/i);
+  if (tgDeep) return { userId: tgDeep[1] };
+
+  const openTg = v.match(/\/open\/tg\/(\d{1,20})\b/i);
+  if (openTg) return { userId: openTg[1] };
+
+  const tMe = v.match(/(?:https?:\/\/)?(?:www\.)?t\.me\/([A-Za-z][A-Za-z0-9_]{3,31})\/?/i);
+  if (tMe) return { username: tMe[1] };
+
+  const at = v.match(/^@([A-Za-z][A-Za-z0-9_]{3,31})$/);
+  if (at) return { username: at[1] };
+
+  if (/^\d{1,20}$/.test(v)) return { userId: v };
+
+  return null;
 }
 
 /** Normalize WhatsApp to +E.164 digits for Person.whatsapp TEXT field. */
@@ -135,6 +205,7 @@ const GET_WORKSPACE_DEFAULTS_CONTEXT = gql`
           fieldsList {
             id
             name
+            type
           }
         }
       }
@@ -326,8 +397,8 @@ const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
 
 const DEFAULT_KANBAN_COLUMN_WIDTH = 320;
 
-/** Person «Социальные сети» custom TEXT fields (LinkedIn is built-in LINKS). */
-const PERSON_SOCIAL_TEXT_FIELDS: Array<{
+/** Person «Социальные сети» — LINKS (clickable), LinkedIn is built-in linkedinLink. */
+const PERSON_SOCIAL_LINK_FIELDS: Array<{
   name: string;
   label: string;
   icon: string;
@@ -341,6 +412,79 @@ const PERSON_SOCIAL_TEXT_FIELDS: Array<{
   { name: 'threads', label: 'Threads', icon: 'IconBrandThreads' },
   { name: 'website', label: 'Сайт', icon: 'IconWorld' },
 ];
+
+/** Build a clickable social URL (never invents t.me/+phone). */
+export function socialFieldToUrl(
+  fieldName: string,
+  raw?: string | null,
+): string | undefined {
+  const v = String(raw || '').trim();
+  if (!v) return undefined;
+  if (fieldName === 'telegram') {
+    // Raw tg:// deep link (storage/display via bridge preferred for clicks).
+    if (/^tg:\/\/user\?id=\d{1,20}$/i.test(v)) return v;
+    if (/^https?:\/\//i.test(v)) {
+      if (/t\.me\/\+\d/i.test(v)) return undefined;
+      return v;
+    }
+    const open = telegramOpenLink({ username: v });
+    return open?.url;
+  }
+  if (/^https?:\/\//i.test(v)) {
+    return v;
+  }
+  if (fieldName === 'whatsapp') {
+    const e164 = normalizePhoneToE164(v) || formatWhatsappHandle(v);
+    if (!e164) return undefined;
+    return `https://wa.me/${e164.replace(/\D/g, '')}`;
+  }
+  if (fieldName === 'website') {
+    return v.includes('.') ? `https://${v.replace(/^https?:\/\//i, '')}` : undefined;
+  }
+  const user = v.replace(/^@/, '').replace(/^\//, '');
+  if (!user) return undefined;
+  if (fieldName === 'instagram') return `https://instagram.com/${user}`;
+  if (fieldName === 'facebook') {
+    if (/facebook\.com|fb\.com/i.test(user)) return `https://${user.replace(/^https?:\/\//i, '')}`;
+    return `https://facebook.com/${user}`;
+  }
+  if (fieldName === 'vkontakte') return `https://vk.com/${user}`;
+  if (fieldName === 'odnoklassniki') return `https://ok.ru/${user}`;
+  if (fieldName === 'threads') return `https://threads.net/@${user}`;
+  return undefined;
+}
+
+/** LINKS composite: show the full URL as the visible label (not "WhatsApp"/"Telegram"). */
+function linksInput(url: string, label?: string): Record<string, unknown> {
+  const visible = String(label || url || '').trim() || url;
+  return {
+    primaryLinkUrl: url,
+    primaryLinkLabel: visible,
+  };
+}
+
+/** Extra Person fields filled from GramJS users.GetFullUser (not Bot API). */
+const PERSON_PROFILE_EXTRA_FIELDS: Array<{
+  name: string;
+  label: string;
+  icon: string;
+  type: 'TEXT' | 'DATE';
+}> = [
+  { name: 'about', label: 'О себе', icon: 'IconInfoCircle', type: 'TEXT' },
+  { name: 'birthday', label: 'День рождения', icon: 'IconCake', type: 'DATE' },
+];
+
+export type TelegramProfileEnrichment = {
+  username?: string;
+  /** MTProto user id — used when username missing for open-in-Telegram link */
+  userId?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  about?: string;
+  birthday?: string;
+  personalChannelUrl?: string;
+};
 const UPDATE_PERSON = gql`
   mutation UpdatePerson($id: UUID!, $data: PersonUpdateInput!) {
     updatePerson(id: $id, data: $data) {
@@ -586,6 +730,24 @@ const UPDATE_OPPORTUNITY = gql`
   }
 `;
 
+const DELETE_OPPORTUNITY = gql`
+  mutation DeleteOpportunity($id: UUID!) {
+    deleteOpportunity(id: $id) {
+      id
+    }
+  }
+`;
+
+const UPDATE_ONE_FIELD = gql`
+  mutation UpdateOneField($input: UpdateOneFieldMetadataInput!) {
+    updateOneField(input: $input) {
+      id
+      name
+      type
+    }
+  }
+`;
+
 const FIND_PEOPLE = gql`
   query FindPeople($filter: PersonFilterInput) {
     people(filter: $filter, first: 5) {
@@ -606,11 +768,40 @@ const FIND_OPPORTUNITIES = gql`
           id
           stage
           name
+          pointOfContactId
+          pointOfContact {
+            id
+          }
         }
       }
     }
   }
 `;
+
+const FIND_OPPORTUNITIES_MANY = gql`
+  query FindOpportunitiesMany($filter: OpportunityFilterInput) {
+    opportunities(filter: $filter, first: 20) {
+      edges {
+        node {
+          id
+          stage
+          name
+        }
+      }
+    }
+  }
+`;
+
+/** Closed / terminal Opportunity stages (RU pipeline + Twenty seed). */
+const CLOSED_OPPORTUNITY_STAGES = new Set([
+  'CUSTOMER',
+  'USPESHNAYA_SDELKA',
+  'SDELKA_PROVALENA',
+  'FAILED',
+  'LOST',
+  'WON',
+  'CLOSED',
+]);
 
 // Twenty 2.x note create — bodyV2 + nested noteTargets (best-effort; schema varies by version)
 const CREATE_NOTE = gql`
@@ -632,6 +823,7 @@ export class TwentyClient {
   private authClient: GraphQLClient;
   private config: TwentyClientConfig;
   private authTokens: { accessToken: string; refreshToken?: string } | null = null;
+  private workspaceId: string | null = null;
 
   constructor(config: TwentyClientConfig) {
     this.config = config;
@@ -923,6 +1115,7 @@ export class TwentyClient {
       origin: workspaceUrl,
     });
     const tokens = (tokenResult as any).getAuthTokensFromLoginToken.tokens;
+    this.workspaceId = workspaceId;
     this.authTokens = {
       accessToken: tokens.accessOrWorkspaceAgnosticToken.token,
       refreshToken: tokens.refreshToken?.token,
@@ -1065,6 +1258,15 @@ export class TwentyClient {
       } catch {
         // Optional: workspace still usable without social custom fields
       }
+      try {
+        await this.ensurePersonProfileExtraFields(
+          person.id,
+          person.fieldsList ?? [],
+          headers,
+        );
+      } catch {
+        // Optional: about/birthday custom fields
+      }
     }
 
     const note = objects.find(
@@ -1087,7 +1289,7 @@ export class TwentyClient {
     await this.ensureSocialFields();
   }
 
-  /** Ensure Person «Социальные сети» TEXT fields (Telegram, WhatsApp, …). */
+  /** Ensure Person «Социальные сети» LINKS fields (Telegram, WhatsApp, …). */
   async ensureSocialFields(): Promise<void> {
     const headers = this.getAuthHeaders();
     const context = await this.authClient.request(
@@ -1109,6 +1311,11 @@ export class TwentyClient {
     );
     if (!person) return;
     await this.ensurePersonSocialFields(person.id, person.fieldsList ?? [], headers);
+    await this.ensurePersonProfileExtraFields(
+      person.id,
+      person.fieldsList ?? [],
+      headers,
+    );
   }
 
   /**
@@ -1464,17 +1671,63 @@ export class TwentyClient {
     );
   }
 
-  /** Ensure Person social TEXT fields exist and sit in the Social FIELDS_WIDGET group. */
-  private async ensurePersonSocialFields(
+  /** Ensure Person about (TEXT) + birthday (DATE) for GramJS profile enrich. */
+  private async ensurePersonProfileExtraFields(
     personObjectId: string,
     fields: Array<{ id: string; name: string }>,
     headers: Record<string, string>,
   ): Promise<void> {
     let workingFields = [...fields];
+    for (const spec of PERSON_PROFILE_EXTRA_FIELDS) {
+      let field = workingFields.find((f) => f.name === spec.name);
+      if (field) continue;
+      try {
+        const created = await this.authClient.request(
+          CREATE_ONE_FIELD,
+          {
+            input: {
+              field: {
+                objectMetadataId: personObjectId,
+                type: spec.type,
+                name: spec.name,
+                label: spec.label,
+                icon: spec.icon,
+                isNullable: true,
+              },
+            },
+          },
+          headers,
+        ) as { createOneField?: { id: string; name: string } };
+        if (created.createOneField?.id) {
+          workingFields.push(created.createOneField);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/already exists|duplicate|unique/i.test(msg)) {
+          console.warn(
+            `[twenty-client] ensurePersonProfileExtraFields ${spec.name}: ${msg}`,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * Ensure Person social fields exist as LINKS (clickable) and sit in the
+   * Social FIELDS_WIDGET group. Migrates legacy TEXT → LINKS when possible.
+   */
+  private async ensurePersonSocialFields(
+    personObjectId: string,
+    fields: Array<{ id: string; name: string; type?: string }>,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    let workingFields = [...fields];
     const ensuredIds: string[] = [];
 
-    for (const spec of PERSON_SOCIAL_TEXT_FIELDS) {
-      let field = workingFields.find((f) => f.name === spec.name);
+    for (const spec of PERSON_SOCIAL_LINK_FIELDS) {
+      let field = workingFields.find((f) => f.name === spec.name) as
+        | { id: string; name: string; type?: string }
+        | undefined;
       if (!field) {
         try {
           const created = await this.authClient.request(
@@ -1483,7 +1736,7 @@ export class TwentyClient {
               input: {
                 field: {
                   objectMetadataId: personObjectId,
-                  type: 'TEXT',
+                  type: 'LINKS',
                   name: spec.name,
                   label: spec.label,
                   icon: spec.icon,
@@ -1492,7 +1745,7 @@ export class TwentyClient {
               },
             },
             headers,
-          ) as { createOneField?: { id: string; name: string } };
+          ) as { createOneField?: { id: string; name: string; type?: string } };
           if (created.createOneField?.id) {
             field = created.createOneField;
             workingFields.push(field);
@@ -1512,10 +1765,30 @@ export class TwentyClient {
           const person = context.objects?.edges
             ?.map((e: any) => e.node)
             ?.find((o: any) => o.id === personObjectId);
-          const refreshed: Array<{ id: string; name: string }> =
+          const refreshed: Array<{ id: string; name: string; type?: string }> =
             person?.fieldsList ?? [];
           workingFields = refreshed.length ? refreshed : workingFields;
           field = workingFields.find((f) => f.name === spec.name);
+        }
+      } else if (field.type && field.type !== 'LINKS') {
+        // Ask Twenty metadata to convert TEXT → LINKS (clickable in UI).
+        // Data backfill for existing workspaces is done by saas-api SQL migrate.
+        try {
+          await this.authClient.request(
+            UPDATE_ONE_FIELD,
+            {
+              input: {
+                id: field.id,
+                update: { type: 'LINKS' },
+              },
+            },
+            headers,
+          );
+          field = { ...field, type: 'LINKS' };
+        } catch (err) {
+          console.warn(
+            `[twenty-client] migrate social field ${spec.name} to LINKS: ${errorMessage(err)}`,
+          );
         }
       }
       if (field?.id) ensuredIds.push(field.id);
@@ -1846,19 +2119,28 @@ export class TwentyClient {
     phone?: string;
     /** Telegram @username (with or without @) */
     telegram?: string;
-    /** WhatsApp E.164 (+digits) — custom Person.whatsapp TEXT field */
+    /** MTProto user id when no @username — opens via /open/tg/:id → tg:// */
+    telegramUserId?: string | number;
+    /** WhatsApp E.164 (+digits) — stored as clickable wa.me LINKS */
     whatsapp?: string;
   }): Promise<{ id: string }> {
     const headers = this.getAuthHeaders();
-    const telegram = formatTelegramHandle(input.telegram);
-    const whatsapp = formatWhatsappHandle(input.whatsapp);
+    const telegramOpen = telegramOpenLink({
+      username: input.telegram,
+      userId: input.telegramUserId,
+    });
+    const telegramUrl = telegramOpen?.url;
+    const telegramLabel = telegramOpen?.label || telegramUrl;
+    const whatsappUrl = socialFieldToUrl('whatsapp', input.whatsapp);
     const flat: Record<string, unknown> = {};
     if (input.firstName) flat.firstName = input.firstName;
     if (input.lastName) flat.lastName = input.lastName;
     if (input.email) flat.emails = { primaryEmail: input.email };
     if (input.phone) flat.phones = { primaryPhoneNumber: input.phone };
-    if (telegram) flat.telegram = telegram;
-    if (whatsapp) flat.whatsapp = whatsapp;
+    if (telegramUrl && telegramLabel) {
+      flat.telegram = linksInput(telegramUrl, telegramLabel);
+    }
+    if (whatsappUrl) flat.whatsapp = linksInput(whatsappUrl, whatsappUrl);
 
     const nestedBase: Record<string, unknown> = {
       name: {
@@ -1867,8 +2149,10 @@ export class TwentyClient {
       },
     };
     if (input.email) nestedBase.emails = { primaryEmail: input.email };
-    if (telegram) nestedBase.telegram = telegram;
-    if (whatsapp) nestedBase.whatsapp = whatsapp;
+    if (telegramUrl && telegramLabel) {
+      nestedBase.telegram = linksInput(telegramUrl, telegramLabel);
+    }
+    if (whatsappUrl) nestedBase.whatsapp = linksInput(whatsappUrl, whatsappUrl);
 
     try {
       const result = await this.client.request(CREATE_PERSON, { data: flat }, headers);
@@ -1964,7 +2248,7 @@ export class TwentyClient {
               /* fall through */
             }
           }
-          if (telegram || whatsapp) {
+          if (telegramUrl || whatsappUrl) {
             delete flat.telegram;
             delete flat.whatsapp;
             const noSocial = { ...nestedBase };
@@ -1984,15 +2268,41 @@ export class TwentyClient {
     }
   }
 
-  /** Set Person.telegram (@username). Best-effort if custom field missing. */
-  async updatePersonTelegram(personId: string, telegram: string): Promise<void> {
-    const handle = formatTelegramHandle(telegram);
-    if (!handle) return;
+  /**
+   * Set Person.telegram as clickable open link.
+   * @username → https://t.me/{user}; else numeric userId → /open/tg/:id (label tg://user?id=…).
+   * Never invents t.me/+phone. Prefer username over userId when both given.
+   */
+  async updatePersonTelegram(
+    personId: string,
+    telegram:
+      | string
+      | { username?: string | null; userId?: string | number | null },
+  ): Promise<void> {
+    let open: { url: string; label: string } | undefined;
+    if (typeof telegram === 'string') {
+      const raw = telegram.trim();
+      const asTg = raw.match(/^tg:\/\/user\?id=(\d{1,20})$/i);
+      open = asTg
+        ? telegramOpenLink({ userId: asTg[1] })
+        : telegramOpenLink({ username: raw });
+      if (!open) {
+        const url = socialFieldToUrl('telegram', raw);
+        if (url) open = { url, label: url };
+      }
+    } else {
+      open = telegramOpenLink(telegram);
+    }
+    if (!open?.url) return;
+    const payload = linksInput(open.url, open.label || open.url);
     const headers = this.getAuthHeaders();
     try {
       await this.client.request(
         UPDATE_PERSON,
-        { id: personId, data: { telegram: handle } },
+        {
+          id: personId,
+          data: { telegram: payload },
+        },
         headers,
       );
       return;
@@ -2008,7 +2318,10 @@ export class TwentyClient {
             }
           }
         `,
-        { id: personId, data: { telegram: handle } },
+        {
+          id: personId,
+          data: { telegram: payload },
+        },
         headers,
       );
     } catch {
@@ -2036,16 +2349,16 @@ export class TwentyClient {
     }
   }
 
-  /** Set Person.whatsapp (+E.164). Best-effort if custom field missing. */
+  /** Set Person.whatsapp as clickable https://wa.me/{digits}. */
   async updatePersonWhatsapp(personId: string, whatsapp: string): Promise<void> {
-    const handle = formatWhatsappHandle(whatsapp);
-    if (!handle) return;
-    await this.updatePersonSocialText(personId, 'whatsapp', handle);
+    const url = socialFieldToUrl('whatsapp', whatsapp);
+    if (!url) return;
+    await this.updatePersonSocialText(personId, 'whatsapp', url);
   }
 
   /**
-   * Set a Person social TEXT field (instagram / facebook / website / …).
-   * Best-effort if the custom field is missing.
+   * Set a Person social field as LINKS (clickable). Falls back to plain TEXT
+   * if the workspace field is still TEXT.
    */
   async updatePersonSocialText(
     personId: string,
@@ -2054,11 +2367,39 @@ export class TwentyClient {
   ): Promise<boolean> {
     const v = String(value || '').trim();
     if (!personId || !fieldName || !v) return false;
+    let url =
+      socialFieldToUrl(fieldName, v) || (/^https?:\/\//i.test(v) ? v : undefined);
+    let label = url;
+    if (fieldName === 'telegram') {
+      const asTg = v.match(/^tg:\/\/user\?id=(\d{1,20})$/i);
+      const open = asTg
+        ? telegramOpenLink({ userId: asTg[1] })
+        : telegramOpenLink({ username: v, userId: /^\d{1,20}$/.test(v) ? v : undefined });
+      if (open) {
+        url = open.url;
+        label = open.label;
+      }
+    }
     const headers = this.getAuthHeaders();
+    if (url) {
+      try {
+        await this.client.request(
+          UPDATE_PERSON,
+          {
+            id: personId,
+            data: { [fieldName]: linksInput(url, label || url) },
+          },
+          headers,
+        );
+        return true;
+      } catch {
+        /* try TEXT fallback below */
+      }
+    }
     try {
       await this.client.request(
         UPDATE_PERSON,
-        { id: personId, data: { [fieldName]: v } },
+        { id: personId, data: { [fieldName]: url || v } },
         headers,
       );
       return true;
@@ -2098,6 +2439,74 @@ export class TwentyClient {
       } catch {
         /* try next shape */
       }
+    }
+  }
+
+  /**
+   * Apply GramJS/MTProto profile fields onto Person (best-effort, fill-empty).
+   * Requires ensureSocialFields (about/birthday customs) beforehand.
+   */
+  async applyTelegramProfile(
+    personId: string,
+    profile: TelegramProfileEnrichment,
+  ): Promise<void> {
+    if (!personId || !profile) return;
+    try {
+      await this.ensureSocialFields();
+    } catch {
+      /* fields may already exist */
+    }
+
+    if (profile.firstName || profile.lastName) {
+      try {
+        await this.updatePersonName(personId, {
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    if (profile.phone) {
+      try {
+        await this.updatePersonPhone(personId, profile.phone);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (profile.username || profile.userId) {
+      try {
+        await this.updatePersonTelegram(personId, {
+          username: profile.username,
+          userId: profile.userId,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    if (profile.personalChannelUrl) {
+      try {
+        await this.updatePersonSocialText(
+          personId,
+          'website',
+          profile.personalChannelUrl,
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const headers = this.getAuthHeaders();
+    const data: Record<string, unknown> = {};
+    if (profile.about) data.about = profile.about;
+    if (profile.birthday) data.birthday = profile.birthday;
+    if (Object.keys(data).length === 0) return;
+    try {
+      await this.client.request(UPDATE_PERSON, { id: personId, data }, headers);
+    } catch (err) {
+      console.warn(
+        `[twenty-client] applyTelegramProfile extras failed person=${personId}: ${errorMessage(err)}`,
+      );
     }
   }
 
@@ -2157,6 +2566,41 @@ export class TwentyClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Find an open (non-won/lost) Opportunity linked to Person as pointOfContact.
+   * Used by web form lead intake to avoid duplicate deals.
+   */
+  async findOpenOpportunityByPerson(
+    personId: string,
+  ): Promise<{ id: string; stage: string } | null> {
+    if (!personId) return null;
+    const headers = this.getAuthHeaders();
+    const filters: Record<string, unknown>[] = [
+      { pointOfContactId: { eq: personId } },
+      { pointOfContact: { id: { eq: personId } } },
+    ];
+    for (const filter of filters) {
+      try {
+        const result = await this.client.request(
+          FIND_OPPORTUNITIES_MANY,
+          { filter },
+          headers,
+        );
+        const edges = (result as any).opportunities?.edges || [];
+        for (const edge of edges) {
+          const node = edge?.node;
+          if (!node?.id) continue;
+          const stage = String(node.stage || '');
+          if (CLOSED_OPPORTUNITY_STAGES.has(stage)) continue;
+          return { id: node.id, stage };
+        }
+      } catch {
+        /* filter shape may differ */
+      }
+    }
+    return null;
   }
 
   /**
@@ -2226,8 +2670,8 @@ export class TwentyClient {
 
   /**
    * Cross-channel Person merge by phone: search phones.primaryPhoneNumber
-   * (+digits / digits / RU national) and custom Person.whatsapp TEXT.
-   * Multiple distinct Persons → ids.length > 1 (caller sets needsReview).
+   * (+digits / digits / RU national) and Person.whatsapp (TEXT +E.164 or
+   * LINKS wa.me URL). Multiple distinct Persons → ids.length > 1.
    */
   async findPersonByPhone(
     e164: string,
@@ -2239,16 +2683,21 @@ export class TwentyClient {
 
     for (const value of variants) {
       const waHandle = formatWhatsappHandle(value);
+      const digits = value.replace(/\D/g, '');
+      const waMe = digits ? `https://wa.me/${digits}` : undefined;
       const filters: Record<string, unknown>[] = [
         { phones: { primaryPhoneNumber: { eq: value } } },
       ];
       if (waHandle) {
         filters.push({ whatsapp: { eq: waHandle } });
+        filters.push({ whatsapp: { primaryLinkUrl: { eq: waHandle } } });
       }
-      // Also try digits-only whatsapp if stored without +
-      const digits = value.replace(/\D/g, '');
       if (digits && digits !== waHandle?.replace(/\D/g, '')) {
         filters.push({ whatsapp: { eq: `+${digits}` } });
+      }
+      if (waMe) {
+        filters.push({ whatsapp: { primaryLinkUrl: { eq: waMe } } });
+        filters.push({ whatsapp: { eq: waMe } });
       }
 
       for (const filter of filters) {
@@ -2273,6 +2722,21 @@ export class TwentyClient {
     return { id: ids[0], ids };
   }
 
+  /** Soft-delete Opportunity (orphan twin cleanup after WA LID↔PN merge). */
+  async softDeleteOpportunity(opportunityId: string): Promise<boolean> {
+    if (!opportunityId) return false;
+    const headers = this.getAuthHeaders();
+    try {
+      await this.client.request(DELETE_OPPORTUNITY, { id: opportunityId }, headers);
+      return true;
+    } catch (err) {
+      console.warn(
+        `[twenty-client] softDeleteOpportunity failed id=${opportunityId}: ${errorMessage(err)}`,
+      );
+      return false;
+    }
+  }
+
   /** Read Opportunity.stage by id (won = typically CUSTOMER). */
   async getOpportunityStage(opportunityId: string): Promise<string | null> {
     const headers = this.getAuthHeaders();
@@ -2283,6 +2747,90 @@ export class TwentyClient {
     );
     const node = (result as any)?.opportunities?.edges?.[0]?.node;
     return node?.stage ? String(node.stage) : null;
+  }
+
+  /** Person id linked as Opportunity.pointOfContact (for CRM Chat tab resolve). */
+  async getOpportunityPointOfContactId(
+    opportunityId: string,
+  ): Promise<string | null> {
+    if (!opportunityId) return null;
+    const headers = this.getAuthHeaders();
+    try {
+      const result = await this.client.request(
+        FIND_OPPORTUNITIES,
+        { filter: { id: { eq: opportunityId } } },
+        headers,
+      );
+      const node = (result as any)?.opportunities?.edges?.[0]?.node;
+      const nested = node?.pointOfContact?.id;
+      if (nested) return String(nested);
+      if (node?.pointOfContactId) return String(node.pointOfContactId);
+    } catch (err) {
+      console.warn(
+        `[twenty-client] getOpportunityPointOfContactId failed: ${errorMessage(err)}`,
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Retarget Opportunity.pointOfContact (soft-merge / save-time dedupe).
+   * Best-effort across Twenty GraphQL input shapes.
+   */
+  async setOpportunityPointOfContact(
+    opportunityId: string,
+    personId: string,
+  ): Promise<boolean> {
+    if (!opportunityId || !personId) return false;
+    const headers = this.getAuthHeaders();
+    const attempts: Array<Record<string, unknown>> = [
+      { pointOfContact: { connect: { id: personId } } },
+      { pointOfContactId: personId },
+      { pointOfContact: { id: personId } },
+    ];
+    for (const data of attempts) {
+      try {
+        await this.client.request(
+          UPDATE_OPPORTUNITY,
+          { id: opportunityId, data },
+          headers,
+        );
+        return true;
+      } catch {
+        /* try next shape */
+      }
+    }
+    return false;
+  }
+
+  /** Open Opportunities linked to Person as pointOfContact (dedupe / review). */
+  async listOpenOpportunityIdsByPerson(personId: string): Promise<string[]> {
+    if (!personId) return [];
+    const headers = this.getAuthHeaders();
+    const found = new Set<string>();
+    const filters: Record<string, unknown>[] = [
+      { pointOfContactId: { eq: personId } },
+      { pointOfContact: { id: { eq: personId } } },
+    ];
+    for (const filter of filters) {
+      try {
+        const result = await this.client.request(
+          FIND_OPPORTUNITIES_MANY,
+          { filter },
+          headers,
+        );
+        for (const edge of (result as any).opportunities?.edges || []) {
+          const node = edge?.node;
+          if (!node?.id) continue;
+          const stage = String(node.stage || '');
+          if (CLOSED_OPPORTUNITY_STAGES.has(stage)) continue;
+          found.add(String(node.id));
+        }
+      } catch {
+        /* filter shape may differ */
+      }
+    }
+    return [...found];
   }
 
   /**

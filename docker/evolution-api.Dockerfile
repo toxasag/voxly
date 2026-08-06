@@ -3,10 +3,12 @@
 # tsup emits the Baileys service into many dist chunks — patch every copy.
 #
 # LID→E.164: Baileys lidMapping / Message.key.remoteJidAlt|senderPn land in
-# Evolution ≥ v2.3.7. Prefer this tag; avoid v2.4.0 until Evolution Foundation
-# licensing is accepted (activation gate).
+# Evolution ≥ v2.3.7. voxly-lid-pn patch exposes getPNForLID on fetchProfile/findChats
+# (INC-097 v8) so workers read remoteJidAlt/senderPn without avatar invent.
 # Upgrade risk: Baileys session may require QR re-scan; keep Postgres volumes.
 FROM evoapicloud/evolution-api:v2.3.7
+
+COPY docker/patch-evolution-lid-pn.cjs /tmp/patch-evolution-lid-pn.cjs
 
 RUN node -e "\
 const fs=require('fs'); const path=require('path');\
@@ -35,4 +37,4 @@ for (const f of walk('/evolution/dist')) {\
 }\
 if (patched<1 && alreadyOk<1) throw new Error('LID patch matched 0 files and no @lid bypass found');\
 console.log('LID-patched files:', patched, 'already-had-bypass files:', alreadyOk);\
-"
+" && node /tmp/patch-evolution-lid-pn.cjs

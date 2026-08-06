@@ -14,10 +14,16 @@ import {
   AI_USAGE_CHANNELS,
   clientMdToMarkdownV2,
   formatPromoButtonLabel,
+  promoShowClickCounter,
   giftPromoStartPayload,
   resolveTelegramMedia,
+  detectStoredMediaKind,
+  normalizeGiftMediaType,
+  isTelegramDocumentFileId,
   type GiftFunnelConfig,
   type GiftFunnelMessage,
+  type GiftExtraButton,
+  type GiftPromoMediaType,
   type GiftPromoPost,
   isWithinMailingAttributionWindow,
   mailingAttributionNote,
@@ -72,6 +78,10 @@ async function main() {
   const http = await import('node:http');
   const AI_TELEGRAM_WORKER_URL =
     process.env.AI_TELEGRAM_WORKER_URL || 'http://ai-telegram-worker:3005';
+  const { handleMaxUpdate } = await import('./max-handler.js');
+  const { maxGetUpdates } = await import('./max-api.js');
+  const USE_MAX_POLLING = process.env.GIFT_MAX_USE_POLLING === 'true' || USE_POLLING;
+
   const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url?.startsWith('/tg/')) {
       const parts = req.url.split('/').filter(Boolean);
@@ -106,6 +116,37 @@ async function main() {
         res.writeHead(500);
         res.end('error');
       }
+    } else if (req.method === 'POST' && req.url?.startsWith('/max/')) {
+      const parts = req.url.split('/').filter(Boolean);
+      const tenantId = parts[1];
+      const botId = parts[2]?.split('?')[0];
+      const secretHeader = String(req.headers['x-max-bot-api-secret'] || '');
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      try {
+        const bot = await prisma.botInstance.findFirst({
+          where: { id: botId, tenantId, botType: 'gift_max' },
+          select: { webhookSecret: true },
+        });
+        if (!bot) {
+          res.writeHead(404);
+          res.end('not found');
+          return;
+        }
+        if (bot.webhookSecret && secretHeader && secretHeader !== bot.webhookSecret) {
+          res.writeHead(401);
+          res.end('bad secret');
+          return;
+        }
+        const update = JSON.parse(body);
+        await handleMaxUpdate(update, tenantId, botId);
+        res.writeHead(200);
+        res.end('ok');
+      } catch (err) {
+        console.error('[gift-max] Error:', err);
+        res.writeHead(500);
+        res.end('error');
+      }
     } else if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200);
       res.end('ok');
@@ -118,6 +159,11 @@ async function main() {
   server.listen(PORT, () => {
     console.log(`[gift-bot-worker] Listening on port ${PORT}`);
   });
+
+  if (USE_MAX_POLLING) {
+    console.log('[gift-bot-worker] MAX long-polling enabled');
+    void pollMaxBots(maxGetUpdates, handleMaxUpdate);
+  }
 }
 
 function startDelayWorker() {
@@ -184,6 +230,38 @@ async function pollAllBots() {
       }
     } catch (err) {
       console.error('[gift-bot] poll error:', err);
+      await sleep(3000);
+    }
+  }
+}
+
+async function pollMaxBots(
+  maxGetUpdates: typeof import('./max-api.js').maxGetUpdates,
+  handleMaxUpdate: typeof import('./max-handler.js').handleMaxUpdate,
+) {
+  const markers = new Map<string, number | string>();
+  for (;;) {
+    try {
+      const bots = await prisma.botInstance.findMany({
+        where: { status: 'active', botType: 'gift_max', botTokenEncrypted: { not: null } },
+      });
+      for (const bot of bots) {
+        if (!bot.botTokenEncrypted) continue;
+        const token = decrypt(bot.botTokenEncrypted);
+        const marker = markers.get(bot.id);
+        const { updates, marker: next } = await maxGetUpdates({
+          token,
+          marker: marker ?? null,
+          timeout: 25,
+        });
+        if (next != null) markers.set(bot.id, next);
+        for (const update of updates) {
+          await handleMaxUpdate(update, bot.tenantId, bot.id);
+        }
+      }
+      if (bots.length === 0) await sleep(5000);
+    } catch (err) {
+      console.error('[gift-max] poll error:', err);
       await sleep(3000);
     }
   }
@@ -501,42 +579,23 @@ async function deliverGift(
   const { gift } = funnel;
   const caption = gift.caption || 'Вот твой подарок 🎁';
   const media = gift.telegramFileId || gift.url;
+  const keyboard = extraButtonsKeyboard(gift.extraButtons);
   if (gift.type === 'link') {
-    await sendBotMessage(botApi, chatId, `${caption}\n\n${gift.url}`, undefined, ctx);
+    await sendBotMessage(botApi, chatId, `${caption}\n\n${gift.url}`, keyboard, ctx);
     return;
   }
   if (!media) {
-    await sendBotMessage(botApi, chatId, caption, undefined, ctx);
+    await sendBotMessage(botApi, chatId, caption, keyboard, ctx);
     return;
   }
 
   // Telegram file_id prefix is authoritative (mediaType in DB can be wrong after uploads)
-  const kind = detectStoredMediaKind(media, gift.mediaType, gift.type);
-  if (kind === 'video') {
-    await sendBotVideo(botApi, chatId, media, caption, undefined, ctx);
-    return;
-  }
-  if (kind === 'photo') {
-    await sendBotPhoto(botApi, chatId, media, caption, undefined, ctx);
-    return;
-  }
-  await sendBotDocument(botApi, chatId, media, caption, ctx);
-}
-
-/** Infer send method from Telegram file_id + optional stored hints. */
-function detectStoredMediaKind(
-  fileId: string,
-  mediaType?: 'photo' | 'video',
-  giftType?: 'file' | 'link' | 'video',
-): 'photo' | 'video' | 'document' {
-  if (giftType === 'video' || mediaType === 'video' || fileId.startsWith('BAAC')) return 'video';
-  // Document / audio / etc. — must not use sendPhoto
-  if (fileId.startsWith('BQAC') || fileId.startsWith('BQAD') || fileId.startsWith('CQAC')) {
-    return 'document';
-  }
-  if (mediaType === 'photo' || fileId.startsWith('AgAC')) return 'photo';
-  if (giftType === 'file') return 'document';
-  return 'document';
+  const hint =
+    gift.type === 'video'
+      ? 'video'
+      : normalizeGiftMediaType(gift.mediaType) || (gift.type === 'file' ? 'document' : undefined);
+  const kind = detectStoredMediaKind(media, hint);
+  await sendBotStoredMedia(botApi, chatId, media, caption, kind, keyboard, ctx);
 }
 
 async function sendStartWithSubscribeButtons(
@@ -550,19 +609,37 @@ async function sendStartWithSubscribeButtons(
     telegramFileId: funnel.start.telegramFileId,
     imageUrl: funnel.start.imageUrl,
   });
-  const keyboard = subscribeKeyboard(funnel, campaign);
+  const keyboard = subscribeKeyboard(funnel, campaign, funnel.start.extraButtons);
   if (media) {
-    if (funnel.start.mediaType === 'video') {
-      await sendBotVideo(botApi, chatId, media, funnel.start.text, keyboard, ctx);
-    } else {
-      await sendBotPhoto(botApi, chatId, media, funnel.start.text, keyboard, ctx);
-    }
+    const kind = detectStoredMediaKind(media, funnel.start.mediaType);
+    await sendBotStoredMedia(botApi, chatId, media, funnel.start.text, kind, keyboard, ctx);
   } else {
     await sendBotMessage(botApi, chatId, funnel.start.text, keyboard, ctx);
   }
 }
 
-function subscribeKeyboard(funnel: GiftFunnelConfig, campaign: any) {
+/** Valid http(s) URL rows for Telegram inline keyboard */
+function appendExtraButtonRows(rows: any[], buttons?: GiftExtraButton[]) {
+  for (const b of buttons || []) {
+    const text = String(b?.text || '').trim();
+    const url = String(b?.url || '').trim();
+    if (text && /^https?:\/\//i.test(url)) {
+      rows.push([{ text, url }]);
+    }
+  }
+  return rows;
+}
+
+function extraButtonsKeyboard(buttons?: GiftExtraButton[]) {
+  const rows = appendExtraButtonRows([], buttons);
+  return rows.length ? { inline_keyboard: rows } : undefined;
+}
+
+function subscribeKeyboard(
+  funnel: GiftFunnelConfig,
+  campaign: any,
+  extraButtons?: GiftExtraButton[],
+) {
   const channelUrl = campaign.channelUsername
     ? `https://t.me/${String(campaign.channelUsername).replace(/^@/, '')}`
     : undefined;
@@ -571,6 +648,7 @@ function subscribeKeyboard(funnel: GiftFunnelConfig, campaign: any) {
   if (channelUrl) {
     rows.push([{ text: 'Перейти в канал', url: channelUrl }]);
   }
+  appendExtraButtonRows(rows, extraButtons);
   rows.push([{ text: confirm, callback_data: `check_sub:${campaign.id}` }]);
   return { inline_keyboard: rows };
 }
@@ -686,8 +764,8 @@ async function processDelayJob(job: DelayJob) {
   const botApi = `https://api.telegram.org/bot${decrypt(bot.botTokenEncrypted)}`;
   const keyboard =
     job.kind === 'not_subscribed' || job.kind === 'not_gifted'
-      ? subscribeKeyboard(funnel, bot.giftCampaigns[0])
-      : undefined;
+      ? subscribeKeyboard(funnel, bot.giftCampaigns[0], msg.extraButtons)
+      : extraButtonsKeyboard(msg.extraButtons);
   const ctx: SendCtx = {
     tenantId: job.tenantId,
     botId: job.botId,
@@ -699,11 +777,8 @@ async function processDelayJob(job: DelayJob) {
       telegramFileId: msg.telegramFileId,
       imageUrl: msg.imageUrl,
     })!;
-    if (msg.mediaType === 'video') {
-      await sendBotVideo(botApi, job.chatId, media, msg.text, keyboard, ctx);
-    } else {
-      await sendBotPhoto(botApi, job.chatId, media, msg.text, keyboard, ctx);
-    }
+    const kind = detectStoredMediaKind(media, msg.mediaType);
+    await sendBotStoredMedia(botApi, job.chatId, media, msg.text, kind, keyboard, ctx);
   } else {
     await sendBotMessage(botApi, job.chatId, msg.text, keyboard, ctx);
   }
@@ -768,11 +843,16 @@ async function processBroadcast(broadcastId: string) {
         telegramId: s.telegramId,
       };
       if (media) {
-        if (msg.mediaType === 'video') {
-          await sendBotVideo(botApi, Number(s.telegramId), media, msg.text, undefined, ctx);
-        } else {
-          await sendBotPhoto(botApi, Number(s.telegramId), media, msg.text, undefined, ctx);
-        }
+        const kind = detectStoredMediaKind(media, msg.mediaType);
+        await sendBotStoredMedia(
+          botApi,
+          Number(s.telegramId),
+          media,
+          msg.text,
+          kind,
+          undefined,
+          ctx,
+        );
       } else {
         await sendBotMessage(botApi, Number(s.telegramId), msg.text, undefined, ctx);
       }
@@ -1062,6 +1142,77 @@ function gramjsBridgeBase(): string {
   return (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
 }
 
+/** Pull phone/about/birthday/name via personal TG session (Bot API cannot see these). */
+async function enrichPersonFromGramjs(
+  tenantId: string,
+  client: TwentyClient,
+  personId: string,
+  opts: { telegramId?: string; username?: string },
+): Promise<void> {
+  const token = serviceToken();
+  if (!token || !personId) return;
+
+  const gramjs = await prisma.botInstance.findFirst({
+    where: {
+      tenantId,
+      botType: 'ai_gramjs',
+      status: 'active',
+      botTokenEncrypted: { not: null },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (!gramjs) {
+    console.warn(
+      `[gift-bot] GramJS profile enrich skipped (no ai_gramjs) tenant=${tenantId}`,
+    );
+    return;
+  }
+
+  try {
+    const res = await fetch(`${gramjsBridgeBase()}/users/full`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        botId: gramjs.id,
+        tenantId,
+        userId: opts.telegramId,
+        username: opts.username,
+      }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      profile?: {
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        about?: string;
+        birthday?: string;
+        personalChannelUrl?: string;
+      };
+      error?: string;
+    };
+    if (!res.ok || !json.ok || !json.profile) {
+      console.warn(
+        `[gift-bot] GramJS /users/full failed: ${json.error || `HTTP ${res.status}`}`,
+      );
+      return;
+    }
+    await client.applyTelegramProfile(personId, json.profile);
+    if (json.profile.phone && opts.telegramId) {
+      await prisma.giftSubscriber.updateMany({
+        where: { tenantId, telegramId: opts.telegramId },
+        data: { phone: json.profile.phone },
+      });
+    }
+  } catch (err) {
+    console.warn('[gift-bot] GramJS profile enrich error', err);
+  }
+}
+
 function whatsappWorkerBase(): string {
   return (process.env.AI_WHATSAPP_WORKER_URL || 'http://ai-whatsapp-worker:3006').replace(
     /\/$/,
@@ -1163,14 +1314,18 @@ async function trackPromoClick(
 ) {
   const promo = (campaign.promoPost || {}) as GiftPromoPost;
   const nextCount = (promo.clickCount || 0) + 1;
+  const showCounter = promoShowClickCounter(promo);
   const next: GiftPromoPost = {
     text: promo.text || '',
-    mediaType: promo.mediaType === 'video' ? 'video' : 'photo',
+    mediaType: promo.telegramFileId
+      ? detectStoredMediaKind(promo.telegramFileId, normalizeGiftMediaType(promo.mediaType))
+      : normalizeGiftMediaType(promo.mediaType) || 'photo',
     telegramFileId: promo.telegramFileId,
     telegramFileUniqueId: promo.telegramFileUniqueId,
     mediaUrl: promo.mediaUrl || promo.imageUrl,
     buttonText: promo.buttonText || 'Получить подарок',
     clickCount: nextCount,
+    showClickCounter: showCounter,
     telegramMessageId: promo.telegramMessageId,
     telegramChatId: promo.telegramChatId,
     publishedAt: promo.publishedAt,
@@ -1183,14 +1338,15 @@ async function trackPromoClick(
   // Keep in-memory campaign in sync for this request
   campaign.promoPost = next;
 
-  if (next.telegramMessageId && next.telegramChatId) {
+  // Only rewrite channel button when the counter is shown on the label
+  if (showCounter && next.telegramMessageId && next.telegramChatId) {
     const bot = await prisma.botInstance.findUnique({
       where: { id: botId },
       select: { botUsername: true },
     });
     if (bot?.botUsername) {
       const buttonUrl = `https://t.me/${bot.botUsername}?start=${giftPromoStartPayload(campaign.id)}`;
-      const label = formatPromoButtonLabel(next.buttonText, nextCount);
+      const label = formatPromoButtonLabel(next.buttonText, nextCount, true);
       try {
         await fetch(`${botApi}/editMessageReplyMarkup`, {
           method: 'POST',
@@ -1221,8 +1377,9 @@ async function trackPromoClick(
 async function fillExistingPersonTelegram(
   tenantId: string,
   personId: string,
-  username: string,
+  opts: { username?: string; userId?: string },
 ): Promise<void> {
+  if (!opts.username && !opts.userId) return;
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
   const owner = await prisma.tenantMember.findFirst({
     where: { tenantId, role: 'owner' },
@@ -1248,7 +1405,10 @@ async function fillExistingPersonTelegram(
   } catch {
     /* continue — update may still work if field exists */
   }
-  await client.updatePersonTelegram(personId, username);
+  await client.updatePersonTelegram(personId, {
+    username: opts.username,
+    userId: opts.userId,
+  });
 }
 
 /** Push shared Telegram contact phone → Twenty Person.phones (best-effort). */
@@ -1308,18 +1468,48 @@ async function syncSubscriberToCRM(
     });
     if (existingSub?.twentyPersonId && existingSub?.twentyOpportunityId) {
       if (
-        person.username &&
+        (person.username || person.telegramId) &&
         !telegramHandleFilled.has(existingSub.twentyPersonId)
       ) {
         telegramHandleFilled.add(existingSub.twentyPersonId);
-        void fillExistingPersonTelegram(
-          tenantId,
-          existingSub.twentyPersonId,
-          person.username,
-        ).catch(() => {
+        void fillExistingPersonTelegram(tenantId, existingSub.twentyPersonId, {
+          username: person.username,
+          userId: person.telegramId,
+        }).catch(() => {
           telegramHandleFilled.delete(existingSub.twentyPersonId!);
         });
       }
+      // Best-effort: refresh phone/ДР/bio when personal TG session can see the peer.
+      void (async () => {
+        try {
+          const tenantRow = await prisma.tenant.findUnique({ where: { id: tenantId } });
+          const ownerRow = await prisma.tenantMember.findFirst({
+            where: { tenantId, role: 'owner' },
+            include: { user: true },
+          });
+          if (
+            !tenantRow?.twentyWorkspaceId ||
+            !tenantRow.twentyOwnerPasswordEncrypted ||
+            !ownerRow?.user?.email
+          ) {
+            return;
+          }
+          const tc = new TwentyClient({
+            apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+          });
+          await tc.authenticateWorkspace(
+            ownerRow.user.email,
+            decrypt(tenantRow.twentyOwnerPasswordEncrypted),
+            tenantRow.twentyWorkspaceId,
+          );
+          await enrichPersonFromGramjs(tenantId, tc, existingSub.twentyPersonId!, {
+            telegramId: person.telegramId,
+            username: person.username,
+          });
+        } catch {
+          /* ignore */
+        }
+      })();
       return {
         personId: existingSub.twentyPersonId,
         opportunityId: existingSub.twentyOpportunityId,
@@ -1392,13 +1582,17 @@ async function syncSubscriberToCRM(
           ? `@${person.username.replace(/^@/, '')}`
           : person.telegramId,
         telegram: person.username,
+        telegramUserId: person.telegramId,
         phone: existingSub?.phone || undefined,
       });
       personId = createdPerson?.id;
-    } else if (person.username) {
-      // Best-effort: fill Telegram field on reused contacts
+    } else if (person.username || person.telegramId) {
+      // Best-effort: fill Telegram open link (@username or tg:// via user id)
       try {
-        await client.updatePersonTelegram(personId, person.username);
+        await client.updatePersonTelegram(personId, {
+          username: person.username,
+          userId: person.telegramId,
+        });
         telegramHandleFilled.add(personId);
       } catch {
         /* ignore */
@@ -1406,11 +1600,21 @@ async function syncSubscriberToCRM(
     }
 
     let opportunityId = existingSub?.twentyOpportunityId || undefined;
+    // suppressDealCreation is manual only (CRM «Не создавать сделку») — never auto-set on delete.
+    let suppressDeal =
+      (existingSub as { suppressDealCreation?: boolean } | null | undefined)
+        ?.suppressDealCreation === true;
     if (
       opportunityId &&
       !(await client.opportunityExists(opportunityId))
     ) {
       opportunityId = undefined;
+      if (existingSub?.id) {
+        await prisma.giftSubscriber.update({
+          where: { id: existingSub.id },
+          data: { twentyOpportunityId: null },
+        });
+      }
     }
 
     // Reuse open deal for this Person (AI/GramJS/WA/other gift) — anti-dupe leads.
@@ -1448,7 +1652,7 @@ async function syncSubscriberToCRM(
       }
     }
 
-    if (!opportunityId && personId) {
+    if (!opportunityId && personId && !suppressDeal) {
       const who = person.username
         ? `@${person.username.replace(/^@/, '')}`
         : person.telegramId;
@@ -1471,6 +1675,21 @@ async function syncSubscriberToCRM(
         botInstanceId: botId,
         campaignId: campaign.id,
       });
+    } else if (!opportunityId && personId && suppressDeal) {
+      console.log(
+        `[gift-bot] skip Opportunity create tg=${person.telegramId} (suppressDealCreation)`,
+      );
+    }
+
+    if (personId) {
+      try {
+        await enrichPersonFromGramjs(tenantId, client, personId, {
+          telegramId: person.telegramId,
+          username: person.username,
+        });
+      } catch (err) {
+        console.warn('[gift-bot] post-create GramJS enrich failed', err);
+      }
     }
 
     return { personId, opportunityId };
@@ -1597,7 +1816,7 @@ async function storeInboundMessage(
 }
 
 type TgAttachment = {
-  type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'sticker' | 'animation';
+  type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'video_note' | 'sticker' | 'animation';
   fileId: string;
   fileUniqueId?: string;
   fileName?: string;
@@ -2163,6 +2382,33 @@ function attachmentFromSendResult(
       fileSize: result.document.file_size,
     };
   }
+  if (type === 'voice' && result?.voice?.file_id) {
+    return {
+      type: 'voice',
+      fileId: result.voice.file_id,
+      fileUniqueId: result.voice.file_unique_id,
+      mimeType: result.voice.mime_type,
+      fileSize: result.voice.file_size,
+    };
+  }
+  if (type === 'audio' && result?.audio?.file_id) {
+    return {
+      type: 'audio',
+      fileId: result.audio.file_id,
+      fileUniqueId: result.audio.file_unique_id,
+      mimeType: result.audio.mime_type,
+      fileName: result.audio.file_name,
+      fileSize: result.audio.file_size,
+    };
+  }
+  if (type === 'video_note' && result?.video_note?.file_id) {
+    return {
+      type: 'video_note',
+      fileId: result.video_note.file_id,
+      fileUniqueId: result.video_note.file_unique_id,
+      fileSize: result.video_note.file_size,
+    };
+  }
   return { type, fileId: media };
 }
 
@@ -2202,6 +2448,44 @@ async function sendBotMessage(
   if (ctx) await logBotOutbound(ctx, text);
 }
 
+async function sendBotStoredMedia(
+  botApi: string,
+  chatId: number,
+  media: string,
+  caption: string,
+  kind: GiftPromoMediaType,
+  replyMarkup?: any,
+  ctx?: SendCtx,
+) {
+  if (kind === 'video') {
+    await sendBotVideo(botApi, chatId, media, caption, replyMarkup, ctx);
+    return;
+  }
+  if (kind === 'photo') {
+    await sendBotPhoto(botApi, chatId, media, caption, replyMarkup, ctx);
+    return;
+  }
+  if (kind === 'voice') {
+    await sendBotVoice(botApi, chatId, media, caption, replyMarkup, ctx);
+    return;
+  }
+  if (kind === 'audio') {
+    await sendBotAudio(botApi, chatId, media, caption, replyMarkup, ctx);
+    return;
+  }
+  if (kind === 'video_note') {
+    await sendBotVideoNote(botApi, chatId, media, replyMarkup, ctx);
+    if (caption?.trim()) {
+      await sendBotMessage(botApi, chatId, caption, undefined, ctx);
+    } else if (replyMarkup) {
+      // keyboard already on video_note
+    }
+    return;
+  }
+  await sendBotDocument(botApi, chatId, media, caption, ctx);
+  if (replyMarkup) await sendBotMessage(botApi, chatId, '👇', replyMarkup, ctx);
+}
+
 async function sendBotDocument(
   botApi: string,
   chatId: number,
@@ -2227,6 +2511,86 @@ async function sendBotDocument(
   }
 }
 
+async function sendBotVoice(
+  botApi: string,
+  chatId: number,
+  media: string,
+  caption: string,
+  replyMarkup?: any,
+  ctx?: SendCtx,
+) {
+  const res = await fetch(`${botApi}/sendVoice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      voice: media,
+      ...(caption
+        ? { caption: clientMdToMarkdownV2(caption), parse_mode: 'MarkdownV2' }
+        : {}),
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }),
+  });
+  const json = (await res.json()) as any;
+  if (!json.ok) throw new Error(json.description || 'sendVoice failed');
+  if (ctx) {
+    const att = attachmentFromSendResult('voice', media, json.result);
+    await logBotOutbound(ctx, caption || '[голосовое]', [att]);
+  }
+}
+
+async function sendBotAudio(
+  botApi: string,
+  chatId: number,
+  media: string,
+  caption: string,
+  replyMarkup?: any,
+  ctx?: SendCtx,
+) {
+  const res = await fetch(`${botApi}/sendAudio`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      audio: media,
+      ...(caption
+        ? { caption: clientMdToMarkdownV2(caption), parse_mode: 'MarkdownV2' }
+        : {}),
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }),
+  });
+  const json = (await res.json()) as any;
+  if (!json.ok) throw new Error(json.description || 'sendAudio failed');
+  if (ctx) {
+    const att = attachmentFromSendResult('audio', media, json.result);
+    await logBotOutbound(ctx, caption || '[аудио]', [att]);
+  }
+}
+
+async function sendBotVideoNote(
+  botApi: string,
+  chatId: number,
+  media: string,
+  replyMarkup?: any,
+  ctx?: SendCtx,
+) {
+  const res = await fetch(`${botApi}/sendVideoNote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      video_note: media,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }),
+  });
+  const json = (await res.json()) as any;
+  if (!json.ok) throw new Error(json.description || 'sendVideoNote failed');
+  if (ctx) {
+    const att = attachmentFromSendResult('video_note', media, json.result);
+    await logBotOutbound(ctx, '[кружочек]', [att]);
+  }
+}
+
 async function sendBotVideo(
   botApi: string,
   chatId: number,
@@ -2235,6 +2599,37 @@ async function sendBotVideo(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
+  // Quality-staged originals are document file_ids — download → sendVideo once.
+  if (isTelegramDocumentFileId(media)) {
+    const downloaded = await downloadGiftTelegramFile(botApi, media);
+    if (downloaded) {
+      const filename = downloaded.filePath.split('/').pop() || 'video.mp4';
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      form.append('caption', clientMdToMarkdownV2(caption));
+      form.append('parse_mode', 'MarkdownV2');
+      if (replyMarkup) form.append('reply_markup', JSON.stringify(replyMarkup));
+      form.append(
+        'video',
+        new Blob([new Uint8Array(downloaded.buffer)], { type: 'video/mp4' }),
+        filename,
+      );
+      const res = await fetch(`${botApi}/sendVideo`, { method: 'POST', body: form });
+      const json = (await res.json()) as any;
+      if (json.ok) {
+        if (ctx) {
+          const att = attachmentFromSendResult('video', media, json.result);
+          await logBotOutbound(ctx, caption || '[видео]', [att]);
+        }
+        return;
+      }
+    }
+    // getFile ≤20MB / sendVideo failed — keep original as document
+    await sendBotDocument(botApi, chatId, media, caption, ctx);
+    if (replyMarkup) await sendBotMessage(botApi, chatId, '👇', replyMarkup, ctx);
+    return;
+  }
+
   const res = await fetch(`${botApi}/sendVideo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2262,6 +2657,61 @@ async function sendBotPhoto(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
+  // Quality-staged originals are document file_ids — download → sendPhoto once.
+  if (isTelegramDocumentFileId(media)) {
+    const downloaded = await downloadGiftTelegramFile(botApi, media);
+    if (downloaded) {
+      const filename = downloaded.filePath.split('/').pop() || 'photo.jpg';
+      const lower = filename.toLowerCase();
+      const mime = /\.png$/i.test(lower)
+        ? 'image/png'
+        : /\.webp$/i.test(lower)
+          ? 'image/webp'
+          : 'image/jpeg';
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      form.append('caption', clientMdToMarkdownV2(caption));
+      form.append('parse_mode', 'MarkdownV2');
+      if (replyMarkup) form.append('reply_markup', JSON.stringify(replyMarkup));
+      form.append(
+        'photo',
+        new Blob([new Uint8Array(downloaded.buffer)], { type: mime }),
+        filename,
+      );
+      const res = await fetch(`${botApi}/sendPhoto`, { method: 'POST', body: form });
+      const json = (await res.json()) as any;
+      if (json.ok) {
+        if (ctx) {
+          const att = attachmentFromSendResult('photo', media, json.result);
+          await logBotOutbound(ctx, caption || '[фото]', [att]);
+        }
+        return;
+      }
+      // Retry without MarkdownV2
+      const formPlain = new FormData();
+      formPlain.append('chat_id', String(chatId));
+      formPlain.append('caption', caption);
+      if (replyMarkup) formPlain.append('reply_markup', JSON.stringify(replyMarkup));
+      formPlain.append(
+        'photo',
+        new Blob([new Uint8Array(downloaded.buffer)], { type: mime }),
+        filename,
+      );
+      const plain = await fetch(`${botApi}/sendPhoto`, { method: 'POST', body: formPlain });
+      const plainJson = (await plain.json()) as any;
+      if (plainJson.ok) {
+        if (ctx) {
+          const att = attachmentFromSendResult('photo', media, plainJson.result);
+          await logBotOutbound(ctx, caption || '[фото]', [att]);
+        }
+        return;
+      }
+    }
+    await sendBotDocument(botApi, chatId, media, caption, ctx);
+    if (replyMarkup) await sendBotMessage(botApi, chatId, '👇', replyMarkup, ctx);
+    return;
+  }
+
   const res = await fetch(`${botApi}/sendPhoto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

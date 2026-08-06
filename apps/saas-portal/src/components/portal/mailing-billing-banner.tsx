@@ -5,6 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/portal/alert';
 
@@ -37,6 +39,9 @@ export function MailingBillingBanner({
   } | null>(null);
   const [autoPayStarted, setAutoPayStarted] = useState(false);
 
+  const invoiceRub = meta?.price ?? 0;
+  const balanceApply = usePartnerBalanceApply(invoiceRub);
+
   const load = useCallback(async () => {
     const res = await fetch('/api/bots/mailing/billing', { headers: authHeaders() });
     if (!res.ok) throw new Error('Не удалось загрузить биллинг');
@@ -65,21 +70,36 @@ export function MailingBillingBanner({
     setBusy(true);
     setError('');
     try {
-      await startCheckout({ productCode: product, periodMonths: 1 });
+      await startCheckout({
+        productCode: product,
+        periodMonths: 1,
+        ...balanceApply.applyBalancePayload,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy(false);
     }
-  }, [product]);
+  }, [product, balanceApply.applyBalancePayload]);
 
-  // ?pay=1 → сразу на Robokassa (из CRM «Оплатить» или после 402)
+  // ?pay=1 → Robokassa only when there is nothing to opt into (no free partner balance).
+  // If balance > 0, stay on the page so the user can check «Зачесть партнёрский баланс».
   useEffect(() => {
     if (autoPayStarted || loading || !meta || meta.isActive) return;
     if (searchParams.get('pay') !== '1') return;
     if (meta.trialAvailable) return;
+    if (!balanceApply.loaded) return;
+    if (balanceApply.availableRub > 0) return;
     setAutoPayStarted(true);
     void pay();
-  }, [autoPayStarted, loading, meta, pay, searchParams]);
+  }, [
+    autoPayStarted,
+    loading,
+    meta,
+    pay,
+    searchParams,
+    balanceApply.loaded,
+    balanceApply.availableRub,
+  ]);
 
   const startTrial = async () => {
     setBusy(true);
@@ -121,22 +141,47 @@ export function MailingBillingBanner({
     );
   }
 
+  const payHint =
+    searchParams.get('pay') === '1' && balanceApply.availableRub > 0
+      ? 'Есть партнёрский баланс — отметьте зачёт ниже или оплатите картой.'
+      : null;
+
   return (
     <div className="space-y-2">
       {error && <Alert variant="error">{error}</Alert>}
       <Alert variant="info">
         {LABELS[product]} — платный add-on ({meta.price} ₽/мес). Меню видно всем; отправка
         требует trial или оплату.
-        <div className="mt-3 flex flex-wrap gap-2">
-          {meta.trialAvailable ? (
-            <Button type="button" size="sm" variant="solid" disabled={busy} onClick={startTrial}>
+        {payHint ? <span className="mt-1 block text-sm">{payHint}</span> : null}
+        <div className="mt-3 space-y-3">
+          <PartnerBalanceApply
+            availableRub={balanceApply.availableRub}
+            invoiceRub={invoiceRub}
+            useBalance={balanceApply.useBalance}
+            onUseBalanceChange={balanceApply.setUseBalance}
+            balanceInput={balanceApply.balanceInput}
+            onBalanceInputChange={balanceApply.setBalanceInput}
+            appliedRub={balanceApply.appliedRub}
+            netRub={balanceApply.netRub}
+            disabled={busy}
+            idPrefix={`mailing-${product}-balance`}
+          />
+          <div className="flex flex-wrap gap-2">
+            {meta.trialAvailable ? (
+              <Button type="button" size="sm" variant="solid" disabled={busy} onClick={startTrial}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Пробный период {meta.trialDays} дн.
+              </Button>
+            ) : null}
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void pay()}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Пробный период {meta.trialDays} дн.
+              {balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                ? 'Оплатить с баланса'
+                : balanceApply.appliedRub > 0
+                  ? `Оплатить ${balanceApply.netRub} ₽ картой`
+                  : `Оплатить ${meta.price} ₽/мес`}
             </Button>
-          ) : null}
-          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void pay()}>
-            Оплатить {meta.price} ₽/мес
-          </Button>
+          </div>
         </div>
       </Alert>
     </div>

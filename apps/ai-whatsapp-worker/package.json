@@ -16,6 +16,7 @@
     "@voxly/db": "workspace:*",
     "@voxly/shared": "workspace:*",
     "@voxly/twenty-client": "workspace:*",
+    "ioredis": "5.11.1",
     "openai": "^4.77.0",
     "pg": "^8.13.0"
   },

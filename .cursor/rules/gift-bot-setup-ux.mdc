@@ -1,0 +1,22 @@
+---
+description: Gift-bot portal setup UX is canonical for all tenants — do not regress previews/media/emoji/text
+alwaysApply: true
+---
+
+# Gift-bot setup UX (ADR-027)
+
+`/dashboard/bots/[botId]` Telegram gift setup is **the same for every tenant and bot**. Polish on one prod bot is the product standard, not a special case.
+
+## Mandatory
+
+- Drive everything from `botId` (route param) + tenant-scoped `/api/bots/:botId/*`. **Never** hardcode a bot or tenant id.
+- Keep steps **1–6** + **Дожим**, dual photos (profile vs card), emoji under step-2 preview, media-file proxy previews, unified TG preview chrome, partners amber **page** chrome, `InputWithEmoji` / `TelegramMdTextarea`, PNG/WebP→JPEG for profile photo.
+
+## Do not regress (without explicit user ask)
+
+- Telegram-like **previews** (incl. photo/video after reload via `GET …/media-file`)
+- **Text** + client Markdown + **emoji** inputs
+- **Media** upload/kinds/`file_id` / `detectStoredMediaKind` prefix-wins
+- Dual photos, JPEG profile convert, multi-tenant data binding
+
+Do **not** casually refactor or “simplify” preview/text/media paths. Details: `docs/agent/CAPABILITIES.md` (Gift bot detail) + `docs/agent/DECISIONS.md` ADR-027. Incidents: INC-005, INC-086–091, INC-093.

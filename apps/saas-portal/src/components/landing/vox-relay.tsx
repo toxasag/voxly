@@ -4,17 +4,17 @@ import { cn } from '@/lib/utils';
 export type VoxPose = 'hero' | 'solution' | 'cta' | 'default';
 
 const POSE_SRC: Record<VoxPose, string> = {
-  hero: '/mascot/voxly-hero-v5.png',
-  solution: '/mascot/voxly-solution-v5.png',
-  cta: '/mascot/voxly-cta-v5.png',
-  default: '/mascot/voxly.png',
+  hero: '/mascot/voxly-mascot-v6.png',
+  solution: '/mascot/voxly-mascot-v6.png',
+  cta: '/mascot/voxly-mascot-v6.png',
+  default: '/mascot/voxly-mascot-v6.png',
 };
 
 const POSE_ASPECT: Record<VoxPose, string> = {
-  hero: 'aspect-[3/4]',
-  solution: 'aspect-square',
-  cta: 'aspect-[3/4]',
-  default: 'aspect-[380/938]',
+  hero: 'aspect-[5/6]',
+  solution: 'aspect-[5/6]',
+  cta: 'aspect-[5/6]',
+  default: 'aspect-[5/6]',
 };
 
 interface VoxRelayProps {
@@ -46,11 +46,11 @@ export function VoxRelay({
       <div className={cn('relative mx-auto w-full bg-transparent', POSE_ASPECT[pose])}>
         <Image
           src={POSE_SRC[pose]}
-          alt="Voxly — робот-компаньон для продаж в мессенджерах"
+          alt="Voxly — промышленный робот-маскот"
           fill
           priority={priority}
           sizes="(max-width: 768px) 280px, 420px"
-          className="bg-transparent object-contain object-bottom"
+          className="bg-transparent object-contain object-bottom drop-shadow-[0_18px_28px_rgba(10,10,10,0.18)]"
         />
       </div>
       {caption ? (

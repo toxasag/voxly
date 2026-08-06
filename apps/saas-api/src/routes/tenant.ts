@@ -316,6 +316,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
           activeUntil: crmSub?.endsAt?.toISOString() ?? null,
         },
         gift: addonActive('gift_bot'),
+        giftMax: addonActive('gift_bot_max'),
         aiBusiness: {
           ...addonActive('ai_tg'),
           includedSlots: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
@@ -323,6 +324,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
           limitedAccounts: businessLimited,
         },
         gramjs: addonActive('ai_gramjs'),
+        max: addonActive('ai_max'),
         whatsapp: addonActive('ai_wa'),
         mailingBot: addonActive('mailing_bot'),
         mailingAccounts: addonActive('mailing_accounts'),
@@ -330,8 +332,10 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
       },
       accounts: {
         giftBots: byType('gift').length,
+        giftMaxBots: byType('gift_max').length,
         aiBusinessBots: byType('ai_tg').length,
         gramjs: byType('ai_gramjs').length,
+        max: byType('ai_max').length,
         whatsapp: byType('ai_wa').length,
         agents: agentsActive,
       },
@@ -776,25 +780,16 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // --- Update tenant settings ---
+  // AI markup is superadmin-only (`PUT /api/admin/ai-balance/tenants/:id/markup`).
   fastify.patch('/', { preHandler: [fastify.authenticate] }, async (request, reply) => {
-    const { tenantId, role: userRole, tenantRole } = (request as any).user;
-    const prisma = fastify.prisma;
+    const { role: userRole, tenantRole } = (request as any).user;
 
     if (userRole !== 'superadmin' && tenantRole !== 'owner' && userRole !== 'owner') {
       return reply.code(403).send({ error: 'Only owners can update settings' });
     }
 
-    const body = request.body as { aiMarkupPercent?: number };
-    const updateData: any = {};
-    if (body.aiMarkupPercent !== undefined) {
-      updateData.aiMarkupPercent = body.aiMarkupPercent;
-    }
-
-    const tenant = await prisma.tenant.update({
-      where: { id: tenantId },
-      data: updateData,
+    return reply.code(400).send({
+      error: 'No updatable tenant settings on this endpoint',
     });
-
-    return reply.send(tenant);
   });
 };

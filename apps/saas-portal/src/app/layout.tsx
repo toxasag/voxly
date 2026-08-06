@@ -20,13 +20,13 @@ const body = Manrope({
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://getvoxly.ru'),
-  title: 'Voxly — командный центр продаж в CRM',
+  title: 'Voxly — CRM для заявок с сайта и мессенджеров',
   description:
-    'Сделки и чаты из Telegram и WhatsApp в одной CRM. В браузере с компьютера и телефона — без приложений. 7 дней бесплатно, от 500 ₽/мес.',
+    'Заявки с Tilda и WordPress бесплатно. Диалоги из Telegram и WhatsApp в той же CRM. Браузер на телефоне — без приложений. 7 дней free, от 500 ₽.',
   openGraph: {
     title: 'Voxly — командный центр продаж',
     description:
-      'CRM + мессенджеры + AI. Работает в браузере на телефоне. 7 дней бесплатно, от 500 ₽.',
+      'Формы free + мессенджеры + CRM. Без приложений. 7 дней бесплатно, от 500 ₽.',
     siteName: 'Voxly',
     locale: 'ru_RU',
     type: 'website',

@@ -1,3 +1,871 @@
+### 2026-08-06 — INC-103: GramJS send when Person has TG userId (Кувалдин) + module freeze
+
+- Goal: Кувалдин Chat — GramJS «Пишем от» was greyed despite Telegram `tg://user?id=928954961`; enable send without requiring prior GramJS Conversation; freeze working modules in docs.
+- Diagnosis: `resolveOutboundPeer` ignored Person.telegram LINKS when base thread is WA; open/tg ≠ send peer.
+- Changes: `parseTelegramPeerFromLink` + Twenty Person telegram/phone resolve; GramJS available from social peer; bridge send ImportContacts(phone, keepContact); gift gate unchanged. `docs/agent/modules/*` + `.cursor/rules/module-freeze.mdc`.
+- Deploy: backup `/opt/voxly/backups/20260806-125415/`; `./scripts/prod-deploy.sh saas-api,gramjs-bridge` (dry-run first); smoke portal+API **200**. Volumes untouched.
+- Verify: hard-refresh Кувалдин → GramJS selectable → send test; `curl` open/tg + health 200.
+- Broken: none. Next: user smoke on voxly-crm Кувалдин.
+
+### 2026-08-06 — INC-102: open Telegram without @username (tg:// via HTTPS bridge)
+
+- Goal: Person/chat peers without public `@nickname` (e.g. `7083659060`, Кувалдин userId `928954961`) get a working open-in-Telegram link; never invent `t.me/+phone`.
+- Diagnosis: Twenty Zod accepts `tg://`, but front `ensureAbsoluteUrl` mangles it → not clickable in LINKS.
+- Changes: `telegramOpenLink` + `GET /open/tg/:userId` HTML→`tg://user?id=`; sync/enrich (gramjs/TG/WA/gift); admin `backfill-telegram-open-links`; migrate keeps tg:// label on bridge URL.
+- Deploy: backup `/opt/voxly/backups/20260806-123456/`; `./scripts/prod-deploy.sh saas-api,ai-whatsapp-worker,ai-telegram-worker,gift-bot-worker`; smoke landing+health+cabinet **200**. Volumes untouched. No commit.
+- Backfill voxly: scanned 464, updated **162** (skipped 302 with `@username`); peer `7083659060` → Person `8585f25c-…` url `/open/tg/7083659060` label `tg://user?id=7083659060`; Кувалдин `e5658d44-…` → `/open/tg/928954961` + WA `wa.me/79850868825`.
+- Verify: `curl https://api.getvoxly.ru/open/tg/928954961` → 200 HTML with `tg://user?id=928954961`; hard-refresh CRM Person cards.
+- Broken: none. Next: user hard-refresh voxly-crm; other tenants optional backfill.
+
+### 2026-08-06 — INC-101: social LINKS show full URL + Кувалдин WA→TG honesty
+
+- Goal: (A) LINKS pills show full clickable URL text, not "WhatsApp"/"Telegram"; (B) diagnose empty Telegram on Кувалдин `+79850868825`; (C) check Opp 399/400.
+- Diagnosis: `primaryLinkLabel` was generic; Twenty renders label as button text. Кувалдин Person `e5658d44-…` WA `https://wa.me/79850868825`; GramJS by-phone exists userId `928954961` without `@username`; scrape `t.me/+phone` is not a profile — correctly leave Telegram empty (never invent `t.me/+`). Opp 399 (Ольга) ≠ 400 (Кувалдин).
+- Changes: `twenty-client.linksInput` label=URL; `migrate-social-links` backfill label=url + clear `t.me/+`; admin reapply calls migrate.
+- Deploy: backup `/opt/voxly/backups/20260806-102034/`; `./scripts/prod-deploy.sh saas-api,ai-whatsapp-worker,ai-telegram-worker` (container-name conflict cleaned, no `-v`); migrate voxly → 196 WA + 321 TG labels=URL. Volumes untouched. No commit.
+- Verify: hard-refresh CRM → Анна `https://t.me/Ann_fire`, WA contacts show `https://wa.me/…`; Кувалдин Telegram empty by design.
+
+### 2026-08-06 — Bug A/B: WA duplicate Opportunities + Person social LINKS
+
+- Goal: (A) one Person must not get two WA Opportunities from sync (noname100 evidence); (B) «Социальные сети» must be clickable links (`wa.me` / `t.me/@user`, never `t.me/+phone`).
+- Diagnosis (prod noname100): Person `14bc46de-…`, phones `+6281351989740`; two open Opps created **223ms** apart (`171` orphan, `352` linked to Conversation `cmsh8xu5a…`). Race: parallel LID/PN (or dual sync) created two Opps before reuse; twin merge left orphan Opp on same Person. Social fields were **TEXT** → gray plain values.
+- Changes:
+  - `ai-whatsapp-worker` / `ai-telegram-worker`: before `createOpportunity` → `findOpenOpportunityByPerson`; after LID↔PN merge → `softDeleteOpportunity` orphans.
+  - `crm-deal-dedupe`: collapse multiple open Opps on same Person (keep Conversation-linked).
+  - `twenty-client`: social fields as **LINKS** + `socialFieldToUrl` writers; `softDeleteOpportunity` / `listOpenOpportunityIdsByPerson`.
+  - `migrate-social-links.ts`: TEXT→LINKS + backfill URLs (no invent `t.me/+`).
+- Deploy: rebuild `saas-api` + `ai-whatsapp-worker` + `ai-telegram-worker` (rsync + compose `--build`); Twenty restart for metadata cache. Volumes untouched. No commit.
+- Prod repair (voxly): soft-deleted orphan `4eb97672-…` (171); bulk collapsed **67** leftover WA dup Opps → **0** Persons with >1 open `· WA ·` opp; migrated 8 social fields to LINKS; noname100 `whatsappPrimaryLinkUrl=https://wa.me/6281351989740`.
+- Verify: hard-refresh Person noname100 → one Opportunity; WhatsApp clickable; new WA sync does not create second open Opp for same Person+bot.
+- Prior (same day): gift/WA «Пишем от» + save-time dedupe 0.1.27 still stand (backup `20260806-093403`).
+
+### 2026-08-06 — Save-time CRM dedupe + «Пишем от» gift/WA gating
+
+- Goal: (1) honest answers on post-resync dupe/WA↔TG checks; (2) gift bot must not appear in «Пишем от» for GramJS peers not subscribed; (3) WA send from TG deal when Person.whatsapp filled; (4) **duplicate check on every Opportunity save** (incl. contact/company changes).
+- Diagnosis:
+  - Sync-time Person dedupe (`findPersonByPhone` / hint) exists; soft-merge on GramJS **connect/enrich** only — **manual sync-history does not** run enrich. Prod: **0** soft-merge notes after wipe+resync; no `gramjs-crm-enrich` in saas-api logs.
+  - WA→TG presence exists in WA worker after phone resolve; **TG→WA IsOnWhatsApp fill does not exist**.
+  - `resolveOutboundPeer` treated gift like GramJS (any TG peer → gift available).
+  - WA send required existing WA Conversation; ignored filled Person.whatsapp.
+  - **No** save-time Opportunity/Person dedupe hooks before this change.
+- Changes:
+  - `crm-chat.ts`: gift/gift_max only if GiftSubscriber/conv on **that** bot (hide otherwise); WA fallback via Twenty `Person.whatsapp` (no invent from phones alone).
+  - `crm-deal-dedupe.ts` + `POST /api/crm/chat/dedupe`; soft-merge People by phone/whatsapp + retarget Opportunities; shared by GramJS enrich.
+  - crm-chat **0.1.27** LFs: `opportunity.created` / `opportunity.updated` / `person.updated` (phones/whatsapp) → dedupe API.
+- Deploy: backup `/opt/voxly/backups/20260806-093403/`; rebuild `saas-api` (code already rsynced); `refresh-crm-chat` voxly `{ok:true}`. Smoke health **200**. Dedupe smoke `{ok:true,skipped:true,reason:no_phone_or_whatsapp}` on sample opp. Volumes untouched. No commit.
+- Verify: GramJS deal without gift sub → «Пишем от» has no gift bot; Person with WhatsApp filled → WA option available; save deal with phone → soft-merge if duplicate Person exists.
+- Not done: TG→WA IsOnWhatsApp backfill; Company entity merge; hard-delete loser People; other tenants refresh (only voxly).
+
+### 2026-08-06 — CRM chat UI: stale `[media]` after GramJS backfill (voxly-crm-chat 0.1.26)
+
+- Goal: `@kahlenko` still showed four `[media]` bubbles after DB/API backfill.
+- Diagnosis: control DB + `GET /api/crm/chat/2b5879f5-…` already return `[файл: IMG_….JPG]` + `gramjs:149487687:{679..682}`; signed media URL → **200** `image/jpeg` (~8MB). Not an API/bridge auth failure.
+- UI root cause: (1) soft-refresh fingerprint used **message ids only** → open Chat kept pre-backfill content; (2) `isMediaPlaceholder` omitted legacy `[media]` so attachment+placeholder could still show bare text.
+- Changes (`twenty-app/voxly-crm-chat` **0.1.26**): fingerprint content+attachment `fileId`s; treat `[media]`/`[документ]` as hideable placeholders; document+`image/*` renders via mimeType.
+- Deploy: `./scripts/prod-deploy.sh saas-api` backup `/opt/voxly/backups/20260806-090344/`; `refresh-crm-chat` tenant `voxly` `{ok:true}`. Volumes untouched. No commit.
+- Verify: hard-refresh `voxly-crm.getvoxly.ru` → Opportunity `@kahlenko · AI · @genadich_agency` → Чат → Aug 23 photos as images (or 📎 filename), not `[media]`.
+- Deliberately not touched: gift-bot, WA invent, Contact-book-as-deals, avatar phone match, suppressDealCreation auto, broad re-sync.
+
+### 2026-08-06 — GramJS history sync: media attachments (not bare `[media]`)
+
+- Goal: CRM chat showed `[media]` for TG history (e.g. @kahlenko) — no preview/download.
+- Root cause: `exportPrivateDialogsForCrm` set text=`[media]` without attachment; sync skipped `attachments`.
+- Changes: bridge exports `attachment` (`gramjs:peer:msgId` + type); `gramjs-chat-sync` stores + **backfills** existing `[media]` rows on re-sync.
+- Deploy: `gramjs-bridge,saas-api` backup `/opt/voxly/backups/20260806-084234/`; smoke 200.
+- Verify: re-sync `@genadich_agency` → hard-refresh CRM chat → placeholders `[фото]/`[файл:…]` + preview.
+
+### 2026-08-06 — GramJS sync UI: «Синхронизация…» badge + background job
+
+- Goal: portal row stayed «На связи» while TG history sync ran for minutes (nginx/browser timeout cleared busy).
+- Changes: `saas-api` `POST …/gramjs/…/sync-history` → **202** background job + `historySyncing` on GET accounts; portal badge **Синхронизация…** + poll 3s until done.
+- Deploy: `saas-api,saas-portal` backup `/opt/voxly/backups/20260806-082647/`; smoke 200. No commit.
+- Verify: hard-refresh `/dashboard/ai/gramjs` → sync → amber badge until finish; hint above table.
+
+### 2026-08-05 — INC-097 v8.2: profile-index poison + honest 2/14 blocker (prod)
+
+- Goal: fill CRM Phones for remaining **12/14** open `@lid` chats after v8.1 (`findChats` 2/14 `remoteJidAlt`).
+- **Prod investigation (instance `wa_cmseeil8m0_9150946944`, bot `79855014040`):**
+  - Message.key: **0/14** `remoteJidAlt`/`senderPn` on any LID thread.
+  - IsOnWhatsapp: jidOptions = LID only (no PN).
+  - `whatsappNumbers(@lid)`: empty; `fetchStatus`/`presence`/`fetchContacts` no mapping.
+  - `fetchProfile` / `fetchBusinessProfile` on **unmapped @lid** returns **linked account** business (`wid=79855014040`, `anton@genadich.com`, `team-big.ru`) — not peer profile.
+  - Contact book: 1439 PN rows; **0** LID rows match open-chat LIDs; findChats **empty pushName** on all 14.
+  - WA UI phone for 12 peers: **not in Evolution** — likely phone address book / WA client `lidMapping` on device, never synced to companion.
+- **Worker bugs fixed (v8.2, `ai-whatsapp-worker`):**
+  - `collectOpenWaChatPeers`: `remoteJidAlt` on `@lid` → `pnPhones` (was `fetched=0` — candidates empty).
+  - `isPoisonedWaLinkedAccountProfile`: strip self-wuid/email/web from unmapped LID `fetchProfile`.
+  - `pokeWaLidMappingViaPresence` before resolve (presenceSubscribe best-effort).
+  - Profile-index: **no pic-only** match / `rememberLidPhoneMapping` unless email/web hit or `WA_LID_AVATAR_PHONE_MATCH=1` (reverted false Redis maps to `79032692646` during first sync).
+- Deploy: `ai-whatsapp-worker` backups `/opt/voxly/backups/20260805-212256/`, `20260805-212636/`; Redis false `lid-mapping-*_reverse` keys **HDEL** (7 peers wrongly → Пашка). No commit.
+- Verify: `profile-index fetched=2` (was 0); force sync **57s** → `dialogs=14 peopleSynced=14 mergedTwins=1`; **CRM phone still 2/14**; `findChats` **2/14** `remoteJidAlt` after Redis cleanup.
+- **Blocker (honest):** Baileys companion has no LID→PN for 12 historical peers. Phones appear only after inbound `senderPn`/`remoteJidAlt`, user re-opens chat on phone (sync mapping), or outbound message triggering protocol mapping — **cannot invent**.
+
+### 2026-08-05 — INC-097 v8.1: Evolution findChats lidMapping expose (prod)
+
+- Goal: fix Evolution `findChats` returning **0/14** `remoteJidAlt` despite `fetchProfile` working; worker already has `resolveLidPhoneFromEvolution()` — expose PN at Evolution layer.
+- Root cause: v8 patch matched `dm(r)` but runtime `whatsapp.baileys.service.mjs` uses `yp(r)`; only dead `main.mjs` got fetchChats patch; controller never enriched.
+- Changes: `docker/patch-evolution-lid-pn.cjs` — regex `\w+\(r\)` + `for…of` service patch (75 files) + controller `voxly-lid-pn-ctrl` (150 files); `baileysCache` fallback on fetchProfile. Worker **unchanged**. No commit.
+- Deploy: `evolution-api` backup `/opt/voxly/backups/20260805-210810/`; WA **no QR**; build log `fetchChats patches=75 controller=150`.
+- Verify: `findChats` **2/14** `remoteJidAlt` (`20774874288269`→`79262625252`, `159004152090810`→`79032692646`). Force sync **39s** → `dialogs=14 peopleSynced=14`. CRM phone **2/14** (`+79262625252` Boomerservice, `+79032692646` Пашка). **12/14** gaps: no Redis/Baileys mapping; profile-index no hit this run.
+- Next: phones for remaining peers only when inbound `senderPn`/`remoteJidAlt`, new Redis mapping, or profile-index match — not avatar invent.
+
+### 2026-08-05 — INC-097 v7.1: full force sync on prod (post-deploy verify)
+
+- Goal: backfill Person+Opportunity for all 14 Evolution open private chats on bot `cmsfsbnei00028n4dkn9cgwkq` / tenant `cmseeil8m00073ji1pz62ry1z` after v7.1 OOM fix; confirm worker stable + idempotent re-sync.
+- Deploy: **none** (v7.1 already live; backup `/opt/voxly/backups/20260805-153506/`). No hung `prod-deploy.sh`. No commit.
+- Force sync (`POST /internal/crm/sync-history`, `force:true`, `messageLimit:500`): **~42s** → `ok=true dialogs=14 peopleSynced=14 messagesUpserted=12 skippedEmptyIdentity=0 skippedNoMessages=0 mergedTwinConversations=0 repairedEmptyLeads=0`; worker **Up**, `OOMKilled=false`, `RestartCount=0`.
+- Re-sync (idempotent): **~40s** → `messagesUpserted=0 peopleSynced=14`; Twenty WA opps total **24** rows / **14 distinct** titles (orphans 7–14 + dupes 15/16/18 from prior runs); **14 distinct** opps linked to synced convs — no new dupes on second pass.
+- CRM (14 findChats peers): opp titles **`15–28 · WA · 9855014040`**; named: Boomerservice, Polimeroom, АВТОСЕРВИС, Ремонт Реставрация Пластика., Пашка + noname1/2/5–10.
+- Boomerservice: **one** open conv `20774874288269` / `+79262625252` / **4 msgs**; Person phones `+79262625252`, Opp **`18 · WA · 9855014040`**.
+- Gaps: **10/14** synced convs remain `status=closed` (history sync links CRM but does not reopen closed threads — only **4 open** convs with opp); stale LID twin `noname4` (`75351208272113`, 3 msgs, closed) **not merged** into Boomerservice (`mergedTwinConversations=0`); **10 orphan** WA opps in Twenty unlinked to current open convs; `platformUserId=0` conv (3 msgs) still no opp (system peer skip).
+
+### 2026-08-05 — INC-097 v7.1: full force sync after OOM fix (prod)
+
+- Goal: close gap **14 open findChats vs ~4–5 live Opportunities** on bot `cmsfsbnei00028n4dkn9cgwkq` / tenant `cmseeil8m00073ji1pz62ry1z` — run **full** force sync (not `repairOnly`) via `POST /internal/crm/sync-history` `force:true` `messageLimit:500`.
+- Pre: no hung local `prod-deploy`; worker **Up** `oom=false` (v7.1 backup `20260805-153506/`). Baseline: **5** open WA convs with msgs, **408** open total (contact-book legacy), **24** live Twenty opps (`15–28 · WA · 9855014040`, seq **18–27 duplicated**), **4** open convs CRM-linked. Boomerservice `cmsfuzk8q004t9gwm4piiqywh` LID `20774874288269` / `+79262625252` / **4 msgs** / opp `28 · WA · 9855014040`.
+- Sync JSON (**40s**, no OOM): `ok=true dialogs=14 messagesUpserted=0 peopleSynced=14 skippedGroups=1 skippedNoMessages=0 skippedEmptyIdentity=0 repairedEmptyLeads=0 mergedTwinConversations=0`. Worker log: `profile-index fetched=0 byPic=373`; idempotent re-run **40s** → identical JSON.
+- Post: **14** distinct `twentyOpportunityId` on WA convs (4 **open**+msgs, 10 **closed**+1 msg each from Evolution LID threads); **24** live Twenty opps unchanged (10 duplicate pairs 18–27 — older shells from 10:36/12:17 + 15:39 re-sync); **403** open zero-msg contact-book convs untouched. Open+msgs: noname1 **100**, Пашка **17** `+79032692646`, noname2 **5**, Boomerservice **4**; 1 open conv `platformUserId=0` **3 msgs** no CRM (system skip). Boomerservice **unchanged** phone/4msgs/canonical LID.
+- Gaps: CRM UI still shows **~4 open** deals with chat history (10 opp-linked threads are **closed** convs); duplicate opps in Twenty need manual soft-delete or repair pass; Evolution stores minimal history on 10 LID chats (1 msg); PDF/outbound only if Evolution has them.
+- Deploy: **none** (sync succeeded on v7.1). Volumes untouched. No commit.
+
+### 2026-08-05 — INC-097 v7.1: scope profile-index + repair to open findChats (prod)
+
+- Goal: fix force sync / `repairOnly` OOM (exit 137) on bot `cmsfsbnei00028n4dkn9cgwkq` — worker walked ~418 contact-book Conversations + bulk Contact PN `fetchProfile`, not ~14 open chats.
+- Root cause: v7 `buildWaProfilePnIndex` filled cap from `loadPnCandidatesFromEvolutionDb` Contact table (1400+); `repairWaLidPnSplitConversationsForBot` queried all WA Conversations (take 1000) including INC-097 v2 contact-book shells.
+- Changes (`ai-whatsapp-worker`): `collectOpenWaChatPeers` + `fetchOpenWaPrivateChats`; scoped `loadPnCandidatesFromEvolutionDb` (open JIDs only, Contact table opt-in off); profile-index `fetchCap` tied to open-chat count; repair scoped to open peers + convs with messages; `repairOnly` loads findChats first.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backup `/opt/voxly/backups/20260805-153506/` (`voxly_control.dump` 253K, `twenty.dump` 1.6M); force-recreate worker; smoke landing/api/dashboard **200**. Volumes untouched. No commit.
+- Verify: `repairOnly` via internal API **12s** → `ok=true dialogs=14 mergedTwinConversations=0 profile-index `fetched=0` (373 Contact CDN pic fp only); worker **Up** (no OOM). Boomerservice conv `20774874288269` / `+79262625252` / **4 msgs**. CRM: 418 legacy open WA convs (contact-book shells, 0 msgs) still in DB but **not** walked; 4 live opps / 5 convs with msgs vs 14 Evolution open chats — run full force sync when ready to backfill remaining threads.
+
+### 2026-08-05 — INC-097 v7: official Evolution LID→PN + LID/PN twin merge (prod)
+
+- Goal: wire Evolution/Baileys LID→PN paths the worker skipped (Message.key `remoteJidAlt`/`senderPn`, Redis `lid-mapping`, `IsOnWhatsapp.jidOptions`, `POST /chat/whatsappNumbers`) before profile-index; merge split LID↔PN Conversations so one thread per peer.
+- Changes (`ai-whatsapp-worker`):
+  - `resolveLidPhoneFromEvolution()` — ordered chain: Message.key SQL → Redis `lid-mapping-*_reverse` → IsOnWhatsapp cache → `/chat/whatsappNumbers` → Contact book → Chat DB → profile-index last.
+  - `mergeWaLidPnTwinConversations` + `repairWaLidPnSplitConversationsForBot` (end of sync + `repairOnly` flag); per-chat merge when phone/LID known; move ChatMessages, keep LID `platformUserId` + `platformUsername` +E.164, close twin.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backup `/opt/voxly/backups/20260805-150848/`; force-recreate worker; smoke landing/api/dashboard **200**. Volumes untouched. No commit. No hung local `prod-deploy.sh` processes.
+- Verify (bot `cmsfsbnei00028n4dkn9cgwkq` / tenant `cmseeil8m00073ji1pz62ry1z`): prod image has `mergeWaLidPnTwinConversations` + `repairWaLidPnSplit` (container created 2026-08-05T15:09Z); `prod-diff` shows only minor post-deploy local drift (`extraLidDigits`, merge expansion) — **no redeploy**. Force sync + `repairOnly` triggered; worker OOM/restart under profile-index on 418 contact-book Conversations (timeout before completion). **Boomerservice before/after:** one Conversation `20774874288269` / `+79262625252` / `Boomerservice` / **1 msg** (= Evolution LID inbound; PN jid **0** msgs). `noname4` (`75351208272113`, 3 outbound msgs) is a **separate** Evolution open chat — empty profile, no LID→PN mapping to `+79262625252`; correctly not merged.
+- Remaining gaps: full `repairOnly` on prod bot with 400+ contact-book Conversations needs memory/time guard or scoped to open `findChats` only; Evolution still stores no `remoteJidAlt`/`senderPn` on Message keys for this instance; outbound/PDF only if Evolution has them under that LID; ship local `extraLidDigits` merge tweak when next worker deploy.
+
+### 2026-08-05 — INC-097 v6.1: WA LID↔PN Conversation merge (prod)
+
+- Goal: Boomerservice CRM chat showed **1 msg** while Evolution had **3** under stale LID `75351208272113` + **1** inbound under `20774874288269` — split across `noname4` and `Boomerservice` Conversations after v6 profile-index linked phone to wrong twin only.
+- Root cause: v6 resolved `+79262625252` on rich LID only; stale LID has outbound-only msgs, no profile/email/pic for profile-index; no Conversation merge — upserts went to separate threads; `platformUserId` flipped LID→PN broke send path.
+- Changes (`ai-whatsapp-worker`): `mergeWaLidPnTwinConversations` + `repairWaLidPnSplitConversationsForBot` + `repairOnly` mode; Redis `listLidDigitsMappedToPhone`; stale outbound LID→rich +phone linking in repair; merge in sync loop + `syncLeadToCrm`; keep LID on `platformUserId`, `platformUsername` +E.164.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backup `/opt/voxly/backups/20260805-153229/` (+ interim `151415/`, `152136/`); smoke 200. Volumes untouched. No commit.
+- Verify (bot `cmsfsbnei00028n4dkn9cgwkq`): before **1+3 split** (Boomerservice 1 / noname4 3); after canonical **4 msgs**, one open conv `+79262625252` LID `20774874288269`, closed twin `75351208272113`; Person/Opp on canonical. Gaps: duplicate Person `noname4` CRM shell may remain in Twenty until manual merge; PDF/outbound only if Evolution stored; full force sync still heavy (~15 min).
+
+### 2026-08-05 — INC-097 v6: WA profile-index LID→PN + seq deal titles (prod)
+
+- Goal: Boomerservice chat shows `+79262625252` in WA header but CRM had empty phones, 1 msg, wrong title `Boomerservice · WA · 9855014040`; ~4 deals vs ≥14 open chats.
+- Root cause: peer `@lid`; Evolution Message often has 1 inbound under LID; `fetchProfile(LID)` shares email/website/pic with `fetchProfile(79262625252)` but LID JSON has no E.164; Contact book lacks PN; Redis `lid-mapping` empty. v5 skipped CRM without phone → Conversation-only.
+- Changes (`ai-whatsapp-worker`, `saas-api` proxy):
+  - `buildWaProfilePnIndex` + `matchPhoneFromProfileIndex` wired in sync loop; `rememberLidPhoneMapping` on match.
+  - `fetchAllEvoMessagesForJid` + LID/PN merge (dedupe by id); default messageLimit **500**.
+  - Always `syncLeadToCrm` for chats with messages (`nonameN` if no name); Opportunity `{seq} · WA · {bot.displayName}`; no contact-first title renames.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backup `/opt/voxly/backups/20260805-141016/` (`voxly_control.dump` 253K, `twenty.dump` 1.6M); force-recreate worker; smoke landing/api/dashboard **200**. Volumes untouched. No commit. Killed hung local deploys (PIDs 15278/15279/15408/15409 + sshpass children).
+- Verify (bot `cmsfsbnei00028n4dkn9cgwkq` / 79855014040): force sync ~15 min → `dialogs=14 peopleSynced=14 messagesUpserted=0 skippedEmptyIdentity=0 repairedEmptyLeads=0`; live WA opps **14** titles `15–28 · WA · 9855014040`; 14 distinct People/Opps (no dupes per `platformUserId`). Boomerservice Person `+79262625252` phones+whatsapp filled; Opp `28 · WA · 9855014040`; CRM msgs **1** (= Evolution inbound under LID; PN `findMessages` **0**). 4 named + 9 `nonameN` + 1 named-with-phone (Пашка). Gaps: PDF/outbound still missing if Evolution never stored; profile-index ~15 min on force sync (worker may restart under load).
+
+### 2026-08-05 — INC-097 v5: kill «WhatsApp» shells; Conversation-only until E.164
+
+- Goal: after v4 left 14 nameless phone-less CRM cards, stop creating garbage; fill names from business profile where possible; soft-delete the rest; keep chats.
+- Root cause (prod Evolution `wa_cmseeil8m0_9150946944`): 14 `@lid` open chats; Message keys **0** `remoteJidAlt`/`senderPn`; Redis peer `lid-mapping` empty; Contact LID rows unlinked — **LID→PN impossible** from Evolution today. Business profile often has email/website/description but **never** phone.
+- Changes (`ai-whatsapp-worker`):
+  - Never `createPerson(firstName=WhatsApp)` without E.164; history sync CRM only if phone **or** real name.
+  - Business profile → name (verifiedName / website host / description); skip punycode `xn--` hosts; rename Opportunity titles.
+  - `repairEmptyWaHistoryLeads` soft-deletes live «WhatsApp»+empty-phone Persons/Opps (Conversation+messages kept).
+- Verify: force sync → peopleSynced=4 names (Boomerservice, Polimeroom, АВТОСЕРВИС, Ремонт…), phones=**0**, repaired=10, Conversation-only=10, WhatsApp-named live people/opps=0.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backups `/opt/voxly/backups/20260805-105239/` (+ `105544/`, `105823/`); smoke 200. Volumes untouched. No commit.
+- Next: phones appear only when Evolution/Baileys exposes LID→PN (inbound twin / lid_mapping) — then re-sync fills Phones + TG @username.
+
+### 2026-08-05 — INC-097 v4: recreate CRM after Twenty wipe (LID open chats)
+
+- Goal: after user deleted all People/Companies/Opportunities, WA «Синхронизировать» created **0** deals — recreate Person+Opportunity for open private chats with messages.
+- Root cause: Evolution instance `wa_cmseeil8m0_9150946944` (79855014040) — `findChats` = 14 `@lid` with messages, **no** `remoteJidAlt`/`senderPn`/pushName, Redis `lid-mapping` empty; INC-097 v3 skipped CRM (`emptyIdentity=14`); repair soft-deleted LID chats that had messages. Contact book 1439 PN have names but 0 messages (not dialogs).
+- Changes (`ai-whatsapp-worker`):
+  - `clearStaleWaConversationCrmIds` before sync (INC-042 wipe path).
+  - Open chats **with messages** always call `syncLeadToCrm` (LID-only → `needsReview`); reuse Conversation phone/name cache.
+  - `repairEmptyWaHistoryLeads` **only** zero-message shells (never wipe open-chat CRM).
+- Verify: force sync → `dialogs=14 peopleSynced=14`; Twenty live people=14 opps=14; Chat msgs linked; companies unchanged (business profile rare).
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` — backup `/opt/voxly/backups/20260805-103459/` (`voxly_control.dump` 245K, `twenty.dump` 1.6M); smoke 200. Volumes untouched. No commit.
+- Next: phones/names enrich when Baileys lid-mapping appears; optional portal re-sync is idempotent.
+
+### 2026-08-05 — INC-097 v3: open chats only + no fake t.me/+ + Chat resolve
+
+- Goal: stop Contact-book→100+ deals; never invent Telegram `t.me/+{phone}`; write real `@username` (e.g. `@ShinkevichJu`); open-profile enrich; Chat tab; soft-delete empty contact-only shells.
+- Root cause: INC-097 v2 iterated Evolution Contact book as dialogs; scrape treated phone deep-link HTML as TG presence and wrote `https://t.me/+E.164` (TG Desktop: user not found; real users like +79052000305 have `@ShinkevichJu`).
+- Changes:
+  - `ai-whatsapp-worker`: sync source = `findChats`+`findMessages` only; Contact book enrich only; skip 0-message rows; repair zero-msg CRM shells; `enrichTelegramPresenceFromPhone` → ImportContacts `@username` only → `/users/full` + `applyTelegramProfile` (about/birthday/channel/name; phone only if matches WA E.164); clear false `t.me/+` fields.
+  - `gramjs-bridge`: username from `usernames[]` + getEntity; `/users/by-phone` link only `t.me/{user}`; `/users/full` uses same username extract.
+  - `saas-api` crm-chat: SQL fallback Opportunity.pointOfContactId; prefer Conversations with messages.
+- Verify: sync → peopleSynced ≈ open private chats; `@ShinkevichJu` not `t.me/+79052000305`; empty TG when not found; Chat loads msgs; repairedEmptyLeads clears contact-only.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker,saas-api,gramjs-bridge` — backup `/opt/voxly/backups/20260805-101610/` (`voxly_control.dump` 260K, `twenty.dump` 1.7M); smoke landing/api/health/dashboard **200**. `refresh-crm-chat` voxly+efim1 `{ok:true}`. Volumes untouched. No commit.
+- Next: portal «Синхронизировать» (force) on WA — repair clears contact-only + false `t.me/+`; open chats re-sync with `@username` + profile enrich.
+
+### 2026-08-05 — INC-097 v2: WA Contact-book sync + TG phone check + Chat person resolve
+
+- Goal: restore WA private-chat deals after v1 skip-all; rich Person (phone/FIO/website/IG); Telegram presence; fix Chat «Нет данных» for deals linked only by Person (e.g. `@velengurin`).
+- Why 0 deals: INC-097 v1 skipped CRM without E.164/name; Evolution chats are LID-only and Contact book was unused as sync source; repair wiped LID leads including named ones.
+- Changes:
+  - `ai-whatsapp-worker`: preload Contact book; sync PN `@s.whatsapp.net` contacts; LID→PN via book + unique pushName; PN findMessages fallback; repair only empty identity; `enrichTelegramPresenceFromPhone` after syncLead; `GRAMJS_BRIDGE_URL` on worker compose.
+  - `gramjs-bridge`: `POST /users/by-phone` (ImportContacts + cleanup).
+  - `saas-api` crm-chat + `twenty-client`: Opportunity→pointOfContact → find Conversation by personId; backfill `twentyOpportunityId`.
+- Verify: WA «Синхронизировать» → peopleSynced>0 with phones/names; Person.telegram when on TG; Chat tab history for GramJS/WA deals; groups/suppressDealCreation unchanged.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker,saas-api,gramjs-bridge,compose` — backup `/opt/voxly/backups/20260805-095059/`; smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+- Next: re-sync WA from portal; open `@velengurin` Chat tab.
+
+### 2026-08-05 — Fix WA history sync empty CRM shells (INC-097)
+
+- Goal: stop WhatsApp history sync from creating Person/Opportunity with empty phone/name; repair bad rows; keep chat messages.
+- Root cause: Evolution chats are `@lid`-only (no remoteJidAlt); Contact PN book unlinked; syncLead still created «WhatsApp» shells. Title `… · WA · 9855014040` = bot displayName, not peer phone. CRM Chat API OK when linked; empty fields looked like «Нет данных».
+- Changes (`ai-whatsapp-worker`):
+  - History sync: PN via message extractors + Contact/Chat + Redis `lid-mapping-*_reverse`; skip self/`0@`/groups; skip CRM without E.164 or real name; business profile like inbound; reject `Você` as name.
+  - `repairEmptyWaHistoryLeads`: soft-delete empty Twenty Person/Opportunity + clear Conversation CRM ids (msgs kept).
+  - Inbound/backfill also try lid_mapping; `EVOLUTION_REDIS_URI` on worker compose.
+- Verify (prod bot `cmsfsbnei…`): sync → `peopleSynced=0`, `skippedEmptyIdentity=14`, `repairedEmptyLeads=15` then 0; live empty WhatsApp Persons = 0; 15 convs unlinked, msgs intact.
+- Deploy: backup `/opt/voxly/backups/20260805-092457/`; `./scripts/prod-deploy.sh ai-whatsapp-worker,compose` (+ skip-backup follow-ups). Volumes untouched. No commit. GramJS portal untouched.
+- Next: phones appear after Evolution LID→PN (inbound / lid_mapping) → re-sync or live message recreates filled leads.
+
+### 2026-08-05 — GramJS manual sync chats button (no QR)
+
+- Goal: mirror WA «Синхронизировать чаты» on `/dashboard/ai/gramjs` — re-import all private dialogs without reconnect QR.
+- Changes:
+  - `saas-api` `POST /api/bots/gramjs/accounts/:botId/sync-history` → `runGramjsPrivateChatSync` (same as connect); clear RU error if session dead.
+  - `gramjs-bridge` `/crm/private-dialogs`: catch loadClient failures + `isUserAuthorized` check.
+  - Portal: RefreshCw button + syncHint; copy no longer says «отключите и QR».
+- Verify: connected account → button → counts; dead session → «Сессия Telegram неактивна…»; WA/gift untouched.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal,gramjs-bridge` — backup `/opt/voxly/backups/20260805-090834/` (`voxly_control.dump` 214K, `twenty.dump` 1.3M). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+
+
+### 2026-08-05 — Uncap private chat history sync (all dialogs × 30 msgs)
+
+- Goal: sync **all** private WhatsApp + GramJS dialogs into CRM (was hard-capped at 40); keep per-chat message depth bounded; rate-limit to reduce ban/FloodWait risk.
+- Changes:
+  - `gramjs-bridge` `exportPrivateDialogsForCrm`: `getDialogs({ limit: undefined })` when uncapped; sleep ~500–900ms between peers; concurrency 1.
+  - `saas-api` `runGramjsPrivateChatSync` + connect job: default dialogLimit=0 (all); messageLimit=30 (max 80).
+  - `ai-whatsapp-worker` `runWhatsAppPrivateChatSync`: no dialog slice cap by default; sleep ~250–500ms between chats; portal/API defaults dialogLimit=0.
+  - Portal copy on `/dashboard/ai/whatsapp` + `/gramjs`: «все личные» + «до 30 сообщений».
+- Limits now: **dialogs = all private** (groups/channels/`@g.us` still skipped); **messages/chat = 30** (API max 80).
+- Re-trigger: WA → button «Синхронизировать» or `POST /api/bots/whatsapp/accounts/:botId/sync-history`; GramJS → button «Синхронизировать» or `POST /api/bots/gramjs/accounts/:botId/sync-history` (no QR) / connect / admin enrich / internal `POST /api/internal/gramjs/connected`.
+- Verify: connect or sync → logs show dialog count >40 when account has more; groups skipped; suppressDealCreation honored; gift-bot untouched.
+- Deploy: `./scripts/prod-deploy.sh gramjs-bridge,saas-api,ai-whatsapp-worker,saas-portal` — backup `/opt/voxly/backups/20260805-085839/` (`voxly_control.dump` 207K, `twenty.dump` 1.3M). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+- Broken / next: deep history beyond 30 msgs/chat still not pulled (by design for rate limits). (Follow-up: GramJS manual sync button — see entry below.)
+
+
+
+- Goal: user correction — `suppressDealCreation` must **not** auto-set when Opportunity is deleted; only CRM chat «Не создавать сделку».
+- Changes:
+  - Removed auto-set in `ai-telegram-worker` / `ai-whatsapp-worker` / `gift-bot-worker` syncLead + `saas-api` `gramjs-chat-sync` (stale/deleted Opportunity clears `twentyOpportunityId` only).
+  - Kept: honor flag when true; `POST /api/crm/chat/:id/suppress-deal` + UI toggle; GramJS group skip unchanged.
+  - Docs: CAPABILITIES + INC-096 corrected.
+- Verify: delete deal → flag stays false → inbound can recreate Opportunity; toggle on → inbound skips create.
+- Deploy: `./scripts/prod-deploy.sh saas-api,ai-telegram-worker,ai-whatsapp-worker,gift-bot-worker` — backup `/opt/voxly/backups/20260805-084346/`; smoke landing + api/health + dashboard OK. Gift-bot portal untouched (ADR-027). Volumes untouched. No commit.
+
+### 2026-08-05 — WA private chat history sync on connect (gap from GramJS)
+
+- Goal: mirror GramJS connect import for WhatsApp at `/dashboard/ai/whatsapp` — private chats → Conversation + ChatMessage + CRM deals (not groups).
+- Changes:
+  - `ai-whatsapp-worker`: `runWhatsAppPrivateChatSync` via Evolution `POST /chat/findChats` + `findMessages`; skip `@g.us`/broadcast/newsletter; 40×30; honor `suppressDealCreation` via `syncLeadToCrm`; idempotent by `externalMessageId`; debounce 2m; trigger on CONNECTION_UPDATE open + QR `authorized`; `POST /internal/crm/sync-history`.
+  - `saas-api`: `POST /api/bots/whatsapp/accounts/:botId/sync-history` (owner JWT → worker).
+  - Portal: sync button (RefreshCw) on connected accounts + post-authorize hint.
+- Limits / caveat: best-effort — only chats/messages already persisted in Evolution DB after WA multi-device sync; may be empty/partial right after QR. Re-run button after a minute if needed. No AI replies on history import.
+- Verify: connect or press sync → worker log `history-sync bot=…`; CRM People/Opportunities for private JIDs only; groups skipped; suppress toggle still blocks new Opportunity; GramJS/gift/send-from untouched.
+- Deploy: **yes** `./scripts/prod-deploy.sh ai-whatsapp-worker,saas-api,saas-portal` — backup `/opt/voxly/backups/20260805-084550/` (`voxly_control.dump` 207K, `twenty.dump` 1.3M). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+- Broken / next: none for this path. If Evolution DB empty right after QR, wait ~1–2 min and press sync again.
+
+
+### 2026-08-05 — GramJS: no CRM deals from groups + suppress-deal + private chat sync
+
+- Goal: group chatter must not create Person/Opportunity; optional suppress-deal after manual toggle; sync private dialogs on GramJS connect (bots not required).
+- Root cause (prod voxly): `8855743233 · AI · @toxasagmsk` / Person `MG 8855743233` = **group** inbound on `@toxasagmsk` (GramJS). `@igor_dev_ru` = real private photo+caption via `@genadich_agency`, but orphaned `botInstanceId=null` → empty CRM chat.
+- Changes:
+  - `gramjs-bridge`: skip non-private chats for AI/CRM; `POST /crm/private-dialogs`; relink orphaned gramjs convs on connect.
+  - `Conversation`/`GiftSubscriber.suppressDealCreation` + migrate; honor in TG/WA/gift syncLead (**later corrected:** no auto-set on Opportunity delete — manual toggle only).
+  - CRM: `POST …/suppress-deal` + chat toggle «Не создавать сделку»; crm-chat **0.1.25**.
+  - `runGramjsPrivateChatSync` on connect job (40 dialogs × 30 msgs, private only).
+  - Orphan chat targets: fallback bot when `botInstanceId` null.
+- Verify: group msg → no deal; DM → deal; suppress toggle; reconnect imports private history.
+- Deploy: `./scripts/prod-deploy.sh gramjs-bridge,saas-api,ai-telegram-worker,ai-whatsapp-worker,gift-bot-worker` — backup `/opt/voxly/backups/20260805-083000/` (+ retry `--skip-backup` after TS fix). Migrate `20260805120000_conversation_suppress_deal` applied. crm-chat **0.1.25** refresh voxly+efim1 `{ok:true}`. Ops: MG conv `suppressDealCreation=true`; igor `botInstanceId` relinked to genadich_agency. Volumes untouched.
+- Gaps: multi-GramJS orphan relink only when sole active session.
+
+### 2026-08-05 — CRM send-from accounts + rename GramJS/WA
+
+- Goal: CRM «Пишем от» can send via connected GramJS/WA (not only gift bot); rename accounts on `/dashboard/ai/gramjs` + `/whatsapp`. Preserve-first (Phase 0 backup already `/opt/voxly/backups/20260805-075512/`).
+- Changes:
+  - Additive only: reuse `BotInstance.displayName` (no schema migrate).
+  - `PATCH /api/bots/gramjs|whatsapp/accounts/:botId` + portal pencil rename UI.
+  - GramJS GET accounts exposes `displayName`; CRM `channelMeta` prefers it for GramJS identity.
+  - crm-chat GET `sendFromOptions[]`; reply `sendFromBotId` + peer resolve (TG id from gift/TG thread; WA only if existing WA dialog). Clear RU 400 if no mapping.
+  - `voxly-crm-chat` **0.1.24**: «Пишем от» `<select>`; logic forwards `sendFromBotId`.
+  - Gift-bot setup UX untouched (ADR-027).
+- Verify: local `tsc` saas-api + saas-portal OK; portal build on prod OK; smoke landing/api/health/dashboard **200**.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` — backup `/opt/voxly/backups/20260805-080506/` (+ Phase0 `/opt/voxly/backups/20260805-075512/`). Volumes untouched. No commit.
+- crm-chat tarball **0.1.24** baked; `refresh-crm-chat` efim1 + voxly → `{ok:true}`.
+- Limitations: WA from gift-only lead without WA dialog = unavailable; GramJS media outbound still text-only; TG Business cross-account not listed; GramJS send may fail if peer privacy/no mutual history (bridge error surfaced).
+
+
+### 2026-08-05 — Phase 0 backup before CRM send-from / account rename
+
+- Goal: preserve client data + document current CRM «Пишем от» before additive GramJS/WA rename + send-from features. User: «Сначала сохрани все настройки. не сломай ничего!»
+- Snapshot (no code change yet):
+  - Accounts: `BotInstance` (`botType` ai_gramjs / ai_wa / gift…); human label = existing nullable `displayName` (WA already uses; GramJS GET `/accounts` did not expose it).
+  - CRM send: reply always uses **active thread** bot (`GiftSubscriber` or `Conversation.botInstanceId`). Header «Пишем от» is label-only (`channelLabel · identityLabel`), not an account picker. Cross-channel send from gift-lead via GramJS/WA was not possible without a separate linked Conversation.
+  - Gift-bot setup UX (ADR-027) untouched.
+- Backup (prod, volumes untouched): `/opt/voxly/backups/20260805-075512/` (`voxly_control.dump` 205K, `twenty.dump` 1.3M). Containers `docker-postgres-control-1`, `docker-postgres-twenty-1`.
+- Next: Phase 1 rename PATCH + UI; Phase 2 sendFrom selector + reply wiring; deploy saas-api + portal + crm-chat after local verify.
+
+
+### 2026-08-05 — INC-095: gift extraButtons stripped on campaign save
+
+- Goal: persist step-4+ `extraButtons` on save; rename step-4 CTA to «Сохранить».
+- Changes:
+  - `apps/saas-api/src/routes/bots.ts` — `sanitizeFunnel` now keeps `extraButtons` on start/gift/notSubscribed/afterGift/notGifted (was silently dropped after zod accept)
+  - portal step 4 save label: «Сохранить пост после старта» → «Сохранить»
+- Verify: add https URL button on step 4 → save → hard refresh → row + preview remain; other ExtraUrlButtonsEditor blocks same path
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api,saas-portal` — backup `/opt/voxly/backups/20260805-071948/` (`voxly_control.dump`, `twenty.dump`). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+- Broken / next: none for this path.
+
+### 2026-08-04 — Gift-bot extra URL buttons under posts
+
+- Goal: allow optional custom https URL inline buttons under gift posts (steps 4–6 + Дожим notGifted/notSubscribed); default empty = no change for existing bots.
+- Changes:
+  - `@voxly/shared`: `GiftExtraButton`, `extraButtons?` on `start` / `gift` / `GiftFunnelMessage`
+  - saas-api `PUT …/campaign` zod: validate ≤8 `{text,url}` http(s) buttons
+  - portal: `ExtraUrlButtonsEditor` («Добавить кнопку») + preview via `TelegramPreview` `linkButtons` (↗); sanitize incomplete rows on save
+  - gift-bot-worker: append extras in `subscribeKeyboard` / gift delivery / delay jobs (`after_gift` = extras only)
+- Verify: add button on step 4 → preview green URL row → save → `/start` shows channel + custom + «Я подписался»; empty bots unchanged
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api,saas-portal,gift-bot-worker` — backup `/opt/voxly/backups/20260804-160301/` (`voxly_control.dump`, `twenty.dump`). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+
+### 2026-08-04 — Promo button: optional click counter
+
+- Goal: allow hiding « · N» on gift promo channel button (step 3); keep counter on by default for existing bots.
+- Changes:
+  - `@voxly/shared`: `GiftPromoPost.showClickCounter`, `promoShowClickCounter()`, `formatPromoButtonLabel(..., showClickCounter?)`
+  - saas-api `PUT/POST …/promo`: persist + publish label respects flag
+  - gift-bot-worker `trackPromoClick`: skip `editMessageReplyMarkup` when counter hidden; still increments `clickCount`
+  - portal `#section-promo`: checkbox «Показывать счётчик нажатий на кнопке»; preview/hint update
+- Verify: uncheck → preview without « · N»; save + publish → TG button plain label; re-check + republish → counter back
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api,saas-portal,gift-bot-worker` — backup `/opt/voxly/backups/20260804-154215/` (`voxly_control.dump`, `twenty.dump`). Smoke landing/api/health/dashboard **200**. Volumes untouched. No commit.
+
+### 2026-08-04 — Gift-bot CTA label «Добавить сообщение»
+
+- Goal/Changes/Verify/Deploy: `MessageList` «+ ещё напоминание» → «Добавить сообщение» (`BTN_AMBER` unchanged); `./scripts/prod-deploy.sh saas-portal` backup `/opt/voxly/backups/20260804-150819/`; volumes untouched; no commit.
+
+### 2026-08-04 — Gift media quality: stage as document (INC-094)
+
+- Goal: stop irreversible Telegram recompression of gift photo/video at upload staging.
+- Changes:
+  - `uploadAttemptsForKind` photo/video → `sendDocument` first; keep requested `mediaType` photo/video when staged as document
+  - `detectStoredMediaKind` + `isTelegramDocumentFileId`: BQAC/BQAD + photo|video hint → intent (true docs unchanged)
+  - saas-api `publishChannelMedia` + gift-bot-worker `sendBotPhoto`/`sendBotVideo`: download → sendPhoto/Video; fallback sendDocument if getFile fails
+  - Tests shared; ADR-002 note; INC-094
+- Verify: `pnpm --filter @voxly/shared test` / root vitest shared cases green (90 passed unit suite)
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api,gift-bot-worker,saas-portal` — backup `/opt/voxly/backups/20260804-150636/` (`voxly_control.dump`, `twenty.dump`). Volumes untouched. No commit.
+- Broken / next: already-uploaded AgAC/BAAC file_ids stay compressed (re-upload to get originals); getFile 20MB cap → large files send as document.
+
+### 2026-08-04 — Gift-bot «+ ещё напоминание» → amber CTA
+
+- Goal: match add-reminder buttons on `/dashboard/bots/[botId]` to promo «Опубликовать в канале» (`land-btn-amber` / `BTN_AMBER`).
+- Changes: `MessageList` «+ ещё напоминание» `BTN_GHOST_SM` → `BTN_AMBER` (covers after-gift + Дожим notGifted/notSubscribed). Ghost saves/cancel/delete untouched; previews/text/emoji/media untouched (ADR-027).
+- Verify: portal build ok; smoke landing/api/health/dashboard **200**.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-145632/` (`voxly_control.dump`, `twenty.dump`). Volumes untouched. No commit.
+- Broken / next: none.
+
+### 2026-08-04 — Persist gift-bot setup UX as multi-tenant canon (ADR-027)
+
+- Goal: lock `/dashboard/bots/[botId]` polish (steps 1–6 + Дожим, dual photos, emoji under preview, media-file preview, TG chrome, partners page chrome, InputWithEmoji/TelegramMdTextarea, PNG→JPG) as the standard for **all** tenants; prevent future regressions.
+- Changes (docs only):
+  - `docs/agent/CAPABILITIES.md` — canonical gift detail section + Do not regress checklist; `media-file` API row
+  - `docs/agent/DECISIONS.md` — **ADR-027**
+  - `docs/agent/README.md` — reading order 3b for gift portal
+  - `.cursor/rules/gift-bot-setup-ux.mdc` — always-on reminder
+  - `steps.md` §4 snapshot note
+- Verify: repo grep — **zero** hits for example bot id `cmseet8qs000eq8b1ld6nmszc`; page uses `useParams().botId` + `/api/bots/${botId}/*` only.
+- Deploy: **no** (no code bug). Commit: no (docs unless user asks).
+- Broken / next: none; agents must not casually refactor preview/text/media.
+
+### 2026-08-04 — Gift-bot detail restyle to partners visual language
+
+- Goal: align `/dashboard/bots/[botId]` page chrome with partners / bots-index amber industrial style without touching funnel logic or Telegram preview chrome.
+- Changes:
+  - `apps/saas-portal/src/app/dashboard/bots/[botId]/page.tsx` — Card/Button → section + `land-btn` / `land-btn-ghost` / `land-btn-amber`; cream readiness (`#faf8f5`); warm how-to (`#fff8ec` / `#f5a623`); partners alert/table/hint tokens; TG previews untouched.
+  - `apps/saas-portal/src/components/portal/project-picker.tsx` — same tokens (cream panels, amber selected border, land buttons).
+- Verify: portal `tsc --noEmit` ok; deploy smoke landing/health/dashboard partners+crm+ai **200**.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-113607/` (`voxly_control.dump`, `twenty.dump`). Volumes untouched. No commit.
+- Broken / next: hard-refresh bot detail; confirm TG previews still look like Telegram.
+
+### 2026-08-04 — Deploy gift-bot-worker: shared detectStoredMediaKind prefix-wins
+
+- Goal: ship send-path fix so gift `type=file` with photo/video file_id prefixes is not sent as document (same shared change as portal preview audit).
+- Changes: no new code in this step; rebuild `gift-bot-worker` with `packages/shared` where `detectStoredMediaKind` prefers known Telegram file_id prefixes over stored mediaType.
+- Verify: dry-run then `./scripts/prod-deploy.sh gift-bot-worker`; container grep shows «Known file_id prefixes are authoritative»; worker `/health` ok; landing + `api/health` + dashboard smokes **200**.
+- Deploy: **yes** — backup `/opt/voxly/backups/20260804-111824/` (`voxly_control.dump`, `twenty.dump`). Volumes untouched.
+- Broken / next: none for this path; Telegram getFile ~20MB cap still applies to preview.
+
+### 2026-08-04 — Auto CRM enrich+dedupe on GramJS connect
+
+- Goal: after personal TG connect, scan CRM contacts → enrich + soft-merge phone duplicates; new leads keep enrich. All portals.
+- Changes:
+  - `runTelegramCrmEnrich` + BullMQ `gramjs-crm-enrich`
+  - `POST /api/internal/gramjs/connected` (bridge service token)
+  - bridge notifies saas-api on QR authorize + `/sessions/connect`
+  - admin enrich uses same service (`async:true` queues)
+- Verify: connect GramJS → logs `[gramjs-crm-enrich] done`; Persons get phone/about/birthday; dupe Conversations share personId.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api,gramjs-bridge` — smoke **200**.
+
+### 2026-08-04 — GramJS Telegram profile → CRM Person (phone/about/birthday)
+
+- Goal: auto-fill Person from Telegram profile visible in app (phone, bio, birthday, name, channel) — Bot API cannot see these.
+- Changes:
+  - `gramjs-bridge` `POST /users/full` → `users.GetFullUser`
+  - `twenty-client`: Person fields `about` + `birthday`; `applyTelegramProfile`
+  - gift-bot + ai-telegram: enrich after CRM sync
+  - admin `POST /api/admin/tenants/:id/enrich-telegram-profiles` backfill
+- Verify: tenant needs active `ai_gramjs`; privacy must expose fields; then enrich or new /start.
+- Deploy: **yes** `./scripts/prod-deploy.sh gramjs-bridge,gift-bot-worker,ai-telegram-worker,saas-api` — smoke **200**.
+- Broken / next: voxly has **no** `ai_gramjs` yet — connect at `/dashboard/ai/gramjs` (account that sees phone/ДР), then auto-enrich on connect.
+
+### 2026-08-04 — INC-021 reopen: kanban note chip showed title not body
+
+- Goal: chip **Заметки** = note **body** (not short title like «мм»).
+- Root cause: PG triggers `voxly_sync_note_title_from_body` **missing** on both ACTIVE workspaces; `reapply-crm-defaults` only did GraphQL (labelIdentifier=title) without SQL backfill/triggers. Example: title=`мм`, body=`мсмчмчмч`.
+- Changes:
+  - Ops: applied `docker/set-opportunity-kanban-card-defaults.sql` on prod → backfill + triggers; titles now = body.
+  - Code: `ensureOpportunityKanbanCardDefaults` in saas-api; hooked in provision (`queues.ts`) + `reapply-crm-defaults` (`admin.ts`).
+- Verify: voxly note titles = body markdown; triggers present on both schemas.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-api` — smoke landing/health/dashboard **200**. SQL already live; code keeps triggers on provision/reapply.
+- Broken / next: hard-refresh voxly-crm Сделки — chip should show body (`мсмчмчмч`), not `мм`.
+
+### 2026-08-04 — Opportunity kanban card fields (noteTargets) on all portals
+
+- Goal: deal cards show full default fields incl. **Заметки** (`noteTargets`); align live portals with SoT.
+- Changes (ops): `POST /api/admin/tenants/:id/reapply-crm-defaults` for **voxly** + **efim1** → `ensureOpportunityKanbanCardFields` added missing `createdAt`/`taskTargets`, set `noteTargets` size **280** (was 100). Note `labelIdentifier` = **title** (unchanged).
+- Verify (prod PG): both ACTIVE workspaces INDEX KANBAN viewFields = name, createdAt, amount, createdBy, closeDate, company, pointOfContact, taskTargets, noteTargets@280.
+- Deploy: **no** (admin reapply only). Hard-refresh `{slug}-crm` Сделки.
+- Broken / next: new portals get same via `provisionWorkspace` → `applyWorkspaceDefaults` (coded ADR-010, not live clone of one URL).
+
+### 2026-08-04 — Gift-bot preview audit: media kind + chrome consistency
+
+- Goal: audit all gift-bot detail preview blocks; fix media stuck on placeholder when `file_id` exists but kind was wrong.
+- Changes:
+  - Root: gift step defaulted `type=file` → `mediaType: document`, so `useResolvedMediaSrc` skipped photo/video fetch (`isVisualMediaKind`).
+  - `detectStoredMediaKind` — known Telegram `file_id` prefixes now beat wrong/legacy `mediaType` (AgAC→photo even if hinted document).
+  - `TelegramPreview` resolves kind via `detectStoredMediaKind` when `telegramFileId` set; uses `TG_INLINE_BTN` from chrome.
+  - Gift preview: no longer defaults to document; link gifts append URL in text (matches worker delivery).
+  - `BotGreetingPreview` uses `TG_START_BTN`; chrome inline-btn green aligned.
+- Verify: shared tests 23 pass; deploy smoke landing/health/dashboard 200.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-111207/` (compose also recreated saas-api as dep; no API route change).
+- Broken / next: Telegram `getFile` ~20MB cap; document/voice/audio stay labeled placeholders; gift-bot-worker rebuilt with prefix-wins shared — backup `20260804-111824` (see entry above).
+
+### 2026-08-04 — INC-092: login 500 (disk full / PG recovery)
+
+- Goal: restore portal login after Internal Server Error for `anton@genadich.com` (and all users).
+- Changes (ops only, no app code):
+  - Root cause: `/` at 100% → `postgres-control` stuck in recovery (checkpoint PANIC) + Redis MISCONF; login Prisma `user.findUnique` 500.
+  - Freed ~68GB via `docker image prune -f` (+ truncate container logs, journal vacuum). **No** `down -v`, no DB wipe.
+  - Restarted `postgres-control`, then `saas-api` + gift/platform/manager/ai workers (stale Prisma P1017).
+- Verify: `POST https://api.getvoxly.ru/api/auth/login` → **401** Invalid credentials (not 500); user row exists; health + `/login` 200; PG healthy; `df` ~26% used / 70G free.
+- Deploy: **no** `prod-deploy.sh` (infra). Last app backup remains `/opt/voxly/backups/20260804-103952/`.
+- Broken / next: schedule periodic dangling-image prune; watch disk before multi-service rebuilds (INC-052/092).
+
+### 2026-08-04 — INC-093: gift TelegramPreview placeholder instead of media
+
+- Goal: fix gift-bot preview showing «Медиа загружено» after media is saved to Telegram.
+- Changes:
+  - Root: preview had `file_id` only (no public URL / lost blob after reload).
+  - `GET /api/bots/:botId/media-file?fileId=` proxy via Telegram `getFile` (saas-api).
+  - `TelegramPreview` resolves photo/video/video_note via auth fetch → blob; keeps local blob when present; document/voice/audio stay labeled placeholders.
+  - Wired `botId`+`telegramFileId` on bot detail + gift broadcasts previews.
+- Verify: hard-refresh bot page with saved photo → image in preview; video ≤20MB; smoke landing/health.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` — backup `/opt/voxly/backups/20260804-110027/`; smoke landing/health/dashboard **200**.
+- Broken / next: Telegram `getFile` download cap ~20MB — larger videos keep placeholder unless same-session blob exists.
+
+### 2026-08-04 — Unified Telegram previews (chat + before-Start)
+
+- Goal: match real TG chat UI (wallpaper, green inline buttons, ↗ on URL) and unify chrome with BotGreetingPreview.
+- Changes:
+  - New `telegram-preview-chrome.tsx` — shared frame, label, header, wallpaper tokens.
+  - `telegram-preview.tsx` — mint doodle wallpaper `#95bb87`, white bubble, translucent green buttons + link icon; shared header + optional `botAvatarUrl`.
+  - `bot-greeting-preview.tsx` — same frame/header; keeps blue greeting wash + distinct profile vs card photo + СТАРТ.
+  - `bots/[botId]/page.tsx` — all preview labels via `TG_PREVIEW_LABEL`; avatar wired into every `TelegramPreview`.
+  - Also labels on broadcasts / channel-broadcasts / mailing stories.
+- Verify: smoke landing + api/health + dashboard routes 200; hard-refresh bot detail to see green buttons + shared chrome.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-103952/` (earlier partial authenticity deploy: `20260804-093127`).
+- Broken / next: none for this UI pass.
+
+### 2026-08-04 — Gift bot step 2: two photos + emoji under preview
+
+- Goal: fix «2 шаг: Настройте бота» — separate profile vs description-card photos; emoji under preview; rename save button.
+- Changes:
+  - `bot-greeting-preview.tsx` — `profilePhotoUrl` (header circle) + `cardPhotoUrl` (large card); no longer reuses one asset.
+  - `bots/[botId]/page.tsx` — profile upload→TG API (PNG→JPG kept); card photo local preview + localStorage; BotFather note; `EmojiPickerPanel` under preview with field target; button «Сохранить настройки бота».
+  - `emoji-picker.tsx` — `placement` on popover + `EmojiPickerPanel`; `input-with-emoji` / `telegram-md-textarea` — `showEmoji` / `onFocus`.
+- Verify: step 2 shows two uploads; preview circle ≠ card image; emoji panel below preview; button label updated; deploy saas-portal.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-102056/`.
+- Broken / next: description media still BotFather-only in Telegram (no Bot API).
+
+### 2026-08-04 — Deploy check: already current (saas-api + saas-portal)
+
+- Goal: user «задеплой» — ship any dirty portal/API vs last backup `20260804-100025`.
+- Changes: none. `prod-diff saas-api,saas-portal` hot files all match; spot-check of dirty/untracked product paths (bots/[botId], settings, app-shell, to-jpeg/emoji, bots.ts, forms/max/admin-*, shared, gift-bot-worker, max-bridge) all **MATCH** `/opt/voxly`.
+- Verify: smoke `https://getvoxly.ru/` / `https://api.getvoxly.ru/health` / `/dashboard/bots` / `/dashboard/settings` / `/login` → **200**. Containers Up (created ~2026-08-04T10:01Z) after prior funnel-reorder deploy.
+- Deploy: **skipped** (already current). Last backup remains `/opt/voxly/backups/20260804-100025/`.
+- Broken / next: none for this check; local git still dirty/uncommitted but code already on prod via prior rsync deploys.
+
+
+### 2026-08-04 — Gift-bot setup steps reorder/rename on `/dashboard/bots/[botId]`
+
+- Goal: rename + reorder TG funnel setup blocks to numbered «N шаг» flow; separate «Дожим» nudges.
+- Changes:
+  - `apps/saas-portal/src/app/dashboard/bots/[botId]/page.tsx` — visual order: 1 канал → 2 настройка бота → 3 пост акции → 4 пост после старта → 5 подарок → 6 после выдачи → **Дожим** (молчит / не подписан); readiness TOC: channel → promo → start → gift → subs; MAX titles adapted (1–3 + Дожим).
+  - `docs/agent/CAPABILITIES.md` — bots/[botId] row updated.
+- Verify: prod `.next` page.js contains all 6 step titles + Дожим + both nudge titles; `/dashboard/bots` 200; smoke landing + api/health OK.
+- Deploy: **yes** `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-100025/`.
+- Broken / next: none for this UI pass; hard-refresh bot detail if CDN/cache.
+
+### 2026-08-04 — `/dashboard/settings` profile page + mobile avatar menu
+
+- Goal: fix avatar «Настроить профиль» 404; same menu on mobile header.
+- Changes:
+  - `apps/saas-portal/src/app/dashboard/settings/page.tsx` — amber hero + cream cards; read-only email/name/role/workspace from `GET /api/auth/me`; note that password/profile edit APIs are not wired (`PATCH /api/tenant` stub returns 400).
+  - `app-shell.tsx` — mobile sticky header: avatar `DropdownMenu` (settings + logout) beside Bell, before hamburger.
+  - `CAPABILITIES.md` — row for `/dashboard/settings`.
+- Verify: local `/dashboard/settings` loads profile; desktop+mobile avatar → settings; member redirect still allows settings.
+- Deploy: **not** (local fix; leave saas-portal deploy for coordinated portal agents).
+- Broken / next: no self-service change-password yet.
+
+### 2026-08-04 — Deploy: portal/API UX batch (settings + avatar menu + PNG/emoji)
+
+- Goal: ship gift-bot PNG→JPG avatar convert + emoji fields, avatar DropdownMenu, `/dashboard/settings` to prod with `saas-api` + `saas-portal`.
+- Changes (rsync via `./scripts/prod-deploy.sh --no-cache saas-api,saas-portal`):
+  - Portal: `to-jpeg.ts`, `emoji-picker.tsx`, `input-with-emoji.tsx`, `bots/[botId]`, `app-shell` avatar menu, `/dashboard/settings`.
+  - API: `bots.ts` JPEG/PNG avatar validation messaging (client converts PNG→JPG).
+  - Piggyback (dirty tree already intentional WIP): MAX/forms/admin pricing+AI-balance+services portal+API surfaces, `packages/` + migrations already on control DB (`form_lead_intake`, `referral_service_rate` — no pending), `twenty-app/voxly-crm-chat` nav tweaks.
+- Verify:
+  - Backup: `/opt/voxly/backups/20260804-094716/` (`voxly_control.dump`, `twenty.dump`).
+  - Smoke: landing 200; `api/health` 200 `{"status":"ok"}`; `/dashboard/{partners,crm,ai,ai/agents}` 200; extra `/dashboard/bots`, `/dashboard/settings`, `/dashboard/bots/max` 200.
+  - Remote files present: `settings/page.tsx`, `to-jpeg.ts`, `emoji-picker.tsx`, `input-with-emoji.tsx`.
+- Broken / next: hard-refresh cabinet for avatar menu + PNG/emoji; live PNG upload + emoji insert smoke on a gift bot; password change still not wired on settings.
+- Skipped intentionally: did **not** deploy `gift-bot-worker` / `max-bridge` / compose in this run (worker MAX handlers remain local dirty if any).
+
+### 2026-08-04 — `/dashboard/bots` amber restyle + reorder + header cleanup
+
+- Goal: match bots index to orange hero language; funnel totals above connect; list CTA «Настроить бота»; remove top toolbar (Подключить бота / Рассылки / Подарки MAX).
+- Changes: `apps/saas-portal/src/app/dashboard/bots/page.tsx` only — section order hero → alert → balance? → 3-step → **Итоги** → **Подключить** → list; cream/`#fff8ec` sections; amber alert/badge; CTA label fixed.
+- Verify: lint clean on page; DOM order + CTA text; header buttons gone.
+- Deploy: `./scripts/prod-deploy.sh saas-portal` — backup `/opt/voxly/backups/20260804-093127/`; smoke OK.
+- Broken / next: pre-existing bots load API errors untouched.
+
+### 2026-08-04 — Dashboard header avatar menu (profile + logout)
+
+- Goal: sticky header avatar opens menu with «Настроить профиль» + «Выйти».
+- Changes: `apps/saas-portal/src/components/portal/app-shell.tsx` — shadcn `DropdownMenu` on desktop avatar; profile → `/dashboard/settings`; logout reuses existing `localStorage.removeItem('voxly_token')` + `router.push('/')`; initials from JWT email; member redirect allows `/dashboard/settings`.
+- Verify: local — click avatar → menu; Escape closes; Выйти clears token. **Not deployed** (shared shell; leave for saas-portal deploy with other agents).
+- Broken / next: **no `/dashboard/settings` page yet** (404) — needs a profile settings page; no `/dashboard/profile` either.
+- Backup: n/a (local only).
+
+### 2026-08-04 — Gift bot: PNG avatar + emoji on greeting/button fields
+
+- Goal: finish incomplete UX — profile photo accept PNG (Telegram static = JPG only); emoji picker on remaining gift-bot text blocks.
+- Changes:
+  - Portal: `fileToJpegFile` (`to-jpeg.ts`) before `POST …/telegram-profile/photo`; accept `.jpg/.jpeg/.png/.webp`; copy «PNG или JPG» (no «Только JPG»).
+  - Portal: `InputWithEmoji` on bot name, short description, subscribe `confirmLabel`, promo `buttonText`; `TelegramMdTextarea` (+ emoji) on description, start/promo/funnel/gift caption, MessageList, operator reply.
+  - `emoji-picker.tsx`: fixed corrupted «Люди» group (ASCII «Blond»); note that TG Premium *custom packs* = paste from Telegram; Unicode via picker.
+  - API (prior/partial): JPEG magic-byte check + friendly error mentioning client PNG→JPG.
+- Verify: `pnpm --filter @voxly/saas-portal typecheck` OK; `pnpm --filter @voxly/saas-api typecheck` OK; no «Только JPG» in portal/api; emoji «Люди» group clean (no ASCII corruption).
+- Deploy: **ready to deploy** — batch with avatar menu / settings (`saas-api,saas-portal`). Not deployed this session.
+- Broken / next: hard-refresh after deploy; TG Premium *custom pack* emoji only via paste from Telegram (Unicode via picker).
+
+### 2026-08-03 — INC-090: Traefik readTimeout 300s for gift media upload
+- Goal: user re-upload after INC-089 still abort ~57%.
+- Root cause: Traefik `web` entrypoint default `readTimeout: 60s` (confirmed via `/api/entrypoints`); POST reached saas-api then client/NPM 499 at exactly 60s.
+- Changes: `docker-compose.prod-npm.yml` respondingTimeouts 300s; recreate `traefik` (`docker-compose ... up -d --force-recreate --no-deps traefik`); NPM `server_proxy.conf` connect/body timeouts 300s + `proxy_buffering off`.
+- Verify: entrypoints `readTimeout: 5m0s`; `https://api.getvoxly.ru/health` 200; landing 200; OPTIONS media 204.
+- Broken / next: user hard-refresh + re-upload; if file >48MB multipart limit, expect 413/fastify error after full body — separate from 60s cut.
+- Backup: NPM `server_proxy.conf.bak-20260803-1908-inc090`; compose synced via `prod-deploy.sh --skip-backup compose`.
+
+### 2026-08-03 — INC-089: media upload buffering off + portal 300s timeout
+
+- Goal: post-INC-088 upload still aborted: API `499` ~189s, saas-api saw only OPTIONS (no POST).
+- Root cause: NPM `proxy_request_buffering on` + portal XHR timeout 180s.
+- Changes: `proxy_request_buffering off` in NPM `server_proxy.conf` (reload); `DEFAULT_TIMEOUT_MS = 300_000` in `upload-bot-media.ts`.
+- Deploy: backup `/opt/voxly/backups/20260803-155457/`; `saas-portal`; nginx bak `server_proxy.conf.bak-20260803-185446`.
+- Verify: buffering `off` in container; landing/health **200**; OPTIONS media **204**.
+- Broken: none. Residual: user must hard-refresh and re-upload a large MP4 to confirm POST hits saas-api mid-upload.
+- Next: client retest «Пост в канале» / broadcasts media.
+
+### 2026-08-03 — INC-088: gift promo/post media upload (all kinds) + deploy
+
+- Goal: promo post video on `cms3bdwkj000aq8b1wyygzspl` progressed then aborted; fix photo/video/document for posts, funnel, broadcasts.
+- Root cause: NPM logs — YaBrowser still `POST getvoxly.ru/.../media` → 500 (Next rewrite); broadcasts used same path; `mediaType` coerced to photo/video so document/`sendVideo` fallback broke publish; NPM read timeout 90s.
+- Changes: `upload-bot-media` harden; broadcasts → direct API + progress; shared `detectStoredMediaKind` + document; API publish/sanitize/worker sendDocument; NPM `server_proxy.conf` 300s/64m.
+- Deploy: backup `/opt/voxly/backups/20260803-153618/`; `saas-api,saas-portal,gift-bot-worker`; smoke 200; OPTIONS `/media` 204.
+- Verify: hard-refresh → upload MP4/photo/file ≤48MB on promo → file_id → Save/Publish.
+- Broken: none. Residual: MAX gift media still unsupported on this endpoint; user must hard-refresh if cached old JS.
+- Next: client retest on bot page section «Пост в канале».
+
+### 2026-08-03 — Deploy: dashboard amber redesign
+
+- Goal: ship `/dashboard` amber hub + tenant dashboard fields (`products.max`, `accounts.max`, `giftMaxBots`) to prod.
+- Changes: deploy via `./scripts/prod-deploy.sh saas-api,saas-portal` (dry-run first).
+- Deploy: backup `/opt/voxly/backups/20260803-151723/` (`voxly_control.dump`, `twenty.dump`); prisma migrate deploy — no pending; recreate saas-api + saas-portal.
+- Verify: smoke `/` **200**, `api/health` **200** + body ok, `/dashboard` **200**, `/dashboard/{partners,crm,ai,ai/agents}` **200**.
+- Broken: none. Brief initial `/` 502 during portal start (~3s), then OK.
+- Next: visual smoke logged-in `/dashboard`; INC-087 pricing 0 ₽ still needs deploy note if not yet shipped in same tree.
+
+### 2026-08-03 — Comp access: free grant for clients (except AI wallet)
+
+- Goal: admin can open CRM/products for free for N months without AI top-up.
+- Changes: `comp-access.ts` `grantCompAccess`; `POST /api/admin/pricing/tenants/:id/comp-access`; UI on `/admin/pricing` («Выдать бесплатно» + 1/3/6/12 мес). Also ships INC-087 (0 ₽ overrides).
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` (×2); backups `/opt/voxly/backups/20260803-152222/` + `20260803-152749/`; smoke landing + api/health + dashboard paths **200**.
+- Verify: saas-api + saas-portal tsc clean; prod smoke OK.
+- Broken: none.
+- Next: UI smoke — efim1 «Выдать бесплатно» 12 мес → CRM unlocked, AI wallet unchanged.
+
+### 2026-08-03 — INC-087: admin pricing allow 0 ₽ tenant overrides
+
+- Goal: `/admin/pricing` individual prices — save `0` (free/comp) for a client.
+- Cause: UI + API rejected prices `< 1` (treated as invalid); Alert at page top easy to miss.
+- Changes: `PRICE_MIN_RUB=0` for tenant overrides; platform min stays 1; portal validation/inputs; `crm-tenant-pricing` + admin CRM PUT; billing fulfils `netAmount===0` without Robokassa.
+- Verify: saas-api + saas-portal `tsc --noEmit` clean.
+- Broken: none. Residual: needs deploy `saas-api,saas-portal` to prod.
+- Next: deploy when asked; smoke efim1 CRM база → 0 → custom.
+
+### 2026-08-04 — Gift media formats: PDF/DOC/XLS + voice + video_note
+
+- Goal: support office files, voice, video circles, photo (not only MP4/photo).
+- Changes: shared `detectUploadMediaKind` + media kinds; API staging/publish; worker send helpers; portal accept/checkbox; fix document→photo coerce (INC-091).
+- Deploy: `--skip-backup saas-api,saas-portal,gift-bot-worker` (prior backup `20260804-085013`); smoke landing/health/cabinet **200**.
+- Verify: shared vitest media cases; saas-api/portal tsc clean.
+- Residual: кружочек needs checkbox or filename `*circle*`; OGG for voice; Telegram limits ≤48 МБ / video note ≤60s.
+
+### 2026-08-04 — Funnel blocks 3.1–3.4 each with preview + no-cache deploy
+
+- Goal: каждый блок воронки (вкл. 3.4 «молчит») — отдельная карточка с превью как пост после старта (кнопки канал + «Я подписался»).
+- Changes: split funnel Card; `linkButtons` on 3.1/3.4; RMB textarea; `prod-deploy.sh --no-cache`; prior greeting/post-start included.
+- Deploy: `--skip-backup --no-cache saas-api,saas-portal` (Docker cache had skipped prior build).
+- Verify: smoke landing/api/health/cabinet 200.
+- Broken: none. Residual: hard-refresh; media needs Telegram linked or verified channel.
+- Next: user retest 3.4 preview + media uploads.
+
+### 2026-08-04 — Gift bot block 3 post-start + RMB format + media
+
+- Goal: «3. Пост после старта»; ПКМ-форматирование; превью с «Перейти в канал»; починить загрузку png/pdf/docx.
+- Changes: `TelegramMdTextarea` + `wrapSelection`/link in shared; preview `linkButtons`; accept list; upload base URL always `api.getvoxly.ru` on prod host; rename section; deploy saas-api+portal (+ shared via image build).
+- Verify: shared vitest md; portal/api tsc; prod smoke after deploy.
+- Broken: none. Residual: staging still needs Telegram linked or verified channel.
+- Next: user hard-refresh and retest uploads + RMB menu.
+
+### 2026-08-04 — Gift bot 1.2 greeting (name, photo, preview)
+
+- Goal: блок 1.2 = приветствие до «Старт» с превью как в Telegram (фото, название, описание).
+- Changes: API `GET/PUT telegram-profile` (+ `setMyName`), `POST/DELETE …/photo`, `GET …/avatar`; portal `BotGreetingPreview` + form; CAPABILITIES.
+- Verify: saas-portal + saas-api tsc clean.
+- Broken: none. Residual: deploy `saas-api,saas-portal`; Telegram limits profile photo change to ~1/day; JPG only.
+- Next: deploy when asked; smoke on a gift bot page.
+
+### 2026-08-03 — Dashboard amber hub redesign
+
+- Goal: `/dashboard` в том же industrial amber стиле, что CRM/partners/AI/bots.
+- Changes: `DashboardPortalHero`; блоки «Сейчас важно», KPI, сетка разделов, партнёрский strip, gift-воронка collapsed; убраны blue HeroBanner и admin-детали (токены/себестоимость); API `GET /api/tenant/dashboard` + `products.max` / `accounts.max|giftMaxBots`.
+- Verify: `saas-portal` tsc clean.
+- Broken: none. Residual: deploy `saas-api,saas-portal` when asked.
+- Next: visual smoke на `/dashboard` после deploy.
+
+### 2026-08-03 — Deploy: web form lead intake Phase 1
+
+- Goal: ship ADR-026 FormLead intake to prod (Tilda/WP → CRM + attribution).
+- Changes: already in tree; deploy `saas-api,saas-portal`.
+- Deploy: backup `/opt/voxly/backups/20260803-122358/`; migrate `20260803160000_form_lead_intake` applied; recreate api+portal.
+- Verify: smoke `/` api/health + body, `/dashboard/crm` (+ partners/ai/agents) **200**; `POST /api/webhooks/forms/:token` registered (unknown token → 404).
+- Broken: none. Residual: client E2E Tilda connect on a real tenant.
+
+### 2026-08-03 — Web form lead intake Phase 1 (Tilda/WP → CRM)
+
+- Goal: universal site form webhook → Twenty Person/Opportunity + attribution for S2S (`web_form_lead`).
+- Changes: Prisma `FormWebhookEndpoint`/`FormLead`; `POST /api/webhooks/forms/:token` + `/api/forms/*`; BullMQ `form-leads`; parser (COOKIES/TILDAUTM); `processFormLead` (phone/email dedupe, reuse_open); `fireGoal` + `attributionId`/`payload`; portal section on `/dashboard/crm`; ADR-026.
+- Verify: parser vitest 5/5; saas-api + portal typecheck; migrate `20260803160000_form_lead_intake`.
+- Broken: none. Residual: field-mapping UI, deal_won hook, WP plugin (Phase 2); apply migrate on prod with deploy.
+- Next: smoke Tilda test=test + real lead on a tenant workspace; deploy saas-api+portal when asked.
+
+### 2026-08-03 — INC-086: gesha Сделки blank kanban (Redis cache)
+
+- Goal: restore gesha CRM Opportunities board (white board, shell OK).
+- Cause: stale Redis flat-maps for workspace `005bad75-…`; DB view/groups/opps OK.
+- Fix: flush Redis `*005bad75*`, bump `metadataVersion` 26→27.
+- Verify: browser board columns + 6 cards visible.
+- Prevention: note in INC-086.
+
+### 2026-08-03 — Landing Awwwards v3 (CRM + free Tilda/WP forms)
+
+- Goal: rebuild getvoxly.ru per PROMPT v3 — forms free/unlimited in CRM Base + ClickUp craft (tabs/replaces/constellation); keep v2 archive.
+- Changes: archive `apps/saas-portal/src/app/_archive/landing-v2/`; new `page.tsx`; `product-tabs.tsx`; form mocks; mobile step «заявка»; design lock `landing-awwwards-v3.md`.
+- Deploy: `./scripts/prod-deploy.sh saas-portal`; smoke `/` + health + cabinet **200**.
+- Verify: HTML has Tilda/WordPress/безлимит/Replaces/constellation signals.
+- Broken: none. Residual: optional real CRM screenshots later.
+
+### 2026-08-03 — Mascot v6 on login/register
+
+- Goal: replace worn CTA/hero mascot with new industrial robot asset (transparent cutout).
+- Changes: `public/mascot/voxly-mascot-v6.png` (+ aliases); login/register layout (aspect 5/6, larger, drop-shadow); `vox-relay` points to v6.
+- Deploy: `./scripts/prod-deploy.sh --skip-backup saas-portal` (prior backup `20260803-114154`).
+- Verify: `/register` `/login` reference `voxly-mascot-v6`; asset 200.
+
+### 2026-08-03 — Landing Awwwards v2 (CRM command center)
+
+- Goal: rebuild getvoxly.ru per `design-system/voxly/pages/landing-awwwards-v2.md` — thesis CRM + mobile web without apps; deploy.
+- Changes: `apps/saas-portal/src/app/page.tsx` full rewrite; `product-mocks.tsx` + `mobile-proof.tsx`; industrial land-btn radius; metadata; design lock status BUILT.
+- Deploy: `./scripts/prod-deploy.sh saas-portal`; backup `/opt/voxly/backups/20260803-112800/`.
+- Verify: build OK; smoke `/` + api health + cabinet URLs 200; HTML contains «Командный центр продаж», «CRM в кармане», «App Store не нужен».
+- Broken: none. Residual: optional polish of mock fidelity / real CRM screenshots later.
+
+### 2026-08-03 — Fix gift video upload (Premature close) + progress + deploy
+
+- Goal: video media on gift bot start message never finished; need progress + working upload.
+- Root cause (prod logs): `POST /api/bots/:id/media` via Next rewrite → `ERR_STREAM_PREMATURE_CLOSE` ~30s (INC-086).
+- Changes: XHR upload direct to `api.getvoxly.ru`; progress bar; video sendVideo↔document fallback; API timeouts/413; bodyLimit 52MB.
+- Deploy: backup `/opt/voxly/backups/20260803-145644/`; `saas-api`+`saas-portal`; smoke 200.
+- Verify: hard-refresh bot page → upload MP4 ≤48MB → progress → «Файл в Telegram» → Save.
+
+### 2026-08-03 — Deploy: Yandex Metrika counter on portal
+
+- Goal: sitewide Metrika `111265694` in root layout (all pages).
+- Changes: `YandexMetrika` + root `layout.tsx` (already local); deploy `saas-portal`.
+- Deploy: backup `/opt/voxly/backups/20260803-101909/`; compose recreate hit orphan saas-api name conflict → cleaned → `up -d --no-deps saas-portal`.
+- Verify: `/` `/login` `/dashboard` + api health 200; HTML contains `111265694` + `mc.yandex.ru/metrika`.
+
+### 2026-08-03 — Split gift products: Telegram vs MAX
+
+- Goal: two products with separate settings/billing (not one glued page).
+- Changes: SKU `gift_bot_max`; trial/checkout/fulfil; gates; grandfather from legacy `gift_bot`; portal `/dashboard/bots` (TG) + `/dashboard/bots/max`; nav labels.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` — smoke OK; `/dashboard/bots` + `/dashboard/bots/max` 200.
+- Verify: shared build/tests; typecheck api/portal.
+
+### 2026-08-03 — Gift bot billing: 500 ₽ per bot slot
+
+- Goal: `gift_bot` was account-wide; now 500 ₽/мес per BotInstance (`gift` / `gift_max`).
+- Changes: `getGiftBotSlots`; trial `botSlots:1`; checkout `quantity`+`intent` add|renew; soft-gate provision-link + max/connect; GET `/api/bots` slots/used + grandfather; portal CTAs.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal` — backup under deploy stamp; smoke OK.
+- Verify: shared tests; typecheck saas-api/portal; prod `/` + health 200.
+- Broken: none. Residual: existing addons get lazy `botSlots=max(1,used)` on first GET.
+
+### 2026-08-03 — Fix: gift bots page Telegram + MAX side-by-side
+
+- Goal: Telegram connect was easy to miss (only after «Подключить канал»); MAX form always visible.
+- Changes: `/dashboard/bots` — always-visible Telegram + MAX connect cards; CTA renamed «Telegram-бот».
+- Deploy: `./scripts/prod-deploy.sh --skip-backup saas-portal` (smoke OK).
+
+### 2026-08-03 — Deploy: MAX personal + gift (`saas-api`, `saas-portal`, `gift-bot-worker`, `max-bridge`, compose)
+
+- Goal: ship ADR-025 MAX surfaces to prod (personal QR + gift Bot API).
+- Commands: `./scripts/prod-deploy.sh saas-api,saas-portal,gift-bot-worker,max-bridge,compose` (1st fail: `qrcode==8.0` vs maxapi ≥8.2) → fix `apps/max-bridge/requirements.txt` → `./scripts/prod-deploy.sh --skip-backup …` OK.
+- Also: `docker-compose.prod-npm.yml` Traefik `PathPrefix(/tg)||PathPrefix(/max)`; `prod-deploy.sh` `--profile max` for max-bridge.
+- Backup: `/opt/voxly/backups/20260803-092240/` (`voxly_control.dump`, `twenty.dump`).
+- Synced/rebuilt: packages + saas-api/portal + gift-bot-worker + max-bridge + compose files; volume `docker_max-sessions-data` created; containers Up.
+- Migrate: no pending (25 already applied).
+- Smoke: `/` 200; `api/health` 200; partners/crm/ai/agents 200; `/dashboard/ai/max` 200; `/dashboard/bots` 200.
+- Broken: none observed. Residual: live QR + gift token E2E manual; gift needs MAX Bot API token from business.max.ru.
+
+### 2026-08-03 — MAX Phase 3 polish (gift UX + CRM reply verify)
+
+- Goal: finish gift_max bot detail UX; confirm CRM operator ChatMessage on MAX paths; defer personal AI agent.
+- Changes: `/dashboard/bots/[botId]` — MAX checklist/hero/overview; hide TG 1.2 description + promo; renumber start/funnel; platform info card (soft «Продолжить»).
+- Verify: CRM reply already persists `ChatMessage` role=operator after `ai_max`/`gift_max` send (`crm-chat.ts`); portal typecheck.
+- Next: live PyMax QR + gift token E2E (`MAX-SMOKE.md`); media/presence/AI on `ai_max` later.
+- Broken / gaps: MAX channel membership parity; CRM outbound media for MAX; AI agent on personal MAX still OFF/store-only (ADR-014/025).
+
+### 2026-08-03 — MAX Phase 2 gift scaffold + Phase 1 polish
+
+- Goal: gift MAX on official Bot API; lock ADR gift decision; continue personal scaffold.
+- ADR-025: `botType=gift_max`, reuse SKU `gift_bot`; channel membership = soft «Продолжить» (gap).
+- Changes: `gift-bot-worker` `/max/...` + `max-api.ts`/`max-handler.ts` + polling; `POST /api/bots/gift/max/connect`; crm-chat gift_max text reply; portal `/dashboard/bots` MAX token form + platform badge; Traefik PathPrefix `/max`; compose `GIFT_MAX_USE_POLLING`.
+- Verify: typecheck gift-bot-worker / saas-api / portal.
+- Next: live token E2E; PyMax QR personal smoke; media enrich for MAX later.
+- Broken / gaps: MAX channel getChatMember parity; MAX gift media outbound from CRM; personal PyMax needs Python≥3.10 image (ok in Docker).
+
+### 2026-08-03 — MAX Phase 1 foundation (personal account)
+
+- Goal: personal MAX channel parity with GramJS (QR → CRM chat reply), without gift MAX yet.
+- ADR-025: `botType=ai_max`, `platform=max` / `channel=max_personal`, SKU `ai_max` 500₽ + soft trial 7d; Python sidecar `apps/max-bridge` (PyMax); gift deferred Phase 2.
+- Changes: shared PRODUCT_CODES/pricing/referral/AI_USAGE; platform-pricing; billing checkout; `routes/max.ts` + `max-internal.ts`; crm-chat labels + `sendViaMaxBridge` (text-only); portal `/dashboard/ai/max` + nav; compose profile `max` :3010 + volume; prod-deploy whitelist `max-bridge`.
+- Verify: typecheck shared/saas-api/portal; unit shared tests for `ai_max`.
+- Next: local smoke QR→inbound→CRM reply; Phase 2 gift MAX; PyMax handler wiring polish if library API differs.
+- Broken / gaps: media/presence/AI agent on MAX = Phase 3; gift MAX not started; live PyMax E2E depends on library + phone scan.
+
+### 2026-08-03 — Deploy: admin AI balance page + APIs
+
+- Goal: ship `/admin/ai-balance` (nav «AI баланс») + `admin-ai-balance` APIs + owner markup lock on tenant PATCH; was missing from prior partner-balance deploy.
+- Commands: `./scripts/prod-diff.sh saas-api,saas-portal` (hot-file drift: `tenant.ts`) → `./scripts/prod-deploy.sh --dry-run saas-api,saas-portal` → `./scripts/prod-deploy.sh saas-api,saas-portal`.
+- Backup: `/opt/voxly/backups/20260802-232944/` (`voxly_control.dump`, `twenty.dump`). Prior partner-balance backup still at `/opt/voxly/backups/20260802-232549/`.
+- Synced/rebuilt: manifests + `packages/` + `apps/saas-api/` + `apps/saas-portal/` + `twenty-app/voxly-crm-chat/`; compose `up -d --build saas-api saas-portal`.
+- Migrate: no pending migrations (25 already applied).
+- Verify: portal build lists `/admin/ai-balance`; container has `dist/routes/admin-ai-balance.js` + `.next/server/app/admin/ai-balance/page.js`; host src synced.
+- Smoke: `/` 200; `api/health` 200 (`{"status":"ok"}`); `/admin/ai-balance` 200 (not 404; auth may still gate UI). Script also OK on partners/crm/ai dashboards. Brief 502 on landing during portal restart, recovered ~3s.
+- Broken: none observed. Residual: logged-in superadmin E2E of markup PUT + stats not run; other uncommitted local admin surfaces (pricing/services) not in this ship scope.
+
+### 2026-08-03 — Deploy: partner-balance checkout + mailing/AI topup opt-in
+
+- Goal: ship partner balance apply on client checkouts, partners CTA `#oplata`, mailing billing banner + `ai_topup` opt-in to prod.
+- Commands: `./scripts/prod-diff.sh saas-api,saas-portal` (hot-file drift: `dashboard/page.tsx`) → `./scripts/prod-deploy.sh --dry-run saas-api,saas-portal` → `./scripts/prod-deploy.sh saas-api,saas-portal`.
+- Backup: `/opt/voxly/backups/20260802-232549/` (`voxly_control.dump`, `twenty.dump`).
+- Synced/rebuilt: manifests + `packages/` + `apps/saas-api/` + `apps/saas-portal/` + `twenty-app/voxly-crm-chat/`; compose `up -d --build saas-api saas-portal`.
+- Migrate: no pending migrations (25 already applied; `ReferralServiceRate` from prior deploy).
+- Smoke: `/` 200; `api/health` 200; `/dashboard/partners` 200; `/dashboard/crm` 200; also `/dashboard/ai` + `/dashboard/ai/agents` 200 (script). Brief 502 on landing during portal restart, recovered in ~3s.
+- Broken: none observed. Residual: functional E2E with free partner balance > 0 (partial/full cover) not run; Robokassa SuccessURL still global → CRM for card path; uncommitted local work still on branch (not git-pushed).
+
+### 2026-08-03 — Admin AI balance: markup + stats
+
+- Goal: restore/finish superadmin AI markup settings (global + per-tenant) and usage stats; add nav «AI баланс».
+- Existed: `getEffectiveMarkup` / `AiUsageLog` / seed `ai_markup_percent`; `/admin` shows aggregate «AI маржа»; `PATCH /api/admin/settings` generic; no dedicated page/nav; owners could theoretically set markup via `PATCH /api/tenant`.
+- Changes: `admin-ai-balance.ts` (`GET/PUT /api/admin/ai-balance*`); portal `/admin/ai-balance`; `ADMIN_NAV` entry; lock tenant PATCH markup.
+- Stats: margin = ΣchargedRub − ΣproviderCostRub; topups = paid `ai_topup`; wallets snapshot; by channel + per tenant for period.
+- Verify: `pnpm --filter @voxly/saas-api|@voxly/saas-portal exec tsc --noEmit` ok.
+- Next: deploy `saas-api` + `saas-portal` (separate from sibling deploy).
+- Broken / gaps: manual `ai-credit` not in topup paid sum; margin uses logged charged (includes uncollected portion in chargedRub, uncollected shown separately).
+
+### 2026-08-03 — Partner balance: pay any Voxly service + withdrawal min 1000 ₽
+
+- Goal: close residual INC-085 gaps — mailing + `ai_topup` opt-in; confirm withdrawal floor 1000 ₽.
+- Changes: `MailingBillingBanner` + `PartnerBalanceApply`; `handleMailingBillingGate` → mailing `?pay=1` (no silent checkout); `?pay=1` auto-Robokassa only when free balance = 0; agents `ai_topup` wired; dashboard «Пополнить AI» → `/dashboard/ai/agents#balance`; partners copy (any services + вывод от 1000 ₽). Withdrawal min already `REFERRAL_WITHDRAWAL_MIN_RUB=1000` (API+UI) — verified, no code change.
+- Verify: `pnpm --filter @voxly/saas-api|@voxly/saas-portal exec tsc --noEmit` ok.
+- Next: deploy `saas-portal` (API unchanged for this gap-close); smoke mailing pay + topup with balance > 0.
+- Broken: none. CRM Twenty «Оплатить» still opens portal `?pay=1` (no in-CRM checkbox — by design, opt-in on portal banner).
+
+### 2026-08-03 — INC-085: partner balance apply on checkout (CRM + AI + gift)
+
+- Goal: partners «Оплатить свой счёт» / «Зачесть партнёрский баланс» actually works where copy promises it.
+- Cause: CRM had checkbox + API `applyBalanceRub`; AI/gift pay buttons skipped balance; CTA missed `#oplata`; full-cover always redirected to CRM.
+- Changes: `PartnerBalanceApply` + `usePartnerBalanceApply`; CRM uses shared UI; AI TG/extra/GramJS/WA/agent + gift bots wired; partners link `/dashboard/crm#oplata`; billing `checkoutPaidRedirect(productCode)`.
+- Verify: `pnpm --filter saas-portal|saas-api exec tsc --noEmit` ok.
+- Next: deploy `saas-api` + `saas-portal`; smoke with free partner balance > 0 (partial + full cover).
+- Broken: mailing one-click pay still without balance opt-in; Robokassa SuccessURL still global → CRM (card path).
+
+### 2026-08-03 — Deploy: partner per-service commission rates
+
+- Goal: ship `ReferralServiceRate` + admin partners per-SKU % UI to prod.
+- Commands: `./scripts/prod-diff.sh saas-api,saas-portal` (hot files match) → `./scripts/prod-deploy.sh --dry-run saas-api,saas-portal` → `./scripts/prod-deploy.sh saas-api,saas-portal`.
+- Backup: `/opt/voxly/backups/20260802-225621/` (`voxly_control.dump`, `twenty.dump`).
+- Synced/rebuilt: manifests + `packages/` + `apps/saas-api/` + `apps/saas-portal/` + `twenty-app/voxly-crm-chat/`; compose `up -d --build saas-api saas-portal`.
+- Migrate: `20260803120000_referral_service_rate` applied; `ReferralServiceRate` present; prisma status up to date (25 migrations).
+- Smoke: `/` 200; `api/health` 200 `{"status":"ok"}`; `/admin/partners` 200; dashboard partners/crm/ai/agents 200. Dist has `admin-referrals.js` + `ReferralServiceRate` refs in billing/referral-program.
+- Broken: none observed. Residual: set a live partner SKU rate and verify payout on referred payment (functional E2E not run in this deploy).
+
+### 2026-08-03 — Per-partner per-service referral commission rates
+
+- Goal: on `/admin/partners`, keep global/default %, add individual % per partner **and service SKU**.
+- Changes: Prisma `ReferralServiceRate` (`tenantId`+`productCode` unique, percent 0–100) + migration `20260803120000_referral_service_rate`; shared `REFERRAL_COMMISSION_SKUS`/`LABELS`; `findReferralServicePercent` + billing `creditReferralForPayment` (SKU override → else personal/global rule; SKU rate makes that product eligible even if productScope would exclude it); admin `PUT/DELETE …/service-rates`; partner detail UI «Ставки по сервисам».
+- AuditLog: not added (referral rule PUT never audited; same policy).
+- Verify: prisma generate; typecheck packages; shared unit test for commission SKU catalogue.
+- Next: migrate + deploy `saas-api`/`saas-portal` when ready; smoke set rate on a partner SKU and pay that product via referred tenant.
+
+### 2026-08-03 — Admin pricing (all SKUs) + services ops panel
+
+- Goal: platform + per-tenant list prices for CRM/AI/gift/mailing; ops panel without full client CRUD.
+- Changes: `platform-pricing.ts` resolver; billing + bots/WA/GramJS/agents/mailing APIs use effective price; `GET/PUT /api/admin/pricing*`; `/admin/pricing` + `/admin/services`; impersonate `next`; MRR via resolver; CRM page keeps CRM editors + link to Тарифы.
+- Policy: next-checkout-only; min 1 ₽; AuditLog on price/addon/bot changes.
+- Deploy: backup `/opt/voxly/backups/20260802-223635/`; rsync (script SSH timeout → manual keepalive rsync) + migrate (24, no pending) + rebuild `saas-api`/`saas-portal`.
+- Verify: typecheck; prod smoke `/admin/pricing` + `/admin/services` + api health 200.
+- Next: reset smoke 5 ₽ overrides when done; sync Robokassa P2 (INC-083).
+
 ### 2026-08-03 — INC-084: purge fails when tenant is referral partner
 
 - Goal: admin delete `john` / `john-crm` actually removes control Tenant.

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { RefreshCw, Smartphone, Trash2 } from 'lucide-react';
+import { Pencil, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
 import { PRICING, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
@@ -11,14 +11,29 @@ import { Badge } from '@/components/ui/badge';
 import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { AiGramjsHero } from '@/components/portal/ai-gramjs-hero';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
 
 interface GramjsAccount {
   id: string;
   name: string;
+  displayName?: string | null;
+  username?: string | null;
   telegramUserId: string | null;
   status: string;
   connected: boolean;
   updatedAt: string;
+  historySyncing?: boolean;
+  historySyncStartedAt?: string | null;
+  historySyncResult?: {
+    ok?: boolean;
+    dialogs?: number;
+    messagesUpserted?: number;
+    peopleCreated?: number;
+    opportunitiesCreated?: number;
+    skippedSuppressed?: number;
+    error?: string;
+  } | null;
 }
 
 interface AccountsResponse {
@@ -145,11 +160,18 @@ export default function GramjsChannelPage() {
   const [password, setPassword] = useState('');
   const [phase, setPhase] = useState<ConnectPhase>('idle');
   const [deleteConfirmId, setDeleteConfirmId] = useState('');
+  const [renameId, setRenameId] = useState('');
+  const [renameValue, setRenameValue] = useState('');
+  const [syncHint, setSyncHint] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncWatchIdsRef = useRef<Set<string>>(new Set());
   const pollNameRef = useRef('default');
   const pngUrlRef = useRef<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const connectSectionRef = useRef<HTMLElement>(null);
+  const invoiceRub = data?.priceMonthly ?? PRICING.AI_GRAMJS_MONTHLY;
+  const balanceApply = usePartnerBalanceApply(invoiceRub);
 
   const clearPng = () => {
     if (pngUrlRef.current) {
@@ -164,6 +186,11 @@ export default function GramjsChannelPage() {
     pollRef.current = null;
   }, []);
 
+  const stopSyncPolling = useCallback(() => {
+    if (syncPollRef.current) clearInterval(syncPollRef.current);
+    syncPollRef.current = null;
+  }, []);
+
   const loadAccounts = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
     if (!token) {
@@ -175,12 +202,44 @@ export default function GramjsChannelPage() {
       const json = (await res.json()) as AccountsResponse;
       if (!res.ok) throw new Error(json.error || 'Не удалось загрузить аккаунты');
       setData(json);
+
+      // Finish watched sync jobs when server clears historySyncing.
+      const still: string[] = [];
+      for (const id of syncWatchIdsRef.current) {
+        const acc = (json.accounts || []).find((a) => a.id === id);
+        if (acc?.historySyncing) {
+          still.push(id);
+          continue;
+        }
+        const result = acc?.historySyncResult;
+        if (result) {
+          if (result.ok === false) {
+            setError(result.error || 'Не удалось синхронизировать переписку');
+          } else {
+            setSyncHint(
+              `Импорт: ${result.dialogs ?? 0} личных чатов, ${result.messagesUpserted ?? 0} сообщений` +
+                (result.skippedSuppressed
+                  ? ` (пропущено с «не создавать сделку»: ${result.skippedSuppressed})`
+                  : ''),
+            );
+          }
+        } else if (acc) {
+          setSyncHint('Синхронизация завершена. Обновите CRM (hard-refresh), если сделки не видны.');
+        }
+      }
+      syncWatchIdsRef.current = new Set(still);
+      if (still.length === 0) stopSyncPolling();
+      else {
+        setSyncHint(
+          'Идёт синхронизация личных чатов… это может занять несколько минут (лимиты Telegram).',
+        );
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки');
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, stopSyncPolling]);
 
   const loadContext = useCallback(async () => {
     try {
@@ -201,9 +260,25 @@ export default function GramjsChannelPage() {
     void loadContext();
     return () => {
       stopPolling();
+      stopSyncPolling();
       clearPng();
     };
-  }, [loadAccounts, loadContext, stopPolling]);
+  }, [loadAccounts, loadContext, stopPolling, stopSyncPolling]);
+
+  // Resume polling after refresh if a sync job is still running on the API.
+  useEffect(() => {
+    const syncing = (data?.accounts || []).filter((a) => a.historySyncing);
+    if (syncing.length === 0) return;
+    for (const a of syncing) syncWatchIdsRef.current.add(a.id);
+    if (!syncPollRef.current) {
+      syncPollRef.current = setInterval(() => {
+        void loadAccounts();
+      }, 3000);
+    }
+    setSyncHint(
+      'Идёт синхронизация личных чатов… это может занять несколько минут (лимиты Telegram).',
+    );
+  }, [data?.accounts, loadAccounts]);
 
   const fetchPng = async (name: string) => {
     try {
@@ -342,7 +417,11 @@ export default function GramjsChannelPage() {
     setBusy('pay');
     setError('');
     try {
-      await startCheckout({ productCode: 'ai_gramjs', periodMonths: 1 });
+      await startCheckout({
+        productCode: 'ai_gramjs',
+        periodMonths: 1,
+        ...balanceApply.applyBalancePayload,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy('');
@@ -363,6 +442,92 @@ export default function GramjsChannelPage() {
       await loadAccounts();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка удаления');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const syncHistory = async (account: GramjsAccount) => {
+    setBusy(`sync:${account.id}`);
+    setError('');
+    setSyncHint(
+      'Идёт синхронизация личных чатов… это может занять несколько минут (лимиты Telegram).',
+    );
+    try {
+      const res = await fetch(`/api/bots/gramjs/accounts/${account.id}/sync-history`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        started?: boolean;
+        alreadyRunning?: boolean;
+        dialogs?: number;
+        messagesUpserted?: number;
+        skippedSuppressed?: number;
+        error?: string;
+        message?: string;
+      };
+      // 202 = background job started; 200 = legacy sync finished inline.
+      if ((!res.ok && res.status !== 202) || json.ok === false) {
+        throw new Error(json.message || json.error || 'Не удалось синхронизировать переписку');
+      }
+      if (json.started || res.status === 202) {
+        syncWatchIdsRef.current.add(account.id);
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            accounts: (prev.accounts || []).map((a) =>
+              a.id === account.id ? { ...a, historySyncing: true } : a,
+            ),
+          };
+        });
+        if (!syncPollRef.current) {
+          syncPollRef.current = setInterval(() => {
+            void loadAccounts();
+          }, 3000);
+        }
+        void loadAccounts();
+        return;
+      }
+      setSyncHint(
+        `Импорт: ${json.dialogs ?? 0} личных чатов, ${json.messagesUpserted ?? 0} сообщений` +
+          (json.skippedSuppressed
+            ? ` (пропущено с «не создавать сделку»: ${json.skippedSuppressed})`
+            : ''),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка синхронизации');
+      setSyncHint('');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const startRename = (account: GramjsAccount) => {
+    setDeleteConfirmId('');
+    setRenameId(account.id);
+    setRenameValue(account.displayName || account.name || '');
+  };
+
+  const saveRename = async (account: GramjsAccount) => {
+    setBusy(`rename:${account.id}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/bots/gramjs/accounts/${account.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ displayName: renameValue }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось переименовать');
+      setRenameId('');
+      setRenameValue('');
+      await loadAccounts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка переименования');
     } finally {
       setBusy('');
     }
@@ -561,7 +726,20 @@ export default function GramjsChannelPage() {
               </p>
               <p className="text-sm tabular-nums text-black/55">{formatRub(price)} ₽/мес за канал</p>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 space-y-3">
+              <PartnerBalanceApply
+                availableRub={balanceApply.availableRub}
+                invoiceRub={price}
+                useBalance={balanceApply.useBalance}
+                onUseBalanceChange={balanceApply.setUseBalance}
+                balanceInput={balanceApply.balanceInput}
+                onBalanceInputChange={balanceApply.setBalanceInput}
+                appliedRub={balanceApply.appliedRub}
+                netRub={balanceApply.netRub}
+                disabled={busy === 'pay' || busy === 'trial'}
+                idPrefix="ai-gramjs-balance"
+              />
+              <div className="flex flex-wrap gap-2">
               {!subActive && trialAvailable ? (
                 <button
                   type="button"
@@ -581,11 +759,16 @@ export default function GramjsChannelPage() {
                 }`}
               >
                 {busy === 'pay'
-                  ? 'Переходим к оплате…'
-                  : subActive
-                    ? `Продлить на месяц · ${formatRub(price)} ₽`
-                    : `Оплатить ${formatRub(price)} ₽/мес`}
+                  ? balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                    ? 'Оформляем…'
+                    : 'Переходим к оплате…'
+                  : balanceApply.appliedRub > 0 && balanceApply.netRub <= 0
+                    ? 'Оформить за 0 ₽ — с баланса'
+                    : subActive
+                      ? `Продлить на месяц · ${formatRub(balanceApply.netRub || price)} ₽`
+                      : `Оплатить ${formatRub(balanceApply.netRub || price)} ₽/мес`}
               </button>
+              </div>
             </div>
           </div>
         </section>
@@ -730,12 +913,19 @@ export default function GramjsChannelPage() {
               ) : null}
 
               {phase === 'authorized' ? (
-                <Link
-                  href="/dashboard/ai/agents"
-                  className="land-btn mt-4 inline-flex min-h-11 cursor-pointer px-4 text-sm"
-                >
-                  Назначить AI-агента
-                </Link>
+                <div className="mt-4 space-y-2">
+                  <Link
+                    href="/dashboard/ai/agents"
+                    className="land-btn inline-flex min-h-11 cursor-pointer px-4 text-sm"
+                  >
+                    Назначить AI-агента
+                  </Link>
+                  <p className="max-w-[70ch] text-xs leading-snug text-black/55">
+                    Все личные диалоги (не группы/каналы) импортируются в CRM — до 30
+                    последних сообщений в каждом. Повторный импорт — кнопка
+                    «Синхронизировать чаты» у подключённого аккаунта (QR не нужен).
+                  </p>
+                </div>
               ) : null}
 
               {phase === 'idle' ? (
@@ -772,6 +962,11 @@ export default function GramjsChannelPage() {
             </div>
           ) : (
             <div className="mt-4 overflow-x-auto rounded-xl border border-black/10">
+              {syncHint ? (
+                <p className="border-b border-black/10 bg-[#faf8f5] px-3 py-2 text-xs text-black/65">
+                  {syncHint}
+                </p>
+              ) : null}
               <table className="w-full min-w-[640px] border-collapse text-left">
                 <thead className="bg-[#faf8f5]">
                   <tr>
@@ -785,14 +980,58 @@ export default function GramjsChannelPage() {
                 <tbody className="divide-y divide-black/10">
                   {accounts.map((account) => (
                     <tr key={account.id} className="hover:bg-[#faf8f5]">
-                      <td className="px-3 py-3 font-medium text-black">{account.name}</td>
+                      <td className="px-3 py-3">
+                        {renameId === account.id ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              maxLength={80}
+                              className="min-h-9 min-w-[10rem] flex-1 rounded-lg border border-black/15 bg-white px-2 text-sm text-black"
+                              aria-label="Новое название аккаунта"
+                            />
+                            <button
+                              type="button"
+                              disabled={busy === `rename:${account.id}`}
+                              onClick={() => void saveRename(account)}
+                              className="land-btn-amber inline-flex min-h-9 cursor-pointer items-center px-3 text-xs"
+                            >
+                              {busy === `rename:${account.id}` ? 'Сохраняем…' : 'Сохранить'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRenameId('');
+                                setRenameValue('');
+                              }}
+                              className="inline-flex min-h-9 cursor-pointer items-center rounded-full border border-black/15 px-3 text-xs font-semibold text-black/65"
+                            >
+                              Отмена
+                            </button>
+                          </div>
+                        ) : (
+                          <div>
+                            <p className="font-medium text-black">{account.name}</p>
+                            {account.username &&
+                            account.displayName &&
+                            account.username !== account.displayName ? (
+                              <p className="mt-0.5 text-xs text-black/45">@{account.username}</p>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-3 text-sm text-black/70">
                         {account.telegramUserId || (
                           <span className="text-black/45">появится после скана</span>
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        {account.connected ? (
+                        {account.historySyncing || busy === `sync:${account.id}` ? (
+                          <Badge variant="warning" className="gap-1.5">
+                            <RefreshCw className="h-3 w-3 animate-spin" aria-hidden />
+                            Синхронизация…
+                          </Badge>
+                        ) : account.connected ? (
                           <Badge variant="success">На связи</Badge>
                         ) : (
                           <Badge variant="warning">Отключён</Badge>
@@ -823,15 +1062,52 @@ export default function GramjsChannelPage() {
                               Отмена
                             </button>
                           </div>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled={Boolean(busy)}
-                            onClick={() => setDeleteConfirmId(account.id)}
-                            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:opacity-50"
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden />
-                          </button>
+                        ) : renameId === account.id ? null : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            {account.connected ? (
+                              <button
+                                type="button"
+                                disabled={
+                                  Boolean(busy) || Boolean(account.historySyncing)
+                                }
+                                onClick={() => void syncHistory(account)}
+                                aria-label={`Синхронизировать чаты ${account.name}`}
+                                title={
+                                  account.historySyncing
+                                    ? 'Синхронизация уже идёт'
+                                    : 'Синхронизировать все личные чаты в CRM (до 30 сообщений в каждом)'
+                                }
+                                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-black/35 hover:text-black disabled:opacity-50"
+                              >
+                                <RefreshCw
+                                  className={`h-4 w-4 ${
+                                    busy === `sync:${account.id}` || account.historySyncing
+                                      ? 'animate-spin'
+                                      : ''
+                                  }`}
+                                  aria-hidden
+                                />
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              disabled={Boolean(busy)}
+                              onClick={() => startRename(account)}
+                              aria-label={`Переименовать ${account.name}`}
+                              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-black/35 hover:text-black disabled:opacity-50"
+                            >
+                              <Pencil className="h-4 w-4" aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={Boolean(busy)}
+                              onClick={() => setDeleteConfirmId(account.id)}
+                              aria-label={`Удалить аккаунт ${account.name}`}
+                              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:opacity-50"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

@@ -12,14 +12,23 @@ import {
   DEFAULT_GIFT_PROMO,
   clientMdToMarkdownV2,
   formatPromoButtonLabel,
+  promoShowClickCounter,
   giftPromoStartPayload,
   buildVoxlyBotUsername,
   resolveTelegramMedia,
+  normalizeGiftMediaType,
+  promoMediaType,
+  detectStoredMediaKind,
+  detectUploadMediaKind,
+  isTelegramDocumentFileId,
+  GIFT_PROMO_MEDIA_TYPES,
   PRICING,
   PRODUCT_CODES,
   TRIAL_PERIOD_DAYS,
   AI_HANDOFF_PAUSE_MS,
+  getGiftBotSlots,
   type GiftFunnelConfig,
+  type GiftPromoMediaType,
   type GiftPromoPost,
 } from '@voxly/shared';
 import {
@@ -30,8 +39,104 @@ import {
 } from '../services/channel-trial.js';
 import { VOXLY_OPPORTUNITY_STAGE_OPTIONS } from '../services/twenty-opportunity-ru-defaults.js';
 
+const giftMediaTypeSchema = z.enum(GIFT_PROMO_MEDIA_TYPES);
+
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
+}
+
+type GiftProductBotType = 'gift' | 'gift_max';
+
+async function countGiftBotsUsed(
+  prisma: any,
+  tenantId: string,
+  botType: GiftProductBotType,
+  opts?: { includePendingProvision?: boolean },
+): Promise<number> {
+  const used = await prisma.botInstance.count({
+    where: { tenantId, botType },
+  });
+  if (!opts?.includePendingProvision || botType !== 'gift') return used;
+  const pending = await prisma.botProvisionRequest.count({
+    where: {
+      tenantId,
+      botType: 'gift',
+      status: 'pending',
+      expiresAt: { gt: new Date() },
+    },
+  });
+  return used + pending;
+}
+
+/** Lazy-migrate missing botSlots → max(1, used) for one product. */
+async function ensureGiftBotSlots<T extends { id: string; config: unknown }>(
+  prisma: any,
+  tenantId: string,
+  addon: T | null,
+  botType: GiftProductBotType,
+): Promise<{ addon: T | null; slots: number; used: number }> {
+  const used = await countGiftBotsUsed(prisma, tenantId, botType);
+  if (!addon) return { addon: null, slots: 0, used };
+  let slots = getGiftBotSlots(addon.config);
+  if (slots <= 0) {
+    slots = Math.max(1, used);
+    const config = {
+      ...((addon.config as object) || {}),
+      botSlots: slots,
+    };
+    addon = await prisma.addon.update({
+      where: { id: addon.id },
+      data: { config },
+    });
+  }
+  return { addon, slots, used };
+}
+
+/**
+ * Split legacy account-wide gift_bot that also covered MAX bots into gift_bot_max.
+ */
+async function grandfatherSplitGiftMaxAddon(prisma: any, tenantId: string): Promise<void> {
+  const maxUsed = await countGiftBotsUsed(prisma, tenantId, 'gift_max');
+  if (maxUsed <= 0) return;
+  const existingMax = await prisma.addon.findUnique({
+    where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT_MAX } },
+  });
+  if (existingMax) return;
+  const legacy = await prisma.addon.findUnique({
+    where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
+  });
+  if (!legacy || legacy.status !== 'active' || legacy.activeUntil < new Date()) return;
+
+  const tgUsed = await countGiftBotsUsed(prisma, tenantId, 'gift');
+  const legacySlots = getGiftBotSlots(legacy.config);
+  await prisma.addon.create({
+    data: {
+      tenantId,
+      type: PRODUCT_CODES.GIFT_BOT_MAX,
+      status: 'active',
+      activeUntil: legacy.activeUntil,
+      config: {
+        ...((legacy.config as object) || {}),
+        botSlots: Math.max(1, maxUsed),
+        trial: false,
+        trialConsumed: true,
+        grandfatheredFrom: 'gift_bot',
+      },
+    },
+  });
+  // Shrink TG slots to TG bots only (keep at least 1 if they still have TG capacity paid).
+  const nextTgSlots = Math.max(tgUsed, legacySlots > maxUsed ? legacySlots - maxUsed : tgUsed, tgUsed > 0 ? 1 : 0);
+  if (nextTgSlots > 0) {
+    await prisma.addon.update({
+      where: { id: legacy.id },
+      data: {
+        config: {
+          ...((legacy.config as object) || {}),
+          botSlots: nextTgSlots,
+        },
+      },
+    });
+  }
 }
 
 const provisionSchema = z.object({
@@ -43,12 +148,23 @@ const provisionSchema = z.object({
 const optionalHttpsUrl = z.string().url().optional().or(z.literal(''));
 const optionalFileId = z.string().min(1).max(256).optional().or(z.literal(''));
 
+const extraButtonSchema = z.object({
+  text: z.string().min(1).max(64),
+  url: z
+    .string()
+    .min(1)
+    .max(2000)
+    .refine((u) => /^https?:\/\//i.test(u), { message: 'URL кнопки должен быть http(s)' }),
+});
+const extraButtonsSchema = z.array(extraButtonSchema).max(8).optional();
+
 const funnelMessageSchema = z.object({
   delayMinutes: z.number().min(0).max(60 * 24 * 30),
   text: z.string().min(1).max(4000),
   imageUrl: optionalHttpsUrl,
   telegramFileId: optionalFileId,
-  mediaType: z.enum(['photo', 'video']).optional(),
+  mediaType: giftMediaTypeSchema.optional(),
+  extraButtons: extraButtonsSchema,
 });
 
 const campaignSchema = z.object({
@@ -63,7 +179,8 @@ const campaignSchema = z.object({
       text: z.string().min(1).max(4000),
       imageUrl: optionalHttpsUrl,
       telegramFileId: optionalFileId,
-      mediaType: z.enum(['photo', 'video']).optional(),
+      mediaType: giftMediaTypeSchema.optional(),
+      extraButtons: extraButtonsSchema,
     }),
     notSubscribed: z.array(funnelMessageSchema).max(10),
     gift: z
@@ -71,8 +188,9 @@ const campaignSchema = z.object({
         type: z.enum(['file', 'link', 'video']),
         url: z.string().max(2000).optional().or(z.literal('')),
         telegramFileId: optionalFileId,
-        mediaType: z.enum(['photo', 'video']).optional(),
+        mediaType: giftMediaTypeSchema.optional(),
         caption: z.string().max(1000).optional(),
+        extraButtons: extraButtonsSchema,
       })
       .superRefine((gift, ctx) => {
         const hasUrl = Boolean(gift.url && gift.url.length > 0);
@@ -109,7 +227,7 @@ const broadcastSchema = z.object({
   text: z.string().min(1).max(4000),
   mediaUrl: optionalHttpsUrl,
   telegramFileId: optionalFileId,
-  mediaType: z.enum(['photo', 'video']).optional(),
+  mediaType: giftMediaTypeSchema.optional(),
   scheduledAt: z.string().datetime().optional(),
 });
 
@@ -117,7 +235,7 @@ const broadcastSchema = z.object({
 const channelBroadcastSchema = z.object({
   text: z.string().min(1).max(4000),
   mediaUrl: optionalHttpsUrl,
-  mediaType: z.enum(['photo', 'video']).optional(),
+  mediaType: giftMediaTypeSchema.optional(),
   opportunityStage: z.string().min(1).max(80).optional(),
   giftStarted: z.enum(['any', 'yes', 'no']).optional(),
   funnelPhase: giftFunnelPhaseSchema.optional(),
@@ -130,7 +248,7 @@ const storyBroadcastSchema = z.object({
   channel: z.literal('story'),
   text: z.string().max(4000).optional().default(''),
   mediaUrl: z.string().url(),
-  mediaType: z.enum(['photo', 'video']).optional(),
+  mediaType: giftMediaTypeSchema.optional(),
   opportunityStage: z.string().min(1).max(80).optional(),
   giftStarted: z.enum(['any', 'yes', 'no']).optional(),
   funnelPhase: giftFunnelPhaseSchema.optional(),
@@ -144,7 +262,7 @@ const patchBroadcastSchema = z.object({
   text: z.string().min(1).max(4000).optional(),
   mediaUrl: optionalHttpsUrl.nullable().optional(),
   telegramFileId: optionalFileId.nullable().optional(),
-  mediaType: z.enum(['photo', 'video']).nullable().optional(),
+  mediaType: giftMediaTypeSchema.nullable().optional(),
   opportunityStage: z.string().min(1).max(80).nullable().optional(),
   giftStarted: z.enum(['any', 'yes', 'no']).nullable().optional(),
   readStatus: z.enum(['any', 'read', 'unread']).nullable().optional(),
@@ -342,13 +460,15 @@ function botTypeForStageRuleChannel(channel: 'gift' | 'gramjs' | 'wa') {
 const promoSchema = z.object({
   campaignId: z.string().cuid().optional(),
   text: z.string().min(1).max(4000),
-  mediaType: z.enum(['photo', 'video']).optional(),
+  mediaType: giftMediaTypeSchema.optional(),
   telegramFileId: optionalFileId,
   telegramFileUniqueId: z.string().min(1).max(256).optional().or(z.literal('')),
   mediaUrl: optionalHttpsUrl,
   /** @deprecated alias for mediaUrl */
   imageUrl: optionalHttpsUrl,
   buttonText: z.string().min(1).max(64),
+  /** Omit / true = show « · N» on channel button (default for existing bots). */
+  showClickCounter: z.boolean().optional(),
 });
 
 const createCampaignSchema = z.object({
@@ -368,14 +488,19 @@ const patchCampaignSchema = z.object({
 function readPromoPost(raw: unknown): GiftPromoPost {
   const p = (raw && typeof raw === 'object' ? raw : {}) as Partial<GiftPromoPost>;
   const mediaUrl = p.mediaUrl || p.imageUrl || undefined;
+  const telegramFileId = p.telegramFileId || undefined;
+  const mediaType = telegramFileId
+    ? detectStoredMediaKind(telegramFileId, normalizeGiftMediaType(p.mediaType))
+    : normalizeGiftMediaType(p.mediaType) || 'photo';
   return {
     text: p.text || DEFAULT_GIFT_PROMO.text,
-    mediaType: p.mediaType === 'video' ? 'video' : 'photo',
-    telegramFileId: p.telegramFileId || undefined,
+    mediaType,
+    telegramFileId,
     telegramFileUniqueId: p.telegramFileUniqueId || undefined,
     mediaUrl,
     buttonText: p.buttonText || DEFAULT_GIFT_PROMO.buttonText,
     clickCount: typeof p.clickCount === 'number' ? p.clickCount : 0,
+    showClickCounter: promoShowClickCounter(p),
     telegramMessageId: p.telegramMessageId,
     telegramChatId: p.telegramChatId,
     publishedAt: p.publishedAt,
@@ -452,7 +577,334 @@ function cleanOptional(value?: string | null): string | undefined {
   return value && value.length > 0 ? value : undefined;
 }
 
-type UploadedMediaKind = 'photo' | 'video' | 'document';
+type UploadedMediaKind = GiftPromoMediaType;
+
+type TelegramMediaMethod =
+  | 'sendPhoto'
+  | 'sendVideo'
+  | 'sendDocument'
+  | 'sendVoice'
+  | 'sendVideoNote'
+  | 'sendAudio';
+type TelegramMediaField = 'photo' | 'video' | 'document' | 'voice' | 'video_note' | 'audio';
+
+function extractTelegramFileIds(message: any): {
+  fileId?: string;
+  fileUniqueId?: string;
+  kind: UploadedMediaKind;
+} {
+  if (Array.isArray(message?.photo) && message.photo.length > 0) {
+    const best = message.photo[message.photo.length - 1];
+    return { fileId: best.file_id, fileUniqueId: best.file_unique_id, kind: 'photo' };
+  }
+  if (message?.video_note) {
+    return {
+      fileId: message.video_note.file_id,
+      fileUniqueId: message.video_note.file_unique_id,
+      kind: 'video_note',
+    };
+  }
+  if (message?.voice) {
+    return {
+      fileId: message.voice.file_id,
+      fileUniqueId: message.voice.file_unique_id,
+      kind: 'voice',
+    };
+  }
+  if (message?.audio) {
+    return {
+      fileId: message.audio.file_id,
+      fileUniqueId: message.audio.file_unique_id,
+      kind: 'audio',
+    };
+  }
+  if (message?.video) {
+    return {
+      fileId: message.video.file_id,
+      fileUniqueId: message.video.file_unique_id,
+      kind: 'video',
+    };
+  }
+  if (message?.animation) {
+    return {
+      fileId: message.animation.file_id,
+      fileUniqueId: message.animation.file_unique_id,
+      kind: 'video',
+    };
+  }
+  if (message?.document) {
+    return {
+      fileId: message.document.file_id,
+      fileUniqueId: message.document.file_unique_id,
+      kind: 'document',
+    };
+  }
+  return { kind: 'document' };
+}
+
+async function telegramSendMedia(opts: {
+  botApi: string;
+  chatId: string | number;
+  buffer: Buffer;
+  filename: string;
+  mimeType: string;
+  method: TelegramMediaMethod;
+  field: TelegramMediaField;
+  timeoutMs: number;
+  caption?: string;
+  replyMarkup?: unknown;
+  /** Staging uploads mute; channel publish should notify (default true for staging). */
+  disableNotification?: boolean;
+}): Promise<any> {
+  const form = new FormData();
+  form.append('chat_id', String(opts.chatId));
+  if (opts.disableNotification !== false) {
+    form.append('disable_notification', 'true');
+  }
+  if (opts.caption) {
+    form.append('caption', opts.caption);
+    form.append('parse_mode', 'MarkdownV2');
+  }
+  if (opts.replyMarkup) {
+    form.append('reply_markup', JSON.stringify(opts.replyMarkup));
+  }
+  const blob = new Blob([new Uint8Array(opts.buffer)], {
+    type: opts.mimeType || 'application/octet-stream',
+  });
+  form.append(opts.field, blob, opts.filename);
+
+  let tgRes: Response;
+  try {
+    tgRes = await fetch(`${opts.botApi}/${opts.method}`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(opts.timeoutMs),
+    });
+  } catch (err) {
+    const name = err instanceof Error ? err.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new Error(
+        'Telegram не ответил вовремя. Уменьшите файл (лучше MP4 до 48 МБ) или проверьте staging-чат (личный Telegram / канал).',
+      );
+    }
+    throw err;
+  }
+  const tgJson = (await tgRes.json()) as any;
+  if (!tgJson.ok) {
+    throw new Error(tgJson.description || 'Telegram upload failed');
+  }
+  return tgJson.result;
+}
+
+/** Download Bot API file (≤20 МБ). Used to deliver quality-staged documents as photo/video. */
+async function downloadTelegramBotFile(
+  botApi: string,
+  fileId: string,
+): Promise<{ buffer: Buffer; filename: string; mimeType: string } | null> {
+  const metaRes = await fetch(`${botApi}/getFile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  const meta = (await metaRes.json()) as {
+    ok?: boolean;
+    result?: { file_path?: string };
+  };
+  if (!meta.ok || !meta.result?.file_path) return null;
+  const filePath = meta.result.file_path;
+  const token = botApi.replace(/^https:\/\/api\.telegram\.org\/bot/, '');
+  const fileRes = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+  if (!fileRes.ok) return null;
+  const buffer = Buffer.from(await fileRes.arrayBuffer());
+  const filename = filePath.split('/').pop() || 'file.bin';
+  const lower = filename.toLowerCase();
+  let mimeType = fileRes.headers.get('content-type') || 'application/octet-stream';
+  if (/\.jpe?g$/i.test(lower)) mimeType = 'image/jpeg';
+  else if (/\.png$/i.test(lower)) mimeType = 'image/png';
+  else if (/\.webp$/i.test(lower)) mimeType = 'image/webp';
+  else if (/\.gif$/i.test(lower)) mimeType = 'image/gif';
+  else if (/\.mp4$/i.test(lower)) mimeType = 'video/mp4';
+  else if (/\.mov$/i.test(lower)) mimeType = 'video/quicktime';
+  else if (/\.webm$/i.test(lower)) mimeType = 'video/webm';
+  return { buffer, filename, mimeType };
+}
+
+/**
+ * Publish photo/video: if file_id is quality-staged document, download → sendPhoto/Video
+ * (one Telegram compress at delivery). Fall back to sendDocument if getFile fails (>20 МБ).
+ */
+async function publishChannelMedia(opts: {
+  botApi: string;
+  chatId: string | number;
+  media: string;
+  kind: GiftPromoMediaType;
+  caption: string;
+  replyMarkup: unknown;
+}): Promise<any> {
+  const { botApi, chatId, media, kind, caption, replyMarkup } = opts;
+  const wantsVisual = kind === 'photo' || kind === 'video';
+  if (wantsVisual && isTelegramDocumentFileId(media)) {
+    const downloaded = await downloadTelegramBotFile(botApi, media);
+    if (downloaded) {
+      try {
+        const message = await telegramSendMedia({
+          botApi,
+          chatId,
+          buffer: downloaded.buffer,
+          filename: downloaded.filename,
+          mimeType: downloaded.mimeType,
+          method: kind === 'video' ? 'sendVideo' : 'sendPhoto',
+          field: kind === 'video' ? 'video' : 'photo',
+          timeoutMs: kind === 'video' ? 180_000 : 120_000,
+          caption,
+          replyMarkup,
+          disableNotification: false,
+        });
+        return { ok: true, result: message };
+      } catch {
+        /* fall through to sendDocument with original file_id */
+      }
+    }
+    const tgRes = await fetch(`${botApi}/sendDocument`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: media,
+        caption,
+        parse_mode: 'MarkdownV2',
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+
+  if (kind === 'video') {
+    const tgRes = await fetch(`${botApi}/sendVideo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        video: media,
+        caption,
+        parse_mode: 'MarkdownV2',
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+  if (kind === 'document') {
+    const tgRes = await fetch(`${botApi}/sendDocument`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        document: media,
+        caption,
+        parse_mode: 'MarkdownV2',
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+  if (kind === 'voice') {
+    const tgRes = await fetch(`${botApi}/sendVoice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        voice: media,
+        caption,
+        parse_mode: 'MarkdownV2',
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+  if (kind === 'audio') {
+    const tgRes = await fetch(`${botApi}/sendAudio`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        audio: media,
+        caption,
+        parse_mode: 'MarkdownV2',
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+  if (kind === 'video_note') {
+    const tgRes = await fetch(`${botApi}/sendVideoNote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        video_note: media,
+        reply_markup: replyMarkup,
+      }),
+    });
+    return tgRes.json();
+  }
+  const tgRes = await fetch(`${botApi}/sendPhoto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      photo: media,
+      caption,
+      parse_mode: 'MarkdownV2',
+      reply_markup: replyMarkup,
+    }),
+  });
+  return tgRes.json();
+}
+
+function uploadAttemptsForKind(
+  kind: UploadedMediaKind,
+  filename: string,
+  mimeType: string,
+): Array<{ method: TelegramMediaMethod; field: TelegramMediaField }> {
+  const isMp4 = /\.mp4$/i.test(filename) || mimeType === 'video/mp4';
+  switch (kind) {
+    case 'photo':
+      // Document first: keep original bytes (sendPhoto irreversibly recompresses).
+      return [
+        { method: 'sendDocument', field: 'document' },
+        { method: 'sendPhoto', field: 'photo' },
+      ];
+    case 'video_note':
+      return [
+        { method: 'sendVideoNote', field: 'video_note' },
+        { method: 'sendVideo', field: 'video' },
+        { method: 'sendDocument', field: 'document' },
+      ];
+    case 'voice':
+      return [
+        { method: 'sendVoice', field: 'voice' },
+        { method: 'sendDocument', field: 'document' },
+      ];
+    case 'audio':
+      return [
+        { method: 'sendAudio', field: 'audio' },
+        { method: 'sendDocument', field: 'document' },
+      ];
+    case 'video':
+      // Document first: avoid Telegram sendVideo re-encode at staging.
+      return isMp4
+        ? [
+            { method: 'sendDocument', field: 'document' },
+            { method: 'sendVideo', field: 'video' },
+          ]
+        : [
+            { method: 'sendDocument', field: 'document' },
+            { method: 'sendVideo', field: 'video' },
+          ];
+    default:
+      return [{ method: 'sendDocument', field: 'document' }];
+  }
+}
 
 async function uploadMediaToTelegram(opts: {
   botApi: string;
@@ -464,41 +916,40 @@ async function uploadMediaToTelegram(opts: {
 }): Promise<{
   fileId: string;
   fileUniqueId?: string;
-  mediaType?: 'photo' | 'video';
+  mediaType: GiftPromoMediaType;
   kind: UploadedMediaKind;
 }> {
-  const form = new FormData();
-  form.append('chat_id', String(opts.chatId));
-  form.append('disable_notification', 'true');
-  const blob = new Blob([new Uint8Array(opts.buffer)], {
-    type: opts.mimeType || 'application/octet-stream',
-  });
-  const field = opts.kind === 'photo' ? 'photo' : opts.kind === 'video' ? 'video' : 'document';
-  const method = opts.kind === 'photo' ? 'sendPhoto' : opts.kind === 'video' ? 'sendVideo' : 'sendDocument';
-  form.append(field, blob, opts.filename);
+  const attempts = uploadAttemptsForKind(opts.kind, opts.filename, opts.mimeType);
+  const timeoutMs =
+    opts.kind === 'video' || opts.kind === 'video_note' ? 180_000 : 120_000;
+  let lastError: Error | null = null;
+  let message: any;
 
-  const tgRes = await fetch(`${opts.botApi}/${method}`, { method: 'POST', body: form });
-  const tgJson = (await tgRes.json()) as any;
-  if (!tgJson.ok) {
-    throw new Error(tgJson.description || 'Telegram upload failed');
+  for (const attempt of attempts) {
+    try {
+      message = await telegramSendMedia({
+        botApi: opts.botApi,
+        chatId: opts.chatId,
+        buffer: opts.buffer,
+        filename: opts.filename,
+        mimeType: opts.mimeType,
+        method: attempt.method,
+        field: attempt.field,
+        timeoutMs,
+      });
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
-  const message = tgJson.result;
-  let fileId: string | undefined;
-  let fileUniqueId: string | undefined;
-  if (opts.kind === 'photo' && Array.isArray(message.photo) && message.photo.length > 0) {
-    const best = message.photo[message.photo.length - 1];
-    fileId = best.file_id;
-    fileUniqueId = best.file_unique_id;
-  } else if (opts.kind === 'video' && message.video) {
-    fileId = message.video.file_id;
-    fileUniqueId = message.video.file_unique_id;
-  } else if (message.document) {
-    fileId = message.document.file_id;
-    fileUniqueId = message.document.file_unique_id;
+  if (!message) {
+    throw lastError || new Error('Telegram upload failed');
   }
 
-  if (!fileId) {
+  const extracted = extractTelegramFileIds(message);
+  if (!extracted.fileId) {
     throw new Error('Telegram не вернул file_id');
   }
 
@@ -511,20 +962,22 @@ async function uploadMediaToTelegram(opts: {
     }).catch(() => undefined);
   }
 
-  return {
-    fileId,
-    fileUniqueId,
-    mediaType: opts.kind === 'video' ? 'video' : opts.kind === 'photo' ? 'photo' : undefined,
-    kind: opts.kind,
-  };
-}
+  // Trust Telegram's response kind — except quality-preserving photo/video staging
+  // via sendDocument (keep requested kind so delivery can download→sendPhoto/Video).
+  let resolvedKind = extracted.kind;
+  if (
+    extracted.kind === 'document' &&
+    (opts.kind === 'photo' || opts.kind === 'video')
+  ) {
+    resolvedKind = opts.kind;
+  }
 
-function detectUploadKind(mimeType: string, filename: string): UploadedMediaKind {
-  const lower = `${mimeType} ${filename}`.toLowerCase();
-  if (mimeType.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(filename)) return 'photo';
-  if (mimeType.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(filename)) return 'video';
-  if (/\.(mp4|mov|webm)$/i.test(lower)) return 'video';
-  return 'document';
+  return {
+    fileId: extracted.fileId,
+    fileUniqueId: extracted.fileUniqueId,
+    mediaType: resolvedKind,
+    kind: resolvedKind,
+  };
 }
 
 function normalizeChannelUsername(raw: string): string {
@@ -563,19 +1016,25 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       where: { tenantId, type: { in: [...types] } },
     });
     const byType = Object.fromEntries(addons.map((a) => [a.type, a]));
+    const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+    const [mailingBotPrice, mailingAccountsPrice, mailingStoriesPrice] = await Promise.all([
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.MAILING_BOT),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.MAILING_ACCOUNTS),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.MAILING_STORIES),
+    ]);
     return reply.send({
       trialDays: TRIAL_PERIOD_DAYS,
       products: {
         mailing_bot: {
-          price: PRICING.MAILING_BOT_MONTHLY,
+          price: mailingBotPrice,
           ...trialMeta(byType.mailing_bot || null),
         },
         mailing_accounts: {
-          price: PRICING.MAILING_ACCOUNTS_MONTHLY,
+          price: mailingAccountsPrice,
           ...trialMeta(byType.mailing_accounts || null),
         },
         mailing_stories: {
-          price: PRICING.MAILING_STORIES_MONTHLY,
+          price: mailingStoriesPrice,
           ...trialMeta(byType.mailing_stories || null),
         },
       },
@@ -802,7 +1261,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         continue;
       }
       const bot = await fastify.prisma.botInstance.findFirst({
-        where: { id: rule.botId, tenantId, botType: 'gift' },
+        where: { id: rule.botId, tenantId, botType: { in: ['gift', 'gift_max'] } },
         include: { giftCampaigns: { where: { isActive: true }, take: 1 } },
       });
       if (!bot?.giftCampaigns[0]) {
@@ -857,6 +1316,200 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         isTrial: true,
       },
       days: result.days,
+    });
+  });
+
+  // --- Start MAX gift bot trial (separate product) ---
+  fastify.post('/gift/max/start-trial', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can start MAX gift bot trial' });
+    }
+    await grandfatherSplitGiftMaxAddon(fastify.prisma, tenantId);
+    const result = await startChannelTrial(fastify.prisma, tenantId, PRODUCT_CODES.GIFT_BOT_MAX);
+    if (!result.ok) {
+      return reply.code(result.code).send({ error: result.error, addon: result.addon });
+    }
+    return reply.send({
+      addon: {
+        id: result.addon.id,
+        type: result.addon.type,
+        status: result.addon.status,
+        activeUntil: result.addon.activeUntil,
+        isTrial: true,
+      },
+      days: result.days,
+    });
+  });
+
+  // --- Connect MAX gift bot by platform token (official Bot API) ---
+  fastify.post('/gift/max/connect', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    const user = (request as any).user;
+    const { tenantId } = user;
+    if (!canManageTenant(user)) {
+      return reply.code(403).send({ error: 'Only owners can connect MAX gift bots' });
+    }
+
+    const parsed = z
+      .object({
+        token: z.string().min(20).max(500),
+        name: z.string().min(1).max(80).optional(),
+      })
+      .safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+
+    const prisma = fastify.prisma;
+    await grandfatherSplitGiftMaxAddon(prisma, tenantId);
+    const addonRaw = await prisma.addon.findUnique({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT_MAX } },
+    });
+    if (!addonRaw || addonRaw.status !== 'active' || addonRaw.activeUntil < new Date()) {
+      return reply.code(402).send({
+        error: 'Сначала активируйте пробный период или оплатите бота подарков MAX',
+        productCode: PRODUCT_CODES.GIFT_BOT_MAX,
+      });
+    }
+    const { addon, slots, used } = await ensureGiftBotSlots(
+      prisma,
+      tenantId,
+      addonRaw,
+      'gift_max',
+    );
+    if (!addon) {
+      return reply.code(402).send({
+        error: 'Сначала активируйте пробный период или оплатите бота подарков MAX',
+        productCode: PRODUCT_CODES.GIFT_BOT_MAX,
+      });
+    }
+
+    const token = parsed.data.token.trim();
+    const maxBase = (process.env.MAX_BOT_API_URL || 'https://platform-api2.max.ru').replace(
+      /\/$/,
+      '',
+    );
+    const meRes = await fetch(`${maxBase}/me`, {
+      headers: { Authorization: token, Accept: 'application/json' },
+    });
+    const meJson = (await meRes.json().catch(() => ({}))) as {
+      user_id?: number;
+      name?: string;
+      username?: string;
+      is_bot?: boolean;
+      message?: string;
+    };
+    if (!meRes.ok || !meJson.user_id) {
+      return reply.code(400).send({
+        error: 'Неверный токен MAX-бота',
+        hint: meJson.message || 'Проверьте токен в кабинете MAX для бизнеса',
+      });
+    }
+
+    const username = (meJson.username || parsed.data.name || `max_${meJson.user_id}`)
+      .replace(/^@/, '')
+      .trim();
+    const displayName = parsed.data.name || meJson.name || username;
+
+    const existingSame = await prisma.botInstance.findFirst({
+      where: {
+        botType: 'gift_max',
+        OR: [{ phoneNumberId: String(meJson.user_id) }, { botUsername: username }],
+      },
+    });
+    if (existingSame && existingSame.tenantId !== tenantId) {
+      return reply.code(409).send({ error: 'Этот MAX-бот уже подключён к другому кабинету' });
+    }
+    if (!existingSame && used >= slots) {
+      return reply.code(402).send({
+        error: `Лимит MAX-ботов: ${used}/${slots}. Купите ещё слот (500 ₽/мес).`,
+        productCode: PRODUCT_CODES.GIFT_BOT_MAX,
+        botSlots: slots,
+        used,
+        intent: 'add',
+      });
+    }
+
+    const webhookSecret = existingSame?.webhookSecret || randomBytes(16).toString('hex');
+    const botData = {
+      botUsername: username,
+      displayName,
+      botTokenEncrypted: encrypt(token),
+      phoneNumberId: String(meJson.user_id),
+      webhookSecret,
+      provisionedVia: 'manual' as const,
+      botType: 'gift_max',
+      status: 'active',
+      addonId: addon.id,
+    };
+
+    const bot = existingSame
+      ? await prisma.botInstance.update({ where: { id: existingSame.id }, data: botData })
+      : await prisma.botInstance.create({
+          data: { tenantId, ...botData },
+        });
+
+    // Ensure default campaign shell (channel optional for MAX — gap documented)
+    const campaignCount = await prisma.giftCampaignConfig.count({
+      where: { botInstanceId: bot.id },
+    });
+    if (campaignCount === 0) {
+      await prisma.giftCampaignConfig.create({
+        data: {
+          tenantId,
+          botInstanceId: bot.id,
+          name: 'Проект MAX',
+          channelId: 'pending',
+          funnelJson: DEFAULT_GIFT_FUNNEL as object,
+          isActive: true,
+        },
+      });
+    }
+
+    // Prod webhook subscription (HTTPS). Local: long-poll via GIFT_MAX_USE_POLLING.
+    const webhookBase =
+      process.env.GIFT_BOT_WEBHOOK_BASE_URL ||
+      process.env.BOT_WEBHOOK_BASE_URL ||
+      '';
+    let webhook: { ok: boolean; detail?: string } | null = null;
+    if (webhookBase.startsWith('https://')) {
+      const url = `${webhookBase.replace(/\/$/, '')}/max/${tenantId}/${bot.id}`;
+      const subRes = await fetch(`${maxBase}/subscriptions`, {
+        method: 'POST',
+        headers: {
+          Authorization: token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url,
+          secret: webhookSecret,
+          update_types: ['message_created', 'bot_started', 'message_callback'],
+        }),
+      });
+      const subJson = (await subRes.json().catch(() => ({}))) as {
+        success?: boolean;
+        message?: string;
+      };
+      webhook = {
+        ok: subRes.ok && subJson.success !== false,
+        detail: subJson.message || (subRes.ok ? url : `HTTP ${subRes.status}`),
+      };
+    }
+
+    return reply.send({
+      ok: true,
+      bot: {
+        id: bot.id,
+        botUsername: bot.botUsername,
+        displayName: bot.displayName,
+        botType: bot.botType,
+        status: bot.status,
+      },
+      webhook,
+      hint: webhookBase.startsWith('https://')
+        ? undefined
+        : 'Локально включите GIFT_MAX_USE_POLLING=true у gift-bot-worker (webhook только HTTPS).',
     });
   });
 
@@ -1038,7 +1691,23 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
       });
       if (!addon || addon.status !== 'active' || addon.activeUntil < new Date()) {
-        return reply.code(402).send({ error: 'Сначала активируйте пробный период или оплатите gift-бота' });
+        return reply.code(402).send({
+          error: 'Сначала активируйте пробный период или оплатите gift-бота',
+          productCode: PRODUCT_CODES.GIFT_BOT,
+        });
+      }
+      const { slots, used } = await ensureGiftBotSlots(prisma, tenantId, addon, 'gift');
+      const usedWithPending = await countGiftBotsUsed(prisma, tenantId, 'gift', {
+        includePendingProvision: true,
+      });
+      if (usedWithPending >= slots) {
+        return reply.code(402).send({
+          error: `Лимит Telegram-ботов: ${used}/${slots}. Купите ещё слот (500 ₽/мес).`,
+          productCode: PRODUCT_CODES.GIFT_BOT,
+          botSlots: slots,
+          used,
+          intent: 'add',
+        });
       }
     }
 
@@ -1233,7 +1902,21 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
-    const serializeAddon = (a: typeof addon) => {
+    await grandfatherSplitGiftMaxAddon(prisma, tenantId);
+    const giftMaxAddonRow = await prisma.addon.findUnique({
+      where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT_MAX } },
+    });
+    const giftSlotsState = await ensureGiftBotSlots(prisma, tenantId, addon, 'gift');
+    const giftMaxSlotsState = await ensureGiftBotSlots(
+      prisma,
+      tenantId,
+      giftMaxAddonRow,
+      'gift_max',
+    );
+    const giftAddonResolved = giftSlotsState.addon;
+    const giftMaxAddonResolved = giftMaxSlotsState.addon;
+
+    const serializeAddon = (a: typeof addon | typeof giftMaxAddonRow) => {
       const meta = trialMeta(a);
       if (!a) return null;
       return {
@@ -1246,15 +1929,36 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       };
     };
 
+    const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+    const [
+      giftBotPriceMonthly,
+      giftMaxBotPriceMonthly,
+      aiBotPriceMonthly,
+      gramjsPriceMonthly,
+      waPriceMonthly,
+    ] = await Promise.all([
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.GIFT_BOT),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.GIFT_BOT_MAX),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.AI_TELEGRAM),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.AI_GRAMJS),
+      resolveUnitPrice(prisma, tenantId, PRODUCT_CODES.AI_WHATSAPP),
+    ]);
+
     return reply.send({
       telegramLinked: Boolean(user?.telegramUserId),
       managerBot: `@${process.env.TELEGRAM_MANAGER_BOT_USERNAME || 'VoxlyGiftbot'}`,
-      giftBotPriceMonthly: PRICING.GIFT_BOT_MONTHLY,
-      aiBotPriceMonthly: PRICING.AI_TELEGRAM_MONTHLY,
-      gramjsPriceMonthly: PRICING.AI_GRAMJS_MONTHLY,
-      waPriceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+      giftBotPriceMonthly,
+      giftBotSlots: giftSlotsState.slots,
+      giftBotsUsed: giftSlotsState.used,
+      giftMaxBotPriceMonthly,
+      giftMaxBotSlots: giftMaxSlotsState.slots,
+      giftMaxBotsUsed: giftMaxSlotsState.used,
+      aiBotPriceMonthly,
+      gramjsPriceMonthly,
+      waPriceMonthly,
       maxBusinessConnections: PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS,
-      giftAddon: serializeAddon(addon),
+      giftAddon: serializeAddon(giftAddonResolved),
+      giftMaxAddon: serializeAddon(giftMaxAddonResolved),
       aiAddon: serializeAddon(aiAddon),
       gramjsAddon: serializeAddon(gramjsAddon),
       waAddon: serializeAddon(waAddon),
@@ -1291,7 +1995,11 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           campaigns: campaigns.map(serializeCampaign),
           /** Active/newest project (compat for older UI) */
           campaign: campaign ? serializeCampaign(campaign) : null,
-          botLink: b.botUsername ? `https://t.me/${b.botUsername}` : null,
+          botLink: b.botUsername
+            ? b.botType === 'gift_max'
+              ? `max://bot/${b.botUsername}`
+              : `https://t.me/${b.botUsername}`
+            : null,
         };
         }),
       ),
@@ -1299,11 +2007,134 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  // --- Telegram bot description (shown when opening t.me/bot before /start) ---
+  // --- Telegram bot greeting / profile (pre-/start screen: name, photo, description) ---
   const telegramProfileSchema = z.object({
+    name: z.string().max(64).optional(),
     description: z.string().max(512),
     shortDescription: z.string().max(120).optional().nullable(),
   });
+
+  async function loadGiftBotForProfile(opts: {
+    prisma: typeof fastify.prisma;
+    botId: string;
+    tenantId: string;
+  }) {
+    return opts.prisma.botInstance.findFirst({
+      where: { id: opts.botId, tenantId: opts.tenantId, botType: 'gift' },
+    });
+  }
+
+  async function fetchTelegramProfilePhotoFilePath(
+    botApi: string,
+    botUserId: number,
+  ): Promise<string | null> {
+    const photosRes = await fetch(`${botApi}/getUserProfilePhotos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: botUserId, limit: 1 }),
+    });
+    const photosJson = (await photosRes.json()) as {
+      ok?: boolean;
+      result?: { total_count?: number; photos?: Array<Array<{ file_id: string }>> };
+      description?: string;
+    };
+    const fileId = photosJson.result?.photos?.[0]?.[0]?.file_id;
+    if (!photosJson.ok || !fileId) return null;
+    const fileRes = await fetch(`${botApi}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+    });
+    const fileJson = (await fileRes.json()) as {
+      ok?: boolean;
+      result?: { file_path?: string };
+    };
+    return fileJson.ok && fileJson.result?.file_path ? fileJson.result.file_path : null;
+  }
+
+  fastify.get(
+    '/:botId/telegram-profile',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      const prisma = fastify.prisma;
+      const bot = await loadGiftBotForProfile({ prisma, botId, tenantId });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const [meRes, nameRes, descRes, shortRes] = await Promise.all([
+        fetch(`${botApi}/getMe`),
+        fetch(`${botApi}/getMyName`),
+        fetch(`${botApi}/getMyDescription`),
+        fetch(`${botApi}/getMyShortDescription`),
+      ]);
+      const meJson = (await meRes.json()) as {
+        ok?: boolean;
+        result?: { id?: number; first_name?: string; username?: string };
+      };
+      const nameJson = (await nameRes.json()) as {
+        ok?: boolean;
+        result?: { name?: string };
+      };
+      const descJson = (await descRes.json()) as {
+        ok?: boolean;
+        result?: { description?: string };
+      };
+      const shortJson = (await shortRes.json()) as {
+        ok?: boolean;
+        result?: { short_description?: string };
+      };
+
+      const name =
+        (nameJson.ok && nameJson.result?.name?.trim()) ||
+        bot.displayName ||
+        meJson.result?.first_name ||
+        '';
+      const description =
+        (descJson.ok && descJson.result?.description) || bot.telegramDescription || '';
+      const shortDescription =
+        (shortJson.ok && shortJson.result?.short_description) ||
+        bot.telegramShortDescription ||
+        '';
+
+      let hasProfilePhoto = false;
+      if (meJson.result?.id != null) {
+        const path = await fetchTelegramProfilePhotoFilePath(botApi, meJson.result.id);
+        hasProfilePhoto = Boolean(path);
+      }
+
+      if (
+        name !== (bot.displayName || '') ||
+        description !== (bot.telegramDescription || '') ||
+        shortDescription !== (bot.telegramShortDescription || '')
+      ) {
+        await prisma.botInstance.update({
+          where: { id: botId },
+          data: {
+            displayName: name || null,
+            telegramDescription: description || null,
+            telegramShortDescription: shortDescription || null,
+          },
+        });
+      }
+
+      return reply.send({
+        name,
+        description,
+        shortDescription,
+        username: bot.botUsername || meJson.result?.username || null,
+        hasProfilePhoto,
+        avatarUrl: hasProfilePhoto
+          ? `/api/bots/${encodeURIComponent(botId)}/telegram-profile/avatar`
+          : null,
+      });
+    },
+  );
 
   fastify.put(
     '/:botId/telegram-profile',
@@ -1321,9 +2152,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const prisma = fastify.prisma;
-      const bot = await prisma.botInstance.findFirst({
-        where: { id: botId, tenantId, botType: 'gift' },
-      });
+      const bot = await loadGiftBotForProfile({ prisma, botId, tenantId });
       if (!bot?.botTokenEncrypted) {
         return reply.code(404).send({ error: 'Bot not found or token missing' });
       }
@@ -1335,6 +2164,22 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         typeof parsed.data.shortDescription === 'string'
           ? parsed.data.shortDescription.trim()
           : description.slice(0, 120);
+      const name =
+        typeof parsed.data.name === 'string' ? parsed.data.name.trim().slice(0, 64) : undefined;
+
+      if (name !== undefined) {
+        const nameRes = await fetch(`${botApi}/setMyName`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const nameJson = (await nameRes.json()) as { ok?: boolean; description?: string };
+        if (!nameJson.ok) {
+          return reply.code(400).send({
+            error: nameJson.description || 'Не удалось сохранить название бота в Telegram',
+          });
+        }
+      }
 
       const descRes = await fetch(`${botApi}/setMyDescription`, {
         method: 'POST',
@@ -1363,6 +2208,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = await prisma.botInstance.update({
         where: { id: botId },
         data: {
+          ...(name !== undefined ? { displayName: name || null } : {}),
           telegramDescription: description || null,
           telegramShortDescription: shortDescription || null,
         },
@@ -1370,9 +2216,156 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({
         ok: true,
+        name: updated.displayName,
+        displayName: updated.displayName,
         telegramDescription: updated.telegramDescription,
         telegramShortDescription: updated.telegramShortDescription,
       });
+    },
+  );
+
+  fastify.post(
+    '/:botId/telegram-profile/photo',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can edit bot profile' });
+      }
+
+      const file = await request.file();
+      if (!file) {
+        return reply.code(400).send({ error: 'Прикрепите JPG или PNG (поле file)' });
+      }
+
+      const prisma = fastify.prisma;
+      const bot = await loadGiftBotForProfile({ prisma, botId, tenantId });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+
+      let buffer: Buffer;
+      try {
+        buffer = await file.toBuffer();
+      } catch {
+        return reply.code(400).send({ error: 'Не удалось прочитать файл' });
+      }
+      if (!buffer.length) {
+        return reply.code(400).send({ error: 'Пустой файл' });
+      }
+      if (buffer.length > 5 * 1024 * 1024) {
+        return reply.code(413).send({ error: 'Фото профиля до 5 МБ' });
+      }
+
+      // Telegram setMyProfilePhoto (static) = JPG only. Portal converts PNG→JPG client-side.
+      if (!(buffer[0] === 0xff && buffer[1] === 0xd8)) {
+        return reply.code(400).send({
+          error:
+            'Нужен JPG или PNG. PNG конвертируется в кабинете автоматически — обновите страницу (hard-refresh) и повторите.',
+        });
+      }
+
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const form = new FormData();
+      form.append('photo', JSON.stringify({ type: 'static', photo: 'attach://avatar' }));
+      form.append(
+        'avatar',
+        new Blob([new Uint8Array(buffer)], { type: 'image/jpeg' }),
+        'avatar.jpg',
+      );
+
+      const tgRes = await fetch(`${botApi}/setMyProfilePhoto`, {
+        method: 'POST',
+        body: form,
+      });
+      const tgJson = (await tgRes.json()) as { ok?: boolean; description?: string };
+      if (!tgJson.ok) {
+        return reply.code(400).send({
+          error:
+            tgJson.description ||
+            'Не удалось установить фото. Telegram меняет фото профиля не чаще раза в сутки.',
+        });
+      }
+
+      return reply.send({
+        ok: true,
+        avatarUrl: `/api/bots/${encodeURIComponent(botId)}/telegram-profile/avatar?t=${Date.now()}`,
+      });
+    },
+  );
+
+  fastify.delete(
+    '/:botId/telegram-profile/photo',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can edit bot profile' });
+      }
+      const prisma = fastify.prisma;
+      const bot = await loadGiftBotForProfile({ prisma, botId, tenantId });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const tgRes = await fetch(`${botApi}/removeMyProfilePhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const tgJson = (await tgRes.json()) as { ok?: boolean; description?: string };
+      if (!tgJson.ok) {
+        return reply.code(400).send({
+          error: tgJson.description || 'Не удалось удалить фото профиля',
+        });
+      }
+      return reply.send({ ok: true });
+    },
+  );
+
+  fastify.get(
+    '/:botId/telegram-profile/avatar',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      const prisma = fastify.prisma;
+      const bot = await loadGiftBotForProfile({ prisma, botId, tenantId });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const meRes = await fetch(`${botApi}/getMe`);
+      const meJson = (await meRes.json()) as {
+        ok?: boolean;
+        result?: { id?: number };
+      };
+      if (!meJson.ok || meJson.result?.id == null) {
+        return reply.code(404).send({ error: 'Не удалось получить профиль бота' });
+      }
+      const filePath = await fetchTelegramProfilePhotoFilePath(botApi, meJson.result.id);
+      if (!filePath) {
+        return reply.code(404).send({ error: 'Фото профиля не установлено' });
+      }
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+      const imgRes = await fetch(fileUrl);
+      if (!imgRes.ok) {
+        return reply.code(502).send({ error: 'Не удалось скачать фото из Telegram' });
+      }
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+      return reply
+        .header('Content-Type', contentType)
+        .header('Cache-Control', 'private, max-age=120')
+        .send(buf);
     },
   );
 
@@ -1392,7 +2385,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
-      where: { id: botId, tenantId, botType: 'gift' },
+      where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] } },
       include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
     });
     if (!bot) return reply.code(404).send({ error: 'Bot not found' });
@@ -1452,7 +2445,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
-      where: { id: botId, tenantId, botType: 'gift' },
+      where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] } },
       include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
     });
     if (!bot) return reply.code(404).send({ error: 'Bot not found' });
@@ -1581,7 +2574,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
-      where: { id: botId, tenantId, botType: 'gift' },
+      where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] } },
       include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
     });
     if (!bot) return reply.code(404).send({ error: 'Bot not found' });
@@ -1596,13 +2589,19 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const next: GiftPromoPost = {
       ...prev,
       text: parsed.data.text,
-      mediaType: parsed.data.mediaType === 'video' ? 'video' : 'photo',
+      mediaType: telegramFileId
+        ? detectStoredMediaKind(telegramFileId, normalizeGiftMediaType(parsed.data.mediaType))
+        : normalizeGiftMediaType(parsed.data.mediaType) || 'photo',
       telegramFileId,
       telegramFileUniqueId:
         cleanOptional(parsed.data.telegramFileUniqueId) ||
         (telegramFileId ? prev.telegramFileUniqueId : undefined),
       mediaUrl: telegramFileId ? undefined : mediaUrl,
       buttonText: parsed.data.buttonText,
+      showClickCounter:
+        typeof parsed.data.showClickCounter === 'boolean'
+          ? parsed.data.showClickCounter
+          : promoShowClickCounter(prev),
     };
     delete (next as { imageUrl?: string }).imageUrl;
 
@@ -1629,27 +2628,54 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     const queryCampaignId = (request.query as { campaignId?: string } | undefined)?.campaignId;
-    const fieldCampaign = (file.fields as Record<string, { value?: string } | undefined> | undefined)
-      ?.campaignId?.value;
+    const fields = file.fields as Record<string, { value?: string } | undefined> | undefined;
+    const fieldCampaign = fields?.campaignId?.value;
     const campaignIdField = queryCampaignId || fieldCampaign;
+    const asVideoNote =
+      fields?.asVideoNote?.value === '1' ||
+      fields?.asVideoNote?.value === 'true' ||
+      (request.query as { asVideoNote?: string } | undefined)?.asVideoNote === '1';
 
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
-      where: { id: botId, tenantId, botType: 'gift', status: 'active' },
+      where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] }, status: 'active' },
       include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
     });
     if (!bot?.botTokenEncrypted) {
       return reply.code(404).send({ error: 'Bot not found' });
     }
+    if (bot.botType === 'gift_max') {
+      return reply.code(400).send({
+        error:
+          'Загрузка медиа для MAX gift-бота через этот endpoint пока не поддерживается (нужен MAX uploads API).',
+      });
+    }
 
-    const buffer = await file.toBuffer();
+    let buffer: Buffer;
+    try {
+      buffer = await file.toBuffer();
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (code === 'FST_REQ_FILE_TOO_LARGE' || /file too large|maxFileSize/i.test(msg)) {
+        return reply.code(413).send({ error: 'Файл слишком большой. Лимит загрузки — 48 МБ.' });
+      }
+      if (code === 'ERR_STREAM_PREMATURE_CLOSE' || /Premature close/i.test(msg)) {
+        return reply.code(400).send({
+          error:
+            'Загрузка оборвалась (сеть или прокси). Повторите: лучше MP4 до 48 МБ, стабильный интернет.',
+        });
+      }
+      request.log.warn({ err }, 'media upload buffer failed');
+      return reply.code(400).send({ error: 'Не удалось прочитать файл' });
+    }
     if (!buffer.length) {
       return reply.code(400).send({ error: 'Пустой файл' });
     }
 
     const filename = file.filename || 'upload.bin';
     const mimeType = file.mimetype || 'application/octet-stream';
-    const kind = detectUploadKind(mimeType, filename);
+    const kind = detectUploadMediaKind(mimeType, filename, { asVideoNote });
 
     // Staging chat: current user's Telegram → tenant owner Telegram → verified channel
     const [currentUser, ownerUser] = await Promise.all([
@@ -1669,6 +2695,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     if (chatId == null && campaign?.channelId) {
       chatId = campaign.channelId;
     }
+
     if (chatId == null) {
       return reply.code(400).send({
         error:
@@ -1700,6 +2727,63 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  // --- Proxy staged Telegram file for portal preview (auth + tenant-scoped) ---
+  fastify.get(
+    '/:botId/media-file',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      const fileId = String((request.query as { fileId?: string })?.fileId || '').trim();
+      if (!fileId || fileId.length < 8 || fileId.length > 512) {
+        return reply.code(400).send({ error: 'Invalid file id' });
+      }
+
+      const prisma = fastify.prisma;
+      const bot = await prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] } },
+        select: { botTokenEncrypted: true, botType: true },
+      });
+      if (!bot?.botTokenEncrypted) {
+        return reply.code(404).send({ error: 'Bot not found or token missing' });
+      }
+      if (bot.botType === 'gift_max') {
+        return reply.code(400).send({ error: 'Превью медиа для MAX пока не поддерживается' });
+      }
+
+      const token = decrypt(bot.botTokenEncrypted);
+      const botApi = `https://api.telegram.org/bot${token}`;
+      const metaRes = await fetch(`${botApi}/getFile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file_id: fileId }),
+      });
+      const meta = (await metaRes.json()) as {
+        ok?: boolean;
+        description?: string;
+        result?: { file_path?: string };
+      };
+      if (!meta.ok || !meta.result?.file_path) {
+        return reply.code(404).send({
+          error: meta.description || 'Файл недоступен в Telegram (file_id устарел или >20 МБ)',
+        });
+      }
+
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${meta.result.file_path}`;
+      const imgRes = await fetch(fileUrl);
+      if (!imgRes.ok) {
+        return reply.code(502).send({ error: 'Не удалось скачать файл из Telegram' });
+      }
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      const contentType = imgRes.headers.get('content-type') || 'application/octet-stream';
+      return reply
+        .header('Content-Type', contentType)
+        .header('Cache-Control', 'private, max-age=300')
+        .send(buf);
+    },
+  );
+
   // --- Publish promo post to Telegram channel ---
   fastify.post('/:botId/promo/publish', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const user = (request as any).user;
@@ -1712,7 +2796,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const body = promoSchema.safeParse(request.body ?? {});
     const prisma = fastify.prisma;
     const bot = await prisma.botInstance.findFirst({
-      where: { id: botId, tenantId, botType: 'gift', status: 'active' },
+      where: { id: botId, tenantId, botType: { in: ['gift', 'gift_max'] }, status: 'active' },
       include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
     });
     if (!bot?.botTokenEncrypted) {
@@ -1731,17 +2815,31 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       ? {
           ...prev,
           text: body.data.text,
-          mediaType: body.data.mediaType === 'video' ? 'video' : 'photo',
+          mediaType: (() => {
+            const fileId =
+              cleanOptional(body.data.telegramFileId) || prev.telegramFileId || '';
+            return fileId
+              ? detectStoredMediaKind(fileId, normalizeGiftMediaType(body.data.mediaType))
+              : normalizeGiftMediaType(body.data.mediaType) || 'photo';
+          })(),
           telegramFileId: cleanOptional(body.data.telegramFileId) || prev.telegramFileId,
           telegramFileUniqueId:
             cleanOptional(body.data.telegramFileUniqueId) || prev.telegramFileUniqueId,
           mediaUrl: cleanOptional(body.data.mediaUrl || body.data.imageUrl) || prev.mediaUrl,
           buttonText: body.data.buttonText,
+          showClickCounter:
+            typeof body.data.showClickCounter === 'boolean'
+              ? body.data.showClickCounter
+              : promoShowClickCounter(prev),
         }
       : prev;
     delete (promo as { imageUrl?: string }).imageUrl;
     if (promo.telegramFileId) {
       promo.mediaUrl = undefined;
+      promo.mediaType = detectStoredMediaKind(
+        promo.telegramFileId,
+        normalizeGiftMediaType(promo.mediaType),
+      );
     }
 
     if (!promo.text.trim()) {
@@ -1752,41 +2850,40 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const botApi = `https://api.telegram.org/bot${token}`;
     const startPayload = giftPromoStartPayload(campaign.id);
     const buttonUrl = `https://t.me/${bot.botUsername}?start=${startPayload}`;
-    const buttonLabel = formatPromoButtonLabel(promo.buttonText, promo.clickCount);
+    const buttonLabel = formatPromoButtonLabel(
+      promo.buttonText,
+      promo.clickCount,
+      promoShowClickCounter(promo),
+    );
     const replyMarkup = {
       inline_keyboard: [[{ text: buttonLabel, url: buttonUrl }]],
     };
     const media = resolveTelegramMedia(promo);
-    const isVideo = promo.mediaType === 'video';
+    const kind = promoMediaType(promo);
     const caption = clientMdToMarkdownV2(promo.text);
 
     let tgJson: any;
-    if (media && isVideo) {
-      const tgRes = await fetch(`${botApi}/sendVideo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: campaign.channelId,
-          video: media,
-          caption,
-          parse_mode: 'MarkdownV2',
-          reply_markup: replyMarkup,
-        }),
+    if (media) {
+      tgJson = await publishChannelMedia({
+        botApi,
+        chatId: campaign.channelId,
+        media,
+        kind,
+        caption,
+        replyMarkup,
       });
-      tgJson = await tgRes.json();
-    } else if (media) {
-      const tgRes = await fetch(`${botApi}/sendPhoto`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: campaign.channelId,
-          photo: media,
-          caption,
-          parse_mode: 'MarkdownV2',
-          reply_markup: replyMarkup,
-        }),
-      });
-      tgJson = await tgRes.json();
+      // video_note has no caption — send text as follow-up
+      if (kind === 'video_note' && tgJson.ok && promo.text.trim()) {
+        await fetch(`${botApi}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: campaign.channelId,
+            text: caption,
+            parse_mode: 'MarkdownV2',
+          }),
+        }).catch(() => undefined);
+      }
     } else {
       const tgRes = await fetch(`${botApi}/sendMessage`, {
         method: 'POST',
@@ -2226,10 +3323,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
               : '';
         let mediaUrl: string | undefined =
           typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
-        let mediaType: 'photo' | 'video' | undefined =
-          prev.mediaType === 'video' || prev.mediaType === 'photo'
-            ? prev.mediaType
-            : undefined;
+        let mediaType: GiftPromoMediaType | undefined =
+          normalizeGiftMediaType(
+            typeof prev.mediaType === 'string' ? prev.mediaType : null,
+          ) || undefined;
         if (parsed.data.mediaUrl !== undefined) {
           mediaUrl = parsed.data.mediaUrl || undefined;
         }
@@ -2341,10 +3438,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           typeof prev.telegramFileId === 'string' ? prev.telegramFileId : undefined;
         let mediaUrl: string | undefined =
           typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
-        let mediaType: 'photo' | 'video' | undefined =
-          prev.mediaType === 'video' || prev.mediaType === 'photo'
-            ? prev.mediaType
-            : undefined;
+        let mediaType: GiftPromoMediaType | undefined =
+          normalizeGiftMediaType(
+            typeof prev.mediaType === 'string' ? prev.mediaType : null,
+          ) || undefined;
 
         if (parsed.data.telegramFileId !== undefined) {
           telegramFileId = parsed.data.telegramFileId || undefined;
@@ -2413,10 +3510,10 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
 
       let mediaUrl: string | undefined =
         typeof prev.mediaUrl === 'string' ? prev.mediaUrl : undefined;
-      let mediaType: 'photo' | 'video' | undefined =
-        prev.mediaType === 'video' || prev.mediaType === 'photo'
-          ? prev.mediaType
-          : undefined;
+      let mediaType: GiftPromoMediaType | undefined =
+        normalizeGiftMediaType(
+          typeof prev.mediaType === 'string' ? prev.mediaType : null,
+        ) || undefined;
       if (parsed.data.mediaUrl !== undefined) {
         mediaUrl = parsed.data.mediaUrl || undefined;
       }
@@ -2814,10 +3911,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       const aiAddon = await prisma.addon.findUnique({
         where: { tenantId_type: { tenantId, type: 'ai_tg' } },
       });
-      const { getAiTgBusinessCapacity, getAiTgExtraSlots, PRICING } = await import('@voxly/shared');
+      const { getAiTgBusinessCapacity, getAiTgExtraSlots, PRICING, PRODUCT_CODES } = await import(
+        '@voxly/shared'
+      );
+      const { resolveUnitPrice } = await import('../services/platform-pricing.js');
       const extraSlots = getAiTgExtraSlots(aiAddon?.config);
       const capacity = getAiTgBusinessCapacity(aiAddon?.config);
       const activeBusiness = businessAccounts.filter((a) => a.status !== 'closed').length;
+      const extraPriceMonthly = await resolveUnitPrice(
+        prisma,
+        tenantId,
+        PRODUCT_CODES.AI_TG_EXTRA_CONN,
+      );
 
       return reply.send({
         defaultAiAgentId: botDefault?.defaultAiAgentId ?? null,
@@ -2827,7 +3932,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           extraSlots,
           capacity,
           active: activeBusiness,
-          extraPriceMonthly: PRICING.AI_TG_EXTRA_CONN_MONTHLY,
+          extraPriceMonthly,
         },
         businessAccounts: businessAccounts.map((a) => ({
           id: a.id,
@@ -3170,43 +4275,54 @@ async function registerAiTgWebhook(
   }
 }
 
+function sanitizeExtraButtons(
+  buttons?: z.infer<typeof extraButtonsSchema>,
+): GiftFunnelConfig['start']['extraButtons'] {
+  if (!buttons?.length) return undefined;
+  const cleaned = buttons
+    .map((b) => ({ text: b.text.trim(), url: b.url.trim() }))
+    .filter((b) => b.text.length > 0 && /^https?:\/\//i.test(b.url));
+  return cleaned.length ? cleaned : undefined;
+}
+
 function sanitizeFunnel(input: z.infer<typeof campaignSchema>['funnel']): GiftFunnelConfig {
   const mapMsg = (m: z.infer<typeof funnelMessageSchema>) => {
     const telegramFileId = cleanOptional(m.telegramFileId);
+    const mediaType = normalizeGiftMediaType(m.mediaType);
+    const extraButtons = sanitizeExtraButtons(m.extraButtons);
     return {
       delayMinutes: m.delayMinutes,
       text: m.text,
       imageUrl: telegramFileId ? undefined : cleanOptional(m.imageUrl),
       telegramFileId,
-      mediaType: (m.mediaType === 'video'
-        ? 'video'
-        : telegramFileId
-          ? 'photo'
-          : undefined) as GiftFunnelConfig['start']['mediaType'],
+      mediaType: (telegramFileId
+        ? detectStoredMediaKind(telegramFileId, mediaType)
+        : mediaType) as GiftFunnelConfig['start']['mediaType'],
+      ...(extraButtons ? { extraButtons } : {}),
     };
   };
   const giftFileId = cleanOptional(input.gift.telegramFileId);
+  const giftHint = normalizeGiftMediaType(input.gift.mediaType);
   const giftMediaType: GiftFunnelConfig['gift']['mediaType'] =
-    input.gift.type === 'video' || input.gift.mediaType === 'video'
+    input.gift.type === 'video'
       ? 'video'
-      : input.gift.mediaType === 'photo'
-        ? 'photo'
-        : giftFileId && input.gift.type === 'file'
-          ? undefined
-          : giftFileId
-            ? 'photo'
-            : undefined;
+      : giftFileId
+        ? detectStoredMediaKind(giftFileId, giftHint)
+        : giftHint;
+  const startExtra = sanitizeExtraButtons(input.start.extraButtons);
+  const giftExtra = sanitizeExtraButtons(input.gift.extraButtons);
   return {
     start: {
       text: input.start.text,
       imageUrl: cleanOptional(input.start.telegramFileId) ? undefined : cleanOptional(input.start.imageUrl),
       telegramFileId: cleanOptional(input.start.telegramFileId),
-      mediaType:
-        input.start.mediaType === 'video'
-          ? 'video'
-          : cleanOptional(input.start.telegramFileId)
-            ? 'photo'
-            : undefined,
+      mediaType: (() => {
+        const fileId = cleanOptional(input.start.telegramFileId);
+        const hint = normalizeGiftMediaType(input.start.mediaType);
+        if (fileId) return detectStoredMediaKind(fileId, hint);
+        return hint;
+      })(),
+      ...(startExtra ? { extraButtons: startExtra } : {}),
     },
     notSubscribed: input.notSubscribed.map(mapMsg),
     gift: {
@@ -3215,6 +4331,7 @@ function sanitizeFunnel(input: z.infer<typeof campaignSchema>['funnel']): GiftFu
       telegramFileId: giftFileId,
       mediaType: giftMediaType,
       caption: input.gift.caption,
+      ...(giftExtra ? { extraButtons: giftExtra } : {}),
     },
     afterGift: input.afterGift.map(mapMsg),
     notGifted: input.notGifted.map(mapMsg),

@@ -14,11 +14,16 @@ export type TgMdNode =
   | { type: 'italic'; children: TgMdNode[] }
   | { type: 'strike'; children: TgMdNode[] }
   | { type: 'spoiler'; children: TgMdNode[] }
+  | { type: 'link'; href: string; children: TgMdNode[] }
   | { type: 'code'; value: string }
   | { type: 'pre'; value: string };
 
 export const TELEGRAM_CLIENT_MD_HINT =
-  '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`, ```блок```';
+  '**жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`, ```блок```, ссылка';
+
+/** Hint for portal textareas with right-click format menu */
+export const TELEGRAM_CLIENT_MD_RMB_HINT =
+  'Оформление текста — правой кнопкой мыши: **жирный**, __курсив__, ~~зачёркнутый~~, ||спойлер||, `код`, ```блок```, ссылка';
 
 const MDV2_SPECIAL = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
 
@@ -115,6 +120,25 @@ function parseFormatted(src: string): TgMdNode[] {
       }
     }
 
+    if (src[i] === '[') {
+      const closeLabel = findClosing(src, i + 1, ']');
+      if (closeLabel !== -1 && src[closeLabel + 1] === '(') {
+        const closeUrl = findClosing(src, closeLabel + 2, ')');
+        if (closeUrl !== -1) {
+          flushText();
+          const label = src.slice(i + 1, closeLabel);
+          const href = src.slice(closeLabel + 2, closeUrl).trim();
+          nodes.push({
+            type: 'link',
+            href,
+            children: parseFormatted(label),
+          });
+          i = closeUrl + 1;
+          continue;
+        }
+      }
+    }
+
     textBuf += src[i];
     i += 1;
   }
@@ -139,6 +163,11 @@ function nodeToMarkdownV2(node: TgMdNode): string {
       return `~${nodesToMarkdownV2(node.children)}~`;
     case 'spoiler':
       return `||${nodesToMarkdownV2(node.children)}||`;
+    case 'link': {
+      const label = nodesToMarkdownV2(node.children);
+      const href = node.href.replace(/[)\\]/g, '\\$&');
+      return `[${label}](${href})`;
+    }
     case 'code':
       return `\`${escapeMdV2Code(node.value)}\``;
     case 'pre':
@@ -152,4 +181,23 @@ function nodeToMarkdownV2(node: TgMdNode): string {
 export function clientMdToMarkdownV2(input: string): string {
   if (!input) return '';
   return nodesToMarkdownV2(parseTelegramClientMd(input));
+}
+
+/** Wrap selected range with Telegram client Markdown markers. */
+export function wrapSelection(
+  value: string,
+  start: number,
+  end: number,
+  before: string,
+  after: string,
+): { text: string; nextStart: number; nextEnd: number } {
+  const from = Math.max(0, Math.min(start, end, value.length));
+  const to = Math.max(0, Math.min(Math.max(start, end), value.length));
+  const selected = value.slice(from, to);
+  const text = value.slice(0, from) + before + selected + after + value.slice(to);
+  return {
+    text,
+    nextStart: from + before.length,
+    nextEnd: from + before.length + selected.length,
+  };
 }

@@ -11,6 +11,7 @@
 | **gift-bot-worker** | `apps/gift-bot-worker` | 3004 | Воронка, подписка, gift, promo clicks, broadcasts, CRM sync, fireGoal | PG-control, Redis, Twenty, bot tokens |
 | **ai-telegram-worker** | `apps/ai-telegram-worker` | 3005 | AI Telegram Business + OpenRouter + ASR/vision + `/internal/inbound` | PG-control, OpenRouter, Twenty |
 | **gramjs-bridge** | `apps/gramjs-bridge` | 3008 | Personal TG QR session (profile `gramjs`) → AI worker | PG-control, Telegram api_id/hash, ai-telegram-worker |
+| **max-bridge** | `apps/max-bridge` | 3010 | Personal MAX QR session (profile `max`, PyMax) → saas-api `/internal/max` | saas-api service token, session volume |
 | **ai-whatsapp-worker** | `apps/ai-whatsapp-worker` | 3006 | AI WhatsApp Cloud API | PG-control, Redis, OpenAI, Twenty |
 
 ## Инфра (docker/)

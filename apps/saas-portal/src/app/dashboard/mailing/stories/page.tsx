@@ -17,6 +17,7 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
 import { TelegramPreview } from '@/components/telegram-preview';
+import { TG_PREVIEW_LABEL } from '@/components/portal/telegram-preview-chrome';
 import { MailingBillingBanner } from '@/components/portal/mailing-billing-banner';
 
 type MediaType = 'photo' | 'video';
@@ -308,7 +309,7 @@ export default function MailingStoriesPage() {
             </CardContent>
           </Card>
           <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">Превью</p>
+            <p className={TG_PREVIEW_LABEL}>Превью</p>
             <TelegramPreview
               text={text || 'Подпись сторис…'}
               mediaUrl={mediaUrl || undefined}

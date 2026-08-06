@@ -21,8 +21,19 @@ import {
   HelpCircle,
   Building2,
   Bot,
+  Tags,
+  Layers,
+  Wallet,
+  Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -35,6 +46,16 @@ import {
 import { cn } from '@/lib/utils';
 import { readSessionClaims } from '@/lib/session';
 import { useEffect, useMemo, useState } from 'react';
+
+function initialsFromEmail(email?: string): string {
+  if (!email) return '??';
+  const local = email.split('@')[0] || '';
+  const parts = local.split(/[._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ''}${parts[1]![0] ?? ''}`.toUpperCase() || '??';
+  }
+  return local.slice(0, 2).toUpperCase() || '??';
+}
 
 type NavItem = {
   href: string;
@@ -81,6 +102,13 @@ const CABINET_NAV: NavItem[] = [
     ownerOnly: true,
   },
   {
+    href: '/dashboard/ai/max',
+    label: 'MAX',
+    match: (p) => p.startsWith('/dashboard/ai/max'),
+    icon: MessageSquare,
+    ownerOnly: true,
+  },
+  {
     href: '/dashboard/ai/gramjs',
     label: 'Telegram',
     match: (p) => p.startsWith('/dashboard/ai/gramjs'),
@@ -94,6 +122,7 @@ const CABINET_NAV: NavItem[] = [
       if (p === '/dashboard/ai') return true;
       if (!p.startsWith('/dashboard/ai/')) return false;
       if (p.startsWith('/dashboard/ai/gramjs')) return false;
+      if (p.startsWith('/dashboard/ai/max')) return false;
       if (p.startsWith('/dashboard/ai/whatsapp')) return false;
       if (p.startsWith('/dashboard/ai/agents')) return false;
       return true;
@@ -103,8 +132,15 @@ const CABINET_NAV: NavItem[] = [
   },
   {
     href: '/dashboard/bots',
-    label: 'Бот выдачи подарков',
-    match: (p) => p.startsWith('/dashboard/bots'),
+    label: 'Подарки Telegram',
+    match: (p) => p === '/dashboard/bots' || p === '/dashboard/bots/',
+    icon: Gift,
+    ownerOnly: true,
+  },
+  {
+    href: '/dashboard/bots/max',
+    label: 'Подарки MAX',
+    match: (p) => p === '/dashboard/bots/max' || p.startsWith('/dashboard/bots/max/'),
     icon: Gift,
     ownerOnly: true,
   },
@@ -124,6 +160,24 @@ const ADMIN_NAV: NavItem[] = [
     label: 'Обзор',
     match: (p) => p === '/admin' || p === '/admin/',
     icon: Shield,
+  },
+  {
+    href: '/admin/pricing',
+    label: 'Тарифы',
+    match: (p) => p.startsWith('/admin/pricing'),
+    icon: Tags,
+  },
+  {
+    href: '/admin/ai-balance',
+    label: 'AI баланс',
+    match: (p) => p.startsWith('/admin/ai-balance'),
+    icon: Wallet,
+  },
+  {
+    href: '/admin/services',
+    label: 'Сервисы',
+    match: (p) => p.startsWith('/admin/services'),
+    icon: Layers,
   },
   {
     href: '/admin/crm',
@@ -160,6 +214,7 @@ export function AppShell({
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [tenantRole, setTenantRole] = useState<string | undefined>(undefined);
+  const [avatarInitials, setAvatarInitials] = useState('??');
   const [hash, setHash] = useState('');
 
   const isAdminShell = pathname.startsWith('/admin');
@@ -167,6 +222,7 @@ export function AppShell({
   useEffect(() => {
     const claims = readSessionClaims();
     setTenantRole(claims?.tenantRole);
+    setAvatarInitials(initialsFromEmail(claims?.email));
   }, [pathname]);
 
   useEffect(() => {
@@ -184,7 +240,11 @@ export function AppShell({
 
   useEffect(() => {
     if (!isMember || isAdminShell) return;
-    if (pathname.startsWith('/dashboard') && !pathname.startsWith('/dashboard/crm')) {
+    if (
+      pathname.startsWith('/dashboard') &&
+      !pathname.startsWith('/dashboard/crm') &&
+      !pathname.startsWith('/dashboard/settings')
+    ) {
       router.replace('/dashboard/crm');
     }
   }, [isMember, isAdminShell, pathname, router]);
@@ -302,9 +362,30 @@ export function AppShell({
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
               <HelpCircle className="h-5 w-5" />
             </Button>
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-dark text-sm font-semibold text-white">
-              AC
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-dark text-sm font-semibold text-white outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-label="Меню профиля"
+                >
+                  {avatarInitials}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[12rem]">
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/settings">
+                    <Settings className="h-4 w-4" aria-hidden />
+                    Настроить профиль
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => logout()}>
+                  <LogOut className="h-4 w-4" aria-hidden />
+                  Выйти
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -319,10 +400,34 @@ export function AppShell({
           <Link href={homeHref} className="text-sm font-semibold tracking-tight text-primary">
             {brandLabel}
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
               <Bell className="h-4 w-4" />
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-dark text-xs font-semibold text-white outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-label="Меню профиля"
+                >
+                  {avatarInitials}
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[12rem]">
+                <DropdownMenuItem asChild>
+                  <Link href="/dashboard/settings">
+                    <Settings className="h-4 w-4" aria-hidden />
+                    Настроить профиль
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => logout()}>
+                  <LogOut className="h-4 w-4" aria-hidden />
+                  Выйти
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="icon" aria-label="Открыть меню">

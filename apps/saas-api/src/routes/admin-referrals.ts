@@ -2,12 +2,20 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { REFERRAL_PRODUCT_SCOPES, REFERRAL_PRODUCT_SCOPE_VALUES } from '@voxly/shared';
+import {
+  REFERRAL_PRODUCT_SCOPES,
+  REFERRAL_PRODUCT_SCOPE_VALUES,
+  REFERRAL_COMMISSION_SKUS,
+  isReferralCommissionSku,
+} from '@voxly/shared';
 import {
   MAIN_LINK_LABEL,
   buildReferralAdminOverview,
   buildReferralPartnerDetail,
   resolveEffectiveRuleShape,
+  listPartnerServiceRates,
+  upsertPartnerServiceRate,
+  deletePartnerServiceRate,
 } from '../services/referral-admin.js';
 import { withdrawalShape } from '../services/referral-program.js';
 
@@ -159,6 +167,58 @@ export const adminReferralRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     return reply.send({ rule: await resolveEffectiveRuleShape(prisma, tenantId) });
+  });
+
+  // --- Per-partner per-SKU commission % (overrides rule.value for that product) ---
+  const serviceRateBody = z.object({
+    productCode: z.enum(REFERRAL_COMMISSION_SKUS),
+    percent: z.number().min(0).max(100),
+  });
+
+  fastify.put('/partners/:tenantId/service-rates', async (request, reply) => {
+    const { tenantId } = request.params as { tenantId: string };
+    const body = serviceRateBody.safeParse(request.body);
+    if (!body.success) {
+      return reply
+        .code(400)
+        .send({ error: 'Укажите сервис из каталога и процент от 0 до 100' });
+    }
+    if (!(await tenantExists(tenantId))) {
+      return reply.code(404).send({ error: 'Партнёр не найден' });
+    }
+
+    const rate = await upsertPartnerServiceRate(
+      prisma,
+      tenantId,
+      body.data.productCode,
+      body.data.percent,
+    );
+    return reply.send({
+      rate,
+      serviceRates: await listPartnerServiceRates(prisma, tenantId),
+    });
+  });
+
+  fastify.delete('/partners/:tenantId/service-rates/:productCode', async (request, reply) => {
+    const { tenantId, productCode } = request.params as {
+      tenantId: string;
+      productCode: string;
+    };
+    if (!(await tenantExists(tenantId))) {
+      return reply.code(404).send({ error: 'Партнёр не найден' });
+    }
+    if (!isReferralCommissionSku(productCode)) {
+      return reply.code(400).send({ error: 'Неизвестный сервис' });
+    }
+
+    const removed = await deletePartnerServiceRate(prisma, tenantId, productCode);
+    if (!removed) return reply.code(404).send({ error: 'Ставка для сервиса не найдена' });
+
+    return reply.send({
+      removed: true,
+      productCode,
+      serviceRates: await listPartnerServiceRates(prisma, tenantId),
+    });
   });
 
   // --- Balance movement: payout or manual correction ---

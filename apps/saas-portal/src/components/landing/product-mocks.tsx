@@ -69,7 +69,7 @@ export function KanbanMock({
   );
 }
 
-export type PhoneScreen = 'kanban' | 'deal' | 'chat' | 'sent';
+export type PhoneScreen = 'kanban' | 'deal' | 'chat' | 'form' | 'sent';
 
 export function PhoneFrame({
   children,
@@ -201,6 +201,9 @@ export function PhoneScreenContent({ screen }: { screen: PhoneScreen }) {
       </div>
     );
   }
+  if (screen === 'form') {
+    return <PhoneFormLeadScreen />;
+  }
   if (screen === 'sent') {
     return (
       <div className="relative flex h-full min-h-[420px] flex-col">
@@ -214,6 +217,60 @@ export function PhoneScreenContent({ screen }: { screen: PhoneScreen }) {
   return <PhoneChatScreen />;
 }
 
+export function PhoneFormLeadScreen() {
+  return (
+    <div className="flex h-full min-h-[420px] flex-col">
+      <div className="border-b border-black/10 bg-white px-3 py-2">
+        <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-[#f5a623]">Новая заявка</p>
+        <p className="mt-2 text-[13px] font-semibold">Иван С. · Tilda</p>
+        <p className="mt-1 font-mono text-[10px] text-black/45">+7 900 123-45-67 · landing /promo</p>
+      </div>
+      <div className="flex-1 space-y-2 p-3">
+        <div className="border border-black/10 bg-white px-2.5 py-2 text-[11px]">
+          <p className="font-mono text-[9px] uppercase text-black/40">Комментарий</p>
+          <p className="mt-1">Нужна консультация по CRM на 5 человек</p>
+        </div>
+        <div className="border border-black/10 bg-white px-2.5 py-2 text-[11px]">
+          <p className="font-mono text-[9px] uppercase text-black/40">UTM</p>
+          <p className="mt-1 font-mono text-[10px]">yandex / cpc / crm_demo</p>
+        </div>
+        <div className="border border-[#f5a623]/40 bg-[#fff4de] px-2.5 py-2 text-[11px] font-semibold">
+          → Сделка «Новый лид» на канбане
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function FormToDealMock() {
+  return (
+    <div aria-hidden className="border border-black/15 bg-white">
+      <div className="border-b border-black/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-black/45">
+        Сайт → CRM
+      </div>
+      <div className="grid gap-0 sm:grid-cols-3">
+        <div className="border-b border-black/10 p-3 sm:border-b-0 sm:border-r">
+          <p className="font-mono text-[9px] text-black/40">01 · Tilda / WP</p>
+          <p className="mt-2 text-[12px] font-semibold">Форма отправлена</p>
+          <p className="mt-1 text-[11px] text-black/50">имя · телефон · UTM · cookies</p>
+        </div>
+        <div className="border-b border-black/10 p-3 sm:border-b-0 sm:border-r">
+          <p className="font-mono text-[9px] text-black/40">02 · Webhook</p>
+          <p className="mt-2 truncate font-mono text-[10px] text-black/55">
+            /api/webhooks/forms/…
+          </p>
+          <p className="mt-1 text-[11px] text-black/50">безлимит сайтов · free</p>
+        </div>
+        <div className="bg-[#fff4de] p-3">
+          <p className="font-mono text-[9px] text-black/40">03 · VoxlyCRM</p>
+          <p className="mt-2 text-[12px] font-semibold">Person + сделка</p>
+          <p className="mt-1 text-[11px] text-black/55">дедуп по телефону · UTM в сессии</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HeroSignature() {
   return (
     <div className="relative isolate min-h-[460px] w-full lg:min-h-[520px]">
@@ -221,8 +278,8 @@ export function HeroSignature() {
         <KanbanMock dimmed className="h-full min-h-[480px] scale-[1.05]" />
       </div>
       <div className="relative z-10 flex justify-center lg:justify-end lg:pr-4">
-        <PhoneFrame className="land-rise-delay-2" label="Сделка · Чат">
-          <PhoneChatScreen />
+        <PhoneFrame className="land-rise-delay-2" label="Заявка · Tilda">
+          <PhoneFormLeadScreen />
         </PhoneFrame>
       </div>
     </div>
@@ -262,7 +319,7 @@ export function TransformCompare() {
       <div className="border-b border-black/15 bg-[#f3f3f3] p-5 lg:border-b-0 lg:border-r">
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-black/40">До</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          {['Salebot', 'Wazzup', 'amo', 'ещё чат'].map((tab) => (
+          {['Tilda формы', 'WhatsApp', 'Telegram', 'amo', 'ещё чат'].map((tab) => (
             <span
               key={tab}
               className="border border-black/20 bg-white px-3 py-2 font-mono text-[11px] text-black/55"
@@ -271,7 +328,9 @@ export function TransformCompare() {
             </span>
           ))}
         </div>
-        <p className="mt-5 text-sm text-[var(--land-muted)]">Четыре вкладки. Один потерянный ночной лид.</p>
+        <p className="mt-5 text-sm text-[var(--land-muted)]">
+          Сайт, мессенджеры и CRM в разных вкладках. Контекст теряется.
+        </p>
       </div>
       <div className="bg-white p-5">
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-[#f5a623]">
@@ -279,10 +338,10 @@ export function TransformCompare() {
         </p>
         <div className="mt-4 border border-black/15 bg-[#0a0a0a] px-4 py-3 text-white">
           <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#f5a623]">VoxlyCRM</p>
-          <p className="mt-2 text-sm font-semibold">сделка + чат + каналы</p>
+          <p className="mt-2 text-sm font-semibold">заявка + сделка + чат + каналы</p>
         </div>
         <p className="mt-5 text-sm text-[var(--land-muted)]">
-          Меньше стек на 8–15 тысяч. CRM Base — от 500 ₽ в месяц.
+          Меньше стек на 8–15 тысяч. CRM Base — от 500 ₽ в месяц. Формы с сайта — бесплатно.
         </p>
       </div>
     </div>

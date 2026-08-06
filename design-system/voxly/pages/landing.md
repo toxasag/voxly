@@ -2,39 +2,19 @@
 
 ## Active design lock
 
-**Source of truth for next rebuild:** [`landing-awwwards-v2.md`](./landing-awwwards-v2.md) (PROMPT v2 — Awwwards / conversion).
-
-Until that file is implemented in `apps/saas-portal/src/app/page.tsx`, production may still show the AIDA industrial page (mascot hero). Do not mix thesis: **CRM command center + mobile web without apps** wins over “трёх сервисов” alone.
+**Source of truth:** [`landing-awwwards-v3.md`](./landing-awwwards-v3.md).  
+**Previous:** [`landing-awwwards-v2.md`](./landing-awwwards-v2.md) archived at `apps/saas-portal/src/app/_archive/landing-v2/`.
 
 ## Positioning (locked)
 
-**Primary:** VoxlyCRM — командный центр продаж. Каналы, диалоги, AI и рассылки управляются из CRM. Мобильный веб, apps не нужны.
+**Primary:** VoxlyCRM — командный центр продаж. Заявки с сайта + диалоги из мессенджеров. Mobile web, apps не нужны.
 
-**Secondary:** модули как оружие CRM (не каталог трафика).
+**Primary-support:** Tilda / WordPress forms — бесплатно в CRM Base, без лимита сайтов (ADR-026).
 
-**Tertiary:** от 500 ₽ · 7 дней без карты · hard lock после trial.
+**Secondary:** модули (секретарь, AI, каналы, gift, mailing).
 
-**Vs market:** конкуренты (GramGPT / TraffSoft / Easy AI / DarkTelegram craft only) продают трафик в TG; Voxly продаёт закрытие лида в CRM.
+**Tertiary:** от 500 ₽ · 7 дней · hard lock после trial · replaces-stack.
 
-## Market anchors (public tariffs, mid-2026)
+## Visual
 
-| Category | Market entry | Voxly |
-|---|---|---|
-| TG funnel builder | BotHelp ~1 599, Salebot ~2 999 | Gift 500/канал |
-| AI + CRM bundle | 7sales ~3 990, Botseller Start ~4 900 | CRM 500 + AI channel 500–1 000 |
-| WA in CRM | Wazzup ~1 000–6 000, Pact from ~2 000 | WA 500/акк |
-| CRM seats | amo/Kommo per seat → 10 seats easily 10k+ | CRM Base 500 / 10 users |
-
-Stack example: market ~8–15k vs Voxly from 500 (CRM) / ~1.5–2k typical contour. Label as ориентир.
-
-## Visual (marketing)
-
-- Swiss Modernism 2.0 × Industrial Editorial
-- Tokens: ink `#0A0A0A`, paper, mist `#F3F3F3`, amber `#F5A623` — **not** ServiceApp blue, **not** purple AI
-- Type: Unbounded + Manrope + JetBrains Mono
-- Signature: phone CRM chat + ambient desktop kanban
-- No cards in hero; one pin section = Mobile Proof
-
-## Components
-
-Landing uses `@/components/ui/*` sparingly (Button patterns via land-btn, Accordion FAQ). Prefer editorial rows over Card grids. Keep `RegisterLink`, `ReferralCapture`, `LEGAL`.
+Swiss × Industrial Editorial. Product mocks + ClickUp-like tabs + constellation. No cards in hero. Unbounded + Manrope + amber.

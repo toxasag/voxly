@@ -2,6 +2,7 @@
 // Browser never talks to Evolution or the worker directly.
 
 import type { FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
 import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
@@ -147,10 +148,16 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
     const meta = trialMeta(addon);
     const addonActive = meta.isActive;
     const evolutionConfigured = Boolean(cfg.json?.evolutionConfigured);
+    const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+    const priceMonthly = await resolveUnitPrice(
+      fastify.prisma,
+      tenantId,
+      PRODUCT_CODES.AI_WHATSAPP,
+    );
 
     return reply.send({
       ok: true,
-      priceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+      priceMonthly,
       trialDays: TRIAL_PERIOD_DAYS,
       workerConfigured: Boolean(serviceToken()),
       evolutionConfigured,
@@ -168,8 +175,8 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
       billingWarning: addonActive
         ? null
         : meta.trialAvailable
-          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес.`
-          : `Тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) не активен. Оформите оплату.`,
+          ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${priceMonthly} ₽/мес.`
+          : `Тариф WhatsApp (${priceMonthly} ₽/мес) не активен. Оформите оплату.`,
       requiresPayment: !addonActive,
       accounts: bots.map((b) => ({
         id: b.id,
@@ -220,11 +227,17 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
     });
     const addonActive = Boolean(addon && addon.status === 'active' && addon.activeUntil > new Date());
     if (!addonActive) {
+      const { resolveUnitPrice } = await import('../services/platform-pricing.js');
+      const priceMonthly = await resolveUnitPrice(
+        fastify.prisma,
+        tenantId,
+        PRODUCT_CODES.AI_WHATSAPP,
+      );
       return reply.code(402).send({
         error: 'payment_required',
-        message: `Оплатите тариф WhatsApp (${PRICING.AI_WHATSAPP_MONTHLY} ₽/мес) или запустите trial`,
+        message: `Оплатите тариф WhatsApp (${priceMonthly} ₽/мес) или запустите trial`,
         productCode: PRODUCT_CODES.AI_WHATSAPP,
-        priceMonthly: PRICING.AI_WHATSAPP_MONTHLY,
+        priceMonthly,
       });
     }
     const body = (request.body || {}) as { name?: string };
@@ -246,6 +259,60 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
     );
     return reply.code(result.status).send(result.json);
   });
+
+  fastify.patch(
+    '/accounts/:botId',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can rename WhatsApp accounts' });
+      }
+      const { botId } = request.params as { botId: string };
+      const body = z
+        .object({
+          displayName: z.string().max(80),
+        })
+        .safeParse(request.body);
+      if (!body.success) {
+        return reply.code(400).send({ error: body.error.flatten() });
+      }
+      const displayName = body.data.displayName.trim() || null;
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'ai_wa' },
+        select: { id: true, botUsername: true, displayName: true },
+      });
+      if (!bot) return reply.code(404).send({ ok: false, error: 'account not found' });
+
+      const updated = await fastify.prisma.botInstance.update({
+        where: { id: bot.id },
+        data: { displayName },
+        select: {
+          id: true,
+          botUsername: true,
+          displayName: true,
+          phoneNumberId: true,
+          status: true,
+          botTokenEncrypted: true,
+          updatedAt: true,
+        },
+      });
+      return reply.send({
+        ok: true,
+        account: {
+          id: updated.id,
+          name: accountLabel(updated),
+          displayName: accountLabel(updated),
+          slug: updated.botUsername || 'default',
+          phoneNumberId: updated.phoneNumberId,
+          status: updated.status,
+          connected: Boolean(updated.botTokenEncrypted) && updated.status === 'active',
+          updatedAt: updated.updatedAt,
+        },
+      });
+    },
+  );
 
   fastify.delete(
     '/accounts/:botId',
@@ -284,6 +351,57 @@ export const whatsappRoutes: FastifyPluginAsync = async (fastify) => {
           return reply.send({ ok: true, botId, evolutionDeleted: false, softDeleted: true });
         }
       }
+      return reply.code(result.status).send(result.json);
+    },
+  );
+
+  /** Pull all private WA chats into CRM (×500 msgs default). Groups skipped. Idempotent. */
+  fastify.post(
+    '/accounts/:botId/sync-history',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can sync WhatsApp history' });
+      }
+      const { botId } = request.params as { botId: string };
+      const body = (request.body || {}) as {
+        dialogLimit?: number;
+        messageLimit?: number;
+      };
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'ai_wa' },
+        select: { id: true, status: true, botTokenEncrypted: true },
+      });
+      if (!bot) return reply.code(404).send({ ok: false, error: 'account not found' });
+      if (!bot.botTokenEncrypted || bot.status !== 'active') {
+        return reply.code(400).send({
+          ok: false,
+          error: 'account_not_connected',
+          message: 'Сначала подключите номер (QR).',
+        });
+      }
+
+      const dialogLimit =
+        typeof body.dialogLimit === 'number' && body.dialogLimit > 0
+          ? Math.floor(body.dialogLimit)
+          : 0; // 0 = all private
+      const messageLimit =
+        typeof body.messageLimit === 'number' && body.messageLimit > 0
+          ? Math.floor(body.messageLimit)
+          : 500;
+
+      const result = await workerFetch('/internal/crm/sync-history', {
+        method: 'POST',
+        body: JSON.stringify({
+          tenantId,
+          botId,
+          dialogLimit,
+          messageLimit,
+          force: true,
+        }),
+      });
       return reply.code(result.status).send(result.json);
     },
   );

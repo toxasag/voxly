@@ -9,6 +9,7 @@ export type ReferralAttribution = {
 type ReferralDb = Pick<PrismaClient, 'referralCampaign' | 'referralCode'>;
 
 export type RuleDb = Pick<PrismaClient, 'referralRule'>;
+export type ServiceRateDb = Pick<PrismaClient, 'referralServiceRate'>;
 
 /** Personal partner rate wins over the global rule; used by admin views, crediting and the partner cabinet. */
 export async function resolveRuleForReferrer(
@@ -22,6 +23,22 @@ export async function resolveRuleForReferrer(
   return db.referralRule.findFirst({
     where: { tenantId: null, isDefault: true, isActive: true },
   });
+}
+
+/** Per-partner SKU percent override, or null when the partner uses the resolved rule's value. */
+export async function findReferralServicePercent(
+  db: ServiceRateDb,
+  referrerTenantId: string,
+  productCode: string,
+): Promise<number | null> {
+  const row = await db.referralServiceRate.findUnique({
+    where: {
+      tenantId_productCode: { tenantId: referrerTenantId, productCode },
+    },
+    select: { percent: true },
+  });
+  if (!row) return null;
+  return Number(row.percent);
 }
 
 export function generateCampaignCode(name: string): string {

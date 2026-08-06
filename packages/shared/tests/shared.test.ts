@@ -15,6 +15,7 @@ import {
   PRESET_GOALS,
   getAiTgExtraSlots,
   getAiTgBusinessCapacity,
+  getGiftBotSlots,
   clientMdToMarkdownV2,
   parseTelegramClientMd,
   buildVoxlyBotUsername,
@@ -23,7 +24,12 @@ import {
   isProductInReferralScope,
   isAfterReferralPayoutWindow,
   normalizeReferralProductScope,
+  isReferralCommissionSku,
   REFERRAL_PRODUCT_SCOPES,
+  REFERRAL_COMMISSION_SKU_LABELS,
+  detectUploadMediaKind,
+  detectStoredMediaKind,
+  normalizeGiftMediaType,
 } from '../src/index';
 
 describe('@voxly/shared exports', () => {
@@ -34,6 +40,7 @@ describe('@voxly/shared exports', () => {
     expect(PRODUCT_CODES.AI_TELEGRAM).toBe('ai_tg');
     expect(PRODUCT_CODES.AI_TG_EXTRA_CONN).toBe('ai_tg_extra_conn');
     expect(PRODUCT_CODES.AI_GRAMJS).toBe('ai_gramjs');
+    expect(PRODUCT_CODES.AI_MAX).toBe('ai_max');
     expect(PRODUCT_CODES.AI_WHATSAPP).toBe('ai_wa');
     expect(PRODUCT_CODES.AI_AGENT).toBe('ai_agent');
     expect(PRODUCT_CODES.AI_TOPUP).toBe('ai_topup');
@@ -47,6 +54,7 @@ describe('@voxly/shared exports', () => {
     expect(PRICING.USD_RUB_RATE_DEFAULT).toBe(90);
     expect(PRICING.AI_TOPUP_MIN_RUB).toBe(500);
     expect(PRICING.AI_GRAMJS_MONTHLY).toBe(500);
+    expect(PRICING.AI_MAX_MONTHLY).toBe(500);
     expect(PRICING.AI_AGENT_MONTHLY).toBe(500);
     expect(PRICING.AI_TG_EXTRA_CONN_MONTHLY).toBe(200);
     expect(PRICING.AI_TELEGRAM_MAX_BUSINESS_CONNECTIONS).toBe(10);
@@ -128,6 +136,13 @@ describe('@voxly/shared exports', () => {
     expect(REFERRAL_EXCLUDED_PRODUCTS.has(PRODUCT_CODES.AI_TOPUP)).toBe(true);
   });
 
+  it('reads gift bot slots from addon config', () => {
+    expect(getGiftBotSlots(null)).toBe(0);
+    expect(getGiftBotSlots({})).toBe(0);
+    expect(getGiftBotSlots({ botSlots: 2 })).toBe(2);
+    expect(getGiftBotSlots({ botSlots: 1.9 })).toBe(1);
+  });
+
   it('exports PERIOD_DISCOUNTS with expected tiers', () => {
     expect(PERIOD_DISCOUNTS[1]).toBe(0);
     expect(PERIOD_DISCOUNTS[12]).toBe(10);
@@ -138,6 +153,7 @@ describe('@voxly/shared exports', () => {
     expect(ADDON_TYPES).toContain('gift_bot');
     expect(ADDON_TYPES).toContain('ai_tg');
     expect(ADDON_TYPES).toContain('ai_gramjs');
+    expect(ADDON_TYPES).toContain('ai_max');
     expect(ANALYTICS_PLATFORMS).toEqual(['metrika', 'ga4', 'facebook', 'vk']);
     expect(REFERRAL_RULE_TYPES).toContain('percent_recurring');
     expect(TENANT_STATUS).toContain('active');
@@ -204,6 +220,13 @@ describe('referral productScope', () => {
     expect(normalizeReferralProductScope('subscriptions')).toBe(REFERRAL_PRODUCT_SCOPES.ALL);
   });
 
+  it('commission SKU catalogue excludes ai_topup', () => {
+    expect(isReferralCommissionSku(PRODUCT_CODES.CRM_BASE)).toBe(true);
+    expect(isReferralCommissionSku(PRODUCT_CODES.AI_TELEGRAM)).toBe(true);
+    expect(isReferralCommissionSku(PRODUCT_CODES.AI_TOPUP)).toBe(false);
+    expect(REFERRAL_COMMISSION_SKU_LABELS.crm_base).toMatch(/CRM/);
+  });
+
   it('durationMonths window starts at firstPaymentAt', () => {
     const first = new Date('2025-01-01T00:00:00.000Z');
     expect(isAfterReferralPayoutWindow(null, 3, new Date('2025-06-01T00:00:00.000Z'))).toBe(false);
@@ -231,5 +254,45 @@ describe('pickPrimaryMembership', () => {
 
   it('returns undefined for empty list', () => {
     expect(pickPrimaryMembership([])).toBeUndefined();
+  });
+});
+
+describe('gift media kind detection', () => {
+  it('maps office/docs to document', () => {
+    expect(detectUploadMediaKind('application/pdf', 'offer.pdf')).toBe('document');
+    expect(detectUploadMediaKind('application/msword', 'brief.doc')).toBe('document');
+    expect(
+      detectUploadMediaKind(
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'prices.xlsx',
+      ),
+    ).toBe('document');
+    expect(detectUploadMediaKind('application/vnd.ms-excel', 'legacy.xls')).toBe('document');
+  });
+
+  it('maps photo / video / voice / audio / video_note', () => {
+    expect(detectUploadMediaKind('image/jpeg', 'a.jpg')).toBe('photo');
+    expect(detectUploadMediaKind('video/mp4', 'clip.mp4')).toBe('video');
+    expect(detectUploadMediaKind('audio/ogg', 'note.ogg')).toBe('voice');
+    expect(detectUploadMediaKind('audio/mpeg', 'track.mp3')).toBe('audio');
+    expect(detectUploadMediaKind('video/mp4', 'promo_circle.mp4')).toBe('video_note');
+    expect(detectUploadMediaKind('video/mp4', 'clip.mp4', { asVideoNote: true })).toBe('video_note');
+  });
+
+  it('normalizes and detects stored kinds', () => {
+    expect(normalizeGiftMediaType('document')).toBe('document');
+    expect(normalizeGiftMediaType('voice')).toBe('voice');
+    // True documents stay documents; photo/video hint = quality-preserving staging
+    expect(detectStoredMediaKind('BQACAgIAAxkBAAI', 'document')).toBe('document');
+    expect(detectStoredMediaKind('BQACAgIAAxkBAAI', null)).toBe('document');
+    expect(detectStoredMediaKind('BQACAgIAAxkBAAI', 'photo')).toBe('photo');
+    expect(detectStoredMediaKind('BQADAgIAAxkBAAI', 'video')).toBe('video');
+    expect(detectStoredMediaKind('AwACAgIAAxkBAAI', null)).toBe('voice');
+    expect(detectStoredMediaKind('DQACAgIAAxkBAAI', null)).toBe('video_note');
+    expect(detectStoredMediaKind('CQACAgIAAxkBAAI', null)).toBe('audio');
+    // Prefix beats wrong/legacy mediaType (gift type=file → document hint)
+    expect(detectStoredMediaKind('AgACAgIAAxkBAAI', 'document')).toBe('photo');
+    expect(detectStoredMediaKind('BAACAgIAAxkBAAI', 'document')).toBe('video');
+    expect(detectStoredMediaKind('', 'photo')).toBe('photo');
   });
 });

@@ -35,19 +35,21 @@ USER="${VOXLY_PROD_USER:-root}"
 REMOTE_DIR="${VOXLY_PROD_DIR:-/opt/voxly}"
 DRY_RUN=0
 SKIP_BACKUP=0
+NO_CACHE=0
 SERVICES_RAW=""
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/prod-deploy.sh [--dry-run] [--skip-backup] <service[,service…]>
+Usage: ./scripts/prod-deploy.sh [--dry-run] [--skip-backup] [--no-cache] <service[,service…]>
 
 Services:
   saas-portal | saas-api | gift-bot-worker | manager-bot-service | platform-bot-service
-  ai-telegram-worker | ai-whatsapp-worker | gramjs-bridge | evolution-api | twenty | compose | all-apps
+  ai-telegram-worker | ai-whatsapp-worker | gramjs-bridge | max-bridge | evolution-api | twenty | compose | all-apps
 
 Examples:
   ./scripts/prod-deploy.sh --dry-run saas-portal
   ./scripts/prod-deploy.sh saas-api,saas-portal,ai-telegram-worker,ai-whatsapp-worker
+  ./scripts/prod-deploy.sh --no-cache saas-portal
 EOF
 }
 
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --skip-backup) SKIP_BACKUP=1; shift ;;
+    --no-cache) NO_CACHE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     -*)
       echo "Unknown flag: $1" >&2
@@ -175,6 +178,10 @@ paths_for_service() {
       echo "packages/"
       echo "apps/gramjs-bridge/"
       ;;
+    max-bridge)
+      echo "apps/max-bridge/"
+      echo "docker/docker-compose.yml"
+      ;;
     twenty)
       echo "docker/twenty.Dockerfile"
       echo "docker/twenty-shell-ux.js"
@@ -193,10 +200,12 @@ paths_for_service() {
       echo "docker/docker-compose.yml"
       echo "docker/docker-compose.prod-npm.yml"
       echo "docker/evolution-api.Dockerfile"
+      echo "docker/patch-evolution-lid-pn.cjs"
       ;;
     evolution-api)
       echo "docker/docker-compose.yml"
       echo "docker/evolution-api.Dockerfile"
+      echo "docker/patch-evolution-lid-pn.cjs"
       ;;
     all-apps)
       paths_for_service saas-portal
@@ -206,6 +215,8 @@ paths_for_service() {
       paths_for_service platform-bot-service
       paths_for_service ai-telegram-worker
       paths_for_service ai-whatsapp-worker
+      paths_for_service gramjs-bridge
+      paths_for_service max-bridge
       paths_for_service twenty
       paths_for_service compose
       ;;
@@ -227,6 +238,7 @@ compose_services_for() {
     ai-telegram-worker) echo "ai-telegram-worker" ;;
     ai-whatsapp-worker) echo "ai-whatsapp-worker" ;;
     gramjs-bridge) echo "gramjs-bridge" ;;
+    max-bridge) echo "max-bridge" ;;
     evolution-api) echo "evolution-api" ;;
     twenty) echo "twenty-server twenty-worker" ;;
     compose) echo "" ;; # files only
@@ -412,17 +424,36 @@ if [[ ${#BUILD_SVCS[@]} -gt 0 ]]; then
   PROFILE_FLAG=""
   for svc in "${BUILD_SVCS[@]}"; do
     if [[ "$svc" == "evolution-api" ]]; then
-      PROFILE_FLAG="--profile whatsapp"
-      break
+      PROFILE_FLAG="${PROFILE_FLAG} --profile whatsapp"
+    fi
+    if [[ "$svc" == "max-bridge" ]]; then
+      PROFILE_FLAG="${PROFILE_FLAG} --profile max"
+    fi
+    if [[ "$svc" == "gramjs-bridge" ]]; then
+      PROFILE_FLAG="${PROFILE_FLAG} --profile gramjs"
     fi
   done
+  # trim leading space
+  PROFILE_FLAG="$(echo "$PROFILE_FLAG" | sed 's/^ *//')"
+  NO_CACHE_FLAG=""
+  if [[ "$NO_CACHE" -eq 1 ]]; then
+    NO_CACHE_FLAG="--no-cache"
+    echo "  (docker build --no-cache)"
+  fi
   remote "bash -s" <<REMOTE
 set -euo pipefail
 cd '${REMOTE_DIR}/docker'
 # Explicitly do NOT pass -v / override
-# evolution-api lives under compose profile "whatsapp".
-docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
-  ${PROFILE_FLAG} up -d --build ${BUILD_SVCS[*]}
+# Profiles: whatsapp (evolution), max (max-bridge), gramjs (gramjs-bridge).
+if [[ -n "${NO_CACHE_FLAG}" ]]; then
+  docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
+    ${PROFILE_FLAG} build --no-cache ${BUILD_SVCS[*]}
+  docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
+    ${PROFILE_FLAG} up -d --no-deps ${BUILD_SVCS[*]}
+else
+  docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env \
+    ${PROFILE_FLAG} up -d --build ${BUILD_SVCS[*]}
+fi
 docker ps --format 'table {{.Names}}\t{{.Status}}' | head -40
 REMOTE
 else

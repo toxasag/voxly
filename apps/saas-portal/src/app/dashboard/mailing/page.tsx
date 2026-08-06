@@ -1,10 +1,21 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Bot, Image, MessageCircle, Send } from 'lucide-react';
+import { PRICING } from '@voxly/shared';
+import { authHeaders } from '@/lib/auth';
 import { AppShell } from '@/components/portal/app-shell';
 import { PageHeader } from '@/components/portal/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
+
+type BillingProducts = {
+  mailing_bot?: { price: number };
+  mailing_accounts?: { price: number };
+  mailing_stories?: { price: number };
+};
 
 const ITEMS = [
   {
@@ -12,32 +23,51 @@ const ITEMS = [
     title: 'Рассылка сообщений ботом',
     desc: 'Gift-подписчики: сегменты, воронка, медиа, расписание',
     icon: Bot,
-    price: '500 ₽/мес',
+    key: 'mailing_bot' as const,
+    priceFallback: PRICING.MAILING_BOT_MONTHLY,
+    priceSuffix: '',
   },
   {
     href: '/dashboard/mailing/gramjs',
     title: 'Рассылка с GramJS аккаунтов',
     desc: 'Личные Telegram-аккаунты → диалоги Conversation',
     icon: Send,
-    price: '500 ₽/мес · вместе с WhatsApp',
+    key: 'mailing_accounts' as const,
+    priceFallback: PRICING.MAILING_ACCOUNTS_MONTHLY,
+    priceSuffix: ' · вместе с WhatsApp',
   },
   {
     href: '/dashboard/mailing/whatsapp',
     title: 'Рассылка в WhatsApp',
     desc: 'Evolution-аккаунты → диалоги Conversation + медиа URL',
     icon: MessageCircle,
-    price: '500 ₽/мес · вместе с GramJS',
+    key: 'mailing_accounts' as const,
+    priceFallback: PRICING.MAILING_ACCOUNTS_MONTHLY,
+    priceSuffix: ' · вместе с GramJS',
   },
   {
     href: '/dashboard/mailing/stories',
     title: 'Постинг сторис по времени',
     desc: 'GramJS (отправка), WhatsApp / Business — расписание',
     icon: Image,
-    price: '1000 ₽/мес',
+    key: 'mailing_stories' as const,
+    priceFallback: PRICING.MAILING_STORIES_MONTHLY,
+    priceSuffix: '',
   },
 ] as const;
 
 export default function MailingHubPage() {
+  const [products, setProducts] = useState<BillingProducts>({});
+
+  useEffect(() => {
+    fetch(`${API}/api/bots/mailing/billing`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.products) setProducts(d.products);
+      })
+      .catch(() => undefined);
+  }, []);
+
   return (
     <AppShell maxWidth="3xl" className="space-y-5">
       <PageHeader
@@ -50,6 +80,7 @@ export default function MailingHubPage() {
       <div className="grid gap-3 sm:grid-cols-2">
         {ITEMS.map((item) => {
           const Icon = item.icon;
+          const price = products[item.key]?.price ?? item.priceFallback;
           return (
             <Link key={item.href} href={item.href} className="group block">
               <Card className="h-full transition-colors group-hover:border-foreground/25">
@@ -59,7 +90,9 @@ export default function MailingHubPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <CardTitle className="text-base leading-snug">{item.title}</CardTitle>
-                    <p className="mt-1 text-xs text-muted-foreground">{item.price}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {price.toLocaleString('ru-RU')} ₽/мес{item.priceSuffix}
+                    </p>
                   </div>
                 </CardHeader>
                 <CardContent>

@@ -47,14 +47,17 @@ type ChatPayload = {
   botAgentLabel?: string | null;
   operatorName?: string | null;
   botType?: string | null;
+  botId?: string | null;
   supportsAttachments?: boolean;
   mode?: string | null;
   aiDisabled?: boolean;
+  suppressDealCreation?: boolean;
   pausedUntil?: string | null;
   aiControls?: boolean;
   conversationId?: string | null;
   subscriberId?: string | null;
   threads?: ChatThread[];
+  sendFromOptions?: SendFromOption[];
   presence?: ChatPresence | null;
 };
 
@@ -63,9 +66,24 @@ type ChatThread = {
   source: string;
   conversationId?: string | null;
   giftSubscriberId?: string | null;
+  botId?: string;
   channelLabel: string;
   identityLabel: string;
   peerLabel: string;
+};
+
+type SendFromOption = {
+  botId: string;
+  botType: string;
+  label: string;
+  channelLabel: string;
+  identityLabel: string;
+  available: boolean;
+  unavailableReason?: string;
+  conversationId?: string | null;
+  giftSubscriberId?: string | null;
+  threadId?: string | null;
+  isDefault?: boolean;
 };
 
 type FilePayload = {
@@ -89,7 +107,9 @@ type PendingAttachment = {
 function isMediaPlaceholder(content: string): boolean {
   const t = (content || '').trim();
   if (!t) return true;
-  return /^\[(фото|видео|кружочек|стикер|голосовое|аудио|файл(?::[^\]]*)?)\]$/i.test(
+  // Include legacy GramJS `[media]` so history backfills never leave bare text
+  // when attachment previews are present.
+  return /^\[(media|фото|видео|кружочек|стикер|голосовое|аудио|файл(?::[^\]]*)?|документ)\]$/i.test(
     t,
   );
 }
@@ -109,6 +129,7 @@ function attachmentLabel(a: ChatAttachment): string {
 
 function isImageType(type: string, contentType?: string): boolean {
   if (type === 'photo' || type === 'sticker') return true;
+  // GramJS often stores photos as document + image/* mime.
   return !!contentType && contentType.startsWith('image/');
 }
 
@@ -227,6 +248,8 @@ function ChatAttachmentView({
 
   const label = attachmentLabel(attachment);
   const videoNote = isVideoNoteAttachment(attachment);
+  const effectiveType =
+    contentType || attachment.mimeType || '';
 
   if (failed) {
     return (
@@ -254,7 +277,7 @@ function ChatAttachmentView({
       <div style={{ marginTop: 6, fontSize: 12, color: muted }}>Загрузка…</div>
     );
   }
-  if (isImageType(attachment.type, contentType)) {
+  if (isImageType(attachment.type, effectiveType)) {
     return (
       <img
         src={mediaUrl}
@@ -268,7 +291,7 @@ function ChatAttachmentView({
       />
     );
   }
-  if (isVideoType(attachment.type, contentType, attachment.fileName) || videoNote) {
+  if (isVideoType(attachment.type, effectiveType, attachment.fileName) || videoNote) {
     const videoType =
       contentType && contentType.startsWith('video/')
         ? contentType
@@ -725,6 +748,7 @@ const ChatPanel = () => {
     aiControls: boolean;
     mode: string;
     aiDisabled: boolean;
+    suppressDealCreation: boolean;
     pausedUntil: string | null;
     contactName: string;
     botAgentLabel: string;
@@ -740,13 +764,17 @@ const ChatPanel = () => {
     aiControls: false,
     mode: 'ai',
     aiDisabled: false,
+    suppressDealCreation: false,
     pausedUntil: null,
     contactName: 'Клиент',
     botAgentLabel: 'Бот',
     operatorName: 'Менеджер',
   });
   const [aiBusy, setAiBusy] = useState(false);
+  const [suppressBusy, setSuppressBusy] = useState(false);
   const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [sendFromOptions, setSendFromOptions] = useState<SendFromOption[]>([]);
+  const [sendFromBotId, setSendFromBotId] = useState('');
   const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [draft, setDraft] = useState('');
   /** Remount composer after send — Remote DOM often ignores controlled `value=""` (INC-016). */
@@ -811,6 +839,8 @@ const ChatPanel = () => {
       setInfo(data.info || null);
       const nextThreads = data.threads || [];
       setThreads(nextThreads);
+      const nextSendFrom = data.sendFromOptions || [];
+      setSendFromOptions(nextSendFrom);
       const currentId =
         (preferred && nextThreads.find((t) => t.id === preferred.id)?.id) ||
         (data.conversationId
@@ -822,8 +852,27 @@ const ChatPanel = () => {
         nextThreads[0]?.id ||
         '';
       if (currentId) setActiveThreadId(currentId);
+      const defaultSend =
+        nextSendFrom.find((o) => o.isDefault)?.botId ||
+        data.botId ||
+        nextThreads.find((t) => t.id === currentId)?.botId ||
+        nextSendFrom[0]?.botId ||
+        '';
+      setSendFromBotId((prev) => {
+        if (prev && nextSendFrom.some((o) => o.botId === prev)) return prev;
+        return defaultSend;
+      });
       const next = data.messages || [];
-      const sig = `${currentId}:${next.map((m) => m.id).join(',')}`;
+      // Fingerprint content + attachments too — history backfill keeps same ids
+      // but rewrites `[media]` → `[файл:…]` + attachment meta (soft refresh must pick up).
+      const sig = `${currentId}:${next
+        .map((m) => {
+          const attKey = (m.attachments || [])
+            .map((a) => `${a?.fileId || ''}:${a?.type || ''}`)
+            .join('+');
+          return `${m.id}|${m.content || ''}|${attKey}`;
+        })
+        .join(',')}`;
       if (sig !== lastSig.current) {
         lastSig.current = sig;
         setMessages(next);
@@ -832,11 +881,14 @@ const ChatPanel = () => {
         data.contactName ||
         data.peerLabel ||
         (data.username ? `@${data.username}` : data.firstName || 'Клиент');
+      const selectedOpt =
+        nextSendFrom.find((o) => o.botId === (defaultSend || data.botId)) ||
+        nextSendFrom.find((o) => o.isDefault);
       setMeta({
         title: who,
         presenceLine: formatPresenceLine(data.presence),
-        channelLabel: data.channelLabel || '',
-        identityLabel: data.identityLabel || '',
+        channelLabel: selectedOpt?.channelLabel || data.channelLabel || '',
+        identityLabel: selectedOpt?.identityLabel || data.identityLabel || '',
         supportsAttachments:
           typeof data.supportsAttachments === 'boolean' ? data.supportsAttachments : true,
         conversationId: data.conversationId || '',
@@ -844,6 +896,7 @@ const ChatPanel = () => {
         aiControls: data.aiControls === true,
         mode: data.mode || 'ai',
         aiDisabled: data.aiDisabled === true,
+        suppressDealCreation: data.suppressDealCreation === true,
         pausedUntil: data.pausedUntil || null,
         contactName: who,
         botAgentLabel: data.botAgentLabel || data.identityLabel || 'Бот',
@@ -896,6 +949,35 @@ const ChatPanel = () => {
     }
   };
 
+  const toggleSuppressDeal = async () => {
+    if (!recordId || suppressBusy) return;
+    if (!meta.conversationId && !meta.giftSubscriberId) return;
+    setSuppressBusy(true);
+    const next = !meta.suppressDealCreation;
+    try {
+      await api.post(`/s/crm-chat/${recordId}/suppress-deal`, {
+        conversationId: meta.conversationId || undefined,
+        giftSubscriberId: meta.giftSubscriberId || undefined,
+        suppress: next,
+      });
+      setMeta((m) => ({ ...m, suppressDealCreation: next }));
+      await enqueueSnackbar({
+        message: next
+          ? 'Сделки при новых сообщениях отключены'
+          : 'Автосоздание сделок снова включено',
+        variant: 'success',
+      });
+    } catch (err) {
+      await enqueueSnackbar({
+        message:
+          err instanceof Error ? err.message : 'Не удалось изменить настройку сделки',
+        variant: 'error',
+      });
+    } finally {
+      setSuppressBusy(false);
+    }
+  };
+
   // Remote DOM sandbox: no window.setInterval / requestAnimationFrame.
   // Refresh on open, after send, «Обновить», and host soft-click (~4.5s while Chat open).
   useEffect(() => {
@@ -939,11 +1021,20 @@ const ChatPanel = () => {
       });
       return;
     }
+    const selected = sendFromOptions.find((o) => o.botId === sendFromBotId);
+    if (selected && !selected.available) {
+      await enqueueSnackbar({
+        message: selected.unavailableReason || 'Нельзя отправить с этого аккаунта',
+        variant: 'error',
+      });
+      return;
+    }
     setSending(true);
     try {
       const threadKeys: Record<string, string> = {};
       if (meta.conversationId) threadKeys.conversationId = meta.conversationId;
       if (meta.giftSubscriberId) threadKeys.giftSubscriberId = meta.giftSubscriberId;
+      if (sendFromBotId) threadKeys.sendFromBotId = sendFromBotId;
       // saas-api accepts one file per /reply — send sequentially (caption on first).
       // dataBase64 already encoded on host file-change (INC-017); never FileReader here.
       if (files.length === 0) {
@@ -1097,11 +1188,88 @@ const ChatPanel = () => {
       >
         <div>
           <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.title}</div>
-          {(meta.channelLabel || meta.identityLabel) && (
-            <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-              Пишем от: {meta.channelLabel}
-              {meta.identityLabel ? ` · ${meta.identityLabel}` : ''}
+          {sendFromOptions.length > 0 ? (
+            <div style={{ marginTop: 4 }}>
+              <label
+                style={{
+                  fontSize: 12,
+                  color: muted,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>Пишем от:</span>
+                <select
+                  value={sendFromBotId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const opt = sendFromOptions.find((o) => o.botId === nextId);
+                    setSendFromBotId(nextId);
+                    if (opt) {
+                      setMeta((m) => ({
+                        ...m,
+                        channelLabel: opt.channelLabel,
+                        identityLabel: opt.identityLabel,
+                        supportsAttachments:
+                          opt.botType !== 'ai_gramjs' &&
+                          opt.botType !== 'ai_max' &&
+                          opt.botType !== 'gift_max',
+                      }));
+                      if (opt.threadId) {
+                        const thr = threads.find((t) => t.id === opt.threadId);
+                        if (thr) {
+                          setActiveThreadId(thr.id);
+                          lastSig.current = '';
+                          void load(thr);
+                          return;
+                        }
+                      }
+                      if (!opt.available && opt.unavailableReason) {
+                        setError(opt.unavailableReason);
+                      } else {
+                        setError(null);
+                      }
+                    }
+                  }}
+                  style={{
+                    maxWidth: 280,
+                    fontSize: 12,
+                    border: `1px solid ${border}`,
+                    borderRadius: 8,
+                    padding: '3px 6px',
+                    background: panel,
+                    color: ink,
+                  }}
+                >
+                  {sendFromOptions.map((o) => (
+                    <option key={o.botId} value={o.botId} disabled={!o.available}>
+                      {o.label}
+                      {!o.available ? ' (недоступно)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(() => {
+                const cur = sendFromOptions.find((o) => o.botId === sendFromBotId);
+                if (cur && !cur.available && cur.unavailableReason) {
+                  return (
+                    <div style={{ fontSize: 11, color: '#b45309', marginTop: 4, maxWidth: 360 }}>
+                      {cur.unavailableReason}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
+          ) : (
+            (meta.channelLabel || meta.identityLabel) && (
+              <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
+                Пишем от: {meta.channelLabel}
+                {meta.identityLabel ? ` · ${meta.identityLabel}` : ''}
+              </div>
+            )
           )}
           {threads.length > 1 && (
             <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -1114,6 +1282,7 @@ const ChatPanel = () => {
                     type="button"
                     onClick={() => {
                       setActiveThreadId(t.id);
+                      if (t.botId) setSendFromBotId(t.botId);
                       lastSig.current = '';
                       void load(t);
                     }}
@@ -1163,7 +1332,9 @@ const ChatPanel = () => {
         </button>
       </div>
 
-      {meta.aiControls && meta.conversationId ? (
+      {(meta.aiControls && meta.conversationId) ||
+      meta.conversationId ||
+      meta.giftSubscriberId ? (
         <div
           data-voxly-ai-controls="1"
           style={{
@@ -1177,49 +1348,82 @@ const ChatPanel = () => {
             alignItems: 'center',
           }}
         >
-          {(() => {
-            const paused =
-              Boolean(meta.pausedUntil) &&
-              new Date(meta.pausedUntil!).getTime() > Date.now();
-            const status = meta.aiDisabled
-              ? 'AI выкл'
-              : paused
-                ? 'AI пауза'
-                : meta.mode === 'human'
-                  ? 'AI пауза'
-                  : 'AI вкл';
-            return (
-              <span style={{ fontSize: 12, color: muted, marginRight: 4, fontWeight: 600 }}>
-                {status}
-              </span>
-            );
-          })()}
-          {(
-            [
-              { action: 'enable' as const, label: 'Вкл AI' },
-              { action: 'pause' as const, label: 'Пауза' },
-              { action: 'disable' as const, label: 'Выкл AI' },
-            ] as const
-          ).map((btn) => (
+          {meta.aiControls && meta.conversationId
+            ? (() => {
+                const paused =
+                  Boolean(meta.pausedUntil) &&
+                  new Date(meta.pausedUntil!).getTime() > Date.now();
+                const status = meta.aiDisabled
+                  ? 'AI выкл'
+                  : paused
+                    ? 'AI пауза'
+                    : meta.mode === 'human'
+                      ? 'AI пауза'
+                      : 'AI вкл';
+                return (
+                  <span
+                    style={{ fontSize: 12, color: muted, marginRight: 4, fontWeight: 600 }}
+                  >
+                    {status}
+                  </span>
+                );
+              })()
+            : null}
+          {meta.aiControls && meta.conversationId
+            ? (
+                [
+                  { action: 'enable' as const, label: 'Вкл AI' },
+                  { action: 'pause' as const, label: 'Пауза' },
+                  { action: 'disable' as const, label: 'Выкл AI' },
+                ] as const
+              ).map((btn) => (
+                <button
+                  key={btn.action}
+                  type="button"
+                  disabled={aiBusy || sending}
+                  onClick={() => void setAiAction(btn.action)}
+                  style={{
+                    border: `1px solid ${border}`,
+                    background: panel,
+                    color: ink,
+                    borderRadius: 8,
+                    padding: '5px 10px',
+                    cursor: aiBusy ? 'wait' : 'pointer',
+                    fontSize: 12,
+                    opacity: aiBusy ? 0.6 : 1,
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))
+            : null}
+          {(meta.conversationId || meta.giftSubscriberId) && (
             <button
-              key={btn.action}
               type="button"
-              disabled={aiBusy || sending}
-              onClick={() => void setAiAction(btn.action)}
+              disabled={suppressBusy || sending}
+              onClick={() => void toggleSuppressDeal()}
+              title="Если сделка удалена — новые сообщения не создадут новую, пока флаг включён"
               style={{
-                border: `1px solid ${border}`,
-                background: panel,
-                color: ink,
+                border: `1px solid ${meta.suppressDealCreation ? '#b45309' : border}`,
+                background: meta.suppressDealCreation
+                  ? dark
+                    ? '#422006'
+                    : '#fff7ed'
+                  : panel,
+                color: meta.suppressDealCreation ? '#c2410c' : ink,
                 borderRadius: 8,
                 padding: '5px 10px',
-                cursor: aiBusy ? 'wait' : 'pointer',
+                cursor: suppressBusy ? 'wait' : 'pointer',
                 fontSize: 12,
-                opacity: aiBusy ? 0.6 : 1,
+                opacity: suppressBusy ? 0.6 : 1,
+                marginLeft: meta.aiControls ? 4 : 0,
               }}
             >
-              {btn.label}
+              {meta.suppressDealCreation
+                ? 'Сделку не создавать ✓'
+                : 'Не создавать сделку'}
             </button>
-          ))}
+          )}
         </div>
       ) : null}
 

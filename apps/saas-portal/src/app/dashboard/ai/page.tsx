@@ -23,6 +23,8 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { AiSecretaryHero } from '@/components/portal/ai-secretary-hero';
 import { CopyButton } from '@/components/portal/copy-button';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
 
 interface AddonState {
   isActive: boolean;
@@ -238,6 +240,9 @@ function TelegramSecretaryPageInner() {
     overview?.products.aiBusiness.activeAccounts ??
     businessAccounts.filter((a) => a.connected).length;
 
+  const subBalance = usePartnerBalanceApply(tgPrice);
+  const slotBalance = usePartnerBalanceApply(extraSlotPrice);
+
   const loadCore = useCallback(async () => {
     const session = localStorage.getItem('voxly_token');
     if (!session) {
@@ -380,7 +385,11 @@ function TelegramSecretaryPageInner() {
     setBusy('pay');
     setError('');
     try {
-      await startCheckout({ productCode: 'ai_tg', periodMonths: 1 });
+      await startCheckout({
+        productCode: 'ai_tg',
+        periodMonths: 1,
+        ...subBalance.applyBalancePayload,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось перейти к оплате');
       setBusy('');
@@ -822,7 +831,20 @@ function TelegramSecretaryPageInner() {
               </Link>
               .
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 space-y-3">
+              <PartnerBalanceApply
+                availableRub={subBalance.availableRub}
+                invoiceRub={tgPrice}
+                useBalance={subBalance.useBalance}
+                onUseBalanceChange={subBalance.setUseBalance}
+                balanceInput={subBalance.balanceInput}
+                onBalanceInputChange={subBalance.setBalanceInput}
+                appliedRub={subBalance.appliedRub}
+                netRub={subBalance.netRub}
+                disabled={busy === 'pay' || busy === 'trial'}
+                idPrefix="ai-tg-sub-balance"
+              />
+              <div className="flex flex-wrap gap-2">
               {!subActive && trialAvailable ? (
                 <button
                   type="button"
@@ -842,13 +864,18 @@ function TelegramSecretaryPageInner() {
                 }`}
               >
                 {busy === 'pay'
-                  ? 'Переходим к оплате…'
-                  : isTrial
-                    ? `Оплатить ${formatInt(tgPrice)} ₽/мес`
-                    : subActive
-                      ? `Продлить на месяц · ${formatInt(tgPrice)} ₽`
-                      : `Оплатить ${formatInt(tgPrice)} ₽/мес`}
+                  ? subBalance.appliedRub > 0 && subBalance.netRub <= 0
+                    ? 'Оформляем…'
+                    : 'Переходим к оплате…'
+                  : subBalance.appliedRub > 0 && subBalance.netRub <= 0
+                    ? 'Оформить за 0 ₽ — с баланса'
+                    : isTrial
+                      ? `Оплатить ${formatInt(subBalance.netRub || tgPrice)} ₽/мес`
+                      : subActive
+                        ? `Продлить на месяц · ${formatInt(subBalance.netRub || tgPrice)} ₽`
+                        : `Оплатить ${formatInt(subBalance.netRub || tgPrice)} ₽/мес`}
               </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1146,7 +1173,20 @@ function TelegramSecretaryPageInner() {
                 description={`В тарифе ${bizCapacity?.included ?? maxConn} слотов. Сверх лимита — ${formatInt(extraSlotPrice)} ₽/мес за аккаунт.`}
               />
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 space-y-3">
+                <PartnerBalanceApply
+                  availableRub={slotBalance.availableRub}
+                  invoiceRub={extraSlotPrice}
+                  useBalance={slotBalance.useBalance}
+                  onUseBalanceChange={slotBalance.setUseBalance}
+                  balanceInput={slotBalance.balanceInput}
+                  onBalanceInputChange={slotBalance.setBalanceInput}
+                  appliedRub={slotBalance.appliedRub}
+                  netRub={slotBalance.netRub}
+                  disabled={busy === 'buy-slot'}
+                  idPrefix="ai-tg-slot-balance"
+                />
+                <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   disabled={busy === 'buy-slot'}
@@ -1158,6 +1198,7 @@ function TelegramSecretaryPageInner() {
                         productCode: 'ai_tg_extra_conn',
                         periodMonths: 1,
                         quantity: 1,
+                        ...slotBalance.applyBalancePayload,
                       });
                     } catch (e) {
                       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
@@ -1168,7 +1209,9 @@ function TelegramSecretaryPageInner() {
                 >
                   {busy === 'buy-slot'
                     ? 'Открываем оплату…'
-                    : `Купить слот +1 · ${formatInt(extraSlotPrice)} ₽/мес`}
+                    : slotBalance.appliedRub > 0 && slotBalance.netRub <= 0
+                      ? 'Купить слот +1 · с баланса'
+                      : `Купить слот +1 · ${formatInt(slotBalance.netRub || extraSlotPrice)} ₽/мес`}
                 </button>
                 {selectedBot.botUsername ? (
                   <>
@@ -1178,6 +1221,7 @@ function TelegramSecretaryPageInner() {
                     <CopyButton value={`@${selectedBot.botUsername}`} label="Username" />
                   </>
                 ) : null}
+              </div>
               </div>
 
               {businessAccounts.length === 0 ? (

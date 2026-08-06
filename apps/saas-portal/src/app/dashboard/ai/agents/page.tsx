@@ -16,6 +16,8 @@ import {
   AiAgentsPortalHero,
   type AiBalanceState,
 } from '@/components/portal/ai-agents-portal-hero';
+import { PartnerBalanceApply } from '@/components/portal/partner-balance-apply';
+import { usePartnerBalanceApply } from '@/hooks/use-partner-balance-apply';
 
 interface AgentRow {
   id: string;
@@ -166,6 +168,16 @@ export default function AiAgentsPage() {
   const [days, setDays] = useState(30);
   const [usageBusy, setUsageBusy] = useState(false);
   const [capacity, setCapacity] = useState<AgentCapacity | null>(null);
+  const agentInvoiceRub = capacity?.priceMonthly ?? PRICING.AI_AGENT_MONTHLY;
+  const balanceApply = usePartnerBalanceApply(agentInvoiceRub);
+  const topupAmountRubPreview = Math.round(
+    Number(topupAmount.replace(/\s/g, '').replace(',', '.')) || 0,
+  );
+  const topupBalance = usePartnerBalanceApply(
+    Number.isFinite(topupAmountRubPreview) && topupAmountRubPreview > 0
+      ? topupAmountRubPreview
+      : 0,
+  );
 
   const load = useCallback(async () => {
     const token = localStorage.getItem('voxly_token');
@@ -287,7 +299,12 @@ export default function AiAgentsPage() {
   const buyAgentSlot = () => {
     setBusy('buy-agent');
     setError('');
-    void startCheckout({ productCode: 'ai_agent', quantity: 1, periodMonths: 1 }).catch((e) => {
+    void startCheckout({
+      productCode: 'ai_agent',
+      quantity: 1,
+      periodMonths: 1,
+      ...balanceApply.applyBalancePayload,
+    }).catch((e) => {
       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy('');
     });
@@ -467,7 +484,11 @@ export default function AiAgentsPage() {
     if (!topupValid) return;
     setBusy('topup');
     setError('');
-    void startCheckout({ productCode: 'ai_topup', amountRub: topupAmountRub }).catch((e) => {
+    void startCheckout({
+      productCode: 'ai_topup',
+      amountRub: topupAmountRub,
+      ...topupBalance.applyBalancePayload,
+    }).catch((e) => {
       setError(e instanceof Error ? e.message : 'Ошибка оплаты');
       setBusy('');
     });
@@ -478,7 +499,7 @@ export default function AiAgentsPage() {
       <div className="landing-root space-y-6">
         <AiAgentsPortalHero
           headline="AI-агенты, которые отвечают вашим клиентам"
-          subtitle="Один агент — 500 ₽/мес. Задайте характер, дайте файлы о бизнесе и обучите на успешных сделках. Пока агент не назначен на канал — он молчит. Ответы списываются с баланса AI."
+          subtitle={`Один агент — ${(capacity?.priceMonthly ?? PRICING.AI_AGENT_MONTHLY).toLocaleString('ru-RU')} ₽/мес. Задайте характер, дайте файлы о бизнесе и обучите на успешных сделках. Пока агент не назначен на канал — он молчит. Ответы списываются с баланса AI.`}
           facts={[
             {
               label: 'Слоты агентов',
@@ -505,14 +526,28 @@ export default function AiAgentsPage() {
           </p>
           <h2 className="land-display mt-1 text-xl tracking-[-0.03em]">Слоты AI-агентов</h2>
           <p className="mt-1 max-w-[70ch] text-sm text-black/60">
-            Каждый агент занимает один оплаченный слот ({PRICING.AI_AGENT_MONTHLY} ₽/мес). Свободных
-            слотов:{' '}
+            Каждый агент занимает один оплаченный слот (
+            {(capacity?.priceMonthly ?? PRICING.AI_AGENT_MONTHLY).toLocaleString('ru-RU')} ₽/мес).
+            Свободных слотов:{' '}
             <span className="font-semibold text-black tabular-nums">
               {capacity?.freeSlots ?? '—'}
             </span>
             . Ответы клиентам по-прежнему списываются с баланса AI в блоке «Расход» ниже.
           </p>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 space-y-3">
+            <PartnerBalanceApply
+              availableRub={balanceApply.availableRub}
+              invoiceRub={agentInvoiceRub}
+              useBalance={balanceApply.useBalance}
+              onUseBalanceChange={balanceApply.setUseBalance}
+              balanceInput={balanceApply.balanceInput}
+              onBalanceInputChange={balanceApply.setBalanceInput}
+              appliedRub={balanceApply.appliedRub}
+              netRub={balanceApply.netRub}
+              disabled={busy === 'buy-agent'}
+              idPrefix="ai-agent-balance"
+            />
+            <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={buyAgentSlot}
@@ -524,10 +559,13 @@ export default function AiAgentsPage() {
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                   Открываем оплату…
                 </>
+              ) : balanceApply.appliedRub > 0 && balanceApply.netRub <= 0 ? (
+                'Оплатить агента · с баланса'
               ) : (
-                `Оплатить агента · ${PRICING.AI_AGENT_MONTHLY} ₽/мес`
+                `Оплатить агента · ${(balanceApply.netRub || agentInvoiceRub).toLocaleString('ru-RU')} ₽/мес`
               )}
             </button>
+            </div>
           </div>
         </section>
 
@@ -578,6 +616,19 @@ export default function AiAgentsPage() {
               />
             </div>
 
+            <PartnerBalanceApply
+              availableRub={topupBalance.availableRub}
+              invoiceRub={topupValid ? topupAmountRub : 0}
+              useBalance={topupBalance.useBalance}
+              onUseBalanceChange={topupBalance.setUseBalance}
+              balanceInput={topupBalance.balanceInput}
+              onBalanceInputChange={topupBalance.setBalanceInput}
+              appliedRub={topupBalance.appliedRub}
+              netRub={topupBalance.netRub}
+              disabled={busy === 'topup'}
+              idPrefix="ai-topup-balance"
+            />
+
             <div>
               <button
                 type="button"
@@ -590,6 +641,10 @@ export default function AiAgentsPage() {
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                     Открываем оплату…
                   </>
+                ) : topupBalance.appliedRub > 0 && topupBalance.netRub <= 0 ? (
+                  'Пополнить · с баланса'
+                ) : topupBalance.appliedRub > 0 ? (
+                  `Пополнить · картой ${formatRub(topupBalance.netRub)} ₽`
                 ) : (
                   'Перейти к оплате'
                 )}
@@ -599,7 +654,11 @@ export default function AiAgentsPage() {
                   ? 'Открываем страницу оплаты, не закрывайте вкладку.'
                   : !topupValid
                     ? `Кнопка станет активной, когда сумма будет не меньше ${TOPUP_MIN_RUB} ₽.`
-                    : `К оплате: ${formatRub(topupAmountRub)} ₽.`}
+                    : topupBalance.appliedRub > 0 && topupBalance.netRub <= 0
+                      ? `К оплате: ${formatRub(topupAmountRub)} ₽ — полностью с партнёрского баланса.`
+                      : topupBalance.appliedRub > 0
+                        ? `К оплате: ${formatRub(topupAmountRub)} ₽ · с баланса ${formatRub(topupBalance.appliedRub)} ₽, картой ${formatRub(topupBalance.netRub)} ₽.`
+                        : `К оплате: ${formatRub(topupAmountRub)} ₽.`}
               </p>
             </div>
           </div>

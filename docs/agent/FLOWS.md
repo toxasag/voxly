@@ -37,7 +37,13 @@ sequenceDiagram
 4. Username: `voxly_{slug}_{01}_bot` (`buildVoxlyBotUsername`)  
 5. Портал: канал verify → promo → funnel → subscribers  
 
-Файлы: `routes/bots.ts`, `apps/manager-bot-service`, portal `dashboard/bots/**`.
+**MAX gift (отдельный продукт, SKU `gift_bot_max`, 500 ₽/бот):**
+1. Portal `/dashboard/bots/max` → trial `POST /gift/max/start-trial` или оплата `gift_bot_max`
+2. `POST /gift/max/connect` (token) → `botType=gift_max`; soft-gate слотов `gift_bot_max`
+3. Worker `max-handler.ts`; webhook `/max/…` или local polling
+4. Настройки — карточка бота (без TG promo/description)
+
+Файлы: `routes/bots.ts`, `apps/manager-bot-service`, `apps/gift-bot-worker/src/max-*.ts`, portal `dashboard/bots/**`.
 
 ## 3. Воронка gift (пользователь)
 
@@ -71,14 +77,14 @@ flowchart LR
 5. Inbound media: **photo/sticker `<img>` preview** via `/s/crm-chat/.../file/...` → logic compresses JPEG ≤~48KB raw then `{ dataBase64, contentType: image/jpeg }` (INC-014 size cliff); **video/audio** via HMAC signed URL + MIME sniff/Range; other attachments = download link or 📎 fallback; hide bare placeholders when attachments exist. **AI/gift understanding** (worker-global): ChatMessage content may already contain `[голос|кружочек|видео|фото|документ …]: …` — INC-063. Outbound: host patch encodes file → `dataBase64` on change (INC-017) **with JPEG shrink** so JSON stays under Nest 10MB (INC-020); front stores `PendingAttachment` (top-level `event.files`) and posts sequential JSON `fileBase64` (Remote DOM File stubs are **not** Blobs — no FileReader/arrayBuffer in worker); logic rebuilds multipart → saas-api.
 6. Reference implement: inject `docker/twenty-deal-chat.js` (rollback; real-DOM `FormData`+File — not usable in SDK front).
 
-Transport: RestApiClient `/s/crm-chat/:recordId` (+ `/reply`, `/file/:fileId`) → logic → saas-api. File route returns compressed `{ dataBase64, contentType }` (binary via service token). Inject floating UI off. saas-api resolves chat via **GiftSubscriber** (gift) **or** **Conversation** CRM ids (`ai_tg` / `ai_gramjs` / `ai_wa`); GET may return `threads[]` for multi-channel switch (`?conversationId=`); GramJS outbound → bridge `POST /messages/send`; WA outbound → ai-whatsapp-worker (INC-032/037).
+Transport: RestApiClient `/s/crm-chat/:recordId` (+ `/reply`, `/file/:fileId`) → logic → saas-api. File route returns compressed `{ dataBase64, contentType }` (binary via service token). Inject floating UI off. saas-api resolves chat via **GiftSubscriber** (gift / gift_max) **or** **Conversation** CRM ids (`ai_tg` / `ai_gramjs` / `ai_max` / `ai_wa`); GET may return `threads[]` for multi-channel switch (`?conversationId=`) + **`sendFromOptions`** (gift/GramJS/WA tenant accounts); reply **`sendFromBotId`** switches outbound account (GramJS/WA need peer mapping — else clear 400). GramJS outbound → bridge `POST /messages/send`; MAX personal → max-bridge; MAX gift → Bot API `/messages`; WA outbound → ai-whatsapp-worker (INC-032/037).
 
 **Кабинет:** сайдбар «Кабинет Voxly» (`NavigationMenuItemType.LINK` → portal `/dashboard`); floating inject `twenty-cabinet-link.js` отключён (`DISABLE_FLOATING_CABINET`).
 
 ## 5. Promo post в канале
 
 `PUT /api/bots/:id/promo` → `POST .../media` (multipart→Telegram file_id) → `POST .../promo/publish`  
-Кнопка `Текст · N`, deep-link `?start=g_{campaignId}`; клики → `promoPost.clickCount` + ConversionEvent.
+Кнопка `Текст · N` (or plain `Текст` when `promoPost.showClickCounter === false`); deep-link `?start=g_{campaignId}`; клики → `promoPost.clickCount` + ConversionEvent (markup update skipped if counter hidden).
 
 ## 6. Рассылки
 
@@ -112,3 +118,9 @@ Signatures (hash = `ROBOKASSA_HASH_ALG`, must match ЛК): pay `MerchantLogin:Ou
 
 Integrations CRUD `/api/analytics` → `fireGoal` / `POST .../fire` → `@voxly/analytics-dispatchers`.  
 Админ воронки: `GET /api/admin/funnels` ← GiftSubscriber + ConversionEvent + promo clicks.
+
+## 8b. Web form lead intake (Tilda / WordPress)
+
+Portal `/dashboard/crm` → создать `FormWebhookEndpoint` → URL `POST /api/webhooks/forms/:token`.  
+Tilda `test=test` → 200 `ok` ≤5s. Реальная заявка → `FormLead(received)` → BullMQ `form-leads` → Person/Opportunity (phone/email dedupe) + `AttributionSession` (COOKIES/`_ym_uid`/TILDAUTM) + `fireGoal('web_form_lead')`.  
+Идемпотентность: `(tenantId, source, externalId)` (Tilda `tranid`). CRM fail → `FormLead.failed`, webhook всё равно 200. ADR-026.

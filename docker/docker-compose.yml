@@ -227,8 +227,9 @@ services:
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
       VOXLY_CHAT_API_URL: ${VOXLY_CHAT_API_URL:-http://saas-api:3002}
       VOXLY_CRM_CHAT_TARBALL: ${VOXLY_CRM_CHAT_TARBALL:-/voxly/assets/voxly-crm-chat.tgz}
-      # Internal only — never expose gramjs-bridge / Evolution publicly
+      # Internal only — never expose gramjs-bridge / max-bridge / Evolution publicly
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
+      MAX_BRIDGE_URL: ${MAX_BRIDGE_URL:-http://max-bridge:3010}
       AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
@@ -371,10 +372,12 @@ services:
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       AI_CHAT_MODEL: ${AI_CHAT_MODEL:-google/gemini-2.5-flash}
       AI_ASR_MODEL: ${AI_ASR_MODEL:-openai/whisper-1}
+      GIFT_BOT_WEBHOOK_BASE_URL: ${GIFT_BOT_WEBHOOK_BASE_URL:-}
+      MAX_BOT_API_URL: ${MAX_BOT_API_URL:-https://platform-api2.max.ru}
     labels:
       - "traefik.enable=true"
-      # Child bot webhooks: /tg/{tenantId}/{botId}
-      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && PathPrefix(`/tg`)"
+      # Child bot webhooks: /tg/{tenantId}/{botId} (Telegram) + /max/... (MAX gift)
+      - "traefik.http.routers.gift-bot.rule=Host(`api.getvoxly.ru`) && (PathPrefix(`/tg`) || PathPrefix(`/max`))"
       - "traefik.http.routers.gift-bot.entrypoints=websecure"
       - "traefik.http.routers.gift-bot.service=gift-bot-worker"
       - "traefik.http.services.gift-bot-worker.loadbalancer.server.port=3004"
@@ -436,6 +439,28 @@ services:
     networks:
       - voxly-net
 
+  # --- MAX bridge (personal MAX account via PyMax; optional profile) ---
+  max-bridge:
+    profiles: ["max"]
+    build:
+      context: ..
+      dockerfile: apps/max-bridge/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      saas-api:
+        condition: service_started
+    environment:
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
+      MAX_BRIDGE_PORT: 3010
+      MAX_SESSION_DIR: /data/max-sessions
+    volumes:
+      - max-sessions-data:/data/max-sessions
+    networks:
+      - voxly-net
+
   # --- Evolution API (WhatsApp Baileys; profile whatsapp) ---
   evolution-api:
     profiles: ["whatsapp"]
@@ -489,6 +514,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
+      # Baileys lidMapping hash lives in Evolution Redis DB 6.
+      EVOLUTION_REDIS_URI: redis://redis:6379/6
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -500,6 +527,7 @@ services:
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       AI_WHATSAPP_WEBHOOK_URL: ${AI_WHATSAPP_WEBHOOK_URL:-http://ai-whatsapp-worker:3006/webhook/evolution}
       AI_WHATSAPP_PORT: 3006
+      GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
       # Free soft-deleted Person emails that block unique (INC-062)
       TWENTY_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
     networks:
@@ -513,6 +541,7 @@ volumes:
   twenty-storage:
   evolution-instances:
   ai-knowledge-data:
+  max-sessions-data:
 
 networks:
   voxly-net:

@@ -1,5 +1,79 @@
 # Решения (короткие ADR)
 
+## ADR-027 — Gift-bot portal setup UX = canonical for all tenants
+
+**Статус:** ✅ 2026-08-04
+
+| Вопрос | Выбор |
+|---|---|
+| Scope | `/dashboard/bots/[botId]` Telegram gift setup for **every** current and new tenant/bot |
+| Parity | UX polished on one prod bot is the **standard**, not a one-off; same components + `/:botId` APIs for all |
+| Data binding | `useParams().botId` + tenant-scoped `GET/PUT/POST /api/bots/:botId/*` — **no** hardcoded bot/tenant ids |
+| Surface | Steps **1** channel → **2** bot profile (dual photos + emoji under preview) → **3** promo → **4** after-start → **5** gift → **6** after-gift → **Дожим**; each with TG preview |
+| Inputs | `InputWithEmoji`, `TelegramMdTextarea`, `EmojiPickerPanel`; profile photo via `fileToJpegFile` (PNG/WebP→JPG) |
+| Previews | `TelegramPreview` + `telegram-preview-chrome`; media after save via `GET …/media-file?fileId=` (INC-093) |
+| Page chrome | Partners amber industrial tokens; **do not** restyle TG preview bubbles into generic dashboard cards |
+| Regressions | **Forbidden** without explicit user ask: breaking previews, text/MD input, emoji, media upload/kinds/proxy, dual photos, JPEG profile convert, or introducing per-bot hardcode |
+| Code changes | Prefer docs + surgical bugfixes; do not “improve/refactor” preview/text/media paths casually |
+
+**Отклонено:** отдельный UI/флаги под одного клиента; hardcode bot id в portal/API; упрощение превью до placeholder без media-file; уборка emoji/MD «для чистоты».
+
+**Related:** CAPABILITIES «Gift bot detail — canonical UX»; INC-005/086–091/093; ADR-002 (`file_id`); `.cursor/rules/gift-bot-setup-ux.mdc`.
+
+---
+
+## ADR-026 — Web form lead intake (Tilda / WordPress → CRM + attribution)
+
+**Статус:** ✅ Phase 1 MVP (2026-08-03)
+
+| Вопрос | Выбор |
+|---|---|
+| Surface | Public `POST /api/webhooks/forms/:token` + tenant CRUD `/api/forms/*` |
+| Sources | Tilda form-urlencoded (+ `test=test`, COOKIES/TILDAUTM, `tranid`); generic JSON (WP/CF7/Gravity/n8n) |
+| Auth | Unguessable `token` in URL; optional shared secret (`X-Voxly-Webhook-Secret` / body / query) |
+| Latency | Persist `FormLead` + **200 `ok` immediately**; CRM via BullMQ `form-leads` (Tilda ≤5s) |
+| CRM | `@voxly/twenty-client`: Person phone→email dedupe; Opportunity `reuse_open` (default) or `always_new`; note with raw fields/UTM |
+| Ambiguous Person | `FormLead.needsReview` + status `needs_review` (no silent merge) |
+| Idempotency | `@@unique([tenantId, source, externalId])` (Tilda `tranid` / WP `entry_id`) |
+| Analytics | New `AttributionSession` (`clickId=fl_{leadId}`) + `fireGoal('web_form_lead')` — **does not** change gift goals |
+| Billing | **Included in CRM base** for Phase 1 (no separate SKU); revisit Phase 3 if needed |
+| Portal | Section on `/dashboard/crm` — URL, secret once, last leads, RU instructions |
+| Not in scope | Gift funnel, messenger channels, PHP WP plugin, field-mapping UI, `deal_won` hook (Phase 2) |
+
+**Отклонено:** синхронный Twenty sync в webhook handler; отдельный gift-style worker app; хранить prod secrets в git.
+
+**Related:** ADR-014 (agents unrelated); CHAT.md peer→Person rule adapted to phone/email; analytics-dispatchers `fireGoal`.
+
+---
+
+## ADR-025 — MAX messenger: personal (`ai_max`) + gift Phase 2
+
+**Статус:** 🟡 Phase 1 scaffold + Phase 2 gift in progress (2026-08-03)
+
+| Вопрос | Выбор |
+|---|---|
+| Personal MAX | Python sidecar `apps/max-bridge` (PyMax / `maxapi-python` ≥3.10), **not** inside `gramjs-bridge` |
+| `botType` personal | `ai_max` |
+| Conversation personal | `platform=max`, `channel=max_personal` |
+| SKU personal | `ai_max` — 500 ₽/мес, soft trial 7d (как `ai_gramjs`) |
+| Referral personal | в `REFERRAL_COMMISSION_SKUS` |
+| Auth personal | QR via `WebClient` + custom `QrHandler` → portal; SMS fallback later |
+| Session personal | SQLite per bot on volume + marker in `BotInstance.botTokenEncrypted` |
+| Inbound personal | bridge → `POST /api/internal/max/inbound` → Conversation + ChatMessage + CRM sync |
+| CRM reply personal | `crm-chat` → `max-bridge` `POST /messages/send` (text-only MVP) |
+| AI agent | Phase 3 (ADR-014 OFF by default; messages always stored) |
+| **Gift MAX** | `botType=gift_max`; **SKU `gift_bot_max`** (отдельный продукт от Telegram `gift_bot`); 500 ₽/слот; portal `/dashboard/bots/max`; official Bot API `platform-api2.max.ru` |
+| Gift Conversation | `platform=max`, `channel=max_gift`; `GiftSubscriber.telegramId` = MAX user id (string peer) |
+| Gift worker | extend `gift-bot-worker`: webhook `/max/{tenantId}/{botId}` + local long-poll |
+| Gift channel check | **gap**: TG `getChatMember` equivalent may be limited — MVP: callback «Продолжить» / skip strict membership; document in CAPABILITIES |
+| Disclaimer personal | UI: неофициальный user API (риск бана / breaking changes) |
+
+**Отклонено:** пихать PyMax в Node gramjs-bridge; один SKU на TG+MAX; unlimited gift на аккаунт; sales LLM на gift MAX.
+
+**Related:** ADR-014 (agents OFF), CHAT.md golden path, GramJS as personal-TG эталон.
+
+---
+
 ## ADR-024 — Release verification: local DB tests + hybrid gate
 
 **Статус:** ✅ 2026-08-02
@@ -168,9 +242,12 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 | Person social fields | `ensureSocialFields` in `applyWorkspaceDefaults`: Telegram + WhatsApp + OK + VK + Instagram + Facebook + Threads (TEXT) next to LinkedIn. WA sync fills `whatsapp` (+phones). Opportunity: no social group → skip. |
 | Inbound left toast | Host `twenty-shell-ux.js` polls `GET /api/crm/chat/inbound-toasts` with `voxlyChatToken` (~4s). Not true push (Remote DOM has no host timers for front components). |
 | Unread chat badges | **Unread** = `ChatMessage.role=user` with `sentAt > Conversation.lastOperatorReadAt` (null = never opened in CRM Chat). Mark-read on `GET /api/crm/chat/:recordId` for **all** conversations linked to the Person/Opportunity (not only the active thread). Counts aggregated by `twentyPersonId` / `twentyOpportunityId` (+ gift links). Shell-ux polls `GET /unread-badges` (~8s) and paints **one** overlay badge per card/row (board title host; no nested field/chip duplicates) + «Чат» tab — no Twenty custom NUMBER field. Existing conversations backfilled `lastOperatorReadAt` on migrate so deploy does not flood historical counts. |
-| «Кабинет Voxly» once | SDK `cabinet-voxly.ts` + shell dedupe + `docker/dedupe-cabinet-nav.sql`. Floating inject stays off. |
+| «Кабинет Voxly» once | SDK `cabinet-voxly.ts` (`position: 6`, after Notes) + shell dedupe + `docker/dedupe-cabinet-nav.sql`. Floating inject stays off. |
+| Sidebar order | **Сделки → Люди → Компании → Рассылка → Задачи → Заметки → Кабинет Voxly → Workflows → Панели** (`ensureWorkspaceNavOrder` + `docker/set-workspace-nav-order.sql`; SDK `mailing-folder` pos 3, `cabinet-voxly` pos 6). |
+| Onboarding | Skip install-apps / sync-email / invite / connect-account via `clearTwentyOnboardingFlags` + GraphQL skip. **Keep** `ONBOARDING_CREATE_PROFILE_PENDING` so owner enters ФИО on first CRM open. Existing workspaces: `syncOwnerProfileFromControlDb` fills empty `workspaceMember` from Voxly `User.firstName/lastName`. |
+| Redis after SQL | `flushTwentyWorkspaceRedisCache` after provision / `reapply-crm-defaults` (INC-086 blank kanban). |
 | «Чат» tab order | `position: 15` (after Home=10, before Timeline=20) in `page-layout-tabs/*-chat.page-layout-tab.ts` + `docker/set-chat-tab-position.sql`. |
-| New workspace provisioning | **Target = parity with test2/john.** `applyWorkspaceDefaults` (kanban + card fields + note title label + **social fields**) runs on provision. **Still TODO:** (1) run note title-sync + latest-first SQL triggers for new schema automatically; (2) seats counter = Twenty CRM workspace members (not only Voxly TenantMember). |
+| New workspace provisioning | `applyWorkspaceDefaults` + `ensureOpportunityRuDefaults` + `ensureOpportunityKanbanCardDefaults` (title←body triggers + noteTargets width) + `ensureWorkspaceNavOrder` + `clearTwentyOnboardingFlags` (CREATE_PROFILE kept) + `syncOwnerProfileFromControlDb` + `flushTwentyWorkspaceRedisCache` in `queues.ts`. |
 | Persistence | Scripts baked in `docker/twenty.Dockerfile`; hot-patch survives until container recreate — then rebuild image or re-copy + re-sed `index.html`. |
 
 **Re-apply after Twenty recreate:**
@@ -179,8 +256,18 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 3. `docker exec -i docker-postgres-twenty-1 psql -U twenty -d twenty < docker/set-opportunity-kanban-card-defaults.sql`
 4. `docker exec -i docker-postgres-twenty-1 psql -U twenty -d twenty < docker/set-chat-tab-position.sql`
 5. `docker exec -i docker-postgres-twenty-1 psql -U twenty -d twenty < docker/dedupe-cabinet-nav.sql`
-6. `POST /api/admin/tenants/:id/reapply-crm-defaults` (social fields + kanban GraphQL)
-7. Re-apply chat app if needed: `yarn twenty apply --remote <ws> --force`
+6. `docker exec -i docker-postgres-twenty-1 psql -U twenty -d twenty < docker/set-workspace-nav-order.sql`
+7. `POST /api/admin/tenants/:id/reapply-crm-defaults` (social + kanban + nav + redis flush)
+8. Re-apply chat app if needed: `yarn twenty apply --remote <ws> --force`
+
+### New CRM portal checklist (must match john / ADR-010)
+
+1. Provision job completes: `twentyWorkspaceId` set, chat app installed.
+2. Onboarding: `/install-apps` skipped; **first CRM open shows /create/profile (ФИО)** unless Voxly User already has names (`syncOwnerProfileFromControlDb`).
+3. Sidebar: Сделки · Люди · Компании · Рассылка · Задачи · Заметки · Кабинет Voxly · Workflows · Панели.
+4. Сделки INDEX = **Канбан** `type=KANBAN` + 6 stage `viewGroup` rows; secondary **Списком** TABLE.
+5. After SQL view/nav fix: Redis flat-map flush + `metadataVersion` bump.
+6. Hard-refresh `{slug}-crm.getvoxly.ru` — kanban columns visible, cabinet opens portal.
 
 ---
 
@@ -189,7 +276,9 @@ URL в манифесте локальный (`http://localhost:3001/dashboard`)
 Не хранить обязательный публичный HTTPS URL.  
 `POST /api/bots/:botId/media` → upload в TG → `{ fileId, mediaType }`.  
 Promo/funnel: `telegramFileId` (+ legacy `mediaUrl`/`imageUrl`).  
-Send: `sendPhoto`/`sendVideo`/`sendDocument` по kind (`AgAC`→photo, `BQAC`→document, …).
+Send: `sendPhoto`/`sendVideo`/`sendDocument` по kind (`AgAC`→photo, `BAAC`→video, `BQAC`→document, …).
+
+**Quality (INC-094):** photo/video staging uses `sendDocument` first so `file_id` keeps original bytes; stored `mediaType` stays `photo`/`video`. Delivery downloads (`getFile` ≤20 МБ) then `sendPhoto`/`sendVideo` (one TG compress at publish/send). Avatar still PNG/WebP→JPEG via portal `fileToJpegFile` only.
 
 ---
 
@@ -255,9 +344,11 @@ Webhook path prod: `/tg/{tenantId}/{botId}` (gift), manager labels на Traefik.
 |---|---|---|
 | Seats 1/10 | Считает `TenantMember` (Voxly `/invite`). Twenty «Пригласить пользователя» **не** учитывается. | Счётчик и лимит = **участники CRM workspace** (Twenty). Extra seat = доп. CRM user (300 ₽). Инвайт из CRM должен отражаться в портале / блочить на 10. |
 | «Чат» app | **Auto-install on provision:** private `uploadAppTarball` + `installApplication`, then set `WORKSPACE_ORIGIN` / `VOXLY_API_URL`. Tarball baked into saas-api image. | Keep CLI apply for hotfixes; optional re-install on gift-bot activate. |
-| Defaults = test2 | `applyWorkspaceDefaults`: ru-RU + RU object labels (`isLabelSyncedWithName:false`) + kanban/notes; `skipInstallAppsOnboarding` on provision. SQL triggers still manual. | Каждый новый workspace сразу: + **title←body triggers** без ручного SQL. |
+| Defaults = test2 | `applyWorkspaceDefaults`: ru-RU + RU object labels (`isLabelSyncedWithName:false`) + kanban/notes; `skipInstallAppsOnboarding` on provision. `ensureOpportunityKanbanCardDefaults` installs title←body triggers on provision + reapply. | — |
 
-**Telegram → Person fields (visibility):** Bot API **не** отдаёт email/ДР из профиля. Телефон — если пользователь нажал «поделиться контактом» (воронка `collect_phone` / Business contact) **или** GramJS видит `Api.User.phone` (контакты/privacy). Пишем в `Person.phones`; AI sync также **ищет** существующий Person по телефону/`whatsapp` перед create (INC-044). Email/ДР → ручной ввод в CRM.
+**Telegram → Person fields (visibility):** Bot API отдаёт только id/username/first_name. Телефон / «О себе» / ДР / канал — через **GramJS** `users.GetFullUser` (`POST gramjs-bridge/users/full`), если у тенанта есть активный `ai_gramjs` и privacy/контакты это показывают. Маппинг: phone→`phones`, about→`about`, birthday→`birthday` (DATE), names, channel→`website`, username→`telegram`.
+
+**On GramJS connect (all portals):** bridge → `POST /api/internal/gramjs/connected` → BullMQ `gramjs-crm-enrich` → `runTelegramCrmEnrich`: сканирует gift + telegram Conversations с `twentyPersonId`, обогащает, **soft-merge** дублей по телефону (перенос GiftSubscriber/Conversation на canonical Person + notes; при >2 матчах `needsReview`). Новые лиды после connect: gift/AI sync вызывают enrich на create. Manual: `POST /api/admin/tenants/:id/enrich-telegram-profiles` (`async:true` = queue).
 
 **Bot outbound media in CRM chat:** fixed INC-024 (2026-07-22) — `logBotOutbound` stores `attachments`.
 

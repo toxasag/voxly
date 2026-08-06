@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Loader2, Trash2, Upload } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
+import { uploadBotMedia } from '@/lib/upload-bot-media';
 import { handleMailingBillingGate } from '@/lib/checkout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,11 +18,12 @@ import { AppShell, LoadingState } from '@/components/portal/app-shell';
 import { Alert } from '@/components/portal/alert';
 import { PageHeader } from '@/components/portal/page-header';
 import { TelegramPreview } from '@/components/telegram-preview';
+import { TG_PREVIEW_LABEL } from '@/components/portal/telegram-preview-chrome';
 import { MailingBillingBanner } from '@/components/portal/mailing-billing-banner';
 
 type Segment = 'gifted' | 'not_gifted' | 'all';
 type FunnelPhase = 'started' | 'awaiting_sub' | 'gifted' | 'not_gifted';
-type MediaType = 'photo' | 'video';
+type MediaType = 'photo' | 'video' | 'document' | 'voice' | 'video_note' | 'audio';
 
 interface BotRow {
   id: string;
@@ -46,11 +48,6 @@ interface BroadcastRow {
   createdAt: string;
 }
 
-function authTokenOnly(): HeadersInit {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('voxly_token') : null;
-  return { Authorization: `Bearer ${token}` };
-}
-
 function toLocalInputValue(iso: string | null | undefined): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -65,6 +62,8 @@ function MediaPicker({
   busy,
   hasFile,
   fileHint,
+  progressPercent,
+  progressPhase,
   onPick,
   onClear,
 }: {
@@ -73,10 +72,19 @@ function MediaPicker({
   busy?: boolean;
   hasFile: boolean;
   fileHint?: string;
+  progressPercent?: number | null;
+  progressPhase?: 'upload' | 'processing' | null;
   onPick: (file: File) => void | Promise<void>;
   onClear: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const pct = typeof progressPercent === 'number' ? Math.max(0, Math.min(100, progressPercent)) : null;
+  const statusLabel =
+    progressPhase === 'processing'
+      ? 'Сохраняем в Telegram…'
+      : pct != null
+        ? `Отправка ${pct}%`
+        : 'Загрузка…';
   return (
     <div className="space-y-1.5">
       {label && <Label>{label}</Label>}
@@ -100,7 +108,7 @@ function MediaPicker({
           onClick={() => inputRef.current?.click()}
         >
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-          {busy ? 'Загрузка…' : 'Выбрать файл'}
+          {busy ? statusLabel : 'Выбрать файл'}
         </Button>
         {hasFile && (
           <Button type="button" variant="ghost" size="sm" onClick={onClear} disabled={Boolean(busy)}>
@@ -108,9 +116,30 @@ function MediaPicker({
           </Button>
         )}
       </div>
-      {fileHint && <p className="text-xs text-muted-foreground">{fileHint}</p>}
-      {!fileHint && !hasFile && (
-        <p className="text-xs text-muted-foreground">С компьютера → Telegram file_id</p>
+      {busy && (
+        <div className="space-y-1" aria-live="polite">
+          <div className="h-2 overflow-hidden rounded-full bg-black/10">
+            <div
+              className={`h-full rounded-full bg-orange-500 transition-[width] duration-200 ease-out ${
+                progressPhase === 'processing' && (pct == null || pct >= 90) ? 'animate-pulse' : ''
+              }`}
+              style={{ width: `${pct != null ? Math.max(pct, 4) : 40}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {progressPhase === 'processing'
+              ? 'Файл на сервере — бот получает file_id в Telegram.'
+              : pct != null
+                ? `Загружено ${pct}%`
+                : 'Готовим загрузку…'}
+          </p>
+        </div>
+      )}
+      {fileHint && !busy && <p className="text-xs text-muted-foreground">{fileHint}</p>}
+      {!fileHint && !hasFile && !busy && (
+        <p className="text-xs text-muted-foreground">
+          С компьютера → Telegram. Фото, видео (MP4) или файл до 48 МБ.
+        </p>
       )}
     </div>
   );
@@ -132,6 +161,10 @@ export default function BroadcastsPage() {
   const [history, setHistory] = useState<BroadcastRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{
+    percent: number;
+    phase: 'upload' | 'processing';
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
@@ -200,30 +233,33 @@ export default function BroadcastsPage() {
   const uploadMedia = async (file: File) => {
     if (!botId) return;
     setUploading(true);
+    setUploadProgress({ percent: 0, phase: 'upload' });
     setError('');
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch(`/api/bots/${botId}/media`, {
-        method: 'POST',
-        headers: authTokenOnly(),
-        body: fd,
+      const uploaded = await uploadBotMedia({
+        botId,
+        file,
+        token: typeof window !== 'undefined' ? localStorage.getItem('voxly_token') : null,
+        onProgress: (p) => setUploadProgress({ percent: p.percent, phase: p.phase }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Не удалось загрузить файл');
       const preview = URL.createObjectURL(file);
       setLocalPreview((prev) => {
         if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
         return preview;
       });
-      setTelegramFileId(json.fileId as string);
-      setMediaType((json.mediaType as MediaType) || (json.kind === 'video' ? 'video' : 'photo'));
+      setTelegramFileId(uploaded.fileId);
+      setMediaType(uploaded.mediaType);
       setMediaUrl('');
       setOk('Медиа загружено в Telegram');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки');
+      setLocalPreview((prev) => {
+        if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+        return '';
+      });
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -410,8 +446,10 @@ export default function BroadcastsPage() {
               </div>
               <MediaPicker
                 label="Медиа"
-                accept="image/*,video/*"
+                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.ogg,.opus,.mp3,.m4a,application/*"
                 busy={uploading}
+                progressPercent={uploadProgress?.percent ?? null}
+                progressPhase={uploadProgress?.phase ?? null}
                 hasFile={hasMedia}
                 fileHint={
                   telegramFileId
@@ -467,11 +505,13 @@ export default function BroadcastsPage() {
           </Card>
 
           <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">Превью</p>
+            <p className={TG_PREVIEW_LABEL}>Превью</p>
             <TelegramPreview
+              botId={botId || undefined}
               text={text || 'Текст рассылки…'}
               mediaUrl={previewMedia}
-              mediaType={mediaType === 'video' ? 'video' : 'photo'}
+              mediaType={mediaType || 'photo'}
+              telegramFileId={telegramFileId || undefined}
               mediaPlaceholder={Boolean(telegramFileId) && !previewMedia}
               botName={selectedBot?.botUsername ? `@${selectedBot.botUsername}` : undefined}
             />

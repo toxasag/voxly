@@ -13,6 +13,6 @@ export default defineNavigationMenuItem({
   universalIdentifier: MAILING_FOLDER_NAV_UNIVERSAL_IDENTIFIER,
   name: 'Рассылка',
   icon: 'IconSend',
-  position: 1,
+  position: 3,
   type: NavigationMenuItemType.FOLDER,
 });
