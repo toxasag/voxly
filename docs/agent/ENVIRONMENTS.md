@@ -26,6 +26,13 @@ Rule: developing locally must **not** assume prod DB/content. Shipping is always
 
 Process (1) is in place. Code (2) is **not fully equal** (see drift below). That is OK while working locally; before each prod ship, run `prod-diff` and deploy only the services you intend.
 
+## Verified snapshot (2026-08-06 tip redeploy)
+
+- Branch tip `cb36ecf` on `feature/getvoxlybot-otp-live-robokassa`; PR https://github.com/toxasag/voxly/pull/1 → `main`.
+- Deployed: `saas-api`, `saas-portal`, `gramjs-bridge`, `ai-whatsapp-worker`, `ai-telegram-worker`, `gift-bot-worker`.
+- Backup `/opt/voxly/backups/20260806-132913/`. Smoke landing + API health + `/open/tg/928954961` **200**.
+- Not touched: `evolution-api` (WA sessions), `max-bridge`, Twenty image.
+
 ## Verified snapshot (2026-07-23, Business AI ship)
 
 ### Match (OK) — after `prod-deploy.sh saas-api,saas-portal,ai-telegram-worker,gift-bot-worker,manager-bot-service,compose`

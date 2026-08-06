@@ -1,3 +1,15 @@
+### 2026-08-06 — Tip redeploy + PR for feature/getvoxlybot-otp-live-robokassa
+
+- Goal: GitHub auth restored → open PR; ship tip `cb36ecf` to prod so CRM/TG/WA/portal match branch.
+- Git: branch `feature/getvoxlybot-otp-live-robokassa` already at origin tip; no product commit (left untracked `.cursor/skills/*`, design dumps, `docker-compose.override.yml`).
+- PR: https://github.com/toxasag/voxly/pull/1 (base `main`; created via GitHub API — `gh` CLI lacks `read:org` on the git credential PAT).
+- Pre-check: `prod-diff` hot files matched; extended shas for open-tg/gramjs/workers/portal bots/crm-chat also matched. Redeployed anyway so images bake tip.
+- Deploy: backup `/opt/voxly/backups/20260806-132913/` (`voxly_control.dump`, `twenty.dump`); `./scripts/prod-deploy.sh --dry-run` then `./scripts/prod-deploy.sh saas-api,saas-portal,gramjs-bridge,ai-whatsapp-worker,ai-telegram-worker,gift-bot-worker`. Prisma migrate deploy ran. Volumes untouched. No evolution-api.
+- Smoke: landing/API health/dashboard partners|crm|ai|agents **200**; `GET /open/tg/928954961` **200** with `tg://user?id=928954961`.
+- crm-chat: still **0.1.27** (no tarball bump) — skipped `refresh-crm-chat` (already ok earlier today for voxly).
+- Not deployed: `evolution-api` (sessions), `max-bridge`, `twenty` image, `manager/platform-bot` — not required for this tip ship.
+- Broken: none. Next: merge PR when ready; user smoke Кувалдин GramJS send.
+
 ### 2026-08-06 — INC-103: GramJS send when Person has TG userId (Кувалдин) + module freeze
 
 - Goal: Кувалдин Chat — GramJS «Пишем от» was greyed despite Telegram `tg://user?id=928954961`; enable send without requiring prior GramJS Conversation; freeze working modules in docs.
