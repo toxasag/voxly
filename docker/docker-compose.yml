@@ -365,6 +365,7 @@ services:
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       AI_TELEGRAM_WORKER_URL: ${AI_TELEGRAM_WORKER_URL:-http://ai-telegram-worker:3005}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
       AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
       # Same media understanding as AI workers (CRM ChatMessage enrichment; no sales LLM).
@@ -411,6 +412,8 @@ services:
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
+      GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
     networks:
       - voxly-net
 

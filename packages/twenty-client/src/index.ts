@@ -42,6 +42,31 @@ function publicApiBase(): string {
  * - else numeric MTProto user id → HTTPS bridge that opens tg://user?id=…
  * Never invents t.me/+{phone}.
  */
+/**
+ * Open-in-MAX link when PyMax has userId but no public max.ru profile URL.
+ * Never invents max.ru/+phone.
+ */
+export function maxOpenLink(opts: {
+  userId?: string | number | null;
+  link?: string | null;
+}): { url: string; label: string; deepLink?: string } | undefined {
+  const rawLink = String(opts.link || '').trim();
+  if (rawLink && /^https?:\/\/([a-z0-9-]+\.)?max\.ru\//i.test(rawLink)) {
+    if (/max\.ru\/\+\d/i.test(rawLink)) return undefined;
+    return { url: rawLink, label: rawLink };
+  }
+  if (rawLink && /^(u\/|join\/|@)/i.test(rawLink)) {
+    const url = `https://max.ru/${rawLink.replace(/^@/, '').replace(/^\//, '')}`;
+    return { url, label: url };
+  }
+  const id = String(opts.userId ?? '').trim();
+  if (!id || !/^\d{1,20}$/.test(id)) return undefined;
+  const deepLink = `max://user?id=${id}`;
+  const base = publicApiBase();
+  const url = base ? `${base}/open/max/${id}` : deepLink;
+  return { url, label: deepLink, deepLink };
+}
+
 export function telegramOpenLink(opts: {
   username?: string | null;
   userId?: string | number | null;
@@ -61,6 +86,26 @@ export function telegramOpenLink(opts: {
   // Twenty front ensureAbsoluteUrl mangles tg:// → https://tg://… so store https bridge.
   const url = base ? `${base}/open/tg/${id}` : deepLink;
   return { url, label: deepLink, deepLink };
+}
+
+/**
+ * Placeholder / machine Person names that enrich may replace with a real channel profile.
+ * Never treat a normal human name as replaceable.
+ */
+export function isPlaceholderPersonName(
+  firstName?: string | null,
+  lastName?: string | null,
+): boolean {
+  const f = String(firstName || '').trim();
+  const l = String(lastName || '').trim();
+  if (!f && !l) return true;
+  if (/^noname\d*$/i.test(f) && (!l || /^noname\d*$/i.test(l))) return true;
+  if (/^whatsapp$/i.test(f)) return true;
+  if (/^tg\s+\d+$/i.test(f)) return true;
+  if (/^\+?\d{10,15}$/.test(f) && !l) return true;
+  // ImportContacts probe names from gramjs-bridge (must never stick on Person).
+  if (/^voxly$/i.test(f) && /^check$/i.test(l)) return true;
+  return false;
 }
 
 /** True when URL is a public @username profile (do not replace with tg:// bridge). */
@@ -405,6 +450,7 @@ const PERSON_SOCIAL_LINK_FIELDS: Array<{
 }> = [
   { name: 'telegram', label: 'Telegram', icon: 'IconBrandTelegram' },
   { name: 'whatsapp', label: 'WhatsApp', icon: 'IconBrandWhatsapp' },
+  { name: 'max', label: 'MAX', icon: 'IconMessageCircle' },
   { name: 'odnoklassniki', label: 'Одноклассники', icon: 'IconUsers' },
   { name: 'vkontakte', label: 'ВКонтакте', icon: 'IconBrandVk' },
   { name: 'instagram', label: 'Instagram', icon: 'IconBrandInstagram' },
@@ -437,6 +483,25 @@ export function socialFieldToUrl(
     const e164 = normalizePhoneToE164(v) || formatWhatsappHandle(v);
     if (!e164) return undefined;
     return `https://wa.me/${e164.replace(/\D/g, '')}`;
+  }
+  if (fieldName === 'max') {
+    // Never invent max.ru/+phone — real max.ru link, handle, or open/max/{id} bridge.
+    if (/max\.ru\/\+\d/i.test(v)) return undefined;
+    if (/^https?:\/\/([a-z0-9-]+\.)?max\.ru\//i.test(v)) return v;
+    if (/\/open\/max\/\d{1,20}\b/i.test(v) || /^https?:\/\/[^/]+\/open\/max\/\d{1,20}/i.test(v)) {
+      return v.startsWith('http') ? v : undefined;
+    }
+    if (/^max:\/\/user\?id=\d{1,20}$/i.test(v)) {
+      const id = v.match(/id=(\d{1,20})/i)?.[1];
+      return id ? maxOpenLink({ userId: id })?.url : undefined;
+    }
+    if (/^\d{1,20}$/.test(v)) {
+      return maxOpenLink({ userId: v })?.url;
+    }
+    if (/^(u\/|join\/|@)/i.test(v)) {
+      return `https://max.ru/${v.replace(/^@/, '').replace(/^\//, '')}`;
+    }
+    return undefined;
   }
   if (fieldName === 'website') {
     return v.includes('.') ? `https://${v.replace(/^https?:\/\//i, '')}` : undefined;
@@ -1869,6 +1934,8 @@ export class TwentyClient {
       }
       if (!socialGroupId) return;
 
+      // Always place socials in fixed order under LinkedIn:
+      // Telegram → WhatsApp → MAX → …
       const linkedinPos = linkedinFieldId
         ? viewFields.find((vf) => vf.fieldMetadataId === linkedinFieldId)?.position
         : undefined;
@@ -1906,27 +1973,36 @@ export class TwentyClient {
           }
         }
         if (!vf) continue;
-        if (vf.viewFieldGroupId === socialGroupId) {
-          nextPos = Math.max(nextPos, (vf.position ?? nextPos) + 1);
-          continue;
-        }
-        await this.authClient.request(
-          UPDATE_VIEW_FIELD,
-          {
-            input: {
-              id: vf.id,
-              update: {
-                viewFieldGroupId: socialGroupId,
-                position: nextPos,
+        const alreadyOk =
+          vf.viewFieldGroupId === socialGroupId &&
+          typeof vf.position === 'number' &&
+          Math.abs((vf.position ?? 0) - nextPos) < 0.0001;
+        if (!alreadyOk) {
+          await this.authClient.request(
+            UPDATE_VIEW_FIELD,
+            {
+              input: {
+                id: vf.id,
+                update: {
+                  viewFieldGroupId: socialGroupId,
+                  position: nextPos,
+                  isVisible: true,
+                },
               },
             },
-          },
-          headers,
-        );
+            headers,
+          );
+          vf = { ...vf, viewFieldGroupId: socialGroupId, position: nextPos };
+        }
         nextPos += 1;
       }
-    } catch {
-      // Layout move is best-effort; fields still usable in System group
+    } catch (err) {
+      // Layout move is best-effort; fields still usable in System group.
+      // Note: Twenty in-memory flat-maps can make updateViewField a no-op vs core.viewField
+      // (INC-107) — SQL + redis flush + twenty-server recreate is the reliable ops fix.
+      console.warn(
+        `[twenty-client] movePersonFieldsToSocialGroup failed: ${errorMessage(err)}`,
+      );
     }
   }
 
@@ -2357,6 +2433,95 @@ export class TwentyClient {
   }
 
   /**
+   * Apply PyMax profile onto Person (best-effort).
+   * Writes Person.max only when API returned a real max.ru link — never from phone.
+   * Name replaces only placeholder/noname. Birthday unavailable in maxapi-python User.
+   */
+  async applyMaxProfile(
+    personId: string,
+    profile: {
+      firstName?: string;
+      lastName?: string;
+      link?: string;
+      /** PyMax numeric user id — used for /open/max/{id} when no public link. */
+      userId?: string;
+      phone?: string;
+      about?: string;
+    },
+  ): Promise<void> {
+    if (!personId || !profile) return;
+    try {
+      await this.ensureSocialFields();
+    } catch {
+      /* optional */
+    }
+
+    if (profile.firstName || profile.lastName) {
+      const incomingPlaceholder = isPlaceholderPersonName(
+        profile.firstName,
+        profile.lastName,
+      );
+      if (!incomingPlaceholder) {
+        try {
+          const current = await this.getPersonName(personId);
+          const canReplace =
+            !current ||
+            isPlaceholderPersonName(current.firstName, current.lastName);
+          if (canReplace) {
+            await this.updatePersonName(personId, {
+              firstName: profile.firstName,
+              lastName: profile.lastName,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    if (profile.phone) {
+      try {
+        await this.updatePersonPhone(personId, profile.phone);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const opened = maxOpenLink({
+      link: profile.link,
+      userId: profile.userId,
+    });
+    const maxUrl = opened?.url || socialFieldToUrl('max', profile.link);
+    if (maxUrl) {
+      try {
+        // Prefer deep-link label when using open/max bridge (like telegramOpenLink).
+        if (opened?.deepLink && opened.url.includes('/open/max/')) {
+          await this.updatePersonSocialText(personId, 'max', maxUrl);
+          // Re-write label=deep via linksInput path: updatePersonSocialText uses url as label.
+          // Store bridge URL (clickable); visible text stays the URL (LINKS contract).
+        } else {
+          await this.updatePersonSocialText(personId, 'max', maxUrl);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (profile.about) {
+      const headers = this.getAuthHeaders();
+      try {
+        await this.client.request(
+          UPDATE_PERSON,
+          { id: personId, data: { about: profile.about } },
+          headers,
+        );
+      } catch {
+        /* about field may be missing */
+      }
+    }
+  }
+
+  /**
    * Set a Person social field as LINKS (clickable). Falls back to plain TEXT
    * if the workspace field is still TEXT.
    */
@@ -2458,13 +2623,26 @@ export class TwentyClient {
     }
 
     if (profile.firstName || profile.lastName) {
-      try {
-        await this.updatePersonName(personId, {
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-        });
-      } catch {
-        /* ignore */
+      // Never apply ImportContacts probe / empty names; never overwrite a good human name.
+      const incomingPlaceholder = isPlaceholderPersonName(
+        profile.firstName,
+        profile.lastName,
+      );
+      if (!incomingPlaceholder) {
+        try {
+          const current = await this.getPersonName(personId);
+          const canReplace =
+            !current ||
+            isPlaceholderPersonName(current.firstName, current.lastName);
+          if (canReplace) {
+            await this.updatePersonName(personId, {
+              firstName: profile.firstName,
+              lastName: profile.lastName,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
       }
     }
     if (profile.phone) {
@@ -2508,6 +2686,65 @@ export class TwentyClient {
         `[twenty-client] applyTelegramProfile extras failed person=${personId}: ${errorMessage(err)}`,
       );
     }
+  }
+
+  /** Read current Person name (for placeholder-guard enrich). */
+  async getPersonName(
+    personId: string,
+  ): Promise<{ firstName?: string; lastName?: string } | null> {
+    if (!personId) return null;
+    const headers = this.getAuthHeaders();
+    const queries = [
+      gql`
+        query PersonName($filter: PersonFilterInput) {
+          people(filter: $filter, first: 1) {
+            edges {
+              node {
+                id
+                name {
+                  firstName
+                  lastName
+                }
+              }
+            }
+          }
+        }
+      `,
+      gql`
+        query PersonNameFlat($filter: PersonFilterInput) {
+          people(filter: $filter, first: 1) {
+            edges {
+              node {
+                id
+                firstName
+                lastName
+              }
+            }
+          }
+        }
+      `,
+    ];
+    for (const query of queries) {
+      try {
+        const result = await this.client.request(
+          query,
+          { filter: { id: { eq: personId } } },
+          headers,
+        );
+        const node = (result as any).people?.edges?.[0]?.node;
+        if (!node) continue;
+        const firstName =
+          node.name?.firstName ?? node.firstName ?? undefined;
+        const lastName = node.name?.lastName ?? node.lastName ?? undefined;
+        return {
+          firstName: firstName != null ? String(firstName) : undefined,
+          lastName: lastName != null ? String(lastName) : undefined,
+        };
+      } catch {
+        /* try next shape */
+      }
+    }
+    return null;
   }
 
   /** Best-effort rename Person (clear LID lastName etc.). */
@@ -2732,6 +2969,46 @@ export class TwentyClient {
     } catch (err) {
       console.warn(
         `[twenty-client] softDeleteOpportunity failed id=${opportunityId}: ${errorMessage(err)}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Bump Opportunity.updatedAt so Kanban «Последнее обновление» follows chat activity.
+   * Re-applies the same name (no-op field change) — Twenty advances updatedAt on update.
+   * Debounced ~2s per opportunity in-process.
+   */
+  async touchOpportunityActivity(opportunityId: string): Promise<boolean> {
+    if (!opportunityId) return false;
+    const g = globalThis as {
+      __voxlyOppTouchAt?: Map<string, number>;
+    };
+    if (!g.__voxlyOppTouchAt) g.__voxlyOppTouchAt = new Map();
+    const now = Date.now();
+    const prev = g.__voxlyOppTouchAt.get(opportunityId) || 0;
+    if (now - prev < 2000) return false;
+    g.__voxlyOppTouchAt.set(opportunityId, now);
+
+    const headers = this.getAuthHeaders();
+    try {
+      const result = await this.client.request(
+        FIND_OPPORTUNITIES,
+        { filter: { id: { eq: opportunityId } } },
+        headers,
+      );
+      const node = (result as any)?.opportunities?.edges?.[0]?.node;
+      const name = node?.name != null ? String(node.name) : null;
+      if (!name) return false;
+      await this.client.request(
+        UPDATE_OPPORTUNITY,
+        { id: opportunityId, data: { name } },
+        headers,
+      );
+      return true;
+    } catch (err) {
+      console.warn(
+        `[twenty-client] touchOpportunityActivity failed id=${opportunityId}: ${errorMessage(err)}`,
       );
       return false;
     }

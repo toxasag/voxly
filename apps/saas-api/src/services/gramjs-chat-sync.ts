@@ -341,13 +341,44 @@ export async function runGramjsPrivateChatSync(opts: {
       personId = created?.id;
       if (personId) peopleCreated += 1;
     } else {
+      // Maximize Person fields from TG dialog (name/phone/links). Placeholder names
+      // (nonameN from WA) are replaced; good human names are kept (twenty-client guard).
       try {
-        await client.updatePersonTelegram(personId, {
+        await client.applyTelegramProfile(personId, {
           username: d.username,
           userId: platformUserId,
+          firstName: d.firstName,
+          lastName: d.lastName,
+          phone: d.phone,
         });
       } catch {
-        /* ignore */
+        try {
+          await client.updatePersonTelegram(personId, {
+            username: d.username,
+            userId: platformUserId,
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    // Phone from MTProto → MAX + WA (TG profile already applied).
+    if (personId && d.phone) {
+      try {
+        const { enrichPersonCrossChannelByPhone } = await import(
+          './enrich-person-by-phone.js'
+        );
+        await enrichPersonCrossChannelByPhone({
+          prisma,
+          twenty: client,
+          tenantId,
+          personId,
+          phone: d.phone,
+          channels: ['max', 'whatsapp'],
+        });
+      } catch (err) {
+        console.warn('[gramjs-chat-sync] cross-channel enrich failed', err);
       }
     }
 
@@ -376,6 +407,14 @@ export async function runGramjsPrivateChatSync(opts: {
         platformFirstName: d.firstName || conversation.platformFirstName,
       },
     });
+
+    if (opportunityId && d.messages?.length) {
+      try {
+        await client.touchOpportunityActivity(opportunityId);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   return {

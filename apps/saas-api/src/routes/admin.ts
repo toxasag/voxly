@@ -18,6 +18,8 @@ import {
 import { syncTwentyCrmLock } from '../services/crm-access.js';
 import { migratePersonSocialFieldsToLinks } from '../services/migrate-social-links.js';
 import { backfillTelegramOpenLinks } from '../services/backfill-telegram-open-links.js';
+import { runEnrichPersonsByPhone } from '../services/enrich-person-by-phone.js';
+import { syncOpportunityChatActivityForTenant } from '../services/sync-opportunity-chat-activity.js';
 import { z } from 'zod';
 
 /** JWT from auth/login uses `sub` (user id); never `userId`. */
@@ -326,6 +328,122 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
     if (!summary.ok && summary.error === 'crm_not_provisioned') {
       return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+    }
+    return reply.send(summary);
+  });
+
+  /**
+   * WA/TG/site Person → TG + MAX + WA enrich by phone.
+   * TG: GramJS ImportContacts + GetFullUser.
+   * MAX: max-bridge search_by_phone (+ import_contacts fallback); Person.max only when
+   * PyMax returns a real max.ru link. Birthday N/A on maxapi-python User.
+   * WA: Evolution IsOnWhatsApp → Person.whatsapp wa.me (never invent without exists).
+   * Body: { limit?, delayMs?, personId?, phone?, maxBotId?, channels?, targets? }.
+   * Omit targets → scan phone + (noname* OR empty telegram OR empty max).
+   * Never invents t.me/+phone or max.ru/+phone; rate-limited (default delay 1500ms).
+   */
+  /**
+   * Align Opportunity.updatedAt with latest ChatMessage so Kanban
+   * «Последнее обновление» matches messenger activity (all existing deals).
+   */
+  fastify.post(
+    '/tenants/:id/sync-opportunity-chat-activity',
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body || {}) as { limit?: number };
+      const summary = await syncOpportunityChatActivityForTenant({
+        prisma: fastify.prisma,
+        tenantId: id,
+        limit: body.limit,
+      });
+      if (!summary.ok && summary.error === 'tenant_not_found') {
+        return reply.code(404).send({ error: 'Tenant not found' });
+      }
+      if (!summary.ok && summary.error === 'crm_not_provisioned') {
+        return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+      }
+      return reply.send(summary);
+    },
+  );
+
+  /** Same backfill for every tenant with a Twenty workspace. */
+  fastify.post('/sync-opportunity-chat-activity', async (request, reply) => {
+    const body = (request.body || {}) as { limit?: number };
+    const tenants = await fastify.prisma.tenant.findMany({
+      where: { twentyWorkspaceId: { not: null } },
+      select: { id: true, slug: true },
+      take: 200,
+    });
+    const results = [];
+    for (const t of tenants) {
+      const summary = await syncOpportunityChatActivityForTenant({
+        prisma: fastify.prisma,
+        tenantId: t.id,
+        limit: body.limit,
+      });
+      results.push(summary);
+    }
+    return reply.send({
+      ok: true,
+      tenants: results.length,
+      updated: results.reduce((n, r) => n + r.updated, 0),
+      results,
+    });
+  });
+
+  fastify.post('/tenants/:id/enrich-persons-by-phone', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body || {}) as {
+      limit?: number;
+      delayMs?: number;
+      personId?: string;
+      phone?: string;
+      maxBotId?: string;
+      channels?: Array<'telegram' | 'max' | 'whatsapp'>;
+      targets?: Array<{ personId?: string; phone?: string }>;
+    };
+
+    const targets: Array<{ personId: string; phone: string }> = [];
+    if (body.personId && body.phone) {
+      targets.push({ personId: String(body.personId), phone: String(body.phone) });
+    }
+    for (const t of body.targets || []) {
+      const personId = String(t.personId || '').trim();
+      const phone = String(t.phone || '').trim();
+      if (personId && phone) targets.push({ personId, phone });
+    }
+
+    const channels = Array.isArray(body.channels)
+      ? body.channels.filter(
+          (c): c is 'telegram' | 'max' | 'whatsapp' =>
+            c === 'telegram' || c === 'max' || c === 'whatsapp',
+        )
+      : undefined;
+
+    const summary = await runEnrichPersonsByPhone({
+      prisma: fastify.prisma,
+      twenty: fastify.twenty,
+      tenantId: id,
+      limit: body.limit,
+      delayMs: body.delayMs,
+      maxBotId: body.maxBotId,
+      channels,
+      targets: targets.length ? targets : undefined,
+    });
+    if (!summary.ok && summary.error === 'tenant_not_found') {
+      return reply.code(404).send({ error: 'Tenant not found' });
+    }
+    if (!summary.ok && summary.error === 'crm_not_provisioned') {
+      return reply.code(409).send({ error: 'CRM workspace is not provisioned yet' });
+    }
+    if (
+      !summary.ok &&
+      (summary.error === 'no_enrich_session' || summary.error === 'no_gramjs_session')
+    ) {
+      return reply.code(409).send({
+        error: summary.error,
+        hint: 'Connect personal Telegram (/dashboard/ai/gramjs) and/or MAX (/dashboard/ai/max)',
+      });
     }
     return reply.send(summary);
   });

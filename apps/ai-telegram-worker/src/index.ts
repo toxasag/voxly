@@ -1998,6 +1998,46 @@ function gramjsBridgeBase(): string {
   return (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
 }
 
+function saasApiBase(): string {
+  return (process.env.SAAS_API_URL || 'http://saas-api:3002').replace(/\/$/, '');
+}
+
+/** Phone → MAX + WA enrich via saas-api (TG profile handled locally). */
+async function requestCrossChannelEnrich(opts: {
+  tenantId: string;
+  personId: string;
+  phone: string;
+  channels?: Array<'telegram' | 'max' | 'whatsapp'>;
+}): Promise<void> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const phone = String(opts.phone || '').replace(/\D/g, '');
+  if (!token || !opts.personId || phone.length < 10) return;
+  try {
+    const res = await fetch(`${saasApiBase()}/api/internal/crm/enrich-by-phone`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Voxly-Service': 'ai-telegram-worker',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tenantId: opts.tenantId,
+        personId: opts.personId,
+        phone,
+        channels: opts.channels || ['max', 'whatsapp'],
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(
+        `[ai-telegram] cross-channel enrich HTTP ${res.status} ${text.slice(0, 200)}`,
+      );
+    }
+  } catch (err) {
+    console.warn('[ai-telegram] cross-channel enrich failed', err);
+  }
+}
+
 /** Enrich Person from MTProto full user (phone / about / birthday) when tenant has ai_gramjs. */
 async function enrichPersonFromGramjs(
   tenantId: string,
@@ -2166,6 +2206,21 @@ async function syncLeadToCrm(opts: {
       });
     } catch {
       /* ignore */
+    }
+    if (opts.phone) {
+      void requestCrossChannelEnrich({
+        tenantId: opts.tenantId,
+        personId: storedPersonId,
+        phone: opts.phone,
+        channels: ['max', 'whatsapp'],
+      });
+    }
+    if (storedOpportunityId) {
+      try {
+        await client.touchOpportunityActivity(storedOpportunityId);
+      } catch {
+        /* ignore */
+      }
     }
     return;
   }
@@ -2407,6 +2462,21 @@ async function syncLeadToCrm(opts: {
       });
     } catch {
       /* ignore */
+    }
+    if (opts.phone) {
+      void requestCrossChannelEnrich({
+        tenantId: opts.tenantId,
+        personId,
+        phone: opts.phone,
+        channels: ['max', 'whatsapp'],
+      });
+    }
+    if (opportunityId) {
+      try {
+        await client.touchOpportunityActivity(opportunityId);
+      } catch {
+        /* ignore */
+      }
     }
   }
 }

@@ -55,12 +55,13 @@ async function syncMaxLeadToCrm(opts: {
   platformUserId: string;
   username?: string | null;
   firstName?: string | null;
+  phone?: string | null;
+  maxLink?: string | null;
 }): Promise<void> {
   const conversation = await opts.prisma.conversation.findUnique({
     where: { id: opts.conversationId },
   });
   if (!conversation) return;
-  if (conversation.twentyPersonId && conversation.twentyOpportunityId) return;
 
   const client = await getTenantTwenty(opts.prisma, opts.tenantId);
   if (!client) return;
@@ -72,6 +73,9 @@ async function syncMaxLeadToCrm(opts: {
   if (opportunityId && !(await client.opportunityExists(opportunityId))) {
     opportunityId = undefined;
   }
+
+  // Already fully linked — still enrich max/name/phone if provided.
+  const phoneDigits = String(opts.phone || '').replace(/\D/g, '');
 
   if (!personId) {
     const prior = await opts.prisma.conversation.findFirst({
@@ -91,6 +95,16 @@ async function syncMaxLeadToCrm(opts: {
     }
   }
 
+  // Cross-channel merge: same phone as WA/TG Person → same deal.
+  if (!personId && phoneDigits.length >= 10) {
+    try {
+      const byPhone = await client.findPersonByPhone(phoneDigits);
+      personId = byPhone?.id || byPhone?.ids?.[0];
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (!personId) {
     const who =
       opts.firstName ||
@@ -101,8 +115,53 @@ async function syncMaxLeadToCrm(opts: {
       lastName: opts.username
         ? `@${opts.username.replace(/^@/, '')}`
         : opts.platformUserId,
+      phone: phoneDigits.length >= 10 ? phoneDigits : undefined,
     });
     personId = created?.id;
+  }
+
+  if (personId) {
+    try {
+      await client.applyMaxProfile(personId, {
+        firstName: opts.firstName || undefined,
+        lastName: opts.username
+          ? `@${opts.username.replace(/^@/, '')}`
+          : undefined,
+        link: opts.maxLink || undefined,
+        userId: opts.platformUserId,
+        phone: phoneDigits.length >= 10 ? `+${phoneDigits}` : undefined,
+      });
+    } catch {
+      /* optional */
+    }
+  }
+
+  // Phone known → fill TG + WA (MAX already applied).
+  if (personId && phoneDigits.length >= 10) {
+    try {
+      const { enrichPersonCrossChannelByPhone } = await import(
+        '../services/enrich-person-by-phone.js'
+      );
+      await enrichPersonCrossChannelByPhone({
+        prisma: opts.prisma,
+        twenty: client,
+        tenantId: opts.tenantId,
+        personId,
+        phone: phoneDigits,
+        channels: ['telegram', 'whatsapp'],
+      });
+    } catch (err) {
+      console.warn('[max-internal] cross-channel enrich failed', err);
+    }
+  }
+
+  if (!opportunityId && personId) {
+    try {
+      const open = await client.findOpenOpportunityByPerson(personId);
+      if (open?.id) opportunityId = open.id;
+    } catch {
+      /* ignore */
+    }
   }
 
   if (!opportunityId && personId) {
@@ -135,6 +194,14 @@ async function syncMaxLeadToCrm(opts: {
     opportunityId = opp?.id;
   }
 
+  if (opportunityId) {
+    try {
+      await client.touchOpportunityActivity(opportunityId);
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (personId || opportunityId) {
     await opts.prisma.conversation.update({
       where: { id: opts.conversationId },
@@ -149,7 +216,8 @@ async function syncMaxLeadToCrm(opts: {
 const upsertBotSchema = z.object({
   tenantId: z.string().min(1),
   name: z.string().min(1).max(80).default('default'),
-  maxUserId: z.string().optional(),
+  // Bridge may send null right after on_start before profile id is known.
+  maxUserId: z.string().nullish(),
   username: z.string().nullable().optional(),
   firstName: z.string().nullable().optional(),
   sessionReady: z.boolean().optional(),
@@ -162,6 +230,8 @@ const inboundSchema = z.object({
   messageId: z.union([z.string(), z.number()]).optional(),
   username: z.string().nullable().optional(),
   firstName: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  maxLink: z.string().nullable().optional(),
 });
 
 export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
@@ -285,7 +355,8 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
-    const { botId, peerId, text, messageId, username, firstName } = parsed.data;
+    const { botId, peerId, text, messageId, username, firstName, phone, maxLink } =
+      parsed.data;
     const prisma = fastify.prisma;
 
     const bot = await prisma.botInstance.findFirst({
@@ -356,6 +427,8 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       platformUserId: peerId,
       username,
       firstName,
+      phone,
+      maxLink,
     }).catch((err) => {
       console.warn('[max-internal] CRM sync failed', err);
     });

@@ -1,0 +1,433 @@
+/**
+ * Import private MAX (PyMax) DIALOG chats into CRM.
+ * Groups/channels never appear — bridge filters ChatType.DIALOG only.
+ * Default: all private dialogs × last 30 messages.
+ */
+import type { PrismaClient } from '@voxly/db';
+import { decrypt } from '@voxly/crypto';
+import { TwentyClient } from '@voxly/twenty-client';
+
+/** 0 = all private dialogs. */
+export const MAX_CHAT_SYNC_ALL_DIALOGS = 0;
+export const MAX_CHAT_SYNC_MESSAGE_LIMIT = 30;
+
+export type MaxChatSyncSummary = {
+  ok: boolean;
+  dialogs: number;
+  messagesUpserted: number;
+  peopleCreated: number;
+  opportunitiesCreated: number;
+  skippedSuppressed: number;
+  error?: string;
+};
+
+type BridgeDialog = {
+  chatId: string;
+  userId?: string;
+  username?: string | null;
+  firstName?: string | null;
+  phone?: string | null;
+  /** PyMax User.link when present — never invented from phone. */
+  link?: string | null;
+  messages: Array<{
+    id: number | string;
+    out: boolean;
+    text: string;
+    date: number;
+  }>;
+};
+
+function bridgeBase(): string {
+  return (process.env.MAX_BRIDGE_URL || 'http://max-bridge:3010').replace(/\/$/, '');
+}
+
+function serviceToken(): string {
+  return process.env.VOXLY_SERVICE_TOKEN || '';
+}
+
+async function fetchPrivateDialogs(opts: {
+  botId: string;
+  dialogLimit: number;
+  messageLimit: number;
+}): Promise<{ dialogs: BridgeDialog[]; error?: string }> {
+  const token = serviceToken();
+  if (!token) return { dialogs: [], error: 'VOXLY_SERVICE_TOKEN unset' };
+  const res = await fetch(`${bridgeBase()}/crm/private-dialogs`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      dialogLimit: opts.dialogLimit,
+      messageLimit: opts.messageLimit,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    dialogs?: BridgeDialog[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok || !json.ok) {
+    return {
+      dialogs: [],
+      error: json.error || json.detail || `HTTP ${res.status}`,
+    };
+  }
+  return { dialogs: Array.isArray(json.dialogs) ? json.dialogs : [] };
+}
+
+function normalizePhone(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) return undefined;
+  return digits;
+}
+
+export async function runMaxPrivateChatSync(opts: {
+  prisma: PrismaClient;
+  twenty?: TwentyClient;
+  tenantId: string;
+  botId: string;
+  dialogLimit?: number;
+  messageLimit?: number;
+}): Promise<MaxChatSyncSummary> {
+  const { prisma, tenantId, botId } = opts;
+  const rawDialog = opts.dialogLimit;
+  const dialogLimit =
+    typeof rawDialog === 'number' && Number.isFinite(rawDialog) && rawDialog > 0
+      ? Math.floor(rawDialog)
+      : MAX_CHAT_SYNC_ALL_DIALOGS;
+  const messageLimit = Math.min(
+    Math.max(opts.messageLimit ?? MAX_CHAT_SYNC_MESSAGE_LIMIT, 1),
+    80,
+  );
+
+  const bot = await prisma.botInstance.findFirst({
+    where: {
+      id: botId,
+      tenantId,
+      botType: 'ai_max',
+      status: 'active',
+      botTokenEncrypted: { not: null },
+    },
+    select: { id: true, displayName: true, botUsername: true, phoneNumberId: true },
+  });
+  if (!bot) {
+    return {
+      ok: false,
+      dialogs: 0,
+      messagesUpserted: 0,
+      peopleCreated: 0,
+      opportunitiesCreated: 0,
+      skippedSuppressed: 0,
+      error: 'max_bot_not_found',
+    };
+  }
+
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    include: {
+      users: {
+        where: { role: 'owner' },
+        include: { user: true },
+        take: 1,
+      },
+    },
+  });
+  if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+    return {
+      ok: false,
+      dialogs: 0,
+      messagesUpserted: 0,
+      peopleCreated: 0,
+      opportunitiesCreated: 0,
+      skippedSuppressed: 0,
+      error: 'crm_not_provisioned',
+    };
+  }
+  const owner = tenant.users[0]?.user;
+  if (!owner?.email) {
+    return {
+      ok: false,
+      dialogs: 0,
+      messagesUpserted: 0,
+      peopleCreated: 0,
+      opportunitiesCreated: 0,
+      skippedSuppressed: 0,
+      error: 'owner_not_found',
+    };
+  }
+
+  const { dialogs, error } = await fetchPrivateDialogs({
+    botId,
+    dialogLimit,
+    messageLimit,
+  });
+  if (error) {
+    return {
+      ok: false,
+      dialogs: 0,
+      messagesUpserted: 0,
+      peopleCreated: 0,
+      opportunitiesCreated: 0,
+      skippedSuppressed: 0,
+      error,
+    };
+  }
+
+  const client =
+    opts.twenty ||
+    new TwentyClient({
+      apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+    });
+  await client.authenticateWorkspace(
+    owner.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+  try {
+    await client.ensureSocialFields();
+  } catch {
+    /* optional */
+  }
+
+  let messagesUpserted = 0;
+  let peopleCreated = 0;
+  let opportunitiesCreated = 0;
+  let skippedSuppressed = 0;
+  const botLabel = bot.displayName || bot.botUsername || 'личный';
+
+  const selfMaxId = String(bot.phoneNumberId || '').trim();
+
+  for (const d of dialogs) {
+    // Match live inbound: platformUserId = chat id (bridge peer prefers chat_id).
+    const platformUserId = String(d.chatId || d.userId || '').trim();
+    if (!platformUserId || platformUserId === '0') continue;
+    // Skip self / Saved Messages style peers
+    if (selfMaxId && String(d.userId || '').trim() === selfMaxId) continue;
+
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        botInstanceId: botId,
+        platform: 'max',
+        platformUserId,
+        channel: 'max_personal',
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          tenantId,
+          botInstanceId: botId,
+          platform: 'max',
+          platformUserId,
+          platformUsername: d.username || undefined,
+          platformFirstName: d.firstName || undefined,
+          channel: 'max_personal',
+          status: 'open',
+          mode: 'ai',
+        },
+      });
+    } else {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          platformUsername: d.username || conversation.platformUsername,
+          platformFirstName: d.firstName || conversation.platformFirstName,
+          botInstanceId: botId,
+        },
+      });
+      conversation = await prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+    }
+
+    for (const m of d.messages) {
+      const externalMessageId = `max:${m.id}`;
+      const content = (m.text || '').trim() || '[сообщение]';
+      const existing = await prisma.chatMessage.findFirst({
+        where: {
+          conversationId: conversation.id,
+          externalMessageId,
+        },
+        select: { id: true },
+      });
+      if (existing) continue;
+
+      const sentAt =
+        m.date && m.date > 0 ? new Date(m.date * 1000) : new Date();
+      await prisma.chatMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: m.out ? 'operator' : 'user',
+          content,
+          externalMessageId,
+          sentAt,
+        },
+      });
+      messagesUpserted += 1;
+    }
+
+    let personId = conversation.twentyPersonId || undefined;
+    let opportunityId = conversation.twentyOpportunityId || undefined;
+    const suppressDeal = conversation.suppressDealCreation === true;
+
+    if (personId && !(await client.personExists(personId))) personId = undefined;
+    if (opportunityId && !(await client.opportunityExists(opportunityId))) {
+      opportunityId = undefined;
+    }
+
+    const phone = normalizePhone(d.phone || undefined);
+
+    if (!personId) {
+      const prior = await prisma.conversation.findFirst({
+        where: {
+          tenantId,
+          platform: 'max',
+          platformUserId,
+          twentyPersonId: { not: null },
+          NOT: { id: conversation.id },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (prior?.twentyPersonId && (await client.personExists(prior.twentyPersonId))) {
+        personId = prior.twentyPersonId;
+        if (
+          prior.twentyOpportunityId &&
+          (await client.opportunityExists(prior.twentyOpportunityId))
+        ) {
+          opportunityId = prior.twentyOpportunityId;
+        }
+      }
+    }
+
+    if (!personId && phone) {
+      try {
+        const byPhone = await client.findPersonByPhone(phone);
+        personId = byPhone?.id || byPhone?.ids?.[0];
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!personId) {
+      const hinted = await client.findPersonByHint({
+        username: d.username || undefined,
+        lastName: d.username
+          ? `@${String(d.username).replace(/^@/, '')}`
+          : platformUserId,
+      });
+      personId = hinted?.id;
+    }
+
+    if (!personId) {
+      const who =
+        d.firstName ||
+        (d.username ? `@${String(d.username).replace(/^@/, '')}` : null) ||
+        `MAX ${platformUserId}`;
+      const created = await client.createPerson({
+        firstName: who,
+        lastName: d.username
+          ? `@${String(d.username).replace(/^@/, '')}`
+          : platformUserId,
+        phone,
+      });
+      personId = created?.id;
+      if (personId) peopleCreated += 1;
+    } else if (phone) {
+      try {
+        await client.updatePersonPhone(personId, phone);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (personId && (d.link || d.firstName)) {
+      try {
+        await client.applyMaxProfile(personId, {
+          firstName: d.firstName || undefined,
+          link: d.link || undefined,
+          userId: platformUserId,
+          phone: phone ? `+${phone}` : undefined,
+        });
+      } catch {
+        /* optional */
+      }
+    }
+
+    if (personId && phone) {
+      try {
+        const { enrichPersonCrossChannelByPhone } = await import(
+          './enrich-person-by-phone.js'
+        );
+        await enrichPersonCrossChannelByPhone({
+          prisma,
+          twenty: client,
+          tenantId,
+          personId,
+          phone,
+          channels: ['telegram', 'whatsapp'],
+        });
+      } catch (err) {
+        console.warn('[max-chat-sync] cross-channel enrich failed', err);
+      }
+    }
+
+    if (!opportunityId && personId && !suppressDeal) {
+      try {
+        const open = await client.findOpenOpportunityByPerson(personId);
+        if (open?.id) opportunityId = open.id;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!opportunityId && personId && !suppressDeal) {
+      const who = d.username
+        ? `@${String(d.username).replace(/^@/, '')}`
+        : d.firstName || platformUserId;
+      const opportunity = await client.createOpportunity({
+        name: `${who} · MAX · ${botLabel}`,
+        personId,
+        stage: 'NEW',
+      });
+      opportunityId = opportunity?.id;
+      if (opportunityId) opportunitiesCreated += 1;
+    } else if (!opportunityId && personId && suppressDeal) {
+      skippedSuppressed += 1;
+    }
+
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        twentyPersonId: personId || null,
+        twentyOpportunityId: opportunityId || null,
+        suppressDealCreation: suppressDeal,
+        platformUsername: d.username || conversation.platformUsername,
+        platformFirstName: d.firstName || conversation.platformFirstName,
+      },
+    });
+
+    if (opportunityId && d.messages?.length) {
+      try {
+        await client.touchOpportunityActivity(opportunityId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    dialogs: dialogs.length,
+    messagesUpserted,
+    peopleCreated,
+    opportunitiesCreated,
+    skippedSuppressed,
+  };
+}

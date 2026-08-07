@@ -4,6 +4,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
+import { runMaxPrivateChatSync } from '../services/max-chat-sync.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
   return user.role === 'superadmin' || user.tenantRole === 'owner' || user.role === 'owner';
@@ -15,6 +16,44 @@ function bridgeBase(): string {
 
 function serviceToken(): string {
   return process.env.VOXLY_SERVICE_TOKEN || '';
+}
+
+/** In-process MAX history-sync jobs (avoid nginx/browser timeout). */
+type MaxHistorySyncJob = {
+  startedAt: number;
+  done: boolean;
+  summary?: {
+    ok: boolean;
+    dialogs?: number;
+    messagesUpserted?: number;
+    peopleCreated?: number;
+    opportunitiesCreated?: number;
+    skippedSuppressed?: number;
+    error?: string;
+  };
+  error?: string;
+};
+
+const maxHistorySyncJobs = new Map<string, MaxHistorySyncJob>();
+
+function maxHistorySyncState(botId: string): {
+  historySyncing: boolean;
+  historySyncStartedAt: string | null;
+  historySyncResult: MaxHistorySyncJob['summary'] | null;
+} {
+  const job = maxHistorySyncJobs.get(botId);
+  if (!job) {
+    return {
+      historySyncing: false,
+      historySyncStartedAt: null,
+      historySyncResult: null,
+    };
+  }
+  return {
+    historySyncing: !job.done,
+    historySyncStartedAt: new Date(job.startedAt).toISOString(),
+    historySyncResult: job.done ? job.summary || null : null,
+  };
 }
 
 async function bridgeFetch(
@@ -109,15 +148,21 @@ export const maxRoutes: FastifyPluginAsync = async (fastify) => {
           ? `Доступен пробный период ${TRIAL_PERIOD_DAYS} дней, затем ${priceMonthly} ₽/мес.`
           : `Тариф «MAX (личный)» (${priceMonthly} ₽/мес) не активен. Оформите оплату.`,
       requiresPayment: !addonActive,
-      accounts: bots.map((b) => ({
-        id: b.id,
-        name: b.displayName || b.botUsername || 'default',
-        maxUserId: b.phoneNumberId,
-        status: b.status,
-        connected: Boolean(b.botTokenEncrypted),
-        createdAt: b.createdAt,
-        updatedAt: b.updatedAt,
-      })),
+      accounts: bots.map((b) => {
+        const sync = maxHistorySyncState(b.id);
+        return {
+          id: b.id,
+          name: b.displayName || b.botUsername || 'default',
+          maxUserId: b.phoneNumberId,
+          status: b.status,
+          connected: Boolean(b.botTokenEncrypted),
+          createdAt: b.createdAt,
+          updatedAt: b.updatedAt,
+          historySyncing: sync.historySyncing,
+          historySyncStartedAt: sync.historySyncStartedAt,
+          historySyncResult: sync.historySyncResult,
+        };
+      }),
     });
   });
 
@@ -245,6 +290,104 @@ export const maxRoutes: FastifyPluginAsync = async (fastify) => {
     });
     return reply.code(result.status).send(result.json);
   });
+
+  /**
+   * Manual private-dialog CRM sync (no QR).
+   * Bridge `/crm/private-dialogs` → Conversation/ChatMessage + Person/Opportunity.
+   * Reuses open Opportunity per Person (dupe guard). Long job → 202 + poll GET /accounts.
+   */
+  fastify.post(
+    '/accounts/:botId/sync-history',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can sync MAX history' });
+      }
+      const { botId } = request.params as { botId: string };
+      const body = (request.body || {}) as {
+        dialogLimit?: number;
+        messageLimit?: number;
+      };
+      const bot = await fastify.prisma.botInstance.findFirst({
+        where: { id: botId, tenantId, botType: 'ai_max' },
+        select: { id: true, status: true, botTokenEncrypted: true },
+      });
+      if (!bot) return reply.code(404).send({ ok: false, error: 'account not found' });
+      if (!bot.botTokenEncrypted || bot.status !== 'active') {
+        return reply.code(400).send({
+          ok: false,
+          error: 'account_not_connected',
+          message: 'Сначала подключите аккаунт (QR).',
+        });
+      }
+
+      const dialogLimit =
+        typeof body.dialogLimit === 'number' && body.dialogLimit > 0
+          ? Math.floor(body.dialogLimit)
+          : 0;
+      const messageLimit =
+        typeof body.messageLimit === 'number' && body.messageLimit > 0
+          ? Math.floor(body.messageLimit)
+          : 30;
+
+      const existing = maxHistorySyncJobs.get(botId);
+      if (existing && !existing.done) {
+        return reply.send({
+          ok: true,
+          started: true,
+          alreadyRunning: true,
+          historySyncStartedAt: new Date(existing.startedAt).toISOString(),
+        });
+      }
+
+      const startedAt = Date.now();
+      maxHistorySyncJobs.set(botId, { startedAt, done: false });
+      void runMaxPrivateChatSync({
+        prisma: fastify.prisma,
+        tenantId,
+        botId,
+        dialogLimit,
+        messageLimit,
+      })
+        .then((summary) => {
+          maxHistorySyncJobs.set(botId, {
+            startedAt,
+            done: true,
+            summary,
+          });
+          setTimeout(() => {
+            const cur = maxHistorySyncJobs.get(botId);
+            if (cur?.done && cur.startedAt === startedAt) {
+              maxHistorySyncJobs.delete(botId);
+            }
+          }, 10 * 60 * 1000);
+        })
+        .catch((err) => {
+          maxHistorySyncJobs.set(botId, {
+            startedAt,
+            done: true,
+            summary: {
+              ok: false,
+              dialogs: 0,
+              messagesUpserted: 0,
+              peopleCreated: 0,
+              opportunitiesCreated: 0,
+              skippedSuppressed: 0,
+              error: String(err?.message || err),
+            },
+            error: String(err?.message || err),
+          });
+        });
+
+      return reply.code(202).send({
+        ok: true,
+        started: true,
+        historySyncStartedAt: new Date(startedAt).toISOString(),
+      });
+    },
+  );
 
   fastify.delete(
     '/accounts/:botId',

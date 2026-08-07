@@ -3395,9 +3395,33 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
               title: isWhatsapp ? 'Ответ оператора (WhatsApp)' : 'Ответ оператора (Telegram)',
               body: text,
             });
+            const oppId =
+              target.twentyOpportunityId ||
+              (
+                await prisma.conversation.findUnique({
+                  where: { id: conversationId },
+                  select: { twentyOpportunityId: true },
+                })
+              )?.twentyOpportunityId;
+            if (oppId) {
+              await client.touchOpportunityActivity(oppId);
+            }
           }
         } catch (err) {
           request.log.warn({ err }, 'Failed to mirror CRM reply note');
+        }
+      } else if (target.twentyOpportunityId) {
+        try {
+          const { touchOpportunityFromConversation } = await import(
+            '../services/sync-opportunity-chat-activity.js'
+          );
+          await touchOpportunityFromConversation({
+            prisma,
+            tenantId,
+            conversationId,
+          });
+        } catch {
+          /* ignore */
         }
       }
 

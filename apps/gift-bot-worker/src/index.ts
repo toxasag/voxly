@@ -1451,6 +1451,31 @@ async function syncPhoneToCrmPerson(
     tenant.twentyWorkspaceId,
   );
   await client.updatePersonPhone(personId, phone);
+
+  // Phone shared → TG already known; fill MAX + WA via saas-api.
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const saas =
+    (process.env.SAAS_API_URL || 'http://saas-api:3002').replace(/\/$/, '');
+  if (token) {
+    try {
+      await fetch(`${saas}/api/internal/crm/enrich-by-phone`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-Voxly-Service': 'gift-bot-worker',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tenantId,
+          personId,
+          phone,
+          channels: ['max', 'whatsapp', 'telegram'],
+        }),
+      });
+    } catch (err) {
+      console.warn('[gift-bot] cross-channel enrich failed', err);
+    }
+  }
 }
 
 async function syncSubscriberToCRM(

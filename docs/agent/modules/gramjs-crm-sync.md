@@ -20,6 +20,7 @@ Golden path: `CHAT.md` (GramJS section). Surface: `CAPABILITIES.md` (GramJS brid
 - Portal: sync returns quickly; UI shows `historySyncing` until job done (no false «На связи» during long sync)
 - `suppressDealCreation` manual only; never auto on Opportunity delete
 - TG open links via `telegramOpenLink` — never `t.me/+phone`
+- On history sync: phone-matched Persons get `applyTelegramProfile` from dialog (name/phone/links); placeholder names upgraded (INC-106)
 - **CRM send:** Person.telegram userId/@username enables «Пишем от» GramJS even without prior Conversation (WA card OK); `/messages/send` may ImportContacts(`phone`) when `getEntity` fails — social open link alone is not enough without peer bind (INC-103)
 
 ## Frozen paths
@@ -43,5 +44,5 @@ Golden path: `CHAT.md` (GramJS section). Surface: `CAPABILITIES.md` (GramJS brid
 
 ## Last verified / deploy
 
-- **2026-08-06 (user-confirmed WORKING):** personal TG accounts sync/send ok; INC-103; backups `20260806-132913` + `20260806-125415`; PR #1 `263e4ef`
+- **2026-08-06 INC-106:** `/users/by-phone` DeleteContacts→GetFullUser (real ФИО); backup `20260806-143720`; sync still applies dialog profile on phone match
 - Deploy: `./scripts/prod-deploy.sh gramjs-bridge,saas-api` (bridge needs compose profile + `TELEGRAM_API_*` on server)

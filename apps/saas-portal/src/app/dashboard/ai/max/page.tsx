@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { RefreshCw, Smartphone, Trash2 } from 'lucide-react';
+import { RefreshCw, Smartphone, Trash2, Download } from 'lucide-react';
 import { PRICING, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { authHeaders } from '@/lib/auth';
 import { startCheckout } from '@/lib/checkout';
@@ -21,6 +21,17 @@ interface MaxAccount {
   status: string;
   connected: boolean;
   updatedAt: string;
+  historySyncing?: boolean;
+  historySyncStartedAt?: string | null;
+  historySyncResult?: {
+    ok?: boolean;
+    dialogs?: number;
+    messagesUpserted?: number;
+    peopleCreated?: number;
+    opportunitiesCreated?: number;
+    skippedSuppressed?: number;
+    error?: string;
+  } | null;
 }
 
 interface AccountsResponse {
@@ -42,8 +53,24 @@ interface QrStatus {
   botId?: string;
   qr?: string | null;
   error?: string | null;
+  passwordHint?: string | null;
   user?: { id: string; username?: string; firstName?: string } | null;
   billingWarning?: string | null;
+}
+
+function bridgeErrorMessage(json: Record<string, unknown> | null | undefined, fallback: string): string {
+  if (!json) return fallback;
+  const detail = json.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (detail && typeof detail === 'object' && 'error' in detail) {
+    const nested = (detail as { error?: unknown }).error;
+    if (typeof nested === 'string' && nested.trim()) return nested;
+  }
+  for (const key of ['error', 'message', 'hint'] as const) {
+    const v = json[key];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  return fallback;
 }
 
 interface AiContext {
@@ -147,11 +174,15 @@ export default function MaxChannelPage() {
   const [password, setPassword] = useState('');
   const [phase, setPhase] = useState<ConnectPhase>('idle');
   const [deleteConfirmId, setDeleteConfirmId] = useState('');
+  const [syncHint, setSyncHint] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncWatchIdsRef = useRef<Set<string>>(new Set());
   const pollNameRef = useRef('default');
   const pngUrlRef = useRef<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const connectSectionRef = useRef<HTMLElement>(null);
+  const processingSinceRef = useRef<number | null>(null);
   const invoiceRub = data?.priceMonthly ?? PRICING.AI_MAX_MONTHLY;
   const balanceApply = usePartnerBalanceApply(invoiceRub);
 
@@ -179,6 +210,30 @@ export default function MaxChannelPage() {
       const json = (await res.json()) as AccountsResponse;
       if (!res.ok) throw new Error(json.error || 'Не удалось загрузить аккаунты');
       setData(json);
+
+      // Finish sync watchers when jobs complete.
+      for (const id of [...syncWatchIdsRef.current]) {
+        const acc = (json.accounts || []).find((a) => a.id === id);
+        if (!acc) {
+          syncWatchIdsRef.current.delete(id);
+          continue;
+        }
+        if (acc.historySyncing) continue;
+        syncWatchIdsRef.current.delete(id);
+        const r = acc.historySyncResult;
+        if (r?.ok) {
+          setSyncHint(
+            `Синхронизация «${acc.name}»: ${r.dialogs ?? 0} чатов, ${r.messagesUpserted ?? 0} сообщений, сделок +${r.opportunitiesCreated ?? 0}. Обновите CRM (hard-refresh).`,
+          );
+        } else if (r && r.ok === false) {
+          setError(r.error || 'Синхронизация MAX завершилась с ошибкой');
+          setSyncHint('');
+        }
+      }
+      if (syncWatchIdsRef.current.size === 0 && syncPollRef.current) {
+        clearInterval(syncPollRef.current);
+        syncPollRef.current = null;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки');
     } finally {
@@ -206,6 +261,8 @@ export default function MaxChannelPage() {
     return () => {
       stopPolling();
       clearPng();
+      if (syncPollRef.current) clearInterval(syncPollRef.current);
+      syncPollRef.current = null;
     };
   }, [loadAccounts, loadContext, stopPolling]);
 
@@ -235,20 +292,58 @@ export default function MaxChannelPage() {
         );
         const json = (await res.json()) as QrStatus;
         if (!res.ok) {
-          setError(json.error || 'Ошибка статуса QR');
+          setError(bridgeErrorMessage(json as Record<string, unknown>, 'Ошибка статуса QR'));
           setPhase('failed');
           return json;
         }
         setQrStatus(json);
         const nextPhase = phaseFromStatus(json.status);
         setPhase(nextPhase);
+        if (json.status === 'processing_password') {
+          if (processingSinceRef.current == null) processingSinceRef.current = Date.now();
+          else if (Date.now() - processingSinceRef.current > 90_000) {
+            setError(
+              'Проверка пароля занимает слишком долго. Нажмите «Показать QR» и отсканируйте код заново.',
+            );
+          }
+        } else {
+          processingSinceRef.current = null;
+        }
         if (json.status === 'qr_ready') {
           await fetchPng(name);
+        }
+        if (json.status === 'waiting_password' && json.error) {
+          setError(json.error);
         }
         if (json.status === 'authorized') {
           stopPolling();
           clearPng();
+          setError('');
           await loadAccounts();
+          // Kick CRM history sync once after fresh connect (same idea as WA/GramJS).
+          const botId = json.botId;
+          if (botId) {
+            void (async () => {
+              try {
+                const syncRes = await fetch(`/api/bots/max/accounts/${botId}/sync-history`, {
+                  method: 'POST',
+                  headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({}),
+                });
+                if (syncRes.ok || syncRes.status === 202) {
+                  syncWatchIdsRef.current.add(botId);
+                  setSyncHint('Аккаунт подключён — синхронизируем личные чаты в CRM…');
+                  if (!syncPollRef.current) {
+                    syncPollRef.current = setInterval(() => {
+                      void loadAccounts();
+                    }, 3000);
+                  }
+                }
+              } catch {
+                /* optional */
+              }
+            })();
+          }
         }
         if (json.status === 'error' && json.error) {
           setError(json.error);
@@ -304,6 +399,7 @@ export default function MaxChannelPage() {
     setBusy('password');
     setError('');
     setPhase('processing_password');
+    processingSinceRef.current = Date.now();
     try {
       const name = pollNameRef.current || accountName.trim() || 'default';
       const res = await fetch('/api/bots/max/auth/qr/password', {
@@ -311,13 +407,21 @@ export default function MaxChannelPage() {
         headers: authHeaders(),
         body: JSON.stringify({ name, password }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Неверный пароль');
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        throw new Error(
+          bridgeErrorMessage(
+            json,
+            'Нет активного запроса пароля. Нажмите «Показать QR» и отсканируйте снова.',
+          ),
+        );
+      }
       setPassword('');
       await pollStatus(name);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
       setPhase('waiting_password');
+      processingSinceRef.current = null;
     } finally {
       setBusy('');
     }
@@ -376,6 +480,52 @@ export default function MaxChannelPage() {
     }
   };
 
+  const syncHistory = async (account: MaxAccount) => {
+    setBusy(`sync:${account.id}`);
+    setError('');
+    setSyncHint(
+      'Идёт синхронизация личных чатов MAX… это может занять несколько минут.',
+    );
+    try {
+      const res = await fetch(`/api/bots/max/accounts/${account.id}/sync-history`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        started?: boolean;
+        alreadyRunning?: boolean;
+        error?: string;
+        message?: string;
+      };
+      if ((!res.ok && res.status !== 202) || json.ok === false) {
+        throw new Error(json.message || json.error || 'Не удалось синхронизировать');
+      }
+      syncWatchIdsRef.current.add(account.id);
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          accounts: (prev.accounts || []).map((a) =>
+            a.id === account.id ? { ...a, historySyncing: true } : a,
+          ),
+        };
+      });
+      if (!syncPollRef.current) {
+        syncPollRef.current = setInterval(() => {
+          void loadAccounts();
+        }, 3000);
+      }
+      void loadAccounts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка синхронизации');
+      setSyncHint('');
+    } finally {
+      setBusy('');
+    }
+  };
+
   const focusConnectForm = () => {
     connectSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     window.setTimeout(() => nameInputRef.current?.focus(), 400);
@@ -413,7 +563,10 @@ export default function MaxChannelPage() {
       ? { variant: 'secondary' as const, text: 'Не подключён' }
       : { variant: 'warning' as const, text: 'Подписка закончилась' };
 
-  const statusKey = qrStatus?.status || 'unknown';
+  const statusKey =
+    phase === 'processing_password'
+      ? 'processing_password'
+      : qrStatus?.status || (phase === 'idle' ? 'unknown' : phase);
   const phaseLabel = STATUS_LABEL[statusKey] || STATUS_LABEL.unknown;
 
   const heroState: 'connected' | 'pending' | 'off' = subActive
@@ -743,6 +896,16 @@ export default function MaxChannelPage() {
                   <label htmlFor="max-2fa" className="block text-sm font-medium text-black">
                     Облачный пароль 2FA
                   </label>
+                  {qrStatus?.passwordHint ? (
+                    <p className="text-xs text-black/55">
+                      Подсказка пароля в MAX:{' '}
+                      <span className="font-semibold text-black">{qrStatus.passwordHint}</span>
+                    </p>
+                  ) : null}
+                  <p className="text-xs text-black/55">
+                    Это пароль двухфакторной защиты MAX (не SMS и не PIN телефона). Название
+                    аккаунта слева — только метка в Voxly.
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     <input
                       id="max-2fa"
@@ -792,8 +955,14 @@ export default function MaxChannelPage() {
             index="03"
             kicker="аккаунты"
             title="Подключённые аккаунты MAX"
-            description="Канал max_personal · личный аккаунт MAX (PyMax)."
+            description="Канал max_personal · личный аккаунт MAX (PyMax). «Синхронизировать» — личные диалоги × до 30 сообщений → сделки в CRM."
           />
+
+          {syncHint ? (
+            <Alert variant="info" className="mt-4">
+              {syncHint}
+            </Alert>
+          ) : null}
 
           {accounts.length === 0 ? (
             <div className="mt-4 rounded-xl border border-dashed border-black/15 bg-[#faf8f5] px-4 py-8 text-center">
@@ -829,7 +998,9 @@ export default function MaxChannelPage() {
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        {account.connected ? (
+                        {account.historySyncing ? (
+                          <Badge variant="warning">Синхронизация…</Badge>
+                        ) : account.connected ? (
                           <Badge variant="success">На связи</Badge>
                         ) : (
                           <Badge variant="warning">Отключён</Badge>
@@ -861,14 +1032,37 @@ export default function MaxChannelPage() {
                             </button>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            disabled={Boolean(busy)}
-                            onClick={() => setDeleteConfirmId(account.id)}
-                            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:opacity-50"
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden />
-                          </button>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {account.connected ? (
+                              <button
+                                type="button"
+                                disabled={
+                                  Boolean(busy) || Boolean(account.historySyncing)
+                                }
+                                onClick={() => void syncHistory(account)}
+                                className="inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-black/15 px-3 text-xs font-semibold text-black/70 hover:border-black/30 disabled:opacity-50"
+                                title={
+                                  account.historySyncing
+                                    ? 'Синхронизация уже идёт'
+                                    : 'Синхронизировать личные чаты в CRM (до 30 сообщений в каждом)'
+                                }
+                                aria-label={`Синхронизировать чаты ${account.name}`}
+                              >
+                                <Download className="h-3.5 w-3.5" aria-hidden />
+                                {account.historySyncing || busy === `sync:${account.id}`
+                                  ? 'Синхронизация…'
+                                  : 'Синхронизировать'}
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              disabled={Boolean(busy)}
+                              onClick={() => setDeleteConfirmId(account.id)}
+                              className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-black/15 text-black/55 hover:border-[#c2410c]/50 hover:text-[#c2410c] disabled:opacity-50"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>

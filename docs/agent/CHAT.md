@@ -15,7 +15,7 @@
 | Debounce inbound | `@voxly/ai-core` `createInboundAiDebouncer`, default **10s** (`AI_INBOUND_DEBOUNCE_MS`); in-flight queue — **не** параллельные `humanLike` на один chat |
 | Bubbles | `normalizeAiBubbles` ≤**4**, ≤**~140** символов; короткие «живые» сообщения |
 | Abort mid-send | Если за время набора пришёл новый `role=user` → остановить оставшиеся bubbles |
-| CRM UI | Вкладка «Чат», presence/last-seen где канал умеет, AI вкл/пауза/выкл, threads multi-channel — FLOWS §4; **unread badges** на карточках сделок/контактов (shell-ux + `lastOperatorReadAt`) |
+| CRM UI | Вкладка «Чат», presence/last-seen где канал умеет, AI вкл/пауза/выкл, threads multi-channel — FLOWS §4; **unread badges** на карточках сделок/контактов (shell-ux + `lastOperatorReadAt`); Kanban **«Последнее обновление»** = Opportunity.updatedAt bumped on chat activity (`touchOpportunityActivity` + admin backfill) |
 | Не выдумывать телефон | Только явные PN/E.164 из webhook / vCard / Contact fields |
 
 ## 2. WhatsApp (`ai-whatsapp-worker` + Evolution) — эталон ✅
@@ -37,7 +37,7 @@
 4. **Person:** real name **или** `noname1`, `noname2`… — **никогда** `firstName=WhatsApp` без identity; phone всегда в `phones` + `whatsapp` (+E.164) когда известен.
 5. **Opportunity title:** `{seq} · WA · {accountDisplayName}` где `account` = `bot.displayName` подключённого WA-бота (не `{contactName} · WA · {ownNumber}`).
 6. Skip groups/channels/self/`0@`; один Person + одна open Opportunity на peer; `suppressDealCreation` — **только** ручной CRM toggle.
-7. **Telegram enrich:** `ImportContacts` → real `@username` + `GetFullUser`; without @username but with MTProto `userId` → open link via `/open/tg/{id}` → `tg://user?id=…` (label shows deep link); **никогда** `https://t.me/+{phone}`.
+7. **Cross-channel enrich (maximize Person fields):** after phone resolve → shared `enrichPersonCrossChannelByPhone` (saas-api): (a) GramJS by-phone → telegram LINKS + name if `nonameN`/empty; (b) if `ai_max` → Person.`max` (real `max.ru` only; no birthday); (c) if `ai_wa` → Evolution IsOnWhatsApp → `wa.me` (**never** invent without `exists`). Wired on: **WA inbound** (worker local TG+MAX), **site form-lead**, **MAX inbound/sync** (TG+WA), **GramJS sync** + **TG worker** when phone known (MAX+WA), **gift contact-share**. **Never** invent `t.me/+phone` / `max.ru/+phone`. INC-106 scrape guard. Social order: Telegram → WhatsApp → **MAX**. Backfill: admin `enrich-persons-by-phone` (`channels` include `whatsapp`). Internal: `POST /api/internal/crm/enrich-by-phone`.
 
 ### AI pacing / typing (эталон «идеально»)
 1. Debounce **10s** + очередь пока идёт flush.
@@ -85,9 +85,11 @@
 |---|---|
 | Продукт | SKU `ai_max` (~500 ₽), UI `/dashboard/ai/max`, soft trial 7d |
 | Transport | Python sidecar `apps/max-bridge` (PyMax / неофициальный user API) |
-| CRM | `platform=max` / `channel=max_personal`; inbound → `/api/internal/max/inbound`; reply → bridge `POST /messages/send` **text-only** |
+| CRM | `platform=max` / `channel=max_personal`; inbound → `/api/internal/max/inbound`; **history sync** bridge `POST /crm/private-dialogs` → `runMaxPrivateChatSync` (DIALOG only ×30; `platformUserId`=chat id; reuse open Opp); reply → bridge `POST /messages/send` **text-only** |
+| Sync fields | chat id, peer name/phone/link (if `get_user`), message text/media placeholder, direction; no groups/channels |
+| Phone enrich | Bridge `POST /users/by-phone` (`search_by_phone` → `import_contacts`); Person.`max` only with real `max.ru` link; **birthday N/A**; admin `enrich-persons-by-phone` channels include `max` |
 | AI | OFF by default (ADR-014); agent assign Phase 3 |
-| Media / presence | Phase 3 |
+| Media / presence | Phase 3 (CRM reply still text-only) |
 | Disclaimer | Portal warning: ban / breaking-change risk |
 
 ## 4b. Gift-бот (`gift-bot-worker`)

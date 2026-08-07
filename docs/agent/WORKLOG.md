@@ -1,3 +1,87 @@
+### 2026-08-06 — Opp chat activity sort + MAX enrich finish
+
+- Goal: Kanban «Последнее обновление» follows chat; MAX on toxasagmsk (+79150946944); ship for all tenants; push GitHub.
+- Changes:
+  - `TwentyClient.touchOpportunityActivity` + live bumps (WA/TG/MAX sync, crm-chat reply).
+  - Admin `POST /api/admin/tenants/:id/sync-opportunity-chat-activity` + platform `/api/admin/sync-opportunity-chat-activity` (SQL `updatedAt` from max ChatMessage).
+  - MAX: by-phone `me` fallback (own phone); `get_user` for link; `maxOpenLink` + `GET /open/max/:userId` when no public max.ru; applyMaxProfile(userId).
+- Ops: sync activity all tenants → voxly updated 5 (688 already newer); Anton Person MAX enriched (`fields: max,name`); open/max/3361844 **200**.
+- Deploy: backups `20260806-163110` (+ later max-bridge/saas-api); services saas-api, WA/TG workers, max-bridge.
+- Next: user hard-refresh Kanban + Person MAX; git push.
+
+### 2026-08-06 — Symmetric cross-channel enrich (site / TG / MAX / WA)
+
+- Goal: User «делай» — same phone enrich from all lead sources (not only WA hub).
+- Changes:
+  - `enrichPersonCrossChannelByPhone` + `enrichOnePersonWhatsappByPhone` (saas-api); WA worker `POST /internal/crm/check-on-whatsapp` (Evolution IsOnWhatsApp).
+  - Wire: form-lead (TG+MAX+WA); max-internal + max-chat-sync (TG+WA); gramjs-chat-sync (MAX+WA); ai-telegram-worker + gift phone-share → `POST /api/internal/crm/enrich-by-phone`; admin channels include `whatsapp`.
+  - Compose: `SAAS_API_URL` on ai-telegram-worker + gift-bot-worker.
+- Contract: never invent t.me/+/max.ru/+; wa.me only when IsOnWhatsApp `exists`.
+- Deploy: backup `/opt/voxly/backups/20260806-160936/`; services saas-api + WA/TG/gift + compose; smoke 200.
+- Verify: site lead with phone → TG/MAX/WA fields when sessions connected; TG with phone → wa.me; MAX with phone → TG link.
+- Next: Opp chat-activity sort + MAX backfill (this session).
+
+### 2026-08-06 — Finish MAX cross-channel on prod voxly (INC-107)
+
+- Goal: User «доделывай» — finish MAX under WhatsApp + WA→MAX enrich + inbound phone merge on prod tenant `voxly`.
+- Verified (already on images from backup `20260806-152806`): worker `enrichMaxPresenceFromPhone`; max-bridge inbound `get_user`/`maxLink`; saas-api `syncMaxLeadToCrm` `findPersonByPhone`+`applyMaxProfile`; twenty-client order Telegram→WhatsApp→MAX. **No redeploy** of those services.
+- Ops: superadmin JWT via `POST /api/auth/login` (not service token) → `reapply-crm-defaults` **200** but view layout unchanged (INC-107). Fixed with SQL Social order + redis flush + recreate `twenty-server`/`twenty-worker` (volumes untouched). GraphQL after restart: max pos 3 under whatsapp.
+- Code: `movePersonFieldsToSocialGroup` catch now warns (INC-107).
+- Broken / gaps: TG→WA IsOnWhatsApp still absent; GraphQL reapply alone insufficient for social layout when Twenty flat-maps drift.
+- Next: user hard-refresh Person → Social shows MAX under WhatsApp; smoke WA msg → MAX enrich; MAX inbound → same Opp by phone.
+
+### 2026-08-06 — MAX by-phone enrich (PyMax search_by_phone)
+
+- Goal: Study PyMax; wire MAX enrich by phone into contact enrichment; confirm history sync live; deploy MAX-related only.
+- PyMax (prod maxapi-python **2.3.1**): `search_by_phone`, `import_contacts`, `get_user`/`fetch_users`, `fetch_chats`/`fetch_history`, User `names`/`link`/`phone`/`description`. **No birthday** on User. Docs: github.com/MaxApiTeam/PyMax + docs.pymax.org.
+- Changes: max-bridge `POST /users/by-phone` (search → import_contacts fallback; never invent max.ru/+phone); private-dialogs returns `link`; twenty-client Person.`max` LINKS + `applyMaxProfile`; admin `enrich-persons-by-phone` also tries MAX when `ai_max` connected (`channels`, `maxBotId`); max-chat-sync writes max link/name on sync. History sync already on prod (SHAs matched before this ship).
+- Deploy: backup `/opt/voxly/backups/20260806-150447/` (first attempt rsync mid-fail; finished with `--skip-backup`); `./scripts/prod-deploy.sh max-bridge,saas-api,saas-portal`. Volumes untouched. Frozen WA/TG/gift/AI/secretary not rebuilt.
+- Verify: bridge health + `/users/by-phone` in container; saas-api dist has `enrichOnePersonMaxByPhone` + `applyMaxProfile`; smoke landing/API/dashboard 200; max-bridge sessions=1 after recreate.
+- Broken: birthday N/A; TG→WA IsOnWhatsApp still absent; privacy may hide phone search.
+- Next: user smoke enrich on known MAX phone; optional bump maxapi-python 2.4.0 later.
+
+### 2026-08-06 — INC-106: WA→TG enrich maximize Person (noname98 / Оксана)
+
+- Goal: WA deals with phone must enrich Telegram name/links/birthday; never invent `t.me/+phone`; fix noname98.
+- Diagnosis (prod): ImportContacts `userId=6392903179` exists; GetFullUser = **Оксана Шамсутдинова**; Person telegram empty + name `noname98`. Root: (1) scrape `t.me/+phone` error-page early-return discarded known userId; (2) ImportContacts overlays User.firstName with probe `Voxly`/`Check` until DeleteContacts — must GetFullUser **after** cleanup.
+- Changes: WA `enrichTelegramPresenceFromPhone` skip scrape when userId known; gramjs `/users/by-phone` DeleteContacts→GetFullUser; `isPlaceholderPersonName` + guarded `applyTelegramProfile`; admin `enrich-persons-by-phone` (prefer wa.me E.164 over truncated phones); gramjs-chat-sync applies dialog profile on phone match. MAX phone-search skipped (no safe PyMax API).
+- Deploy: backups `/opt/voxly/backups/20260806-143720/` then redeploy gramjs+saas-api; services `gramjs-bridge,ai-whatsapp-worker,saas-api`. Volumes untouched. Frozen chat/gift/AI/secretary not rebuilt.
+- Verify (prod): Person `8355ea0d-…` → **Оксана Шамсутдинова** + `https://api.getvoxly.ru/open/tg/6392903179` + `wa.me/77784112019`; by-phone returns real ФИО; backfill 15 → enriched 7. Smoke landing/API 200.
+- Broken: TG→WA IsOnWhatsApp still absent; MAX by-phone N/A; some Twenty phones truncated vs wa.me (backfill prefers wa.me).
+- Next: user hard-refresh CRM; optional larger backfill.
+
+### 2026-08-06 — MAX personal history sync → CRM deals
+
+- Goal: Like WA/GramJS — sync private MAX dialogs into CRM with Person+Opp + dupe reuse.
+- Changes: `max-bridge` `POST /crm/private-dialogs` (DIALOG only); `max-chat-sync.ts`; `POST …/max/…/sync-history` (202 + historySyncing); portal sync button + auto after authorize; inbound Opp reuse via `findOpenOpportunityByPerson`. Docs: CAPABILITIES/CHAT/modules/max-personal.
+- Deploy: backup `/opt/voxly/backups/20260806-150044/`; `./scripts/prod-deploy.sh max-bridge,saas-api,saas-portal` + no-cache recreate max-bridge. Frozen WA/TG/gift/AI/secretary untouched.
+- Verify: bridge has `/crm/private-dialogs`; saas-api `runMaxPrivateChatSync`; smoke landing/API 200. User: hard-refresh → Синхронизировать → deals `· MAX ·`.
+- Next: user smoke on account `915`; media Phase 3 later.
+
+### 2026-08-06 — MAX under WhatsApp + WA→MAX enrich + MAX inbound phone merge
+
+- Goal: Person social shows MAX under WhatsApp; WA inbound enriches MAX; MAX message joins same deal by phone.
+- Changes: `movePersonFieldsToSocialGroup` force order Telegram→WhatsApp→MAX; WA `enrichMaxPresenceFromPhone`; max-bridge inbound `get_user` phone/link; `syncMaxLeadToCrm` `findPersonByPhone` + `applyMaxProfile`.
+- Deploy: `saas-api,ai-whatsapp-worker,max-bridge` (+ reapply CRM defaults for max field view). Volumes untouched.
+- Verify: hard-refresh Person → MAX row under WhatsApp; WA msg → TG+MAX enrich; MAX msg → same Opp.
+
+### 2026-08-06 — INC-105: MAX upsert 400 `maxUserId` null
+
+- Goal: `/dashboard/ai/max` after QR must not land on Ошибка Zod `maxUserId` null.
+- Changes: `max-internal` `maxUserId: z.string().nullish()`; `max-bridge` `resolve_me` retry + always send string. Docs INC-105 + module card.
+- Deploy: backup `/opt/voxly/backups/20260806-140626/`; `./scripts/prod-deploy.sh saas-api,max-bridge` (dry-run first). Cleared `pending-*` only. Volumes untouched. Did **not** rebuild gift/WA/GramJS/AI workers/portal.
+- Verify: host+container markers `nullish` / `resolve_me`; smoke landing/API/dashboard 200. User: hard-refresh → QR → Подключено.
+- Next: live user smoke QR→CRM inbound.
+
+### 2026-08-06 — INC-104: MAX QR stuck on «Проверяем пароль…»
+
+- Goal: `/dashboard/ai/max` login completes after 2FA (or shows clear error); diagnose prod hang.
+- Diagnosis: PyMax `start()` never returns → bridge never upserted/`authorized`; wrong 2FA re-prompted without UI error; stale pending session → `FAIL_LOGIN_TOKEN` / 400 password.
+- Changes: `apps/max-bridge` — `on_start`/`wait_client_ready`, wipe pending, RU password errors + hint; portal MAX page — bridge `detail`, hint, 90s processing tip. Docs: INC-104, module card `max-personal.md`.
+- Deploy: backup `/opt/voxly/backups/20260806-135432/`; `./scripts/prod-deploy.sh max-bridge,saas-portal` (dry-run first). Cleared `/data/max-sessions/pending-*`. Volumes untouched. Did **not** rebuild gift/WA/GramJS/AI workers/saas-api.
+- Verify: health max-bridge ok; `/dashboard/ai/max` 200; code markers `wait_client_ready` in container. User: hard-refresh → QR → 2FA → «Подключено».
+- Broken: none observed. Next: live user smoke QR→CRM inbound.
+
 ### 2026-08-06 — Freeze WORKING baseline (chats / WA / TG / gift / AI / secretary)
 
 - Goal: Lock in user-confirmed working surfaces so future module work does not regress them («все остальное сохрани»).

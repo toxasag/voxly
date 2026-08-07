@@ -5,6 +5,38 @@
 
 ---
 
+### INC-107 — `reapply-crm-defaults` 200 but Person social fields stay in System (MAX under WhatsApp)
+- **Симптом:** Admin `POST …/reapply-crm-defaults` returns `{ok:true}` (superadmin JWT required — `VOXLY_SERVICE_TOKEN` → 401). Prod `core.viewField` still has `telegram`/`whatsapp`/`max` in **System** (max at pos 14), not Social under LinkedIn.
+- **Причина:** (1) Admin route is `requireSuperadmin` (JWT), not service token. (2) Twenty **in-memory flat-maps** can diverge from `core.viewField`: `getViewFields` / `updateViewField` report Social positions while Postgres still has System — mutation becomes a no-op; redis flush + `metadataVersion++` alone is not enough. (3) `movePersonFieldsToSocialGroup` catch was silent.
+- **Фикс (ops):** SQL `UPDATE core.viewField` → Social group, positions Telegram=1 WhatsApp=2 MAX=3 …; redis keys `*workspaceId*`; `metadataVersion++`; **recreate `twenty-server` (+ worker)** without `-v`. Code: warn log in catch (INC-107 note).
+- **Verify:** SQL + GraphQL both show LinkedIn→Telegram→WhatsApp→MAX in Social; hard-refresh Person card.
+- **Дата:** 2026-08-06.
+
+### INC-106 — WA Person stayed `nonameN` / empty Telegram despite TG account on phone
+- **Симптом:** Person **noname98** (deal `350 · WA · 9150946944`, phone `+77784112019` / `wa.me/77784112019`) — Telegram empty, name still `noname98`. User’s Telegram contact for same phone: **Оксана Шамсутдинова**.
+- **Причина:** (1) `enrichTelegramPresenceFromPhone` after GramJS `ImportContacts` found `userId` **without** `@username`, still scraped `t.me/+{phone}`; error-page HTML matched → **early `return`**, discarding `userId` before `updatePersonTelegram` / GetFullUser. (2) `ImportContacts` echoes probe names `Voxly`/`Check` — not real ФИО; real name only from `GetFullUser`. (3) No backfill for existing noname+phone rows.
+- **Prod evidence:** live `/users/by-phone` → `userId=6392903179` (probe names); `/users/full` → `Оксана` / `Шамсутдинова`; Person telegram URL empty; **109** voxly Persons with phone + noname/empty TG.
+- **Фикс:** skip scrape when GramJS already resolved user; bridge `/users/by-phone` **DeleteContacts then GetFullUser** (probe names otherwise stick); `applyTelegramProfile` replaces only placeholder names (`nonameN` / empty / probe); admin `POST …/enrich-persons-by-phone` rate-limited backfill (prefer `wa.me` E.164); GramJS sync applies dialog profile onto phone-matched Persons.
+- **Deploy:** `gramjs-bridge,ai-whatsapp-worker,saas-api` backup `20260806-143720`. Never `t.me/+phone`. (MAX phone enrich wired later same day via PyMax `search_by_phone` — see WORKLOG / `modules/max-personal.md`.)
+- **Verify:** hard-refresh noname98 → **Оксана Шамсутдинова** + Telegram `https://api.getvoxly.ru/open/tg/6392903179`; WhatsApp `wa.me` unchanged.
+- **Дата:** 2026-08-06.
+
+### INC-105 — MAX personal QR → status Ошибка `maxUserId` null
+- **Симптом:** `/dashboard/ai/max` after QR (+2FA) shows badge **Ошибка**: `400: { fieldErrors: { maxUserId: ['Expected string, received null'] } }`. Account label e.g. `915`.
+- **Причина:** After INC-104 `on_start` path, bridge calls `POST /internal/max/bots/upsert` with `"maxUserId": null` when PyMax `me`/profile id is not ready yet. Zod `z.string().optional()` rejects JSON `null` (only `undefined`).
+- **Фикс:** saas-api `maxUserId: z.string().nullish()`; bridge `resolve_me` retry + always send string (`""` if unknown). Deploy `saas-api,max-bridge` only.
+- **Backup:** `/opt/voxly/backups/20260806-140626/`. Volumes untouched. Frozen modules not rebuilt.
+- **Verify:** hard-refresh → «Показать QR» → scan (+2FA) → **Подключено** (not Ошибка); §03 row; optional MAX id when profile resolves.
+- **Дата:** 2026-08-06.
+
+### INC-104 — MAX personal QR stuck on «Проверяем пароль…»
+- **Симптом:** `/dashboard/ai/max` after QR + 2FA cloud password stays on badge **«Проверяем пароль…»**; section 03 empty; account label e.g. `9150946944` (метка, не спец. id MAX).
+- **Причина:** PyMax `WebClient.start()` **не возвращается** до disconnect (event loop). Bridge `await start()` после успешного 2FA → никогда не делал `bots/upsert` / `status=authorized`. Wrong password silently re-asked; stale `pending-*` session → `FAIL_LOGIN_TOKEN` / 400 «No pending password challenge» без RU UX.
+- **Фикс:** `on_start` + `wait_client_ready` (не ждать return `start`); wipe pending на новый QR; wrong-password → `waiting_password` + error; portal: `detail` errors, hint, 90s timeout tip. Deploy `max-bridge,saas-portal` only.
+- **Backup:** `/opt/voxly/backups/20260806-135432/`. Volumes untouched. Frozen modules not rebuilt.
+- **Verify:** hard-refresh → trial/sub → «Показать QR» → MAX Devices → 2FA (hint) → status **Подключено** + row in §03.
+- **Дата:** 2026-08-06.
+
 ### INC-103 — GramJS «Пишем от» greyed despite Person Telegram link (Кувалдин)
 - **Симптом:** Person «Кувалдин» has Telegram `tg://user?id=928954961` + WA; Chat «Пишем от» shows both GramJS accounts **(недоступно)**; only WA sendable.
 - **Причина:** `resolveOutboundPeer` for `ai_gramjs` required GiftSubscriber / telegram Conversation / non-WA `baseTarget.telegramId`. WA-opened cards never read Person.telegram LINKS (`/open/tg/{id}`). Open-profile link ≠ send peer bind.

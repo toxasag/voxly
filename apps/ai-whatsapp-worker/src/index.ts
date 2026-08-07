@@ -2050,6 +2050,83 @@ function matchContactBookIdentity(
 }
 
 /**
+ * After Person has E.164 — if tenant has connected ai_max, resolve MAX by phone
+ * (PyMax search_by_phone) and write Person.max + name (placeholder only).
+ * Never invent max.ru/+phone.
+ */
+async function enrichMaxPresenceFromPhone(opts: {
+  tenantId: string;
+  personId: string;
+  phoneE164: string;
+  client: TwentyClient;
+}): Promise<void> {
+  const phone = normalizeWaNumber(opts.phoneE164);
+  if (!opts.personId || !phone || !isLikelyE164Phone(phone)) return;
+
+  const maxBot = await prisma.botInstance.findFirst({
+    where: {
+      tenantId: opts.tenantId,
+      botType: 'ai_max',
+      status: 'active',
+      botTokenEncrypted: { not: null },
+    },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true },
+  });
+  if (!maxBot) return;
+
+  const bridge = (process.env.MAX_BRIDGE_URL || 'http://max-bridge:3010').replace(
+    /\/$/,
+    '',
+  );
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) return;
+
+  try {
+    const res = await fetch(`${bridge}/users/by-phone`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ botId: maxBot.id, phone: `+${phone}` }),
+    });
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      exists?: boolean;
+      userId?: string;
+      firstName?: string;
+      lastName?: string;
+      link?: string;
+      about?: string;
+      phone?: string;
+      error?: string;
+    };
+    if (!res.ok || !json.ok) return;
+    if (json.exists === false) return;
+    if (!json.userId && !json.link) return;
+
+    await opts.client.applyMaxProfile(opts.personId, {
+      firstName: json.firstName,
+      lastName: json.lastName,
+      link: json.link,
+      userId: json.userId,
+      about: json.about,
+      phone:
+        normalizeWaNumber(json.phone || '') === phone ? `+${phone}` : undefined,
+    });
+    console.log(
+      `[ai-whatsapp] max presence enriched person=${opts.personId} phone=+${phone} link=${json.link || '-'}`,
+    );
+  } catch (err) {
+    console.warn(
+      '[ai-whatsapp] max by-phone failed',
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
  * After Person has E.164 — positively confirm Telegram presence, write @username,
  * then run existing open-profile enrich (GetFullUser → applyTelegramProfile).
  * Never invent `https://t.me/+{phone}`.
@@ -2065,6 +2142,17 @@ async function enrichTelegramPresenceFromPhone(opts: {
 
   let username: string | undefined;
   let telegramUserId: string | undefined;
+  /** Real profile from bridge (GetFullUser inside /users/by-phone) — never ImportContacts probe names. */
+  let byPhoneProfile:
+    | {
+        firstName?: string;
+        lastName?: string;
+        about?: string;
+        birthday?: string;
+        personalChannelUrl?: string;
+        phone?: string;
+      }
+    | undefined;
 
   const bridge = (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(
     /\/$/,
@@ -2086,6 +2174,12 @@ async function enrichTelegramPresenceFromPhone(opts: {
         exists?: boolean;
         username?: string;
         userId?: string;
+        firstName?: string;
+        lastName?: string;
+        about?: string;
+        birthday?: string;
+        personalChannelUrl?: string;
+        phone?: string;
       };
       if (res.ok && json.ok && json.exists === true) {
         if (json.userId) telegramUserId = String(json.userId);
@@ -2098,6 +2192,19 @@ async function enrichTelegramPresenceFromPhone(opts: {
           return;
         }
         // No @username but userId → open via /open/tg bridge (never invent t.me/+phone).
+        const fn = String(json.firstName || '').trim();
+        const ln = String(json.lastName || '').trim();
+        const probe = /^voxly$/i.test(fn) && /^check$/i.test(ln);
+        if (!probe && (fn || ln || json.about || json.birthday || json.personalChannelUrl)) {
+          byPhoneProfile = {
+            firstName: fn || undefined,
+            lastName: ln || undefined,
+            about: json.about,
+            birthday: json.birthday,
+            personalChannelUrl: json.personalChannelUrl,
+            phone: json.phone,
+          };
+        }
       } else if (res.ok && json.ok && json.exists === false) {
         return;
       }
@@ -2109,8 +2216,9 @@ async function enrichTelegramPresenceFromPhone(opts: {
     }
   }
 
-  // Scrape only accepts a real public @username — never treat t.me/+ phone pages as proof.
-  if (!username) {
+  // Optional scrape for public @username only when GramJS did not resolve the user.
+  // Never early-return on scrape errors when telegramUserId is already known (INC-105).
+  if (!username && !telegramUserId) {
     try {
       const url = `https://t.me/+${phone}`;
       const res = await fetch(url, {
@@ -2163,8 +2271,69 @@ async function enrichTelegramPresenceFromPhone(opts: {
     );
   }
 
-  // Open-profile enrich (same path as TG/gift workers): GetFullUser → about/birthday/channel/name.
+  // Open-profile enrich: prefer fields already returned by /users/by-phone (GetFullUser).
+  // Fallback to /users/full when by-phone had only ids (older bridge).
   if (!token || (!username && !telegramUserId)) return;
+
+  const applyProfile = async (raw: {
+    username?: string;
+    userId?: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    about?: string;
+    birthday?: string;
+    personalChannelUrl?: string;
+  }) => {
+    const profile = { ...raw };
+    if (username) profile.username = username;
+    if (telegramUserId) profile.userId = telegramUserId;
+
+    const tgPhone = profile.phone ? normalizeWaNumber(profile.phone) : '';
+    if (tgPhone && isLikelyE164Phone(tgPhone)) {
+      if (tgPhone === phone) {
+        profile.phone = `+${tgPhone}`;
+      } else {
+        console.warn(
+          `[ai-whatsapp] telegram phone mismatch person=${opts.personId} wa=+${phone} tg=+${tgPhone} — keep WA phone`,
+        );
+        delete profile.phone;
+      }
+    } else {
+      delete profile.phone;
+    }
+
+    await opts.client.applyTelegramProfile(opts.personId, profile);
+    console.log(
+      `[ai-whatsapp] telegram profile enrich person=${opts.personId} @${username || '-'} userId=${telegramUserId || '-'} fields=${[
+        (profile.username || profile.userId) && 'telegram',
+        profile.firstName && 'name',
+        profile.about && 'about',
+        profile.birthday && 'birthday',
+        profile.personalChannelUrl && 'website',
+        profile.phone && 'phone_verified',
+      ]
+        .filter(Boolean)
+        .join(',')}`,
+    );
+  };
+
+  if (byPhoneProfile) {
+    try {
+      await applyProfile({
+        ...byPhoneProfile,
+        username,
+        userId: telegramUserId,
+      });
+      return;
+    } catch (err) {
+      console.warn(
+        '[ai-whatsapp] telegram by-phone profile enrich failed',
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   try {
     const fullRes = await fetch(`${bridge}/users/full`, {
       method: 'POST',
@@ -2200,40 +2369,7 @@ async function enrichTelegramPresenceFromPhone(opts: {
       }
       return;
     }
-
-    const profile = { ...fullJson.profile };
-    // Prefer verified @username; else keep open-link via userId (never t.me/+).
-    if (username) profile.username = username;
-    if (telegramUserId) profile.userId = telegramUserId;
-
-    // Phone cross-check: only apply TG phone when it matches known WA E.164.
-    const tgPhone = profile.phone ? normalizeWaNumber(profile.phone) : '';
-    if (tgPhone && isLikelyE164Phone(tgPhone)) {
-      if (tgPhone === phone) {
-        profile.phone = `+${tgPhone}`;
-      } else {
-        console.warn(
-          `[ai-whatsapp] telegram phone mismatch person=${opts.personId} wa=+${phone} tg=+${tgPhone} — keep WA phone`,
-        );
-        delete profile.phone;
-      }
-    } else {
-      delete profile.phone;
-    }
-
-    await opts.client.applyTelegramProfile(opts.personId, profile);
-    console.log(
-      `[ai-whatsapp] telegram profile enrich person=${opts.personId} @${username || '-'} userId=${telegramUserId || '-'} fields=${[
-        (profile.username || profile.userId) && 'telegram',
-        profile.firstName && 'name',
-        profile.about && 'about',
-        profile.birthday && 'birthday',
-        profile.personalChannelUrl && 'website',
-        profile.phone && 'phone_verified',
-      ]
-        .filter(Boolean)
-        .join(',')}`,
-    );
+    await applyProfile(fullJson.profile);
   } catch (err) {
     console.warn(
       '[ai-whatsapp] telegram full profile enrich failed',
@@ -3970,6 +4106,28 @@ async function syncLeadToCrm(opts: {
           '[ai-whatsapp] telegram presence enrich failed',
           err instanceof Error ? err.message : err,
         );
+      }
+      try {
+        await enrichMaxPresenceFromPhone({
+          tenantId: opts.tenantId,
+          personId,
+          phoneE164: phoneForCrm,
+          client,
+        });
+      } catch (err) {
+        console.warn(
+          '[ai-whatsapp] max presence enrich failed',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    // Kanban «Последнее обновление» follows chat, not only CRM field edits.
+    if (opportunityId) {
+      try {
+        await client.touchOpportunityActivity(opportunityId);
+      } catch {
+        /* ignore */
       }
     }
 
@@ -6339,6 +6497,80 @@ async function handleEvolutionWebhook(payload: any) {
   }
 }
 
+/**
+ * Confirm phone is registered on WhatsApp via Evolution whatsappNumbers / IsOnWhatsApp.
+ * Used by saas-api cross-channel enrich (site / TG / MAX → Person.whatsapp).
+ */
+async function checkPhoneOnWhatsApp(opts: {
+  tenantId: string;
+  phone: string;
+  botId?: string;
+}): Promise<{
+  ok: boolean;
+  exists?: boolean;
+  phone?: string;
+  botId?: string;
+  error?: string;
+}> {
+  const phone = normalizeWaNumber(opts.phone);
+  if (!opts.tenantId || !phone || !isLikelyE164Phone(phone)) {
+    return { ok: false, error: 'bad_input' };
+  }
+  if (!evolutionConfigured()) {
+    return { ok: false, error: 'evolution_not_configured' };
+  }
+
+  const bot = opts.botId
+    ? await prisma.botInstance.findFirst({
+        where: {
+          id: opts.botId,
+          tenantId: opts.tenantId,
+          botType: 'ai_wa',
+          status: 'active',
+          botTokenEncrypted: { not: null },
+        },
+      })
+    : await prisma.botInstance.findFirst({
+        where: {
+          tenantId: opts.tenantId,
+          botType: 'ai_wa',
+          status: 'active',
+          botTokenEncrypted: { not: null },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+  if (!bot) {
+    return { ok: true, exists: false, error: 'no_wa_session', phone };
+  }
+
+  const session = decodeSession(bot.botTokenEncrypted);
+  if (!session?.instanceName) {
+    return { ok: false, error: 'bad_session', botId: bot.id };
+  }
+
+  const res = await evoFetch(
+    `/chat/whatsappNumbers/${encodeURIComponent(session.instanceName)}`,
+    { method: 'POST', body: JSON.stringify({ numbers: [phone] }) },
+  );
+  if (!res.ok) {
+    return {
+      ok: false,
+      error: `evolution_http_${res.status}`,
+      botId: bot.id,
+      phone,
+    };
+  }
+  const rows: any[] = Array.isArray(res.json) ? res.json : [];
+  const hit = rows[0];
+  const exists = Boolean(hit?.exists);
+  return {
+    ok: true,
+    exists,
+    phone,
+    botId: bot.id,
+  };
+}
+
 /** One-shot: LID Conversations → Evolution Contact book → Twenty phones/whatsapp. */
 async function backfillWaPhonesFromEvolution(opts?: {
   tenantId?: string;
@@ -6725,6 +6957,22 @@ async function main() {
         const tenantId = String(body.tenantId || '').trim() || undefined;
         const result = await backfillWaPhonesFromEvolution({ tenantId });
         return sendJson(res, 200, { ok: true, ...result });
+      }
+
+      // Cross-channel enrich: phone → Evolution IsOnWhatsApp (never invent wa.me without exists).
+      if (req.method === 'POST' && url.pathname === '/internal/crm/check-on-whatsapp') {
+        const body = await readJsonBody(req);
+        const tenantId = String(body.tenantId || '').trim();
+        const phone = normalizeWaNumber(String(body.phone || ''));
+        const botId = String(body.botId || '').trim() || undefined;
+        if (!tenantId || !phone || !isLikelyE164Phone(phone)) {
+          return sendJson(res, 400, {
+            ok: false,
+            error: 'tenantId and E.164 phone required',
+          });
+        }
+        const result = await checkPhoneOnWhatsApp({ tenantId, phone, botId });
+        return sendJson(res, result.ok ? 200 : 502, result);
       }
 
       // Private chat history → CRM (all private dialogs × up to 500 msgs; groups skipped).
