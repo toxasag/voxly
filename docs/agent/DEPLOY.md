@@ -2,7 +2,7 @@
 
 Local Voxly and production are **separate**. Clients live only in **prod DB volumes**. Deploys update **code/images only**.
 
-See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified drift).
+See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified drift); [`CAPACITY.md`](CAPACITY.md) (disk/RAM — keep ≥15GB free before rebuilds; INC-052/092).
 
 ## Non-negotiables
 
@@ -12,6 +12,7 @@ See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified dri
 - Never ad-hoc `rsync` of multiple files into one parent dir (that already wiped the landing `page.tsx`).
 - Prefer **migrations** on control plane when schema changes — not blind `db push` on prod.
 - `prod-deploy.sh` runs `prisma migrate deploy` automatically before container rebuild (for prisma-using services). Manual migration is no longer needed.
+- Before heavy deploy: check `CAPACITY.md` / `df -h /` — if free &lt;15GB, prune images first (no `-v`).
 
 ## Happy path
 

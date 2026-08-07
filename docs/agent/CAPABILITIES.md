@@ -21,6 +21,8 @@ User lock: keep these green; do not break with other module work. Cards: `docs/a
 
 Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source; never wipe prod volumes.
 
+**New vs existing portals:** runtime code is shared on the same docker services for all tenants. New workspaces get defaults/apps via provision. Existing often need explicit backfill/reapply (e.g. `enrich-persons-by-phone`, `sync-opportunity-chat-activity`, Social layout INC-107, `refresh-crm-chat`). Agent memory: `ADDRESS_BOOK.md` + `RISK_GATE.md` + `CAPACITY.md`; enrich card `modules/cross-channel-enrich.md`.
+
 ---
 
 ## Portal pages (`apps/saas-portal/src/app`)
@@ -359,7 +361,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | AiAgent model | packages/db | ✅ tenant agents; bot default + conversation override; null = AI off |
 | AI CRM lead Person+Opportunity | ai-telegram-worker / ai-whatsapp-worker `syncLeadToCrm` | ✅ dedupe; **not for bot senders** (early return before CRM); **cross-channel merge by phone** (`findPersonByPhone` phones+whatsapp, INC-044); ambiguous → `needsReview`; **stale Twenty ids after wipe → clear+recreate (INC-042)**; WA E.164 from webhook/vCard/explicit Evolution fields only (no avatar invent, INC-059) |
 | Web form → CRM + attribution | saas-api `processFormLead` + BullMQ `form-leads` | ✅ Tilda/WP/JSON; Person phone→email dedupe; Opportunity reuse_open; `AttributionSession` + `fireGoal('web_form_lead')`; phone → `enrichPersonCrossChannelByPhone` (TG+MAX+WA); **not** gift funnel |
-| Cross-channel enrich by phone | `enrichPersonCrossChannelByPhone` + `POST /api/internal/crm/enrich-by-phone` + WA `/internal/crm/check-on-whatsapp` | ✅ Shared hub: site / TG / GramJS sync / MAX / gift contact-share / admin; WA inbound keeps local TG+MAX; wa.me only if IsOnWhatsApp exists |
+| Cross-channel enrich by phone | `enrichPersonCrossChannelByPhone` + `POST /api/internal/crm/enrich-by-phone` + WA `/internal/crm/check-on-whatsapp` | ✅ Shared hub: site / TG / GramJS sync / MAX / gift contact-share / admin; WA inbound keeps local TG+MAX; wa.me only if IsOnWhatsApp exists; freeze: [`modules/cross-channel-enrich.md`](modules/cross-channel-enrich.md) |
 | AI Business SKU | PRODUCT_CODES.AI_TELEGRAM + addon gate | ✅ Телеграм Секретарь 1000₽/10; extra `ai_tg_extra_conn` 200₽/slot |
 | AI agent SKU | PRODUCT_CODES.AI_AGENT + `config.agentSlots` | ✅ 500₽/slot; create gated 402; grandfather `20260731220000` |
 | AI usage by agent + channel | AiUsageLog.aiAgentId + **channel** + GET `/api/ai/agents/usage` | ✅ charge on reply; portal breakdown **byAgent** + **byChannel**; `uncollectedRub` for shortfall tracking |

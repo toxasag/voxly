@@ -1,0 +1,28 @@
+---
+description: Agent memory gate — ADDRESS_BOOK + Risk Gate + Capacity before non-trivial work
+alwaysApply: true
+---
+
+# Agent memory gate (Address Book + Risk + Capacity)
+
+Complements `project-state.mdc`, `graphify.mdc`, `module-freeze.mdc`, `prod-deploy-updates.mdc` — does **not** replace them.
+
+## MANDATORY before non-trivial implementation
+
+1. **Address Book:** use `docs/agent/ADDRESS_BOOK.md` as a map — open only the rows matching the task (do not dump the whole file in the reply).
+2. **Freeze cards:** open relevant `docs/agent/modules/*.md` (index: `modules/README.md`). If a WORKING/FROZEN module is in blast radius and the user did **not** explicitly ask to change its behavior → **STOP**, ask / propose an additive path.
+3. **Capacity:** if the task adds background load, deploy pressure, sync/backfill, new worker, media AI, or research-like always-on work → read `docs/agent/CAPACITY.md` and cite infra risk in the gate.
+4. **Risk Gate:** fill `docs/agent/RISK_GATE.md` template in the reply **BEFORE** edits (Goal/DoD, freeze, blast radius, contracts, rollback, infra, smoke, backfill new vs existing, docs updates).
+5. **Graphify first** for code orientation (`query` / `path` / `explain`); do not broad-scan Grep/Read/Glob first (see `graphify.mdc`).
+6. **New vs existing portals:** state explicitly what new tenants get at provision vs what existing need (backfill/reapply/refresh). Runtime is shared; data/layout often are not.
+
+## After significant work
+
+- Update **ADDRESS_BOOK** if a new surface/address appeared.
+- Update freeze card **Last verified** (+ smoke).
+- Append **WORKLOG**; **CAPABILITIES** if product surface changed; **CAPACITY** if infra assumptions changed; **INCIDENTS** on new failure modes.
+- Do not create a parallel second docs tree — extend `docs/agent/` only.
+
+## Trivial exceptions
+
+Typo-only, single-line comment, or pure Q&A with no edits: Risk Gate optional. Prefer a one-line “no freeze / no infra” note if unsure.

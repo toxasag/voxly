@@ -1,3 +1,23 @@
+### 2026-08-07 — Prod Stage-0 disk prune (no volumes)
+
+- Goal: free disk after CAPACITY showed 97% / 3.2G avail (INC-052/092 pattern).
+- Ops (readonly-safe): journal vacuum 160MB; `docker container prune -f` 882MB; `docker image prune -af` **66.87GB**. **No** volume prune / no `down -v`.
+- Verify: `df` 24% / **72G free**; PG control+twenty healthy; api+portal **200**; critical containers Up.
+- Next: merge product PR only if user wants; agent-memory docs still local uncommitted.
+
+### 2026-08-07 — Agent memory: Address Book + Risk Gate + Capacity
+
+- Goal: sustainable project memory for any agent — lookup, freeze, risk-before-code, prod VPS capacity (no parallel docs tree).
+- Changes (docs/rules only):
+  - `docs/agent/ADDRESS_BOOK.md` — topic→docs/code/freeze/risk index (incl. capacity + ENOSPC).
+  - `docs/agent/RISK_GATE.md` — mandatory pre-code checklist (new vs existing, backfill, infra).
+  - `docs/agent/CAPACITY.md` — prod facts 2026-08-07: 6 vCPU / ~10G RAM / 99G disk **3.2G free (97%)**; 3 tenants; automation (n8n/baserow) co-hosted; bands + scaling playbook.
+  - `docs/agent/modules/cross-channel-enrich.md` + index row; wire README / CAPABILITIES new-vs-existing note.
+  - Rules: `.cursor/rules/agent-memory-gate.mdc` (alwaysApply); `project-state.mdc` cascade updated.
+- Verify: files present; SSH capacity snapshot recorded (not STALE).
+- Broken / ops: prod disk already danger — Stage 0 prune before next heavy deploy.
+- Next: optional commit; ops prune images on prod if deploying soon.
+
 ### 2026-08-06 — Opp chat activity sort + MAX enrich finish
 
 - Goal: Kanban «Последнее обновление» follows chat; MAX on toxasagmsk (+79150946944); ship for all tenants; push GitHub.

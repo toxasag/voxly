@@ -5,14 +5,16 @@
 ## Порядок чтения (каждый новый чат)
 
 1. **Этот файл** → сразу `CAPABILITIES.md` (что уже есть — anti-reimplementation).
+1b. **`ADDRESS_BOOK.md`** — lookup темы задачи (docs + code + freeze + риск); не читать весь репозиторий «с нуля».
+1c. Перед **non-trivial** кодом — заполнить **`RISK_GATE.md`** в ответе пользователю (rule `agent-memory-gate.mdc`). Фон/deploy/sync/новый worker → ещё **`CAPACITY.md`**.
 2. Протокол `apps/.cursorrules`: **`docs/ai/FEATURES.md`** + **`docs/ai/ARCHITECTURE.md`** (фичи и паттерны; обновлять после значимой работы).
 3. При задаче по **чату / AI-агентам / WA / TG / GramJS** → **`CHAT.md`** (golden path — не регрессировать) + ADR-014 в `DECISIONS.md` + freeze-card в **`modules/`** (см. `modules/README.md`).
-3b. При задаче по **gift-бот порталу** (`/dashboard/bots/[botId]`, превью, медиа, emoji, профиль) → **CAPABILITIES** «Gift bot detail» + **ADR-027** + `modules/gift-bot.md` — не регрессировать UX для всех тенантов.
-3c. Перед правкой WA sync / GramJS CRM / chat panel / social links / gift-bot / AI agent / Telegram secretary / deal dedupe → открой карточку в **`modules/`**, потом код; после — smoke из карточки. Baseline **2026-08-06 WORKING** (см. `CAPABILITIES.md` Verified baseline).
+    3b. При задаче по **gift-бот порталу** (`/dashboard/bots/[botId]`, превью, медиа, emoji, профиль) → **CAPABILITIES** «Gift bot detail» + **ADR-027** + `modules/gift-bot.md` — не регрессировать UX для всех тенантов.
+    3c. Перед правкой WA sync / GramJS CRM / chat panel / social links / gift-bot / AI agent / Telegram secretary / deal dedupe / cross-channel enrich → открой карточку в **`modules/`**, потом код; после — smoke из карточки. Baseline **2026-08-06 WORKING** (см. `CAPABILITIES.md` Verified baseline).
 4. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
 5. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
 6. При дебаге runtime → **сначала** `INCIDENTS.md`.
-7. При выкладке на prod → **`DEPLOY.md`** + **`ENVIRONMENTS.md`** + `./scripts/prod-deploy.sh` (не ad-hoc rsync).
+7. При выкладке на prod → **`DEPLOY.md`** + **`ENVIRONMENTS.md`** + **`CAPACITY.md`** (disk/RAM) + `./scripts/prod-deploy.sh` (не ad-hoc rsync).
 8. Graphify (`graphify query/path/explain`) → затем код.
 9. Глубокий контекст: `docs/ARCHITECTURE.md`. Доки библиотек: Context7 MCP.
 10. MAX personal smoke: `MAX-SMOKE.md` (ADR-025 Phase 1).
@@ -30,6 +32,9 @@
 | `FORMS.md` | Web form lead intake (Tilda/WP) — клиентская инструкция + ADR-026 |
 | `CHAT.md` | **Golden path** CRM/AI chat (WA эталон, TG/GramJS, агенты) — не регрессировать |
 | `CAPABILITIES.md` | Чеклист существующего surface (API/UI/worker); gift-bot setup UX + Do not regress (ADR-027) |
+| `ADDRESS_BOOK.md` | Быстрый индекс: тема → docs + code + freeze + риск (+ capacity/ENOSPC) |
+| `RISK_GATE.md` | Чеклист рисков **до кода** (freeze, blast, backfill new/existing, infra) |
+| `CAPACITY.md` | Prod VPS факты: RAM/disk/tenants, bands, scaling; читать перед нагрузкой/deploy |
 | `modules/` | Freeze-cards рабочих модулей (paths/contract/smoke/incidents/deploy) — не ломать working surfaces |
 | `DECISIONS.md` | Короткие ADR |
 | `WORKLOG.md` | Журнал значимых сессий агента (append-only) |
@@ -46,11 +51,12 @@
 2. Обновить `CAPABILITIES.md` / `DECISIONS.md`, если изменился product surface или ADR.
 3. Новый failure mode → `INCIDENTS.md`.
 4. Обновить `steps.md` (§3 timeline + §4) — как раньше.
-5. `source $HOME/.local/bin/env && graphify . --code-only --update`.
+5. Новая тема/адрес → строка в `ADDRESS_BOOK.md`; infra assumptions → `CAPACITY.md`; freeze card Last verified.
+6. `source $HOME/.local/bin/env && graphify . --code-only --update`.
 
 ## Каскад памяти (токены)
 
-1. `docs/agent/` — CAPABILITIES + WORKLOG/INCIDENTS (+ DEPLOY/ENVIRONMENTS при выкладке) (+ релевантные STACK/DATA/FLOWS)
+1. `docs/agent/` — CAPABILITIES + **ADDRESS_BOOK** (lookup) + WORKLOG/INCIDENTS (+ RISK_GATE перед кодом; CAPACITY/DEPLOY/ENVIRONMENTS при нагрузке/выкладке) (+ релевантные STACK/DATA/FLOWS)
 2. `steps.md` §4
 3. Graphify
 4. `docs/ARCHITECTURE.md`

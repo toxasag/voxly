@@ -92,6 +92,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-07** — **Agent memory gate:** `ADDRESS_BOOK.md` + `RISK_GATE.md` + `CAPACITY.md` (prod measure: 6 vCPU / ~10G RAM / disk 97% free 3.2G; 3 CRM tenants) + module `cross-channel-enrich.md` + rule `agent-memory-gate.mdc`.
 - **2026-08-06** — **Opp chat activity sort:** `touchOpportunityActivity` on inbound/reply; admin SQL backfill Opp.updatedAt from ChatMessage; MAX enrich backfill for phones with empty max.
 - **2026-08-06** — **Symmetric cross-channel enrich:** `enrichPersonCrossChannelByPhone` (TG+MAX+WA IsOnWhatsApp) on site form-lead, MAX/TG/GramJS sync, gift contact-share; WA `/internal/crm/check-on-whatsapp`; internal `/api/internal/crm/enrich-by-phone`.
 - **2026-08-06** — **MAX cross-channel finish (voxly):** images `20260806-152806` OK (WA→MAX enrich, inbound phone merge); **INC-107** reapply JWT≠service token + Social order via SQL + twenty recreate; MAX under WhatsApp confirmed GraphQL+SQL.
@@ -570,7 +571,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ### Снимок сессии (читать перед продолжением)
 
-**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; **`CHAT.md`** — golden path CRM/AI chat (WA эталон); `WORKLOG.md` / `INCIDENTS.md` — что делали и что ломалось. Не сканировать репо «с нуля» без проверки этих файлов.
+**Память агентов:** `docs/agent/README.md` — порядок чтения; `CAPABILITIES.md` — что уже есть; **`ADDRESS_BOOK.md`** — lookup; **`RISK_GATE.md`** до кода; **`CAPACITY.md`** перед нагрузкой/deploy; **`CHAT.md`** — golden path; `modules/` freeze; `WORKLOG.md` / `INCIDENTS.md`. Не сканировать репо «с нуля».
 
 **Design reference (вне монорепо):** Open WebUI → `/Users/antonsagajdak/Desktop/open-webui` (shallow clone; смотреть `src/tailwind.css`, `src/app.css`, `src/lib/components/common|layout`, `src/routes/auth`). Не runtime-зависимость.
 

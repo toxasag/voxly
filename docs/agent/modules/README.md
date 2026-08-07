@@ -13,7 +13,7 @@ Lean per-module status so future work does **not** break working surfaces.
 
 Deploy always via `./scripts/prod-deploy.sh` (see `DEPLOY.md`). **Never** wipe volumes (`docker compose down -v` forbidden on prod).
 
-Cross-cutting (all cards): social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source.
+Cross-cutting (all cards): social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source; never wipe prod volumes. Lookup: `ADDRESS_BOOK.md`. Pre-code: `RISK_GATE.md`. Load/deploy: `CAPACITY.md`.
 
 ## Cards — WORKING / FROZEN baseline 2026-08-06
 
@@ -33,6 +33,7 @@ Cross-cutting (all cards): social TG link ≠ chat send; gift only for subscribe
 | Person social links | [`person-social-links.md`](person-social-links.md) | LINKS URLs + `/open/tg/{id}` |
 | Deal / Opp dedupe | [`deal-dedupe.md`](deal-dedupe.md) | save-time soft-merge + Opp reuse |
 | MAX personal | [`max-personal.md`](max-personal.md) | `/dashboard/ai/max` + max-bridge (not frozen baseline; INC-104) |
+| Cross-channel enrich + Opp chat activity | [`cross-channel-enrich.md`](cross-channel-enrich.md) | phone→TG/MAX/WA + `touchOpportunityActivity` / admin sync |
 
 ## Card template (keep lean)
 

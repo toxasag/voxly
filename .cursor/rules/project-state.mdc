@@ -7,21 +7,24 @@ This project keeps lean agent memory under `docs/agent/` and a progress journal 
 
 **MANDATORY at the start of every new chat in this project:**
 1. Read `docs/agent/README.md` (reading order), then `docs/agent/CAPABILITIES.md` — check what already exists before implementing anything.
-2. For the task at hand, skim only the relevant `docs/agent/` files (`DATA.md`, `FLOWS.md`, `SERVICES.md`, `DECISIONS.md`, `STACK.md`).
-3. Read `steps.md` section 4 «Текущее состояние» as the session snapshot / next-steps source of truth. Do not re-derive project state by scanning files unless `steps.md` or `docs/agent/CAPABILITIES.md` is clearly stale.
-4. When debugging runtime failures: read `docs/agent/INCIDENTS.md` **before** broad exploration.
-5. When deploying or comparing local vs prod: read `docs/agent/DEPLOY.md` + `docs/agent/ENVIRONMENTS.md`; use `./scripts/prod-diff.sh` / `./scripts/prod-deploy.sh` only (never ad-hoc rsync).
-6. Verify the phase checklist in `steps.md` against reality before starting non-trivial work — if the file says a phase is done but the code disagrees, trust the code and then update `steps.md` + `CAPABILITIES.md`.
+2. Use `docs/agent/ADDRESS_BOOK.md` as a topic→docs/code/freeze map for the task (do not re-scan the whole repo).
+3. For the task at hand, skim only the relevant `docs/agent/` files (`DATA.md`, `FLOWS.md`, `SERVICES.md`, `DECISIONS.md`, `STACK.md`, freeze cards under `modules/`).
+4. Read `steps.md` section 4 «Текущее состояние» as the session snapshot / next-steps source of truth. Do not re-derive project state by scanning files unless `steps.md` or `docs/agent/CAPABILITIES.md` is clearly stale.
+5. When debugging runtime failures: read `docs/agent/INCIDENTS.md` **before** broad exploration.
+6. When deploying or comparing local vs prod: read `docs/agent/DEPLOY.md` + `docs/agent/ENVIRONMENTS.md` + `docs/agent/CAPACITY.md` (disk/RAM); use `./scripts/prod-diff.sh` / `./scripts/prod-deploy.sh` only (never ad-hoc rsync).
+7. Before non-trivial implementation: fill Risk Gate (`docs/agent/RISK_GATE.md`) in the reply first — see `.cursor/rules/agent-memory-gate.mdc`.
+8. Verify the phase checklist in `steps.md` against reality before starting non-trivial work — if the file says a phase is done but the code disagrees, trust the code and then update `steps.md` + `CAPABILITIES.md`.
 
-**After completing significant work (new phase, bugfix, architectural change, new package, new product surface):**
+**After completing significant work (new phase, bug fix, architectural change, new package, new product surface):**
 1. Append an entry to `docs/agent/WORKLOG.md` (use the template at the top of that file: Goal / Changes / Verify / Broken / Next).
 2. Update `docs/agent/CAPABILITIES.md` and/or `DECISIONS.md` if the product surface or an ADR changed.
 3. If a new failure mode was found: add it to `docs/agent/INCIDENTS.md`.
 4. Update `steps.md`: timeline entry under section 3, flip phase status in section 4, update section 5 if TODOs changed.
-5. Run `source $HOME/.local/bin/env && graphify . --code-only --update` to refresh the knowledge graph (AST-only, no API cost).
+5. Update `ADDRESS_BOOK.md` if a new address/surface appeared; `CAPACITY.md` if infra assumptions changed; freeze card Last verified when relevant.
+6. Run `source $HOME/.local/bin/env && graphify . --code-only --update` to refresh the knowledge graph (AST-only, no API cost).
 
 **Memory cascade (do not waste tokens re-scanning):**
-1. `docs/agent/` — especially `CAPABILITIES.md`, plus `WORKLOG.md` / `INCIDENTS.md` when relevant; `DEPLOY.md` / `ENVIRONMENTS.md` for prod
+1. `docs/agent/` — especially `CAPABILITIES.md` + `ADDRESS_BOOK.md`, plus `WORKLOG.md` / `INCIDENTS.md` when relevant; `RISK_GATE.md` before code; `CAPACITY.md` / `DEPLOY.md` / `ENVIRONMENTS.md` for prod/load
 2. `steps.md` — session snapshot & phase checklist (§4)
 3. Graphify `graphify-out/` — codebase knowledge graph (query/path/explain before Read/Grep/Glob)
 4. `docs/ARCHITECTURE.md` — full architecture for deep dives
