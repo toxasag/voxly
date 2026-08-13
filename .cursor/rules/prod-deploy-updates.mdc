@@ -24,7 +24,8 @@ Local Voxly and production are **separate**. Clients live only in **prod DB volu
 4. Script backs up control + twenty DBs, rsyncs a **whitelist** of paths, rebuilds via:
    `docker-compose -f docker-compose.yml -f docker-compose.prod-npm.yml --env-file ../.env up -d --build …`
 5. Smoke: `https://getvoxly.ru/`, `https://api.getvoxly.ru/health` (+ app healthz if Twenty).
-6. Note backup + commands in `docs/agent/WORKLOG.md` when significant.
+6. **Disk habit (INC-052/092):** after heavy rebuild day or if `df` free &lt;20GB → `docker image prune -af` (never volumes). Rule: `.cursor/rules/prod-disk-hygiene.mdc` + `CAPACITY.md`.
+7. Note backup + commands in `docs/agent/WORKLOG.md` when significant.
 
 Full runbook: `docs/agent/DEPLOY.md`.
 

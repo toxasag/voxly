@@ -3,7 +3,10 @@ import {
   parseCookiesBlob,
   parseFormWebhookBody,
   sanitizeRawFields,
+  buildDedupeFingerprint,
+  parseClientTs,
 } from '../src/services/form-lead-parse.js';
+import { phoneFingerprint } from '@voxly/twenty-client';
 
 describe('form-lead-parse', () => {
   it('handles Tilda test=test probe', () => {
@@ -62,5 +65,89 @@ describe('form-lead-parse', () => {
     });
     expect(clean.Name).toBe('A');
     expect(clean.api_key).toBeUndefined();
+  });
+
+  it('parses msclkid from flat fields and TILDAUTM', () => {
+    const flat = parseFormWebhookBody({
+      Name: 'X',
+      phone: '79001234567',
+      msclkid: 'abc123',
+    });
+    expect(flat.attribution.msclkid).toBe('abc123');
+    const { attribution } = parseCookiesBlob(
+      'TILDAUTM%3Dutm_source%253Dbing%257C%257C%257Cmsclkid%253Dxyz789',
+    );
+    expect(attribution.msclkid).toBe('xyz789');
+  });
+
+  it('extracts client submit timestamp', () => {
+    const n = parseFormWebhookBody({
+      Name: 'X',
+      phone: '79001234567',
+      client_ts: '1700000000',
+    });
+    expect(n.clientTs).toBe('1700000000');
+  });
+});
+
+describe('parseClientTs', () => {
+  it('parses epoch seconds', () => {
+    expect(parseClientTs('1700000000')?.getTime()).toBe(1700000000 * 1000);
+  });
+  it('parses epoch millis', () => {
+    expect(parseClientTs('1700000000000')?.getTime()).toBe(1700000000000);
+  });
+  it('parses ISO strings', () => {
+    expect(parseClientTs('2026-08-14T00:00:00Z')?.toISOString()).toBe(
+      '2026-08-14T00:00:00.000Z',
+    );
+  });
+  it('returns undefined for junk / empty', () => {
+    expect(parseClientTs('not-a-date')).toBeUndefined();
+    expect(parseClientTs('')).toBeUndefined();
+    expect(parseClientTs(undefined)).toBeUndefined();
+  });
+});
+
+describe('buildDedupeFingerprint', () => {
+  it('is stable for the same endpoint + phone + email + formId', () => {
+    const a = buildDedupeFingerprint({
+      endpointId: 'ep1',
+      phone: '+7 900 123-45-67',
+      email: 'A@Example.com',
+      formId: 'f1',
+    });
+    const b = buildDedupeFingerprint({
+      endpointId: 'ep1',
+      phone: '79001234567',
+      email: 'a@example.com',
+      formId: 'f1',
+    });
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('differs per endpoint', () => {
+    const a = buildDedupeFingerprint({ endpointId: 'ep1', phone: '79001234567' });
+    const b = buildDedupeFingerprint({ endpointId: 'ep2', phone: '79001234567' });
+    expect(a).not.toBe(b);
+  });
+
+  it('returns undefined without phone or email', () => {
+    expect(buildDedupeFingerprint({ endpointId: 'ep1', formId: 'f1' })).toBeUndefined();
+  });
+});
+
+describe('phoneFingerprint', () => {
+  it('collapses +7 / 8 / bare forms to the same key', () => {
+    const canonical = phoneFingerprint('+79001234567');
+    expect(phoneFingerprint('89001234567')).toBe(canonical);
+    expect(phoneFingerprint('8 (900) 123-45-67')).toBe(canonical);
+    expect(phoneFingerprint('9001234567')).toBe(canonical);
+    expect(canonical).toBe('9001234567');
+  });
+  it('returns undefined for empty', () => {
+    expect(phoneFingerprint('')).toBeUndefined();
+    expect(phoneFingerprint(null)).toBeUndefined();
   });
 });

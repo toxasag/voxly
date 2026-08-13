@@ -3,7 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { dailySendLimitFor, PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
 
@@ -114,12 +114,40 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
           botTokenEncrypted: true,
           createdAt: true,
           updatedAt: true,
+          isPremium: true,
+          dailySendLimit: true,
+          dailyStoryLimit: true,
+          warmupSince: true,
+          floodedUntil: true,
+          botType: true,
         },
       }),
       prisma.addon.findUnique({
         where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
       }),
     ]);
+
+    // Warm-up history per account (Job 1C.4): rows are written by the gift-bot
+    // worker on every broadcast send; today's row = live "осталось сегодня".
+    const since = new Date();
+    since.setUTCDate(since.getUTCDate() - 13);
+    since.setUTCHours(0, 0, 0, 0);
+    const warmupRows =
+      bots.length > 0
+        ? await prisma.warmupLog.findMany({
+            where: { botId: { in: bots.map((b) => b.id) }, date: { gte: since } },
+            orderBy: { date: 'asc' },
+          })
+        : [];
+    const warmupByBot = new Map<string, typeof warmupRows>();
+    for (const row of warmupRows) {
+      const list = warmupByBot.get(row.botId);
+      if (list) list.push(row);
+      else warmupByBot.set(row.botId, [row]);
+    }
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayMs = todayStart.getTime();
 
     const meta = trialMeta(addon);
     const addonActive = meta.isActive;
@@ -152,6 +180,12 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
       requiresPayment: !addonActive,
       accounts: bots.map((b) => {
         const sync = gramjsHistorySyncState(b.id);
+        const rows = warmupByBot.get(b.id) ?? [];
+        const today = rows.find((r) => r.date.getTime() === todayMs);
+        const limit =
+          today?.limit ??
+          dailySendLimitFor(b.botType, b.dailySendLimit, b.warmupSince);
+        const sent = today?.sent ?? 0;
         return {
           id: b.id,
           name: (b.displayName || '').trim() || b.botUsername || 'default',
@@ -165,6 +199,23 @@ export const gramjsRoutes: FastifyPluginAsync = async (fastify) => {
           historySyncing: sync.historySyncing,
           historySyncStartedAt: sync.historySyncStartedAt,
           historySyncResult: sync.historySyncResult,
+          isPremium: b.isPremium ?? null,
+          dailySendLimit: b.dailySendLimit ?? null,
+          dailyStoryLimit: b.dailyStoryLimit ?? null,
+          warmupSince: b.warmupSince ?? null,
+          floodedUntil: b.floodedUntil ?? null,
+          warmup: {
+            limit,
+            sent,
+            remaining: Math.max(0, limit - sent),
+            history: rows
+              .filter((r) => r.date.getTime() !== todayMs)
+              .map((r) => ({
+                date: r.date,
+                limit: r.limit,
+                sent: r.sent,
+              })),
+          },
         };
       }),
     });

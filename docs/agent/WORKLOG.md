@@ -1,3 +1,214 @@
+### 2026-08-07 — INC-119 CRM «не открывается» / disk check
+
+- Goal: urgent — user CRM won't open; suspects low disk.
+- Findings: disk **OK** (57G→72G free after prune); CRM/Twenty/API **200**; containers Up; no OOM; volumes untouched. Disk **not** root cause.
+- Ops: prophylactic `docker image prune -af` (−14.54GB unused images only). No Twenty recreate, no deploy, no commit.
+- Verify: voxly-crm + healthz + GraphQL + api/health **200**.
+- Docs: INC-119; CAPACITY snapshot refresh.
+- Next: user hard-refresh `https://voxly-crm.getvoxly.ru/` — if still broken, need browser error/screenshot.
+
+### 2026-08-07 — INC-118 GramJS CRM «Код» → visible MessageEntityPre
+
+- Goal: toolbar «Код» visibly monospace in native Telegram (user: code still broken after INC-117; spoiler OK).
+- Root cause: INC-117 already sent `MessageEntityCode` (verified on Remont msgs); Cyrillic inline code looks like plain text. Need Pre (grey block).
+- Changes: `clientMdToTelegramHtml` maps `` `code` `` → `<pre>`; bridge format log; shared tests. No crm-chat / MAX / WA.
+- Deploy: `./scripts/prod-deploy.sh gramjs-bridge` backup `20260807-141203`. max-bridge / wa-worker untouched. Disk ~57G free. Volumes untouched. No commit.
+- Verify: msg 36903 `MessageEntityPre` on `monospace_visible`; 36904 Cyrillic; health 200; `hasPre=true` in logs.
+- Docs: INC-118; gramjs-crm-sync Last verified.
+- Next: user smoke CRM → Код → Telegram grey block.
+
+### 2026-08-07 — INC-117 GramJS CRM spoiler/code + outbound attach
+
+- Goal: spoiler+code apply in native Telegram from CRM; show «Прикрепить» for GramJS like MAX/WA; do not regress MAX/WA.
+- Root cause: bridge sent plain text (no entities; GramJS `md` omits spoiler); INC-033 hid `supportsAttachments` for `ai_gramjs` + 400 on fileBuffer.
+- Changes: `clientMdToTelegramHtml` + bridge `parseMode:'html'` + `mediaBase64`/`sendFile`; saas-api GramJS media path + attach flag; crm-chat **0.1.29** (channel switch no longer disables MAX attach).
+- Deploy: `./scripts/prod-deploy.sh gramjs-bridge,saas-api` backup `20260807-132959`; `refresh-crm-chat` voxly/efim1/art-dekor `{ok:true}`; tarball **0.1.29**. **max-bridge / ai-whatsapp-worker untouched** (uptime older). Disk ~58G free. Volumes untouched. No commit.
+- Verify: shared tests green; dist `supportsAttachments: botType !== 'gift_max'`; bridge has `clientMdToTelegramHtml`; health/landing/dashboard **200**. User: hard-refresh CRM → spoiler/code + attach on GramJS; MAX/WA attach when selected.
+- Docs: INC-117; `modules/gramjs-crm-sync.md`; CHAT.md; CAPABILITIES; crm-chat-panel Last verified (MAX/WA freeze kept).
+- Next: user hard-refresh CRM → GramJS Remont chat smoke.
+
+### 2026-08-07 — Freeze verified MAX + WhatsApp CRM chat (~16:14 MSK)
+
+- Goal: freeze verified MAX+WA chat so agents don’t break it («сохраняй»).
+- Changes: **docs only** — `modules/{max-personal,wa-crm-sync,crm-chat-panel}.md` WORKING/FROZEN ~16:14; `modules/README.md`; `CAPABILITIES.md` Verified baseline; `ADDRESS_BOOK.md`; `steps.md` §3/§4; INC-114/115/116 closed note; `.cursor/rules/module-freeze.mdc`. No product code, **no redeploy**, no commit.
+- Verify: user confirmed MAX chat + WhatsApp chat both work as expected.
+- Broken: none.
+- Next: —
+
+### 2026-08-07 — INC-116 CRM Chat «Нет данных» after crm-chat 0.1.28 refresh
+
+- Goal: restore Chat load ASAP (Remont MAX deal) without wiping volumes / without breaking INC-115 WA previews.
+- Root cause: Twenty canvas empty state when `pageLayoutWidget.configuration` lacks `__typename: FrontComponentConfiguration` after `refresh-crm-chat`. DB messages OK; API 200; FC not mounting.
+- Changes (prod): SQL patch `__typename` on 18 FRONT_COMPONENT widgets (all tenants); redis flat-map flush; metadataVersion bump; `refresh-crm-chat` voxly once during diagnosis; twenty-server recreate (storage volume kept). Code: `refreshCrmChatAppForTenant` post-install `__typename` patch.
+- Kept: crm-chat **0.1.28** + saas-api `findAttachmentContext` (INC-115). max-bridge not touched.
+- Backup: tip `20260807-130335` (saas-api harden ship); prior INC-115 `20260807-124124`. Disk ~60G free. Volumes untouched. No commit.
+- Verify: API Remont 17 msgs / 2 threads; widget `__typename=FrontComponentConfiguration`; health 200; harden in saas-api dist.
+- User: hard-refresh CRM Chat on Remont — must show history again.
+- Docs: INC-116; crm-chat-panel Last verified.
+
+### 2026-08-07 — INC-115 CRM WA photo/video paperclip (multi-channel bot mismatch)
+
+- Goal: WA outbound/inbound photo+video previews in CRM chat without touching MAX freeze/bridge.
+- Root cause: Person with MAX+WA — media resolve used busiest thread (MAX) → WA fileIds 400. Store types were already correct after INC-114 send fix.
+- Changes: `crm-chat.ts` `findAttachmentContext` + resolve/signed-url by owning conversation; WA mime coerce + outbound `externalMessageId`; `ai-whatsapp-worker` fromMe retry + attachment fileId lookup; crm-chat **0.1.28** signed URL for images + extension classify.
+- Deploy: `./scripts/prod-deploy.sh saas-api,ai-whatsapp-worker` backup `20260807-124124`; refresh-crm-chat voxly. **max-bridge not redeployed.** Disk ~66G free. Volumes untouched. No commit.
+- Verify: WA photo/video/inbound media `200` with correct MIME; HTTPS smoke 200; max-bridge still up (pre-deploy uptime).
+- User smoke: hard-refresh WA thread `@+79918829870` → jpg preview + mp4 player; MAX thread on same Person still OK; re-send not needed.
+- Docs: INC-115; crm-chat-panel Last verified; MAX freeze untouched.
+
+### 2026-08-07 — INC-114 CRM→WA media «Owned media must be a url or base64»
+
+- Goal: restore CRM WhatsApp photo/video outbound without touching MAX freeze.
+- Root cause: Evolution `sendMedia` rejects `data:…;base64,…` (`isBase64`/`isURL` both false). Worker was wrapping payload as data-URI. Not caused by MAX crm-chat changes (separate `sendViaWhatsappWorker` → worker → Evolution).
+- Changes: `apps/ai-whatsapp-worker` `sendWhatsAppMedia` — pure base64 + mime coerce for image/video when `octet-stream`.
+- Deploy: `./scripts/prod-deploy.sh ai-whatsapp-worker` backup `20260807-122920`. max-bridge/saas-api **not** redeployed. Volumes untouched.
+- Verify: container recreated; health/landing/dashboard 200; dist has pure-base64 path.
+- Broken: none observed. User: CRM WA photo+video smoke; MAX paths unchanged (freeze intact).
+- Docs: INC-114; do not loosen `modules/max-personal.md`.
+
+### 2026-08-07 — INC-113 harden + freeze MAX chat baseline
+
+- Goal: belt-and-suspenders so owner phone/TG cannot land on peer Person again; document MAX chat as WORKING/FROZEN.
+- Gaps vs prior INC-113 deploy `20260807-120603`: history sync still called `updatePersonPhone` (overwrite); saas-api had no owner-phone strip (bridge-only); enrich had no `forbidPhones`.
+- Changes: `max-phone-guard.ts` + vitest; bridge inbound `selfPhone` + private-dialogs `selfPhone`/`selfMaxUserId`; max-internal/max-chat-sync `stripOwnerPhone`; enrich `forbidPhones`; freeze card + CAPABILITIES/ADDRESS_BOOK/modules README.
+- Deploy: `./scripts/prod-deploy.sh saas-api,max-bridge` backup `20260807-121730`. Disk ~68G free. Volumes untouched. No CRM mass-delete (Marina already cleaned).
+- Verify: unit test green; prod markers `stripOwnerPhone`/`selfPhone`/`forbidPhones` in saas-api dist + max-bridge; max-bridge session restore + `Attached on_message` for `cmshlhdd60002q6g7f9vydlky` me=`3361844`; smoke HTTPS 200.
+- Docs: `modules/max-personal.md` freeze checklist — **do not regress** without explicit user ask.
+
+### 2026-08-07 — INC-113 MAX channel lead + owner enrich leak onto Marina
+
+- Goal: no CRM Person/Opp from MAX channels/bots; stop owner (toxasagmsk) profile leaking onto peer Persons; fix Marina + channel junk.
+- Root cause: (1) live inbound did not filter `ChatType.CHANNEL` (history sync already DIALOG-only). (2) skip-me used `client.me.id` but User is on `me.contact` → me CALL/outbound applied owner phone → cross-channel enrich wrote `@toxasagmsk`/about/birthday. (3) DIALOG `chat_id` ≠ peer `user_id` → wrong `/open/max/{chatId}`.
+- Changes: max-bridge unwrap/skip channel+self+bot heuristic; `maxUserId`+`chatType` on inbound; saas-api reject negative/non-DIALOG/self; applyMaxProfile fill-empty phone + real userId; max-chat-sync skip negative.
+- Cleanup: Marina `ffd4ef82-…` phone `+79150910874`, cleared owner socials, max `28981896`; soft-delete channel Person/Opp `-70340712641969`; `phoneNumberId=3361844`.
+- Deploy: `./scripts/prod-deploy.sh saas-api,max-bridge` backup `20260807-120603`. Disk ~70G. Volumes untouched.
+- Verify: `profile_from_me` → `3361844`; API skip channel/self; personal DM path unchanged (Conversation key=chat id).
+- Next: user hard-refresh CRM; smoke new personal DM → lead; channel message → no new deal.
+
+### 2026-08-07 — INC-112 CRM→MAX outbound video no player (`:out` fileId)
+
+- Goal: outbound MAX video (Reklama.mp4) shows inline `<video>` like inbound; no re-send.
+- Changes: max-bridge resolve `max:…:out` via message attaches; extension classify on send; real native id when send result has attaches. saas-api effectiveMime + store type=video for .mp4. Docs: INC-112.
+- Prod evidence: ChatMessage `cmsiva0aq000d7a8b28nm47xp` already `type=video` `mimeType=video/mp4` `fileId=max:346581106:117054009613552692:video:out`. Post-deploy `/messages/media` → **200** `video/mp4` ~3.1MB (resolved `video_id=16307919806337`, okcdn 200).
+- Deploy: `./scripts/prod-deploy.sh max-bridge,saas-api` backup `20260807-114320`. Disk ~70G free. Volumes untouched. No crm-chat refresh.
+- Broken: none. User: hard-refresh CRM — **re-send not needed**.
+- Next: user confirms player on 14:34 bubble.
+
+### 2026-08-07 — INC-111 MAX CRM outbound «Token has expired»
+
+- Goal: restore CRM→MAX outbound after PDF error «Token has expired» / all send broken.
+- Diagnosis: no matching send failure in max-bridge around 13:47 MSK; session live (`sessions=1`); pre-fix probe text+PDF **200**. Likely transient MAX/PyMax auth glitch surfaced as raw English error; not INC-110 UA.
+- Changes: bridge drop+restore once on session-auth send errors + RU 401; saas-api humanize → same RU re-QR hint.
+- Verify: post-deploy restore `cmshlhdd60002q6g7f9vydlky` + `Attached on_message`; text+PDF `/messages/send` **200** to peer `346581106`.
+- Deploy: `./scripts/prod-deploy.sh max-bridge,saas-api` backup `20260807-105343`. Disk ~60G free. Volumes untouched.
+- Broken: none observed. User: hard-refresh CRM → retry; re-QR only if RU session message returns.
+- Next: watch if auth errors recur under read/media load; optional debounce MAX `/messages/read` spam.
+
+### 2026-08-07 — INC-110 MAX regular video okcdn 400 (Chrome UA)
+
+- Goal: regular MAX video file shows inline player in CRM (not only «скачать»).
+- Changes: max-bridge `_http_get_bytes` → Chrome User-Agent (okcdn `srcAg=CHROME`); no Origin. Docs: INC-110 + `modules/max-personal.md`.
+- Verify: prod `/messages/media` regular video + circle + voice + sticker + PDF → all **200**; okcdn GET **200**.
+- Deploy: `./scripts/prod-deploy.sh max-bridge` backup `20260807-101651`. Disk ~61G free. Volumes untouched.
+- Broken: none expected (classification already `video`).
+- Next: user hard-refresh CRM chat on «Ремонт Инструмент» → inline `<video>` for 13:09 bubble.
+
+### 2026-08-07 — INC-109 MAX media/read/attach + TG peer from MAX card
+
+- Goal: MAX inbound media in CRM; attach outbound; read receipts; fix TG send peer when contact came from MAX (phone/@username).
+- Changes:
+  - max-bridge: extract `attaches` → inbound attachments; `/messages/media` download; `/messages/read` via PyMax `read_message`; send Photo/File/Voice/Video; history export attachments.
+  - saas-api: inbound store attachments; `supportsAttachments` for `ai_max`; `fireMaxPresence` read; `resolveOutboundPeer` same-channel only (no MAX id→GramJS); phoneE164 + username to GramJS; max-chat-sync backfill `[сообщение]`.
+  - gramjs-bridge: username `getEntity` + ImportContacts phone wins on id mismatch.
+  - Docs: INC-109 + CAPABILITIES + `modules/max-personal.md`.
+- Verify: smoke checklist in deliverable; typing unsupported (no PyMax send-typing API).
+- Deploy: `./scripts/prod-deploy.sh max-bridge,saas-api,gramjs-bridge` backup `20260807-085850`; follow-up `--skip-backup` for messageId string/int read fix.
+- Broken: outbound typing in native MAX app still N/A; old `[сообщение]` need re-send or history sync backfill (corrupted snowflake ids from pre-fix JSON numbers).
+- Next: user smoke Remont_toua MAX media + TG send.
+
+### 2026-08-07 — INC-108 MAX live inbound handler arity (max-bridge)
+
+- Goal: diagnose why live MAX DM → no CRM Person/Opp; fix if tiny+safe.
+- Changes: `max-bridge` `_listen_inbound.on_msg(message, event_client=None)` (PyMax 2.4 `callback(event, client)`); skip self by `sender == me.id`; log `inbound forwarded`. Docs: INC-108 + `modules/max-personal.md`.
+- Verify (prod): before — 0 Conv/Msg for `cmshlhdd60002q6g7f9vydlky`, TypeError on every inbound; after deploy — session restored + `Attached on_message()`; await user DM smoke for Person/Opp.
+- Deploy: `./scripts/prod-deploy.sh max-bridge` backup `20260807-083628`. Smoke landing/api/health 200. Disk 66G free.
+- Broken: empty `phoneNumberId` → UI «появится после скана» despite restore `profile=3361844` (separate cosmetic).
+- Next: user sends test DM to connected MAX → expect deal `· MAX · …`.
+
+### 2026-08-07 — Disable auto history sync on connect (MAX / GramJS / WA)
+
+- Goal: connecting MAX/GramJS/WA accounts must **not** start CRM history sync; sync only via portal «Синхронизировать».
+- Changes:
+  - MAX portal: removed auto `POST …/sync-history` on QR `authorized` (`dashboard/ai/max/page.tsx`); keep `loadAccounts` + manual button.
+  - GramJS: `/api/internal/gramjs/connected` ack-only (no `enqueueGramjsCrmEnrich`); bridge `notifySaasCrmEnrichOnConnect` skip log; manual `POST …/sync-history` + admin enqueue unchanged.
+  - WA: removed `scheduleWhatsAppHistorySync` from QR open + `CONNECTION_UPDATE`; `/internal/crm/sync-history` button path intact; inbound live messages unchanged.
+  - Docs: CAPABILITIES + `modules/{max-personal,gramjs-crm-sync,wa-crm-sync}.md` + steps timeline.
+- Verify: connect account → no «Синхронизация…» until button; button still 202/polls; inbound messages still create ChatMessage.
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-portal,gramjs-bridge,ai-whatsapp-worker` → smoke landing/api/health/dashboard AI pages **200**; containers Up. Note: `saas-portal` rsync also shipped local Friendly LP homepage work if present.
+- Broken: none expected (live inbound paths untouched).
+- Next: user smoke — connect MAX/GramJS/WA without sync badge; press «Синхронизировать» once.
+
+### 2026-08-07 — Pricing calculator UI polish
+
+- Goal: make landing calculator visually stronger (not a dense checkbox list).
+- Changes: two-column layout (config + dark summary), grouped cards (channels qty grid + automation toggles), seat chips, sticky-feel total panel.
+- Deploy: `saas-portal` --skip-backup. Smoke OK.
+- Next: none.
+
+### 2026-08-07 — Pricing calc qty for TG/WA/MAX/gift
+
+- Goal: personal channels + gift bot can be several units, not checkbox-only.
+- Changes: `pricing-calculator.tsx` QtyRow (−/+) ×1…10; totals multiply unit price.
+- Deploy: `saas-portal` --skip-backup. Smoke OK.
+- Next: none.
+
+### 2026-08-07 — Landing pricing calculator ← admin platform prices
+
+- Goal: correct modular calculator; CRM 600/10 seats; pull live prices from admin PlatformSetting.
+- Changes: `GET /api/pricing/catalog` (public); calculator toggles TG/WA/MAX/gift/secretary(+extra)/mailing/stories; shared `CRM_BASE_MONTHLY` 500→600; `loadPlatformPrices` reads `subscription_seats_included`.
+- Deploy: `prod-deploy.sh --skip-backup saas-api,saas-portal`. Smoke OK.
+- Verify: `GET /api/pricing/catalog` → crm_base **600**, seats 10; landing shows CRM от 600 + module toggles.
+- Next: none.
+
+### 2026-08-07 — OG logo + auth pages match Friendly LP
+
+- Goal: messenger preview without robot; `/login` `/register` same style as `/`.
+- Changes: `opengraph-image.tsx` / `twitter-image.tsx` / `icon.tsx` (wordmark V); `AuthShell`; restyle login/register (no amber/mascot); layout OG title updated.
+- Deploy: `prod-deploy.sh --skip-backup saas-portal`. Smoke OK.
+- Verify: `/opengraph-image` 200; login/register have `friendly-lp`, no mascot. Telegram may cache old preview until refresh.
+- Next: if TG still shows robot — wait cache or use t.me link debug / share with `?v=2`.
+
+### 2026-08-07 — Deploy hero copy tweak (Friendly LP)
+
+- Goal: H1/subhero Max+соцсети/ФИО/ДР on live `/`.
+- Ops: `./scripts/prod-deploy.sh --skip-backup saas-portal`. Smoke OK.
+- Verify: getvoxly.ru HTML has «Все Ваши клиенты… Max…» + соцсети/ФИО copy.
+- Next: none.
+
+### 2026-08-07 — Deploy Friendly LP homepage (`saas-portal`)
+
+- Goal: ship promoted Friendly LP to getvoxly.ru.
+- Ops: `./scripts/prod-deploy.sh saas-portal` (1st SSH mid-build cut); retry `--skip-backup` OK. Backup from first run: `/opt/voxly/backups/20260807-082346/`. Disk 66G free. Volumes untouched.
+- Verify: `https://getvoxly.ru/` 200 + friendly copy; `/lp/friendly` → `/`; api health 200; dashboard smoke 200.
+- Broken: none lasting (transient 502 during portal restart).
+- Next: none for this surface.
+
+### 2026-08-07 — Promote Friendly LP to `/` (archive v3)
+
+- Goal: make friendly LP the homepage; keep previous without delete.
+- Changes: archive Awwwards v3 → `app/_archive/landing-v3/`; `/` renders `FriendlyLanding`; `/lp/friendly` redirects to `/` (+ref); layout metadata updated; design lock → `landing-friendly.md`.
+- Verify: local `/` 200 + hero copy; `/lp/friendly` → `/`.
+- Broken: none.
+- Next: deploy `saas-portal` when user asks.
+
+### 2026-08-07 — Friendly LP draft `/lp/friendly` (not homepage)
+
+- Goal: new conversion LP for non-tech owners (prompt); keep live `/` until user approves swap.
+- Changes: `app/lp/friendly/page.tsx` + `components/landing/friendly/{friendly-landing,phone-demo,pricing-calculator,referral-calculator,custom-dev-cta,gift-widget}.tsx`; scoped `.friendly-lp` CSS in `globals.css`. Pricing uses `@voxly/shared` (500/300/10 seats; stories+gift optional +500). Referral 20% preview @ ~3000 ARPU. Custom-dev → mailto sheet. `robots: noindex`.
+- Verify: local `http://127.0.0.1:3011/lp/friendly` 200; hero/calc/FAQ present; tsc OK. `/` untouched.
+- Broken: none.
+- Next: user review → if OK, promote to `/` (archive v3) + deploy `saas-portal`.
+
 ### 2026-08-07 — Prod Stage-0 disk prune (no volumes)
 
 - Goal: free disk after CAPACITY showed 97% / 3.2G avail (INC-052/092 pattern).

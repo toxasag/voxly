@@ -1,5 +1,7 @@
 // Voxly Platform Bot (@GetVoxlybot): OTP deep-links + support inbox webhook.
 
+import { fetchWithTimeout } from '@voxly/shared';
+
 const PLATFORM_BOT_TOKEN = process.env.PLATFORM_BOT_TOKEN || '';
 const PLATFORM_BOT_USERNAME = process.env.PLATFORM_BOT_USERNAME || 'GetVoxlybot';
 const WEBHOOK_PORT = parseInt(process.env.PLATFORM_BOT_PORT || '3009', 10);
@@ -16,10 +18,11 @@ const TELEGRAM_API = `https://api.telegram.org/bot${PLATFORM_BOT_TOKEN}`;
 
 async function main() {
   if (USE_POLLING) {
-    await fetch(`${TELEGRAM_API}/deleteWebhook`, {
+    await fetchWithTimeout(`${TELEGRAM_API}/deleteWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drop_pending_updates: false }),
+      timeout: 15000,
     });
     console.log('[platform-bot] Long-polling mode');
     void pollUpdates();
@@ -34,7 +37,7 @@ async function setWebhook() {
   const webhookUrl =
     process.env.PLATFORM_WEBHOOK_URL ||
     `http://platform-bot-service:${WEBHOOK_PORT}/webhook`;
-  const res = await fetch(`${TELEGRAM_API}/setWebhook`, {
+  const res = await fetchWithTimeout(`${TELEGRAM_API}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -42,6 +45,7 @@ async function setWebhook() {
       allowed_updates: ['message'],
       drop_pending_updates: process.env.PLATFORM_WEBHOOK_DROP_PENDING === 'true',
     }),
+    timeout: 15000,
   });
   const data = (await res.json()) as { ok?: boolean };
   if (data.ok) console.log('[platform-bot] Webhook set');
@@ -52,8 +56,9 @@ async function pollUpdates() {
   let offset = 0;
   for (;;) {
     try {
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${TELEGRAM_API}/getUpdates?timeout=25&offset=${offset}&allowed_updates=${encodeURIComponent(JSON.stringify(['message']))}`,
+        { timeout: 30000 },
       );
       const data = (await res.json()) as {
         ok?: boolean;
@@ -180,7 +185,7 @@ async function callSaasApi(path: string, body: Record<string, unknown>): Promise
     return;
   }
   try {
-    const res = await fetch(`${SAAS_API_URL}${path}`, {
+    const res = await fetchWithTimeout(`${SAAS_API_URL}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -188,6 +193,7 @@ async function callSaasApi(path: string, body: Record<string, unknown>): Promise
         'X-Voxly-Service': 'platform-bot',
       },
       body: JSON.stringify(body),
+      timeout: 15000,
     });
     if (!res.ok) {
       const t = await res.text();
@@ -199,10 +205,11 @@ async function callSaasApi(path: string, body: Record<string, unknown>): Promise
 }
 
 async function sendTelegram(chatId: number, text: string): Promise<void> {
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
+  await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text }),
+    timeout: 15000,
   });
 }
 

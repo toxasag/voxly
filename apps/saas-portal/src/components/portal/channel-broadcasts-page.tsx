@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/portal/page-header';
 import { TelegramPreview } from '@/components/telegram-preview';
 import { TG_PREVIEW_LABEL } from '@/components/portal/telegram-preview-chrome';
 import { MailingBillingBanner } from '@/components/portal/mailing-billing-banner';
+import { spintaxGroupsCount, previewSpintax } from '@voxly/shared';
 
 type Channel = 'gramjs' | 'wa';
 type MediaType = 'photo' | 'video';
@@ -38,6 +39,7 @@ interface BroadcastRow {
   scheduledAt: string | null;
   sentCount: number;
   totalCount: number;
+  botIds?: string[] | null;
   text?: string;
   mediaUrl?: string | null;
   mediaType?: MediaType | null;
@@ -81,6 +83,7 @@ export function ChannelBroadcastsPage({
 
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [botId, setBotId] = useState('');
+  const [pool, setPool] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
@@ -92,6 +95,7 @@ export function ChannelBroadcastsPage({
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
   const [billingOk, setBillingOk] = useState(false);
+  const [previewSamples, setPreviewSamples] = useState<string[] | null>(null);
 
   const resetForm = useCallback(() => {
     setEditingId(null);
@@ -99,6 +103,7 @@ export function ChannelBroadcastsPage({
     setMediaUrl('');
     setMediaType('');
     setScheduledAt('');
+    setPreviewSamples(null);
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -133,6 +138,7 @@ export function ChannelBroadcastsPage({
   useEffect(() => {
     if (botId) {
       resetForm();
+      setPool([botId]);
       void loadHistory(botId);
     }
   }, [botId, loadHistory, resetForm]);
@@ -144,6 +150,7 @@ export function ChannelBroadcastsPage({
     setMediaUrl(row.mediaUrl || '');
     setMediaType(row.mediaType || '');
     setScheduledAt(toLocalInputValue(row.scheduledAt));
+    setPool(row.botIds && row.botIds.length ? row.botIds : [botId]);
     setOk('Редактирование запланированной рассылки');
     setError('');
   };
@@ -160,6 +167,7 @@ export function ChannelBroadcastsPage({
         if (mediaType) body.mediaType = mediaType;
       }
       if (scheduledAt) body.scheduledAt = new Date(scheduledAt).toISOString();
+      body.botIds = pool.length ? pool : [botId];
 
       const url = editingId
         ? `/api/bots/${botId}/broadcasts/${editingId}`
@@ -176,6 +184,7 @@ export function ChannelBroadcastsPage({
                 scheduledAt: scheduledAt
                   ? new Date(scheduledAt).toISOString()
                   : undefined,
+                botIds: pool.length ? pool : [botId],
               }
             : body,
         ),
@@ -272,6 +281,45 @@ export function ChannelBroadcastsPage({
                 </p>
               </div>
               <div className="space-y-1.5">
+                <Label>Пул аккаунтов (ротация)</Label>
+                <div className="flex flex-wrap gap-2">
+                  {accounts.map((a) => {
+                    const isPrimary = a.id === botId;
+                    const checked = pool.includes(a.id);
+                    return (
+                      <label
+                        key={a.id}
+                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                          checked
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border text-muted-foreground'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5"
+                          checked={checked}
+                          disabled={isPrimary}
+                          onChange={(e) => {
+                            if (isPrimary) return;
+                            const next = e.target.checked
+                              ? [...new Set([...pool, a.id])]
+                              : pool.filter((id) => id !== a.id);
+                            setPool(next.length ? next : [botId]);
+                          }}
+                        />
+                        {accountLabel(a)}
+                        {isPrimary ? ' (осн.)' : ''}
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Least-loaded: сообщение отправит аккаунт с минимальным суточным счётчиком; при лимите
+                  аккаунт берёт следующий из пула.
+                </p>
+              </div>
+              <div className="space-y-1.5">
                 <Label htmlFor="text">Текст</Label>
                 <Textarea
                   id="text"
@@ -279,6 +327,35 @@ export function ChannelBroadcastsPage({
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                 />
+                <div className="flex items-center gap-2">
+                  {spintaxGroupsCount(text) > 0 ? (
+                    <Badge variant="secondary">
+                      {spintaxGroupsCount(text)} гр. вариантов
+                    </Badge>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!text.trim() || spintaxGroupsCount(text) === 0}
+                    onClick={() => setPreviewSamples(previewSpintax(text, 5))}
+                  >
+                    Предпросмотр вариантов
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Спинтакс: <code>{'{вариант|вариант}'}</code> — каждый получатель увидит случайный вариант.
+                </p>
+                {previewSamples ? (
+                  <div className="space-y-1 rounded-md border bg-muted/40 p-2.5">
+                    {previewSamples.map((sample, i) => (
+                      <p key={i} className="text-xs text-muted-foreground">
+                        <span className="mr-1.5 text-primary">{i + 1}.</span>
+                        {sample}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               {channel === 'wa' ? (
                 <>
@@ -354,6 +431,7 @@ export function ChannelBroadcastsPage({
                 <tr className="text-left text-muted-foreground">
                   <th className="pb-2 font-medium">Когда</th>
                   <th className="pb-2 font-medium">Статус</th>
+                  <th className="pb-2 font-medium">Пул</th>
                   <th className="pb-2 font-medium">Отправлено</th>
                   <th className="pb-2 font-medium" />
                 </tr>
@@ -368,6 +446,9 @@ export function ChannelBroadcastsPage({
                     </td>
                     <td className="py-2.5">
                       <Badge variant="secondary">{b.status}</Badge>
+                    </td>
+                    <td className="py-2.5">
+                      {b.botIds && b.botIds.length > 1 ? `${b.botIds.length} акк.` : '1 акк.'}
                     </td>
                     <td className="py-2.5">
                       {b.sentCount}/{b.totalCount}

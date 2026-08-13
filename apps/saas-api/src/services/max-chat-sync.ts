@@ -6,6 +6,7 @@
 import type { PrismaClient } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import { TwentyClient } from '@voxly/twenty-client';
+import { stripOwnerPhone } from './max-phone-guard.js';
 
 /** 0 = all private dialogs. */
 export const MAX_CHAT_SYNC_ALL_DIALOGS = 0;
@@ -34,6 +35,13 @@ type BridgeDialog = {
     out: boolean;
     text: string;
     date: number;
+    attachments?: Array<{
+      type: string;
+      fileId: string;
+      fileName?: string;
+      mimeType?: string;
+      fileSize?: number;
+    }>;
   }>;
 };
 
@@ -49,7 +57,12 @@ async function fetchPrivateDialogs(opts: {
   botId: string;
   dialogLimit: number;
   messageLimit: number;
-}): Promise<{ dialogs: BridgeDialog[]; error?: string }> {
+}): Promise<{
+  dialogs: BridgeDialog[];
+  selfPhone?: string;
+  selfMaxUserId?: string;
+  error?: string;
+}> {
   const token = serviceToken();
   if (!token) return { dialogs: [], error: 'VOXLY_SERVICE_TOKEN unset' };
   const res = await fetch(`${bridgeBase()}/crm/private-dialogs`, {
@@ -67,6 +80,8 @@ async function fetchPrivateDialogs(opts: {
   const json = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
     dialogs?: BridgeDialog[];
+    selfPhone?: string | null;
+    selfMaxUserId?: string | null;
     error?: string;
     detail?: string;
   };
@@ -76,14 +91,11 @@ async function fetchPrivateDialogs(opts: {
       error: json.error || json.detail || `HTTP ${res.status}`,
     };
   }
-  return { dialogs: Array.isArray(json.dialogs) ? json.dialogs : [] };
-}
-
-function normalizePhone(raw: string | null | undefined): string | undefined {
-  if (!raw) return undefined;
-  const digits = String(raw).replace(/\D/g, '');
-  if (digits.length < 10 || digits.length > 15) return undefined;
-  return digits;
+  return {
+    dialogs: Array.isArray(json.dialogs) ? json.dialogs : [],
+    selfPhone: json.selfPhone ? String(json.selfPhone) : undefined,
+    selfMaxUserId: json.selfMaxUserId ? String(json.selfMaxUserId) : undefined,
+  };
 }
 
 export async function runMaxPrivateChatSync(opts: {
@@ -161,7 +173,7 @@ export async function runMaxPrivateChatSync(opts: {
     };
   }
 
-  const { dialogs, error } = await fetchPrivateDialogs({
+  const { dialogs, selfPhone, selfMaxUserId, error } = await fetchPrivateDialogs({
     botId,
     dialogLimit,
     messageLimit,
@@ -200,14 +212,18 @@ export async function runMaxPrivateChatSync(opts: {
   let skippedSuppressed = 0;
   const botLabel = bot.displayName || bot.botUsername || 'личный';
 
-  const selfMaxId = String(bot.phoneNumberId || '').trim();
+  const selfMaxId =
+    String(selfMaxUserId || bot.phoneNumberId || '').trim();
 
   for (const d of dialogs) {
-    // Match live inbound: platformUserId = chat id (bridge peer prefers chat_id).
+    // Match live inbound: platformUserId = chat id (send/read). Profile id = userId.
     const platformUserId = String(d.chatId || d.userId || '').trim();
     if (!platformUserId || platformUserId === '0') continue;
+    // Channels/groups (negative ids) — never Person/Opportunity (INC-113).
+    if (platformUserId.startsWith('-')) continue;
+    const peerUserId = String(d.userId || '').trim();
     // Skip self / Saved Messages style peers
-    if (selfMaxId && String(d.userId || '').trim() === selfMaxId) continue;
+    if (selfMaxId && (peerUserId === selfMaxId || platformUserId === selfMaxId)) continue;
 
     let conversation = await prisma.conversation.findFirst({
       where: {
@@ -249,15 +265,44 @@ export async function runMaxPrivateChatSync(opts: {
 
     for (const m of d.messages) {
       const externalMessageId = `max:${m.id}`;
-      const content = (m.text || '').trim() || '[сообщение]';
+      const atts = Array.isArray(m.attachments) ? m.attachments : [];
+      const content =
+        (m.text || '').trim() ||
+        (atts[0]?.type === 'photo'
+          ? '[фото]'
+          : atts[0]?.type === 'video'
+            ? '[видео]'
+            : atts[0]?.type === 'voice' || atts[0]?.type === 'audio'
+              ? '[голосовое]'
+              : atts[0]?.fileName
+                ? `[файл: ${atts[0].fileName}]`
+                : atts.length
+                  ? '[файл]'
+                  : '[сообщение]');
       const existing = await prisma.chatMessage.findFirst({
         where: {
           conversationId: conversation.id,
           externalMessageId,
         },
-        select: { id: true },
+        select: { id: true, content: true, attachments: true },
       });
-      if (existing) continue;
+      if (existing) {
+        // Backfill placeholders when sync now has typed media (mirror GramJS).
+        const isPlaceholder =
+          !existing.content ||
+          existing.content === '[сообщение]' ||
+          existing.content === '[media]' ||
+          existing.content.startsWith('[media:');
+        const hasAtts = Array.isArray(existing.attachments) && existing.attachments.length > 0;
+        if (isPlaceholder && atts.length && !hasAtts) {
+          await prisma.chatMessage.update({
+            where: { id: existing.id },
+            data: { content, attachments: atts },
+          });
+          messagesUpserted += 1;
+        }
+        continue;
+      }
 
       const sentAt =
         m.date && m.date > 0 ? new Date(m.date * 1000) : new Date();
@@ -268,6 +313,7 @@ export async function runMaxPrivateChatSync(opts: {
           content,
           externalMessageId,
           sentAt,
+          ...(atts.length ? { attachments: atts } : {}),
         },
       });
       messagesUpserted += 1;
@@ -282,7 +328,8 @@ export async function runMaxPrivateChatSync(opts: {
       opportunityId = undefined;
     }
 
-    const phone = normalizePhone(d.phone || undefined);
+    // Never write connected-account phone onto peer (INC-113); fill-empty only via applyMaxProfile.
+    const phone = stripOwnerPhone(d.phone || undefined, selfPhone);
 
     if (!personId) {
       const prior = await prisma.conversation.findFirst({
@@ -339,20 +386,16 @@ export async function runMaxPrivateChatSync(opts: {
       });
       personId = created?.id;
       if (personId) peopleCreated += 1;
-    } else if (phone) {
-      try {
-        await client.updatePersonPhone(personId, phone);
-      } catch {
-        /* ignore */
-      }
     }
 
-    if (personId && (d.link || d.firstName)) {
+    if (personId && (d.link || d.firstName || peerUserId || phone)) {
       try {
         await client.applyMaxProfile(personId, {
           firstName: d.firstName || undefined,
           link: d.link || undefined,
-          userId: platformUserId,
+          // Real MAX user id for /open/max — not chat id (INC-113).
+          userId: peerUserId || platformUserId,
+          // fill-empty only inside applyMaxProfile — never overwrite different phone.
           phone: phone ? `+${phone}` : undefined,
         });
       } catch {
@@ -372,6 +415,7 @@ export async function runMaxPrivateChatSync(opts: {
           personId,
           phone,
           channels: ['telegram', 'whatsapp'],
+          forbidPhones: selfPhone ? [selfPhone] : undefined,
         });
       } catch (err) {
         console.warn('[max-chat-sync] cross-channel enrich failed', err);

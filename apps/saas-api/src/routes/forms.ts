@@ -7,12 +7,61 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { nanoid } from 'nanoid';
+import IORedis from 'ioredis';
 import { prisma } from '@voxly/db';
+import { phoneFingerprint } from '@voxly/twenty-client';
 import {
   parseFormWebhookBody,
   sanitizeRawFields,
+  buildDedupeFingerprint,
+  parseClientTs,
 } from '../services/form-lead-parse.js';
 import { enqueueFormLead } from '../jobs/queues.js';
+
+/** Dedicated Redis client for webhook idempotency (4.1). Lazy — never blocks route boot. */
+const FORMS_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const formsRedis = new IORedis(FORMS_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
+
+/** Webhook idempotency window: collapse identical resubmissions (4.1). */
+const FORM_DEDUPE_TTL_SEC = 10 * 60;
+
+/**
+ * Claim a dedupe fingerprint via Redis SET NX EX. Returns true when this is the
+ * first delivery in the window, false when it is a duplicate. Fails OPEN (true)
+ * on Redis error — the DB unique index (endpointId, dedupeFingerprint) is the backstop.
+ */
+async function claimFormFingerprint(fingerprint: string): Promise<boolean> {
+  try {
+    const ok = await formsRedis.set(
+      `forms:dedupe:${fingerprint}`,
+      '1',
+      'EX',
+      FORM_DEDUPE_TTL_SEC,
+      'NX',
+    );
+    return ok === 'OK';
+  } catch (err) {
+    console.warn('[forms] fingerprint claim failed (fail-open)', err);
+    return true;
+  }
+}
+
+/** Best-effort client IP behind Traefik/CDN: first X-Forwarded-For hop, else socket. */
+function clientIpOf(request: {
+  headers: Record<string, unknown>;
+  ip?: string;
+}): string | undefined {
+  const xff = request.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) {
+    return xff.split(',')[0]!.trim();
+  }
+  const real = request.headers['x-real-ip'];
+  if (typeof real === 'string' && real.trim()) return real.trim();
+  return request.ip;
+}
 
 function publicApiBase(domain: string): string {
   const fromEnv = (
@@ -181,6 +230,31 @@ export const formWebhookRoutes: FastifyPluginAsync = async (fastify) => {
         cookiesRaw: normalized.cookiesRaw,
       } as object;
 
+      // 4.2 client analytics: UA / IP / client submit ts.
+      const userAgent =
+        (request.headers['user-agent'] as string | undefined)?.slice(0, 500) ||
+        null;
+      const ipAddress = clientIpOf(request as any)?.slice(0, 64) || null;
+      const clientTs = parseClientTs(normalized.clientTs) || null;
+      const phoneFp = phoneFingerprint(normalized.phone) || null;
+
+      // 4.1 idempotency: when no stable externalId, dedupe by content fingerprint.
+      const dedupeFingerprint = normalized.externalId
+        ? null
+        : buildDedupeFingerprint({
+            endpointId: endpoint.id,
+            phone: normalized.phone,
+            email: normalized.email,
+            formId: normalized.formId,
+          }) || null;
+      if (dedupeFingerprint) {
+        const fresh = await claimFormFingerprint(dedupeFingerprint);
+        if (!fresh) {
+          // Duplicate within the 10-min window — ACK without creating a lead.
+          return reply.code(200).type('text/plain').send('ok');
+        }
+      }
+
       let lead;
       try {
         lead = await prisma.formLead.create({
@@ -198,11 +272,17 @@ export const formWebhookRoutes: FastifyPluginAsync = async (fastify) => {
             referer: normalized.referer || null,
             payload: payloadJson,
             status: 'received',
+            userAgent,
+            ipAddress,
+            clientTs,
+            msclkid: normalized.attribution.msclkid || null,
+            phoneFingerprint: phoneFp,
+            dedupeFingerprint,
           },
         });
       } catch (err: any) {
-        // Unique (tenantId, source, externalId) → duplicate
-        if (err?.code === 'P2002' && normalized.externalId) {
+        // Unique (tenantId, source, externalId) or (endpointId, dedupeFingerprint) → duplicate
+        if (err?.code === 'P2002') {
           return reply.code(200).type('text/plain').send('ok');
         }
         throw err;
@@ -396,6 +476,10 @@ export const formsRoutes: FastifyPluginAsync = async (fastify) => {
           personId: true,
           opportunityId: true,
           needsReview: true,
+          userAgent: true,
+          ipAddress: true,
+          clientTs: true,
+          msclkid: true,
           createdAt: true,
         },
       });
@@ -423,6 +507,46 @@ export const formsRoutes: FastifyPluginAsync = async (fastify) => {
       });
       await enqueueFormLead({ formLeadId: id });
       return { success: true };
+    },
+  );
+
+  // Interaction history (4.3): timeline for a Person or a phone fingerprint.
+  fastify.get(
+    '/activity',
+    { preHandler: [(fastify as any).authenticate] },
+    async (request: any, reply) => {
+      const tenantId = request.user.tenantId as string;
+      const q = request.query as {
+        personId?: string;
+        phone?: string;
+        limit?: string;
+      };
+      const limit = Math.min(parseInt(q.limit || '50', 10) || 50, 200);
+      const fp = q.phone ? phoneFingerprint(q.phone) : undefined;
+      if (!q.personId && !fp) {
+        return reply.code(400).send({ error: 'personId or phone required' });
+      }
+      const or = [
+        q.personId ? { twentyPersonId: q.personId } : undefined,
+        fp ? { phoneFingerprint: fp } : undefined,
+      ].filter(Boolean) as any[];
+      const activities = await prisma.customerActivity.findMany({
+        where: { tenantId, OR: or },
+        orderBy: { occurredAt: 'desc' },
+        take: limit,
+        select: {
+          id: true,
+          kind: true,
+          channel: true,
+          title: true,
+          description: true,
+          meta: true,
+          twentyPersonId: true,
+          formLeadId: true,
+          occurredAt: true,
+        },
+      });
+      return { activities };
     },
   );
 };

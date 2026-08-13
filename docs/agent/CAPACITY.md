@@ -10,16 +10,18 @@
 
 | Field | Value |
 |---|---|
-| Measured at (UTC) | **2026-08-07T07:44:55Z** (post Stage-0 prune) |
+| Measured at (UTC) | **2026-08-07T15:01Z** (INC-119 disk check + prune) |
 | Hostname | `ai-agents-server-n8n.com` |
 | Kernel | Linux 5.15.0-185-generic x86_64 |
 | vCPU | **6** (guest: AMD Ryzen 9 5950X 16-Core, 6 online) |
-| RAM | **9.7 GiB** total · ~3.7 GiB MemAvailable · **0 swap** (pre-prune measure 07:35Z) |
-| Disk `/` | **99G** total · **22G** used · **72G avail (24%)** — was 97%/3.2G free before prune |
-| Load | 0.09 / 0.10 / 0.08 (idle at 07:35Z measure) |
+| RAM | **9.7 GiB** total · ~3.3 GiB available · **0 swap** |
+| Disk `/` | **99G** total · **23G** used · **72G avail (24%)** — was 57G free / 40% before evening prune |
+| Load | (not re-measured; earlier idle) |
 | Tenants (control DB) | **3** total · **3** with `twentyWorkspaceId` |
 
-**Ops 2026-08-07:** Stage 0 — `docker image prune -af` reclaimed **~66.9GB** unused images; container prune **882MB**; journal vacuum **160MB**. Volumes untouched. API/portal **200**. Pre-prune: Images 309 / 71GB reclaimable (INC-052/092 pattern).
+**Ops 2026-08-07 evening (INC-119):** disk was **not** critical (57G free). Prophylactic `docker image prune -af` → **14.54GB** reclaimed; after **72G free**. Logs small (max ~37MB). Volumes untouched. CRM/API **200**.
+
+**Ops 2026-08-07 morning:** Stage 0 — `docker image prune -af` reclaimed **~66.9GB** unused images; container prune **882MB**; journal vacuum **160MB**. Volumes untouched. API/portal **200**. Pre-prune: Images 309 / 71GB reclaimable (INC-052/092 pattern).
 
 ### Top memory consumers (docker stats, no-stream)
 
@@ -88,11 +90,14 @@ Prevention: `docker image prune` (**without** `-v`), log vacuum, backup retentio
 
 ### Stage 0 — ops hygiene (do first, always)
 
+Rule (alwaysApply): `.cursor/rules/prod-disk-hygiene.mdc`.
+
 - `docker image prune -f` (dangling); careful `prune -af` only when sure unused
 - Truncate huge `*-json.log`; `journalctl --vacuum-size=50M`
 - Retention on `/opt/voxly/backups/`
 - **Never** wipe named volumes / `down -v`
 - Target: **≥20GB** free on `/` before multi-service deploy
+- Habit: after heavy rebuild days, prune **before** the next ship (prevents INC-052/092)
 
 ### Stage 1 — bigger single VPS
 

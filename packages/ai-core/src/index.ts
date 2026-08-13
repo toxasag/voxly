@@ -7,6 +7,13 @@ export {
   applyMarkup,
 };
 export {
+  AI_USAGE_QUEUE_NAME,
+  buildUsageChargeKey,
+  enqueueAiUsageCharge,
+  startAiUsageWorker,
+  type AiUsageJobData,
+} from './ai-usage-queue.js';
+export {
   costUsdFromOpenRouter,
   resolveProviderCostRub,
   usdToProviderCostRub,
@@ -66,6 +73,18 @@ export interface ChargeAiUsageParams {
   aiAgentId?: string | null;
   /** Which surface consumed the tokens; omitted only by callers that predate the breakdown. */
   channel?: AiUsageChannel;
+  /**
+   * No-debt mode: when the wallet cannot cover the charge, skip the debit entirely
+   * and return `insufficient: true` instead of draining the wallet to zero and logging
+   * uncollected debt (legacy behaviour). When omitted, falls back to the value of
+   * `isNoDebtModeEnabled()` (env `VOXLY_AI_NO_DEBT`).
+   */
+  noDebt?: boolean;
+  /**
+   * Idempotency key for the usage charge. When set, a duplicate charge with the same
+   * key is a no-op (`duplicate: true`) enforced by the unique `AiUsageLog.usageChargeKey`.
+   */
+  usageChargeKey?: string;
 }
 
 export interface ChargeResult {
@@ -73,6 +92,20 @@ export interface ChargeResult {
   markupPercent: number;
   remainingBalance: number;
   paused: boolean;
+  /** True when no-debt mode skipped the charge because the wallet could not cover it. */
+  insufficient?: boolean;
+  /** True when the charge was skipped because `usageChargeKey` was already recorded. */
+  duplicate?: boolean;
+}
+
+/**
+ * Whether AI billing runs in "no-debt" mode by default.
+ * Reads env `VOXLY_AI_NO_DEBT` (accepts `1`/`true`/`yes`, trimmed + lowercased).
+ * A per-call `noDebt` param always overrides this.
+ */
+export function isNoDebtModeEnabled(): boolean {
+  const raw = (process.env.VOXLY_AI_NO_DEBT ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 /**
@@ -102,8 +135,31 @@ export async function getEffectiveMarkup(tenantId: string): Promise<number> {
 export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<ChargeResult> {
   const markupPercent = await getEffectiveMarkup(params.tenantId);
   const chargedRub = applyMarkup(params.providerCostRub, markupPercent);
+  const noDebt = params.noDebt ?? isNoDebtModeEnabled();
 
   const result = await prisma.$transaction(async (tx) => {
+    // Idempotency: if this usageChargeKey was already recorded, treat as duplicate no-op.
+    if (params.usageChargeKey) {
+      const existing = await tx.aiUsageLog.findUnique({
+        where: { usageChargeKey: params.usageChargeKey },
+        select: { chargedRub: true },
+      });
+      if (existing) {
+        const wallet = await tx.aiWallet.findUnique({
+          where: { tenantId: params.tenantId },
+          select: { balanceRub: true },
+        });
+        const balance = Number(wallet?.balanceRub ?? 0);
+        return {
+          balance,
+          paused: balance <= 0,
+          insufficient: false,
+          duplicate: true,
+          chargedRub: Number(existing.chargedRub),
+        };
+      }
+    }
+
     const wallet = await tx.aiWallet.findUnique({
       where: { tenantId: params.tenantId },
     });
@@ -126,6 +182,19 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
         where: { tenantId: params.tenantId },
       });
       balance = Number(updatedWallet?.balanceRub ?? 0);
+    } else if (noDebt) {
+      // No-debt mode: do not drain the wallet, do not log usage, signal insufficient funds.
+      const current = await tx.aiWallet.findUnique({
+        where: { tenantId: params.tenantId },
+        select: { balanceRub: true },
+      });
+      return {
+        balance: Number(current?.balanceRub ?? 0),
+        paused: true,
+        insufficient: true,
+        duplicate: false,
+        chargedRub: 0,
+      };
     } else {
       // Wallet cannot cover the charge: lock the row, collect what is actually there
       const locked = await tx.$queryRaw<Array<{ balanceRub: unknown }>>`
@@ -155,20 +224,26 @@ export async function chargeAiUsage(params: ChargeAiUsageParams): Promise<Charge
         uncollectedRub: uncollectedRub > 0 ? uncollectedRub : undefined,
         requestType: params.requestType,
         channel: params.channel,
+        usageChargeKey: params.usageChargeKey,
       },
     });
 
     return {
       balance,
       paused: balance <= 0,
+      insufficient: false,
+      duplicate: false,
+      chargedRub,
     };
   });
 
   return {
-    chargedRub,
+    chargedRub: result.chargedRub,
     markupPercent,
     remainingBalance: result.balance,
     paused: result.paused,
+    insufficient: result.insufficient,
+    duplicate: result.duplicate,
   };
 }
 

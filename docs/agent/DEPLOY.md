@@ -12,7 +12,7 @@ See also: [`ENVIRONMENTS.md`](ENVIRONMENTS.md) (local vs prod, last verified dri
 - Never ad-hoc `rsync` of multiple files into one parent dir (that already wiped the landing `page.tsx`).
 - Prefer **migrations** on control plane when schema changes — not blind `db push` on prod.
 - `prod-deploy.sh` runs `prisma migrate deploy` automatically before container rebuild (for prisma-using services). Manual migration is no longer needed.
-- Before heavy deploy: check `CAPACITY.md` / `df -h /` — if free &lt;15GB, prune images first (no `-v`).
+- Before heavy deploy: check `CAPACITY.md` / `df -h /` — if free &lt;15GB, prune images first (no `-v`). See `.cursor/rules/prod-disk-hygiene.mdc` (INC-052/092).
 
 ## Happy path
 

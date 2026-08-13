@@ -1,11 +1,13 @@
 // Voxly AI WhatsApp Worker — Evolution API (Baileys QR), ADR-014
 // Channel connect → Conversation + CRM lead always; AI reply only if AiAgent assigned.
 
-import { prisma } from '@voxly/db';
+import { prisma, upsertCrmRecordLink } from '@voxly/db';
 import { decrypt, encrypt } from '@voxly/crypto';
 import {
   chargeAiUsage,
   hasAiBalance,
+  enqueueAiUsageCharge,
+  buildUsageChargeKey,
   resolveProviderCostRub,
   retrieveAgentContext,
   formatRagPromptBlock,
@@ -29,7 +31,7 @@ import {
   type OpenRouterUsageLike,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
-import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote } from '@voxly/shared';
+import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote, sleep, retryBackoffMs, fetchWithTimeout, invalidateCrmThreadCache, invalidateCrmUnreadCache } from '@voxly/shared';
 import { TwentyClient } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
@@ -145,7 +147,7 @@ const WA_WEBHOOK_EVENTS = [
   'PRESENCE_UPDATE',
 ] as const;
 
-/** Debounce connect-triggered history sync (CONNECTION_UPDATE + QR poll both fire). */
+/** Debounce repeated history-sync requests (manual button / overlapping calls). */
 const waHistorySyncStartedAt = new Map<string, number>();
 const WA_HISTORY_SYNC_DEBOUNCE_MS = 2 * 60 * 1000;
 
@@ -294,9 +296,22 @@ async function evoFetch(
     headers.set('Content-Type', 'application/json');
   }
   try {
-    const res = await fetch(`${EVOLUTION_API_URL}${path}`, { ...init, headers });
-    const json = await res.json().catch(() => ({}));
-    return { status: res.status, json, ok: res.ok };
+    // 429 on write ops → backoff (1s → 5s → 30s) and retry; read/poll paths pass through.
+    const isRead = (init.method ?? 'GET').toUpperCase() === 'GET';
+    let attempt = 0;
+    for (;;) {
+      const res = await fetchWithTimeout(`${EVOLUTION_API_URL}${path}`, { ...init, headers, timeout: 15000 });
+      const json = await res.json().catch(() => ({}));
+      if (res.status !== 429 || isRead || attempt >= 3) {
+        return { status: res.status, json, ok: res.ok };
+      }
+      const backoffMs = retryBackoffMs(attempt);
+      console.warn(
+        `[ai-whatsapp] evo 429 ${path}, attempt=${attempt + 1}, backoff=${backoffMs}ms`,
+      );
+      await sleep(backoffMs);
+      attempt += 1;
+    }
   } catch (err) {
     return {
       status: 503,
@@ -536,43 +551,63 @@ async function fetchEvolutionMediaBase64(opts: {
   messageId: string;
   remoteJid?: string;
   convertToMp4?: boolean;
+  /** CRM outbound bubbles need fromMe=true; inbound false. Retry opposite on miss. */
+  fromMe?: boolean;
 }): Promise<{ base64: string; mimeType: string; fileName?: string } | null> {
-  const key: Record<string, unknown> = { id: opts.messageId };
-  if (opts.remoteJid) {
-    key.remoteJid = opts.remoteJid.includes('@')
+  const remoteJid = opts.remoteJid
+    ? opts.remoteJid.includes('@')
       ? opts.remoteJid
-      : `${normalizeWaNumber(opts.remoteJid)}@s.whatsapp.net`;
-    key.fromMe = false;
-  }
-  const res = await evoFetch(
-    `/chat/getBase64FromMediaMessage/${encodeURIComponent(opts.instanceName)}`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        message: { key },
-        // Only convert video → mp4; converting audio/voice breaks ASR / playback.
-        convertToMp4: Boolean(opts.convertToMp4),
-      }),
-    },
-  );
-  if (!res.ok) {
-    console.warn(
-      '[ai-whatsapp] getBase64FromMediaMessage failed',
-      res.status,
-      evolutionErrorMessage(res.json, ''),
+      : `${normalizeWaNumber(opts.remoteJid)}@s.whatsapp.net`
+    : undefined;
+  const tryOnce = async (fromMe: boolean | undefined) => {
+    const key: Record<string, unknown> = { id: opts.messageId };
+    if (remoteJid) {
+      key.remoteJid = remoteJid;
+      if (fromMe !== undefined) key.fromMe = fromMe;
+    }
+    const res = await evoFetch(
+      `/chat/getBase64FromMediaMessage/${encodeURIComponent(opts.instanceName)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          message: { key },
+          // Only convert video → mp4; converting audio/voice breaks ASR / playback.
+          convertToMp4: Boolean(opts.convertToMp4),
+        }),
+      },
     );
-    return null;
-  }
-  const b64 = String(res.json?.base64 || res.json?.base64Data || '').replace(
-    /^data:[^;]+;base64,/,
-    '',
-  );
-  if (!b64) return null;
-  return {
-    base64: b64,
-    mimeType: String(res.json?.mimetype || res.json?.mimeType || 'application/octet-stream'),
-    fileName: res.json?.fileName ? String(res.json.fileName) : undefined,
+    if (!res.ok) {
+      console.warn(
+        '[ai-whatsapp] getBase64FromMediaMessage failed',
+        res.status,
+        evolutionErrorMessage(res.json, ''),
+        fromMe === undefined ? '' : `fromMe=${fromMe}`,
+      );
+      return null;
+    }
+    const b64 = String(res.json?.base64 || res.json?.base64Data || '').replace(
+      /^data:[^;]+;base64,/,
+      '',
+    );
+    if (!b64) return null;
+    return {
+      base64: b64,
+      mimeType: String(res.json?.mimetype || res.json?.mimeType || 'application/octet-stream'),
+      fileName: res.json?.fileName ? String(res.json.fileName) : undefined,
+    };
   };
+
+  const preferred =
+    opts.fromMe !== undefined ? opts.fromMe : remoteJid ? false : undefined;
+  let media = await tryOnce(preferred);
+  // Outbound CRM fileIds often lack externalMessageId — retry opposite fromMe.
+  if (!media && preferred !== undefined) {
+    media = await tryOnce(!preferred);
+  }
+  if (!media && preferred === undefined && remoteJid) {
+    media = (await tryOnce(false)) || (await tryOnce(true));
+  }
+  return media;
 }
 
 async function describeWaImage(
@@ -615,7 +650,7 @@ async function transcribeWaAudio(
   const timer = setTimeout(() => controller.abort(), 45_000);
   let res: Response;
   try {
-    res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+    res = await fetchWithTimeout(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -632,6 +667,7 @@ async function transcribeWaAudio(
         },
       }),
       signal: controller.signal,
+      timeout: 45000,
     });
   } catch (err) {
     console.error('[ai-whatsapp] transcription fetch failed', err);
@@ -693,6 +729,26 @@ async function enrichWaTextWithMediaAi(opts: {
         fileName: opts.fileNameHint,
       })
     : null;
+
+  // Phase 3.2: pre-check wallet before paid ASR/vision. Docs are extracted locally (free).
+  // No balance → skip the paid call and drop a placeholder so the message still lands in CRM.
+  if (!docKind && (opts.needsAsr || opts.needsVision)) {
+    if (!(await hasAiBalance(opts.tenantId, 1))) {
+      const preCaption =
+        opts.text.startsWith('[') && opts.text.endsWith(']')
+          ? undefined
+          : opts.text;
+      const placeholder = looksLikeVideoNote
+        ? '[кружочек]'
+        : looksLikeVideo
+          ? '[видео]'
+          : opts.needsAsr
+            ? '[голосовое]'
+            : '[фото]';
+      return preCaption ? `${preCaption}\n\n${placeholder}` : placeholder;
+    }
+  }
+
   const media = await fetchEvolutionMediaBase64({
     instanceName: opts.instanceName,
     messageId: opts.messageId,
@@ -774,13 +830,20 @@ async function enrichWaTextWithMediaAi(opts: {
           baseUrl: OPENROUTER_BASE_URL,
         })
           .then((cost) =>
-            chargeAiUsage({
+            // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+            enqueueAiUsageCharge({
               tenantId: opts.tenantId,
               providerCostRub: cost.providerCostRub,
               tokens: cost.tokens || estTokens,
               model: asrModel,
               requestType: 'transcribe',
               channel: AI_USAGE_CHANNELS.WHATSAPP,
+              usageChargeKey: buildUsageChargeKey({
+                channel: AI_USAGE_CHANNELS.WHATSAPP,
+                tenantId: opts.tenantId,
+                requestType: 'transcribe',
+                externalId: opts.messageId,
+              }),
             }),
           )
           .catch((err) => console.warn('[ai-whatsapp] ASR charge failed', err));
@@ -814,13 +877,20 @@ async function enrichWaTextWithMediaAi(opts: {
           baseUrl: OPENROUTER_BASE_URL,
         })
           .then((cost) =>
-            chargeAiUsage({
+            // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+            enqueueAiUsageCharge({
               tenantId: opts.tenantId,
               providerCostRub: cost.providerCostRub,
               tokens: cost.tokens || estTokens,
               model: visionModel,
               requestType: 'vision',
               channel: AI_USAGE_CHANNELS.WHATSAPP,
+              usageChargeKey: buildUsageChargeKey({
+                channel: AI_USAGE_CHANNELS.WHATSAPP,
+                tenantId: opts.tenantId,
+                requestType: 'vision',
+                externalId: opts.messageId,
+              }),
             }),
           )
           .catch((err) => console.warn('[ai-whatsapp] vision charge failed', err));
@@ -1062,6 +1132,13 @@ function getEvolutionRedis(): Redis {
   }
   return evolutionRedis;
 }
+
+/** Redis for CRM thread-list cache invalidation (Phase 2.2), on the default queue DB (not Evolution's /6). Lazy. */
+const CRM_CACHE_REDIS_URL = process.env.REDIS_URL || 'redis://redis:6379';
+const crmCacheRedis = new Redis(CRM_CACHE_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
 
 function evolutionDbUrl(): string | undefined {
   if (process.env.EVOLUTION_DATABASE_URL?.trim()) {
@@ -2083,13 +2160,14 @@ async function enrichMaxPresenceFromPhone(opts: {
   if (!token) return;
 
   try {
-    const res = await fetch(`${bridge}/users/by-phone`, {
+    const res = await fetchWithTimeout(`${bridge}/users/by-phone`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ botId: maxBot.id, phone: `+${phone}` }),
+      timeout: 15000,
     });
     const json = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -2161,13 +2239,14 @@ async function enrichTelegramPresenceFromPhone(opts: {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (token) {
     try {
-      const res = await fetch(`${bridge}/users/by-phone`, {
+      const res = await fetchWithTimeout(`${bridge}/users/by-phone`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ tenantId: opts.tenantId, phone: `+${phone}` }),
+        timeout: 15000,
       });
       const json = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -2335,7 +2414,7 @@ async function enrichTelegramPresenceFromPhone(opts: {
   }
 
   try {
-    const fullRes = await fetch(`${bridge}/users/full`, {
+    const fullRes = await fetchWithTimeout(`${bridge}/users/full`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -2346,6 +2425,7 @@ async function enrichTelegramPresenceFromPhone(opts: {
         username,
         userId: telegramUserId,
       }),
+      timeout: 15000,
     });
     const fullJson = (await fullRes.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -2940,10 +3020,6 @@ function cleanWaContactName(
   return n;
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function typingDelayMs(text: string): number {
   const base = 1400;
   const perChar = 40;
@@ -3261,7 +3337,7 @@ async function handleQrStart(tenantId: string, nameRaw: string) {
       where: { id: bot.id },
       data: { status: 'active' },
     });
-    scheduleWhatsAppHistorySync({ tenantId, botId: bot.id });
+    // History sync is manual only (portal «Синхронизировать» → /internal/crm/sync-history).
   }
 
   const preparingHint = !qr && String(stateVal).toLowerCase() !== 'open'
@@ -3376,7 +3452,7 @@ async function handleQrStatus(tenantId: string, nameRaw: string) {
       where: { id: bot.id },
       data: { status: 'active' },
     });
-    scheduleWhatsAppHistorySync({ tenantId, botId: bot.id });
+    // History sync is manual only (portal «Синхронизировать» → /internal/crm/sync-history).
   }
 
   const billing = await softCheckAddon(tenantId);
@@ -3438,12 +3514,18 @@ async function sendWhatsAppMedia(opts: {
 }): Promise<{ type: 'photo' | 'video' | 'document'; fileId: string; fileName: string; mimeType: string }> {
   const number = formatWaSendRecipient(opts.to);
   if (!number) throw new Error('WhatsApp recipient is empty');
-  const rawB64 = String(opts.mediaBase64 || '').replace(/^data:[^;]+;base64,/, '');
-  if (!rawB64) throw new Error('WhatsApp media payload is empty');
-  const mimeType = opts.mimeType || 'application/octet-stream';
+  // Evolution sendMedia validates with class-validator isBase64/isURL — a data: URL
+  // fails both and returns 400 "Owned media must be a url or base64". Pass pure base64.
+  const media = String(opts.mediaBase64 || '')
+    .replace(/^data:[^;]+;base64,/, '')
+    .replace(/\s+/g, '');
+  if (!media) throw new Error('WhatsApp media payload is empty');
+  let mimeType = opts.mimeType || 'application/octet-stream';
   const fileName = opts.fileName || 'file.bin';
   const mediatype = mediaTypeForMime(mimeType, fileName);
-  const media = `data:${mimeType};base64,${rawB64}`;
+  // Browser often sends application/octet-stream; Evolution needs a real media mime.
+  if (mediatype === 'image' && !mimeType.startsWith('image/')) mimeType = 'image/jpeg';
+  if (mediatype === 'video' && !mimeType.startsWith('video/')) mimeType = 'video/mp4';
   const res = await evoFetch(`/message/sendMedia/${encodeURIComponent(opts.instanceName)}`, {
     method: 'POST',
     body: JSON.stringify({
@@ -3470,6 +3552,52 @@ async function sendWhatsAppMedia(opts: {
     fileName,
     mimeType,
   };
+}
+
+/**
+ * WhatsApp status/story via Evolution 2.3.7 `POST /message/sendStatus/{instance}`.
+ * Public status: `allContacts: true` lets Evolution pick contacts from its own DB;
+ * otherwise pass explicit `statusJidList` of raw phone digits (`^\d+` per schema).
+ * `content` is a URL or base64 for image/video, plain text for text type.
+ */
+async function sendWhatsAppStory(opts: {
+  instanceName: string;
+  type: 'text' | 'image' | 'video';
+  content: string;
+  caption?: string;
+  statusJidList?: string[];
+  backgroundColor?: string;
+  font?: number;
+}): Promise<void> {
+  const statusJidList = (opts.statusJidList || [])
+    .map(normalizeWaNumber)
+    .filter(Boolean);
+  const body: Record<string, unknown> = {
+    type: opts.type,
+    content: opts.content,
+  };
+  if (opts.caption) body.caption = opts.caption;
+  if (opts.backgroundColor) body.backgroundColor = opts.backgroundColor;
+  if (typeof opts.font === 'number') body.font = opts.font;
+  if (statusJidList.length > 0) {
+    body.statusJidList = statusJidList;
+    body.allContacts = false;
+  } else {
+    // Evolution fills statusJidList from its own contact DB (public story).
+    body.allContacts = true;
+  }
+  const res = await evoFetch(
+    `/message/sendStatus/${encodeURIComponent(opts.instanceName)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(
+      evolutionErrorMessage(res.json, `Evolution story send failed (HTTP ${res.status})`),
+    );
+  }
 }
 
 /** Best-effort presenceSubscribe via Evolution — may refresh Baileys lidMapping (INC-097 v8.2). */
@@ -4003,6 +4131,12 @@ async function syncLeadToCrm(opts: {
               : conversationAfterMerge.platformUsername,
           },
         });
+        await upsertCrmRecordLink(prisma, {
+          tenantId: opts.tenantId,
+          conversationId: opts.conversationId,
+          twentyPersonId: personId,
+          twentyOpportunityId: opportunityId,
+        });
       }
       return;
     }
@@ -4081,6 +4215,12 @@ async function syncLeadToCrm(opts: {
           ? `+${phoneForCrm}`
           : conversationAfterMerge.platformUsername,
       },
+    });
+    await upsertCrmRecordLink(prisma, {
+      tenantId: opts.tenantId,
+      conversationId: opts.conversationId,
+      twentyPersonId: personId || null,
+      twentyOpportunityId: opportunityId || null,
     });
 
     if (personId || opportunityId) {
@@ -4535,6 +4675,11 @@ async function handleInboundMessage(opts: {
         opts.attachments && opts.attachments.length ? opts.attachments : undefined,
     },
   });
+  await invalidateCrmThreadCache(crmCacheRedis, resolved.tenantId, [
+    conversation.twentyPersonId,
+    conversation.twentyOpportunityId,
+  ]);
+  await invalidateCrmUnreadCache(crmCacheRedis, resolved.tenantId);
 
   void maybeAttributeMailingInbound({
     tenantId: resolved.tenantId,
@@ -6379,23 +6524,130 @@ async function runWhatsAppPrivateChatSync(opts: {
   };
 }
 
-function scheduleWhatsAppHistorySync(opts: {
-  tenantId: string;
-  botId: string;
-  force?: boolean;
-}): void {
-  void runWhatsAppPrivateChatSync({
-    tenantId: opts.tenantId,
-    botId: opts.botId,
-    dialogLimit: 0,
-    messageLimit: 500,
-    force: opts.force,
-  }).catch((err) => {
-    console.error(
-      `[ai-whatsapp] history-sync failed bot=${opts.botId}`,
-      err,
-    );
+/**
+ * Phone-app (or device) outbound: mirror into CRM as operator only.
+ * NEVER syncLeadToCrm / enrich / create Person·Opportunity (INC-118).
+ */
+async function mirrorWaPhoneOutbound(opts: {
+  instanceName: string;
+  item: any;
+}): Promise<void> {
+  const candidates = await prisma.botInstance.findMany({
+    where: { botType: 'ai_wa' },
+    take: 500,
   });
+  const bot =
+    candidates.find(
+      (b) => decodeSession(b.botTokenEncrypted)?.instanceName === opts.instanceName,
+    ) || null;
+  if (!bot) return;
+
+  const remoteJid = resolveInboundWaJid(opts.item);
+  if (!remoteJid || String(remoteJid).endsWith('@g.us')) return;
+  const jid = String(remoteJid);
+  if (
+    jid === 'status@broadcast' ||
+    jid.endsWith('@newsletter') ||
+    jid.endsWith('@broadcast')
+  ) {
+    return;
+  }
+  const ownPhone = bot.phoneNumberId || null;
+  if (isWaSystemOrSelfJid(jid, ownPhone)) return;
+
+  const messageId = opts.item?.key?.id ? String(opts.item.key.id) : undefined;
+  if (messageId) {
+    const dup = await prisma.chatMessage.findFirst({
+      where: {
+        externalMessageId: messageId,
+        conversation: { botInstanceId: bot.id, platform: 'whatsapp' },
+      },
+      select: { id: true },
+    });
+    if (dup) return;
+  }
+
+  const classified = classifyWaInbound(opts.item?.message, messageId);
+  if (!classified.text && !(classified.attachments?.length > 0)) return;
+
+  const from = normalizeWaNumber(jid) || jid;
+  const extractedPhone = extractPhoneFromInboundItem(opts.item);
+  const phoneE164 =
+    (extractedPhone && isLikelyE164Phone(extractedPhone) ? extractedPhone : undefined) ||
+    (isLikelyE164Phone(from) ? from : undefined);
+
+  let conversation = await prisma.conversation.findFirst({
+    where: {
+      tenantId: bot.tenantId,
+      botInstanceId: bot.id,
+      platform: 'whatsapp',
+      platformUserId: from,
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (!conversation && phoneE164) {
+    conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: bot.tenantId,
+        botInstanceId: bot.id,
+        platform: 'whatsapp',
+        OR: [
+          { platformUserId: phoneE164 },
+          { platformUsername: `+${phoneE164}` },
+          { platformUsername: phoneE164 },
+        ],
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+  if (!conversation && isWhatsAppLid(from)) {
+    // Last resort: any open WA thread with same LID digits in platformUserId already handled above.
+  }
+  if (!conversation) {
+    // Conversation shell only — no Person/Opp (lead sync forbidden on this path).
+    conversation = await prisma.conversation.create({
+      data: {
+        tenantId: bot.tenantId,
+        botInstanceId: bot.id,
+        platform: 'whatsapp',
+        platformUserId: from,
+        platformUsername: phoneE164 ? `+${phoneE164}` : null,
+        channel: 'whatsapp',
+        status: 'open',
+        mode: 'ai',
+      },
+    });
+  }
+
+  const atts = classified.attachments?.length ? classified.attachments : undefined;
+  const content =
+    (classified.text || '').trim() ||
+    (atts?.[0]
+      ? atts[0].type === 'photo'
+        ? '[фото]'
+        : atts[0].type === 'video'
+          ? '[видео]'
+          : atts[0].fileName
+            ? `[файл: ${atts[0].fileName}]`
+            : '[файл]'
+      : '[outbound]');
+
+  await prisma.chatMessage.create({
+    data: {
+      conversationId: conversation.id,
+      role: 'operator',
+      content,
+      externalMessageId: messageId,
+      ...(atts ? { attachments: atts } : {}),
+    },
+  });
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { updatedAt: new Date() },
+  });
+  console.log(
+    `[ai-whatsapp] phone-outbound mirrored conv=${conversation.id} mid=${messageId || '-'} peer=${from}`,
+  );
 }
 
 async function handleEvolutionWebhook(payload: any) {
@@ -6432,8 +6684,7 @@ async function handleEvolutionWebhook(payload: any) {
           where: { id: bot.id },
           data: { status: 'active', phoneNumberId: phone || bot.phoneNumberId },
         });
-        // MVP: pull private chats already in Evolution → CRM (skip @g.us).
-        scheduleWhatsAppHistorySync({ tenantId: bot.tenantId, botId: bot.id });
+        // History sync is manual only (portal «Синхронизировать» → /internal/crm/sync-history).
       }
     }
     return;
@@ -6791,6 +7042,62 @@ async function main() {
         return sendJson(res, 200, { ok: true, attachment: attachment || null });
       }
 
+      // Broadcast story: WhatsApp status via Evolution sendStatus (Job 1D.1).
+      if (req.method === 'POST' && url.pathname === '/internal/stories/send') {
+        const body = await readJsonBody(req);
+        const botId = String(body.botId || '').trim();
+        const text = String(body.text || '').trim();
+        const mediaUrl = String(body.mediaUrl || '').trim();
+        const caption = String(body.caption || '').trim();
+        const mediaType = String(body.mediaType || '').trim();
+        const statusJidList = Array.isArray(body.statusJidList)
+          ? body.statusJidList.map(String)
+          : [];
+        if (!botId || (!text && !mediaUrl)) {
+          return sendJson(res, 400, {
+            ok: false,
+            error: 'botId and text or mediaUrl required',
+          });
+        }
+        const bot = await prisma.botInstance.findFirst({
+          where: { id: botId, botType: 'ai_wa' },
+        });
+        if (!bot) return sendJson(res, 404, { ok: false, error: 'account not found' });
+        const session = decodeSession(bot.botTokenEncrypted);
+        if (!session?.instanceName) {
+          return sendJson(res, 400, { ok: false, error: 'WhatsApp session missing' });
+        }
+        try {
+          let type: 'text' | 'image' | 'video';
+          let content: string;
+          if (mediaUrl) {
+            type = mediaType === 'video' ? 'video' : 'image';
+            content = mediaUrl;
+          } else {
+            type = 'text';
+            content = text;
+            if (!body.backgroundColor && !statusJidList.length) {
+              body.backgroundColor = body.backgroundColor || '#000000';
+            }
+            body.font = body.font ?? 0;
+          }
+          await sendWhatsAppStory({
+            instanceName: session.instanceName,
+            type,
+            content,
+            caption: caption || (mediaUrl ? text : undefined),
+            statusJidList,
+            backgroundColor: body.backgroundColor,
+            font: body.font,
+          });
+          return sendJson(res, 200, { ok: true, type });
+        } catch (err) {
+          const message = String((err as Error)?.message || err);
+          console.error('[ai-whatsapp] story send failed', message);
+          return sendJson(res, 400, { ok: false, error: message });
+        }
+      }
+
       // CRM file preview: re-download media by Evolution message id.
       if (req.method === 'POST' && url.pathname === '/internal/messages/media') {
         const body = await readJsonBody(req);
@@ -6812,36 +7119,80 @@ async function main() {
           return sendJson(res, 400, { ok: false, error: 'WhatsApp session missing' });
         }
         let attTypeHint = '';
+        let fromMeHint: boolean | undefined =
+          typeof body.fromMe === 'boolean' ? body.fromMe : undefined;
         {
-          const msgRow = await prisma.chatMessage.findFirst({
+          let msgRow = await prisma.chatMessage.findFirst({
             where: {
               externalMessageId: messageId,
               conversation: { botInstanceId: bot.id },
             },
             select: {
+              role: true,
               attachments: true,
               conversation: { select: { platformUserId: true } },
             },
           });
+          // CRM outbound often stores Evolution key only in attachments.fileId
+          // (externalMessageId unset until INC-115) — scan recent messages.
+          if (!msgRow) {
+            const recent = await prisma.chatMessage.findMany({
+              where: { conversation: { botInstanceId: bot.id } },
+              orderBy: { sentAt: 'desc' },
+              take: 120,
+              select: {
+                role: true,
+                attachments: true,
+                conversation: { select: { platformUserId: true } },
+              },
+            });
+            msgRow =
+              recent.find((m) => {
+                if (!Array.isArray(m.attachments)) return false;
+                return m.attachments.some(
+                  (a: unknown) =>
+                    a &&
+                    typeof a === 'object' &&
+                    (a as { fileId?: string }).fileId === messageId,
+                );
+              }) || null;
+          }
           if (!remoteJid) {
             remoteJid = msgRow?.conversation?.platformUserId || '';
           }
+          if (fromMeHint === undefined && msgRow?.role) {
+            fromMeHint =
+              msgRow.role === 'operator' || msgRow.role === 'assistant'
+                ? true
+                : msgRow.role === 'user'
+                  ? false
+                  : undefined;
+          }
           if (Array.isArray(msgRow?.attachments)) {
+            const match = msgRow.attachments.find(
+              (a: unknown) =>
+                a &&
+                typeof a === 'object' &&
+                (a as { fileId?: string }).fileId === messageId,
+            ) as { type?: string } | undefined;
             const first = msgRow.attachments.find(
               (a: unknown) =>
                 a &&
                 typeof a === 'object' &&
                 typeof (a as { fileId?: string }).fileId === 'string',
             ) as { type?: string } | undefined;
-            attTypeHint = first?.type || '';
+            attTypeHint = match?.type || first?.type || '';
           }
         }
-        const convertToMp4 = attTypeHint === 'video';
+        const convertToMp4 =
+          attTypeHint === 'video' ||
+          /\.(mp4|mov|webm|mkv)$/i.test(String(body.fileName || ''));
         const media = await fetchEvolutionMediaBase64({
           instanceName: session.instanceName,
           messageId,
           remoteJid: remoteJid || undefined,
           convertToMp4,
+          fromMe: fromMeHint,
         });
         if (!media) {
           return sendJson(res, 404, { ok: false, error: 'media not available' });

@@ -13,6 +13,8 @@
   "dependencies": {
     "@voxly/db": "workspace:*",
     "@voxly/shared": "workspace:*",
+    "bullmq": "^5.13.0",
+    "ioredis": "^5.4.0",
     "mammoth": "^1.9.0",
     "pdf-parse": "^1.1.1"
   },

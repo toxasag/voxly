@@ -17,6 +17,7 @@ import { syncOwnerProfileFromControlDb } from '../services/twenty-owner-profile-
 import { processFormLead } from '../services/form-lead-process.js';
 import { runTelegramCrmEnrich } from '../services/telegram-crm-enrich.js';
 import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
+import { startAiUsageWorker } from '@voxly/ai-core';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 /** Integration tests import the API without starting BullMQ workers. */
@@ -351,7 +352,7 @@ export async function enqueueFormLead(data: FormLeadJobData): Promise<void> {
   });
 }
 
-/** After GramJS personal account connects — enrich CRM Persons + soft-merge by phone. */
+/** Manual/admin GramJS CRM enrich (+ private chat sync inside job). Not auto-queued on connect. */
 export async function enqueueGramjsCrmEnrich(
   data: GramjsCrmEnrichJobData,
 ): Promise<void> {
@@ -414,4 +415,11 @@ gramjsCrmEnrichWorker?.on('failed', (job, err) => {
     err.message,
   );
 });
+
+// =====================================
+// Worker: durable AI usage charging (Phase 3.3)
+// Consumes charges enqueued by ai-telegram/ai-whatsapp media enrichment via
+// `enqueueAiUsageCharge` (idempotent on `usageChargeKey`); retries transient DB errors.
+// =====================================
+export const aiUsageWorker = WORKERS_ENABLED ? startAiUsageWorker() : null;
 

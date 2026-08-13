@@ -2,11 +2,13 @@
 // Telegram Business + private bot AI: OpenRouter LLM, handoff pause/disable, human-like send.
 // Webhooks arrive via gift-bot-worker forward for botType=ai_tg (path /tg/{tenantId}/{botId}).
 
-import { prisma } from '@voxly/db';
+import { prisma, upsertCrmRecordLink } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import {
   chargeAiUsage,
   hasAiBalance,
+  enqueueAiUsageCharge,
+  buildUsageChargeKey,
   resolveProviderCostRub,
   retrieveAgentContext,
   formatRagPromptBlock,
@@ -39,8 +41,12 @@ import {
   PRICING,
   isWithinMailingAttributionWindow,
   mailingAttributionNote,
+  fetchWithTimeout,
+  invalidateCrmThreadCache,
+  invalidateCrmUnreadCache,
 } from '@voxly/shared';
 import OpenAI from 'openai';
+import IORedis from 'ioredis';
 
 const PORT = 3005;
 const OPENROUTER_API_KEY =
@@ -72,6 +78,13 @@ const openai = new OpenAI({
     'HTTP-Referer': process.env.VOXLY_PUBLIC_URL || 'https://getvoxly.ru',
     'X-Title': 'Voxly AI Telegram',
   },
+});
+
+/** Redis for CRM thread-list cache invalidation (Phase 2.2). Lazy — never blocks boot. */
+const CRM_CACHE_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const crmCacheRedis = new IORedis(CRM_CACHE_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
 });
 
 /** business_connection_id → owner telegram user id */
@@ -322,6 +335,16 @@ async function handleInternalInbound(
               caption,
             });
           }
+        } else if (!(await hasAiBalance(tenantId, 1))) {
+          // Phase 3.2: no balance → skip paid ASR/vision, keep a placeholder for CRM.
+          const placeholder = isVideoNote
+            ? '[кружочек]'
+            : isVideo
+              ? '[видео]'
+              : isAudio
+                ? '[голосовое]'
+                : '[фото]';
+          text = caption ? `${caption}\n\n${placeholder}` : placeholder;
         } else if (isAudio || isVideoNote || isVideo) {
           const asrModel = await getAsrModel();
           let asrBuf: Buffer = buffer;
@@ -347,13 +370,20 @@ async function handleInternalInbound(
               baseUrl: OPENROUTER_BASE_URL,
             })
               .then((cost) =>
-                chargeAiUsage({
+                // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+                enqueueAiUsageCharge({
                   tenantId,
                   providerCostRub: cost.providerCostRub,
                   tokens: cost.tokens || estTokens,
                   model: asrModel,
                   requestType: 'transcribe',
                   channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
+                  usageChargeKey: buildUsageChargeKey({
+                    channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
+                    tenantId,
+                    requestType: 'transcribe',
+                    externalId: externalMessageId,
+                  }),
                 }),
               )
               .catch((err) =>
@@ -384,13 +414,20 @@ async function handleInternalInbound(
               baseUrl: OPENROUTER_BASE_URL,
             })
               .then((cost) =>
-                chargeAiUsage({
+                // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+                enqueueAiUsageCharge({
                   tenantId,
                   providerCostRub: cost.providerCostRub,
                   tokens: cost.tokens || estTokens,
                   model: visionModel,
                   requestType: 'vision',
                   channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
+                  usageChargeKey: buildUsageChargeKey({
+                    channel: AI_USAGE_CHANNELS.TELEGRAM_PERSONAL,
+                    tenantId,
+                    requestType: 'vision',
+                    externalId: externalMessageId,
+                  }),
                 }),
               )
               .catch((err) =>
@@ -437,6 +474,11 @@ async function handleInternalInbound(
       attachments: attachments.length ? attachments : undefined,
     },
   });
+  await invalidateCrmThreadCache(crmCacheRedis, tenantId, [
+    conversation.twentyPersonId,
+    conversation.twentyOpportunityId,
+  ]);
+  await invalidateCrmUnreadCache(crmCacheRedis, tenantId);
   void maybeAttributeMailingInbound({
     tenantId,
     conversationId: conversation.id,
@@ -740,8 +782,9 @@ async function resolveBusinessOwnerId(
   if (cached) return cached;
 
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${botApi}/getBusinessConnection?business_connection_id=${encodeURIComponent(businessConnectionId)}`,
+      { timeout: 15000 },
     );
     const data = (await res.json()) as any;
     const ownerId = Number(data?.result?.user?.id);
@@ -1305,6 +1348,7 @@ async function asrTelegramVideo(opts: {
   durationSec?: number;
   caption?: string;
   tag: 'видео' | 'кружочек';
+  messageId?: string;
 }): Promise<{ text?: string; mediaPlaceholder?: string }> {
   const placeholder = `[${opts.tag}]`;
   const failText = (reason?: string) => {
@@ -1377,13 +1421,20 @@ async function asrTelegramVideo(opts: {
           baseUrl: OPENROUTER_BASE_URL,
         })
           .then((cost) =>
-            chargeAiUsage({
+            // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+            enqueueAiUsageCharge({
               tenantId: opts.tenantId!,
               providerCostRub: cost.providerCostRub,
               tokens: cost.tokens || estTokens,
               model: asrModel,
               requestType: 'transcribe',
               channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+              usageChargeKey: buildUsageChargeKey({
+                channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+                tenantId: opts.tenantId!,
+                requestType: 'transcribe',
+                externalId: opts.messageId,
+              }),
             }),
           )
           .catch((err) =>
@@ -1439,13 +1490,20 @@ async function extractInboundText(
             baseUrl: OPENROUTER_BASE_URL,
           })
             .then((cost) =>
-              chargeAiUsage({
+              // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+              enqueueAiUsageCharge({
                 tenantId,
                 providerCostRub: cost.providerCostRub,
                 tokens: cost.tokens || estTokens,
                 model: asrModel,
                 requestType: 'transcribe',
                 channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+                usageChargeKey: buildUsageChargeKey({
+                  channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+                  tenantId,
+                  requestType: 'transcribe',
+                  externalId: String(message.message_id),
+                }),
               }),
             )
             .catch((err) => console.warn('[ai-telegram] ASR charge failed', err));
@@ -1500,13 +1558,20 @@ async function extractInboundText(
             baseUrl: OPENROUTER_BASE_URL,
           })
             .then((cost) =>
-              chargeAiUsage({
+              // Phase 3.3: durable + idempotent charge (retries survive a worker crash).
+              enqueueAiUsageCharge({
                 tenantId,
                 providerCostRub: cost.providerCostRub,
                 tokens: cost.tokens || estTokens,
                 model: visionModel,
                 requestType: 'vision',
                 channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+                usageChargeKey: buildUsageChargeKey({
+                  channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
+                  tenantId,
+                  requestType: 'vision',
+                  externalId: String(message.message_id),
+                }),
               }),
             )
             .catch((err) => console.warn('[ai-telegram] vision charge failed', err));
@@ -1542,6 +1607,7 @@ async function extractInboundText(
       durationSec: message.video_note.duration,
       caption: message.caption,
       tag: 'кружочек',
+      messageId: String(message.message_id),
     });
   }
 
@@ -1554,6 +1620,7 @@ async function extractInboundText(
       durationSec: message.video.duration,
       caption: message.caption,
       tag: 'видео',
+      messageId: String(message.message_id),
     });
   }
 
@@ -1574,6 +1641,7 @@ async function extractInboundText(
         fileSize: message.document.file_size,
         caption: message.caption,
         tag: 'видео',
+        messageId: String(message.message_id),
       });
     }
     const docKind = detectDocumentKind({
@@ -1757,10 +1825,11 @@ async function downloadTelegramFile(
   botApi: string,
   fileId: string,
 ): Promise<{ buffer: Buffer; filePath: string } | null> {
-  const metaRes = await fetch(`${botApi}/getFile`, {
+  const metaRes = await fetchWithTimeout(`${botApi}/getFile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file_id: fileId }),
+    timeout: 15000,
   });
   const meta = (await metaRes.json()) as {
     ok?: boolean;
@@ -1773,7 +1842,7 @@ async function downloadTelegramFile(
   }
   const token = botTokenFromApi(botApi);
   const fileUrl = `https://api.telegram.org/file/bot${token}/${meta.result.file_path}`;
-  const fileRes = await fetch(fileUrl);
+  const fileRes = await fetchWithTimeout(fileUrl, { timeout: 30000 });
   if (!fileRes.ok) {
     console.warn('[ai-telegram] file download failed', fileRes.status);
     return null;
@@ -1793,7 +1862,7 @@ async function transcribeAudio(
   const timer = setTimeout(() => controller.abort(), 45_000);
   let res: Response;
   try {
-    res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+    res = await fetchWithTimeout(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -1810,6 +1879,7 @@ async function transcribeAudio(
         },
       }),
       signal: controller.signal,
+      timeout: 45000,
     });
   } catch (err) {
     console.error('[ai-telegram] transcription fetch failed', err);
@@ -2013,7 +2083,7 @@ async function requestCrossChannelEnrich(opts: {
   const phone = String(opts.phone || '').replace(/\D/g, '');
   if (!token || !opts.personId || phone.length < 10) return;
   try {
-    const res = await fetch(`${saasApiBase()}/api/internal/crm/enrich-by-phone`, {
+    const res = await fetchWithTimeout(`${saasApiBase()}/api/internal/crm/enrich-by-phone`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -2026,6 +2096,7 @@ async function requestCrossChannelEnrich(opts: {
         phone,
         channels: opts.channels || ['max', 'whatsapp'],
       }),
+      timeout: 15000,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -2063,7 +2134,7 @@ async function enrichPersonFromGramjs(
   if (!gramjsBotId) return;
 
   try {
-    const res = await fetch(`${gramjsBridgeBase()}/users/full`, {
+    const res = await fetchWithTimeout(`${gramjsBridgeBase()}/users/full`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -2075,6 +2146,7 @@ async function enrichPersonFromGramjs(
         userId: opts.telegramId,
         username: opts.username,
       }),
+      timeout: 15000,
     });
     const json = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -2437,6 +2509,12 @@ async function syncLeadToCrm(opts: {
         : conversation.platformUsername,
     },
   });
+  await upsertCrmRecordLink(prisma, {
+    tenantId: opts.tenantId,
+    conversationId: opts.conversationId,
+    twentyPersonId: personId || null,
+    twentyOpportunityId: opportunityId || null,
+  });
 
   if (personId && (clearedStale || !conversation.twentyPersonId)) {
     try {
@@ -2646,10 +2724,11 @@ async function handleCallback(update: any, botApi: string, tenantId: string, bot
     | string
     | undefined;
 
-  await fetch(`${botApi}/answerCallbackQuery`, {
+  await fetchWithTimeout(`${botApi}/answerCallbackQuery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ callback_query_id: update.callback_query.id }),
+    timeout: 15000,
   });
 
   switch (callbackData) {
@@ -2669,7 +2748,7 @@ async function showModeSelector(
   chatId: number,
   businessConnectionId?: string,
 ) {
-  await fetch(`${botApi}/sendMessage`, {
+  await fetchWithTimeout(`${botApi}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2683,6 +2762,7 @@ async function showModeSelector(
         ],
       },
     }),
+    timeout: 15000,
   });
 }
 
@@ -2843,7 +2923,7 @@ async function markTelegramRead(
 
   if (businessConnectionId) {
     for (const messageId of ids) {
-      await fetch(`${botApi}/readBusinessMessage`, {
+      await fetchWithTimeout(`${botApi}/readBusinessMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2851,6 +2931,7 @@ async function markTelegramRead(
           chat_id: chatId,
           message_id: Number(messageId),
         }),
+        timeout: 15000,
       }).catch(() => undefined);
     }
     return;
@@ -2859,10 +2940,11 @@ async function markTelegramRead(
   // Private bot chats: best-effort (Bot API has no universal read receipt).
   const maxId = Math.max(...ids.map((id) => Number(id) || 0));
   if (maxId > 0) {
-    await fetch(`${botApi}/readChatHistory`, {
+    await fetchWithTimeout(`${botApi}/readChatHistory`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, max_id: maxId }),
+      timeout: 15000,
     }).catch(() => undefined);
   }
 }
@@ -2873,7 +2955,7 @@ async function sendChatAction(
   action: string,
   businessConnectionId?: string,
 ) {
-  await fetch(`${botApi}/sendChatAction`, {
+  await fetchWithTimeout(`${botApi}/sendChatAction`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2881,6 +2963,7 @@ async function sendChatAction(
       action,
       ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
     }),
+    timeout: 15000,
   }).catch(() => undefined);
 }
 
@@ -2889,8 +2972,9 @@ async function businessConnectionCanReply(
   businessConnectionId: string,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${botApi}/getBusinessConnection?business_connection_id=${encodeURIComponent(businessConnectionId)}`,
+      { timeout: 15000 },
     );
     const json = (await res.json()) as {
       ok?: boolean;
@@ -2958,7 +3042,7 @@ async function sendBotMessage(
   text: string,
   businessConnectionId?: string,
 ): Promise<boolean> {
-  const res = await fetch(`${botApi}/sendMessage`, {
+  const res = await fetchWithTimeout(`${botApi}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2966,6 +3050,7 @@ async function sendBotMessage(
       text,
       ...(businessConnectionId ? { business_connection_id: businessConnectionId } : {}),
     }),
+    timeout: 15000,
   });
   const data = (await res.json()) as any;
   if (!data.ok) {

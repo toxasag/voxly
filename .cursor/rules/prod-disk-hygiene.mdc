@@ -1,0 +1,42 @@
+---
+description: Prod disk hygiene — prune unused Docker images after deploys (INC-052/092)
+alwaysApply: true
+---
+
+# Prod disk hygiene (ENOSPC prevention)
+
+Prod VPS disk fills mainly with **dangling/unused Docker images** after rebuilds — not client DB volumes. Recurrence: **INC-052**, **INC-092** (PG panic / Redis MISCONF / login 500). Related: **INC-070** (Chat tab lost mid-`refresh-crm-chat` when disk full).
+
+## Mandatory habit
+
+After any **heavy** prod deploy day (multi-service `--build`, several recreates, or when `df` free **&lt; 20GB**):
+
+1. Check: `df -h /` on `150.241.98.135` (also see `docs/agent/CAPACITY.md`).
+2. If free **&lt; 15–20GB** or many unused images: reclaim **images only**.
+3. Safe commands (SSH readonly-ops style):
+
+```bash
+df -h /
+docker system df
+# unused images ONLY — keeps images used by running containers
+docker image prune -af
+# optional: stopped containers (not volumes)
+docker container prune -f
+# optional: journal
+journalctl --vacuum-size=50M
+df -h /
+```
+
+4. Target after prune: prefer **≥20GB** free on `/` before the next multi-service rebuild.
+
+## Never
+
+- `docker compose down -v` / `docker volume prune` / wipe named volumes
+- Treat local DB dump as prod cleanup
+- Skip prune and “hope” the next deploy fits (ENOSPC mid-refresh uninstalls CRM Chat)
+
+## Agent behavior
+
+- Before heavy `./scripts/prod-deploy.sh` of several services: read free disk; if tight → prune **first**, then deploy.
+- After reclaiming significant space: note in `WORKLOG.md` + refresh `CAPACITY.md` snapshot when material.
+- Do not invent numbers — measure with `df` / `docker system df`.

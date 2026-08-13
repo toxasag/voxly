@@ -181,7 +181,7 @@ export function aiUsageChannelLabel(channel: string | null | undefined): string 
 }
 
 export const PRICING = {
-  CRM_BASE_MONTHLY: 500,
+  CRM_BASE_MONTHLY: 600,
   EXTRA_SEAT_MONTHLY: 300,
   GIFT_BOT_MONTHLY: 500,
   GIFT_BOT_MAX_MONTHLY: 500,
@@ -755,10 +755,69 @@ export function buildVoxlyBotUsername(nickname: string, sequence: number): strin
 }
 
 export {
+  sleep,
+  randomInt,
+  jitterMs,
+  pickFloodDelayMs,
+  antiFloodPause,
+  retryBackoffMs,
+  warmupFactor,
+  telegramStoryDailyLimit,
+  dailySendLimitFor,
+  dailyStoryLimitFor,
+  dailyCounterKey,
+  dailyStoryCounterKey,
+  FLOOD_DEFAULT_WINDOWS,
+  FLOOD_RETRY_BACKOFF_MS,
+  DEFAULT_DAILY_SEND_LIMIT,
+  DEFAULT_DAILY_STORY_LIMIT,
+  type FloodWindow,
+  type FloodActionKind,
+} from './flood-guard.js';
+
+export {
+  broadcastPoolIds,
+  isBotFlooded,
+  pickLeastLoadedBot,
+  poolPauseUntil,
+  type BroadcastPoolCandidate,
+} from './broadcast-pool.js';
+
+export {
+  expandSpintax,
+  previewSpintax,
+  spintaxGroupsCount,
+} from './spintax.js';
+
+export { fetchWithTimeout } from './fetch.js';
+
+export {
+  CRM_THREAD_CACHE_TTL_SEC,
+  crmThreadCacheKey,
+  readCrmThreadCache,
+  writeCrmThreadCache,
+  invalidateCrmThreadCache,
+  CRM_READ_DEBOUNCE_SEC,
+  crmReadDebounceKey,
+  claimCrmReadDebounce,
+  type CrmThreadCacheRedis,
+} from './crm-thread-cache.js';
+
+export {
+  CRM_UNREAD_CACHE_TTL_SEC,
+  crmUnreadCacheKey,
+  readCrmUnreadCache,
+  writeCrmUnreadCache,
+  invalidateCrmUnreadCache,
+  type CrmUnreadCacheRedis,
+} from './crm-unread-cache.js';
+
+export {
   TELEGRAM_CLIENT_MD_HINT,
   TELEGRAM_CLIENT_MD_RMB_HINT,
   parseTelegramClientMd,
   clientMdToMarkdownV2,
+  clientMdToTelegramHtml,
   wrapSelection,
   type TgMdNode,
 } from './telegram-md.js';

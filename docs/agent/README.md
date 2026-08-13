@@ -10,7 +10,7 @@
 2. Протокол `apps/.cursorrules`: **`docs/ai/FEATURES.md`** + **`docs/ai/ARCHITECTURE.md`** (фичи и паттерны; обновлять после значимой работы).
 3. При задаче по **чату / AI-агентам / WA / TG / GramJS** → **`CHAT.md`** (golden path — не регрессировать) + ADR-014 в `DECISIONS.md` + freeze-card в **`modules/`** (см. `modules/README.md`).
     3b. При задаче по **gift-бот порталу** (`/dashboard/bots/[botId]`, превью, медиа, emoji, профиль) → **CAPABILITIES** «Gift bot detail» + **ADR-027** + `modules/gift-bot.md` — не регрессировать UX для всех тенантов.
-    3c. Перед правкой WA sync / GramJS CRM / chat panel / social links / gift-bot / AI agent / Telegram secretary / deal dedupe / cross-channel enrich → открой карточку в **`modules/`**, потом код; после — smoke из карточки. Baseline **2026-08-06 WORKING** (см. `CAPABILITIES.md` Verified baseline).
+    3c. Перед правкой WA sync / GramJS CRM / chat panel / MAX personal / social links / gift-bot / AI agent / Telegram secretary / deal dedupe / cross-channel enrich → открой карточку в **`modules/`**, потом код; после — smoke из карточки. Baseline **2026-08-06 WORKING**; **MAX + WA CRM chat FROZEN 2026-08-07 ~16:14** (см. `CAPABILITIES.md` Verified baseline).
 4. При задаче по данным/API/воркерам → `DATA.md` / `FLOWS.md` / `SERVICES.md` (только нужные).
 5. `steps.md` §4 «Текущее состояние» — снимок сессии, E2E, next steps.
 6. При дебаге runtime → **сначала** `INCIDENTS.md`.

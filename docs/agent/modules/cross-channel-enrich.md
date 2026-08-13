@@ -36,6 +36,7 @@ Surface: CHAT.md §7; CAPABILITIES «Cross-channel enrich» + admin sync-opportu
 - INC-106 — WA→TG enrich scrape / noname
 - INC-107 — Social field order (Telegram→WhatsApp→MAX) drift; reapply JWT; SQL + twenty recreate
 - INC-102 — open/tg without @username
+- INC-113 — owner phone on peer Person → enrich wrote toxasagmsk TG/about/birthday (fix: skip-me + phone fill-empty + `forbidPhones` / `stripOwnerPhone`)
 - Related: INC-044 phone cross-channel Person merge
 
 ## Smoke (~1–2 min)

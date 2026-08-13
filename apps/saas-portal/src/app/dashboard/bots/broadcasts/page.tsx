@@ -8,6 +8,7 @@ import { Loader2, Trash2, Upload } from 'lucide-react';
 import { authHeaders } from '@/lib/auth';
 import { uploadBotMedia } from '@/lib/upload-bot-media';
 import { handleMailingBillingGate } from '@/lib/checkout';
+import { spintaxGroupsCount, previewSpintax } from '@voxly/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -24,6 +25,7 @@ import { MailingBillingBanner } from '@/components/portal/mailing-billing-banner
 type Segment = 'gifted' | 'not_gifted' | 'all';
 type FunnelPhase = 'started' | 'awaiting_sub' | 'gifted' | 'not_gifted';
 type MediaType = 'photo' | 'video' | 'document' | 'voice' | 'video_note' | 'audio';
+type Channel = 'gift' | 'story';
 
 interface BotRow {
   id: string;
@@ -156,10 +158,14 @@ export default function BroadcastsPage() {
   const [mediaUrl, setMediaUrl] = useState('');
   const [telegramFileId, setTelegramFileId] = useState('');
   const [mediaType, setMediaType] = useState<MediaType | ''>('');
+  const [channel, setChannel] = useState<Channel>('gift');
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkText, setLinkText] = useState('');
   const [localPreview, setLocalPreview] = useState('');
   const [scheduledAt, setScheduledAt] = useState('');
   const [history, setHistory] = useState<BroadcastRow[]>([]);
   const [busy, setBusy] = useState(false);
+  const [previewSamples, setPreviewSamples] = useState<string[] | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{
     percent: number;
@@ -178,7 +184,11 @@ export default function BroadcastsPage() {
     setMediaUrl('');
     setTelegramFileId('');
     setMediaType('');
+    setChannel('gift');
+    setLinkUrl('');
+    setLinkText('');
     setScheduledAt('');
+    setPreviewSamples(null);
     setLocalPreview((prev) => {
       if (prev.startsWith('blob:')) URL.revokeObjectURL(prev);
       return '';
@@ -291,6 +301,11 @@ export default function BroadcastsPage() {
         segment,
         text: text.trim(),
       };
+      if (channel === 'story') {
+        body.channel = 'story';
+        if (linkUrl.trim()) body.linkUrl = linkUrl.trim();
+        if (linkText.trim()) body.linkText = linkText.trim();
+      }
       if (funnelPhase) body.funnelPhase = funnelPhase;
       if (telegramFileId) {
         body.telegramFileId = telegramFileId;
@@ -315,6 +330,8 @@ export default function BroadcastsPage() {
                 telegramFileId: telegramFileId || null,
                 mediaUrl: telegramFileId ? null : mediaUrl.trim() || null,
                 mediaType: mediaType || null,
+                linkUrl: linkUrl.trim() || null,
+                linkText: linkText.trim() || null,
               }
             : body,
         ),
@@ -436,6 +453,18 @@ export default function BroadcastsPage() {
                 </div>
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="channel">Тип рассылки</Label>
+                <select
+                  id="channel"
+                  className={selectClassName}
+                  value={channel}
+                  onChange={(e) => setChannel(e.target.value as Channel)}
+                >
+                  <option value="gift">Подарок (Bot API)</option>
+                  <option value="story">Сторис (Telegram/WA)</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
                 <Label htmlFor="text">Текст</Label>
                 <Textarea
                   id="text"
@@ -443,6 +472,33 @@ export default function BroadcastsPage() {
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                 />
+                <div className="flex items-center gap-2">
+                  {spintaxGroupsCount(text) > 0 ? (
+                    <Badge variant="secondary">{spintaxGroupsCount(text)} гр. вариантов</Badge>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!text.trim() || spintaxGroupsCount(text) === 0}
+                    onClick={() => setPreviewSamples(previewSpintax(text, 5))}
+                  >
+                    Предпросмотр вариантов
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Спинтакс: <code>{'{вариант|вариант}'}</code> — каждый получатель увидит случайный вариант.
+                </p>
+                {previewSamples ? (
+                  <div className="space-y-1 rounded-md border bg-muted/40 p-2.5">
+                    {previewSamples.map((sample, i) => (
+                      <p key={i} className="text-xs text-muted-foreground">
+                        <span className="mr-1.5 text-primary">{i + 1}.</span>
+                        {sample}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <MediaPicker
                 label="Медиа"
@@ -481,6 +537,26 @@ export default function BroadcastsPage() {
                     }}
                     placeholder="https://..."
                     inputMode="url"
+                  />
+                </div>
+              )}
+              {channel === 'story' && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="linkUrl">Ссылка (URL)</Label>
+                  <Input
+                    id="linkUrl"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    placeholder="https://example.com"
+                    inputMode="url"
+                  />
+                  <Label htmlFor="linkText">Текст ссылки</Label>
+                  <Input
+                    id="linkText"
+                    value={linkText}
+                    onChange={(e) => setLinkText(e.target.value)}
+                    placeholder="Нажмите здесь"
+                    maxLength={100}
                   />
                 </div>
               )}

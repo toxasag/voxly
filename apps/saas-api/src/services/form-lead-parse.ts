@@ -2,6 +2,9 @@
  * Normalize inbound web form payloads (Tilda form-urlencoded, WordPress/generic JSON).
  */
 
+import { createHash } from 'node:crypto';
+import { phoneFingerprint } from '@voxly/twenty-client';
+
 export type FormLeadSource = 'tilda' | 'wordpress' | 'generic';
 
 export interface FormAttribution {
@@ -9,6 +12,7 @@ export interface FormAttribution {
   gaClientId?: string;
   yclid?: string;
   gclid?: string;
+  msclkid?: string;
   fbp?: string;
   fbc?: string;
   rbClickid?: string;
@@ -30,6 +34,8 @@ export interface NormalizedFormLead {
   pageUrl?: string;
   referer?: string;
   cookiesRaw?: string;
+  /** Client-side submit timestamp when the form provides one (ISO or epoch ms). */
+  clientTs?: string;
   attribution: FormAttribution;
   rawFields: Record<string, unknown>;
   /** Tilda connection probe: body has only test=test */
@@ -118,6 +124,7 @@ export function parseCookiesBlob(raw: string | undefined): {
   if (cookies._fbc) attribution.fbc = cookies._fbc;
   if (cookies.yclid) attribution.yclid = cookies.yclid;
   if (cookies.gclid) attribution.gclid = cookies.gclid;
+  if (cookies.msclkid) attribution.msclkid = cookies.msclkid;
   if (cookies.rb_clickid || cookies.rbClickid) {
     attribution.rbClickid = cookies.rb_clickid || cookies.rbClickid;
   }
@@ -139,6 +146,7 @@ export function parseCookiesBlob(raw: string | undefined): {
       else if (k === 'utm_term') attribution.utmTerm = v;
       else if (k === 'yclid') attribution.yclid = v;
       else if (k === 'gclid') attribution.gclid = v;
+      else if (k === 'msclkid') attribution.msclkid = v;
     }
   }
 
@@ -154,6 +162,7 @@ function mergeAttribution(
     gaClientId: extra.gaClientId || base.gaClientId,
     yclid: extra.yclid || base.yclid,
     gclid: extra.gclid || base.gclid,
+    msclkid: extra.msclkid || base.msclkid,
     fbp: extra.fbp || base.fbp,
     fbc: extra.fbc || base.fbc,
     rbClickid: extra.rbClickid || base.rbClickid,
@@ -172,6 +181,7 @@ function attributionFromFlat(fields: Record<string, unknown>): FormAttribution {
   a.gaClientId = get(['gaClientId', 'ga_client_id', 'cid', '_ga']);
   a.yclid = get(['yclid']);
   a.gclid = get(['gclid']);
+  a.msclkid = get(['msclkid', 'ms_clkid', 'msclid']);
   a.fbp = get(['fbp', '_fbp']);
   a.fbc = get(['fbc', '_fbc', 'fbclid']);
   a.rbClickid = get(['rbClickid', 'rb_clickid']);
@@ -317,6 +327,17 @@ export function parseFormWebhookBody(
     opts?.referer ||
     pickField(fields, ['referer', 'referrer', 'http_referer']);
 
+  const clientTs = pickField(fields, [
+    'clientTs',
+    'client_ts',
+    'client_time',
+    'clientTime',
+    'ts',
+    'timestamp',
+    'submittedAt',
+    'submitted_at',
+  ]);
+
   return {
     source,
     externalId: externalId || undefined,
@@ -328,6 +349,7 @@ export function parseFormWebhookBody(
     pageUrl: pageUrl || undefined,
     referer: referer || undefined,
     cookiesRaw,
+    clientTs: clientTs || undefined,
     attribution,
     rawFields: fields,
     isTestProbe: false,
@@ -345,4 +367,39 @@ export function sanitizeRawFields(
     out[k] = typeof v === 'string' ? decodeMaybe(v) : v;
   }
   return out;
+}
+
+/**
+ * Content fingerprint for webhook idempotency (4.1) when the source provides no
+ * stable externalId (tranid / entry_id). Combines endpoint + normalized phone +
+ * email + formId so an identical resubmission within the dedupe window collapses.
+ * Returns undefined when there is no phone and no email (nothing stable to hash).
+ */
+export function buildDedupeFingerprint(parts: {
+  endpointId: string;
+  phone?: string | null;
+  email?: string | null;
+  formId?: string | null;
+}): string | undefined {
+  // Use the same canonical phone form as 4.5 so 8… / +7… / bare resubmissions collapse.
+  const phone = phoneFingerprint(parts.phone) || '';
+  const email = String(parts.email ?? '').trim().toLowerCase();
+  if (!phone && !email) return undefined;
+  const basis = [parts.endpointId, phone, email, parts.formId ?? ''].join('|');
+  return createHash('sha256').update(basis).digest('hex');
+}
+
+/** Parse a client-provided timestamp (ISO string or epoch ms/seconds) to a Date. */
+export function parseClientTs(raw?: string | null): Date | undefined {
+  const s = String(raw ?? '').trim();
+  if (!s) return undefined;
+  // Numeric epoch (seconds or milliseconds)
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    const ms = s.length <= 10 ? n * 1000 : n;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? undefined : d;
 }

@@ -92,6 +92,13 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 ## 3. История разработки (timeline)
 
+- **2026-08-07** — **INC-118 GramJS «Код» visible:** `` `code` `` → MessageEntityPre; deploy `gramjs-bridge` backup `20260807-141203`. Smoke Remont msg 36903/36904. **max/wa/crm-chat untouched.**
+- **2026-08-07** — **INC-117 GramJS spoiler/code + attach:** bridge HTML entities + mediaBase64; crm-chat **0.1.29**; deploy `gramjs-bridge,saas-api` + refresh. **max-bridge / wa-worker untouched.** MAX/WA freeze kept.
+- **2026-08-07 ~16:14** — **Freeze MAX + WA CRM chat (user-confirmed WORKING):** docs only — `modules/{max-personal,wa-crm-sync,crm-chat-panel}.md` + CAPABILITIES / ADDRESS_BOOK / modules README / WORKLOG; INC-114/115/116 closed. **No redeploy.** crm-chat **0.1.28**.
+- **2026-08-07** — **INC-116 Chat «Нет данных»:** после refresh crm-chat **0.1.28** виджет FRONT_COMPONENT без `configuration.__typename` → Twenty empty state (не потеря сообщений). SQL+redis на всех тенантах; harden `refreshCrmChatAppForTenant`; backup `20260807-130335`. Remont API 17 msgs OK. Hard-refresh CRM.
+- **2026-08-07** — **INC-115 WA CRM preview:** multi-channel Person (MAX+WA) media resolve used MAX bot → WA photo/video paperclip. Fix `findAttachmentContext` + crm-chat **0.1.28**. Deploy `saas-api,ai-whatsapp-worker` backup `20260807-124124`; **max-bridge untouched**. Re-send not needed.
+- **2026-08-07** — **INC-113 MAX channel/self leak:** live inbound skipped CHANNEL; `me.contact` unwrap so owner CALL no longer overwrites peer phone → TG enrich; `/open/max` uses user id. Cleanup Marina + channel deal. Deploy `saas-api,max-bridge` backup `20260807-120603`.
+- **2026-08-07** — **History sync manual-only on connect:** MAX portal no auto `sync-history`; GramJS `/connected` no enqueue; WA no `scheduleWhatsAppHistorySync` on QR/`CONNECTION_UPDATE`. Buttons unchanged. Deploy: `saas-portal,saas-api,gramjs-bridge,ai-whatsapp-worker`.
 - **2026-08-07** — **Agent memory gate:** `ADDRESS_BOOK.md` + `RISK_GATE.md` + `CAPACITY.md` (prod measure: 6 vCPU / ~10G RAM / disk 97% free 3.2G; 3 CRM tenants) + module `cross-channel-enrich.md` + rule `agent-memory-gate.mdc`.
 - **2026-08-06** — **Opp chat activity sort:** `touchOpportunityActivity` on inbound/reply; admin SQL backfill Opp.updatedAt from ChatMessage; MAX enrich backfill for phones with empty max.
 - **2026-08-06** — **Symmetric cross-channel enrich:** `enrichPersonCrossChannelByPhone` (TG+MAX+WA IsOnWhatsApp) on site form-lead, MAX/TG/GramJS sync, gift contact-share; WA `/internal/crm/check-on-whatsapp`; internal `/api/internal/crm/enrich-by-phone`.
@@ -122,6 +129,9 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 - **2026-08-03** — INC-088: gift promo/post media (photo/video/document) — direct API + NPM 300s; deploy `saas-api,saas-portal,gift-bot-worker` backup `20260803-153618`.
 - **2026-08-03** — `/dashboard` amber industrial hub: hero, alerts, KPI, product grid, partner strip, gift funnel collapsed (deploy pending).
 - **2026-08-03** — Web form lead intake Phase 1 (ADR-026): Tilda/WP/JSON → FormLead → Twenty + AttributionSession + `web_form_lead`; UI `/dashboard/crm`; migrate `20260803160000_form_lead_intake` (deploy pending).
+- **2026-08-07** — Friendly LP live on getvoxly.ru (`prod-deploy.sh saas-portal`; backup `20260807-082346`).
+- **2026-08-07** — Friendly LP promoted to `/`; Awwwards v3 archived at `app/_archive/landing-v3/` (not deleted).
+- **2026-08-07** — Friendly LP draft at `/lp/friendly` (soft SaaS blue; not promoted to `/`).
 - **2026-08-03** — Landing Awwwards v3 live (CRM + free Tilda/WP forms); v2 archived under `app/_archive/landing-v2/`; deploy `saas-portal`.
 - **2026-08-03** — Landing Awwwards v2 live on getvoxly.ru (CRM thesis + mobile web); deploy `saas-portal` backup `20260803-112800`.
 - **2026-08-03** — Admin `/admin/ai-balance`: global + per-tenant AI markup %, usage/margin/topup stats; nav; API `admin-ai-balance.ts`; deploy pending `saas-api`+`saas-portal`.
@@ -577,7 +587,7 @@ docs/agent/              Lean-память агентов (capabilities, worklog
 
 **UI skill (в репо):** `.cursor/skills/ui-ux-pro-max/` — `uipro init --ai cursor` from [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill). Design system persist: `design-system/voxly/MASTER.md` (Twenty tokens override; не blue SaaS). Workflow: `search.py --design-system` → UX/stack domains → implement.
 
-**Статус кода:** CRM chat + INC-024…**/107** + **/106** + cross-channel enrich hub (site/TG/MAX/WA IsOnWhatsApp) + **/105**/104 MAX QR + **/103**…**/097 v7** + ADR-026 + **ADR-027**. **Baseline locked 2026-08-06 (user-confirmed WORKING):** CRM chats, WhatsApp, GramJS personal, gift bot, AI agent, Telegram secretary — freeze cards in `docs/agent/modules/` (+ social/dedupe + `max-personal.md`). PR #1 merged `263e4ef`. **MAX** ADR-025 + symmetric phone enrich across sources. **Blocker:** Robokassa Password#2 (INC-083). Gaps: SMTP; rotate root SSH; MAX bot. Other modules may proceed **without regressing** the frozen baseline.
+**Статус кода:** CRM chat + INC-024…**/107** + **/106** + cross-channel enrich hub (site/TG/MAX/WA IsOnWhatsApp) + **/105**/104 MAX QR + **/103**…**/097 v7** + ADR-026 + **ADR-027**. **Baseline locked 2026-08-06 (user-confirmed WORKING):** GramJS personal, gift bot, AI agent, Telegram secretary. **MAX + WhatsApp CRM chat FROZEN 2026-08-07 ~16:14 MSK (user-confirmed):** inbound/outbound/media/read/attach (MAX); WA send pure base64 + multi-channel preview + widget load — cards `max-personal.md`, `wa-crm-sync.md`, `crm-chat-panel.md`. **INC-117:** GramJS CRM spoiler/code (HTML entities) + outbound attach; crm-chat **0.1.29**; max-bridge/wa-worker untouched. PR #1 merged `263e4ef`. **2026-08-07:** history sync on connect **disabled** (button only). **INC-108…117** (114/115/116 user-confirmed). **Blocker:** Robokassa Password#2 (INC-083). Gaps: SMTP; rotate root SSH; MAX bot. Other modules may proceed **without regressing** the frozen MAX/WA baseline.
 
 **Локальные URL**
 - Портал: `http://localhost:3001`

@@ -5,3 +5,4 @@ const prisma = new PrismaClient();
 export { prisma };
 export default prisma;
 export * from '@prisma/client';
+export { upsertCrmRecordLink } from './crm-link.js';

@@ -71,7 +71,7 @@
 | Тема | Сейчас |
 |---|---|
 | Продукт | Отдельный SKU `ai_gramjs` (~500 ₽), UI `/dashboard/ai/gramjs` |
-| CRM chat outbound | Bridge `POST /messages/send`; **text-only** (media outbound not yet) |
+| CRM chat outbound | Bridge `POST /messages/send`; client MD → HTML entities (`parseMode: html`, spoiler/code); **photo/video/voice/document** via `mediaBase64` (parity MAX/WA) |
 | CRM chat inbound media | Photo/video/sticker/voice/doc → `attachments` `gramjs:{peer}:{msgId}` + CRM `/file` via bridge `POST /messages/media`; **video/audio/documents** via HMAC signed URL (`/file-url` → `/media/:token`) with MIME sniff + Range |
 | AI media | Photo/sticker → vision; voice/audio → ASR; **кружочек + обычное видео** → ASR (`[кружочек]:` / `[видео]:`, ffmpeg demux, ≤20MB/180s); **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k); else fallback «не удалось разобрать»; animation/GIF → placeholder |
 | Presence | Live через GramJS → crm-chat |

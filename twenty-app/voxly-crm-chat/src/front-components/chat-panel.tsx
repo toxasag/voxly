@@ -127,9 +127,14 @@ function attachmentLabel(a: ChatAttachment): string {
   return a.type || 'Файл';
 }
 
-function isImageType(type: string, contentType?: string): boolean {
+function isImageType(
+  type: string,
+  contentType?: string,
+  fileName?: string,
+): boolean {
   if (type === 'photo' || type === 'sticker') return true;
-  // GramJS often stores photos as document + image/* mime.
+  // GramJS / WA often store photos as document + image/* or octet-stream + .jpg.
+  if (fileName && /\.(jpe?g|png|gif|webp)$/i.test(fileName)) return true;
   return !!contentType && contentType.startsWith('image/');
 }
 
@@ -182,10 +187,13 @@ function ChatAttachmentView({
       return;
     }
     const preferSignedUrl =
+      isImageType(attachment.type, attachment.mimeType, attachment.fileName) ||
       isVideoType(attachment.type, attachment.mimeType, attachment.fileName) ||
       isVideoNoteAttachment(attachment) ||
       isAudioType(attachment.type, attachment.mimeType) ||
       // PDF/DOCX exceed Twenty /s ~96KB base64 cap — use signed URL like video/audio.
+      // Photos also prefer signed URL so multi-channel Persons bypass /file bot mismatch
+      // and Twenty JSON size cliff (INC-115).
       attachment.type === 'document';
     void (async () => {
       try {
@@ -277,11 +285,12 @@ function ChatAttachmentView({
       <div style={{ marginTop: 6, fontSize: 12, color: muted }}>Загрузка…</div>
     );
   }
-  if (isImageType(attachment.type, effectiveType)) {
+  if (isImageType(attachment.type, effectiveType, attachment.fileName)) {
     return (
       <img
         src={mediaUrl}
         alt={label}
+        onError={() => setFailed(true)}
         style={{
           display: 'block',
           maxWidth: '100%',
@@ -1212,10 +1221,8 @@ const ChatPanel = () => {
                         ...m,
                         channelLabel: opt.channelLabel,
                         identityLabel: opt.identityLabel,
-                        supportsAttachments:
-                          opt.botType !== 'ai_gramjs' &&
-                          opt.botType !== 'ai_max' &&
-                          opt.botType !== 'gift_max',
+                        // gift_max only — GramJS/MAX/WA outbound attach are supported.
+                        supportsAttachments: opt.botType !== 'gift_max',
                       }));
                       if (opt.threadId) {
                         const thr = threads.find((t) => t.id === opt.threadId);

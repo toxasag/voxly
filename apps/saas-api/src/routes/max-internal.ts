@@ -5,6 +5,7 @@ import type { FastifyPluginAsync, FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { encrypt, decrypt } from '@voxly/crypto';
 import { TwentyClient } from '@voxly/twenty-client';
+import { stripOwnerPhone } from '../services/max-phone-guard.js';
 
 function requireMaxService(request: { headers: Record<string, unknown> }, reply: {
   code: (n: number) => { send: (b: unknown) => unknown };
@@ -47,21 +48,36 @@ async function getTenantTwenty(
   return client;
 }
 
-/** Best-effort CRM lead: one Person + one open Opportunity per peer. */
+/** Best-effort CRM lead: one Person + one open Opportunity per private peer. */
 async function syncMaxLeadToCrm(opts: {
   prisma: FastifyInstance['prisma'];
   tenantId: string;
   conversationId: string;
+  /** Chat id — Conversation/send key (may differ from MAX user id). */
   platformUserId: string;
+  /** Real MAX user id for Person.max /open/max when known. */
+  maxUserId?: string | null;
   username?: string | null;
   firstName?: string | null;
   phone?: string | null;
   maxLink?: string | null;
+  /** Connected account MAX user id — never create a lead for self. */
+  selfMaxUserId?: string | null;
+  /** Connected account phone digits — never write onto peer Person (INC-113). */
+  selfPhone?: string | null;
 }): Promise<void> {
   const conversation = await opts.prisma.conversation.findUnique({
     where: { id: opts.conversationId },
   });
   if (!conversation) return;
+
+  // Channels/groups: negative chat ids — never Person/Opportunity.
+  const chatKey = String(opts.platformUserId || '').trim();
+  if (!chatKey || chatKey === '0' || chatKey.startsWith('-')) return;
+
+  const maxUserId = String(opts.maxUserId || '').trim() || undefined;
+  const selfId = String(opts.selfMaxUserId || '').trim() || undefined;
+  if (selfId && (maxUserId === selfId || chatKey === selfId)) return;
 
   const client = await getTenantTwenty(opts.prisma, opts.tenantId);
   if (!client) return;
@@ -75,7 +91,8 @@ async function syncMaxLeadToCrm(opts: {
   }
 
   // Already fully linked — still enrich max/name/phone if provided.
-  const phoneDigits = String(opts.phone || '').replace(/\D/g, '');
+  // Never use connected-account phone as peer phone (fill-empty would still leak).
+  const phoneDigits = stripOwnerPhone(opts.phone, opts.selfPhone) || '';
 
   if (!personId) {
     const prior = await opts.prisma.conversation.findFirst({
@@ -128,7 +145,8 @@ async function syncMaxLeadToCrm(opts: {
           ? `@${opts.username.replace(/^@/, '')}`
           : undefined,
         link: opts.maxLink || undefined,
-        userId: opts.platformUserId,
+        // Prefer real user id for /open/max — chat id ≠ user id (INC-113).
+        userId: maxUserId || opts.platformUserId,
         phone: phoneDigits.length >= 10 ? `+${phoneDigits}` : undefined,
       });
     } catch {
@@ -149,6 +167,7 @@ async function syncMaxLeadToCrm(opts: {
         personId,
         phone: phoneDigits,
         channels: ['telegram', 'whatsapp'],
+        forbidPhones: opts.selfPhone ? [opts.selfPhone] : undefined,
       });
     } catch (err) {
       console.warn('[max-internal] cross-channel enrich failed', err);
@@ -223,16 +242,44 @@ const upsertBotSchema = z.object({
   sessionReady: z.boolean().optional(),
 });
 
+const inboundAttachmentSchema = z.object({
+  type: z.enum(['photo', 'video', 'document', 'audio', 'voice', 'sticker', 'animation']),
+  fileId: z.string().min(1),
+  fileName: z.string().optional(),
+  mimeType: z.string().optional(),
+  fileSize: z.number().optional(),
+});
+
 const inboundSchema = z.object({
   botId: z.string().min(1),
   peerId: z.string().min(1),
+  /** Real MAX user id (DIALOG participant); peerId remains chat id for send/read. */
+  maxUserId: z.string().nullable().optional(),
+  chatType: z.string().nullable().optional(),
   text: z.string().max(8000).default(''),
-  messageId: z.union([z.string(), z.number()]).optional(),
+  // String only — MAX snowflake ids exceed JS safe integer if parsed as number.
+  messageId: z.union([z.string(), z.number()]).optional().transform((v) =>
+    v == null ? undefined : String(v),
+  ),
   username: z.string().nullable().optional(),
   firstName: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
+  /** Connected MAX account phone — saas-api strips if peer phone matches (INC-113). */
+  selfPhone: z.string().nullable().optional(),
   maxLink: z.string().nullable().optional(),
+  attachments: z.array(inboundAttachmentSchema).max(20).optional(),
 });
+
+function maxAttachmentPlaceholder(atts: z.infer<typeof inboundAttachmentSchema>[]): string {
+  const a = atts[0];
+  if (!a) return '[сообщение]';
+  if (a.type === 'photo') return '[фото]';
+  if (a.type === 'video' || a.type === 'animation') return '[видео]';
+  if (a.type === 'voice') return '[голосовое]';
+  if (a.type === 'audio') return '[аудио]';
+  if (a.type === 'sticker') return '[стикер]';
+  return a.fileName ? `[файл: ${a.fileName}]` : '[файл]';
+}
 
 export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', async (request, reply) => {
@@ -355,14 +402,42 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
-    const { botId, peerId, text, messageId, username, firstName, phone, maxLink } =
-      parsed.data;
+    const {
+      botId,
+      peerId,
+      maxUserId,
+      chatType,
+      text,
+      messageId,
+      username,
+      firstName,
+      phone,
+      selfPhone,
+      maxLink,
+      attachments,
+    } = parsed.data;
     const prisma = fastify.prisma;
 
     const bot = await prisma.botInstance.findFirst({
       where: { id: botId, botType: 'ai_max', status: 'active' },
     });
     if (!bot) return reply.code(404).send({ error: 'bot not found' });
+
+    const chatTypeNorm = String(chatType || '').trim().toUpperCase();
+    // Belt-and-suspenders: channels/groups never become CRM leads (bridge should already skip).
+    if (chatTypeNorm && chatTypeNorm !== 'DIALOG') {
+      return reply.send({ ok: true, skipped: 'non_private_chat', chatType: chatTypeNorm });
+    }
+    if (String(peerId).trim().startsWith('-')) {
+      return reply.send({ ok: true, skipped: 'non_private_chat', chatType: 'negative_id' });
+    }
+    const selfMaxUserId = String(bot.phoneNumberId || '').trim() || null;
+    const peerUser = String(maxUserId || '').trim();
+    if (selfMaxUserId && (peerUser === selfMaxUserId || String(peerId) === selfMaxUserId)) {
+      return reply.send({ ok: true, skipped: 'self' });
+    }
+    // Drop owner phone before Conversation metadata / CRM lead (INC-113).
+    const peerPhone = stripOwnerPhone(phone, selfPhone) || null;
 
     const extId = messageId != null ? `max:${messageId}` : null;
     if (extId) {
@@ -410,13 +485,16 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
-    const content = (text || '').trim() || '[сообщение]';
+    const atts = Array.isArray(attachments) ? attachments : [];
+    const content =
+      (text || '').trim() || (atts.length ? maxAttachmentPlaceholder(atts) : '[сообщение]');
     const msg = await prisma.chatMessage.create({
       data: {
         conversationId: conversation.id,
         role: 'user',
         content,
         externalMessageId: extId,
+        ...(atts.length ? { attachments: atts } : {}),
       },
     });
 
@@ -425,10 +503,13 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       tenantId: bot.tenantId,
       conversationId: conversation.id,
       platformUserId: peerId,
+      maxUserId: peerUser || null,
       username,
       firstName,
-      phone,
+      phone: peerPhone,
       maxLink,
+      selfMaxUserId,
+      selfPhone,
     }).catch((err) => {
       console.warn('[max-internal] CRM sync failed', err);
     });

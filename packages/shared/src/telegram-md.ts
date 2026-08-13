@@ -183,6 +183,57 @@ export function clientMdToMarkdownV2(input: string): string {
   return nodesToMarkdownV2(parseTelegramClientMd(input));
 }
 
+function escapeHtmlText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttr(text: string): string {
+  return escapeHtmlText(text).replace(/"/g, '&quot;');
+}
+
+function nodesToTelegramHtml(nodes: TgMdNode[]): string {
+  return nodes.map(nodeToTelegramHtml).join('');
+}
+
+function nodeToTelegramHtml(node: TgMdNode): string {
+  switch (node.type) {
+    case 'text':
+      return escapeHtmlText(node.value);
+    case 'bold':
+      return `<b>${nodesToTelegramHtml(node.children)}</b>`;
+    case 'italic':
+      return `<i>${nodesToTelegramHtml(node.children)}</i>`;
+    case 'strike':
+      return `<s>${nodesToTelegramHtml(node.children)}</s>`;
+    case 'spoiler':
+      return `<spoiler>${nodesToTelegramHtml(node.children)}</spoiler>`;
+    case 'link':
+      return `<a href="${escapeHtmlAttr(node.href)}">${nodesToTelegramHtml(node.children)}</a>`;
+    case 'code':
+      // GramJS/Telegram: inline MessageEntityCode is easy to miss on Cyrillic
+      // (same glyphs as body font). Prefer MessageEntityPre (grey code block)
+      // so CRM toolbar «Код» (`…`) is visibly monospace in the native app.
+      return `<pre>${escapeHtmlText(node.value)}</pre>`;
+    case 'pre':
+      return `<pre>${escapeHtmlText(node.value)}</pre>`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Convert Telegram client Markdown to Telegram HTML for MTProto/GramJS
+ * (`parseMode: 'html'`). Supports spoiler — GramJS `md` delimiters do not.
+ * Inline `code` → `<pre>` (MessageEntityPre) for visible monospace in clients.
+ */
+export function clientMdToTelegramHtml(input: string): string {
+  if (!input) return '';
+  return nodesToTelegramHtml(parseTelegramClientMd(input));
+}
+
 /** Wrap selected range with Telegram client Markdown markers. */
 export function wrapSelection(
   value: string,

@@ -8,7 +8,17 @@ import multipart from '@fastify/multipart';
 import pg from 'pg';
 import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
-import { clientMdToMarkdownV2, AI_HANDOFF_PAUSE_MS } from '@voxly/shared';
+import {
+  clientMdToMarkdownV2,
+  AI_HANDOFF_PAUSE_MS,
+  readCrmThreadCache,
+  writeCrmThreadCache,
+  readCrmUnreadCache,
+  writeCrmUnreadCache,
+  invalidateCrmUnreadCache,
+  claimCrmReadDebounce,
+} from '@voxly/shared';
+import IORedis from 'ioredis';
 import {
   TwentyClient,
   normalizePhoneToE164,
@@ -17,6 +27,13 @@ import {
 import { resolveTwentyOperatorLabel } from '../services/twenty-member-display-names.js';
 import { assertCrmAccessAllowed } from '../services/crm-access.js';
 import { runCrmSaveDedupe } from '../services/crm-deal-dedupe.js';
+
+/** Dedicated Redis client for the CRM thread-list cache (Phase 2.2). Lazy — never blocks route boot. */
+const CRM_CACHE_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const crmCacheRedis = new IORedis(CRM_CACHE_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
 
 /** Browser-reachable API origin for CRM media <video>/<audio>/<img> src (bypasses Twenty /s JSON size cap). */
 function publicApiBase(): string {
@@ -235,11 +252,37 @@ async function listCrmChatTargets(
     orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
     take: 20,
   });
+
+  // Fast-path (Phase 2.1): CrmRecordLink maps conversationId → CRM record via a
+  // dedicated tenant+person/opp index. Pull matching conversation ids so threads
+  // are found even when Conversation.twentyPersonId was later cleared. The direct
+  // scan below stays as fallback for rows without a link (pre-backfill).
+  const linkOr = [
+    { twentyOpportunityId: recordId },
+    { twentyPersonId: recordId },
+    ...extraPersonIds
+      .filter((id) => id && id !== recordId)
+      .map((id) => ({ twentyPersonId: id })),
+  ];
+  let linkedConvIds: string[] = [];
+  try {
+    const links = await prisma.crmRecordLink.findMany({
+      where: { tenantId, OR: linkOr },
+      select: { conversationId: true },
+      take: 60,
+    });
+    linkedConvIds = [...new Set(links.map((l) => l.conversationId))];
+  } catch {
+    /* CrmRecordLink unavailable (pre-migration) — rely on direct scan below. */
+  }
+
   const conversations = await prisma.conversation.findMany({
     where: {
       tenantId,
       channel: { not: 'telegram_business_account' },
-      OR: personOr,
+      OR: linkedConvIds.length
+        ? [...personOr, { id: { in: linkedConvIds } }]
+        : personOr,
     },
     include: { _count: { select: { messages: true } } },
     orderBy: { updatedAt: 'desc' },
@@ -430,18 +473,16 @@ async function resolvePointOfContactFromTwentyDb(
   workspaceId: string,
   opportunityId: string,
 ): Promise<string | null> {
-  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
-  if (!connectionString || !workspaceId || !opportunityId) return null;
-  const client = new pg.Client({ connectionString });
+  const pool = twentyPersonPgPool();
+  if (!pool || !workspaceId || !opportunityId) return null;
   try {
-    await client.connect();
-    const ws = await client.query<{ databaseSchema: string | null }>(
+    const ws = await pool.query<{ databaseSchema: string | null }>(
       `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
       [workspaceId],
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
-    const row = await client.query<{ pointOfContactId: string | null }>(
+    const row = await pool.query<{ pointOfContactId: string | null }>(
       `SELECT "pointOfContactId" FROM "${schema}".opportunity
        WHERE id = $1::uuid AND "deletedAt" IS NULL
        LIMIT 1`,
@@ -451,8 +492,6 @@ async function resolvePointOfContactFromTwentyDb(
     return id ? String(id) : null;
   } catch {
     return null;
-  } finally {
-    await client.end().catch(() => undefined);
   }
 }
 
@@ -465,18 +504,16 @@ async function resolvePersonWhatsappFromTwentyDb(
   workspaceId: string,
   personId: string,
 ): Promise<string | null> {
-  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
-  if (!connectionString || !workspaceId || !personId) return null;
-  const client = new pg.Client({ connectionString });
+  const pool = twentyPersonPgPool();
+  if (!pool || !workspaceId || !personId) return null;
   try {
-    await client.connect();
-    const ws = await client.query<{ databaseSchema: string | null }>(
+    const ws = await pool.query<{ databaseSchema: string | null }>(
       `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
       [workspaceId],
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
-    const row = await client.query<{
+    const row = await pool.query<{
       whatsapp: string | null;
       whatsappPrimaryLinkUrl: string | null;
     }>(
@@ -493,8 +530,6 @@ async function resolvePersonWhatsappFromTwentyDb(
     return e164 || null;
   } catch {
     return null;
-  } finally {
-    await client.end().catch(() => undefined);
   }
 }
 
@@ -514,18 +549,16 @@ async function resolvePersonTelegramPeerFromTwentyDb(
   workspaceId: string,
   personId: string,
 ): Promise<PersonTelegramPeer | null> {
-  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
-  if (!connectionString || !workspaceId || !personId) return null;
-  const client = new pg.Client({ connectionString });
+  const pool = twentyPersonPgPool();
+  if (!pool || !workspaceId || !personId) return null;
   try {
-    await client.connect();
-    const ws = await client.query<{ databaseSchema: string | null }>(
+    const ws = await pool.query<{ databaseSchema: string | null }>(
       `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
       [workspaceId],
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
-    const row = await client.query<{
+    const row = await pool.query<{
       telegram: string | null;
       telegramPrimaryLinkUrl: string | null;
       telegramPrimaryLinkLabel: string | null;
@@ -569,8 +602,76 @@ async function resolvePersonTelegramPeerFromTwentyDb(
     return peer;
   } catch {
     return null;
-  } finally {
-    await client.end().catch(() => undefined);
+  }
+}
+
+/** Person phone for GramJS ImportContacts when peer entity missing from session. */
+/** Lazy shared pg pool for direct Twenty DB reads (phone/peer lookup on chat hot path). */
+let twentyPersonPg: pg.Pool | null = null;
+function twentyPersonPgPool(): pg.Pool | null {
+  const connectionString = process.env.TWENTY_DATABASE_URL?.trim();
+  if (!connectionString) return null;
+  if (!twentyPersonPg) {
+    twentyPersonPg = new pg.Pool({
+      connectionString,
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+    });
+  }
+  return twentyPersonPg;
+}
+
+async function loadPersonPhoneE164(
+  prisma: FastifyInstance['prisma'],
+  tenantId: string,
+  personId: string | null | undefined,
+): Promise<string | null> {
+  if (!personId) return null;
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { twentyWorkspaceId: true },
+  });
+  if (!tenant?.twentyWorkspaceId) return null;
+  const social = await resolvePersonTelegramPeerFromTwentyDb(
+    tenant.twentyWorkspaceId,
+    personId,
+  );
+  // resolvePersonTelegramPeerFromTwentyDb returns null without TG link — still need phone.
+  if (social?.phoneE164) return social.phoneE164;
+  const pool = twentyPersonPgPool();
+  if (!pool) return null;
+  try {
+    const ws = await pool.query<{ databaseSchema: string | null }>(
+      `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+      [tenant.twentyWorkspaceId],
+    );
+    const schema = ws.rows[0]?.databaseSchema;
+    if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    const row = await pool.query<{
+      phonesPrimaryPhoneNumber: string | null;
+      whatsapp: string | null;
+      whatsappPrimaryLinkUrl: string | null;
+    }>(
+      `SELECT
+         "phonesPrimaryPhoneNumber" AS "phonesPrimaryPhoneNumber",
+         whatsapp,
+         "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
+       FROM "${schema}".person
+       WHERE id = $1::uuid AND "deletedAt" IS NULL
+       LIMIT 1`,
+      [personId],
+    );
+    const p = row.rows[0];
+    if (!p) return null;
+    return (
+      normalizePhoneToE164(p.phonesPrimaryPhoneNumber) ||
+      normalizePhoneToE164(p.whatsappPrimaryLinkUrl) ||
+      normalizePhoneToE164(p.whatsapp) ||
+      null
+    );
+  } catch {
+    return null;
   }
 }
 
@@ -854,7 +955,8 @@ async function resolveOutboundPeer(opts: {
     };
   }
 
-  // Personal Telegram / MAX: prefer same-bot thread, else peer from any TG/gift link.
+  // Personal Telegram / MAX: prefer same-bot thread, else channel-matched peer.
+  // CRITICAL: never reuse MAX platformUserId as GramJS peer (or TG id as MAX) — INC-109.
   const convForBot = await prisma.conversation.findFirst({
     where: {
       tenantId,
@@ -864,6 +966,11 @@ async function resolveOutboundPeer(opts: {
     orderBy: { updatedAt: 'desc' },
   });
   if (convForBot) {
+    const phoneE164 = await loadPersonPhoneE164(
+      prisma,
+      tenantId,
+      convForBot.twentyPersonId || baseTarget.twentyPersonId,
+    );
     return {
       ok: true,
       peerId: convForBot.platformUserId,
@@ -874,6 +981,7 @@ async function resolveOutboundPeer(opts: {
       businessConnectionId: convForBot.businessConnectionId,
       twentyPersonId: convForBot.twentyPersonId || baseTarget.twentyPersonId,
       twentyOpportunityId: convForBot.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      phoneE164,
     };
   }
 
@@ -881,7 +989,12 @@ async function resolveOutboundPeer(opts: {
     where: { tenantId, OR: linkOr },
     orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
   });
-  if (anyGift && (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max')) {
+  if (anyGift && bot.botType === 'ai_gramjs') {
+    const phoneE164 = await loadPersonPhoneE164(
+      prisma,
+      tenantId,
+      anyGift.twentyPersonId || baseTarget.twentyPersonId,
+    );
     return {
       ok: true,
       peerId: anyGift.telegramId,
@@ -892,34 +1005,46 @@ async function resolveOutboundPeer(opts: {
       businessConnectionId: null,
       twentyPersonId: anyGift.twentyPersonId || baseTarget.twentyPersonId,
       twentyOpportunityId: anyGift.twentyOpportunityId || baseTarget.twentyOpportunityId,
+      phoneE164,
     };
   }
 
-  const anyTg = await prisma.conversation.findFirst({
-    where: {
-      tenantId,
-      platform: { in: ['telegram', 'max'] },
-      OR: linkOr,
-    },
-    orderBy: { updatedAt: 'desc' },
-  });
-  if (anyTg && (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max')) {
-    return {
-      ok: true,
-      peerId: anyTg.platformUserId,
-      username: anyTg.platformUsername,
-      firstName: anyTg.platformFirstName,
-      conversationId: null,
-      giftSubscriberId: null,
-      businessConnectionId: null,
-      twentyPersonId: anyTg.twentyPersonId || baseTarget.twentyPersonId,
-      twentyOpportunityId: anyTg.twentyOpportunityId || baseTarget.twentyOpportunityId,
-    };
-  }
-
-  // Person.telegram LINKS (userId / @username) — enable GramJS even when chat opened from WA
-  // and there is no prior GramJS Conversation. Open/tg link ≠ gift; gift gate stays above.
+  // Same channel only — do not treat MAX dialog as Telegram peer (and vice versa).
   if (bot.botType === 'ai_gramjs' || bot.botType === 'ai_max') {
+    const platformWanted = bot.botType === 'ai_max' ? 'max' : 'telegram';
+    const anySameChannel = await prisma.conversation.findFirst({
+      where: {
+        tenantId,
+        platform: platformWanted,
+        OR: linkOr,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (anySameChannel) {
+      const phoneE164 = await loadPersonPhoneE164(
+        prisma,
+        tenantId,
+        anySameChannel.twentyPersonId || baseTarget.twentyPersonId,
+      );
+      return {
+        ok: true,
+        peerId: anySameChannel.platformUserId,
+        username: anySameChannel.platformUsername,
+        firstName: anySameChannel.platformFirstName,
+        conversationId: null,
+        giftSubscriberId: null,
+        businessConnectionId: null,
+        twentyPersonId: anySameChannel.twentyPersonId || baseTarget.twentyPersonId,
+        twentyOpportunityId:
+          anySameChannel.twentyOpportunityId || baseTarget.twentyOpportunityId,
+        phoneE164,
+      };
+    }
+  }
+
+  // Person.telegram LINKS (userId / @username) — enable GramJS even when chat opened from WA/MAX
+  // and there is no prior GramJS Conversation. Open/tg link ≠ gift; gift gate stays above.
+  if (bot.botType === 'ai_gramjs') {
     const personId = await resolvePersonIdForRecord(prisma, tenantId, recordId, baseTarget);
     if (personId) {
       const tenant = await prisma.tenant.findUnique({
@@ -957,8 +1082,22 @@ async function resolveOutboundPeer(opts: {
       where: { id: baseTarget.botInstanceId, tenantId },
       select: { botType: true },
     });
-    // Allow peer reuse from gift/TG/GramJS base threads; WA telegramId is often a phone JID — skip.
-    if (botOfBase && botOfBase.botType !== 'ai_wa') {
+    // Allow peer reuse only from same-family base threads.
+    // WA telegramId is often a phone JID; MAX id must never be used as GramJS peer.
+    const baseOk =
+      botOfBase &&
+      ((bot.botType === 'ai_gramjs' &&
+        (botOfBase.botType === 'ai_gramjs' ||
+          botOfBase.botType === 'ai_tg' ||
+          botOfBase.botType === 'gift')) ||
+        (bot.botType === 'ai_max' &&
+          (botOfBase.botType === 'ai_max' || botOfBase.botType === 'gift_max')));
+    if (baseOk) {
+      const phoneE164 = await loadPersonPhoneE164(
+        prisma,
+        tenantId,
+        baseTarget.twentyPersonId,
+      );
       return {
         ok: true,
         peerId: baseTarget.telegramId,
@@ -969,6 +1108,7 @@ async function resolveOutboundPeer(opts: {
         businessConnectionId: null,
         twentyPersonId: baseTarget.twentyPersonId,
         twentyOpportunityId: baseTarget.twentyOpportunityId,
+        phoneE164,
       };
     }
   }
@@ -1178,18 +1318,48 @@ function sniffMediaContentType(
   return rawHint || 'application/octet-stream';
 }
 
-async function lookupStoredAttachmentMeta(
+type StoredAttachmentContext = {
+  mimeType?: string;
+  fileName?: string;
+  type?: string;
+  botInstanceId: string;
+  conversationId: string;
+  peerUserId: string;
+  /** ChatMessage.role — operator outbound → WA fromMe=true */
+  role?: string;
+};
+
+/**
+ * Resolve attachment owner across ALL channels on the CRM record.
+ * Default findCrmChatTarget picks the busiest thread (e.g. MAX over WA) — wrong bot
+ * → 400 "preview not supported" for the other channel's fileIds (INC-115).
+ */
+async function findAttachmentContext(
   prisma: FastifyInstance['prisma'],
   opts: { tenantId: string; recordId: string; fileId: string },
-): Promise<{ mimeType?: string; fileName?: string; type?: string } | null> {
-  const target = await findCrmChatTarget(prisma, opts.tenantId, opts.recordId);
-  if (!target?.conversationId) return null;
+): Promise<StoredAttachmentContext | null> {
+  const targets = await listCrmChatTargets(prisma, opts.tenantId, opts.recordId);
+  const convIds = [
+    ...new Set(
+      targets
+        .map((t) => t.conversationId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  ];
+  if (!convIds.length) return null;
 
   const messages = await prisma.chatMessage.findMany({
-    where: { conversationId: target.conversationId },
+    where: { conversationId: { in: convIds } },
     orderBy: { sentAt: 'desc' },
-    take: 80,
-    select: { attachments: true },
+    take: 200,
+    select: {
+      role: true,
+      attachments: true,
+      conversationId: true,
+      conversation: {
+        select: { botInstanceId: true, platformUserId: true },
+      },
+    },
   });
   for (const m of messages) {
     if (!Array.isArray(m.attachments)) continue;
@@ -1197,14 +1367,33 @@ async function lookupStoredAttachmentMeta(
       if (!raw || typeof raw !== 'object') continue;
       const a = raw as Record<string, unknown>;
       if (a.fileId !== opts.fileId) continue;
+      const botInstanceId = m.conversation?.botInstanceId;
+      if (!botInstanceId) continue;
       return {
         mimeType: typeof a.mimeType === 'string' ? a.mimeType : undefined,
         fileName: typeof a.fileName === 'string' ? a.fileName : undefined,
         type: typeof a.type === 'string' ? a.type : undefined,
+        botInstanceId,
+        conversationId: m.conversationId,
+        peerUserId: m.conversation.platformUserId || '',
+        role: m.role,
       };
     }
   }
   return null;
+}
+
+async function lookupStoredAttachmentMeta(
+  prisma: FastifyInstance['prisma'],
+  opts: { tenantId: string; recordId: string; fileId: string },
+): Promise<{ mimeType?: string; fileName?: string; type?: string } | null> {
+  const ctx = await findAttachmentContext(prisma, opts);
+  if (!ctx) return null;
+  return {
+    mimeType: ctx.mimeType,
+    fileName: ctx.fileName,
+    type: ctx.type,
+  };
 }
 
 function mapAttachment(att: unknown): ChatAttachment | null {
@@ -1392,6 +1581,15 @@ function humanizeCrmChatSendError(raw: string): string {
     return 'Не удалось отправить: контакт недоступен в WhatsApp';
   }
 
+  // MAX personal / PyMax session death (INC-111).
+  if (
+    /token has expired|FAIL_LOGIN_TOKEN|FAIL_LOGOUT_ALL|сессия max истекла|login.?token|session.*(expired|invalid)/i.test(
+      msg,
+    )
+  ) {
+    return 'Сессия MAX истекла. Откройте /dashboard/ai/max → «Показать QR» и заново привяжите устройство в MAX → Devices.';
+  }
+
   return msg;
 }
 
@@ -1416,7 +1614,14 @@ async function sendViaGramjsBridge(opts: {
   text: string;
   /** Optional E.164 — bridge ImportContacts when peer not in session cache. */
   phone?: string | null;
-}): Promise<void> {
+  /** Optional @username — getEntity fallback when id not in dialogs. */
+  username?: string | null;
+  media?: {
+    mediaBase64: string;
+    mimeType: string;
+    fileName: string;
+  } | null;
+}): Promise<ChatAttachment | null> {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
@@ -1432,22 +1637,52 @@ async function sendViaGramjsBridge(opts: {
       peerUserId: opts.peerUserId,
       text: opts.text,
       ...(opts.phone ? { phone: opts.phone } : {}),
+      ...(opts.username ? { username: opts.username } : {}),
+      ...(opts.media
+        ? {
+            mediaBase64: opts.media.mediaBase64,
+            mimeType: opts.media.mimeType,
+            fileName: opts.media.fileName,
+          }
+        : {}),
     }),
   });
   const json = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
     error?: string;
+    attachment?: {
+      type?: string;
+      fileId?: string;
+      fileName?: string;
+      mimeType?: string;
+      fileSize?: number;
+    };
   };
   if (!res.ok || !json.ok) {
     throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
   }
+  if (json.attachment?.fileId && json.attachment.type) {
+    return {
+      type: json.attachment.type as ChatAttachment['type'],
+      fileId: json.attachment.fileId,
+      fileName: json.attachment.fileName,
+      mimeType: json.attachment.mimeType,
+      fileSize: json.attachment.fileSize,
+    };
+  }
+  return null;
 }
 
 async function sendViaMaxBridge(opts: {
   botId: string;
   peerUserId: string;
   text: string;
-}): Promise<void> {
+  media?: {
+    mediaBase64: string;
+    mimeType: string;
+    fileName: string;
+  } | null;
+}): Promise<ChatAttachment | null> {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
@@ -1462,15 +1697,42 @@ async function sendViaMaxBridge(opts: {
       botId: opts.botId,
       peerUserId: opts.peerUserId,
       text: opts.text,
+      ...(opts.media
+        ? {
+            mediaBase64: opts.media.mediaBase64,
+            mimeType: opts.media.mimeType,
+            fileName: opts.media.fileName,
+          }
+        : {}),
     }),
   });
   const json = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
     error?: string;
+    detail?: string;
+    attachment?: {
+      type?: string;
+      fileId?: string;
+      fileName?: string;
+      mimeType?: string;
+      fileSize?: number;
+    };
   };
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || `MAX send failed (HTTP ${res.status})`);
+    throw new Error(
+      json.error || json.detail || `MAX send failed (HTTP ${res.status})`,
+    );
   }
+  if (json.attachment?.fileId && json.attachment.type) {
+    return {
+      type: json.attachment.type as ChatAttachment['type'],
+      fileId: json.attachment.fileId,
+      fileName: json.attachment.fileName,
+      mimeType: json.attachment.mimeType,
+      fileSize: json.attachment.fileSize,
+    };
+  }
+  return null;
 }
 
 function parseGramjsFileId(
@@ -1528,6 +1790,8 @@ async function fetchWhatsappMedia(opts: {
   botId: string;
   fileId: string;
   peerUserId?: string;
+  /** Evolution key.fromMe — true for CRM/operator outbound */
+  fromMe?: boolean;
 }): Promise<{ buffer: Buffer; contentType: string } | null> {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (!token) {
@@ -1544,6 +1808,7 @@ async function fetchWhatsappMedia(opts: {
       fileId: opts.fileId,
       messageId: opts.fileId,
       peerUserId: opts.peerUserId,
+      ...(opts.fromMe !== undefined ? { fromMe: opts.fromMe } : {}),
     }),
   });
   const json = (await res.json().catch(() => ({}))) as {
@@ -1666,6 +1931,65 @@ function fireGramjsPresence(opts: {
       peerUserId: opts.peerUserId,
     }),
   }).catch(() => undefined);
+}
+
+/** Best-effort MAX read via PyMax read_message. Typing: PyMax has no public send-typing API. */
+function fireMaxPresence(opts: {
+  botId: string;
+  peerUserId: string;
+  kind: 'read';
+  messageIds?: string[];
+}): void {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) return;
+  void fetch(`${maxBridgeBase()}/messages/read`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      peerUserId: opts.peerUserId,
+      messageIds: opts.messageIds || [],
+    }),
+  }).catch(() => undefined);
+}
+
+async function fetchMaxMedia(opts: {
+  botId: string;
+  fileId: string;
+}): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  if (!token) {
+    throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  }
+  if (!opts.fileId.startsWith('max:')) return null;
+  const res = await fetch(`${maxBridgeBase()}/messages/media`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      botId: opts.botId,
+      fileId: opts.fileId,
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    detail?: string;
+    dataBase64?: string;
+    mimeType?: string;
+  };
+  if (!res.ok || !json.ok || !json.dataBase64) {
+    throw new Error(json.error || json.detail || `MAX media failed (HTTP ${res.status})`);
+  }
+  return {
+    buffer: Buffer.from(json.dataBase64, 'base64'),
+    contentType: json.mimeType || 'application/octet-stream',
+  };
 }
 
 type CrmChatPresence = {
@@ -2113,6 +2437,18 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       const { tenantId } = (request as any).user;
       const prisma = fastify.prisma;
 
+      // Phase 2.4: serve the small aggregated response from Redis when warm.
+      // SQL below is authoritative; workers invalidate on inbound and opening a
+      // chat (mark-read) invalidates too, so counts refresh before the TTL.
+      const cachedUnread = await readCrmUnreadCache<{
+        opportunities: { id: string; count: number }[];
+        persons: { id: string; count: number }[];
+        serverTime: string;
+      }>(crmCacheRedis, tenantId);
+      if (cachedUnread) {
+        return reply.send({ ...cachedUnread, cached: true });
+      }
+
       type UnreadRow = {
         conversationId: string;
         personId: string | null;
@@ -2142,11 +2478,13 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       `;
 
       if (rows.length === 0) {
-        return reply.send({
-          opportunities: [],
-          persons: [],
+        const empty = {
+          opportunities: [] as { id: string; count: number }[],
+          persons: [] as { id: string; count: number }[],
           serverTime: new Date().toISOString(),
-        });
+        };
+        await writeCrmUnreadCache(crmCacheRedis, tenantId, empty);
+        return reply.send(empty);
       }
 
       const needGift = rows.filter((r) => !r.personId && !r.opportunityId);
@@ -2223,11 +2561,13 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           .map(([id, count]) => ({ id, count }))
           .sort((a, b) => b.count - a.count);
 
-      return reply.send({
+      const payload = {
         opportunities: toList(oppCounts),
         persons: toList(personCounts),
         serverTime: new Date().toISOString(),
-      });
+      };
+      await writeCrmUnreadCache(crmCacheRedis, tenantId, payload);
+      return reply.send(payload);
     },
   );
 
@@ -2248,21 +2588,32 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       };
 
       const prisma = fastify.prisma;
-      let allTargets = await listCrmChatTargets(prisma, tenantId, recordId);
-      if (!allTargets.length) {
-        const extraPersonIds = await resolveExtraPersonIdsForRecord(
-          prisma,
-          tenantId,
-          recordId,
-        );
-        if (extraPersonIds.length) {
-          allTargets = await listCrmChatTargets(
+      // Phase 2.2: cache the resolved thread list (channel pills) for a few seconds.
+      // Messages + active target are still read live below; workers invalidate this
+      // key on inbound so a new thread appears immediately, not after the TTL.
+      let allTargets = await readCrmThreadCache<CrmChatTarget[]>(
+        crmCacheRedis,
+        tenantId,
+        recordId,
+      );
+      if (!allTargets) {
+        allTargets = await listCrmChatTargets(prisma, tenantId, recordId);
+        if (!allTargets.length) {
+          const extraPersonIds = await resolveExtraPersonIdsForRecord(
             prisma,
             tenantId,
             recordId,
-            extraPersonIds,
           );
+          if (extraPersonIds.length) {
+            allTargets = await listCrmChatTargets(
+              prisma,
+              tenantId,
+              recordId,
+              extraPersonIds,
+            );
+          }
         }
+        await writeCrmThreadCache(crmCacheRedis, tenantId, recordId, allTargets);
       }
       const target = await findCrmChatTarget(prisma, tenantId, recordId, preferred);
       if (!target) {
@@ -2329,25 +2680,38 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         email?: string;
         purpose?: string;
       };
-      const operatorName = await resolveOperatorLabel({
-        prisma,
-        tenantId,
-        user: jwtUser,
-        headers: request.headers as Record<string, unknown>,
-      });
 
       const botIds = [...new Set(allTargets.map((t) => t.botInstanceId))];
-      const bots = await prisma.botInstance.findMany({
-        where: { tenantId, id: { in: botIds } },
-        select: {
-          id: true,
-          botType: true,
-          botUsername: true,
-          displayName: true,
-          phoneNumberId: true,
-          botTokenEncrypted: true,
-        },
-      });
+
+      // Phase 2.5: run the independent hot-path reads in parallel instead of
+      // sequentially (operator label + bots + messages). operatorName may hit
+      // the Twenty DB, but it never blocks messages/bots now.
+      const [operatorName, bots, messages] = await Promise.all([
+        resolveOperatorLabel({
+          prisma,
+          tenantId,
+          user: jwtUser,
+          headers: request.headers as Record<string, unknown>,
+        }),
+        prisma.botInstance.findMany({
+          where: { tenantId, id: { in: botIds } },
+          select: {
+            id: true,
+            botType: true,
+            botUsername: true,
+            displayName: true,
+            phoneNumberId: true,
+            botTokenEncrypted: true,
+          },
+        }),
+        conversationId
+          ? prisma.chatMessage.findMany({
+              where: { conversationId },
+              orderBy: { sentAt: 'asc' },
+              take: 300,
+            })
+          : Promise.resolve([] as Awaited<ReturnType<typeof prisma.chatMessage.findMany>>),
+      ]);
       const botById = new Map(bots.map((b) => [b.id, b]));
 
       const threads: CrmChatThreadMeta[] = allTargets.map((t) => {
@@ -2389,17 +2753,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         peerId: target.telegramId,
       });
 
-      const messages = conversationId
-        ? await prisma.chatMessage.findMany({
-            where: { conversationId },
-            orderBy: { sentAt: 'asc' },
-            take: 300,
-          })
-        : [];
-
       // CRM unread badges: opening Chat marks ALL linked threads read.
       // Badges aggregate every conversation for the Person/Opportunity; marking only
       // the active thread left counts stuck when multi-channel (WA+TG+gift).
+      // Phase 2.5: debounce the mark-read + channel read-receipts per active
+      // conversation so rapid polls of the same open chat don't re-write
+      // lastOperatorReadAt / re-fire presence every few seconds.
       const readConvIds = [
         ...new Set(
           allTargets
@@ -2407,19 +2766,24 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             .filter((id): id is string => Boolean(id)),
         ),
       ];
-      if (readConvIds.length > 0) {
+      const shouldFireRead = conversationId
+        ? await claimCrmReadDebounce(crmCacheRedis, tenantId, conversationId)
+        : readConvIds.length > 0;
+      if (readConvIds.length > 0 && shouldFireRead) {
         try {
           await prisma.conversation.updateMany({
             where: { id: { in: readConvIds }, tenantId },
             data: { lastOperatorReadAt: new Date() },
           });
+          // Marking read changes unread badges — drop the cached aggregate (Phase 2.4).
+          await invalidateCrmUnreadCache(crmCacheRedis, tenantId);
         } catch {
           /* ignore */
         }
       }
 
       // Operator opened chat → mark inbound as read on channel (best-effort). Typing only on send.
-      if (botType === 'ai_wa') {
+      if (shouldFireRead && botType === 'ai_wa') {
         const inboundIds = messages
           .filter((m) => m.role === 'user' && m.externalMessageId)
           .slice(-10)
@@ -2430,13 +2794,25 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           kind: 'read',
           messageIds: inboundIds,
         });
-      } else if (botType === 'ai_gramjs') {
+      } else if (shouldFireRead && botType === 'ai_gramjs') {
         fireGramjsPresence({
           botId: target.botInstanceId,
           peerUserId: target.telegramId,
           kind: 'read',
         });
+      } else if (shouldFireRead && botType === 'ai_max') {
+        const inboundIds = messages
+          .filter((m) => m.role === 'user' && m.externalMessageId)
+          .slice(-10)
+          .map((m) => String(m.externalMessageId));
+        fireMaxPresence({
+          botId: target.botInstanceId,
+          peerUserId: target.telegramId,
+          kind: 'read',
+          messageIds: inboundIds,
+        });
       } else if (
+        shouldFireRead &&
         (botType === 'ai_tg' || botType === 'gift') &&
         bot?.botTokenEncrypted
       ) {
@@ -2461,19 +2837,22 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const presence = await fetchContactPresence({
-        botType,
-        botId: target.botInstanceId,
-        peerUserId: target.telegramId,
-      });
-
-      const sendFromOptions = await buildSendFromOptions({
-        prisma,
-        tenantId,
-        recordId,
-        baseTarget: target,
-        threads,
-      });
+      // Phase 2.5: presence (external channel call) and send-from options (DB)
+      // are independent — run them in parallel to shave hot-path latency.
+      const [presence, sendFromOptions] = await Promise.all([
+        fetchContactPresence({
+          botType,
+          botId: target.botInstanceId,
+          peerUserId: target.telegramId,
+        }),
+        buildSendFromOptions({
+          prisma,
+          tenantId,
+          recordId,
+          baseTarget: target,
+          threads,
+        }),
+      ]);
 
       return reply.send({
         recordId,
@@ -2515,12 +2894,84 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         operatorName,
         botType,
-        supportsAttachments:
-          botType !== 'ai_gramjs' && botType !== 'ai_max' && botType !== 'gift_max',
+        supportsAttachments: botType !== 'gift_max',
         presence,
         threads,
         sendFromOptions,
         messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          senderLabel: extractSenderLabel(m.attachments),
+          attachments: Array.isArray(m.attachments)
+            ? (m.attachments as unknown[])
+                .map(mapAttachment)
+                .filter((a): a is ChatAttachment => Boolean(a))
+            : [],
+          sentAt: m.sentAt,
+        })),
+      });
+    },
+  );
+
+  /**
+   * Phase 2.3: lightweight delta poll for an already-open thread.
+   * Returns only ChatMessages with sentAt > `since` for one tenant-scoped
+   * conversation — no target resolution, no bots / sendFromOptions / presence /
+   * Twenty calls / mark-read. The panel uses this between full `GET /:recordId`
+   * loads to append new bubbles cheaply. `since` is an ISO timestamp; omit it to
+   * get the latest tail. Response `serverTime` should be echoed as the next `since`.
+   */
+  fastify.get(
+    '/:recordId/stream',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const { recordId } = request.params as { recordId: string };
+      if (!recordId || recordId.length < 10) {
+        return reply.code(400).send({ error: 'Invalid CRM record id' });
+      }
+      const q = request.query as { conversationId?: string; since?: string; limit?: string };
+      const conversationId =
+        typeof q.conversationId === 'string' && q.conversationId ? q.conversationId : null;
+      if (!conversationId) {
+        return reply.code(400).send({ error: 'conversationId is required' });
+      }
+      const limit = Math.min(100, Math.max(1, parseInt(String(q.limit || '50'), 10) || 50));
+
+      let since: Date | null = null;
+      if (typeof q.since === 'string' && q.since.trim()) {
+        const parsed = new Date(q.since);
+        if (!Number.isNaN(parsed.getTime())) since = parsed;
+      }
+
+      const prisma = fastify.prisma;
+      // Tenant-scope the conversation before reading its messages (never leak cross-tenant).
+      const conv = await prisma.conversation.findFirst({
+        where: { id: conversationId, tenantId },
+        select: { id: true },
+      });
+      if (!conv) {
+        return reply.code(404).send({ error: 'No chat linked to this CRM record' });
+      }
+
+      const rows = await prisma.chatMessage.findMany({
+        where: {
+          conversationId,
+          ...(since ? { sentAt: { gt: since } } : {}),
+        },
+        orderBy: { sentAt: since ? 'asc' : 'desc' },
+        take: limit,
+        select: { id: true, role: true, content: true, attachments: true, sentAt: true },
+      });
+      // When no `since`, we fetched the newest tail desc — return it chronological.
+      const ordered = since ? rows : [...rows].reverse();
+
+      return reply.send({
+        recordId,
+        conversationId,
+        serverTime: new Date().toISOString(),
+        messages: ordered.map((m) => ({
           id: m.id,
           role: m.role,
           content: m.content,
@@ -2700,28 +3151,48 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
     const target = await findCrmChatTarget(prisma, opts.tenantId, opts.recordId);
     if (!target) return { error: 'Not found', status: 404 };
 
+    const fileId = opts.fileId;
+    // Prefer the conversation that actually stores this fileId (multi-channel Person).
+    const attCtx = await findAttachmentContext(prisma, {
+      tenantId: opts.tenantId,
+      recordId: opts.recordId,
+      fileId,
+    });
+    const resolvedBotId =
+      attCtx?.botInstanceId || opts.botId || target.botInstanceId;
+
     const bot = await prisma.botInstance.findFirst({
       where: {
-        id: opts.botId || target.botInstanceId,
+        id: resolvedBotId,
         tenantId: opts.tenantId,
         status: 'active',
       },
     });
     if (!bot) return { error: 'Bot not found', status: 404 };
-    if (opts.botId && bot.id !== target.botInstanceId) {
-      return { error: 'Bot mismatch', status: 403 };
-    }
+    // Do not require botId === default target — same Person may have MAX + WA threads.
 
-    const fileId = opts.fileId;
-    const storedMeta = await lookupStoredAttachmentMeta(prisma, {
-      tenantId: opts.tenantId,
-      recordId: opts.recordId,
-      fileId,
-    });
+    const storedMeta = attCtx
+      ? {
+          mimeType: attCtx.mimeType,
+          fileName: attCtx.fileName,
+          type: attCtx.type,
+        }
+      : await lookupStoredAttachmentMeta(prisma, {
+          tenantId: opts.tenantId,
+          recordId: opts.recordId,
+          fileId,
+        });
     const withMeta = (media: { buffer: Buffer; contentType: string }) => ({
       ...media,
       fileName: storedMeta?.fileName || null,
     });
+    const peerUserId = attCtx?.peerUserId || target.telegramId || undefined;
+    const waFromMe =
+      attCtx?.role === 'operator' || attCtx?.role === 'assistant'
+        ? true
+        : attCtx?.role === 'user'
+          ? false
+          : undefined;
 
     if (bot.botType === 'ai_gramjs') {
       if (!fileId.startsWith('gramjs:')) {
@@ -2749,12 +3220,39 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
 
+    if (bot.botType === 'ai_max') {
+      if (!fileId.startsWith('max:')) {
+        return {
+          error: 'Превью файлов для личного MAX пока не поддерживается',
+          status: 400,
+        };
+      }
+      try {
+        const media = await fetchMaxMedia({ botId: bot.id, fileId });
+        if (!media) return { error: 'Invalid MAX file id', status: 400 };
+        return withMeta({
+          buffer: media.buffer,
+          contentType: sniffMediaContentType(media.buffer, {
+            contentType: media.contentType,
+            mimeType: storedMeta?.mimeType,
+            fileName: storedMeta?.fileName,
+          }),
+        });
+      } catch (err) {
+        return {
+          error: (err as Error).message || 'Failed to fetch MAX media',
+          status: 502,
+        };
+      }
+    }
+
     if (bot.botType === 'ai_wa') {
       try {
         const media = await fetchWhatsappMedia({
           botId: bot.id,
           fileId,
-          peerUserId: target.telegramId || undefined,
+          peerUserId,
+          fromMe: waFromMe,
         });
         if (!media) return { error: 'WhatsApp media not found', status: 404 };
         return withMeta({
@@ -2909,16 +3407,31 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       const target = await findCrmChatTarget(prisma, tenantId, recordId);
       if (!target) return reply.code(404).send({ error: 'Not found' });
 
-      const bot = await prisma.botInstance.findFirst({
-        where: { id: target.botInstanceId, tenantId, status: 'active' },
-      });
-      if (!bot) return reply.code(404).send({ error: 'Bot not found' });
-
-      const storedMeta = await lookupStoredAttachmentMeta(prisma, {
+      const attCtx = await findAttachmentContext(prisma, {
         tenantId,
         recordId,
         fileId,
       });
+      const bot = await prisma.botInstance.findFirst({
+        where: {
+          id: attCtx?.botInstanceId || target.botInstanceId,
+          tenantId,
+          status: 'active',
+        },
+      });
+      if (!bot) return reply.code(404).send({ error: 'Bot not found' });
+
+      const storedMeta = attCtx
+        ? {
+            mimeType: attCtx.mimeType,
+            fileName: attCtx.fileName,
+            type: attCtx.type,
+          }
+        : await lookupStoredAttachmentMeta(prisma, {
+            tenantId,
+            recordId,
+            fileId,
+          });
       const mediaToken = mintMediaToken({
         tenantId,
         recordId,
@@ -3115,15 +3628,6 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       const isMax = bot.botType === 'ai_max';
       const isGiftMax = bot.botType === 'gift_max';
       const isWhatsapp = bot.botType === 'ai_wa';
-      if ((isGramjs || isMax) && fileBuffer?.length) {
-        return reply
-          .code(400)
-          .send({
-            error: isMax
-              ? 'Вложения из CRM для личного MAX пока не поддерживаются'
-              : 'Вложения из CRM для личного Telegram пока не поддерживаются',
-          });
-      }
       if (isGiftMax && fileBuffer?.length) {
         return reply
           .code(400)
@@ -3158,18 +3662,115 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             peerUserId: chatId,
             kind: 'typing',
           });
-          await sendViaGramjsBridge({
-            botId: bot.id,
-            peerUserId: chatId,
-            text: text || '[файл]',
-            phone: gramjsPhoneE164,
-          });
+          if (fileBuffer?.length) {
+            const kind = detectUploadKind(mimeType, filename);
+            const effectiveMime =
+              kind === 'video' && !mimeType.startsWith('video/')
+                ? 'video/mp4'
+                : kind === 'photo' && !mimeType.startsWith('image/')
+                  ? 'image/jpeg'
+                  : mimeType;
+            const sent = await sendViaGramjsBridge({
+              botId: bot.id,
+              peerUserId: chatId,
+              text: text || '',
+              phone: gramjsPhoneE164,
+              username: target.username,
+              media: {
+                mediaBase64: fileBuffer.toString('base64'),
+                mimeType: effectiveMime,
+                fileName: filename,
+              },
+            });
+            if (sent) attachments = [sent];
+            if (!text) {
+              text =
+                kind === 'photo'
+                  ? '[фото]'
+                  : kind === 'video'
+                    ? '[видео]'
+                    : `[файл: ${filename}]`;
+            }
+          } else {
+            await sendViaGramjsBridge({
+              botId: bot.id,
+              peerUserId: chatId,
+              text,
+              phone: gramjsPhoneE164,
+              username: target.username,
+            });
+          }
         } else if (isMax) {
-          await sendViaMaxBridge({
-            botId: bot.id,
-            peerUserId: chatId,
-            text: text || '[файл]',
-          });
+          if (target.conversationId) {
+            const recentInbound = await prisma.chatMessage.findMany({
+              where: {
+                conversationId: target.conversationId,
+                role: 'user',
+                externalMessageId: { not: null },
+              },
+              orderBy: { sentAt: 'desc' },
+              take: 5,
+              select: { externalMessageId: true },
+            });
+            fireMaxPresence({
+              botId: bot.id,
+              peerUserId: chatId,
+              kind: 'read',
+              messageIds: recentInbound
+                .map((m) => m.externalMessageId)
+                .filter((id): id is string => Boolean(id)),
+            });
+          }
+          if (fileBuffer?.length) {
+            const kind = detectUploadKind(mimeType, filename);
+            // Browser often sends application/octet-stream for .mp4 — force video mime
+            // so max-bridge uploads Video (not File) and stores type=video.
+            const effectiveMime =
+              kind === 'video' && !mimeType.startsWith('video/')
+                ? 'video/mp4'
+                : kind === 'photo' && !mimeType.startsWith('image/')
+                  ? 'image/jpeg'
+                  : mimeType;
+            const sent = await sendViaMaxBridge({
+              botId: bot.id,
+              peerUserId: chatId,
+              text: text || '',
+              media: {
+                mediaBase64: fileBuffer.toString('base64'),
+                mimeType: effectiveMime,
+                fileName: filename,
+              },
+            });
+            if (sent) {
+              // Prefer UI type from filename/mime if bridge still returned document.
+              const storedType =
+                kind === 'video' && sent.type === 'document' ? 'video' : sent.type;
+              attachments = [
+                {
+                  ...sent,
+                  type: storedType,
+                  mimeType:
+                    storedType === 'video' && !sent.mimeType?.startsWith('video/')
+                      ? 'video/mp4'
+                      : sent.mimeType,
+                },
+              ];
+            }
+            if (!text) {
+              text =
+                kind === 'photo'
+                  ? '[фото]'
+                  : kind === 'video'
+                    ? '[видео]'
+                    : `[файл: ${filename}]`;
+            }
+          } else {
+            await sendViaMaxBridge({
+              botId: bot.id,
+              peerUserId: chatId,
+              text,
+            });
+          }
         } else if (isGiftMax) {
           const token = decrypt(bot.botTokenEncrypted!);
           const maxBase = (
@@ -3197,13 +3798,21 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           // Worker marks read + types + may split multi-bubble text.
           if (fileBuffer?.length) {
             const kind = detectUploadKind(mimeType, filename);
+            // Browser often sends application/octet-stream — force real media mime
+            // so worker stores type=photo|video (parity with MAX INC-112 path).
+            const effectiveMime =
+              kind === 'video' && !mimeType.startsWith('video/')
+                ? 'video/mp4'
+                : kind === 'photo' && !mimeType.startsWith('image/')
+                  ? 'image/jpeg'
+                  : mimeType;
             const sent = await sendViaWhatsappWorker({
               botId: bot.id,
               peerUserId: chatId,
               text,
               media: {
                 mediaBase64: fileBuffer.toString('base64'),
-                mimeType,
+                mimeType: effectiveMime,
                 fileName: filename,
               },
             });
@@ -3349,6 +3958,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         ...attachments,
         { type: 'sender_meta', label: operatorLabel },
       ];
+      // WA/Evolution media preview uses message key id as fileId — persist for
+      // getBase64FromMediaMessage lookup (convertToMp4 / fromMe hints).
+      const outboundExternalId =
+        isWhatsapp && attachments[0]?.fileId
+          ? attachments[0].fileId
+          : undefined;
 
       const message = await prisma.chatMessage.create({
         data: {
@@ -3356,6 +3971,9 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           role: 'operator',
           content: text,
           attachments: storedAttachments,
+          ...(outboundExternalId
+            ? { externalMessageId: outboundExternalId }
+            : {}),
         },
       });
       // AI stays on until manual pause/off (CRM buttons / /pause / /off).

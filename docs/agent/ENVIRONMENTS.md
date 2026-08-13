@@ -26,6 +26,12 @@ Rule: developing locally must **not** assume prod DB/content. Shipping is always
 
 Process (1) is in place. Code (2) is **not fully equal** (see drift below). That is OK while working locally; before each prod ship, run `prod-diff` and deploy only the services you intend.
 
+## Verified snapshot (2026-08-07 Friendly LP homepage)
+
+- Deployed: `saas-portal` (compose also restarted `saas-api` as dep). Friendly LP live on `/`; v3 kept in repo `_archive/landing-v3/`.
+- Backup `/opt/voxly/backups/20260807-082346/`. Smoke: landing/api/dashboard **200**; HTML has `friendly-lp` + «Все клиенты из WhatsApp»; `/lp/friendly` → `/`.
+- Disk after: ~66G free. Volumes untouched.
+
 ## Verified snapshot (2026-08-06 tip redeploy)
 
 - Branch tip `cb36ecf` on `feature/getvoxlybot-otp-live-robokassa`; PR https://github.com/toxasag/voxly/pull/1 → `main`.

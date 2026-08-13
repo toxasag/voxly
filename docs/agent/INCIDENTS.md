@@ -5,6 +5,113 @@
 
 ---
 
+### INC-119 — CRM «не открывается» — disk suspected (false alarm)
+- **Симптом (voxly 2026-08-07 ~18:00 MSK):** пользователь: CRM не открывается; follow-up «может места мало».
+- **Проверка:** `/` **не** full — **57G free (40%)** before ops; inodes 21%; logs max ~37MB; no OOM; twenty-server/worker/saas-api/traefik/NPM/PG/redis all **Up**; `https://voxly-crm.getvoxly.ru/` + `/healthz` + GraphQL + API health **200**. Twenty logs show live auth/metadata traffic minutes before report.
+- **Причина outage:** **не диск** (не INC-052/092). Infra CRM healthy — likely client cache/session or transient; no container down.
+- **Ops (профилактика, не restore):** `docker image prune -af` → reclaimed **14.54GB**; after **72G free (24%)**. Volumes / `down -v` **не** трогали. Twenty recreate не нужен.
+- **User:** открыть `https://voxly-crm.getvoxly.ru/` + hard-refresh (Cmd/Ctrl+Shift+R). Если blank — прислать screenshot/код ошибки.
+- **Дата:** 2026-08-07.
+
+### INC-118 — GramJS CRM: «Код» всё ещё не виден в Telegram (после INC-117)
+- **Симптом (voxly 2026-08-07 ~17:00 MSK):** после INC-117 spoiler OK; toolbar **Код** (`…`) в нативном Telegram выглядит как обычный текст (кириллица).
+- **Причина:** entities уже уходили (`MessageEntityCode` на msg `апапап` / `ппп` к @Remont_toua). Inline Code на кириллице почти неотличим от body font; пользователь воспринимал как «не работает». Spoiler заметен сразу.
+- **Фикс:** `clientMdToTelegramHtml` — inline `` `code` `` → `<pre>` → **MessageEntityPre** (серый code-block). Spoiler/bold/italic/strike без изменений. Bot API MarkdownV2 path не трогали. Лог bridge `send format … hasPre=`.
+- **Deploy:** `./scripts/prod-deploy.sh gramjs-bridge` backup `20260807-141203`. **max-bridge / ai-whatsapp-worker / crm-chat не трогали.** Volumes untouched.
+- **Verify:** send `` `monospace_visible` `` → msg **36903** entities=`MessageEntityPre`; `` `код_блок` `` → **36904**; health 200; log `hasPre=true`.
+- **Smoke:** CRM GramJS → выделить слово → Код → отправить → в Telegram серый monospace block.
+- **Дата:** 2026-08-07.
+
+### INC-117 — GramJS CRM: spoiler/code не в Telegram + нет «Прикрепить»
+- **Симптом (voxly 2026-08-07 ~16:22 MSK):** CRM Chat «Telegram · личный · @genadich_age» → текст OK; toolbar Жирный/Курсив/Зачёркнутый/Спойлер/Код — **спойлер и код не применяются в нативном Telegram**; кнопки **Прикрепить** нет (MAX/WA на том же виджете attach есть).
+- **Причина:** (1) Bridge `POST /messages/send` слал plain text без entities/`parseMode`. Client MD (`||` spoiler, `` `code` ``) уходил литералами. Даже GramJS `md` delimiters **не включают spoiler** (`DEFAULT_DELIMITERS` = `**` `__` `~~` `` ` `` ```). Bot API path uses MarkdownV2 — GramJS не шёл туда. (2) INC-033 намеренно скрыл attach: `supportsAttachments: botType !== 'ai_gramjs'` + reply 400 «вложения… не поддерживаются»; UI onChange тоже исключал `ai_gramjs` (и ошибочно мог гасить MAX при переключении канала).
+- **Фикс:** `clientMdToTelegramHtml` → bridge `parseMode: 'html'`; outbound `mediaBase64` через `CustomFile`/`sendFile`; saas-api `sendViaGramjsBridge` media + `supportsAttachments` для всех кроме `gift_max`; crm-chat **0.1.29** attach при GramJS. MAX/WA send paths / max-bridge / wa-worker **не трогали**.
+- **Deploy:** `./scripts/prod-deploy.sh gramjs-bridge,saas-api` backup `20260807-132959`; `refresh-crm-chat` voxly/efim1/art-dekor. **max-bridge / wa-worker не трогали.** Volumes untouched. crm-chat **0.1.29**.
+- **Verify:** dist markers OK; health 200; user smoke spoiler+code + attach GramJS; MAX/WA attach при выборе канала.
+- **Дата:** 2026-08-07.
+
+### INC-116 — CRM Chat tab «Нет данных» after refresh-crm-chat 0.1.28
+- **Status:** ✅ **CLOSED** — user-confirmed WORKING 2026-08-07 ~16:14 MSK (MAX+WA CRM chat OK). Freeze: `modules/crm-chat-panel.md`.
+- **Симптом (voxly 2026-08-07 ~15:50 MSK):** сделка «Ремонт Инструмент · MAX · личный» → вкладка «Чат» активна, красная таблетка **«Нет данных»**, пустой canvas. Сообщения в control DB живы (MAX 17 + WA 6); `GET /api/crm/chat/:oppId` **200** с threads/messages. Браузер **не** бил в `/api/crm/chat/:id` (front-component не монтировался).
+- **Причина:** не saas-api / не потеря данных / не max-bridge. Twenty `FrontComponent` widget renderer: `Gt(configuration,"FrontComponentConfiguration")` ⇒ `configuration.__typename === "FrontComponentConfiguration"`. `refresh-crm-chat` / app install пишет в `pageLayoutWidget.configuration` только `{configurationType:"FRONT_COMPONENT", frontComponentId}` **без** `__typename`. После refresh + flat-map reload клиент видит incomplete config → empty state `B6C0XJ` = «Нет данных» (не текст chat-panel).
+- **Фикс (prod ASAP):** SQL `jsonb_set(…,'{__typename}','"FrontComponentConfiguration"')` на все `FRONT_COMPONENT` widgets (voxly/efim1/art-dekor, 18 rows); flush redis `page-layout*` / `front-component*` flat-maps; bump `metadataVersion`. Harden: `refreshCrmChatAppForTenant` патчит `__typename` + bump metadata после install.
+- **Deploy:** ops SQL+redis на prod (backup tip `20260807-124124` still valid for prior ship); saas-api harden via `./scripts/prod-deploy.sh saas-api` when shipping code. **max-bridge / volumes untouched.** crm-chat **0.1.28** (WA preview) оставлен — не откатывали.
+- **Verify:** DB Chat widgets have `__typename`; API Remont opp/person msgs=17 threads=2; CRM/API health 200.
+- **User:** hard-refresh (Cmd/Ctrl+Shift+R) voxly-crm → сделка Remont → «Чат» → история MAX+WA. Re-send не нужен. **Closed ~16:14 MSK** — both MAX and WA chat confirmed OK.
+- **Дата:** 2026-08-07.
+
+### INC-115 — CRM WA photo/video show paperclip only (no preview) on multi-channel Person
+- **Status:** ✅ **CLOSED** — user-confirmed WORKING 2026-08-07 ~16:14 MSK. Freeze: `modules/wa-crm-sync.md` + `crm-chat-panel.md`.
+- **Симптом (voxly 2026-08-07 ~15:32–15:34 MSK):** CRM WhatsApp chat → outbound jpg / Marketing.mp4 / docx delivered OK (после INC-114), но в UI: `📎 ….jpg`, `📎 Marketing.mp4 · скачать` (нет `<img>`/`<video>`). Inbound `[фото]:` + «Фото» paperclip тоже без превью. Документ/текст OK.
+- **Причина:** не сломанный store (`type=photo|video`, mime верные) и не Evolution download (worker `getBase64` OK). Person имеет **MAX (17 msgs) + WA (6)**; `findCrmChatTarget` / media resolve брали **default = busiest thread = MAX**. WA Evolution `fileId` на MAX-боте → 400 «Превью файлов для личного MAX…»; signed-url тоже клал MAX `botId` в токен → `/media` 400. Дополнительно: `botId !== default target` → 403; CRM outbound без `externalMessageId`.
+- **Фикс:** saas-api `findAttachmentContext` — bot/peer по сообщению с этим `fileId` across all channels; убран жёсткий bot-mismatch; WA mime coerce + `externalMessageId` на outbound; worker `fromMe` hint + retry + lookup по attachments.fileId. crm-chat **0.1.28** — photo/sticker via signed URL + `isImageType` by extension.
+- **Deploy:** `./scripts/prod-deploy.sh saas-api,ai-whatsapp-worker` backup `20260807-124124`; `refresh-crm-chat` voxly. **max-bridge не трогали.** Volumes untouched.
+- **Verify:** media tokens → photo `200 image/jpeg` (~93KB), video `200 video/mp4` (~1.1MB), inbound photo `200`; `/file` outbound jpg `200`. max-bridge uptime unchanged vs pre-deploy.
+- **User:** hard-refresh CRM WA chat — **re-send не нужен**. MAX preview path не меняли (только общий resolve по fileId). **Closed ~16:14 MSK** with WA chat confirmation.
+- **Дата:** 2026-08-07.
+
+### INC-114 — CRM→WA outbound photo/video «Owned media must be a url or base64»
+- **Status:** ✅ **CLOSED** — user-confirmed WORKING 2026-08-07 ~16:14 MSK. Freeze: `modules/wa-crm-sync.md`.
+- **Симптом:** CRM chat WhatsApp → send photo/video → 400 **Owned media must be a url or base64**. Text OK. Suspected after MAX media work (shared crm-chat upload).
+- **Причина:** не MAX. `ai-whatsapp-worker` `sendWhatsAppMedia` слал Evolution `media` как `data:{mime};base64,…`. Evolution `sendMedia` проверяет `class-validator` `isBase64` / `isURL` — data-URI **проваливает оба** → BadRequest. MAX path (`sendViaMaxBridge`) отдельный, не задет.
+- **Фикс:** worker → pure base64 (strip `data:` + whitespace); force `image/jpeg` / `video/mp4` when browser sends `octet-stream` but kind is image/video.
+- **Deploy:** `./scripts/prod-deploy.sh ai-whatsapp-worker` backup `20260807-122920`. **Не** трогали `max-bridge` / `saas-api`. Volumes untouched.
+- **Verify:** worker dist comment `Pass pure base64`; max-bridge/saas-api uptime unchanged vs pre-deploy; HTTPS smoke 200.
+- **User smoke:** CRM WA → фото + видео → delivered; MAX outbound text/file без регресса (код MAX не меняли). **Closed ~16:14 MSK** with WA chat confirmation.
+- **Дата:** 2026-08-07.
+
+### INC-113 — MAX channel→CRM lead + owner profile leaked onto peer Person
+- **Симптом (voxly ~14:51 MSK 2026-08-07):** (A) контакт «Марина Горохова» с телефоном/TG/WA/about/birthday владельца `+79150946944` / `@toxasagmsk` / `t.me/genadich_com`; MAX link `open/max/25786044`. (B) сделка `-70340712641969 · MAX · личный` из канала «Несносный дед PRO…».
+- **Evidence:** control Conversation `25786044` + Person `ffd4ef82-…`; chat `25786044` type=DIALOG participants=`[3361844(me), 28981896]` — **chat id ≠ user id**; real peer `get_user(28981896)` = Марина `+79150910874`. Owner me=`3361844`. Channel `-70340712641969` type=**CHANNEL**. CRM message `max:117054011124502204` sender=**me** stored as `role=user` at 11:34Z → Person.updatedAt same second → `applyMaxProfile` phone overwrite + `enrichPersonCrossChannelByPhone` → toxasagmsk TG fields. Root: inbound skip-me used `client.me.id` but PyMax `me` is wrapper — User on **`me.contact`** → outgoing/CALL not skipped; live inbound had **no** CHANNEL filter (history sync already DIALOG-only); `/open/max` used chat id.
+- **Фикс:** max-bridge — unwrap `me.contact`; skip negative ids + non-DIALOG; resolve peer user from sender/participants (never chat_id as user); never forward me phone; pass `maxUserId`+`chatType` (+ later `selfPhone`). saas-api — reject channel/self before lead; `applyMaxProfile` userId=maxUserId; phone fill-empty only. max-chat-sync — skip negative; open/max via `userId`.
+- **Harden (same day):** `max-phone-guard` (`stripOwnerPhone`); inbound+history `selfPhone`; enrich `forbidPhones`; history sync no direct `updatePersonPhone` overwrite. Freeze card WORKING/FROZEN. Vitest `apps/saas-api/tests/max-phone-guard.test.ts`.
+- **Cleanup (voxly):** Marina phone→`9150910874`, clear owner TG/WA/site/about/birthday, max→`open/max/28981896`; soft-delete channel Person/Opp; suppress channel Conversation; `BotInstance.phoneNumberId=3361844`.
+- **Deploy:** `saas-api,max-bridge` backup `20260807-120603`; harden `20260807-121730`. Volumes untouched.
+- **Дата:** 2026-08-07.
+
+### INC-112 — CRM→MAX outbound video → «📎 Reklama.mp4 · скачать» (no player)
+- **Симптом:** Outbound CRM→MAX video delivers in MAX app, but CRM bubble shows paperclip + filename + «скачать» (no `<video>`). Example: voxly · 07.08.2026 14:34 Reklama.mp4 (peer «Ремонт Инструмент»). Inbound regular video already OK after INC-110.
+- **Причина:** Outbound `fileId` was `max:{chat}:{mid}:{kind}:out`. Media download called `get_video_by_id(video_id=int("out"))` → fail → signed URL 502 → `video.onError` → paperclip fallback. UI already treated `.mp4` as video (`isVideoType`); classification/store was secondary. Browser `octet-stream` for `.mp4` could also upload as File instead of Video.
+- **Фикс:** max-bridge — resolve `:out` via `get_message` + attaches (real video_id/file_id + CDN, Chrome UA); classify outbound by extension; prefer real native id from send result. saas-api — force `video/mp4` mime for `.mp4` uploads + store `type=video` when kind is video.
+- **Deploy:** `max-bridge,saas-api` backup `20260807-114320`. Volumes untouched. crm-chat tarball unchanged (no refresh).
+- **Verify:** prod media for that fileId → 200 `video/mp4` (~3.1MB) via message attach `video_id`.
+- **User:** hard-refresh CRM — **re-send not needed**. New outbound videos get better fileIds when send result has attaches.
+- **Дата:** 2026-08-07.
+
+### INC-111 — CRM→MAX outbound «Token has expired» (PDF then all send)
+- **Симптом:** CRM chat → MAX (аккаунт «915» `cmshlhdd60002q6g7f9vydlky`, peer `346581106` «Ремонт Инструмент») — send PDF → UI **Token has expired**; затем не уходят media/files/text.
+- **Prod evidence (2026-08-07 ~13:47 MSK):** в текущем `max-bridge` (после INC-110 restart 13:17) **нет** строк `Token has expired` / `send failed` около 13:47; последние успешные outbound до инцидента — photo×2 в **13:25** (`POST /messages/send` 200). Media download/read/inbound OK. Live probe **до** фикса: text + tiny PDF → bridge **200**. Значит сессия PyMax **жила**; UI-текст — сырой `ApiError`/MAX message через `detail=str(exc)` без humanize; полный outage в логах saas-api как failed `/reply` после 13:25 **не подтверждён** (возможен stale toast / клиент не дошёл до bridge / краткий auth glitch).
+- **Не причина:** INC-110 Chrome UA (только `_http_get_bytes` download); wipe session; gift MAX Bot API.
+- **Фикс:** max-bridge — detect session-auth errors (`Token has expired` / `FAIL_LOGIN_TOKEN` / …) → drop live client → **one** restore+retry on `/messages/send`; если всё ещё auth → **401** + RU «Сессия MAX истекла… QR». saas-api `humanizeCrmChatSendError` — тот же RU для CRM toast.
+- **Deploy:** `max-bridge,saas-api` backup `20260807-105343`. Volumes untouched. Post-deploy: session restore + text/PDF smoke **200**.
+- **User:** hard-refresh CRM; retry text then PDF. **Re-QR не нужен**, пока снова не увидит RU про сессию / статус Ошибка на `/dashboard/ai/max`.
+- **Дата:** 2026-08-07.
+
+### INC-110 — MAX regular video file → CRM «📎 Видео · скачать» (no player)
+- **Симптом:** Inbound MAX voice / circle / PDF / sticker preview OK; regular **video file** shows paperclip + «Видео» + «скачать» (no `<video>`). Example: peer `346581106` «Ремонт Инструмент» `2026-08-07 13:09:19` MSK, `max:…:video:16001767006040`.
+- **Причина:** Classification OK (`type=video`, `mimeType=video/mp4`). Circle uses `v.oneme.ru/videoMsg` (200 with default httpx UA). Regular file → PyMax `get_video_by_id` → **okcdn.ru** URL signed `srcAg=CHROME`; default httpx User-Agent → CDN **400** → bridge `/messages/media` 502 → CRM chat `video.onError` → download fallback. Sending `Origin: https://web.max.ru` also → 400.
+- **Фикс:** max-bridge `_http_get_bytes` uses Chrome UA (+ `Accept: */*`), no Origin.
+- **Deploy:** `max-bridge` only, backup `20260807-101651`. Volumes untouched. crm-chat unchanged.
+- **Verify:** `/messages/media` for that fileId → 200 `video/mp4`; hard-refresh CRM chat → inline player; circle/voice/sticker/PDF still 200.
+- **Дата:** 2026-08-07.
+
+### INC-109 — MAX CRM media `[сообщение]` + no attach/read; TG send used MAX user id
+- **Симптом:** Live MAX inbound OK (Person/Opp), но photo/PDF/voice → CRM `[сообщение]` без attachments; нет 📎 в MAX-треде; native MAX не показывает read/«печатает»; «Пишем от» Telegram → `peer not found` despite phone `+79918829870` / `@Remont_toua`.
+- **Причина:** (1) max-bridge inbound forwarded only `text` (empty for media) → saas-api default `[сообщение]`. (2) `supportsAttachments` excluded `ai_max`; send blocked fileBuffer. (3) No `read_message` wiring. (4) `resolveOutboundPeer` treated `platform in (telegram,max)` as interchangeable → GramJS got MAX `platformUserId` without phoneE164; ImportContacts never ran; username not passed to bridge. (5) MAX message snowflakes > JS `Number.MAX_SAFE_INTEGER` — JSON number `messageId` corrupted precision for read/media.
+- **Фикс:** bridge extract `attaches` + `/messages/media` + `/messages/read` + outbound Photo/File/Voice/Video; inbound schema stores attachments; crm-chat channel-scoped peer resolve + phone/@username to GramJS; ImportContacts wins when CRM id mismatches phone map. **Typing:** PyMax exposes `MSG_TYPING` / `on_typing` only — no public send-typing API → unsupported (documented).
+- **Deploy:** `max-bridge,saas-api,gramjs-bridge`. Backfill: optional MAX history sync for old `[сообщение]` rows.
+- **Verify:** MAX photo/PDF/voice → preview; 📎 outbound; open chat → read in MAX app; TG send to Remont_toua via phone/@username.
+- **Дата:** 2026-08-07.
+
+### INC-108 — MAX live inbound never created Person/Opportunity (handler arity)
+- **Симптом:** `/dashboard/ai/max` shows account **На связи** (label `915`, MAX id «появится после скана»), но сообщение с другого MAX → CRM без Person/Opportunity. History sync button не нажимали.
+- **Причина:** PyMax 2.4 `Dispatcher._call` вызывает `callback(event, self.client)`, а max-bridge `_listen_inbound.on_msg` принимал **1** аргумент → `TypeError: takes 1 positional argument but 2 were given` на каждом opcode=128; `POST /api/internal/max/inbound` не вызывался. Auto-disable history sync **не** виноват (отдельный путь).
+- **Prod evidence:** bot `cmshlhdd60002q6g7f9vydlky` tenant `cmseeil8m00073ji1pz62ry1z` — **0** Conversation / **0** ChatMessage; saas-api без `/internal/max/inbound`; max-bridge errors с 2026-08-06 16:59 через 2026-08-07 08:27 (~45 за 24h).
+- **Фикс:** `on_msg(message, event_client=None)` + skip self (`sender == me.id`); log `inbound forwarded`. Deploy `max-bridge` only.
+- **Backup:** `/opt/voxly/backups/20260807-083628/`. Volumes untouched.
+- **Verify:** send DM to connected MAX → max-bridge `inbound forwarded` + Conversation/Person/Opp; UI «появится после скана» = empty `phoneNumberId` (cosmetic, restore sees `profile=3361844`).
+- **Дата:** 2026-08-07.
+
 ### INC-107 — `reapply-crm-defaults` 200 but Person social fields stay in System (MAX under WhatsApp)
 - **Симптом:** Admin `POST …/reapply-crm-defaults` returns `{ok:true}` (superadmin JWT required — `VOXLY_SERVICE_TOKEN` → 401). Prod `core.viewField` still has `telegram`/`whatsapp`/`max` in **System** (max at pos 14), not Social under LinkedIn.
 - **Причина:** (1) Admin route is `requireSuperadmin` (JWT), not service token. (2) Twenty **in-memory flat-maps** can diverge from `core.viewField`: `getViewFields` / `updateViewField` report Social positions while Postgres still has System — mutation becomes a no-op; redis flush + `metadataVersion++` alone is not enough. (3) `movePersonFieldsToSocialGroup` catch was silent.

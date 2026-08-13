@@ -256,5 +256,41 @@ export async function refreshCrmChatAppForTenant(opts: {
     forceReinstall: true,
   });
 
+  // Twenty front renders FRONT_COMPONENT only when configuration.__typename is
+  // "FrontComponentConfiguration" (Gt check). App install stores JSON without
+  // __typename; flat-map hydration then shows canvas empty state «Нет данных»
+  // (INC-116). Patch after every refresh so Chat/Mailing widgets mount.
+  if (connectionString) {
+    const pgClient = new pg.Client({ connectionString });
+    await pgClient.connect();
+    try {
+      await pgClient.query(
+        `UPDATE core."pageLayoutWidget"
+         SET configuration = jsonb_set(
+           configuration,
+           '{__typename}',
+           '"FrontComponentConfiguration"'::jsonb,
+           true
+         ),
+         "updatedAt" = now()
+         WHERE "workspaceId" = $1::uuid
+           AND type = 'FRONT_COMPONENT'
+           AND "deletedAt" IS NULL
+           AND configuration->>'configurationType' = 'FRONT_COMPONENT'
+           AND coalesce(configuration->>'__typename', '') <> 'FrontComponentConfiguration'`,
+        [tenant.twentyWorkspaceId],
+      );
+      await pgClient.query(
+        `UPDATE core.workspace
+         SET "metadataVersion" = "metadataVersion" + 1,
+             "updatedAt" = now()
+         WHERE id = $1::uuid`,
+        [tenant.twentyWorkspaceId],
+      );
+    } finally {
+      await pgClient.end();
+    }
+  }
+
   return { ok: true, versionHint: '0.1.10+' };
 }

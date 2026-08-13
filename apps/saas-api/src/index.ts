@@ -19,6 +19,7 @@ import { adminPlatformBotRoutes } from './routes/admin-platform-bot.js';
 import { adminPricingRoutes } from './routes/admin-pricing.js';
 import { adminServicesRoutes } from './routes/admin-services.js';
 import { adminAiBalanceRoutes } from './routes/admin-ai-balance.js';
+import { publicPricingRoutes } from './routes/public-pricing.js';
 import { platformBotInternalRoutes } from './routes/platform-bot-internal.js';
 import { referralRoutes } from './routes/referral.js';
 import { botRoutes } from './routes/bots.js';
@@ -31,6 +32,7 @@ import { whatsappRoutes } from './routes/whatsapp.js';
 import { aiAgentRoutes } from './routes/ai-agents.js';
 import { audienceRoutes } from './routes/audience.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { metricsRoutes } from './routes/metrics.js';
 import { crmChatRoutes } from './routes/crm-chat.js';
 import { formsRoutes, formWebhookRoutes } from './routes/forms.js';
 import { openTgRoutes } from './routes/open-tg.js';
@@ -240,6 +242,7 @@ export async function buildServer() {
 
   // --- Routes ---
   await fastify.register(authRoutes, { prefix: '/api/auth' });
+  await fastify.register(publicPricingRoutes, { prefix: '/api/pricing' });
   await fastify.register(billingRoutes, { prefix: '/api/billing' });
   await fastify.register(tenantRoutes, { prefix: '/api/tenant' });
   await fastify.register(adminRoutes, { prefix: '/api/admin' });
@@ -260,6 +263,7 @@ export async function buildServer() {
   await fastify.register(aiAgentRoutes, { prefix: '/api/ai/agents' });
   await fastify.register(audienceRoutes, { prefix: '/api/audience' });
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
+  await fastify.register(metricsRoutes, { prefix: '/api/admin' });
   await fastify.register(crmChatRoutes, { prefix: '/api/crm/chat' });
   await fastify.register(formsRoutes, { prefix: '/api/forms' });
   await fastify.register(formWebhookRoutes, { prefix: '/api/webhooks/forms' });

@@ -176,6 +176,21 @@ export function normalizePhoneToE164(raw?: string | null): string | undefined {
   return `+${digits}`;
 }
 
+/**
+ * Canonical fingerprint for phone dedupe/search (4.5): the last-10 significant
+ * digits of a normalized RU number, or the full digit string for shorter/foreign
+ * numbers. `+7 903 …`, `8 (903) …`, and `903…` all collapse to the same value.
+ * Returns undefined only when no phone-like digits are present.
+ */
+export function phoneFingerprint(raw?: string | null): string | undefined {
+  const e164 = normalizePhoneToE164(raw);
+  const digits = (e164 ? e164 : String(raw ?? '')).replace(/\D/g, '');
+  if (!digits) return undefined;
+  // Last 10 digits are the subscriber-significant part for RU (and most NANP)
+  // numbers, so trunk/country-code differences (8 vs +7) collapse to one key.
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
 /** Search variants for Twenty phones / whatsapp eq filters. */
 export function phoneSearchVariants(raw?: string | null): string[] {
   const e164 = normalizePhoneToE164(raw);
@@ -2481,7 +2496,12 @@ export class TwentyClient {
 
     if (profile.phone) {
       try {
-        await this.updatePersonPhone(personId, profile.phone);
+        // Fill-empty only — never overwrite a different existing phone (INC-113 me-leak).
+        const currentPhone = await this.getPersonPhoneDigits(personId);
+        const incoming = String(profile.phone).replace(/\D/g, '');
+        if (!currentPhone || currentPhone === incoming) {
+          await this.updatePersonPhone(personId, profile.phone);
+        }
       } catch {
         /* ignore */
       }
@@ -2685,6 +2705,40 @@ export class TwentyClient {
       console.warn(
         `[twenty-client] applyTelegramProfile extras failed person=${personId}: ${errorMessage(err)}`,
       );
+    }
+  }
+
+  /** Primary phone digits for fill-empty guards (INC-113). */
+  async getPersonPhoneDigits(personId: string): Promise<string | null> {
+    if (!personId) return null;
+    const headers = this.getAuthHeaders();
+    try {
+      const result = await this.client.request(
+        gql`
+          query PersonPhone($filter: PersonFilterInput) {
+            people(filter: $filter, first: 1) {
+              edges {
+                node {
+                  id
+                  phones {
+                    primaryPhoneNumber
+                    primaryPhoneCallingCode
+                  }
+                }
+              }
+            }
+          }
+        `,
+        { filter: { id: { eq: personId } } },
+        headers,
+      );
+      const node = (result as any).people?.edges?.[0]?.node;
+      const n = String(node?.phones?.primaryPhoneNumber || '').replace(/\D/g, '');
+      const c = String(node?.phones?.primaryPhoneCallingCode || '').replace(/\D/g, '');
+      const digits = n.length >= 10 ? n : c && n ? `${c}${n}` : n;
+      return digits.length >= 10 ? digits : null;
+    } catch {
+      return null;
     }
   }
 

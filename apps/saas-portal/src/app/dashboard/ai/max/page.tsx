@@ -320,30 +320,7 @@ export default function MaxChannelPage() {
           clearPng();
           setError('');
           await loadAccounts();
-          // Kick CRM history sync once after fresh connect (same idea as WA/GramJS).
-          const botId = json.botId;
-          if (botId) {
-            void (async () => {
-              try {
-                const syncRes = await fetch(`/api/bots/max/accounts/${botId}/sync-history`, {
-                  method: 'POST',
-                  headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                  body: JSON.stringify({}),
-                });
-                if (syncRes.ok || syncRes.status === 202) {
-                  syncWatchIdsRef.current.add(botId);
-                  setSyncHint('Аккаунт подключён — синхронизируем личные чаты в CRM…');
-                  if (!syncPollRef.current) {
-                    syncPollRef.current = setInterval(() => {
-                      void loadAccounts();
-                    }, 3000);
-                  }
-                }
-              } catch {
-                /* optional */
-              }
-            })();
-          }
+          // History sync is manual only («Синхронизировать» → POST …/sync-history).
         }
         if (json.status === 'error' && json.error) {
           setError(json.error);

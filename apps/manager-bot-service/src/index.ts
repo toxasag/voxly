@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from '@voxly/db';
 import { encrypt } from '@voxly/crypto';
+import { fetchWithTimeout } from '@voxly/shared';
 
 const MANAGER_BOT_TOKEN = process.env.TELEGRAM_MANAGER_BOT_TOKEN || '';
 const MANAGER_BOT_USERNAME = process.env.TELEGRAM_MANAGER_BOT_USERNAME || 'VoxlyGiftbot';
@@ -24,10 +25,11 @@ declare const Bun: { serve?: (...args: any[]) => unknown } | undefined;
 
 async function main() {
   if (USE_POLLING) {
-    await fetch(`${TELEGRAM_API}/deleteWebhook`, {
+    await fetchWithTimeout(`${TELEGRAM_API}/deleteWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ drop_pending_updates: false }),
+      timeout: 15000,
     });
     console.log('[manager-bot-service] Long-polling mode enabled');
     void pollManagerUpdates();
@@ -50,8 +52,9 @@ async function pollManagerUpdates() {
   let offset = 0;
   for (;;) {
     try {
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${TELEGRAM_API}/getUpdates?timeout=25&offset=${offset}&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'managed_bot']))}`,
+        { timeout: 30000 },
       );
       const data = (await res.json()) as any;
       if (!data.ok) {
@@ -79,7 +82,7 @@ async function setManagerWebhook() {
   const url = `${TELEGRAM_API}/setWebhook`;
   // Keep pending updates (ManagedBotUpdated) unless explicitly dropping.
   const dropPending = process.env.MANAGER_WEBHOOK_DROP_PENDING === 'true';
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -87,6 +90,7 @@ async function setManagerWebhook() {
       allowed_updates: ['message', 'managed_bot'],
       drop_pending_updates: dropPending,
     }),
+    timeout: 15000,
   });
   const data = (await response.json()) as any;
   if (data.ok) {
@@ -392,10 +396,11 @@ async function handleManagedBotUpdated(managedBot: any) {
  * Get managed bot token via Bot API
  */
 async function getManagedBotToken(userId: number): Promise<string | null> {
-  const response = await fetch(`${TELEGRAM_API}/getManagedBotToken`, {
+  const response = await fetchWithTimeout(`${TELEGRAM_API}/getManagedBotToken`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId }),
+    timeout: 15000,
   });
   const data = await response.json() as any;
   if (data.ok) {
@@ -447,7 +452,7 @@ async function registerChildBotWebhook(
         ]
       : ['message', 'callback_query', 'chat_member'];
 
-  const response = await fetch(`${botApi}/setWebhook`, {
+  const response = await fetchWithTimeout(`${botApi}/setWebhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -456,6 +461,7 @@ async function registerChildBotWebhook(
       allowed_updates,
       drop_pending_updates: true,
     }),
+    timeout: 15000,
   });
   const data = await response.json() as any;
   if (data.ok) {
@@ -523,11 +529,17 @@ async function linkTelegramUser(telegramUserId: number, nonce: string) {
 }
 
 async function sendManagerMessage(chatId: number, text: string) {
-  await fetch(`${TELEGRAM_API}/sendMessage`, {
+  const res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
+    timeout: 15000,
   });
+  const data = (await res.json().catch(() => null)) as { ok?: boolean; description?: string } | null;
+  if (!res.ok || !data?.ok) {
+    console.error('[manager-bot-service] sendManagerMessage failed:', data?.description || `HTTP ${res.status}`);
+  }
+  return res.ok && data?.ok === true;
 }
 
 function generateSecret(): string {

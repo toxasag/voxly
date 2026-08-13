@@ -27,6 +27,7 @@ import {
   TRIAL_PERIOD_DAYS,
   AI_HANDOFF_PAUSE_MS,
   getGiftBotSlots,
+  broadcastPoolIds,
   type GiftFunnelConfig,
   type GiftPromoMediaType,
   type GiftPromoPost,
@@ -229,6 +230,8 @@ const broadcastSchema = z.object({
   telegramFileId: optionalFileId,
   mediaType: giftMediaTypeSchema.optional(),
   scheduledAt: z.string().datetime().optional(),
+  /** Optional account pool for least-loaded rotation (Job 1B.1). */
+  botIds: z.array(z.string().min(1)).optional(),
 });
 
 /** GramJS / WhatsApp mailing — audience = Conversations for the account */
@@ -241,6 +244,8 @@ const channelBroadcastSchema = z.object({
   funnelPhase: giftFunnelPhaseSchema.optional(),
   readStatus: z.enum(['any', 'read', 'unread']).optional(),
   scheduledAt: z.string().datetime().optional(),
+  /** Optional account pool for least-loaded rotation (Job 1B.1). */
+  botIds: z.array(z.string().min(1)).optional(),
 });
 
 /** Stories — media required; send supported for GramJS only (ADR-019) */
@@ -249,6 +254,8 @@ const storyBroadcastSchema = z.object({
   text: z.string().max(4000).optional().default(''),
   mediaUrl: z.string().url(),
   mediaType: giftMediaTypeSchema.optional(),
+  linkUrl: z.string().url().optional(),
+  linkText: z.string().max(100).optional(),
   opportunityStage: z.string().min(1).max(80).optional(),
   giftStarted: z.enum(['any', 'yes', 'no']).optional(),
   funnelPhase: giftFunnelPhaseSchema.optional(),
@@ -267,6 +274,8 @@ const patchBroadcastSchema = z.object({
   giftStarted: z.enum(['any', 'yes', 'no']).nullable().optional(),
   readStatus: z.enum(['any', 'read', 'unread']).nullable().optional(),
   scheduledAt: z.string().datetime().optional(),
+  /** Optional account pool for least-loaded rotation (Job 1B.1). */
+  botIds: z.array(z.string().min(1)).optional(),
 });
 
 function giftSubscriberAudienceWhere(input: {
@@ -281,10 +290,10 @@ function giftSubscriberAudienceWhere(input: {
   return where;
 }
 
-function conversationAudienceWhere(botId: string, tenantId: string) {
+function conversationAudienceWhere(botId: string | string[], tenantId: string) {
   return {
     tenantId,
-    botInstanceId: botId,
+    botInstanceId: Array.isArray(botId) ? { in: botId } : botId,
     status: { not: 'closed' },
   };
 }
@@ -334,7 +343,7 @@ async function getTenantTwentyClient(prisma: any, tenantId: string): Promise<Twe
 async function resolveChannelBroadcastAudience(input: {
   prisma: any;
   tenantId: string;
-  botId: string;
+  botId: string | string[];
   filters: ChannelAudienceFilters;
 }): Promise<{ conversationIds: string[]; count: number }> {
   const filters = normalizeChannelAudienceFilters(input.filters);
@@ -445,6 +454,41 @@ function addonTypeForMailingChannel(
   if (channel === 'gift') return PRODUCT_CODES.MAILING_BOT;
   if (channel === 'story') return PRODUCT_CODES.MAILING_STORIES;
   return PRODUCT_CODES.MAILING_ACCOUNTS;
+}
+
+/**
+ * Validate a broadcast account pool (Job 1B.1): every member must belong to the
+ * tenant, be active and map to the same mailing channel. Always keeps the
+ * primary bot; returns `[primary, ...valid extras]` deduplicated.
+ */
+async function resolveBroadcastPool(
+  prisma: any,
+  tenantId: string,
+  primaryBotId: string,
+  extraBotIds: string[] | undefined,
+  expectedChannel: 'gift' | 'gramjs' | 'wa',
+): Promise<string[]> {
+  const requested = [
+    ...new Set([
+      primaryBotId,
+      ...(Array.isArray(extraBotIds) ? extraBotIds.filter(Boolean) : []),
+    ]),
+  ];
+  if (requested.length === 1) return requested;
+  const bots = await prisma.botInstance.findMany({
+    where: { id: { in: requested }, tenantId },
+    select: { id: true, botType: true, status: true },
+  });
+  const allowed = new Set(
+    bots
+      .filter(
+        (b: { botType: string; status: string }) =>
+          b.status === 'active' && mailingChannelForBotType(b.botType) === expectedChannel,
+      )
+      .map((b: { id: string }) => b.id),
+  );
+  const pool = requested.filter((id) => allowed.has(id));
+  return pool.length > 0 ? pool : [primaryBotId];
 }
 
 function normalizeStageRuleChannel(value: unknown): 'gift' | 'gramjs' | 'wa' {
@@ -2224,6 +2268,58 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     },
   );
 
+  fastify.patch(
+    '/:botId/flood-settings',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const user = (request as any).user;
+      const { tenantId } = user;
+      const { botId } = request.params as { botId: string };
+      if (!canManageTenant(user)) {
+        return reply.code(403).send({ error: 'Only owners can edit flood settings' });
+      }
+      const body = (request.body ?? {}) as {
+        dailySendLimit?: number | string | null;
+        dailyStoryLimit?: number | string | null;
+      };
+      const prisma = fastify.prisma;
+      const bot = await prisma.botInstance.findFirst({ where: { id: botId, tenantId } });
+      if (!bot) return reply.code(404).send({ error: 'Bot not found' });
+
+      const clamp = (v: number | string | null | undefined, max: number): number | null => {
+        if (v === null || v === undefined || v === '') return null;
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 1 || Math.floor(n) !== n) return NaN;
+        return Math.min(n, max);
+      };
+
+      const data: Record<string, number | null> = {};
+      if ('dailySendLimit' in body) {
+        const v = clamp(body.dailySendLimit, 5000);
+        if (Number.isNaN(v)) {
+          return reply.code(400).send({ error: 'dailySendLimit должен быть целым числом ≥ 0' });
+        }
+        data.dailySendLimit = v;
+      }
+      if ('dailyStoryLimit' in body) {
+        const v = clamp(body.dailyStoryLimit, 1000);
+        if (Number.isNaN(v)) {
+          return reply.code(400).send({ error: 'dailyStoryLimit должен быть целым числом ≥ 0' });
+        }
+        data.dailyStoryLimit = v;
+      }
+      if (Object.keys(data).length === 0) {
+        return reply.code(400).send({ error: 'Укажите dailySendLimit и/или dailyStoryLimit' });
+      }
+      const updated = await prisma.botInstance.update({ where: { id: bot.id }, data });
+      return reply.send({
+        ok: true,
+        dailySendLimit: updated.dailySendLimit,
+        dailyStoryLimit: updated.dailyStoryLimit,
+      });
+    },
+  );
+
   fastify.post(
     '/:botId/telegram-profile/photo',
     { preHandler: [fastify.authenticate] },
@@ -3134,6 +3230,8 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             text: parsed.data.text || '',
             mediaUrl: parsed.data.mediaUrl,
             mediaType: parsed.data.mediaType || undefined,
+            linkUrl: parsed.data.linkUrl || undefined,
+            linkText: parsed.data.linkText || undefined,
             opportunityStage: filters.opportunityStage,
             giftStarted: filters.giftStarted || 'any',
             funnelPhase: filters.funnelPhase,
@@ -3171,8 +3269,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       if (!bot.giftCampaigns[0]) {
         return reply.code(404).send({ error: 'Active campaign not found' });
       }
+      if (bot.status !== 'active') {
+        return reply.code(409).send({ error: 'Аккаунт не активен' });
+      }
 
       const campaignId = bot.giftCampaigns[0].id;
+      const poolBotIds = await resolveBroadcastPool(
+        prisma,
+        tenantId,
+        botId,
+        parsed.data.botIds,
+        'gift',
+      );
       const where = giftSubscriberAudienceWhere({
         campaignId,
         segment: parsed.data.segment,
@@ -3189,6 +3297,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           messageJson: {
             channel: 'gift',
             botId,
+            botIds: poolBotIds.length > 1 ? poolBotIds : undefined,
             campaignId,
             segment: parsed.data.segment,
             funnelPhase: parsed.data.funnelPhase || undefined,
@@ -3211,11 +3320,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(409).send({ error: 'Аккаунт не активен' });
     }
 
+    const poolBotIds = await resolveBroadcastPool(
+      prisma,
+      tenantId,
+      botId,
+      parsed.data.botIds,
+      channel,
+    );
     const filters = normalizeChannelAudienceFilters(parsed.data);
     const audience = await resolveChannelBroadcastAudience({
       prisma,
       tenantId,
-      botId,
+      botId: poolBotIds,
       filters,
     });
     const broadcast = await prisma.broadcast.create({
@@ -3227,6 +3343,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         messageJson: {
           channel,
           botId,
+          botIds: poolBotIds.length > 1 ? poolBotIds : undefined,
           text: parsed.data.text,
           mediaUrl: parsed.data.mediaUrl || undefined,
           mediaType: parsed.data.mediaType || undefined,
@@ -3266,16 +3383,22 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const prev = (existing.messageJson || {}) as Record<string, unknown>;
-      if (prev.botId !== botId) {
+      if (!broadcastPoolIds(prev).includes(botId)) {
         return reply.code(404).send({ error: 'Broadcast not found' });
       }
+      // Anchor primary to the stored botId so a pool member cannot silently
+      // reassign the broadcast's primary account while editing (Job 1B.1).
+      const anchorBotId = typeof prev.botId === 'string' && prev.botId ? prev.botId : botId;
 
       const bot = await prisma.botInstance.findFirst({
-        where: { id: botId, tenantId },
+        where: { id: anchorBotId, tenantId },
         include: { giftCampaigns: { where: { isActive: true }, take: 1 } },
       });
       if (!bot) {
         return reply.code(404).send({ error: 'Bot not found' });
+      }
+      if (bot.status !== 'active') {
+        return reply.code(409).send({ error: 'Аккаунт не активен' });
       }
 
       const channel =
@@ -3378,7 +3501,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             messageJson: {
               ...prev,
               channel: 'story',
-              botId,
+              botId: anchorBotId,
               text,
               mediaUrl,
               mediaType: mediaType || undefined,
@@ -3457,6 +3580,14 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         if (!telegramFileId && !mediaUrl) mediaType = undefined;
 
         const campaignId = bot.giftCampaigns[0].id;
+        const prevPool = broadcastPoolIds(prev);
+        const poolBotIds = await resolveBroadcastPool(
+          prisma,
+          tenantId,
+          anchorBotId,
+          parsed.data.botIds ?? (prevPool.length > 1 ? prevPool : undefined),
+          'gift',
+        );
         const where = giftSubscriberAudienceWhere({ campaignId, segment, funnelPhase });
         const totalCount = await prisma.giftSubscriber.count({ where });
         const scheduledAt = parsed.data.scheduledAt
@@ -3471,7 +3602,8 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
             messageJson: {
               ...prev,
               channel: 'gift',
-              botId,
+              botId: anchorBotId,
+              botIds: poolBotIds.length > 1 ? poolBotIds : undefined,
               campaignId,
               segment,
               funnelPhase: funnelPhase || undefined,
@@ -3496,6 +3628,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           funnelPhase: true,
           readStatus: true,
           scheduledAt: true,
+          botIds: true,
         })
         .safeParse(request.body);
       if (!parsed.success) {
@@ -3556,10 +3689,18 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
                 ? prev.readStatus
                 : 'any',
       });
+      const prevPool = broadcastPoolIds(prev);
+      const poolBotIds = await resolveBroadcastPool(
+        prisma,
+        tenantId,
+        anchorBotId,
+        parsed.data.botIds ?? (prevPool.length > 1 ? prevPool : undefined),
+        channel,
+      );
       const audience = await resolveChannelBroadcastAudience({
         prisma,
         tenantId,
-        botId,
+        botId: poolBotIds,
         filters,
       });
       const scheduledAt = parsed.data.scheduledAt
@@ -3574,7 +3715,8 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           messageJson: {
             ...prev,
             channel,
-            botId,
+            botId: anchorBotId,
+            botIds: poolBotIds.length > 1 ? poolBotIds : undefined,
             text,
             mediaUrl: mediaUrl || undefined,
             mediaType: mediaType || undefined,
@@ -3606,7 +3748,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       const broadcast = await fastify.prisma.broadcast.findFirst({
         where: { id: broadcastId, tenantId },
       });
-      if (!broadcast || (broadcast.messageJson as any)?.botId !== botId) {
+      if (!broadcast || !broadcastPoolIds(broadcast.messageJson as any).includes(botId)) {
         return reply.code(404).send({ error: 'Broadcast not found' });
       }
       if (broadcast.status === 'sending') {
@@ -3634,7 +3776,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     const broadcasts = rows
-      .filter((b) => (b.messageJson as any)?.botId === botId)
+      .filter((b) => broadcastPoolIds(b.messageJson as any).includes(botId))
       .map((b) => {
         const msg = b.messageJson as any;
         return {
@@ -3644,6 +3786,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           sentCount: b.sentCount,
           totalCount: b.totalCount,
           channel: msg?.channel || 'gift',
+          botIds: Array.isArray(msg?.botIds) ? msg.botIds : null,
           segment: msg?.segment,
           funnelPhase: msg?.funnelPhase ?? null,
           opportunityStage: msg?.opportunityStage ?? null,

@@ -55,6 +55,7 @@ model Tenant {
   pricingOverrides  PricingOverride[]
   auditLogs         AuditLog[]
   broadcasts        Broadcast[]
+  storyPosts        StoryPost[]
   mailingStageRules MailingStageRule[]
   conversations     Conversation[]
   aiUsageLog        AiUsageLog[]
@@ -64,6 +65,8 @@ model Tenant {
   salesExamples     AiSalesExample[]
   formWebhookEndpoints FormWebhookEndpoint[]
   formLeads         FormLead[]
+  crmRecordLinks    CrmRecordLink[]
+  customerActivities CustomerActivity[]
 
   @@index([status])
 }
@@ -214,6 +217,8 @@ model AiUsageLog {
   requestType     String   // text, transcribe, vision
   /// ai_tg | ai_gramjs | ai_max | ai_wa | gift_bot | system (AI_USAGE_CHANNELS); null = charge predates channel tracking
   channel         String?
+  /// Idempotency key for reliable charging (Phase 3.3); unique so a retried charge is a no-op
+  usageChargeKey  String?  @unique
   createdAt       DateTime @default(now())
 
   @@index([tenantId])
@@ -383,15 +388,41 @@ model BotInstance {
   /// Account-level default AI agent (nullable = AI off until conversation override or assign).
   defaultAiAgent    AiAgent?          @relation("BotDefaultAiAgent", fields: [defaultAiAgentId], references: [id], onDelete: SetNull)
   defaultAiAgentId  String?
+  /// Mailing anti-flood: daily outbound message limit (null = channel default, см. MAILING-LIMITS.md)
+  dailySendLimit    Int?
+  /// Daily stories limit (null = default: TG 1/100, WA 20)
+  dailyStoryLimit   Int?
+  /// Account warm-up start (null = no warm-up; limit multiplied by warmupFactor curve)
+  warmupSince       DateTime?
+  /// Telegram Premium auto-detected via GramJS getMe().premium (null = unknown)
+  isPremium         Boolean?
+  /// Account temporarily flood-limited / spam-blocked by platform until this time
+  floodedUntil      DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   giftCampaigns     GiftCampaignConfig[]
   conversations     Conversation[]
+  warmupLogs        WarmupLog[]
+  storyPosts        StoryPost[]
 
   @@index([tenantId])
   @@index([status])
   @@index([defaultAiAgentId])
+}
+
+/// Daily warm-up snapshot per account (Job 1C.4): effective send limit vs sent.
+model WarmupLog {
+  id        String      @id @default(cuid())
+  bot       BotInstance @relation(fields: [botId], references: [id], onDelete: Cascade)
+  botId     String
+  date      DateTime // UTC day start (YYYY-MM-DD 00:00 UTC) — matches dailyCounterKey day
+  limit     Int // effective daily send limit that day (override or warmup-scaled default)
+  sent      Int         @default(0)
+  updatedAt DateTime    @updatedAt
+
+  @@unique([botId, date])
+  @@index([botId, date])
 }
 
 model BotProvisionRequest {
@@ -605,6 +636,7 @@ model AttributionSession {
   fbc             String?
   gclid           String?
   rbClickid       String?
+  msclkid         String?
   telegramUserId  BigInt?
   creativeTag     String?
   postId          String?
@@ -691,13 +723,55 @@ model FormLead {
   opportunityId   String?
   attributionId   String?
   needsReview     Boolean  @default(false)
+  /// Client analytics (4.2): browser UA, source IP, client-side submit timestamp, MS click id
+  userAgent       String?
+  ipAddress       String?
+  clientTs        DateTime?
+  msclkid         String?
+  /// Normalized phone fingerprint (4.5): digits, RU 8→7, last-10 canonical form for matching
+  phoneFingerprint String?
+  /// Content fingerprint (4.1): sha256(endpoint+phone+email+formId); dedupe when externalId absent
+  dedupeFingerprint String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@unique([tenantId, source, externalId])
+  @@unique([endpointId, dedupeFingerprint])
   @@index([tenantId, createdAt])
   @@index([endpointId, createdAt])
   @@index([status])
+  @@index([tenantId, phoneFingerprint])
+}
+
+/// Cross-channel interaction history (4.3): one row per meaningful customer touch
+/// (form lead, inbound message, enrichment, conversion). Keyed to the CRM Person when known.
+model CustomerActivity {
+  id              String   @id @default(cuid())
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  /// Twenty CRM Person id (null until the lead is linked to a Person)
+  twentyPersonId  String?
+  /// Phone fingerprint for grouping activity before a Person exists (4.5 canonical form)
+  phoneFingerprint String?
+  /// form_lead | inbound_message | enrichment | conversion | note
+  kind            String
+  /// Channel/source label: tilda | wordpress | ai_tg | ai_wa | ai_max | gift_bot | system
+  channel         String?
+  /// Short human-readable title for the timeline row
+  title           String
+  /// Optional longer description / snippet
+  description     String?
+  /// Structured detail (attribution, enrichment result, ids) for the detail view
+  meta            Json?
+  /// Originating FormLead when kind=form_lead (dedup / backreference)
+  formLeadId      String?
+  occurredAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, twentyPersonId, occurredAt])
+  @@index([tenantId, phoneFingerprint, occurredAt])
+  @@index([tenantId, kind, occurredAt])
+  @@index([formLeadId])
 }
 
 model TrackingLink {
@@ -805,6 +879,35 @@ model Broadcast {
   @@index([status])
 }
 
+/// Story publication history + analytics (1D.6).
+model StoryPost {
+  id              String      @id @default(cuid())
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  botInstance     BotInstance @relation(fields: [botInstanceId], references: [id])
+  botInstanceId   String
+  broadcastId     String?     // link to Broadcast if created from broadcast
+  channel         String      // gramjs | wa
+  mediaUrl        String?
+  mediaType       String?     // photo | video
+  text            String?
+  linkUrl         String?
+  linkText        String?
+  trackingLinkId  String?     // if linkUrl was wrapped
+  postedAt        DateTime    @default(now())
+  viewsCount      Int         @default(0)
+  reactionsCount  Int         @default(0)
+  forwardsCount   Int         @default(0)
+  waViewsCount    Int         @default(0)
+  clicksCount     Int         @default(0)
+  providerData    Json?
+
+  @@index([tenantId])
+  @@index([botInstanceId])
+  @@index([broadcastId])
+  @@index([postedAt])
+}
+
 /// Auto-send when Opportunity enters a pipeline stage (in-CRM «По этапу сделки»).
 model MailingStageRule {
   id         String   @id @default(cuid())
@@ -860,6 +963,8 @@ model Conversation {
   suppressDealCreation Boolean @default(false)
   /// Ambiguous Person dedupe → manual review in portal
   needsReview          Boolean  @default(false)
+  /// Fast Conversation ↔ CRM record links (Phase 2.1); read by listCrmChatTargets.
+  crmRecordLinks CrmRecordLink[]
   /// Set after won-deal sales examples were ingested for this conversation
   salesLearnedAt       DateTime?
   /// CRM operator last opened this thread in Twenty «Чат» (unread = user msgs after).
@@ -887,6 +992,30 @@ model Conversation {
   @@index([lastMailingAt])
 }
 
+/// Fast link: Conversation ↔ CRM record (Person/Opportunity) for instant chat panel lookup.
+/// Written by workers on first inbound/outbound; read by listCrmChatTargets with SQL fallback.
+model CrmRecordLink {
+  id              String   @id @default(cuid())
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId  String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantId        String
+  /// Twenty CRM Person ID (from twentyPersonId on Conversation)
+  twentyPersonId       String?
+  /// Twenty CRM Opportunity ID (from twentyOpportunityId on Conversation)
+  twentyOpportunityId  String?
+  /// Source that created this link: inbound | outbound | backfill
+  source          String   @default("inbound")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([conversationId, twentyPersonId])
+  @@unique([conversationId, twentyOpportunityId])
+  @@index([tenantId, twentyPersonId])
+  @@index([tenantId, twentyOpportunityId])
+  @@index([conversationId])
+}
+
 model ChatMessage {
   id              String   @id @default(cuid())
   conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -908,6 +1037,7 @@ model ChatMessage {
   createdAt       DateTime @default(now())
 
   @@index([conversationId])
+  @@index([conversationId, sentAt])
   @@index([role])
   @@index([externalMessageId])
   @@index([deliveryStatus])

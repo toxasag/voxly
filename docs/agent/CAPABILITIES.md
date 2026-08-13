@@ -4,22 +4,25 @@
 
 Обновляй этот файл при изменении API/UI/worker surface.
 
-**Module freeze:** before editing WA sync / GramJS CRM / chat panel / social links / gift-bot / AI agent / Telegram secretary / deal dedupe → read `docs/agent/modules/README.md` + the module card; run its smoke after changes.
+**Module freeze:** before editing WA sync / GramJS CRM / chat panel / MAX personal / social links / gift-bot / AI agent / Telegram secretary / deal dedupe → read `docs/agent/modules/README.md` + the module card; run its smoke after changes.
 
-## Verified baseline 2026-08-06 (user-confirmed WORKING)
+## Verified baseline (user-confirmed WORKING / FROZEN)
 
 User lock: keep these green; do not break with other module work. Cards: `docs/agent/modules/`. PR #1 merged `263e4ef`; prod tip backup `20260806-132913` (+ INC-103 `20260806-125415`).
 
 | Surface | Status | Freeze card |
 |---|---|---|
-| CRM chats (panel, media, write-as, multi-channel) | 🟢 WORKING | [`crm-chat-panel.md`](modules/crm-chat-panel.md) |
-| WhatsApp (Evolution + ai-whatsapp-worker) | 🟢 WORKING | [`wa-crm-sync.md`](modules/wa-crm-sync.md) |
-| Telegram GramJS personal | 🟢 WORKING | [`gramjs-crm-sync.md`](modules/gramjs-crm-sync.md) |
-| Gift bot (бот выдачи подарков) | 🟢 WORKING | [`gift-bot.md`](modules/gift-bot.md) |
-| AI agent | 🟢 WORKING | [`ai-agent.md`](modules/ai-agent.md) |
-| Telegram secretary (телеграм секретарь) | 🟢 WORKING | [`telegram-secretary.md`](modules/telegram-secretary.md) |
+| CRM chats (panel, media, write-as, multi-channel) | 🟢 WORKING / FROZEN **2026-08-07 ~16:14 MSK** (MAX+WA user OK; crm-chat **0.1.28**) | [`crm-chat-panel.md`](modules/crm-chat-panel.md) |
+| WhatsApp CRM chat + sync (Evolution + ai-whatsapp-worker) | 🟢 WORKING / FROZEN **2026-08-07 ~16:14 MSK** (outbound media INC-114; preview INC-115; widget INC-116) | [`wa-crm-sync.md`](modules/wa-crm-sync.md) |
+| Telegram GramJS personal | 🟢 WORKING (2026-08-06) | [`gramjs-crm-sync.md`](modules/gramjs-crm-sync.md) |
+| Gift bot (бот выдачи подарков) | 🟢 WORKING (2026-08-06) | [`gift-bot.md`](modules/gift-bot.md) |
+| AI agent | 🟢 WORKING (2026-08-06) | [`ai-agent.md`](modules/ai-agent.md) |
+| Telegram secretary (телеграм секретарь) | 🟢 WORKING (2026-08-06) | [`telegram-secretary.md`](modules/telegram-secretary.md) |
+| MAX personal (личный MAX → CRM chat) | 🟢 WORKING / FROZEN **2026-08-07 ~16:14 MSK** | [`max-personal.md`](modules/max-personal.md) |
 
-Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source; never wipe prod volumes.
+**Chat channels lock (2026-08-07 ~16:14 MSK):** user confirmed **MAX chat** and **WhatsApp chat** both work as expected — do not change without explicit request (docs freeze only that day; no redeploy for the freeze itself).
+
+Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never invent `t.me/+phone`; Contact book ≠ deals source; never wipe prod volumes; **never** write connected MAX owner phone/TG onto peer Person (INC-113).
 
 **New vs existing portals:** runtime code is shared on the same docker services for all tenants. New workspaces get defaults/apps via provision. Existing often need explicit backfill/reapply (e.g. `enrich-persons-by-phone`, `sync-opportunity-chat-activity`, Social layout INC-107, `refresh-crm-chat`). Agent memory: `ADDRESS_BOOK.md` + `RISK_GATE.md` + `CAPACITY.md`; enrich card `modules/cross-channel-enrich.md`.
 
@@ -29,9 +32,10 @@ Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never in
 
 | Path | Статус | Файл |
 |---|---|---|
-| `/` лендинг | ✅ Awwwards v3: CRM + mobile web + **Tilda/WP forms free/unlimited** (ADR-026); ClickUp tabs/replaces/constellation; industrial amber; product mocks; Deep Dive + Mobile Proof; modular pricing; FAQ; sticky CTA. v2 archive: `app/_archive/landing-v2/` | `page.tsx` + `components/landing/{product-mocks,product-tabs,mobile-proof,register-link,referral-capture}.tsx` |
+| `/` лендинг | ✅ **Friendly SaaS**: phone-first hero, pain/solution, phone tabs, features, **pricing calculator ← `GET /api/pricing/catalog`** (CRM 600/10 seats + modules), referral calc, custom-dev sheet, FAQ, gift FAB. Awwwards **v3** archived: `app/_archive/landing-v3/` | `page.tsx` + `components/landing/friendly/*` + RegisterLink/ReferralCapture |
+| `/lp/friendly` | ✅ alias → redirect `/` (сохраняет `?ref=`) | `lp/friendly/page.tsx` |
 | `/terms`, `/privacy`, `/consent`, `/refund` | ✅ публичные юр. страницы (Robokassa / 152-ФЗ); `LegalPageShell` + Separator/Card; реквизиты в `lib/legal.ts` | `terms|privacy|consent|refund/page.tsx` |
-| `/login`, `/register` | ✅ OTP через `@GetVoxlybot` (`register/start`→`confirm`, `login`→`login/confirm`); superadmin login без OTP; checkbox оферта+ПДн на register | `login/page.tsx`, `register/page.tsx` |
+| `/login`, `/register` | ✅ OTP через `@GetVoxlybot`; **Friendly LP chrome** (`AuthShell`, blue/white, без маскота); checkbox оферта+ПДн на register | `login/page.tsx`, `register/page.tsx` + `components/landing/friendly/auth-shell.tsx` |
 | `/dashboard` | ✅ amber industrial hub (`DashboardPortalHero`): «Сейчас важно», KPI (лиды/диалоги/сообщения/AI), сетка разделов, партнёрский баланс, gift-воронка collapsed; CRM open; без admin-деталей (токены/себестоимость) | `dashboard/page.tsx` + `dashboard-portal-hero.tsx` |
 | `/dashboard/settings` | ✅ профиль: email/имя/роль/workspace из `GET /api/auth/me` (read-only); смена пароля/PATCH профиля — позже; avatar menu desktop+mobile → сюда | `dashboard/settings/page.tsx` |
 | `/dashboard/partners` | ✅ реферальная программа: основная ссылка/код; проекты (campaign links); stats за период; расходы по проекту; pending/earned/net; **резервы баланса** (holds), **заявки на вывод от 1000 ₽**, **транзакции**, **«Оплатить свой счёт»** — любые свои сервисы Voxly с opt-in «Зачесть партнёрский баланс» (CRM/seats/AI/gift/mailing/`ai_topup`) | `dashboard/partners/page.tsx` |
@@ -47,9 +51,9 @@ Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never in
 | `/dashboard/mailing/stories` | ✅ schedule/edit/preview; GramJS send; WA/ai_tg → unsupported on send (ADR-019); billing banner + balance opt-in | `dashboard/mailing/stories/page.tsx` |
 | Twenty sidebar «Рассылка» | ✅ expandable FOLDER + 4 PAGE_LAYOUT; crm-chat **0.1.23** composer+preview+history (edit/dup/delete); accounts filters CRM stage + gift + read; stage rules gift|gramjs|wa; receipts sent (+ delivered/read when acks) | `mailing-*-panel.tsx` + `mailing/*` |
 | `/dashboard/ai` | ✅ **Телеграм Секретарь** (единая страница): тариф `ai_tg` 1000₽/10 акк, BotFather+token, Business-аккаунты + unlink + `ai_tg_extra_conn` 200₽, назначение агента, диалоги/handoff; `?bot=`; **не** обзор всех каналов и **не** top-up | `dashboard/ai/page.tsx` + `ai-secretary-hero.tsx` |
-| `/dashboard/ai/gramjs` | ✅ **Telegram** (личный аккаунт): landing как WA; QR+2FA; trial/оплата `ai_gramjs` 500₽; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button + auto on connect (private only) | `dashboard/ai/gramjs/page.tsx` + `ai-gramjs-hero.tsx` |
-| `/dashboard/ai/max` | ✅ **MAX** (личный, INC-104): QR+2FA; trial/оплата `ai_max` 500₽; disclaimer неофициальный API; CRM reply text-only; bridge waits `on_start` (not `start()` return) | `dashboard/ai/max/page.tsx` + `ai-max-hero.tsx` + `max-bridge` |
-| `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button + auto on connect (private only) | `dashboard/ai/whatsapp/page.tsx` |
+| `/dashboard/ai/gramjs` | ✅ **Telegram** (личный аккаунт): landing как WA; QR+2FA; trial/оплата `ai_gramjs` 500₽; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button only (no auto on connect) | `dashboard/ai/gramjs/page.tsx` + `ai-gramjs-hero.tsx` |
+| `/dashboard/ai/max` | ✅ **MAX** (личный, **FROZEN** INC-104/109/113): QR+2FA; trial/оплата `ai_max` 500₽; disclaimer неофициальный API; CRM reply **text+media** (📎); inbound media + read receipts; **typing N/A**; private DIALOG only (skip CHANNEL/CHAT/bots/self; `me.contact`); owner phone strip (`selfPhone`/`stripOwnerPhone`/`forbidPhones`); `/open/max` = peer **user** id; **sync history** button only | `dashboard/ai/max/page.tsx` + `ai-max-hero.tsx` + `max-bridge` + `max-phone-guard.ts` |
+| `/dashboard/ai/whatsapp` | ✅ Evolution QR + trial/оплата `ai_wa`; QR gated `requiresPayment`; **переименование** `PATCH …/accounts/:botId` (`displayName`); **sync history** button only (no auto on connect) | `dashboard/ai/whatsapp/page.tsx` |
 | `/dashboard/ai/agents` | ✅ list/create/**edit**; **SKU `ai_agent` 500₽/слот** (gate 402 + grandfather); assign; **usage** byAgent+byChannel; KB + won-deal; **пополнение баланса AI** + partner-balance opt-in на слот и `ai_topup`; hero | `dashboard/ai/agents/page.tsx` |
 | `/dashboard/ai/[botId]` | ✅ thin redirect → `/dashboard/ai?bot=` | `dashboard/ai/[botId]/page.tsx` |
 | `/admin` | ✅ stats + tenants + воронки + **system health** + **полное удаление аккаунта**; sidebar супер-админ | `admin/page.tsx` + `app-shell.tsx` ADMIN_NAV |
@@ -60,7 +64,7 @@ Cross-cutting: social TG link ≠ chat send; gift only for subscribers; never in
 | `/admin/crm` | ✅ CRM цены (subset) + отчёт + ресурсы + purge + CRM-login + impersonate; ссылка на `/admin/pricing` | `admin/crm/page.tsx` |
 | `/admin/partners` | ✅ супер-админ партнёрской программы: список партнёров + метрики за период, карточка партнёра (рефералы, коды, проекты, транзакции), дефолтное правило вознаграждения + **индивидуальное правило на тенанта** (+ **productScope**) + **ставки по сервисам** (`ReferralServiceRate`: per-SKU %), ручные выплаты/корректировки (`ReferralTransaction`), **очередь заявок на вывод** (`admin-withdrawals-queue.tsx`), вкл/выкл кодов и проектов, блокировка партнёра | `admin/partners/page.tsx` + `components/portal/admin-partners-rule.tsx`, `admin-partners-detail.tsx`, `admin-withdrawals-queue.tsx` |
 | Tenant funnel stats на `/dashboard/bots` | ❌ только супер-админ | — |
-| Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach**, **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for video/audio/**PDF·DOCX** + GramJS `document`+`image/*`; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), MarkdownV2, **«Пишем от»** (gift only if subscribed; WA if Person.whatsapp; **GramJS if Person.telegram userId/@username or TG Conversation** — social open link alone was not enough until INC-103; first send creates Conversation + optional ImportContacts by phone), **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **«Не создавать сделку»** (`suppressDealCreation`), **clickable http(s) links**; soft-refresh fingerprints content+attachments (not ids-only); hide legacy `[media]` when attachments present (INC-050/055/057/063/067/096/098/099/103, app ≥**0.1.27**) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`); freeze: `modules/crm-chat-panel.md` |
+| Deal-card chat UI в Twenty | ✅ SDK tab «Чат» Person+Opportunity: history, reply, **format toolbar** (ПКМ; no format cheat-sheet), **📎 multi-attach** (GramJS+MAX+WA; not gift_max — INC-117), **pinned composer**, remount clear, **photo + video/audio/document preview** (signed URL for **photo**/video/audio/**PDF·DOCX** + GramJS `document`+`image/*`; media resolve by attachment-owning channel on multi-thread Person — INC-115; MIME sniff/Range; Fastify `maxParamLength`+`/media/*`), client MD→MarkdownV2 (Bot API) / HTML entities (GramJS), **«Пишем от»** (gift only if subscribed; WA if Person.whatsapp; **GramJS if Person.telegram userId/@username or TG Conversation** — social open link alone was not enough until INC-103; first send creates Conversation + optional ImportContacts by phone), **channel/identity header** + **presence/last-seen** (GramJS live; WA via PRESENCE_UPDATE cache; TG Business hide), **multi-thread switcher**, **AI вкл/пауза/выкл**, **«Не создавать сделку»** (`suppressDealCreation`), **clickable http(s) links**; soft-refresh fingerprints content+attachments (not ids-only); hide legacy `[media]` when attachments present (INC-050/055/057/063/067/096/098/099/103/115, app ≥**0.1.28**) | `twenty-app/voxly-crm-chat` (+ `docker/twenty-deal-chat.js` rollback; `patch-twenty-file-base64.cjs`; `twenty-shell-ux.js`); freeze: `modules/crm-chat-panel.md` |
 | Inbound message left toast | ✅ shell-ux poll prefer `/s/crm-chat/inbound-toasts` ~4s; toast + **auto-refresh open Chat** (click «Обновить» / soft ~4.5s); skew 15s | `docker/twenty-shell-ux.js` + `get-inbound-toasts` + `crm-chat.ts` |
 | Unread chat badges (deals + contacts) | ✅ count = inbound `role=user` after `Conversation.lastOperatorReadAt`; mark-read on Chat GET **all** linked threads; shell-ux **one** badge per card (title) + «Чат» tab; poll `/s/crm-chat/unread-badges` ~8s | `crm-chat.ts` + `get-unread-badges` + `twenty-shell-ux.js` |
 | Кабинет Voxly (CRM → portal) | ✅ sidebar LINK «Кабинет Voxly»; floating inject off; **dedupe** shell + SQL | `navigation-menu-items/cabinet-voxly.ts` (+ `docker/dedupe-cabinet-nav.sql`) |
@@ -150,6 +154,11 @@ Related incidents: INC-005, INC-086…091, INC-093, INC-095. Cursor rule: `.curs
 | POST | `/checkout`, `/result` | ✅ checkout: `ai_tg_extra_conn`, `ai_gramjs`, `ai_max`, `ai_wa`, `ai_topup`, `crm_base`+`extraSeats`, `extra_seat`, mailing_*; **`applyBalanceRub`** (партнёрский баланс → hold → fulfilPaymentTransactional; full-cover redirect по productCode); **idempotent result** (conditional claim); webhook persists `Subscription.extraSeats`; InvId via advisory lock; wallet / extraSlots / referral by resolved rule (productScope + durationMonths + **per-SKU ReferralServiceRate** enforced) |
 | GET | `/success`, `/fail`, `/status` | ✅ success/fail → `/dashboard/crm?paid=ok\|fail` |
 
+### Public pricing `/api/pricing`
+| Method | Path | ✅ |
+|---|---|---|
+| GET | `/catalog` | ✅ platform monthly SKUs + seatsIncluded (PlatformSetting / shared fallback) for landing calculator; Cache-Control 60s; no auth |
+
 ### Tenant `/api/tenant`
 | Method | Path | ✅ |
 |---|---|---|
@@ -213,7 +222,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | POST | `/auth/qr/password` | ✅ 2FA |
 | POST | `/sessions/connect` | ✅ |
 | PATCH | `/accounts/:botId` | ✅ rename (`displayName`, max 80) |
-| POST | `/accounts/:botId/sync-history` | ✅ `runGramjsPrivateChatSync` (same as connect) — **all** private dialogs × **30** msgs; no QR; clear error if session dead |
+| POST | `/accounts/:botId/sync-history` | ✅ `runGramjsPrivateChatSync` (manual only) — **all** private dialogs × **30** msgs; no QR; clear error if session dead |
 | DELETE | `/accounts/:botId` | ✅ |
 
 ### MAX proxy `/api/bots/max` (portal JWT → max-bridge + `VOXLY_SERVICE_TOKEN`) — ADR-025
@@ -241,7 +250,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | GET | `/accounts` | ✅ list `ai_wa` (`name`/`displayName` + `slug`) + soft billing + evolutionConfigured; prunes underscore never-connected stubs |
 | POST | `/start-trial` | ✅ soft **7d** addon `ai_wa` (`TRIAL_PERIOD_DAYS`) + Robokassa `ai_wa` |
 | POST | `/auth/qr/start` | ✅ Evolution instance + QR; persists human `displayName` (Cyrillic OK), ascii slug for Evolution |
-| GET | `/auth/qr/status` | ✅ connectionState + QR refresh; on `open` schedules private-chat history sync |
+| GET | `/auth/qr/status` | ✅ connectionState + QR refresh; marks `active` on `open` (no auto history sync) |
 | PATCH | `/accounts/:botId` | ✅ rename (`displayName`, max 80) |
 | POST | `/accounts/:botId/sync-history` | ✅ Evolution `findChats`+`findMessages` → Conversation/ChatMessage + CRM (**open private dialogs with messages** × **30**; Contact book enrich only; skip `@g.us` / 0-msg; honor `suppressDealCreation`, idempotent by `externalMessageId`; concurrency 1 + sleep) |
 | DELETE | `/accounts/:botId` | ✅ Evolution logout/delete + remove `BotInstance` |
@@ -347,7 +356,7 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Mailing stories | gramjs-bridge `/stories/send` | ✅ GramJS; WA/ai_tg explicit unsupported |
 | Mailing billing | PRODUCT_CODES mailing_* | ✅ 500/500/1000 + trial gate; soft 402 → portal Robokassa (`productCode` / `?pay=1`) |
 | Trial period | `TRIAL_PERIOD_DAYS` | ✅ **7** days (was 14) |
-| CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ Person.`telegram`; GramJS enrich phone/about/birthday; **on GramJS connect** auto enrich+phone soft-merge (BullMQ) |
+| CRM Person/Opportunity + notes | gift-bot-worker + twenty-client | ✅ Person.`telegram`; GramJS enrich phone/about/birthday; GramJS history/enrich via portal sync button or admin enqueue (not auto on connect) |
 | Media ASR/vision/docs | ai-telegram-worker / ai-whatsapp-worker / gramjs-bridge / **gift-bot-worker** | ✅ **Platform default** (worker-global; no per-tenant flag). Whisper via OpenRouter STT (voice + **video_note/ptv + regular video** / doc-video; ffmpeg demux; tags `[голос]`/`[кружочек]`/`[видео]`, ≤**20MB** / ≤**180s**); vision multimodal; **PDF/DOCX** → `[документ PDF|DOCX]:` (≤25k, `@voxly/ai-core` pdf-parse/mammoth); `MEDIA_INBOUND_HINT` on AI channels; fail → clear RU fallback. **Gift:** same enrich into `ChatMessage` for CRM (no sales LLM); `ai_tg` still forwarded to telegram-worker. New workspaces: `ensureCrmChatAppInstalled(forceReinstall)` on provision |
 | Bot outbound media in CRM chat | gift-bot-worker `logBotOutbound` | ✅ photo/video/document `attachments.fileId` (INC-024); same preview path as inbound |
 | Gift inbound media CRM | gift-bot-worker `storeInboundMessage` + `enrichGiftInboundMedia` | ✅ attachments + ASR/vision/PDF/DOCX text (video_note included); ffmpeg in image; OPENROUTER_* in compose |
@@ -371,13 +380,13 @@ Conversation override: `PATCH /api/bots/:botId/conversations/:id` body `aiAgentI
 | Referral per-tenant rule + transactions + withdrawals | `referral-program.ts` (резолв правила) + `referral-admin.ts` | ✅ `ReferralRule.tenantId` (индивидуальное правило имеет приоритет над дефолтным); **`ReferralServiceRate`** (tenantId+productCode → %; при начислении SKU-override > rule.value, иначе personal/global); `billing.ts` начисляет по резолвнутому правилу (**productScope** + **durationMonths** enforced); `ReferralTransaction` (`payout`/`manual_credit`/`manual_debit`/`redeem`) — ручные выплаты и корректировки из `/admin/partners`; **`ReferralWithdrawal`** (создание/отмена/approve/reject); **`releaseBalanceHold`** (hold на Payment при checkout, часовой sweep зависших); резолв вынесен из `referral-admin` чтобы разорвать циклическую зависимость |
 | `emailWorker` SMTP | queues.ts | ❌ logging stub |
 | `notifyHumanOperator` | AI workers | ❌ |
-| GramJS bridge | `apps/gramjs-bridge` | ✅ QR + session + soft SKU + `POST /messages/send`; **private DM only** for AI/CRM (skip group/channel); `POST /crm/private-dialogs` + connect **or portal sync button** → CRM chat sync (**all** private dialogs × **30** msgs, rate-limited); audience sync separate; portal via saas-api proxy |
-| Skip bot / group senders | ai-telegram / gramjs / WA | ✅ TG `is_bot`; GramJS `User.bot` + **non-private chat**; WA skip `@g.us` / status/newsletter/broadcast (inbound + connect history sync) |
+| GramJS bridge | `apps/gramjs-bridge` | ✅ QR + session + soft SKU + `POST /messages/send` (HTML entities + optional media); **private DM only** for AI/CRM (skip group/channel); `POST /crm/private-dialogs` + **portal sync button** → CRM chat sync (**all** private dialogs × **30** msgs, rate-limited; no auto on connect); audience sync separate; portal via saas-api proxy |
+| Skip bot / group senders | ai-telegram / gramjs / WA / MAX | ✅ TG `is_bot`; GramJS `User.bot` + **non-private chat**; WA skip `@g.us` / status/newsletter/broadcast (inbound + manual history sync); MAX skip `CHANNEL`/`CHAT`/negative id/self (`me.contact`) + bot heuristic + owner-phone strip (INC-113) |
 | suppressDealCreation | Conversation + GiftSubscriber | ✅ Manual CRM chat toggle «Не создавать сделку» only (never auto-set on Opportunity delete); honored in TG/WA/gift syncLead + GramJS/WA connect import |
-| WA private chat sync on connect | ai-whatsapp-worker `runWhatsAppPrivateChatSync` | ✅ On CONNECTION_UPDATE/`authorized` + portal button; Evolution **findChats + fetchAllEvoMessagesForJid** (open private dialogs with history, default **500** msgs/chat); Contact book **enrich only** — not dialog source (INC-097 v6); LID→PN via `resolveLidPhoneFromEvolution()` (Message.key → Redis lid-mapping → IsOnWhatsapp → whatsappNumbers → book → profile-index) (INC-097 v7); **merge LID↔PN twin Conversations** (`mergeWaLidPnTwinConversations`, `repairOnly`); after twin merge soft-delete orphan Opps; before createOpportunity **reuse** open Opp on Person (`findOpenOpportunityByPerson`, INC-100); LID+PN message merge; skip 0-msg rows; skip groups/self/`0@`; always Person+Opportunity per chat (`nonameN` if no name); Opportunity `{seq} · WA · {bot.displayName}`; phone in Person.phones+whatsapp when resolvable; repair soft-deletes legacy shells; TG presence after phone (no `t.me/+`); concurrency 1 + sleep |
+| WA private chat history sync | ai-whatsapp-worker `runWhatsAppPrivateChatSync` | ✅ **Manual only** (portal «Синхронизировать» / `POST …/sync-history`); no auto on CONNECTION_UPDATE/`authorized`; Evolution **findChats + fetchAllEvoMessagesForJid** (open private dialogs with history, default **500** msgs/chat); Contact book **enrich only** — not dialog source (INC-097 v6); LID→PN via `resolveLidPhoneFromEvolution()` (Message.key → Redis lid-mapping → IsOnWhatsapp → whatsappNumbers → book → profile-index) (INC-097 v7); **merge LID↔PN twin Conversations** (`mergeWaLidPnTwinConversations`, `repairOnly`); after twin merge soft-delete orphan Opps; before createOpportunity **reuse** open Opp on Person (`findOpenOpportunityByPerson`, INC-100); LID+PN message merge; skip 0-msg rows; skip groups/self/`0@`; always Person+Opportunity per chat (`nonameN` if no name); Opportunity `{seq} · WA · {bot.displayName}`; phone in Person.phones+whatsapp when resolvable; repair soft-deletes legacy shells; TG presence after phone (no `t.me/+`); concurrency 1 + sleep |
 | Save-time CRM deal dedupe | `crm-deal-dedupe` + crm-chat LFs ≥**0.1.27** | ✅ On Opportunity create/update + Person phones/whatsapp update → soft-merge People by phone/whatsapp + collapse duplicate open Opps on same Person (keep Conversation-linked) |
 | Telegram presence by phone | gramjs-bridge `POST /users/by-phone` (+ GetFullUser) + `/users/full` + WA `enrichTelegramPresenceFromPhone` + admin `enrich-persons-by-phone` | ✅ ImportContacts → `@username` **or** MTProto `userId` → `telegramOpenLink` (`t.me/{user}` / `/open/tg/{id}`→`tg://`); GetFullUser name/about/birthday (replace only `nonameN`/empty); phone only if matches WA E.164; **never** invent `https://t.me/+{phone}`; scrape never discards known userId (INC-106); leave empty if not on TG |
-| MAX presence by phone | max-bridge `POST /users/by-phone` + WA `enrichMaxPresenceFromPhone` + admin/shared enrich (`channels:["max"]`) + sync/inbound `applyMaxProfile` | ✅ PyMax `search_by_phone` → `import_contacts` fallback; WA/site/TG paths enrich when `ai_max` connected; live MAX inbound merges Person/Opp by phone + reverse TG/WA enrich; Person.`max` LINKS only when `User.link` is real `max.ru/…`; name placeholder-guard; about from `description`; **birthday N/A**; never invent `max.ru/+{phone}` |
+| MAX presence by phone | max-bridge `POST /users/by-phone` + WA `enrichMaxPresenceFromPhone` + admin/shared enrich (`channels:["max"]`) + sync/inbound `applyMaxProfile` | ✅ PyMax `search_by_phone` → `import_contacts` fallback; WA/site/TG paths enrich when `ai_max` connected; live MAX inbound merges Person/Opp by **peer** phone + reverse TG/WA enrich (`forbidPhones` for owner); Person.`max` LINKS only when `User.link` is real `max.ru/…`; name placeholder-guard; about from `description`; phone **fill-empty**; **birthday N/A**; never invent `max.ru/+{phone}`; never apply connected-account phone onto peer |
 | WhatsApp presence by phone | WA worker `POST /internal/crm/check-on-whatsapp` + `enrichOnePersonWhatsappByPhone` | ✅ Evolution `whatsappNumbers` / IsOnWhatsApp; writes `wa.me` only when `exists`; used from site/TG/MAX/gift (not invent from phone alone) |
 | GramJS → AI handoff | `POST /internal/inbound` on ai-telegram-worker | ✅ Bearer `VOXLY_SERVICE_TOKEN`; returns bubbles |
 | GramJS portal UI | saas-portal `/dashboard/ai/gramjs` | ✅ QR + status + accounts; browser never hits bridge |

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -26,6 +28,9 @@ SERVICE_TOKEN = os.environ.get("VOXLY_SERVICE_TOKEN", "")
 SAAS_API_URL = (os.environ.get("SAAS_API_URL") or "http://saas-api:3002").rstrip("/")
 SESSION_DIR = Path(os.environ.get("MAX_SESSION_DIR") or "/data/max-sessions")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+# Outbound media cap (mirrors gramjs-bridge OUTBOUND_MEDIA_MAX_BYTES).
+OUTBOUND_MEDIA_MAX_BYTES = 20 * 1024 * 1024
 
 try:
     from pymax import WebClient  # type: ignore
@@ -207,21 +212,118 @@ async def resolve_me(client: Any, attempts: int = 8, delay: float = 0.25) -> Any
     return None
 
 
-def profile_from_me(me: Any) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    if me is None:
-        return None, None, None
-    raw_id = (
-        getattr(me, "id", None)
-        or getattr(me, "user_id", None)
-        or getattr(me, "userId", None)
+def _unwrap_max_user(obj: Any) -> Any:
+    """PyMax WebClient.me is often a wrapper; User lives on .contact."""
+    if obj is None:
+        return None
+    contact = getattr(obj, "contact", None)
+    return contact if contact is not None else obj
+
+
+def _user_id_int(user: Any) -> Optional[int]:
+    u = _unwrap_max_user(user)
+    if u is None:
+        return None
+    raw = (
+        getattr(u, "id", None)
+        or getattr(u, "user_id", None)
+        or getattr(u, "userId", None)
     )
-    max_user_id = str(raw_id).strip() if raw_id is not None and str(raw_id).strip() else None
-    username = getattr(me, "username", None) or getattr(me, "nick", None)
-    first_name = getattr(me, "first_name", None) or getattr(me, "name", None)
-    if username is not None:
-        username = str(username) or None
-    if first_name is not None:
-        first_name = str(first_name) or None
+    try:
+        return int(raw) if raw is not None else None
+    except Exception:
+        return None
+
+
+def _phone_digits(raw: Any) -> str:
+    return "".join(ch for ch in str(raw or "") if ch.isdigit())
+
+
+def _phones_likely_same(a: Any, b: Any) -> bool:
+    """Exact digits or last-10 match (INC-113 owner-phone leak guard)."""
+    da = _phone_digits(a)
+    db = _phone_digits(b)
+    if not da or not db or len(da) < 10 or len(db) < 10:
+        return False
+    if da == db:
+        return True
+    return da[-10:] == db[-10:]
+
+
+def _is_bot_user(user: Any) -> bool:
+    """Best-effort: PyMax User has no is_bot in 2.3–2.4."""
+    u = _unwrap_max_user(user)
+    if u is None:
+        return False
+    if getattr(u, "is_bot", None) is True:
+        return True
+    for o in getattr(u, "options", None) or []:
+        s = str(getattr(o, "value", o) or "").upper()
+        if "BOT" in s and "ONEME" not in s:
+            return True
+    return False
+
+
+def _find_chat(client: Any, chat_id: Any) -> Any:
+    if chat_id is None:
+        return None
+    try:
+        want = int(chat_id)
+    except Exception:
+        return None
+    for c in list(getattr(client, "chats", None) or []):
+        try:
+            if int(getattr(c, "id", 0)) == want:
+                return c
+        except Exception:
+            continue
+    return None
+
+
+def _peer_user_id_from_chat(chat: Any, me_id: Optional[int]) -> Optional[int]:
+    """Other participant in a DIALOG (not me)."""
+    if chat is None:
+        return None
+    candidate_ids: list[int] = []
+    participants = getattr(chat, "participants", None) or {}
+    if isinstance(participants, dict):
+        for uid in participants.keys():
+            try:
+                candidate_ids.append(int(uid))
+            except Exception:
+                continue
+    owner = getattr(chat, "owner", None)
+    if owner is not None:
+        try:
+            oid = int(owner)
+            if oid not in candidate_ids:
+                candidate_ids.append(oid)
+        except Exception:
+            pass
+    for uid_i in candidate_ids:
+        if me_id is not None and uid_i == me_id:
+            continue
+        if uid_i == 0:
+            continue
+        return uid_i
+    return None
+
+
+def profile_from_me(me: Any) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    u = _unwrap_max_user(me)
+    if u is None:
+        return None, None, None
+    uid = _user_id_int(u)
+    max_user_id = str(uid) if uid is not None else None
+    first_name, username = _user_display_name(u)
+    if not first_name:
+        first_name = getattr(u, "first_name", None) or getattr(u, "name", None)
+        if first_name is not None:
+            first_name = str(first_name).strip() or None
+    if not username:
+        username = getattr(u, "username", None) or getattr(u, "nick", None)
+        if username is not None:
+            username = str(username).strip() or None
     return max_user_id, username, first_name
 
 
@@ -275,8 +377,22 @@ class QrPasswordBody(BaseModel):
 class SendBody(BaseModel):
     botId: str
     peerUserId: str = Field(..., description="MAX peer / chat id")
-    text: str
+    text: str = ""
     replyTo: Optional[str] = None
+    mediaBase64: Optional[str] = None
+    mimeType: Optional[str] = None
+    fileName: Optional[str] = None
+
+
+class MediaBody(BaseModel):
+    botId: str
+    fileId: str
+
+
+class ReadBody(BaseModel):
+    botId: str
+    peerUserId: str
+    messageIds: list[str] = Field(default_factory=list)
 
 
 class ConnectBody(BaseModel):
@@ -526,24 +642,614 @@ async def _resolve_user_by_phone(client: Any, phone_e164: str) -> dict[str, Any]
     return {"exists": False, "error": "search_by_phone unavailable"}
 
 
-def _message_text(msg: Any) -> str:
+def _attach_type_name(attach: Any) -> str:
+    t = getattr(attach, "type", None)
+    if t is None:
+        return type(attach).__name__.upper()
+    return str(getattr(t, "value", t) or type(attach).__name__).upper()
+
+
+def _crm_type_for_attach(type_name: str) -> Optional[str]:
+    if "PHOTO" in type_name:
+        return "photo"
+    if "VIDEO" in type_name:
+        return "video"
+    if "AUDIO" in type_name or "VOICE" in type_name:
+        return "voice"
+    if "STICKER" in type_name:
+        return "sticker"
+    if "FILE" in type_name or "DOCUMENT" in type_name:
+        return "document"
+    return None
+
+
+def _placeholder_for_crm_type(crm_type: str, file_name: Optional[str] = None) -> str:
+    if crm_type == "photo":
+        return "[фото]"
+    if crm_type == "video":
+        return "[видео]"
+    if crm_type == "voice":
+        return "[голосовое]"
+    if crm_type == "audio":
+        return "[аудио]"
+    if crm_type == "sticker":
+        return "[стикер]"
+    if file_name:
+        return f"[файл: {file_name}]"
+    return "[файл]"
+
+
+def _extract_inbound_attachments(msg: Any, chat_id: Any) -> list[dict[str, Any]]:
+    """Serialize PyMax message.attaches for CRM ChatMessage.attachments."""
+    attaches = getattr(msg, "attaches", None) or []
+    mid = getattr(msg, "id", None) or getattr(msg, "message_id", None)
+    if mid is None or chat_id is None:
+        return []
+    mid_s = str(mid)
+    chat_s = str(chat_id)
+    out: list[dict[str, Any]] = []
+    for attach in attaches:
+        type_name = _attach_type_name(attach)
+        crm_type = _crm_type_for_attach(type_name)
+        if not crm_type:
+            continue
+        native_id: Any = None
+        file_name: Optional[str] = None
+        mime: Optional[str] = None
+        url: Optional[str] = None
+        size: Optional[int] = None
+        kind_key = crm_type
+        if crm_type == "photo":
+            native_id = getattr(attach, "photo_id", None)
+            url = getattr(attach, "base_url", None)
+            mime = "image/jpeg"
+            kind_key = "photo"
+        elif crm_type == "video":
+            native_id = getattr(attach, "video_id", None)
+            mime = "video/mp4"
+            kind_key = "video"
+        elif crm_type == "voice":
+            native_id = getattr(attach, "audio_id", None)
+            url = getattr(attach, "url", None)
+            mime = "audio/ogg"
+            kind_key = "audio"
+        elif crm_type == "sticker":
+            native_id = getattr(attach, "sticker_id", None)
+            url = getattr(attach, "url", None) or getattr(attach, "lottie_url", None)
+            mime = "image/webp"
+            kind_key = "sticker"
+        else:
+            native_id = getattr(attach, "file_id", None)
+            name = getattr(attach, "name", None)
+            file_name = str(name).strip() if name else None
+            size_raw = getattr(attach, "size", None)
+            try:
+                size = int(size_raw) if size_raw is not None else None
+            except Exception:
+                size = None
+            if file_name and "." in file_name:
+                ext = file_name.rsplit(".", 1)[-1].lower()
+                if ext in ("pdf",):
+                    mime = "application/pdf"
+                elif ext in ("doc", "docx"):
+                    mime = "application/msword"
+                elif ext in ("png", "jpg", "jpeg", "webp", "gif"):
+                    mime = f"image/{'jpeg' if ext in ('jpg', 'jpeg') else ext}"
+                    crm_type = "photo"
+            kind_key = "file"
+        if native_id is None and not url:
+            continue
+        # All id segments as strings — avoid JSON number precision loss.
+        file_id = (
+            f"max:{chat_s}:{mid_s}:{kind_key}:"
+            f"{native_id if native_id is not None else 'url'}"
+        )
+        item: dict[str, Any] = {
+            "type": crm_type,
+            "fileId": file_id,
+        }
+        if file_name:
+            item["fileName"] = file_name
+        if mime:
+            item["mimeType"] = mime
+        if size is not None:
+            item["fileSize"] = size
+        if isinstance(url, str) and url.strip():
+            item["url"] = url.strip()
+        out.append(item)
+    return out
+
+
+def _message_text(msg: Any, attachments: Optional[list[dict[str, Any]]] = None) -> str:
     text = getattr(msg, "text", None) or ""
     if not isinstance(text, str):
         text = str(text or "")
     text = text.strip()
     if text:
         return text
+    atts = attachments if attachments is not None else _extract_inbound_attachments(
+        msg, getattr(msg, "chat_id", None) or getattr(msg, "peer_id", None)
+    )
+    if atts:
+        first = atts[0]
+        return _placeholder_for_crm_type(
+            str(first.get("type") or "document"),
+            first.get("fileName") if isinstance(first.get("fileName"), str) else None,
+        )
     attaches = getattr(msg, "attaches", None) or []
     if attaches:
         kinds: list[str] = []
         for a in attaches:
-            k = getattr(a, "type", None) or type(a).__name__
-            kinds.append(str(k))
+            kinds.append(_attach_type_name(a))
         return f"[media:{','.join(kinds[:3])}]" if kinds else "[media]"
     return ""
 
 
-async def _ensure_live_client(bot_id: str) -> Any:
+def _parse_max_file_id(file_id: str) -> Optional[dict[str, str]]:
+    # max:{chatId}:{messageId}:{kind}:{nativeId}
+    if not file_id.startswith("max:"):
+        return None
+    parts = file_id.split(":")
+    if len(parts) < 5:
+        return None
+    return {
+        "chatId": parts[1],
+        "messageId": parts[2],
+        "kind": parts[3],
+        "nativeId": ":".join(parts[4:]),
+    }
+
+
+def _is_placeholder_native(native: str) -> bool:
+    """Outbound CRM fileIds use nativeId=out|local until real attach id is known."""
+    return native in ("out", "local")
+
+
+def _crm_kind_matches(kind: str, crm_type: Optional[str]) -> bool:
+    if not crm_type:
+        return False
+    if kind == "photo":
+        return crm_type == "photo"
+    if kind == "video":
+        return crm_type == "video"
+    if kind == "file":
+        return crm_type == "document"
+    if kind == "audio":
+        return crm_type == "voice"
+    if kind == "sticker":
+        return crm_type == "sticker"
+    return False
+
+
+def _native_id_from_attach(attach: Any, crm_type: str) -> Optional[str]:
+    if crm_type == "photo":
+        v = getattr(attach, "photo_id", None)
+    elif crm_type == "video":
+        v = getattr(attach, "video_id", None)
+    elif crm_type == "voice":
+        v = getattr(attach, "audio_id", None)
+    elif crm_type == "sticker":
+        v = getattr(attach, "sticker_id", None)
+    else:
+        v = getattr(attach, "file_id", None)
+    return str(v) if v is not None else None
+
+
+async def _url_for_attach(
+    client: Any,
+    chat_id: int,
+    message_id: str,
+    attach: Any,
+    crm_type: str,
+) -> tuple[Optional[str], str]:
+    """Resolve CDN URL + default mime for one PyMax attach."""
+    mime = "application/octet-stream"
+    url: Optional[str] = None
+    try:
+        mid: Any = int(message_id)
+    except Exception:
+        mid = message_id
+
+    if crm_type == "photo":
+        mime = "image/jpeg"
+        url = getattr(attach, "base_url", None)
+    elif crm_type == "video":
+        mime = "video/mp4"
+        native = _native_id_from_attach(attach, "video")
+        get_video = getattr(client, "get_video_by_id", None)
+        if callable(get_video) and native:
+            try:
+                info = await get_video(
+                    chat_id=chat_id,
+                    message_id=mid,
+                    video_id=int(native),
+                )
+                url = getattr(info, "url", None) if info is not None else None
+            except Exception:
+                url = None
+        if not url:
+            url = getattr(attach, "url", None) or getattr(attach, "base_url", None)
+    elif crm_type == "document":
+        native = _native_id_from_attach(attach, "document")
+        get_file = getattr(client, "get_file_by_id", None)
+        if callable(get_file) and native:
+            try:
+                info = await get_file(
+                    chat_id=chat_id,
+                    message_id=mid,
+                    file_id=int(native),
+                )
+                url = getattr(info, "url", None) if info is not None else None
+            except Exception:
+                url = None
+        if not url:
+            url = getattr(attach, "url", None)
+        name = getattr(attach, "name", None)
+        if isinstance(name, str) and name.lower().endswith(
+            (".mp4", ".mov", ".webm", ".mkv")
+        ):
+            mime = "video/mp4"
+    elif crm_type == "voice":
+        mime = "audio/ogg"
+        url = getattr(attach, "url", None)
+    elif crm_type == "sticker":
+        mime = "image/webp"
+        url = getattr(attach, "url", None) or getattr(attach, "lottie_url", None)
+    return (str(url) if url else None), mime
+
+
+async def _resolve_media_from_message(
+    client: Any,
+    chat_id: int,
+    message_id: str,
+    kind: str,
+) -> tuple[Optional[str], str]:
+    """Outbound fileIds end with :out — resolve real attach from the sent message."""
+    msg = await _get_message_any(client, chat_id, message_id)
+    if msg is None:
+        return None, "application/octet-stream"
+    attaches = list(getattr(msg, "attaches", None) or [])
+    if not attaches:
+        return None, "application/octet-stream"
+
+    preferred: list[Any] = []
+    fallback: list[Any] = []
+    for a in attaches:
+        crm = _crm_type_for_attach(_attach_type_name(a))
+        if _crm_kind_matches(kind, crm):
+            preferred.append(a)
+        elif kind in ("video", "file") and crm in ("video", "document"):
+            # Outbound may store Video as File (octet-stream mime) or vice versa.
+            fallback.append(a)
+        elif crm in ("photo", "video", "document", "voice", "sticker"):
+            fallback.append(a)
+
+    for a in preferred + fallback:
+        crm = _crm_type_for_attach(_attach_type_name(a)) or "document"
+        url, mime = await _url_for_attach(client, chat_id, message_id, a, crm)
+        if url:
+            if kind == "video" or (
+                isinstance(getattr(a, "name", None), str)
+                and str(a.name).lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
+            ):
+                if not mime.startswith("video/"):
+                    mime = "video/mp4"
+            return url, mime
+    return None, "application/octet-stream"
+
+
+def _classify_outbound_upload(
+    mime: str, name: str
+) -> tuple[str, str]:
+    """Return (crm_type, effective_mime). Prefer extension when browser sends octet-stream."""
+    mime_l = (mime or "application/octet-stream").lower()
+    name_l = (name or "").lower()
+    if mime_l.startswith("image/") and not mime_l.endswith("svg+xml"):
+        return "photo", mime_l
+    if mime_l.startswith("video/") or name_l.endswith(
+        (".mp4", ".mov", ".webm", ".mkv")
+    ):
+        return "video", mime_l if mime_l.startswith("video/") else "video/mp4"
+    if mime_l.startswith("audio/") and (
+        "ogg" in mime_l or name_l.endswith(".ogg")
+    ):
+        return "voice", mime_l if "ogg" in mime_l else "audio/ogg"
+    if name_l.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp")):
+        ext = name_l.rsplit(".", 1)[-1]
+        return "photo", f"image/{'jpeg' if ext in ('jpg', 'jpeg') else ext}"
+    return "document", mime_l
+
+
+def _attachment_meta_from_send_result(
+    result: Any, chat_id: Any, fallback: dict[str, Any]
+) -> dict[str, Any]:
+    """Prefer real native attach id from send_message result (inbound-compatible fileId)."""
+    meta = dict(fallback)
+    kind = {
+        "photo": "photo",
+        "video": "video",
+        "voice": "audio",
+        "document": "file",
+    }.get(str(meta.get("type")), "file")
+    mid = getattr(result, "id", None) if result is not None else None
+    attaches = list(getattr(result, "attaches", None) or []) if result is not None else []
+    for a in attaches:
+        crm = _crm_type_for_attach(_attach_type_name(a))
+        if not crm:
+            continue
+        if not _crm_kind_matches(kind, crm) and not (
+            kind in ("video", "file") and crm in ("video", "document")
+        ):
+            continue
+        native = _native_id_from_attach(a, crm)
+        if not native:
+            continue
+        kind_key = (
+            "file"
+            if crm == "document"
+            else ("audio" if crm == "voice" else crm)
+        )
+        # Keep CRM type=video when we uploaded a video even if MAX stored FILE.
+        if str(meta.get("type")) == "video" or crm == "video":
+            meta["type"] = "video"
+            if not str(meta.get("mimeType") or "").startswith("video/"):
+                meta["mimeType"] = "video/mp4"
+        elif crm == "voice":
+            meta["type"] = "voice"
+        elif crm == "photo":
+            meta["type"] = "photo"
+        else:
+            meta["type"] = "document"
+        meta["fileId"] = f"max:{chat_id}:{mid}:{kind_key}:{native}"
+        name = getattr(a, "name", None)
+        if isinstance(name, str) and name.strip() and not meta.get("fileName"):
+            meta["fileName"] = name.strip()
+        return meta
+    if mid is not None:
+        meta["fileId"] = f"max:{chat_id}:{mid}:{kind}:out"
+    else:
+        meta["fileId"] = f"max:{chat_id}:out:{kind}:local"
+    return meta
+
+
+# okcdn.ru signs CDN URLs with srcAg=CHROME — default httpx UA → HTTP 400
+# (regular MAX video files). Do not send Origin (also → 400). Circle/voice use
+# oneme.ru and tolerate either UA; Chrome is safe for both.
+_MAX_CDN_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+}
+
+
+async def _http_get_bytes(url: str) -> tuple[bytes, Optional[str]]:
+    async with httpx.AsyncClient(
+        timeout=60.0,
+        follow_redirects=True,
+        headers=_MAX_CDN_HTTP_HEADERS,
+    ) as client:
+        res = await client.get(url)
+        res.raise_for_status()
+        ctype = res.headers.get("content-type")
+        return res.content, ctype
+
+
+async def _get_message_any(client: Any, chat_id: int, message_id: str) -> Any:
+    get_msg = getattr(client, "get_message", None)
+    if not callable(get_msg):
+        return None
+    try:
+        mid_int = int(message_id)
+    except Exception:
+        mid_int = None
+    # PyMax WebClient get_message expects int; try int then str.
+    for mid in (mid_int, message_id):
+        if mid is None:
+            continue
+        try:
+            msg = await get_msg(chat_id=chat_id, message_id=mid)
+            if msg is not None:
+                return msg
+        except Exception:
+            continue
+    return None
+
+
+async def _download_max_attachment(client: Any, file_id: str) -> dict[str, Any]:
+    parsed = _parse_max_file_id(file_id)
+    if not parsed:
+        raise HTTPException(400, detail="invalid max fileId")
+    chat_id = int(parsed["chatId"])
+    message_id = parsed["messageId"]
+    kind = parsed["kind"]
+    native = parsed["nativeId"]
+
+    # CRM outbound stores max:{chat}:{mid}:{kind}:out — resolve via message.attaches
+    # (native "out" is not a MAX video_id/file_id; int("out") would 502 → UI «скачать»).
+    if message_id == "out" or kind == "out":
+        # Legacy max:{chat}:out:{kind}:local — no real message id to fetch.
+        raise HTTPException(
+            404, detail="outbound MAX media preview unavailable (no message id)"
+        )
+    if _is_placeholder_native(native):
+        url, mime = await _resolve_media_from_message(client, chat_id, message_id, kind)
+        if not url:
+            raise HTTPException(404, detail="outbound MAX media URL not available")
+        data, ctype = await _http_get_bytes(str(url))
+        if not data:
+            raise HTTPException(404, detail="MAX media empty")
+        return {
+            "ok": True,
+            "dataBase64": base64.b64encode(data).decode("ascii"),
+            "mimeType": (ctype.split(";")[0].strip() if ctype else mime) or mime,
+            "fileId": file_id,
+        }
+
+    url: Optional[str] = None
+    mime = "application/octet-stream"
+    if kind == "photo":
+        mime = "image/jpeg"
+        msg = await _get_message_any(client, chat_id, message_id)
+        for a in getattr(msg, "attaches", None) or []:
+            if _crm_type_for_attach(_attach_type_name(a)) != "photo":
+                continue
+            pid = getattr(a, "photo_id", None)
+            if native != "url" and pid is not None and str(pid) != str(native):
+                continue
+            url = getattr(a, "base_url", None)
+            if url:
+                break
+        if not url and msg is not None:
+            for a in getattr(msg, "attaches", None) or []:
+                if _crm_type_for_attach(_attach_type_name(a)) == "photo":
+                    url = getattr(a, "base_url", None)
+                    if url:
+                        break
+    elif kind == "file":
+        get_file = getattr(client, "get_file_by_id", None)
+        if callable(get_file) and native != "url":
+            try:
+                mid: Any = int(message_id)
+            except Exception:
+                mid = message_id
+            try:
+                info = await get_file(
+                    chat_id=chat_id,
+                    message_id=mid,
+                    file_id=int(native),
+                )
+                url = getattr(info, "url", None) if info is not None else None
+            except Exception:
+                url = None
+            mime = "application/octet-stream"
+    elif kind == "video":
+        mime = "video/mp4"
+        get_video = getattr(client, "get_video_by_id", None)
+        if callable(get_video) and native != "url":
+            try:
+                mid = int(message_id)
+            except Exception:
+                mid = message_id
+            try:
+                info = await get_video(
+                    chat_id=chat_id,
+                    message_id=mid,
+                    video_id=int(native),
+                )
+                url = getattr(info, "url", None) if info is not None else None
+            except Exception:
+                url = None
+    elif kind in ("audio", "sticker"):
+        mime = "audio/ogg" if kind == "audio" else "image/webp"
+        msg = await _get_message_any(client, chat_id, message_id)
+        for a in getattr(msg, "attaches", None) or []:
+            crm = _crm_type_for_attach(_attach_type_name(a))
+            if (kind == "audio" and crm == "voice") or (
+                kind == "sticker" and crm == "sticker"
+            ):
+                url = getattr(a, "url", None) or getattr(a, "lottie_url", None)
+                if url:
+                    break
+    else:
+        raise HTTPException(400, detail=f"unsupported max media kind: {kind}")
+
+    if not url:
+        msg = await _get_message_any(client, chat_id, message_id)
+        for a in getattr(msg, "attaches", None) or []:
+            for attr in ("photo_id", "file_id", "video_id", "audio_id", "sticker_id"):
+                if str(getattr(a, attr, None)) == str(native):
+                    url = (
+                        getattr(a, "base_url", None)
+                        or getattr(a, "url", None)
+                        or getattr(a, "lottie_url", None)
+                    )
+                    break
+            if url:
+                break
+
+    # Last resort: treat as outbound-style lookup by message attaches.
+    if not url:
+        url, mime_fallback = await _resolve_media_from_message(
+            client, chat_id, message_id, kind
+        )
+        if url and mime == "application/octet-stream":
+            mime = mime_fallback
+
+    if not url:
+        raise HTTPException(404, detail="MAX media URL not available")
+
+    data, ctype = await _http_get_bytes(str(url))
+    if not data:
+        raise HTTPException(404, detail="MAX media empty")
+
+    return {
+        "ok": True,
+        "dataBase64": base64.b64encode(data).decode("ascii"),
+        "mimeType": (ctype.split(";")[0].strip() if ctype else mime) or mime,
+        "fileId": file_id,
+    }
+
+
+def _is_session_auth_error(exc: BaseException) -> bool:
+    """True when MAX/PyMax reports login/session token death (needs restore or re-QR)."""
+    text = str(exc) or ""
+    err_code = getattr(exc, "error", None)
+    msg = getattr(exc, "message", None)
+    parts = " ".join(str(p) for p in (text, err_code, msg) if p)
+    return bool(
+        re.search(
+            r"token has expired|FAIL_LOGIN_TOKEN|FAIL_LOGOUT_ALL|login.?token|session.*(expired|invalid)|unauthorized",
+            parts,
+            re.I,
+        )
+    )
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """True when MAX/PyMax reports a rate limit / flood (transient — retry after backoff)."""
+    text = str(exc) or ""
+    err_code = getattr(exc, "error", None)
+    msg = getattr(exc, "message", None)
+    parts = " ".join(str(p) for p in (text, err_code, msg) if p).lower()
+    return any(
+        token in parts
+        for token in (
+            "rate limit",
+            "rate-limit",
+            "too many requests",
+            "flood",
+            "slow down",
+            "429",
+            "limit exceeded",
+            "превышен",
+        )
+    )
+
+
+SESSION_AUTH_RU = (
+    "Сессия MAX истекла. Откройте /dashboard/ai/max → Показать QR "
+    "и заново привяжите устройство (Devices в MAX)."
+)
+
+
+async def _drop_live_client(bot_id: str) -> None:
+    """Forget in-memory client so the next ensure restores from session DB."""
+    task = listener_tasks.pop(bot_id, None)
+    if task and not task.done():
+        task.cancel()
+    ct = client_tasks.pop(bot_id, None)
+    if ct and not ct.done():
+        ct.cancel()
+    client = live_clients.pop(bot_id, None)
+    await close_client(client)
+
+
+async def _ensure_live_client(bot_id: str, *, force_restore: bool = False) -> Any:
+    if force_restore:
+        await _drop_live_client(bot_id)
     client = live_clients.get(bot_id)
     if client is not None:
         return client
@@ -777,49 +1483,102 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
         # Common decorator / register patterns across PyMax versions.
         handler = getattr(client, "on_message", None) or getattr(client, "add_message_handler", None)
 
-        async def on_msg(message: Any) -> None:
+        # PyMax 2.3+/2.4: callback(event, client) — see Message docstring / Dispatcher._call.
+        async def on_msg(message: Any, event_client: Any = None) -> None:
             try:
-                # Skip outgoing if flagged
+                api = event_client if event_client is not None else client
+                # Skip outgoing if flagged (Telethon-style) or sender == me (PyMax Message.sender is int).
                 if getattr(message, "out", False) or getattr(message, "is_out", False):
                     return
+                sender = getattr(message, "sender", None)
+                # CRITICAL: client.me is often a wrapper — User is on .contact (INC-113).
+                me_user = _unwrap_max_user(getattr(api, "me", None))
+                me_id = _user_id_int(me_user)
+                me_phone = _phone_digits(getattr(me_user, "phone", None) if me_user else None)
+                try:
+                    sender_id = int(sender) if sender is not None else None
+                except Exception:
+                    sender_id = None
+                if me_id is not None and sender_id is not None and sender_id == me_id:
+                    return
+
                 peer = (
                     getattr(message, "chat_id", None)
                     or getattr(message, "peer_id", None)
                     or getattr(getattr(message, "chat", None), "id", None)
-                    or getattr(getattr(message, "sender", None), "id", None)
+                    or sender_id
                 )
                 if peer is None:
                     return
-                text = (
-                    getattr(message, "text", None)
-                    or getattr(message, "body", None)
-                    or getattr(message, "content", None)
-                    or ""
-                )
-                if not isinstance(text, str):
-                    text = str(text or "")
+                try:
+                    peer_i = int(peer)
+                except Exception:
+                    peer_i = None
+                # Channels/groups use negative ids; never create CRM leads from them.
+                if peer_i is not None and peer_i < 0:
+                    logger.info(
+                        "skip non-private inbound (negative chat id) botId=%s chat=%s",
+                        bot_id,
+                        peer,
+                    )
+                    return
+
+                chat_obj = getattr(message, "chat", None) or _find_chat(api, peer)
+                chat_type = _chat_type_value(chat_obj) if chat_obj is not None else ""
+                if chat_type and chat_type != "DIALOG":
+                    logger.info(
+                        "skip non-dialog inbound type=%s botId=%s chat=%s",
+                        chat_type,
+                        bot_id,
+                        peer,
+                    )
+                    return
+
                 mid = getattr(message, "id", None) or getattr(message, "message_id", None)
-                sender = getattr(message, "sender", None)
-                username = getattr(sender, "username", None) if sender else None
-                first_name = (
-                    getattr(sender, "first_name", None) or getattr(sender, "name", None)
-                    if sender
-                    else None
-                )
+                attachments = _extract_inbound_attachments(message, peer)
+                text = _message_text(message, attachments)
+                # Message.sender is user id (int), not a profile object.
+                username = None
+                first_name = None
+                if sender is not None and not isinstance(sender, (int, str)):
+                    username = getattr(sender, "username", None)
+                    first_name = getattr(sender, "first_name", None) or getattr(sender, "name", None)
                 phone: Optional[str] = None
                 link: Optional[str] = None
-                # Enrich peer profile for CRM merge-by-phone (DIALOG chats).
+                # Peer user id ≠ chat id (DIALOG chat_id is often a separate snowflake).
+                peer_uid: Optional[int] = None
+                if sender_id is not None and (me_id is None or sender_id != me_id):
+                    peer_uid = sender_id
+                if peer_uid is None:
+                    peer_uid = _peer_user_id_from_chat(chat_obj, me_id)
+                # Never treat chat_id as user id when it is not the other participant.
+                if peer_uid is None:
+                    logger.info(
+                        "skip inbound without peer user botId=%s chat=%s",
+                        bot_id,
+                        peer,
+                    )
+                    return
+                if me_id is not None and peer_uid == me_id:
+                    return
+
+                # Enrich peer profile for CRM merge-by-phone (DIALOG only).
                 try:
-                    peer_uid = int(sender) if sender is not None else None
-                    if peer_uid is None:
-                        try:
-                            peer_uid = int(peer)
-                        except Exception:
-                            peer_uid = None
-                    get_user = getattr(client, "get_user", None)
-                    if callable(get_user) and peer_uid is not None:
+                    get_user = getattr(api, "get_user", None)
+                    if callable(get_user):
                         user = await get_user(peer_uid)
                         if user is not None:
+                            if _is_bot_user(user):
+                                logger.info(
+                                    "skip bot inbound botId=%s peerUser=%s chat=%s",
+                                    bot_id,
+                                    peer_uid,
+                                    peer,
+                                )
+                                return
+                            got_id = _user_id_int(user)
+                            if me_id is not None and got_id is not None and got_id == me_id:
+                                return
                             fn, un = _user_display_name(user)
                             if fn and not first_name:
                                 first_name = fn
@@ -828,25 +1587,48 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                             ph = getattr(user, "phone", None)
                             if ph is not None and str(ph).strip():
                                 phone = str(ph).strip()
-                            lk = getattr(user, "link", None)
-                            if isinstance(lk, str) and lk.strip():
-                                link = lk.strip()
+                            lk = _user_link(user)
+                            if lk:
+                                link = lk
                 except Exception:
-                    logger.debug("inbound get_user failed peer=%s", peer, exc_info=True)
+                    logger.debug("inbound get_user failed peer=%s", peer_uid, exc_info=True)
 
+                # Never attach the connected account's own phone onto a peer lead.
+                if phone and me_phone and _phones_likely_same(phone, me_phone):
+                    phone = None
+
+                # Strip ephemeral download URLs before persisting descriptors in control DB.
+                attachments_out = [
+                    {k: v for k, v in a.items() if k != "url"} for a in attachments
+                ]
                 await saas_fetch(
                     "/api/internal/max/inbound",
                     method="POST",
                     json_body={
                         "botId": bot_id,
+                        # Conversation key = chat id (send/read). Profile id = maxUserId.
                         "peerId": str(peer),
+                        "maxUserId": str(peer_uid),
+                        "chatType": chat_type or "DIALOG",
+                        # MUST be string — MAX ids exceed JS Number.MAX_SAFE_INTEGER.
                         "text": text,
-                        "messageId": mid,
+                        "messageId": str(mid) if mid is not None else None,
                         "username": username,
                         "firstName": first_name,
                         "phone": phone,
+                        # Belt: saas-api strips peer phone if it equals connected account.
+                        "selfPhone": me_phone or None,
                         "maxLink": link,
+                        "attachments": attachments_out,
                     },
+                )
+                logger.info(
+                    "inbound forwarded botId=%s chat=%s peerUser=%s mid=%s attaches=%s",
+                    bot_id,
+                    peer,
+                    peer_uid,
+                    mid,
+                    len(attachments_out),
                 )
             except Exception:
                 logger.exception("inbound handle failed botId=%s", bot_id)
@@ -936,17 +1718,9 @@ async def crm_private_dialogs(
         dialog_limit = 0
 
     client = await _ensure_live_client(bot_id)
-    me = getattr(client, "me", None)
-    # PyMax WebClient.me is often a wrapper; User lives on .contact
-    me_user = getattr(me, "contact", None) or me
-    me_id_raw = getattr(me_user, "id", None) if me_user is not None else None
-    try:
-        me_id: Optional[int] = int(me_id_raw) if me_id_raw is not None else None
-    except Exception:
-        me_id = None
-    me_phone_digits = "".join(
-        ch for ch in str(getattr(me_user, "phone", "") or "") if ch.isdigit()
-    )
+    me_user = _unwrap_max_user(getattr(client, "me", None))
+    me_id = _user_id_int(me_user)
+    me_phone_digits = _phone_digits(getattr(me_user, "phone", None) if me_user else None)
     if me_id is not None:
         logger.info("private-dialogs me_id=%s botId=%s", me_id, bot_id)
 
@@ -1027,28 +1801,13 @@ async def crm_private_dialogs(
             pass
 
         # Peer user id = other participant (not me); CRM key stays chat_id to match inbound.
-        peer_user_id: Optional[int] = None
-        candidate_ids: list[int] = []
-        participants = getattr(chat, "participants", None) or {}
-        if isinstance(participants, dict):
-            for uid in participants.keys():
-                try:
-                    candidate_ids.append(int(uid))
-                except Exception:
-                    continue
-        owner = getattr(chat, "owner", None)
-        if owner is not None:
-            try:
-                oid = int(owner)
-                if oid not in candidate_ids:
-                    candidate_ids.append(oid)
-            except Exception:
-                pass
-        for uid_i in candidate_ids:
-            if me_id is not None and uid_i == me_id:
+        # DIALOG chat_id ≠ user id (INC-113) — never use chat_id as profile id.
+        try:
+            if int(chat_id) < 0:
                 continue
-            peer_user_id = uid_i
-            break
+        except Exception:
+            pass
+        peer_user_id = _peer_user_id_from_chat(chat, me_id)
 
         # Skip self / system shells (no other participant)
         if peer_user_id is None:
@@ -1063,12 +1822,11 @@ async def crm_private_dialogs(
         if peer_user_id is not None and callable(get_user):
             try:
                 user = await get_user(peer_user_id)
-                uid_got = getattr(user, "id", None) if user is not None else None
-                try:
-                    if me_id is not None and uid_got is not None and int(uid_got) == me_id:
-                        continue
-                except Exception:
-                    pass
+                if user is not None and _is_bot_user(user):
+                    continue
+                uid_got = _user_id_int(user)
+                if me_id is not None and uid_got is not None and uid_got == me_id:
+                    continue
                 fn, un = _user_display_name(user)
                 if fn:
                     first_name = fn
@@ -1078,8 +1836,8 @@ async def crm_private_dialogs(
                 ph = getattr(user, "phone", None)
                 if ph is not None and str(ph).strip():
                     phone = str(ph).strip()
-                    ph_digits = "".join(ch for ch in phone if ch.isdigit())
-                    if me_phone_digits and ph_digits and ph_digits.endswith(me_phone_digits[-10:]):
+                    if me_phone_digits and _phones_likely_same(phone, me_phone_digits):
+                        # Self / Saved-style — never sync as a lead.
                         continue
             except Exception:
                 logger.debug("get_user failed chat=%s peer=%s", chat_id, peer_user_id, exc_info=True)
@@ -1106,13 +1864,19 @@ async def crm_private_dialogs(
                         ts = int(getattr(msg, "time", 0) or 0)
                         # PyMax times are ms; expose unix seconds for CRM
                         date_sec = int(ts / 1000) if ts > 10_000_000_000 else ts
-                        text = _message_text(msg)
+                        atts = _extract_inbound_attachments(msg, chat_id)
+                        text = _message_text(msg, atts)
                         messages_out.append(
                             {
-                                "id": int(mid) if str(mid).isdigit() else mid,
+                                # String id — MAX snowflakes exceed JS safe integer.
+                                "id": str(mid),
                                 "out": out,
                                 "text": text,
                                 "date": date_sec,
+                                "attachments": [
+                                    {k: v for k, v in a.items() if k != "url"}
+                                    for a in atts
+                                ],
                             }
                         )
             except Exception:
@@ -1135,7 +1899,14 @@ async def crm_private_dialogs(
         )
         await asyncio.sleep(0.05)
 
-    return {"ok": True, "dialogs": dialogs_out, "totalPrivate": len(private)}
+    return {
+        "ok": True,
+        "dialogs": dialogs_out,
+        "totalPrivate": len(private),
+        # saas-api belt: never apply this phone onto peer Persons (INC-113).
+        "selfPhone": me_phone_digits or None,
+        "selfMaxUserId": str(me_id) if me_id is not None else None,
+    }
 
 
 @app.post("/messages/send")
@@ -1144,33 +1915,191 @@ async def messages_send(
     authorization: Optional[str] = Header(default=None),
 ) -> dict:
     require_auth(authorization)
-    client = await _ensure_live_client(body.botId)
 
     text = (body.text or "").strip()
-    if not text:
-        raise HTTPException(400, detail="text required")
-
-    send_fn = (
-        getattr(client, "send_message", None)
-        or getattr(client, "send_text", None)
-        or getattr(client, "send", None)
-    )
-    if send_fn is None:
-        raise HTTPException(501, detail="PyMax client has no send_message")
+    media_b64 = (body.mediaBase64 or "").strip()
+    if not text and not media_b64:
+        raise HTTPException(400, detail="text or mediaBase64 required")
 
     try:
-        # Prefer chat_id / peer kwargs across versions
+        chat_id: Any
         try:
-            result = send_fn(body.peerUserId, text)
-        except TypeError:
-            result = send_fn(chat_id=body.peerUserId, text=text)
-        if asyncio.iscoroutine(result):
-            await result
+            chat_id = int(body.peerUserId)
+        except Exception:
+            chat_id = body.peerUserId
+
+        attachments_arg: Optional[list[Any]] = None
+        attachment_meta: Optional[dict[str, Any]] = None
+        if media_b64:
+            if len(media_b64) > OUTBOUND_MEDIA_MAX_BYTES * 4 // 3 + 8:
+                raise HTTPException(
+                    413,
+                    detail=f"media too large (max {OUTBOUND_MEDIA_MAX_BYTES} bytes)",
+                )
+            raw = base64.b64decode(media_b64.split(",")[-1], validate=False)
+            if not raw:
+                raise HTTPException(400, detail="empty media")
+            if len(raw) > OUTBOUND_MEDIA_MAX_BYTES:
+                raise HTTPException(
+                    413,
+                    detail=f"media too large (max {OUTBOUND_MEDIA_MAX_BYTES} bytes)",
+                )
+            name = (body.fileName or "file.bin").strip() or "file.bin"
+            crm_type, mime = _classify_outbound_upload(
+                body.mimeType or "application/octet-stream", name
+            )
+            try:
+                from pymax.files import File, Photo, Video, Voice  # type: ignore
+            except Exception as exc:
+                raise HTTPException(
+                    501, detail=f"PyMax files API unavailable: {exc}"
+                ) from exc
+
+            upload_obj: Any
+            if crm_type == "photo":
+                upload_obj = Photo(raw=raw, name=name)
+            elif crm_type == "video":
+                upload_obj = Video(raw=raw, name=name)
+            elif crm_type == "voice":
+                upload_obj = Voice(
+                    raw=raw,
+                    name=name if name.endswith(".ogg") else f"{name}.ogg",
+                )
+            else:
+                upload_obj = File(raw=raw, name=name)
+            attachments_arg = [upload_obj]
+            attachment_meta = {
+                "type": crm_type,
+                "fileName": name,
+                "mimeType": mime,
+                "fileSize": len(raw),
+            }
+
+        kwargs: dict[str, Any] = {"chat_id": chat_id}
+        if text:
+            kwargs["text"] = text
+        if attachments_arg is not None:
+            kwargs["attachments"] = attachments_arg
+
+        last_exc: Optional[BaseException] = None
+        result: Any = None
+        for attempt in range(2):
+            client = await _ensure_live_client(
+                body.botId, force_restore=attempt > 0
+            )
+            send_fn = getattr(client, "send_message", None)
+            if send_fn is None:
+                raise HTTPException(501, detail="PyMax client has no send_message")
+            try:
+                result = send_fn(**kwargs)
+                if asyncio.iscoroutine(result):
+                    result = await result
+                last_exc = None
+                break
+            except HTTPException:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if _is_rate_limit_error(exc):
+                    wait_s = 1 + attempt * 4  # 1s → 5s
+                    logger.warning(
+                        "send rate-limited botId=%s attempt=%s waiting %ss: %s",
+                        body.botId,
+                        attempt,
+                        wait_s,
+                        exc,
+                    )
+                    await asyncio.sleep(wait_s)
+                    continue
+                if attempt == 0 and _is_session_auth_error(exc):
+                    logger.warning(
+                        "send auth error botId=%s — drop+restore once: %s",
+                        body.botId,
+                        exc,
+                    )
+                    await _drop_live_client(body.botId)
+                    continue
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+
+        # Prefer real attach id from send result; else max:…:out (resolved on media GET).
+        if attachment_meta is not None:
+            attachment_meta = _attachment_meta_from_send_result(
+                result, chat_id, attachment_meta
+            )
+
+        logger.info(
+            "message sent chat_id=%s text_len=%s media=%s fileId=%s",
+            chat_id,
+            len(text),
+            bool(media_b64),
+            (attachment_meta or {}).get("fileId"),
+        )
+        out: dict[str, Any] = {"ok": True, "chatId": str(chat_id)}
+        if attachment_meta and attachment_meta.get("fileId"):
+            out["attachment"] = attachment_meta
+        return out
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("send failed")
+        if _is_session_auth_error(exc):
+            await _drop_live_client(body.botId)
+            raise HTTPException(401, detail=SESSION_AUTH_RU) from exc
         raise HTTPException(502, detail=str(exc)) from exc
 
-    return {"ok": True}
+
+@app.post("/messages/media")
+async def messages_media(
+    body: MediaBody,
+    authorization: Optional[str] = Header(default=None),
+) -> dict:
+    """Download inbound MAX attachment for CRM signed-url preview."""
+    require_auth(authorization)
+    client = await _ensure_live_client(body.botId)
+    try:
+        return await _download_max_attachment(client, body.fileId)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("media download failed fileId=%s", body.fileId)
+        raise HTTPException(502, detail=str(exc)) from exc
+
+
+@app.post("/messages/read")
+async def messages_read(
+    body: ReadBody,
+    authorization: Optional[str] = Header(default=None),
+) -> dict:
+    """Mark MAX messages read in the native app (PyMax read_message)."""
+    require_auth(authorization)
+    client = await _ensure_live_client(body.botId)
+    read_fn = getattr(client, "read_message", None)
+    if not callable(read_fn):
+        return {"ok": False, "error": "read_message unsupported", "marked": 0}
+
+    try:
+        chat_id = int(body.peerUserId)
+    except Exception as exc:
+        raise HTTPException(400, detail="peerUserId must be numeric chat id") from exc
+
+    marked = 0
+    # Prod WebClient validates message_id as number ("Expected number"); pass int.
+    # IDs are stored as decimal strings (safe — never JSON-number in JS).
+    for raw in body.messageIds[-20:]:
+        mid = str(raw).strip()
+        if mid.startswith("max:"):
+            mid = mid.split(":", 1)[1]
+        if not mid or not mid.isdigit():
+            continue
+        try:
+            await read_fn(message_id=int(mid), chat_id=chat_id)
+            marked += 1
+        except Exception:
+            logger.debug("read_message failed chat=%s mid=%s", chat_id, mid, exc_info=True)
+    return {"ok": True, "marked": marked}
 
 
 @app.post("/sessions/connect")

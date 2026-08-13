@@ -1,8 +1,8 @@
-// Internal: gramjs-bridge → enqueue CRM enrich+dedupe after personal TG connects.
+// Internal: gramjs-bridge → acknowledge personal TG connect.
+// History sync + CRM enrich are manual only (portal POST …/sync-history / admin enqueue).
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { enqueueGramjsCrmEnrich } from '../jobs/queues.js';
 
 const connectedSchema = z.object({
   tenantId: z.string().min(1),
@@ -26,7 +26,7 @@ export const gramjsInternalRoutes: FastifyPluginAsync = async (fastify) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
     }
-    const { tenantId, botId, limit } = parsed.data;
+    const { tenantId, botId } = parsed.data;
     const bot = await fastify.prisma.botInstance.findFirst({
       where: {
         id: botId,
@@ -39,16 +39,13 @@ export const gramjsInternalRoutes: FastifyPluginAsync = async (fastify) => {
     if (!bot) {
       return reply.code(404).send({ error: 'gramjs bot not found' });
     }
-    try {
-      await enqueueGramjsCrmEnrich({ tenantId, botId, limit });
-    } catch (err) {
-      // Duplicate jobId while previous still in Redis → treat as ok (idempotent).
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/already exists|JobId/i.test(msg)) {
-        fastify.log.error({ err, tenantId, botId }, 'enqueue gramjs crm enrich failed');
-        return reply.code(500).send({ error: 'enqueue_failed', detail: msg });
-      }
-    }
-    return reply.send({ ok: true, queued: true, tenantId, botId });
+    // Do not enqueue runGramjsPrivateChatSync / enrich on connect — button only.
+    return reply.send({
+      ok: true,
+      queued: false,
+      reason: 'manual_sync_only',
+      tenantId,
+      botId,
+    });
   });
 };

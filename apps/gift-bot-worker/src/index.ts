@@ -2,9 +2,9 @@
 // Multi-tenant webhook: /tg/{tenantId}/{botId}
 // Supports linear funnelJson, delayed nudges, CRM Person+Opportunity, broadcasts
 
-import { Queue, Worker } from 'bullmq';
+import { Queue, Worker, type Job } from 'bullmq';
 import IORedis from 'ioredis';
-import { prisma } from '@voxly/db';
+import { prisma, Prisma, upsertCrmRecordLink } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import { fireGoal } from '@voxly/analytics-dispatchers';
 import { TwentyClient } from '@voxly/twenty-client';
@@ -27,6 +27,22 @@ import {
   type GiftPromoPost,
   isWithinMailingAttributionWindow,
   mailingAttributionNote,
+  sleep,
+  jitterMs,
+  retryBackoffMs,
+  antiFloodPause,
+  dailySendLimitFor,
+  dailyCounterKey,
+  dailyStoryLimitFor,
+  dailyStoryCounterKey,
+  broadcastPoolIds,
+  pickLeastLoadedBot,
+  poolPauseUntil,
+  randomInt,
+  expandSpintax,
+  fetchWithTimeout,
+  invalidateCrmThreadCache,
+  invalidateCrmUnreadCache,
 } from '@voxly/shared';
 import {
   chargeAiUsage,
@@ -65,10 +81,19 @@ interface DelayJob {
   chatId: number;
 }
 
+/** Per-recipient broadcast job (Job 1B.3): one BullMQ job per subscriber/conversation. */
+interface BroadcastRecipientJob {
+  broadcastId: string;
+  kind: 'gift' | 'gramjs' | 'wa';
+  subscriberId?: string;
+  conversationId?: string;
+}
+
 async function main() {
   startDelayWorker();
   startBroadcastWorker();
   startBroadcastScanner();
+  startStoryMetricsPoller();
 
   if (USE_POLLING) {
     console.log('[gift-bot-worker] Long-polling mode enabled');
@@ -96,10 +121,11 @@ async function main() {
           select: { botType: true },
         });
         if (botMeta?.botType === 'ai_tg') {
-          const upstream = await fetch(`${AI_TELEGRAM_WORKER_URL}${req.url}`, {
+          const upstream = await fetchWithTimeout(`${AI_TELEGRAM_WORKER_URL}${req.url}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body,
+            timeout: 15000,
           });
           const text = await upstream.text();
           res.writeHead(upstream.status, { 'Content-Type': 'text/plain' });
@@ -177,14 +203,33 @@ function startDelayWorker() {
 }
 
 function startBroadcastWorker() {
-  new Worker(
+  const worker = new Worker(
     'gift-bot-broadcast',
     async (job) => {
+      if (job.name === 'recipient') {
+        await processBroadcastRecipient(job.data as BroadcastRecipientJob, job);
+        return;
+      }
       const { broadcastId } = job.data as { broadcastId: string };
-      await processBroadcast(broadcastId);
+      await processBroadcast(job, broadcastId);
     },
-    { connection, limiter: { max: 25, duration: 1000 } },
+    {
+      connection,
+      // Serialize recipients so antiFloodPause pacing (30–60s) is preserved;
+      // per-recipient jobs are the checkpoint (restart only redoes in-flight ones).
+      concurrency: 1,
+    },
   );
+  // Dead-letter: failed jobs (after retries) stay in the queue for inspection/replay
+  // (removeOnFail: false) and every final failure is logged here.
+  worker.on('failed', (job, err) => {
+    console.error(
+      '[gift-bot] broadcast job failed after retries',
+      job?.name,
+      job?.id,
+      err?.message,
+    );
+  });
 }
 
 function startBroadcastScanner() {
@@ -199,12 +244,146 @@ function startBroadcastScanner() {
           where: { id: b.id },
           data: { status: 'sending' },
         });
-        await broadcastQueue.add('send', { broadcastId: b.id });
+        await broadcastQueue.add(
+          'send',
+          { broadcastId: b.id },
+          {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 5_000 },
+            removeOnComplete: { count: 1_000 },
+            removeOnFail: false,
+          },
+        );
+      }
+      // Finalize broadcasts stuck in 'sending' with no pending counter:
+      // the planner crashed mid-enqueue (or the counter TTL expired) — Job 1B.3 safety net.
+      const stale = await prisma.broadcast.findMany({
+        where: {
+          status: 'sending',
+          updatedAt: { lt: new Date(Date.now() - 10 * 60 * 1000) },
+        },
+        take: 5,
+        select: { id: true },
+      });
+      for (const b of stale) {
+        const [pendingRaw, planned] = await Promise.all([
+          connection.get(`broadcast:pending:${b.id}`),
+          connection.get(`broadcast:planned:${b.id}`),
+        ]);
+        if (planned !== '1') continue; // 'send' job never ran — leave it queued
+        const pendingNum = pendingRaw === null ? -1 : Number(pendingRaw);
+        if (pendingNum !== -1 && pendingNum > 1) continue; // recipients still pending
+        // Nothing (or one) pending — finalize only when no job for this
+        // broadcast is still queued/running/delayed (paused on flood — Job 1B.4,
+        // or queue backlog from other broadcasts).
+        const live = await broadcastQueue
+          .getJobs(['waiting', 'delayed', 'active'], 0, -1)
+          .catch(() => null);
+        if (live === null) continue; // can't enumerate — keep 'sending' until manual check
+        const mineStillRunning = live.some(
+          (j) => (j.data as { broadcastId?: string })?.broadcastId === b.id,
+        );
+        if (mineStillRunning) continue;
+        console.warn(
+          `[gift-bot] broadcast stale in 'sending' without pending recipients — finalizing ${b.id}`,
+        );
+        await finalizeBroadcast(b.id);
       }
     } catch (err) {
       console.error('[gift-bot] broadcast scanner:', err);
     }
   }, 15000);
+}
+
+/** Story metrics poller (1D.6): periodically fetches TG story views/reactions from gramjs-bridge. */
+function startStoryMetricsPoller() {
+  const intervalMs = 15 * 60 * 1000; // 15 min
+  setInterval(async () => {
+    try {
+      const posts = await prisma.storyPost.findMany({
+        where: {
+          channel: 'gramjs',
+          providerData: { not: Prisma.JsonNull },
+          postedAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) }, // last 24h
+        },
+        take: 50,
+        select: { id: true, botInstanceId: true, providerData: true },
+      });
+
+      for (const post of posts) {
+        const providerData = (post.providerData as { storyId?: number } | null);
+        const storyId = providerData?.storyId;
+        if (!storyId) continue;
+
+        try {
+          const base = process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008';
+          const res = await fetchWithTimeout(`${base}/stories/${storyId}/metrics?botId=${post.botInstanceId}`, {
+            timeout: 15000,
+          });
+          if (!res.ok) continue;
+          const json = (await res.json()) as { ok?: boolean; views?: number; reactions?: number; forwards?: number };
+          if (!json.ok) continue;
+          await prisma.storyPost.update({
+            where: { id: post.id },
+            data: {
+              viewsCount: json.views || 0,
+              reactionsCount: json.reactions || 0,
+              forwardsCount: json.forwards || 0,
+              providerData: { ...(providerData as object), lastPolled: new Date().toISOString() },
+            },
+          });
+        } catch (e) {
+          console.warn('[gift-bot] story metrics poll failed', { postId: post.id, error: String(e) });
+        }
+      }
+    } catch (err) {
+      console.error('[gift-bot] story metrics poller error:', err);
+    }
+  }, intervalMs);
+  // Run once on startup after 30s
+  setTimeout(() => {
+    // inline the poll logic
+    (async () => {
+      try {
+        const posts = await prisma.storyPost.findMany({
+          where: {
+            channel: 'gramjs',
+            providerData: { not: Prisma.JsonNull },
+            postedAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) },
+          },
+          take: 50,
+          select: { id: true, botInstanceId: true, providerData: true },
+        });
+
+        for (const post of posts) {
+          const providerData = post.providerData as { storyId?: number } | null;
+          const storyId = providerData?.storyId;
+          if (!storyId) continue;
+
+          try {
+            const base = process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008';
+            const res = await fetch(`${base}/stories/${storyId}/metrics?botId=${post.botInstanceId}`);
+            if (!res.ok) continue;
+            const json = (await res.json()) as { ok?: boolean; views?: number; reactions?: number; forwards?: number };
+            if (!json.ok) continue;
+            await prisma.storyPost.update({
+              where: { id: post.id },
+              data: {
+                viewsCount: json.views || 0,
+                reactionsCount: json.reactions || 0,
+                forwardsCount: json.forwards || 0,
+                providerData: { ...(providerData as object), lastPolled: new Date().toISOString() },
+              },
+            });
+          } catch (e) {
+            console.warn('[gift-bot] story metrics poll failed', { postId: post.id, error: String(e) });
+          }
+        }
+      } catch (err) {
+        console.error('[gift-bot] story metrics poller error:', err);
+      }
+    })();
+  }, 30000).unref?.();
 }
 
 async function pollAllBots() {
@@ -218,8 +397,9 @@ async function pollAllBots() {
         if (!bot.botTokenEncrypted) continue;
         const token = decrypt(bot.botTokenEncrypted);
         const offset = offsets.get(bot.id) || 0;
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           `https://api.telegram.org/bot${token}/getUpdates?timeout=10&offset=${offset}`,
+          { timeout: 15000 },
         );
         const data = (await res.json()) as any;
         if (!data.ok) continue;
@@ -430,6 +610,14 @@ async function handleStart(
   });
 
   const conversation = await ensureConversation(tenantId, botId, telegramId, username, firstName);
+  await upsertCrmRecordLink(prisma, {
+    tenantId,
+    conversationId: conversation.id,
+    twentyPersonId: crm.personId || null,
+    twentyOpportunityId: crm.opportunityId || null,
+  });
+  await invalidateCrmThreadCache(connection, tenantId, [crm.personId, crm.opportunityId]);
+  await invalidateCrmUnreadCache(connection, tenantId);
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
@@ -789,7 +977,147 @@ async function processDelayJob(job: DelayJob) {
   });
 }
 
-async function processBroadcast(broadcastId: string) {
+type BroadcastPoolBot = {
+  id: string;
+  botType: string;
+  dailySendLimit: number | null;
+  botTokenEncrypted: string | null;
+  floodedUntil: Date | null;
+  warmupSince: Date | null;
+};
+
+type BroadcastPoolEntry = {
+  bot: BroadcastPoolBot;
+  used: number;
+  limit: number;
+};
+
+/**
+ * Least-loaded rotation pool for a broadcast (Job 1B.1). Loads per-account
+ * daily counters from Redis once, then hands out the least-loaded available
+ * account per recipient and accounts usage locally + in Redis.
+ */
+class BroadcastBotPool {
+  private readonly entries: BroadcastPoolEntry[];
+  private readonly expireScheduled = new Set<string>();
+
+  private constructor(entries: BroadcastPoolEntry[]) {
+    this.entries = entries;
+  }
+
+  static async load(bots: BroadcastPoolBot[]): Promise<BroadcastBotPool> {
+    const entries: BroadcastPoolEntry[] = [];
+    for (const bot of bots) {
+      const counterKey = dailyCounterKey(bot.id);
+      const used = Number((await connection.get(counterKey)) || 0);
+      entries.push({
+        bot,
+        used,
+        limit: dailySendLimitFor(bot.botType, bot.dailySendLimit, bot.warmupSince),
+      });
+    }
+    return new BroadcastBotPool(entries);
+  }
+
+  /** Least-loaded available bot, or null when the whole pool is exhausted/blocked. */
+  next(): BroadcastPoolBot | null {
+    const picked = pickLeastLoadedBot(
+      this.entries.map((e) => ({
+        id: e.bot.id,
+        used: e.used,
+        limit: e.limit,
+        floodedUntil: e.bot.floodedUntil,
+      })),
+    );
+    if (!picked) return null;
+    // Account rotation: when the pool has >1 account, each pick is a rotation event.
+    if (this.entries.length > 1) {
+      const day = new Date();
+      day.setUTCHours(0, 0, 0, 0);
+      const rotatedKey = `tg:rotated:${day.toISOString().slice(0, 10)}`;
+      connection.incr(rotatedKey).catch(() => undefined);
+      connection.expire(rotatedKey, 48 * 3600).catch(() => undefined);
+    }
+    return this.entries.find((e) => e.bot.id === picked.id)?.bot ?? null;
+  }
+
+  /**
+   * Job 1B.4: when the whole pool is unavailable, return the resume timestamp
+   * (nearest floodedUntil) if the cause is flood — pause until then. Null when
+   * the exhaustion is the daily limit (fail instead).
+   */
+  pauseUntil(now: Date = new Date()): number | null {
+    return poolPauseUntil(
+      this.entries.map((e) => ({
+        id: e.bot.id,
+        used: e.used,
+        limit: e.limit,
+        floodedUntil: e.bot.floodedUntil,
+      })),
+      now,
+    );
+  }
+
+  /** Account a send against the local counter and the Redis daily counter. */
+  async accountFor(botId: string): Promise<void> {
+    const entry = this.entries.find((e) => e.bot.id === botId);
+    if (!entry) return;
+    entry.used += 1;
+    try {
+      const key = dailyCounterKey(botId);
+      const sent = Number(await connection.incr(key));
+      if (!this.expireScheduled.has(botId)) {
+        this.expireScheduled.add(botId);
+        await connection.expire(key, 48 * 3600);
+      }
+      // Warm-up snapshot (Job 1C.4): one row per bot per UTC day for the portal curve.
+      try {
+        const day = new Date();
+        day.setUTCHours(0, 0, 0, 0);
+        await prisma.warmupLog.upsert({
+          where: { botId_date: { botId, date: day } },
+          create: { botId, date: day, limit: entry.limit, sent },
+          update: { limit: entry.limit, sent },
+        });
+      } catch (err) {
+        console.warn('[gift-bot] warmup log upsert failed', err);
+      }
+    } catch (err) {
+      console.warn('[gift-bot] pool counter incr failed', err);
+    }
+  }
+
+  /** Evict an account from the rotation for this run (flooded / spam-blocked). */
+  exclude(botId: string): void {
+    const entry = this.entries.find((e) => e.bot.id === botId);
+    if (entry) entry.used = entry.limit;
+  }
+}
+
+/** Cooldown for a flood/spam block: retry_after (когда есть), иначе 6ч (MAILING-LIMITS). */
+function floodCooldownMs(err?: FloodedAccountError): number {
+  return err && err.retryAfterSeconds > 0 ? err.retryAfterSeconds * 1000 : 6 * 3600 * 1000;
+}
+
+/** Persist a flood/spam block so later broadcasts skip this account (Job 1B.2). */
+async function markBotFlooded(botId: string, err?: FloodedAccountError): Promise<void> {
+  try {
+    await prisma.botInstance.update({
+      where: { id: botId },
+      data: { floodedUntil: new Date(Date.now() + floodCooldownMs(err)) },
+    });
+  } catch (e) {
+    console.warn('[gift-bot] failed to persist floodedUntil', e);
+  }
+}
+
+/** True when an error signals a flood / spam / 429 block (native or bridge/HTTP text). */
+function isFloodError(err: unknown): boolean {
+  if (err instanceof FloodedAccountError) return true;
+  return /flood|spam|too many requests|429/i.test(String((err as Error)?.message || err));
+}
+
+async function processBroadcast(job: Job<{ broadcastId: string }>, broadcastId: string) {
   const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
   if (!broadcast) return;
   const msg = broadcast.messageJson as any;
@@ -799,85 +1127,464 @@ async function processBroadcast(broadcastId: string) {
       : 'gift';
 
   if (channel === 'story') {
-    await processStoryBroadcast(broadcast, msg);
+    await processStoryBroadcast(broadcast, msg, job);
     return;
   }
 
-  if (channel === 'gramjs' || channel === 'wa') {
-    await processChannelBroadcast(broadcast, msg, channel);
-    return;
-  }
+  // Marker that the planner has started: the scanner only finalizes stale
+  // broadcasts that were planned (pending counter missing) — never ones the
+  // 'send' job has not run yet (worker down / queue backlog).
+  await connection.set(`broadcast:planned:${broadcastId}`, '1', 'EX', 7 * 24 * 3600);
 
-  const bot = await prisma.botInstance.findFirst({
-    where: { id: msg.botId, tenantId: broadcast.tenantId },
-  });
-  if (!bot?.botTokenEncrypted) {
+  // Planner (Job 1B.3): enumerate recipients and enqueue one durable BullMQ
+  // job per recipient (unique jobId + in-job checkpoint = idempotent re-plan).
+  const poolIds = broadcastPoolIds(msg);
+  if (poolIds.length === 0) {
     await prisma.broadcast.update({ where: { id: broadcastId }, data: { status: 'failed' } });
     return;
   }
+  const bots = await prisma.botInstance.findMany({
+    where: {
+      id: { in: poolIds },
+      tenantId: broadcast.tenantId,
+      status: 'active',
+      ...(channel === 'gramjs'
+        ? { botType: 'ai_gramjs' }
+        : channel === 'wa'
+          ? { botType: 'ai_wa' }
+          : {}),
+      ...(channel === 'gift' ? { botTokenEncrypted: { not: null } } : {}),
+    },
+    select: {
+      id: true,
+      botType: true,
+      dailySendLimit: true,
+      botTokenEncrypted: true,
+      floodedUntil: true,
+      warmupSince: true,
+    },
+  });
+  if (bots.length === 0) {
+    await prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: { status: 'failed', messageJson: { ...msg, error: 'no_active_bots' } },
+    });
+    return;
+  }
+  const pool = await BroadcastBotPool.load(bots as BroadcastPoolBot[]);
+  if (!pool.next()) {
+    const pauseUntil = pool.pauseUntil();
+    if (pauseUntil !== null) {
+      // Whole pool flooded — pause the plan and replan after the cooldown (Job 1B.4).
+      console.warn(
+        `[gift-bot] broadcast pool fully flooded — replan delayed until ${new Date(pauseUntil).toISOString()} broadcast=${broadcastId}`,
+      );
+      await job.moveToDelayed(pauseUntil + randomInt(0, 30_000));
+      return;
+    }
+    await prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: {
+        status: 'failed',
+        messageJson: { ...msg, error: 'daily_limit_reached' },
+      },
+    });
+    return;
+  }
 
-  const where: any = { campaignId: msg.campaignId };
-  if (Array.isArray(msg.subscriberIds) && msg.subscriberIds.length > 0) {
-    where.id = { in: msg.subscriberIds.map(String) };
+  let recipients: {
+    kind: BroadcastRecipientJob['kind'];
+    subscriberId?: string;
+    conversationId?: string;
+  }[] = [];
+  if (channel === 'gift') {
+    const where: any = { campaignId: msg.campaignId };
+    if (Array.isArray(msg.subscriberIds) && msg.subscriberIds.length > 0) {
+      where.id = { in: msg.subscriberIds.map(String) };
+    } else {
+      if (msg.segment === 'gifted') where.giftDelivered = true;
+      if (msg.segment === 'not_gifted') where.giftDelivered = false;
+      // Backward-compatible: older scheduled jobs omit funnelPhase
+      if (typeof msg.funnelPhase === 'string' && msg.funnelPhase) {
+        where.funnelPhase = msg.funnelPhase;
+      }
+    }
+    const subscribers = await prisma.giftSubscriber.findMany({ where, select: { id: true } });
+    recipients = subscribers.map((s) => ({ kind: 'gift', subscriberId: s.id }));
   } else {
-    if (msg.segment === 'gifted') where.giftDelivered = true;
-    if (msg.segment === 'not_gifted') where.giftDelivered = false;
-    // Backward-compatible: older scheduled jobs omit funnelPhase
-    if (typeof msg.funnelPhase === 'string' && msg.funnelPhase) {
-      where.funnelPhase = msg.funnelPhase;
+    const conversations = await prisma.conversation.findMany({
+      where: {
+        tenantId: broadcast.tenantId,
+        botInstanceId: { in: poolIds },
+        status: { not: 'closed' },
+        ...(Array.isArray(msg.conversationIds) && msg.conversationIds.length > 0
+          ? { id: { in: msg.conversationIds.map(String) } }
+          : {}),
+      },
+      select: { id: true },
+    });
+    recipients = conversations.map((c) => ({
+      kind: channel as 'gramjs' | 'wa',
+      conversationId: c.id,
+    }));
+  }
+
+  if (recipients.length === 0) {
+    await prisma.broadcast.update({ where: { id: broadcastId }, data: { status: 'sent' } });
+    return;
+  }
+
+  await broadcastQueue.addBulk(
+    recipients.map((r) => ({
+      name: 'recipient',
+      data: {
+        broadcastId,
+        kind: r.kind,
+        subscriberId: r.subscriberId,
+        conversationId: r.conversationId,
+      } satisfies BroadcastRecipientJob,
+      opts: {
+        jobId: `bcast:${broadcastId}:${r.subscriberId || r.conversationId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: { count: 10_000 },
+        removeOnFail: false,
+      },
+    })),
+  );
+  // Counter is set only after every job is durable in Redis, so a crash mid-enqueue
+  // leaves no counter and the scanner finalizes the stale 'sending' broadcast.
+  await connection.set(
+    `broadcast:pending:${broadcastId}`,
+    String(recipients.length),
+    'EX',
+    7 * 24 * 3600,
+  );
+}
+
+/** One recipient of a broadcast: least-loaded account, send, checkpoint (Job 1B.3). */
+async function processBroadcastRecipient(
+  data: BroadcastRecipientJob,
+  job: Job<BroadcastRecipientJob>,
+) {
+  const { broadcastId, kind, subscriberId, conversationId } = data;
+  const broadcast = await prisma.broadcast.findUnique({
+    where: { id: broadcastId },
+    select: { id: true, tenantId: true, status: true, messageJson: true },
+  });
+  if (!broadcast) return;
+  if (broadcast.status !== 'sending') return;
+  const msg = broadcast.messageJson as any;
+  const text = expandSpintax(String(msg.text || '').trim());
+  const poolIds = broadcastPoolIds(msg);
+  if (poolIds.length === 0 || !text) {
+    await maybeFinalizeBroadcast(broadcastId);
+    return;
+  }
+
+  let giftSub: { id: string; telegramId: string } | null = null;
+  if (kind === 'gift') {
+    const sub = await prisma.giftSubscriber.findUnique({
+      where: { id: subscriberId },
+      select: { id: true, telegramId: true, lastMailingBroadcastId: true },
+    });
+    if (!sub || sub.lastMailingBroadcastId === broadcastId) {
+      await maybeFinalizeBroadcast(broadcastId);
+      return;
+    }
+    giftSub = sub;
+  } else {
+    const existing = await prisma.broadcastRecipient.findFirst({
+      where: {
+        broadcastId,
+        conversationId,
+        status: { in: ['sent', 'delivered', 'read'] },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await maybeFinalizeBroadcast(broadcastId);
+      return;
     }
   }
 
-  const subscribers = await prisma.giftSubscriber.findMany({ where });
-  const botApi = `https://api.telegram.org/bot${decrypt(bot.botTokenEncrypted)}`;
-  const media = resolveTelegramMedia({
-    telegramFileId: msg.telegramFileId,
-    mediaUrl: msg.mediaUrl,
+  const bots = await prisma.botInstance.findMany({
+    where: {
+      id: { in: poolIds },
+      tenantId: broadcast.tenantId,
+      status: 'active',
+      ...(kind === 'gramjs'
+        ? { botType: 'ai_gramjs' }
+        : kind === 'wa'
+          ? { botType: 'ai_wa' }
+          : {}),
+      ...(kind === 'gift' ? { botTokenEncrypted: { not: null } } : {}),
+    },
+    select: {
+      id: true,
+      botType: true,
+      dailySendLimit: true,
+      botTokenEncrypted: true,
+      floodedUntil: true,
+      warmupSince: true,
+    },
   });
-  let sent = 0;
-  for (const s of subscribers) {
-    try {
+  const pool = await BroadcastBotPool.load(bots as BroadcastPoolBot[]);
+  const bot = pool.next();
+  if (!bot || (kind === 'gift' && !bot.botTokenEncrypted)) {
+    const pauseUntil = pool.pauseUntil();
+    if (pauseUntil !== null) {
+      // Whole pool flooded — pause this recipient; it resumes after the cooldown
+      // without consuming a retry attempt or finalizing the broadcast (Job 1B.4).
+      console.warn(
+        `[gift-bot] broadcast recipient: pool fully flooded — job delayed until ${new Date(pauseUntil).toISOString()} broadcast=${broadcastId}`,
+      );
+      await job.moveToDelayed(pauseUntil + randomInt(0, 30_000));
+      return;
+    }
+    console.warn(`[gift-bot] broadcast recipient: pool exhausted broadcast=${broadcastId}`);
+    await recordFailedRecipient(
+      broadcastId,
+      kind,
+      conversationId,
+      subscriberId,
+      'daily_limit_reached',
+    );
+    await maybeFinalizeBroadcast(broadcastId);
+    return;
+  }
+
+  try {
+    if (kind === 'gift') {
+      if (!giftSub || !bot.botTokenEncrypted) {
+        await maybeFinalizeBroadcast(broadcastId);
+        return;
+      }
+      const botApi = `https://api.telegram.org/bot${decrypt(bot.botTokenEncrypted)}`;
+      const media = resolveTelegramMedia({
+        telegramFileId: msg.telegramFileId,
+        mediaUrl: msg.mediaUrl,
+      });
       const ctx: SendCtx = {
         tenantId: broadcast.tenantId,
         botId: bot.id,
-        telegramId: s.telegramId,
+        telegramId: giftSub.telegramId,
       };
       if (media) {
-        const kind = detectStoredMediaKind(media, msg.mediaType);
+        const mediaKind = detectStoredMediaKind(media, msg.mediaType);
         await sendBotStoredMedia(
           botApi,
-          Number(s.telegramId),
+          Number(giftSub.telegramId),
           media,
-          msg.text,
-          kind,
+          text,
+          mediaKind,
           undefined,
           ctx,
         );
       } else {
-        await sendBotMessage(botApi, Number(s.telegramId), msg.text, undefined, ctx);
+        await sendBotMessage(botApi, Number(giftSub.telegramId), text, undefined, ctx);
       }
       await prisma.giftSubscriber.update({
-        where: { id: s.id },
+        where: { id: giftSub.id },
+        data: { lastMailingBroadcastId: broadcastId, lastMailingAt: new Date() },
+      });
+      await prisma.broadcastRecipient
+        .deleteMany({
+          where: { broadcastId, giftSubscriberId: giftSub.id, status: 'failed' },
+        })
+        .catch(() => undefined);
+      await prisma.broadcastRecipient
+        .create({
+          data: {
+            broadcastId,
+            giftSubscriberId: giftSub.id,
+            status: 'sent',
+            sentAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
+    } else {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { id: true, platformUserId: true },
+      });
+      if (!conv) {
+        await maybeFinalizeBroadcast(broadcastId);
+        return;
+      }
+      let mediaPayload:
+        | { mediaBase64: string; mimeType: string; fileName: string }
+        | undefined;
+      if (kind === 'wa' && typeof msg.mediaUrl === 'string' && msg.mediaUrl) {
+        const cacheKey = `bcast:media:${msg.mediaUrl}`;
+        try {
+          const cached = await connection.get(cacheKey);
+          if (cached) {
+            mediaPayload = JSON.parse(cached);
+          } else {
+            mediaPayload = await fetchMediaAsBase64(msg.mediaUrl, msg.mediaType);
+            if (mediaPayload) {
+              await connection.set(cacheKey, JSON.stringify(mediaPayload), 'EX', 6 * 3600);
+            }
+          }
+        } catch (err) {
+          console.error('[gift-bot] broadcast recipient media fetch failed', err);
+        }
+      } else if (kind === 'gramjs' && msg.mediaUrl) {
+        console.warn(
+          '[gift-bot] GramJS mailing: media skipped (outbound media not supported); text only',
+        );
+      }
+      if (kind === 'gramjs') {
+        await sendViaGramjsStory({ botId: bot.id, mediaUrl: '', text, mediaType: undefined });
+      } else {
+        await sendViaWhatsappWorker({
+          botId: bot.id,
+          peerUserId: conv.platformUserId,
+          text,
+          media: mediaPayload,
+        });
+      }
+      await prisma.chatMessage.create({
         data: {
-          lastMailingBroadcastId: broadcast.id,
-          lastMailingAt: new Date(),
+          conversationId: conv.id,
+          role: 'operator',
+          content: text,
+          deliveryStatus: 'sent',
         },
       });
-      sent += 1;
-      await sleep(40);
-    } catch (err) {
-      console.error('[gift-bot] broadcast send failed', s.telegramId, err);
+      await prisma.broadcastRecipient
+        .deleteMany({
+          where: { broadcastId, conversationId: conv.id, status: 'failed' },
+        })
+        .catch(() => undefined);
+      await prisma.broadcastRecipient
+        .create({
+          data: { broadcastId, conversationId: conv.id, status: 'sent', sentAt: new Date() },
+        })
+        .catch(() => undefined);
+      await prisma.conversation.update({
+        where: { id: conv.id },
+        data: { lastMailingBroadcastId: broadcastId, lastMailingAt: new Date() },
+      });
     }
+    await pool.accountFor(bot.id);
+    await prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: { sentCount: { increment: 1 } },
+    });
+  } catch (err) {
+    if (isFloodError(err)) {
+      pool.exclude(bot.id);
+      await markBotFlooded(bot.id, err instanceof FloodedAccountError ? err : undefined);
+    }
+    console.error(
+      '[gift-bot] broadcast recipient failed',
+      kind,
+      conversationId || subscriberId,
+      err,
+    );
+    await recordFailedRecipient(
+      broadcastId,
+      kind,
+      conversationId,
+      subscriberId,
+      (err as Error)?.message || String(err),
+    );
   }
+  await antiFloodPause('message');
+  await maybeFinalizeBroadcast(broadcastId);
+}
+
+async function recordFailedRecipient(
+  broadcastId: string,
+  kind: BroadcastRecipientJob['kind'],
+  conversationId: string | undefined,
+  subscriberId: string | undefined,
+  error: string,
+) {
+  try {
+    const existing = await prisma.broadcastRecipient.findFirst({
+      where: {
+        broadcastId,
+        ...(kind === 'gift' ? { giftSubscriberId: subscriberId } : { conversationId }),
+        status: 'failed',
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      await prisma.broadcastRecipient.update({ where: { id: existing.id }, data: { error } });
+      return;
+    }
+    await prisma.broadcastRecipient.create({
+      data: {
+        broadcastId,
+        conversationId: kind === 'gift' ? undefined : conversationId,
+        giftSubscriberId: kind === 'gift' ? subscriberId : undefined,
+        status: 'failed',
+        error,
+      },
+    });
+  } catch {
+    // table may not exist until migrate
+  }
+}
+
+/** Final status roll-up for a broadcast (Job 1B.3). */
+async function finalizeBroadcast(broadcastId: string) {
+  const b = await prisma.broadcast.findUnique({
+    where: { id: broadcastId },
+    select: { id: true, sentCount: true, messageJson: true },
+  });
+  if (!b) return;
+  const [failedCount, deliveredCount, readCount] = await Promise.all([
+    prisma.broadcastRecipient
+      .count({ where: { broadcastId, status: 'failed' } })
+      .catch(() => 0),
+    prisma.broadcastRecipient
+      .count({ where: { broadcastId, status: { in: ['delivered', 'read'] } } })
+      .catch(() => 0),
+    prisma.broadcastRecipient.count({ where: { broadcastId, status: 'read' } }).catch(() => 0),
+  ]);
+  const msg = { ...((b.messageJson as any) || {}) };
+  if (b.sentCount > 0) {
+    if (failedCount > 0) msg.error = 'partial_failures';
+    else delete msg.error;
+  } else {
+    if (failedCount > 0) msg.error = 'all_failed';
+    else delete msg.error;
+  }
+  msg.deliveredCount = deliveredCount;
+  msg.readCount = readCount;
+  msg.failedCount = failedCount;
   await prisma.broadcast.update({
     where: { id: broadcastId },
-    data: { status: 'sent', sentCount: sent },
+    data: { status: b.sentCount > 0 ? 'sent' : 'failed', messageJson: msg },
   });
+}
+
+/** Decrement the pending counter; the last recipient finalizes the broadcast. */
+async function maybeFinalizeBroadcast(broadcastId: string) {
+  let remaining: number;
+  try {
+    remaining = await connection.decr(`broadcast:pending:${broadcastId}`);
+  } catch (err) {
+    console.warn('[gift-bot] pending counter decr failed', err);
+    return;
+  }
+  if (remaining > 0) return;
+  if (remaining < 0) {
+    // Counter missing (crash before SET / TTL) — the scanner owns finalization.
+    return;
+  }
+  await connection.del(`broadcast:pending:${broadcastId}`).catch(() => undefined);
+  await finalizeBroadcast(broadcastId);
 }
 
 async function processStoryBroadcast(
   broadcast: { id: string; tenantId: string },
   msg: any,
+  job: Job<{ broadcastId: string }>,
 ) {
   const botId = String(msg.botId || '');
   const mediaUrl = String(msg.mediaUrl || '').trim();
@@ -890,7 +1597,7 @@ async function processStoryBroadcast(
     return;
   }
 
-  if (storyVia !== 'gramjs') {
+  if (storyVia !== 'gramjs' && storyVia !== 'wa') {
     await prisma.broadcast.update({
       where: { id: broadcast.id },
       data: {
@@ -898,8 +1605,8 @@ async function processStoryBroadcast(
         messageJson: {
           ...msg,
           error:
-            storyVia === 'wa' || storyVia === 'ai_tg'
-              ? `stories_unsupported_${storyVia}`
+            storyVia === 'ai_tg'
+              ? 'stories_unsupported_ai_tg'
               : 'stories_unsupported',
         },
       },
@@ -913,12 +1620,97 @@ async function processStoryBroadcast(
   }
 
   try {
-    await sendViaGramjsStory({
-      botId,
-      mediaUrl,
-      text: String(msg.text || ''),
-      mediaType: msg.mediaType,
+    const bot = await prisma.botInstance.findFirst({
+      where: { id: botId, tenantId: broadcast.tenantId },
+      select: { botType: true, dailyStoryLimit: true, isPremium: true },
     });
+    const storyLimit = dailyStoryLimitFor(
+      bot?.botType ?? 'ai_gramjs',
+      bot?.isPremium,
+      bot?.dailyStoryLimit,
+    );
+    const storyKey = dailyStoryCounterKey(botId);
+    const sentStories = Number((await connection.get(storyKey)) || 0);
+    if (sentStories >= storyLimit) {
+      console.warn(
+        `[gift-bot] story daily limit reached bot=${botId} ${sentStories}/${storyLimit} — broadcast marked failed`,
+      );
+      await prisma.broadcast.update({
+        where: { id: broadcast.id },
+        data: {
+          status: 'failed',
+          messageJson: { ...msg, error: 'stories_daily_limit_reached' },
+        },
+      });
+      return;
+    }
+
+    const storyCooldownKey = `tg:story:last_sent:${botId}`;
+    const lastStorySentAt = Number((await connection.get(storyCooldownKey)) || 0);
+    const now = Date.now();
+    const minDelayMs = 180_000;
+    const maxDelayMs = 300_000;
+    if (now - lastStorySentAt < minDelayMs) {
+      const delayUntil = lastStorySentAt + randomInt(minDelayMs, maxDelayMs);
+      console.warn(
+        `[gift-bot] story send throttled — job delayed until ${new Date(delayUntil).toISOString()} bot=${botId}`,
+      );
+      await job.moveToDelayed(delayUntil);
+      return;
+    }
+
+    const storyText = expandSpintax(String(msg.text || ''));
+    const storyRes = storyVia === 'wa' ? { storyId: undefined } : await sendViaGramjsStory({
+        botId,
+        mediaUrl,
+        text: storyText,
+        mediaType: msg.mediaType,
+        linkUrl: msg.linkUrl,
+        linkText: msg.linkText,
+      });
+
+    try {
+      await prisma.storyPost.create({
+        data: {
+          tenantId: broadcast.tenantId,
+          botInstanceId: botId,
+          broadcastId: broadcast.id,
+          channel: storyVia,
+          mediaUrl,
+          mediaType: msg.mediaType,
+          text: storyText,
+          linkUrl: msg.linkUrl,
+          linkText: msg.linkText,
+          providerData: storyRes.storyId ? { storyId: storyRes.storyId } : undefined,
+          postedAt: new Date(),
+        },
+      });
+    } catch (e) {
+      console.warn('[gift-bot] failed to persist StoryPost', e);
+    }
+    await connection.incr(storyKey);
+    await connection.expire(storyKey, 48 * 3600);
+    await connection.set(storyCooldownKey, Date.now());
+    await connection.expire(storyCooldownKey, 48 * 3600);
+    // Persist publication history for analytics (1D.6).
+    try {
+      await prisma.storyPost.create({
+        data: {
+          tenantId: broadcast.tenantId,
+          botInstanceId: botId,
+          broadcastId: broadcast.id,
+          channel: storyVia,
+          mediaUrl,
+          mediaType: msg.mediaType || null,
+          text: storyText,
+          linkUrl: msg.linkUrl || null,
+          linkText: msg.linkText || null,
+          postedAt: new Date(),
+        },
+      });
+    } catch (e) {
+      console.warn('[gift-bot] failed to persist StoryPost', e);
+    }
     // Tag open conversations on this account for inbound attribution window
     await prisma.conversation.updateMany({
       where: {
@@ -936,6 +1728,21 @@ async function processStoryBroadcast(
       data: { status: 'sent', sentCount: 1 },
     });
   } catch (err) {
+    const flooded = isFloodError(err);
+    if (flooded) {
+      await markBotFlooded(botId, err instanceof FloodedAccountError ? err : undefined);
+      console.warn(
+        `[gift-bot] story account flooded — job delayed until cooldown passes bot=${botId}`,
+      );
+      // Pause instead of failing (Job 1B.4): the broadcast stays 'sending' and the
+      // delayed 'send' job retries the story after the flood cooldown.
+      const pauseUntil =
+        Date.now() +
+        floodCooldownMs(err instanceof FloodedAccountError ? err : undefined) +
+        randomInt(0, 30_000);
+      await job.moveToDelayed(pauseUntil);
+      return;
+    }
     console.error('[gift-bot] story send failed', err);
     await prisma.broadcast.update({
       where: { id: broadcast.id },
@@ -955,10 +1762,12 @@ async function sendViaGramjsStory(opts: {
   mediaUrl: string;
   text: string;
   mediaType?: string;
-}): Promise<void> {
+  linkUrl?: string;
+  linkText?: string;
+}): Promise<{ storyId?: number }> {
   const token = serviceToken();
   if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
-  const res = await fetch(`${gramjsBridgeBase()}/stories/send`, {
+  const res = await fetchWithTimeout(`${gramjsBridgeBase()}/stories/send`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -969,169 +1778,16 @@ async function sendViaGramjsStory(opts: {
       mediaUrl: opts.mediaUrl,
       text: opts.text,
       mediaType: opts.mediaType,
+      linkUrl: opts.linkUrl,
+      linkText: opts.linkText,
     }),
+    timeout: 15000,
   });
-  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; storyId?: number };
   if (!res.ok || !json.ok) {
     throw new Error(json.error || `GramJS story send failed (HTTP ${res.status})`);
   }
-}
-
-async function processChannelBroadcast(
-  broadcast: { id: string; tenantId: string },
-  msg: any,
-  channel: 'gramjs' | 'wa',
-) {
-  const botId = String(msg.botId || '');
-  const text = String(msg.text || '').trim();
-  if (!botId || !text) {
-    await prisma.broadcast.update({
-      where: { id: broadcast.id },
-      data: { status: 'failed' },
-    });
-    return;
-  }
-
-  const bot = await prisma.botInstance.findFirst({
-    where: {
-      id: botId,
-      tenantId: broadcast.tenantId,
-      botType: channel === 'gramjs' ? 'ai_gramjs' : 'ai_wa',
-    },
-  });
-  if (!bot || bot.status !== 'active') {
-    await prisma.broadcast.update({
-      where: { id: broadcast.id },
-      data: { status: 'failed' },
-    });
-    return;
-  }
-
-  const conversations = await prisma.conversation.findMany({
-    where: {
-      tenantId: broadcast.tenantId,
-      botInstanceId: botId,
-      status: { not: 'closed' },
-      ...(Array.isArray(msg.conversationIds) && msg.conversationIds.length > 0
-        ? { id: { in: msg.conversationIds.map(String) } }
-        : {}),
-    },
-    select: { id: true, platformUserId: true },
-  });
-
-  let mediaPayload:
-    | { mediaBase64: string; mimeType: string; fileName: string }
-    | undefined;
-  if (channel === 'wa' && typeof msg.mediaUrl === 'string' && msg.mediaUrl) {
-    try {
-      mediaPayload = await fetchMediaAsBase64(msg.mediaUrl, msg.mediaType);
-    } catch (err) {
-      console.error('[gift-bot] channel broadcast media fetch failed', err);
-    }
-  } else if (channel === 'gramjs' && msg.mediaUrl) {
-    console.warn(
-      '[gift-bot] GramJS mailing: media skipped (outbound media not supported); text only',
-    );
-  }
-
-  let sent = 0;
-  for (const conv of conversations) {
-    try {
-      if (channel === 'gramjs') {
-        await sendViaGramjsBridge({
-          botId,
-          peerUserId: conv.platformUserId,
-          text,
-        });
-      } else {
-        await sendViaWhatsappWorker({
-          botId,
-          peerUserId: conv.platformUserId,
-          text,
-          media: mediaPayload,
-        });
-      }
-      await prisma.chatMessage.create({
-        data: {
-          conversationId: conv.id,
-          role: 'operator',
-          content: text,
-          deliveryStatus: 'sent',
-        },
-      });
-      try {
-        await prisma.broadcastRecipient.create({
-          data: {
-            broadcastId: broadcast.id,
-            conversationId: conv.id,
-            status: 'sent',
-            sentAt: new Date(),
-          },
-        });
-      } catch (err) {
-        console.warn('[gift-bot] BroadcastRecipient create skipped', err);
-      }
-      await prisma.conversation.update({
-        where: { id: conv.id },
-        data: {
-          lastMailingBroadcastId: broadcast.id,
-          lastMailingAt: new Date(),
-        },
-      });
-      sent += 1;
-      await sleep(channel === 'gramjs' ? 120 : 80);
-    } catch (err) {
-      console.error(
-        '[gift-bot] channel broadcast send failed',
-        channel,
-        conv.platformUserId,
-        err,
-      );
-      try {
-        await prisma.broadcastRecipient.create({
-          data: {
-            broadcastId: broadcast.id,
-            conversationId: conv.id,
-            status: 'failed',
-            error: err instanceof Error ? err.message : String(err),
-          },
-        });
-      } catch {
-        // ignore until migrate
-      }
-    }
-  }
-
-  let deliveredCount = 0;
-  let readCount = 0;
-  let failedCount = 0;
-  try {
-    const recipients = await prisma.broadcastRecipient.findMany({
-      where: { broadcastId: broadcast.id },
-      select: { status: true },
-    });
-    for (const r of recipients) {
-      if (r.status === 'delivered' || r.status === 'read') deliveredCount += 1;
-      if (r.status === 'read') readCount += 1;
-      if (r.status === 'failed') failedCount += 1;
-    }
-  } catch {
-    // table may not exist until migrate
-  }
-
-  await prisma.broadcast.update({
-    where: { id: broadcast.id },
-    data: {
-      status: sent > 0 ? 'sent' : 'failed',
-      sentCount: sent,
-      messageJson: {
-        ...msg,
-        deliveredCount,
-        readCount,
-        failedCount,
-      },
-    },
-  });
+  return { storyId: json.storyId };
 }
 
 function serviceToken(): string {
@@ -1169,7 +1825,7 @@ async function enrichPersonFromGramjs(
   }
 
   try {
-    const res = await fetch(`${gramjsBridgeBase()}/users/full`, {
+    const res = await fetchWithTimeout(`${gramjsBridgeBase()}/users/full`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1181,6 +1837,7 @@ async function enrichPersonFromGramjs(
         userId: opts.telegramId,
         username: opts.username,
       }),
+      timeout: 15000,
     });
     const json = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -1220,31 +1877,6 @@ function whatsappWorkerBase(): string {
   );
 }
 
-async function sendViaGramjsBridge(opts: {
-  botId: string;
-  peerUserId: string;
-  text: string;
-}): Promise<void> {
-  const token = serviceToken();
-  if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
-  const res = await fetch(`${gramjsBridgeBase()}/messages/send`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      botId: opts.botId,
-      peerUserId: opts.peerUserId,
-      text: opts.text,
-    }),
-  });
-  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-  if (!res.ok || !json.ok) {
-    throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
-  }
-}
-
 async function sendViaWhatsappWorker(opts: {
   botId: string;
   peerUserId: string;
@@ -1264,13 +1896,14 @@ async function sendViaWhatsappWorker(opts: {
     body.mimeType = opts.media.mimeType;
     body.fileName = opts.media.fileName;
   }
-  const res = await fetch(`${whatsappWorkerBase()}/internal/messages/send`, {
+  const res = await fetchWithTimeout(`${whatsappWorkerBase()}/internal/messages/send`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    timeout: 15000,
   });
   const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
   if (!res.ok || !json.ok) {
@@ -1278,11 +1911,46 @@ async function sendViaWhatsappWorker(opts: {
   }
 }
 
+async function sendViaWhatsappStory(opts: {
+  botId: string;
+  text: string;
+  mediaUrl?: string;
+  mediaType?: string;
+  statusJidList?: string[];
+}): Promise<void> {
+  const token = serviceToken();
+  if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
+  const body: Record<string, unknown> = {
+    botId: opts.botId,
+    text: opts.text || '',
+  };
+  if (opts.mediaUrl) {
+    body.mediaUrl = opts.mediaUrl;
+    body.mediaType = opts.mediaType || '';
+  }
+  if (opts.statusJidList?.length) {
+    body.statusJidList = opts.statusJidList;
+  }
+  const res = await fetchWithTimeout(`${whatsappWorkerBase()}/internal/stories/send`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    timeout: 15000,
+  });
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || `WhatsApp story send failed (HTTP ${res.status})`);
+  }
+}
+
 async function fetchMediaAsBase64(
   mediaUrl: string,
   mediaType?: string,
 ): Promise<{ mediaBase64: string; mimeType: string; fileName: string }> {
-  const res = await fetch(mediaUrl);
+  const res = await fetchWithTimeout(mediaUrl, { timeout: 30000 });
   if (!res.ok) throw new Error(`media fetch HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > 15 * 1024 * 1024) {
@@ -1832,6 +2500,11 @@ async function storeInboundMessage(
   const sub = await prisma.giftSubscriber.findFirst({
     where: { tenantId, botInstanceId: botId, telegramId },
   });
+  await invalidateCrmThreadCache(connection, tenantId, [
+    sub?.twentyPersonId,
+    sub?.twentyOpportunityId,
+  ]);
+  await invalidateCrmUnreadCache(connection, tenantId);
   if (sub?.twentyPersonId && text) {
     await syncChatNoteToCRM(tenantId, sub.twentyPersonId, 'Сообщение из Telegram', text);
   }
@@ -2020,7 +2693,7 @@ async function giftTranscribeAudio(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 45_000);
   try {
-    const res = await fetch(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
+    const res = await fetchWithTimeout(`${OPENROUTER_BASE_URL}/audio/transcriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -2037,6 +2710,7 @@ async function giftTranscribeAudio(
         },
       }),
       signal: controller.signal,
+      timeout: 45000,
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -2066,7 +2740,7 @@ async function giftDescribeImage(
     'Опиши изображение кратко для оператора CRM: что на фото, текст/цены если видны. 1–3 предложения на русском, только факты.' +
     (caption ? ` Подпись пользователя: ${caption}` : '');
   try {
-    const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+    const res = await fetchWithTimeout(`${OPENROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${OPENROUTER_API_KEY}`,
@@ -2087,6 +2761,7 @@ async function giftDescribeImage(
         ],
         max_tokens: 300,
       }),
+      timeout: 45000,
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -2323,10 +2998,11 @@ async function checkChannelSubscription(
 
   for (const chatId of candidates) {
     try {
-      const res = await fetch(`${botApi}/getChatMember`, {
+      const res = await fetchWithTimeout(`${botApi}/getChatMember`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, user_id: telegramUserId }),
+        timeout: 15000,
       });
       const data = (await res.json()) as any;
       if (!data.ok) {
@@ -2437,6 +3113,70 @@ function attachmentFromSendResult(
   return { type, fileId: media };
 }
 
+/** Account is temporarily flood-limited / spam-blocked — signal for pool failover (Phase 1B). */
+export class FloodedAccountError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(description: string, retryAfterSeconds = 0) {
+    super(description);
+    this.name = 'FloodedAccountError';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/** Mask the bot token in a Telegram Bot API URL before logging (secret hygiene). */
+function redactTelegramApiUrl(url: string): string {
+  try {
+    return url.replace(/bot[^/]+\//, 'bot<redacted>/');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Telegram Bot API fetch with FloodWait/429 handling:
+ * - HTTP 429 with retry_after → sleep(retry_after + jitter), retry (up to 3 attempts).
+ * - 429 with retry_after ≥ 60s or exhausted retries → throw FloodedAccountError (failover signal).
+ * - 429 without retry_after → backoff (1s → 5s → 30s), retry.
+ * - 400/403 containing spam|flood|too many requests → throw FloodedAccountError (failover signal).
+ * Returns parsed JSON when `ok: true`; otherwise throws.
+ */
+async function tgApiFetch(url: string, init: RequestInit, attempts = 3): Promise<any> {
+  let lastErr: Error | null = null;
+  let lastRetryAfter = 0;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const res = await fetchWithTimeout(url, { ...init, timeout: 15000 });
+    const json = (await res.json().catch(() => null)) as any;
+    if (json && json.ok === true) return json;
+    const desc = String(json?.description || `HTTP ${res.status}`);
+    const retryAfter = Number(json?.parameters?.retry_after || 0);
+    if (json?.error_code === 429) {
+      if (retryAfter >= 60) {
+        console.warn(
+          `[gift-bot] flood 429 retry_after=${retryAfter}s ≥ 60s — account failover ${redactTelegramApiUrl(url)}`,
+        );
+        throw new FloodedAccountError(desc, retryAfter);
+      }
+      const waitMs =
+        retryAfter > 0
+          ? Math.max(retryAfter, 0.5) * 1000 + jitterMs(1_500)
+          : retryBackoffMs(attempt);
+      console.warn(
+        `[gift-bot] flood 429 retry_after=${retryAfter}s attempt=${attempt + 1}/${attempts} waiting=${waitMs}ms ${redactTelegramApiUrl(url)}`,
+      );
+      await sleep(waitMs);
+      lastErr = new FloodedAccountError(desc, retryAfter);
+      lastRetryAfter = retryAfter;
+      continue;
+    }
+    if (/spam|flood|too many requests/i.test(desc)) {
+      throw new FloodedAccountError(desc, retryAfter);
+    }
+    throw new Error(desc);
+  }
+  throw lastErr ?? new Error(`tgApiFetch exhausted: ${redactTelegramApiUrl(url)}`);
+}
+
 async function sendBotMessage(
   botApi: string,
   chatId: number,
@@ -2444,21 +3184,22 @@ async function sendBotMessage(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
-  const res = await fetch(`${botApi}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: clientMdToMarkdownV2(text),
-      parse_mode: 'MarkdownV2',
-      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-    }),
-  });
-  const json = (await res.json()) as any;
-  if (!json.ok) {
-    console.error('[gift-bot] sendMessage failed:', json.description);
+  try {
+    await tgApiFetch(`${botApi}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: clientMdToMarkdownV2(text),
+        parse_mode: 'MarkdownV2',
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      }),
+    });
+  } catch (err) {
+    if (err instanceof FloodedAccountError) throw err;
+    console.error('[gift-bot] sendMessage failed, plain fallback:', (err as Error).message);
     // Fallback without parse_mode so the user still gets something
-    const plain = await fetch(`${botApi}/sendMessage`, {
+    await tgApiFetch(`${botApi}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2467,8 +3208,6 @@ async function sendBotMessage(
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       }),
     });
-    const plainJson = (await plain.json()) as any;
-    if (!plainJson.ok) throw new Error(plainJson.description || 'sendMessage failed');
   }
   if (ctx) await logBotOutbound(ctx, text);
 }
@@ -2518,7 +3257,7 @@ async function sendBotDocument(
   caption: string,
   ctx?: SendCtx,
 ) {
-  const res = await fetch(`${botApi}/sendDocument`, {
+  const json = await tgApiFetch(`${botApi}/sendDocument`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2528,8 +3267,6 @@ async function sendBotDocument(
       parse_mode: 'MarkdownV2',
     }),
   });
-  const json = (await res.json()) as any;
-  if (!json.ok) throw new Error(json.description || 'sendDocument failed');
   if (ctx) {
     const att = attachmentFromSendResult('document', media, json.result);
     await logBotOutbound(ctx, caption || '[документ]', [att]);
@@ -2544,7 +3281,7 @@ async function sendBotVoice(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
-  const res = await fetch(`${botApi}/sendVoice`, {
+  const json = await tgApiFetch(`${botApi}/sendVoice`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2556,8 +3293,6 @@ async function sendBotVoice(
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
-  const json = (await res.json()) as any;
-  if (!json.ok) throw new Error(json.description || 'sendVoice failed');
   if (ctx) {
     const att = attachmentFromSendResult('voice', media, json.result);
     await logBotOutbound(ctx, caption || '[голосовое]', [att]);
@@ -2572,7 +3307,7 @@ async function sendBotAudio(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
-  const res = await fetch(`${botApi}/sendAudio`, {
+  const json = await tgApiFetch(`${botApi}/sendAudio`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2584,8 +3319,6 @@ async function sendBotAudio(
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
-  const json = (await res.json()) as any;
-  if (!json.ok) throw new Error(json.description || 'sendAudio failed');
   if (ctx) {
     const att = attachmentFromSendResult('audio', media, json.result);
     await logBotOutbound(ctx, caption || '[аудио]', [att]);
@@ -2599,7 +3332,7 @@ async function sendBotVideoNote(
   replyMarkup?: any,
   ctx?: SendCtx,
 ) {
-  const res = await fetch(`${botApi}/sendVideoNote`, {
+  const json = await tgApiFetch(`${botApi}/sendVideoNote`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2608,8 +3341,6 @@ async function sendBotVideoNote(
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
-  const json = (await res.json()) as any;
-  if (!json.ok) throw new Error(json.description || 'sendVideoNote failed');
   if (ctx) {
     const att = attachmentFromSendResult('video_note', media, json.result);
     await logBotOutbound(ctx, '[кружочек]', [att]);
@@ -2639,14 +3370,19 @@ async function sendBotVideo(
         new Blob([new Uint8Array(downloaded.buffer)], { type: 'video/mp4' }),
         filename,
       );
-      const res = await fetch(`${botApi}/sendVideo`, { method: 'POST', body: form });
-      const json = (await res.json()) as any;
-      if (json.ok) {
+      try {
+        const json = await tgApiFetch(`${botApi}/sendVideo`, { method: 'POST', body: form });
         if (ctx) {
           const att = attachmentFromSendResult('video', media, json.result);
           await logBotOutbound(ctx, caption || '[видео]', [att]);
         }
         return;
+      } catch (err) {
+        if (err instanceof FloodedAccountError) throw err;
+        console.error(
+          '[gift-bot] sendVideo upload failed, fallback to document:',
+          (err as Error).message,
+        );
       }
     }
     // getFile ≤20MB / sendVideo failed — keep original as document
@@ -2655,7 +3391,7 @@ async function sendBotVideo(
     return;
   }
 
-  const res = await fetch(`${botApi}/sendVideo`, {
+  const json = await tgApiFetch(`${botApi}/sendVideo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2666,8 +3402,6 @@ async function sendBotVideo(
       ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }),
   });
-  const json = (await res.json()) as any;
-  if (!json.ok) throw new Error(json.description || 'sendVideo failed');
   if (ctx) {
     const att = attachmentFromSendResult('video', media, json.result);
     await logBotOutbound(ctx, caption || '[видео]', [att]);
@@ -2703,33 +3437,39 @@ async function sendBotPhoto(
         new Blob([new Uint8Array(downloaded.buffer)], { type: mime }),
         filename,
       );
-      const res = await fetch(`${botApi}/sendPhoto`, { method: 'POST', body: form });
-      const json = (await res.json()) as any;
-      if (json.ok) {
+      try {
+        const json = await tgApiFetch(`${botApi}/sendPhoto`, { method: 'POST', body: form });
         if (ctx) {
           const att = attachmentFromSendResult('photo', media, json.result);
           await logBotOutbound(ctx, caption || '[фото]', [att]);
         }
         return;
-      }
-      // Retry without MarkdownV2
-      const formPlain = new FormData();
-      formPlain.append('chat_id', String(chatId));
-      formPlain.append('caption', caption);
-      if (replyMarkup) formPlain.append('reply_markup', JSON.stringify(replyMarkup));
-      formPlain.append(
-        'photo',
-        new Blob([new Uint8Array(downloaded.buffer)], { type: mime }),
-        filename,
-      );
-      const plain = await fetch(`${botApi}/sendPhoto`, { method: 'POST', body: formPlain });
-      const plainJson = (await plain.json()) as any;
-      if (plainJson.ok) {
-        if (ctx) {
-          const att = attachmentFromSendResult('photo', media, plainJson.result);
-          await logBotOutbound(ctx, caption || '[фото]', [att]);
+      } catch (err) {
+        if (err instanceof FloodedAccountError) throw err;
+        // Retry without MarkdownV2
+        const formPlain = new FormData();
+        formPlain.append('chat_id', String(chatId));
+        formPlain.append('caption', caption);
+        if (replyMarkup) formPlain.append('reply_markup', JSON.stringify(replyMarkup));
+        formPlain.append(
+          'photo',
+          new Blob([new Uint8Array(downloaded.buffer)], { type: mime }),
+          filename,
+        );
+        try {
+          const plainJson = await tgApiFetch(`${botApi}/sendPhoto`, {
+            method: 'POST',
+            body: formPlain,
+          });
+          if (ctx) {
+            const att = attachmentFromSendResult('photo', media, plainJson.result);
+            await logBotOutbound(ctx, caption || '[фото]', [att]);
+          }
+          return;
+        } catch (err2) {
+          if (err2 instanceof FloodedAccountError) throw err2;
+          console.error('[gift-bot] sendPhoto plain fallback failed:', (err2 as Error).message);
         }
-        return;
       }
     }
     await sendBotDocument(botApi, chatId, media, caption, ctx);
@@ -2737,22 +3477,23 @@ async function sendBotPhoto(
     return;
   }
 
-  const res = await fetch(`${botApi}/sendPhoto`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      photo: media,
-      caption: clientMdToMarkdownV2(caption),
-      parse_mode: 'MarkdownV2',
-      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-    }),
-  });
-  const json = (await res.json()) as any;
-  let result = json.result;
-  if (!json.ok) {
+  let json: any;
+  try {
+    json = await tgApiFetch(`${botApi}/sendPhoto`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        photo: media,
+        caption: clientMdToMarkdownV2(caption),
+        parse_mode: 'MarkdownV2',
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      }),
+    });
+  } catch (err) {
+    if (err instanceof FloodedAccountError) throw err;
     // Retry without MarkdownV2 (emoji/caption edge cases)
-    const plain = await fetch(`${botApi}/sendPhoto`, {
+    json = await tgApiFetch(`${botApi}/sendPhoto`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2762,18 +3503,11 @@ async function sendBotPhoto(
         ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
       }),
     });
-    const plainJson = (await plain.json()) as any;
-    if (!plainJson.ok) throw new Error(plainJson.description || json.description || 'sendPhoto failed');
-    result = plainJson.result;
   }
   if (ctx) {
-    const att = attachmentFromSendResult('photo', media, result);
+    const att = attachmentFromSendResult('photo', media, json.result);
     await logBotOutbound(ctx, caption || '[фото]', [att]);
   }
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 main().catch(console.error);

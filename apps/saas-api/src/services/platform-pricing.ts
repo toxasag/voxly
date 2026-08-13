@@ -129,14 +129,21 @@ export function defaultPlatformPrices(): PlatformPrices {
 }
 
 export async function loadPlatformPrices(prisma: PrismaClient): Promise<PlatformPrices> {
-  const keys = MONTHLY_PRICE_SKUS.map(platformSettingKey);
+  const keys = [
+    ...MONTHLY_PRICE_SKUS.map(platformSettingKey),
+    'subscription_seats_included',
+  ];
   const rows = await prisma.platformSetting.findMany({ where: { key: { in: keys } } });
   const map = new Map(rows.map((r) => [r.key, r.value]));
   const prices = defaultPlatformPrices();
   for (const sku of MONTHLY_PRICE_SKUS) {
     prices[sku] = parseRub(map.get(platformSettingKey(sku)), FALLBACK_BY_SKU[sku]);
   }
-  prices.seatsIncluded = PRICING.SEATS_INCLUDED;
+  const seatsParsed = Number(map.get('subscription_seats_included'));
+  prices.seatsIncluded =
+    Number.isFinite(seatsParsed) && seatsParsed >= 1
+      ? Math.round(seatsParsed)
+      : PRICING.SEATS_INCLUDED;
   return prices;
 }
 

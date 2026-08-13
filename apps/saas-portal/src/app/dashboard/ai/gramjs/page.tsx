@@ -34,6 +34,17 @@ interface GramjsAccount {
     skippedSuppressed?: number;
     error?: string;
   } | null;
+  isPremium?: boolean | null;
+  dailySendLimit?: number | null;
+  dailyStoryLimit?: number | null;
+  warmupSince?: string | null;
+  floodedUntil?: string | null;
+  warmup?: {
+    limit: number;
+    sent: number;
+    remaining: number;
+    history: { date: string; limit: number; sent: number }[];
+  };
 }
 
 interface AccountsResponse {
@@ -163,6 +174,10 @@ export default function GramjsChannelPage() {
   const [renameId, setRenameId] = useState('');
   const [renameValue, setRenameValue] = useState('');
   const [syncHint, setSyncHint] = useState('');
+  const [limitsDraft, setLimitsDraft] = useState<
+    Record<string, { send: string; story: string }>
+  >({});
+  const [warmupId, setWarmupId] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const syncWatchIdsRef = useRef<Set<string>>(new Set());
@@ -510,6 +525,37 @@ export default function GramjsChannelPage() {
     setDeleteConfirmId('');
     setRenameId(account.id);
     setRenameValue(account.displayName || account.name || '');
+  };
+
+  const saveLimits = async (account: GramjsAccount) => {
+    const draft = limitsDraft[account.id];
+    if (!draft) return;
+    setBusy(`limits:${account.id}`);
+    setError('');
+    try {
+      const res = await fetch(`/api/bots/${account.id}/flood-settings`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dailySendLimit: draft.send === '' ? null : Number(draft.send),
+          dailyStoryLimit: draft.story === '' ? null : Number(draft.story),
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.error || 'Не удалось сохранить лимиты');
+      }
+      setLimitsDraft((prev) => {
+        const next = { ...prev };
+        delete next[account.id];
+        return next;
+      });
+      void loadAccounts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Ошибка сохранения лимитов');
+    } finally {
+      setBusy('');
+    }
   };
 
   const saveRename = async (account: GramjsAccount) => {
@@ -973,6 +1019,8 @@ export default function GramjsChannelPage() {
                     <th className={TH}>Название</th>
                     <th className={TH}>Telegram ID</th>
                     <th className={TH}>Состояние</th>
+                    <th className={TH}>Лимит/день</th>
+                    <th className={TH}>Прогрев</th>
                     <th className={TH}>Обновлено</th>
                     <th className={`${TH} text-right`}>Действия</th>
                   </tr>
@@ -1011,7 +1059,14 @@ export default function GramjsChannelPage() {
                           </div>
                         ) : (
                           <div>
-                            <p className="font-medium text-black">{account.name}</p>
+                            <p className="font-medium text-black">
+                              {account.name}
+                              {account.isPremium ? (
+                                <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-[#fff4cc] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#8a5a00]">
+                                  ★ Premium
+                                </span>
+                              ) : null}
+                            </p>
                             {account.username &&
                             account.displayName &&
                             account.username !== account.displayName ? (
@@ -1035,6 +1090,128 @@ export default function GramjsChannelPage() {
                           <Badge variant="success">На связи</Badge>
                         ) : (
                           <Badge variant="warning">Отключён</Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="flex items-center gap-1 text-xs text-black/60">
+                            сообщ.
+                            <input
+                              type="number"
+                              min={0}
+                              value={
+                                limitsDraft[account.id]?.send ??
+                                (account.dailySendLimit == null
+                                  ? ''
+                                  : String(account.dailySendLimit))
+                              }
+                              onChange={(e) =>
+                                setLimitsDraft((prev) => ({
+                                  ...prev,
+                                  [account.id]: {
+                                    send: e.target.value,
+                                    story:
+                                      prev[account.id]?.story ??
+                                      (account.dailyStoryLimit == null
+                                        ? ''
+                                        : String(account.dailyStoryLimit)),
+                                  },
+                                }))
+                              }
+                              placeholder={account.dailySendLimit == null ? '100' : ''}
+                              className="min-h-8 w-16 rounded-lg border border-black/15 bg-white px-1.5 text-center text-sm text-black"
+                              aria-label="Лимит сообщений в день"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1 text-xs text-black/60">
+                            сторис
+                            <input
+                              type="number"
+                              min={0}
+                              value={
+                                limitsDraft[account.id]?.story ??
+                                (account.dailyStoryLimit == null
+                                  ? ''
+                                  : String(account.dailyStoryLimit))
+                              }
+                              onChange={(e) =>
+                                setLimitsDraft((prev) => ({
+                                  ...prev,
+                                  [account.id]: {
+                                    story: e.target.value,
+                                    send:
+                                      prev[account.id]?.send ??
+                                      (account.dailySendLimit == null
+                                        ? ''
+                                        : String(account.dailySendLimit)),
+                                  },
+                                }))
+                              }
+                              placeholder={account.dailyStoryLimit == null ? 'по умолч.' : ''}
+                              className="min-h-8 w-16 rounded-lg border border-black/15 bg-white px-1.5 text-center text-sm text-black"
+                              aria-label="Лимит сторис в день"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            disabled={busy === `limits:${account.id}`}
+                            onClick={() => void saveLimits(account)}
+                            className="land-btn-amber inline-flex min-h-8 cursor-pointer items-center px-2.5 text-xs"
+                            aria-label="Сохранить лимиты"
+                          >
+                            {busy === `limits:${account.id}` ? '…' : 'ОК'}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        {account.warmup ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWarmupId(warmupId === account.id ? '' : account.id)
+                            }
+                            className={`group flex w-full max-w-[9.5rem] cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${
+                              warmupId === account.id
+                                ? 'border-[#e08e2e]/60 bg-[#fff7e8]'
+                                : 'border-transparent hover:border-black/15 hover:bg-[#faf8f5]'
+                            }`}
+                            aria-label={`Прогрев ${account.name}: осталось ${account.warmup.remaining} из ${account.warmup.limit}`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="text-sm font-medium tabular-nums text-black">
+                                  {account.warmup.sent}
+                                  <span className="text-black/40">/{account.warmup.limit}</span>
+                                </span>
+                                <span className="text-[10px] uppercase tracking-wide text-black/40">
+                                  осталось
+                                </span>
+                              </div>
+                              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-black/10">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    account.warmup.remaining === 0
+                                      ? 'bg-[#c2410c]'
+                                      : 'bg-[#e08e2e]'
+                                  }`}
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      (account.warmup.sent / Math.max(1, account.warmup.limit)) *
+                                        100,
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            {account.warmup.history.length > 0 ? (
+                              <span className="text-[10px] text-black/45 group-hover:text-black/70">
+                                кривая ▾
+                              </span>
+                            ) : null}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-black/45">—</span>
                         )}
                       </td>
                       <td className="px-3 py-3 text-sm tabular-nums text-black/55">
@@ -1114,6 +1291,66 @@ export default function GramjsChannelPage() {
                   ))}
                 </tbody>
               </table>
+              {warmupId && data?.accounts?.find((a) => a.id === warmupId) ? (
+                (() => {
+                  const account = data.accounts.find((a) => a.id === warmupId)!;
+                  const w = account.warmup;
+                  const bars = (w?.history ?? []).concat(
+                    w ? { date: new Date().toISOString(), limit: w.limit, sent: w.sent } : [],
+                  );
+                  const maxLimit = Math.max(1, ...bars.map((b) => b.limit));
+                  return (
+                    <div className="border-t border-black/10 bg-[#faf8f5] px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-black/70">
+                          Прогрев · {account.name}
+                        </p>
+                        <p className="text-xs text-black/50">
+                          {w
+                            ? `сегодня ${w.sent}/${w.limit} · осталось ${w.remaining}`
+                            : 'отправок ещё не было'}
+                        </p>
+                      </div>
+                      <div className="mt-3 flex items-end gap-1.5">
+                        {bars.length === 0 ? (
+                          <p className="text-xs text-black/45">
+                            Статистика появится после первой рассылки.
+                          </p>
+                        ) : (
+                          bars.map((b, i) => {
+                            const ratio = b.sent / Math.max(1, b.limit);
+                            const exhausted = b.sent >= b.limit;
+                            return (
+                              <div
+                                key={`${b.date}-${i}`}
+                                className="flex flex-col items-center gap-1"
+                                title={`${b.date.slice(0, 10)}: ${b.sent}/${b.limit}`}
+                              >
+                                <div className="flex h-16 w-6 items-end overflow-hidden rounded-md bg-black/5">
+                                  <div
+                                    className={`w-full rounded-md ${
+                                      exhausted ? 'bg-[#c2410c]' : 'bg-[#e08e2e]'
+                                    }`}
+                                    style={{
+                                      height: `${Math.max(
+                                        ratio > 0 ? 6 : 0,
+                                        (b.sent / maxLimit) * 100,
+                                      )}%`,
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-[10px] tabular-nums text-black/45">
+                                  {b.date.slice(8, 10)}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : null}
             </div>
           )}
         </section>

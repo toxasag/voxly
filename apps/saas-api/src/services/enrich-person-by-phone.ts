@@ -588,10 +588,34 @@ export async function enrichPersonCrossChannelByPhone(opts: {
   phone: string;
   /** Default: all available sessions. Omit source channel if already written. */
   channels?: EnrichChannel[];
+  /**
+   * Phones that must never drive enrich (e.g. connected MAX account phone).
+   * INC-113: owner phone on peer → toxasagmsk TG/about via this path.
+   */
+  forbidPhones?: Array<string | null | undefined>;
 }): Promise<EnrichByPhoneRow> {
   const phone = normalizeDigits(opts.phone);
   if (!opts.personId || phone.length < 10) {
     return { personId: opts.personId, phone, ok: false, error: 'bad_input' };
+  }
+
+  const forbid = (opts.forbidPhones || [])
+    .map((p) => normalizeDigits(String(p || '')))
+    .filter((d) => d.length >= 10);
+  if (
+    forbid.some(
+      (d) =>
+        d === phone ||
+        (d.length >= 10 && phone.length >= 10 && d.slice(-10) === phone.slice(-10)),
+    )
+  ) {
+    return {
+      personId: opts.personId,
+      phone,
+      ok: false,
+      error: 'forbidden_owner_phone',
+      channels: opts.channels,
+    };
   }
 
   const want = new Set<EnrichChannel>(

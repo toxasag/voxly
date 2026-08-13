@@ -1,10 +1,10 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight, ExternalLink, Loader2 } from 'lucide-react';
+import { AuthShell } from '@/components/landing/friendly/auth-shell';
 import { REF_STORAGE_KEY } from '@/lib/referral-ref';
 
 type OtpChallenge = {
@@ -72,8 +72,8 @@ export default function RegisterPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        <div className="friendly-lp flex min-h-screen items-center justify-center bg-white">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
         </div>
       }
     >
@@ -212,273 +212,240 @@ function RegisterForm() {
   };
 
   return (
-    <main className="landing-root min-h-svh">
-      <div className="grid min-h-svh lg:grid-cols-2">
-        <section className="relative isolate flex flex-col bg-[#f5a623] px-5 py-6 sm:px-8 sm:py-8 lg:px-12 lg:py-10">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-[0.07]"
-            style={{
-              backgroundImage:
-                'linear-gradient(rgba(10,10,10,.45) 1px, transparent 1px), linear-gradient(90deg, rgba(10,10,10,.45) 1px, transparent 1px)',
-              backgroundSize: '48px 48px',
-            }}
-          />
+    <AuthShell
+      eyebrow="7 дней без карты"
+      title="Запусти кабинет за минуту."
+      subtitle="CRM, мессенджеры и заявки с сайта в одном месте. Сначала пробуешь — потом решаешь."
+      headerAction={{ href: '/login', label: 'Войти' }}
+    >
+      <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">
+        {otp ? 'Код из Telegram' : 'Регистрация'}
+      </h2>
+      <p className="mt-2 text-sm text-slate-500">
+        {otp
+          ? otp.message || 'Откройте @GetVoxlybot и введите код'
+          : 'Заполни поля, подтверди код в боте — и в кабинет.'}
+      </p>
 
-          <header className="relative z-10 flex items-center justify-between gap-3">
-            <Link href="/" className="land-display text-base font-bold uppercase tracking-[-0.04em]">
-              Voxly
-            </Link>
-            <Link href="/login" className="land-btn-ghost min-h-11 border-black/20 bg-transparent px-4 py-2.5 text-sm">
-              Войти
-            </Link>
-          </header>
+      {error ? (
+        <div
+          role="alert"
+          className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800"
+        >
+          {error}
+        </div>
+      ) : null}
 
-          <div className="relative z-10 mt-8 flex flex-1 flex-col lg:mt-0 lg:justify-center">
-            <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-black/45">
-              7 дней без карты
-            </p>
-            <h1 className="land-rise mt-4 max-w-[18ch] text-[clamp(1.85rem,4.2vw,3.25rem)] leading-[1.1] tracking-[-0.04em]">
-              Запусти кабинет за минуту.
-            </h1>
-            <p className="land-rise-delay mt-4 max-w-[38ch] text-base text-black/65">
-              CRM, боты и мессенджеры в одном месте. Сначала пробуешь — потом решаешь, платить или нет.
-            </p>
-
-            <div className="relative mx-auto mt-8 w-[min(58vw,220px)] sm:w-[240px] lg:mt-12 lg:w-[min(100%,300px)]">
-              <div className="land-mascot-float relative aspect-[5/6] w-full">
-                <Image
-                  src="/mascot/voxly-mascot-v6.png"
-                  alt="Voxly — промышленный робот-маскот"
-                  fill
-                  priority
-                  sizes="(max-width: 1024px) 240px, 300px"
-                  className="object-contain object-bottom drop-shadow-[0_18px_28px_rgba(10,10,10,0.22)]"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="flex bg-white px-5 py-8 sm:px-10 sm:py-12 lg:items-center lg:px-14 lg:py-12">
-          <div className="land-rise mx-auto w-full max-w-[420px]">
-            <h2 className="text-2xl tracking-[-0.03em] sm:text-3xl">
-              {otp ? 'Код из Telegram' : 'Регистрация'}
-            </h2>
-            <p className="mt-2 text-sm text-[var(--land-muted)]">
-              {otp
-                ? otp.message || 'Откройте @GetVoxlybot и введите код'
-                : 'Заполни поля, подтверди код в боте — и в кабинет.'}
-            </p>
-
-            {error ? (
-              <div
-                role="alert"
-                className="mt-5 rounded-xl border border-[#b04a43]/35 bg-[#b04a43]/8 px-4 py-3 text-sm font-medium text-[#8b2e2e]"
-              >
-                {error}
-              </div>
-            ) : null}
-
-            <form onSubmit={handleSubmit} className="mt-7 space-y-4">
-              {otp ? (
-                <>
-                  <a
-                    href={otp.botDeepLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="land-btn flex w-full items-center justify-center gap-2"
-                  >
-                    Открыть @{otp.botUsername}
-                    <ExternalLink className="h-4 w-4" aria-hidden />
-                  </a>
-                  <div>
-                    <label htmlFor="otp" className="land-label">
-                      Код из бота
-                    </label>
-                    <input
-                      id="otp"
-                      name="otp"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6 цифр"
-                      value={otpCode}
-                      onChange={(e) => setOtpCode(e.target.value)}
-                      required
-                      className="land-input tracking-widest"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-[var(--land-muted)] underline-offset-4 hover:underline"
-                    onClick={() => {
-                      setOtp(null);
-                      setOtpCode('');
-                      setError('');
-                    }}
-                  >
-                    ← Изменить данные
-                  </button>
-                </>
-              ) : null}
-              {!otp ? (
-              <>
-              <div>
-                <label htmlFor="firstName" className="land-label">
-                  Имя
-                </label>
-                <input
-                  id="firstName"
-                  name="given-name"
-                  autoComplete="given-name"
-                  placeholder="Как к тебе обращаться"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  required
-                  className="land-input"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="email" className="land-label">
-                  Email
-                </label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="you@company.ru"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="land-input"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="password" className="land-label">
-                  Пароль
-                </label>
-                <input
-                  id="password"
-                  name="new-password"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="Не меньше 8 символов"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="land-input"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="workspace" className="land-label">
-                  Название вашего CRM-портала
-                </label>
-                <input
-                  id="workspace"
-                  name="organization"
-                  value={workspaceName}
-                  onChange={(e) => setWorkspaceName(e.target.value)}
-                  placeholder="Например: Студия Антона"
-                  required
-                  minLength={2}
-                  maxLength={50}
-                  className="land-input"
-                />
-                <p className="mt-1.5 text-xs leading-relaxed text-[var(--land-muted)]">
-                  Это имя вашего воркспейса / CRM-портала.
-                  {companySlug.length >= 2 ? (
-                    <>
-                      {' '}
-                      Адрес кабинета:{' '}
-                      <span className="font-semibold text-[var(--land-ink)]">{companySlug}</span>
-                    </>
-                  ) : (
-                    <> Из названия сделаем латинский адрес для ссылки.</>
-                  )}
-                </p>
-              </div>
-
-              <div>
-                <label htmlFor="ref" className="land-label">
-                  Реферальный код
-                </label>
-                <input
-                  id="ref"
-                  name="referral"
-                  value={refCode}
-                  onChange={(e) => setRefCode(e.target.value)}
-                  placeholder="Если есть — сюда"
-                  className="land-input"
-                />
-              </div>
-
-              <label
-                htmlFor="legal"
-                className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-black/10 bg-[#f7f7f7] px-3 py-3"
-              >
-                <input
-                  id="legal"
-                  type="checkbox"
-                  checked={acceptedLegal}
-                  onChange={(e) => setAcceptedLegal(e.target.checked)}
-                  required
-                  aria-required="true"
-                  className="mt-1 h-5 w-5 shrink-0 accent-[#0a0a0a]"
-                />
-                <span className="text-sm leading-snug text-[var(--land-muted)]">
-                  Принимаю{' '}
-                  <Link href="/terms" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
-                    оферту
-                  </Link>{' '}
-                  и{' '}
-                  <Link href="/consent" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
-                    согласие на обработку ПДн
-                  </Link>
-                  . Читал{' '}
-                  <Link href="/privacy" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
-                    политику
-                  </Link>{' '}
-                  и{' '}
-                  <Link href="/refund" className="font-semibold text-[var(--land-ink)] underline underline-offset-4" target="_blank">
-                    правила возврата
-                  </Link>
-                  .
-                </span>
+      <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+        {otp ? (
+          <>
+            <a
+              href={otp.botDeepLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="friendly-btn flex w-full items-center justify-center gap-2 touch-manipulation"
+            >
+              Открыть @{otp.botUsername}
+              <ExternalLink className="h-4 w-4" aria-hidden />
+            </a>
+            <Field
+              id="otp"
+              label="Код из бота"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6 цифр"
+              value={otpCode}
+              onChange={setOtpCode}
+              required
+              className="tracking-widest"
+            />
+            <button
+              type="button"
+              className="text-sm font-medium text-slate-500 underline-offset-4 hover:text-slate-800 hover:underline"
+              onClick={() => {
+                setOtp(null);
+                setOtpCode('');
+                setError('');
+              }}
+            >
+              ← Изменить данные
+            </button>
+          </>
+        ) : (
+          <>
+            <Field
+              id="firstName"
+              label="Имя"
+              autoComplete="given-name"
+              name="given-name"
+              placeholder="Как к тебе обращаться"
+              value={firstName}
+              onChange={setFirstName}
+              required
+            />
+            <Field
+              id="email"
+              label="Email"
+              type="email"
+              name="email"
+              autoComplete="email"
+              inputMode="email"
+              placeholder="you@company.ru"
+              value={email}
+              onChange={setEmail}
+              required
+            />
+            <Field
+              id="password"
+              label="Пароль"
+              type="password"
+              name="new-password"
+              autoComplete="new-password"
+              placeholder="Не меньше 8 символов"
+              value={password}
+              onChange={setPassword}
+              required
+              minLength={8}
+            />
+            <div>
+              <label htmlFor="workspace" className="mb-1.5 block text-sm font-medium text-slate-800">
+                Название вашего CRM-портала
               </label>
-              </>
-              ) : null}
+              <input
+                id="workspace"
+                name="organization"
+                value={workspaceName}
+                onChange={(e) => setWorkspaceName(e.target.value)}
+                placeholder="Например: Студия Антона"
+                required
+                minLength={2}
+                maxLength={50}
+                className="friendly-input w-full"
+              />
+              <p className="mt-1.5 text-xs leading-relaxed text-slate-500">
+                Это имя вашего воркспейса / CRM-портала.
+                {companySlug.length >= 2 ? (
+                  <>
+                    {' '}
+                    Адрес кабинета: <span className="font-semibold text-slate-800">{companySlug}</span>
+                  </>
+                ) : (
+                  <> Из названия сделаем латинский адрес для ссылки.</>
+                )}
+              </p>
+            </div>
+            <Field
+              id="ref"
+              label="Реферальный код"
+              name="referral"
+              placeholder="Если есть — сюда"
+              value={refCode}
+              onChange={setRefCode}
+            />
+            <label
+              htmlFor="legal"
+              className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+            >
+              <input
+                id="legal"
+                type="checkbox"
+                checked={acceptedLegal}
+                onChange={(e) => setAcceptedLegal(e.target.checked)}
+                required
+                aria-required="true"
+                className="mt-1 h-5 w-5 shrink-0 accent-blue-600"
+              />
+              <span className="text-sm leading-snug text-slate-600">
+                Принимаю{' '}
+                <Link
+                  href="/terms"
+                  className="font-semibold text-blue-600 underline underline-offset-4"
+                  target="_blank"
+                >
+                  оферту
+                </Link>{' '}
+                и{' '}
+                <Link
+                  href="/consent"
+                  className="font-semibold text-blue-600 underline underline-offset-4"
+                  target="_blank"
+                >
+                  согласие на обработку ПДн
+                </Link>
+                . Читал{' '}
+                <Link
+                  href="/privacy"
+                  className="font-semibold text-blue-600 underline underline-offset-4"
+                  target="_blank"
+                >
+                  политику
+                </Link>{' '}
+                и{' '}
+                <Link
+                  href="/refund"
+                  className="font-semibold text-blue-600 underline underline-offset-4"
+                  target="_blank"
+                >
+                  правила возврата
+                </Link>
+                .
+              </span>
+            </label>
+          </>
+        )}
 
-              <button
-                type="submit"
-                className="land-btn w-full"
-                disabled={loading || (!otp && !acceptedLegal)}
-              >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                {loading ? 'Проверяем…' : otp ? 'Подтвердить и создать' : 'Продолжить'}
-                {!loading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
-              </button>
-            </form>
+        <button
+          type="submit"
+          className="friendly-btn w-full touch-manipulation"
+          disabled={loading || (!otp && !acceptedLegal)}
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+          {loading ? 'Проверяем…' : otp ? 'Подтвердить и создать' : 'Продолжить'}
+          {!loading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
+        </button>
+      </form>
 
-            <p className="mt-7 text-sm text-[var(--land-muted)]">
-              Уже есть аккаунт?{' '}
-              <Link href="/login" className="font-semibold text-[var(--land-ink)] underline underline-offset-4">
-                Войти
-              </Link>
-            </p>
-            <p className="mt-3">
-              <Link href="/" className="text-sm font-medium text-[var(--land-muted)] underline-offset-4 hover:underline">
-                ← На главную
-              </Link>
-            </p>
-          </div>
-        </section>
-      </div>
-    </main>
+      <p className="mt-7 text-sm text-slate-500">
+        Уже есть аккаунт?{' '}
+        <Link href="/login" className="font-semibold text-blue-600 underline-offset-4 hover:underline">
+          Войти
+        </Link>
+      </p>
+      <p className="mt-3">
+        <Link href="/" className="text-sm font-medium text-slate-500 underline-offset-4 hover:underline">
+          ← На главную
+        </Link>
+      </p>
+    </AuthShell>
+  );
+}
+
+function Field({
+  id,
+  label,
+  value,
+  onChange,
+  className = '',
+  ...rest
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'onChange' | 'className'>) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-slate-800">
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`friendly-input w-full ${className}`}
+        {...rest}
+      />
+    </div>
   );
 }

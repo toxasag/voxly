@@ -7,11 +7,12 @@ alwaysApply: true
 
 Working surfaces have lean freeze cards under `docs/agent/modules/`.
 
-**Baseline 2026-08-06 (user-confirmed WORKING / FROZEN):** CRM chats, WhatsApp, Telegram GramJS personal, gift bot, AI agent, Telegram secretary. Preserve behavior. Do not “improve”, simplify, or casually refactor these unless the user explicitly asks.
+**Baseline 2026-08-06 (user-confirmed WORKING / FROZEN):** CRM chats, WhatsApp, Telegram GramJS personal, gift bot, AI agent, Telegram secretary.  
+**+ 2026-08-07 ~16:14 MSK:** MAX CRM chat + WhatsApp CRM chat + crm-chat panel (**0.1.28**) user-confirmed WORKING — cards `max-personal.md`, `wa-crm-sync.md`, `crm-chat-panel.md`. Preserve behavior. Do not “improve”, simplify, or casually refactor these unless the user explicitly asks.
 
 ## Before editing
 
-If the task touches WA→CRM sync, GramJS/TG personal→CRM, CRM chat panel, Person social links, gift-bot (ADR-027), AI agent, Telegram secretary, deal/Opp dedupe, or cross-channel enrich / Opp chat activity:
+If the task touches WA→CRM sync, GramJS/TG personal→CRM, CRM chat panel, MAX personal, Person social links, gift-bot (ADR-027), AI agent, Telegram secretary, deal/Opp dedupe, or cross-channel enrich / Opp chat activity:
 
 1. Open `docs/agent/modules/README.md` → the matching card.
 2. Skim `docs/agent/CAPABILITIES.md` (+ `CHAT.md` for chat/WA/TG/AI).

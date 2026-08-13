@@ -10,9 +10,10 @@ import { StringSession } from 'telegram/sessions/index.js';
 import { NewMessage } from 'telegram/events/index.js';
 import { CustomFile } from 'telegram/client/uploads.js';
 import { generateRandomLong } from 'telegram/Helpers.js';
+import { FloodWaitError } from 'telegram/errors/index.js';
 import { prisma } from '@voxly/db';
 import { encrypt, decrypt } from '@voxly/crypto';
-import { PRODUCT_CODES, PRICING } from '@voxly/shared';
+import { PRODUCT_CODES, PRICING, clientMdToTelegramHtml, fetchWithTimeout } from '@voxly/shared';
 
 const PORT = Number(process.env.GRAMJS_BRIDGE_PORT || 3008);
 const API_ID = Number(process.env.TELEGRAM_API_ID || process.env.API_ID || 0);
@@ -146,6 +147,102 @@ function gramjsAttachmentPlaceholder(a: GramjsAttachment, kind?: 'video_note'): 
   return a.fileName ? `[файл: ${a.fileName}]` : '[файл]';
 }
 
+const OUTBOUND_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
+
+function classifyOutboundUpload(
+  mimeType: string,
+  fileName: string,
+): {
+  type: 'photo' | 'video' | 'document' | 'audio' | 'voice';
+  forceDocument: boolean;
+  voiceNote: boolean;
+  supportsStreaming: boolean;
+} {
+  const mime = (mimeType || '').toLowerCase();
+  const name = fileName || 'file.bin';
+  if (mime.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(name)) {
+    return {
+      type: 'photo',
+      forceDocument: false,
+      voiceNote: false,
+      supportsStreaming: false,
+    };
+  }
+  if (mime.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/i.test(name)) {
+    return {
+      type: 'video',
+      forceDocument: false,
+      voiceNote: false,
+      supportsStreaming: true,
+    };
+  }
+  const isOgg =
+    mime.includes('ogg') ||
+    mime === 'audio/opus' ||
+    /\.(ogg|opus)$/i.test(name);
+  if (isOgg || mime === 'audio/ogg') {
+    return {
+      type: 'voice',
+      forceDocument: false,
+      voiceNote: true,
+      supportsStreaming: false,
+    };
+  }
+  if (mime.startsWith('audio/') || /\.(mp3|m4a|wav|aac|flac)$/i.test(name)) {
+    return {
+      type: 'audio',
+      forceDocument: false,
+      voiceNote: false,
+      supportsStreaming: false,
+    };
+  }
+  return {
+    type: 'document',
+    forceDocument: true,
+    voiceNote: false,
+    supportsStreaming: false,
+  };
+}
+
+/** Resolve peer for CRM send: id → @username → ImportContacts(phone). */
+async function resolveSendPeer(
+  client: TelegramClient,
+  peerUserId: string,
+  opts: { phoneHint?: string; usernameHint?: string } = {},
+): Promise<{ entity: any; peerId: string } | null> {
+  let entity = await resolvePeerEntity(client, peerUserId);
+  let peerId = peerUserId;
+  const usernameHint = (opts.usernameHint || '').trim().replace(/^@/, '');
+  if (!entity && usernameHint) {
+    try {
+      entity = await client.getEntity(usernameHint);
+    } catch {
+      try {
+        entity = await client.getEntity(`@${usernameHint}`);
+      } catch {
+        entity = null;
+      }
+    }
+  }
+  const phoneHint = (opts.phoneHint || '').trim();
+  if (!entity && phoneHint) {
+    const imported = await resolveUserByPhone(client, phoneHint, {
+      keepContact: true,
+    });
+    if (imported?.exists && imported.userId) {
+      if (/^\d{1,20}$/.test(peerUserId) && imported.userId !== peerUserId) {
+        console.warn(
+          `[gramjs] send peer id mismatch: crm=${peerUserId} phone→${imported.userId} — using phone`,
+        );
+      }
+      peerId = imported.userId;
+      entity = await resolvePeerEntity(client, imported.userId);
+    }
+  }
+  if (!entity) return null;
+  return { entity, peerId };
+}
+
 const GRAMJS_VISION_MAX_BYTES = 8 * 1024 * 1024;
 /** Video ASR / document extract — up to Bot API-ish size; audio demuxed in AI worker. */
 const GRAMJS_ASR_MEDIA_MAX_BYTES = 20 * 1024 * 1024;
@@ -204,7 +301,24 @@ async function pauseOnHumanOutbound(opts: {
   platformUserId: string;
   content: string;
   externalMessageId?: string;
+  /** Phone-app / CRM media — store descriptors only; never syncLead/enrich. */
+  attachments?: GramjsAttachment[];
 }) {
+  // Dedup CRM echo + webhook retry (same TG message id).
+  if (opts.externalMessageId) {
+    const dup = await prisma.chatMessage.findFirst({
+      where: {
+        externalMessageId: opts.externalMessageId,
+        conversation: {
+          tenantId: opts.tenantId,
+          botInstanceId: opts.botId,
+        },
+      },
+      select: { id: true },
+    });
+    if (dup) return;
+  }
+
   let conversation = await prisma.conversation.findFirst({
     where: {
       tenantId: opts.tenantId,
@@ -214,6 +328,7 @@ async function pauseOnHumanOutbound(opts: {
     orderBy: { updatedAt: 'desc' },
   });
   if (!conversation) {
+    // Conversation only — never Person/Opportunity from phone outbound.
     conversation = await prisma.conversation.create({
       data: {
         tenantId: opts.tenantId,
@@ -227,15 +342,17 @@ async function pauseOnHumanOutbound(opts: {
     });
   }
 
+  const atts = opts.attachments?.length ? opts.attachments : undefined;
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'operator',
       content: opts.content || '[outbound]',
       externalMessageId: opts.externalMessageId,
+      ...(atts ? { attachments: atts } : {}),
     },
   });
-  // Do NOT auto-pause AI (manual pause/off only).
+  // Do NOT auto-pause AI (manual pause/off only). No CRM lead sync.
 }
 
 function rememberAiSent(botId: string, messageId: number) {
@@ -641,7 +758,12 @@ async function persistSession(botId: string, sessionStr: string, me: {
   id: string;
   username?: string;
   firstName?: string;
+  premium?: boolean;
 }) {
+  const existing = await prisma.botInstance.findUnique({
+    where: { id: botId },
+    select: { warmupSince: true },
+  });
   await prisma.botInstance.update({
     where: { id: botId },
     data: {
@@ -649,42 +771,21 @@ async function persistSession(botId: string, sessionStr: string, me: {
       botUsername: me.username || me.firstName || botId,
       phoneNumberId: me.id,
       status: 'active',
+      isPremium: me.premium === true,
+      // Warm-up starts on first successful connect (kept if already set).
+      ...(existing?.warmupSince ? {} : { warmupSince: new Date() }),
     },
   });
 }
 
-/** Queue CRM Person enrich + phone soft-merge for this tenant (all portals). */
+/** Connect ack only — CRM history sync is manual (portal «Синхронизировать»). */
 async function notifySaasCrmEnrichOnConnect(
   tenantId: string,
   botId: string,
 ): Promise<void> {
-  if (!SERVICE_TOKEN) {
-    console.warn('[gramjs] skip CRM enrich notify — VOXLY_SERVICE_TOKEN unset');
-    return;
-  }
-  try {
-    const res = await fetch(`${SAAS_API_URL}/api/internal/gramjs/connected`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${SERVICE_TOKEN}`,
-        'Content-Type': 'application/json',
-        'X-Voxly-Service': 'gramjs-bridge',
-      },
-      body: JSON.stringify({ tenantId, botId }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn(
-        `[gramjs] CRM enrich notify HTTP ${res.status}: ${text.slice(0, 200)}`,
-      );
-      return;
-    }
-    console.log(`[gramjs] CRM enrich queued tenant=${tenantId} bot=${botId}`);
-  } catch (err) {
-    console.warn(
-      `[gramjs] CRM enrich notify failed: ${String((err as Error)?.message || err)}`,
-    );
-  }
+  console.log(
+    `[gramjs] skip CRM history sync on connect tenant=${tenantId} bot=${botId} (manual sync only)`,
+  );
 }
 
 async function loadClient(botId: string): Promise<TelegramClient | null> {
@@ -708,7 +809,23 @@ async function loadClient(botId: string): Promise<TelegramClient | null> {
   void relinkOrphanedGramjsConversations(bot.tenantId, botId);
   // Fire-and-forget audience sync on connect
   void syncAudienceFromDialogs(client, bot.tenantId, botId);
+  void refreshPremiumStatus(client, botId);
   return client;
+}
+
+/** Best-effort: refresh Telegram Premium flag from the connected account. */
+async function refreshPremiumStatus(client: TelegramClient, botId: string) {
+  try {
+    const me = await client.getMe();
+    if (me instanceof Api.User && typeof me.premium === 'boolean') {
+      await prisma.botInstance.update({
+        where: { id: botId },
+        data: { isPremium: me.premium },
+      });
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 function attachInboundHandler(client: TelegramClient, tenantId: string, botId: string) {
@@ -719,7 +836,7 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
       const msg = event.message;
       if (!msg) return;
 
-      // Own outbound: AI replies are tagged; everything else = human → 1h pause
+      // Own outbound (phone or CRM): mirror operator bubble; AI-tagged ids skip echo.
       if (msg.out) {
         const sent = aiSentIds.get(botId);
         if (sent?.has(msg.id)) {
@@ -728,12 +845,23 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         }
         const peer = await msg.getChat();
         if (peer instanceof Api.User && !peer.bot) {
+          const peerId = String(peer.id);
+          const attachment = extractGramjsAttachment(msg, peerId);
+          let content = (msg.message || '').trim();
+          if (!content && attachment) {
+            content = gramjsAttachmentPlaceholder(
+              attachment,
+              msg.videoNote ? 'video_note' : undefined,
+            );
+          }
+          if (!content && !attachment) return;
           await pauseOnHumanOutbound({
             tenantId,
             botId,
-            platformUserId: String(peer.id),
-            content: (msg.message || '').trim() || '[media]',
+            platformUserId: peerId,
+            content: content || '[media]',
             externalMessageId: String(msg.id),
+            attachments: attachment ? [attachment] : undefined,
           });
         }
         return;
@@ -942,13 +1070,14 @@ async function askAiWorker(payload: {
   mediaBase64?: string;
   mediaMime?: string;
 }): Promise<string[]> {
-  const res = await fetch(`${AI_WORKER_URL}/internal/inbound`, {
+  const res = await fetchWithTimeout(`${AI_WORKER_URL}/internal/inbound`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${SERVICE_TOKEN}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ ...payload, channel: 'telegram_gramjs' }),
+    timeout: 15000,
   });
   if (!res.ok) {
     console.error('[gramjs] AI worker HTTP', res.status, await res.text().catch(() => ''));
@@ -1309,6 +1438,12 @@ async function startQrLogin(
             username: me.username,
             firstName: me.firstName,
           };
+          await prisma.botInstance
+            .update({
+              where: { id: bot.id },
+              data: { isPremium: me.premium === true },
+            })
+            .catch(() => undefined);
           qrState.set(key, { status: 'authorized', user, botId: bot.id, tenantId });
           return { botId: bot.id, addonActive };
         }
@@ -1366,6 +1501,7 @@ async function startQrLogin(
         id: String(me.id),
         username: me.username,
         firstName: me.firstName,
+        premium: me.premium === true,
       };
       const sessionStr = client.session.save() as unknown as string;
       await persistSession(bot.id, sessionStr, user);
@@ -1825,6 +1961,34 @@ async function main() {
         return;
       }
 
+      /**
+       * Retry a GramJS call on FloodWaitError (waits err.seconds + jitter).
+       * Rethrows after 3 attempts, or immediately when seconds > 300
+       * (MAILING-LIMITS: long floods → account-level handling, not a held request).
+       */
+      async function withFloodRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+        let attempts = 0;
+        for (;;) {
+          try {
+            return await fn();
+          } catch (err: any) {
+            if (err instanceof FloodWaitError && Number(err.seconds) > 0) {
+              if (Number(err.seconds) > 300) throw err;
+              attempts += 1;
+              if (attempts > 3) throw err;
+              const waitMs =
+                Number(err.seconds) * 1000 + 1_500 + Math.floor(Math.random() * 1_500);
+              console.warn(
+                `[gramjs] FloodWait ${err.seconds}s ${label}, attempt=${attempts}, waiting ${waitMs}ms`,
+              );
+              await sleep(waitMs);
+              continue;
+            }
+            throw err;
+          }
+        }
+      }
+
       // Operator / CRM reply via personal account (MTProto).
       // Caller (saas-api) persists ChatMessage + pause; we mark id so NewMessage
       // does not treat this as a phone-typed human outbound (double-write).
@@ -1832,12 +1996,21 @@ async function main() {
         const body = await readJson(req);
         const botId = String(body.botId || '').trim();
         const peerUserId = String(body.peerUserId || '').trim();
-        const text = String(body.text || '').trim();
+        const textRaw = String(body.text || '');
+        const text = textRaw.trim();
         const phoneHint = String(body.phone || '').trim();
-        if (!botId || !peerUserId || !text) {
+        const usernameHint = String(body.username || '')
+          .trim()
+          .replace(/^@/, '');
+        const mediaB64 = String(body.mediaBase64 || '').trim();
+        const mimeType = String(body.mimeType || 'application/octet-stream').trim();
+        const fileName =
+          String(body.fileName || '').trim() ||
+          (mediaB64 ? 'file.bin' : '');
+        if (!botId || !peerUserId || (!text && !mediaB64)) {
           sendJson(res, 400, {
             ok: false,
-            error: 'botId, peerUserId, and text are required',
+            error: 'botId, peerUserId, and text or mediaBase64 are required',
           });
           return;
         }
@@ -1846,27 +2019,11 @@ async function main() {
           sendJson(res, 404, { ok: false, error: 'session not connected' });
           return;
         }
-        let entity = await resolvePeerEntity(client, peerUserId);
-        // Peer known by id/@ from CRM social link but not in session (no prior dialog):
-        // ImportContacts by phone (WA→TG enrich path), then send. Do not require @username.
-        if (!entity && phoneHint) {
-          const imported = await resolveUserByPhone(client, phoneHint, {
-            keepContact: true,
-          });
-          if (imported?.exists && imported.userId) {
-            const wantNumeric = /^\d{1,20}$/.test(peerUserId);
-            if (!wantNumeric || imported.userId === peerUserId) {
-              entity = await resolvePeerEntity(client, imported.userId);
-            } else {
-              sendJson(res, 404, {
-                ok: false,
-                error: `peer not found: phone maps to ${imported.userId}, expected ${peerUserId}`,
-              });
-              return;
-            }
-          }
-        }
-        if (!entity) {
+        const resolved = await resolveSendPeer(client, peerUserId, {
+          phoneHint,
+          usernameHint,
+        });
+        if (!resolved) {
           sendJson(res, 404, {
             ok: false,
             error:
@@ -1874,6 +2031,7 @@ async function main() {
           });
           return;
         }
+        const { entity, peerId } = resolved;
         try {
           await client.invoke(
             new Api.messages.SetTyping({
@@ -1885,13 +2043,76 @@ async function main() {
           /* best-effort */
         }
         await sleep(400 + Math.floor(Math.random() * 600));
-        const sent = await client.sendMessage(entity, { message: text });
+
+        // Client MD → HTML entities (spoiler; `code` → <pre> for visible mono).
+        // GramJS md delimiters omit spoiler — must use parseMode html.
+        const htmlText = text ? clientMdToTelegramHtml(textRaw) : '';
+        if (htmlText && htmlText !== textRaw) {
+          console.log(
+            `[gramjs] send format bot=${botId} peer=${peerId} ` +
+              `rawLen=${textRaw.length} htmlLen=${htmlText.length} ` +
+              `hasPre=${htmlText.includes('<pre>')} hasSpoiler=${htmlText.includes('<spoiler>')}`,
+          );
+        }
+        let sent: { id?: number } | null = null;
+        let attachment: GramjsAttachment | null = null;
+
+        if (mediaB64) {
+          let buf: Buffer;
+          try {
+            buf = Buffer.from(mediaB64.split(',').pop() || '', 'base64');
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid mediaBase64' });
+            return;
+          }
+          if (!buf.length) {
+            sendJson(res, 400, { ok: false, error: 'empty media' });
+            return;
+          }
+          if (buf.length > OUTBOUND_MEDIA_MAX_BYTES) {
+            sendJson(res, 400, {
+              ok: false,
+              error: `media too large (>${OUTBOUND_MEDIA_MAX_BYTES} bytes)`,
+            });
+            return;
+          }
+          const kind = classifyOutboundUpload(mimeType, fileName);
+          const toUpload = new CustomFile(fileName, buf.length, '', buf);
+          sent = await withFloodRetry('sendFile', () =>
+            client.sendFile(entity, {
+              file: toUpload,
+              caption: htmlText || undefined,
+              parseMode: htmlText ? 'html' : undefined,
+              forceDocument: kind.forceDocument,
+              voiceNote: kind.voiceNote,
+              supportsStreaming: kind.supportsStreaming,
+              workers: 1,
+            }),
+          );
+          if (sent?.id != null) {
+            attachment = {
+              type: kind.type,
+              fileId: gramjsFileId(peerId, sent.id),
+              fileName,
+              mimeType: mimeType || undefined,
+            };
+          }
+        } else {
+          sent = await withFloodRetry('sendMessage', () =>
+            client.sendMessage(entity, {
+              message: htmlText,
+              parseMode: 'html',
+            }),
+          );
+        }
+
         if (sent?.id != null) rememberAiSent(botId, Number(sent.id));
         sendJson(res, 200, {
           ok: true,
           botId,
-          peerUserId,
+          peerUserId: peerId,
           messageId: sent?.id != null ? String(sent.id) : null,
+          ...(attachment ? { attachment } : {}),
         });
         return;
       }
@@ -1985,6 +2206,8 @@ async function main() {
         const mediaUrl = String(body.mediaUrl || '').trim();
         const caption = String(body.text || body.caption || '').trim();
         const mediaTypeHint = String(body.mediaType || '').trim();
+        const linkUrl = String(body.linkUrl || '').trim();
+        const linkText = String(body.linkText || '').trim();
         if (!botId || !mediaUrl) {
           sendJson(res, 400, { ok: false, error: 'botId and mediaUrl required' });
           return;
@@ -1995,7 +2218,7 @@ async function main() {
           return;
         }
         try {
-          const mediaRes = await fetch(mediaUrl);
+          const mediaRes = await fetchWithTimeout(mediaUrl, { timeout: 30000 });
           if (!mediaRes.ok) {
             sendJson(res, 400, { ok: false, error: `media fetch HTTP ${mediaRes.status}` });
             return;
@@ -2030,21 +2253,78 @@ async function main() {
               })
             : new Api.InputMediaUploadedPhoto({ file: uploaded });
 
-          const updates = await client.invoke(
-            new Api.stories.SendStory({
-              peer: new Api.InputPeerSelf(),
-              media,
-              caption: caption || undefined,
-              privacyRules: [new Api.InputPrivacyValueAllowAll()],
-              randomId: generateRandomLong(),
-            }),
+          const updates = await withFloodRetry('SendStory', () =>
+            client.invoke(
+              new Api.stories.SendStory({
+                peer: new Api.InputPeerSelf(),
+                media,
+                caption: caption || undefined,
+                entities: linkUrl
+                  ? [
+                      new Api.MessageEntityTextUrl({
+                        offset: 0,
+                        length: (linkText || caption || '.').length,
+                        url: linkUrl,
+                      }),
+                    ]
+                  : undefined,
+                privacyRules: [new Api.InputPrivacyValueAllowAll()],
+                randomId: generateRandomLong(),
+              }),
+            ),
           );
-          sendJson(res, 200, { ok: true, botId, updates: Boolean(updates) });
+
+          let storyId: number | undefined;
+          if (updates instanceof Api.Updates) {
+            for (const u of updates.updates) {
+              if (u instanceof Api.UpdateStory && u.peer instanceof Api.PeerUser) {
+                storyId = u.story.id;
+              }
+            }
+          }
+
+          sendJson(res, 200, { ok: true, botId, storyId, updates: Boolean(updates) });
         } catch (err) {
           sendJson(res, 400, {
             ok: false,
             error: String((err as Error)?.message || err),
           });
+        }
+        return;
+      }
+
+      // Fetch story metrics from Telegram
+      if (req.method === 'GET' && path.startsWith('/stories/') && path.endsWith('/metrics')) {
+        const parts = path.split('/');
+        const storyId = parseInt(parts[2]);
+        const botId = String(url.searchParams.get('botId') || '').trim();
+        if (!botId || isNaN(storyId)) {
+          sendJson(res, 400, { ok: false, error: 'botId and storyId required' });
+          return;
+        }
+        const client = await loadClient(botId);
+        if (!client?.connected) {
+          sendJson(res, 404, { ok: false, error: 'session not connected' });
+          return;
+        }
+        try {
+          const storiesRes = await client.invoke(
+            new Api.stories.GetPeerStories({
+              peer: new Api.InputPeerSelf(),
+            }),
+          );
+          const story = (storiesRes as any).stories.find((s: any) => s.id === storyId);
+          if (!story) {
+            sendJson(res, 404, { ok: false, error: 'story not found' });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            views: story.views?.viewsCount || 0,
+            reactions: story.reactions?.results?.reduce((acc: number, r: any) => acc + (r.count || 0), 0) || 0,
+          });
+        } catch (err) {
+          sendJson(res, 400, { ok: false, error: String(err) });
         }
         return;
       }

@@ -8,7 +8,9 @@ import { fireGoal } from '@voxly/analytics-dispatchers';
 import {
   TwentyClient,
   normalizePhoneToE164,
+  phoneFingerprint,
 } from '@voxly/twenty-client';
+import { retryBackoffMs } from '@voxly/shared';
 import type { FormAttribution } from './form-lead-parse.js';
 import { sanitizeRawFields } from './form-lead-parse.js';
 
@@ -121,6 +123,7 @@ export async function processFormLead(formLeadId: string): Promise<void> {
         ymUid: attribution.ymUid || null,
         yclid: attribution.yclid || null,
         gclid: attribution.gclid || null,
+        msclkid: attribution.msclkid || null,
         fbp: attribution.fbp || null,
         fbc: attribution.fbc || null,
         rbClickid: attribution.rbClickid || null,
@@ -202,6 +205,7 @@ export async function processFormLead(formLeadId: string): Promise<void> {
 
   // Prior processed lead with same phone/email on this tenant
   if (!candidateIds.size && (phone || email)) {
+    const fp = phoneFingerprint(lead.phone);
     const prior = await prisma.formLead.findFirst({
       where: {
         tenantId: lead.tenantId,
@@ -209,7 +213,7 @@ export async function processFormLead(formLeadId: string): Promise<void> {
         personId: { not: null },
         status: { in: ['processed', 'needs_review'] },
         OR: [
-          phone ? { phone: { contains: phone.replace(/\D/g, '').slice(-10) } } : undefined,
+          fp ? { phoneFingerprint: fp } : undefined,
           email ? { email } : undefined,
         ].filter(Boolean) as any[],
       },
@@ -343,23 +347,64 @@ export async function processFormLead(formLeadId: string): Promise<void> {
     console.warn('[form-lead] createNoteForPerson failed', err);
   }
 
-  // Cross-channel enrich: phone → TG + MAX + WA (IsOnWhatsApp). Best-effort.
+  // Cross-channel enrich: phone → TG + MAX + WA (IsOnWhatsApp).
+  // 4.4: mandatory bounded retry on hard failure; result stored in payload.enrichment.
+  let enrichment:
+    | {
+        ok: boolean;
+        fields?: string[];
+        channels?: string[];
+        error?: string;
+        attempts: number;
+        at: string;
+      }
+    | undefined;
   if (phone) {
-    try {
-      const { enrichPersonCrossChannelByPhone } = await import(
-        './enrich-person-by-phone.js'
-      );
-      await enrichPersonCrossChannelByPhone({
-        prisma,
-        twenty: client,
-        tenantId: lead.tenantId,
-        personId,
-        phone,
-      });
-    } catch (err) {
-      console.warn('[form-lead] cross-channel enrich failed', err);
+    const { enrichPersonCrossChannelByPhone } = await import(
+      './enrich-person-by-phone.js'
+    );
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      try {
+        const row = await enrichPersonCrossChannelByPhone({
+          prisma,
+          twenty: client,
+          tenantId: lead.tenantId,
+          personId,
+          phone,
+        });
+        enrichment = {
+          ok: row.ok,
+          fields: row.fields,
+          channels: row.channels,
+          error: row.error,
+          attempts: attempt + 1,
+          at: new Date().toISOString(),
+        };
+        // ok=true (including "not on channel" soft skips) is terminal; only hard-fail retries.
+        if (row.ok) break;
+      } catch (err) {
+        enrichment = {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+          attempts: attempt + 1,
+          at: new Date().toISOString(),
+        };
+        console.warn(
+          `[form-lead] cross-channel enrich failed (attempt ${attempt + 1})`,
+          err,
+        );
+      }
+      if (attempt < MAX_ATTEMPTS - 1) {
+        await new Promise((r) => setTimeout(r, retryBackoffMs(attempt)));
+      }
     }
   }
+
+  // 4.4: persist enrichment result into payload without clobbering existing keys.
+  const nextPayload = enrichment
+    ? { ...payload, enrichment }
+    : undefined;
 
   await prisma.formLead.update({
     where: { id: lead.id },
@@ -370,8 +415,34 @@ export async function processFormLead(formLeadId: string): Promise<void> {
       needsReview,
       status: needsReview ? 'needs_review' : 'processed',
       error: null,
+      ...(nextPayload ? { payload: nextPayload as object } : {}),
     },
   });
+
+  // 4.3: record a cross-channel interaction-history row for this lead.
+  try {
+    await prisma.customerActivity.create({
+      data: {
+        tenantId: lead.tenantId,
+        twentyPersonId: personId,
+        phoneFingerprint: phoneFingerprint(lead.phone) || null,
+        kind: 'form_lead',
+        channel: lead.source,
+        title: `Заявка с сайта (${sourceLabel(lead.source)})`,
+        description: lead.comment || null,
+        formLeadId: lead.id,
+        meta: {
+          opportunityId: opportunityId || null,
+          formId: lead.formId || null,
+          pageUrl: lead.pageUrl || null,
+          attribution,
+          enrichment: enrichment || null,
+        } as object,
+      },
+    });
+  } catch (err) {
+    console.warn('[form-lead] customerActivity create failed', err);
+  }
 
   // fireGoal — do not break gift goals; new goal name only
   try {
