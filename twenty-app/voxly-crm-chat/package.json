@@ -1,6 +1,6 @@
 {
   "name": "voxly-crm-chat",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "license": "MIT",
   "engines": {
     "node": "^24.5.0",
