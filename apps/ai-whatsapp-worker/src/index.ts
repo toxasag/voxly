@@ -4759,14 +4759,20 @@ async function handleInboundMessage(opts: {
   const session = decodeSession(resolved.botTokenEncrypted);
   if (!session?.instanceName) return;
 
-  // Mark read as soon as we accept the message (human-like).
+  // Mark read as soon as we accept the message (human-like), unless suppressDealCreation is set.
   if (opts.messageId) {
-    void markWhatsAppRead(
-      session.instanceName,
-      from,
-      [opts.messageId],
-      opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
-    );
+    if (conversation.suppressDealCreation === true) {
+      console.log(
+        `[ai-whatsapp] skip markRead conv=${conversation.id} (suppressDealCreation)`,
+      );
+    } else {
+      void markWhatsAppRead(
+        session.instanceName,
+        from,
+        [opts.messageId],
+        opts.remoteJid || (opts.from.includes('@') ? opts.from : undefined),
+      );
+    }
   }
 
   inboundAiDebouncer.push(conversation.id, {
@@ -6998,22 +7004,27 @@ async function main() {
               platformUserId: peer,
               status: { in: ['open', 'waiting_for_human'] },
             },
+            select: { id: true, suppressDealCreation: true },
           });
           if (convForRead) {
-            const recent = await prisma.chatMessage.findMany({
-              where: {
-                conversationId: convForRead.id,
-                role: 'user',
-                externalMessageId: { not: null },
-              },
-              orderBy: { sentAt: 'desc' },
-              take: 10,
-              select: { externalMessageId: true },
-            });
-            const ids = recent
-              .map((m) => m.externalMessageId)
-              .filter((id): id is string => Boolean(id));
-            if (ids.length) await markWhatsAppRead(session.instanceName, to, ids);
+            if (convForRead.suppressDealCreation === true) {
+              console.log(`[ai-whatsapp] skip markRead conv=${convForRead.id} (suppressDealCreation)`);
+            } else {
+              const recent = await prisma.chatMessage.findMany({
+                where: {
+                  conversationId: convForRead.id,
+                  role: 'user',
+                  externalMessageId: { not: null },
+                },
+                orderBy: { sentAt: 'desc' },
+                take: 10,
+                select: { externalMessageId: true },
+              });
+              const ids = recent
+                .map((m) => m.externalMessageId)
+                .filter((id): id is string => Boolean(id));
+              if (ids.length) await markWhatsAppRead(session.instanceName, to, ids);
+            }
           }
         }
 

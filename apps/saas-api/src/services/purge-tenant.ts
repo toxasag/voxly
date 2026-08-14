@@ -89,6 +89,50 @@ async function deleteKnowledgeFiles(tenantId: string): Promise<void> {
   }
 }
 
+async function disconnectAllMessengerSessions(
+  db: PrismaClient,
+  tenantId: string,
+): Promise<void> {
+  const gramjsUrl = (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(
+    /\/$/,
+    '',
+  );
+  const maxUrl = (process.env.MAX_BRIDGE_URL || 'http://max-bridge:3010').replace(/\/$/, '');
+  const serviceToken = process.env.VOXLY_SERVICE_TOKEN || '';
+
+  const bots = await db.botInstance.findMany({
+    where: {
+      tenantId,
+      botType: { in: ['ai_gramjs', 'ai_max'] },
+      status: 'active',
+      botTokenEncrypted: { not: null },
+    },
+    select: { id: true, botType: true },
+  });
+
+  for (const bot of bots) {
+    const bridgeUrl = bot.botType === 'ai_gramjs' ? gramjsUrl : maxUrl;
+    if (!bridgeUrl || !serviceToken) continue;
+
+    try {
+      await fetch(`${bridgeUrl}/accounts/delete`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${serviceToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tenantId, botId: bot.id }),
+      });
+      console.log(`[purge-tenant] disconnected ${bot.botType} session bot=${bot.id}`);
+    } catch (err) {
+      console.warn(
+        `[purge-tenant] failed to disconnect ${bot.botType} bot=${bot.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
 export async function purgeTenantFully(opts: {
   tenantId: string;
   confirmSlug: string;
@@ -116,6 +160,7 @@ export async function purgeTenantFully(opts: {
 
   await deleteEvolutionInstancesForTenant(db, tenant.id);
   await deleteKnowledgeFiles(tenant.id);
+  await disconnectAllMessengerSessions(db, tenant.id);
 
   if (workspaceId && owner?.email && tenant.twentyOwnerPasswordEncrypted) {
     try {

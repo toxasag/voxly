@@ -916,16 +916,38 @@ function attachInboundHandler(client: TelegramClient, tenantId: string, botId: s
         return;
       }
 
-      // Mark inbound as read immediately (blue ticks / read status).
+      // Check suppressDealCreation before marking as read.
+      let shouldMarkRead = true;
       try {
-        await client.invoke(
-          new Api.messages.ReadHistory({
-            peer: sender,
-            maxId: msg.id,
-          }),
-        );
+        const conv = await prisma.conversation.findFirst({
+          where: {
+            tenantId,
+            botInstanceId: botId,
+            platformUserId: peerId,
+          },
+          orderBy: { updatedAt: 'desc' },
+          select: { suppressDealCreation: true },
+        });
+        if (conv?.suppressDealCreation === true) {
+          shouldMarkRead = false;
+          console.log(`[gramjs] skip markRead peer=${peerId} (suppressDealCreation)`);
+        }
       } catch (err) {
-        console.warn('[gramjs] ReadHistory on inbound failed', err);
+        console.warn('[gramjs] check suppressDealCreation failed', err);
+      }
+
+      // Mark inbound as read immediately (blue ticks / read status).
+      if (shouldMarkRead) {
+        try {
+          await client.invoke(
+            new Api.messages.ReadHistory({
+              peer: sender,
+              maxId: msg.id,
+            }),
+          );
+        } catch (err) {
+          console.warn('[gramjs] ReadHistory on inbound failed', err);
+        }
       }
 
       // Api.User.phone is visible when peer is in contacts / shared number (no leading +).
