@@ -29,9 +29,12 @@ import {
   formatDocumentAiText,
   DOC_MEDIA_MAX_BYTES,
   type OpenRouterUsageLike,
+  enqueueTimelineSync,
+  buildTimelineSyncKey,
+  type TimelineSyncJobData,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
-import { TwentyClient } from '@voxly/twenty-client';
+import { TwentyClient, normalizePhoneToE164, phoneFingerprint } from '@voxly/twenty-client';
 import {
   AI_HANDOFF_PAUSE_MS,
   AI_MODEL_DEFAULTS,
@@ -995,6 +998,29 @@ async function handleInboundMessage(
         return undefined;
       })(),
     },
+  });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  const phoneFp = contactPhone
+    ? phoneFingerprint(normalizePhoneToE164(contactPhone))
+    : null;
+  void enqueueTimelineSync({
+    tenantId,
+    twentyPersonId: conversation.twentyPersonId || null,
+    phoneFingerprint: phoneFp ?? null,
+    kind: 'chat_inbound',
+    channel: isBusiness ? 'ai_tg_business' : 'ai_tg',
+    title: `Входящее: ${displayText.slice(0, 80)}${displayText.length > 80 ? '…' : ''}`,
+    description: displayText,
+    meta: {
+      conversationId: conversation.id,
+      externalMessageId: String(message.message_id),
+      telegramId,
+      username,
+      firstName,
+    },
+    conversationId: conversation.id,
+    messageId: String(message.message_id),
   });
 
   void maybeAttributeMailingInbound({

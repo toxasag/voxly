@@ -17,8 +17,8 @@ import {
   filterHistoryAfterAgentUpdate,
   filterMediaCapabilityRefusals,
   isMediaCapabilityRefusal,
-  hasEnrichedMediaTag,
   isNearDuplicateReply,
+  hasEnrichedMediaTag,
   AGENT_PROMPT_PRIORITY_HINT,
   MEDIA_INBOUND_HINT,
   MEDIA_REFUSAL_RETRY_USER,
@@ -29,10 +29,13 @@ import {
   formatDocumentAiText,
   DOC_MEDIA_MAX_BYTES,
   type OpenRouterUsageLike,
+  enqueueTimelineSync,
+  buildTimelineSyncKey,
+  type TimelineSyncJobData,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
 import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote, sleep, retryBackoffMs, fetchWithTimeout, invalidateCrmThreadCache, invalidateCrmUnreadCache } from '@voxly/shared';
-import { TwentyClient } from '@voxly/twenty-client';
+import { TwentyClient, normalizePhoneToE164, phoneFingerprint } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
 import Redis from 'ioredis';
@@ -4665,7 +4668,7 @@ async function handleInboundMessage(opts: {
   // Persist + CRM sync BEFORE slow ASR/vision/doc extract so voice/video/image/doc
   // still create Person+Opportunity if media AI hangs or fails (personal WA wipe path).
   let displayText = opts.text;
-  const createdMsg = await prisma.chatMessage.create({
+const createdMsg = await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
@@ -4675,6 +4678,30 @@ async function handleInboundMessage(opts: {
         opts.attachments && opts.attachments.length ? opts.attachments : undefined,
     },
   });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  const phoneFp = conversation.platformUsername && conversation.platformUsername.startsWith('+')
+    ? phoneFingerprint(conversation.platformUsername)
+    : null;
+  void enqueueTimelineSync({
+    tenantId: resolved.tenantId,
+    twentyPersonId: conversation.twentyPersonId || null,
+    phoneFingerprint: phoneFp ?? null,
+    kind: 'chat_inbound',
+    channel: 'ai_wa',
+    title: `Входящее: ${displayText.slice(0, 80)}${displayText.length > 80 ? '…' : ''}`,
+    description: displayText,
+    meta: {
+      conversationId: conversation.id,
+      externalMessageId: opts.messageId,
+      platformUserId: conversation.platformUserId,
+      platformUsername: conversation.platformUsername,
+      platformFirstName: conversation.platformFirstName,
+    },
+    conversationId: conversation.id,
+    messageId: opts.messageId,
+  });
+
   await invalidateCrmThreadCache(crmCacheRedis, resolved.tenantId, [
     conversation.twentyPersonId,
     conversation.twentyOpportunityId,
