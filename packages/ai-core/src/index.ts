@@ -14,6 +14,13 @@ export {
   type AiUsageJobData,
 } from './ai-usage-queue.js';
 export {
+  TIMELINE_SYNC_QUEUE_NAME,
+  buildTimelineSyncKey,
+  enqueueTimelineSync,
+  startTimelineSyncWorker,
+  type TimelineSyncJobData,
+} from './timeline-sync-queue.js';
+export {
   costUsdFromOpenRouter,
   resolveProviderCostRub,
   usdToProviderCostRub,

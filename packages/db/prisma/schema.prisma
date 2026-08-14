@@ -25,6 +25,7 @@ model Tenant {
   crmSubdomain      String?        // {slug}-crm
   status            TenantStatus   @default(trial)
   aiMarkupPercent   Int?           // override global markup for this tenant
+  timelineSyncEnabled Boolean      @default(true)  // per-tenant toggle for chat timeline sync
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
 
@@ -753,7 +754,7 @@ model CustomerActivity {
   twentyPersonId  String?
   /// Phone fingerprint for grouping activity before a Person exists (4.5 canonical form)
   phoneFingerprint String?
-  /// form_lead | inbound_message | enrichment | conversion | note
+  /// form_lead | inbound_message | enrichment | conversion | note | chat_inbound | chat_outbound | chat_thread_created | chat_deal_created
   kind            String
   /// Channel/source label: tilda | wordpress | ai_tg | ai_wa | ai_max | gift_bot | system
   channel         String?
