@@ -23,7 +23,9 @@ import {
   TwentyClient,
   normalizePhoneToE164,
   parseTelegramPeerFromLink,
+  phoneFingerprint,
 } from '@voxly/twenty-client';
+import { enqueueTimelineSync } from '@voxly/ai-core';
 import { resolveTwentyOperatorLabel } from '../services/twenty-member-display-names.js';
 import { assertCrmAccessAllowed } from '../services/crm-access.js';
 import { runCrmSaveDedupe } from '../services/crm-deal-dedupe.js';
@@ -4101,6 +4103,29 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           /* ignore */
         }
       }
+
+      // Timeline sync (Phase 5.3) — enqueue chat_outbound
+      const outboundPhone = gramjsPhoneE164 || maxResolvePhone;
+      const phoneFp = outboundPhone
+        ? phoneFingerprint(normalizePhoneToE164(outboundPhone))
+        : null;
+      void enqueueTimelineSync({
+        tenantId,
+        twentyPersonId: target.twentyPersonId || null,
+        phoneFingerprint: phoneFp ?? null,
+        kind: 'chat_outbound',
+        channel: bot.botType,
+        title: `Исходящее (оператор): ${text.slice(0, 80)}${text.length > 80 ? '…' : ''}`,
+        description: text,
+        meta: {
+          conversationId,
+          operatorLabel,
+          botId: bot.id,
+          botType: bot.botType,
+        },
+        conversationId,
+        messageId: message.id,
+      });
 
       return reply.send({
         ok: true,

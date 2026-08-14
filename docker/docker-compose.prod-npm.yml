@@ -76,6 +76,9 @@ services:
   twenty-worker:
     pull_policy: build
 
+  saas-worker:
+    pull_policy: build
+
   saas-api:
     labels: !override
       - "traefik.enable=true"

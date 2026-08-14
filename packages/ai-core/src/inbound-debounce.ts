@@ -11,6 +11,8 @@ export type InboundDebouncer<T> = {
   push: (key: string, item: T) => void;
   pendingCount: (key: string) => number;
   clear: (key?: string) => void;
+  /** Abort the in-flight generation/send if active for this key. */
+  abort: (key: string) => void;
 };
 
 /** Default quiet window after last user message (10s — short pauses still coalesce). */
@@ -19,11 +21,12 @@ export const DEFAULT_INBOUND_DEBOUNCE_MS = 10_000;
 export function createInboundDebouncer<T>(opts: {
   /** Quiet window after last message before flush (default 10s). */
   settleMs?: number;
-  onFlush: (key: string, items: T[]) => void | Promise<void>;
+  onFlush: (key: string, items: T[], signal?: AbortSignal) => void | Promise<void>;
 }): InboundDebouncer<T> {
-  const settleMs = Math.max(500, opts.settleMs ?? DEFAULT_INBOUND_DEBOUNCE_MS);
+  const settleMs = opts.settleMs !== undefined ? Math.max(10, opts.settleMs) : DEFAULT_INBOUND_DEBOUNCE_MS;
   const pending = new Map<string, { items: T[]; timer: ReturnType<typeof setTimeout> }>();
   const inFlight = new Map<string, Promise<void>>();
+  const abortControllers = new Map<string, AbortController>();
   const queuedDuringFlight = new Map<string, T[]>();
 
   const schedule = (key: string, items: T[]) => {
@@ -43,13 +46,21 @@ export function createInboundDebouncer<T>(opts: {
       return;
     }
 
+    const controller = new AbortController();
+    abortControllers.set(key, controller);
+
     const job = (async () => {
       try {
-        await opts.onFlush(key, items);
+        await opts.onFlush(key, items, controller.signal);
       } catch (err) {
-        console.error('[inbound-debounce] onFlush failed', key, err);
+        if (controller.signal.aborted) {
+          console.log('[inbound-debounce] onFlush aborted for key:', key);
+        } else {
+          console.error('[inbound-debounce] onFlush failed', key, err);
+        }
       } finally {
         inFlight.delete(key);
+        abortControllers.delete(key);
         const queued = queuedDuringFlight.get(key);
         queuedDuringFlight.delete(key);
         if (queued?.length) {
@@ -65,6 +76,11 @@ export function createInboundDebouncer<T>(opts: {
   return {
     push(key: string, item: T) {
       if (inFlight.has(key)) {
+        // Abort the in-flight generation since new user message arrived
+        const ac = abortControllers.get(key);
+        if (ac && !ac.signal.aborted) {
+          ac.abort();
+        }
         const q = queuedDuringFlight.get(key) || [];
         queuedDuringFlight.set(key, [...q, item]);
         return;
@@ -79,17 +95,31 @@ export function createInboundDebouncer<T>(opts: {
       const queued = queuedDuringFlight.get(key)?.length ?? 0;
       return pendingCount + queued;
     },
+    abort(key: string) {
+      const ac = abortControllers.get(key);
+      if (ac && !ac.signal.aborted) {
+        ac.abort();
+      }
+    },
     clear(key?: string) {
       if (key) {
         const cur = pending.get(key);
         if (cur) clearTimeout(cur.timer);
         pending.delete(key);
         queuedDuringFlight.delete(key);
+        const ac = abortControllers.get(key);
+        if (ac && !ac.signal.aborted) {
+          ac.abort();
+        }
         return;
       }
       for (const [, cur] of pending) clearTimeout(cur.timer);
       pending.clear();
       queuedDuringFlight.clear();
+      for (const [, ac] of abortControllers) {
+        if (!ac.signal.aborted) ac.abort();
+      }
+      abortControllers.clear();
     },
   };
 }

@@ -99,3 +99,43 @@ describe('hasEnrichedMediaTag / isNearDuplicateReply', () => {
     expect(isNearDuplicateReply(a, 'Совсем другой ответ про фото десерта.')).toBe(false);
   });
 });
+
+describe('createInboundDebouncer abort & debounce timing', () => {
+  it('passes AbortSignal to onFlush and aborts when new push arrives during flush', async () => {
+    let abortedCount = 0;
+    let flushCount = 0;
+    const { createInboundDebouncer } = await import('../src/inbound-debounce.js');
+
+    const debouncer = createInboundDebouncer<string>({
+      settleMs: 50,
+      onFlush: async (key, items, signal) => {
+        flushCount += 1;
+        if (signal?.aborted) {
+          abortedCount += 1;
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 80);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            abortedCount += 1;
+            resolve();
+          });
+        });
+      },
+    });
+
+    debouncer.push('conv-1', 'msg 1');
+    // Wait for settleMs (50ms) to trigger first flush
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Mid-flight: push msg 2 should abort msg 1's flush and schedule a new one
+    debouncer.push('conv-1', 'msg 2');
+
+    // Wait for the aborted flush to finish and the queued one to settle + execute
+    await new Promise((r) => setTimeout(r, 160));
+
+    expect(abortedCount).toBe(1);
+    expect(flushCount).toBe(2);
+  });
+});

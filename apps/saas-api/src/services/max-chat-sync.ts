@@ -5,7 +5,8 @@
  */
 import type { PrismaClient } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
-import { TwentyClient } from '@voxly/twenty-client';
+import { TwentyClient, phoneFingerprint, normalizePhoneToE164 } from '@voxly/twenty-client';
+import { enqueueTimelineSync } from '@voxly/ai-core';
 import { stripOwnerPhone } from './max-phone-guard.js';
 
 /** 0 = all private dialogs. */
@@ -317,6 +318,29 @@ export async function runMaxPrivateChatSync(opts: {
         },
       });
       messagesUpserted += 1;
+
+      // Timeline sync (Phase 5.3) — fire-and-forget
+      if (!m.out) {
+        const phoneFp = d.phone ? phoneFingerprint(normalizePhoneToE164(d.phone)) : null;
+        void enqueueTimelineSync({
+          tenantId,
+          twentyPersonId: conversation.twentyPersonId || null,
+          phoneFingerprint: phoneFp ?? null,
+          kind: 'chat_inbound',
+          channel: 'max_personal',
+          title: `Входящее (MAX): ${content.slice(0, 80)}${content.length > 80 ? '…' : ''}`,
+          description: content,
+          meta: {
+            conversationId: conversation.id,
+            externalMessageId,
+            maxUserId: d.userId || platformUserId,
+            username: d.username,
+            firstName: d.firstName,
+          },
+          conversationId: conversation.id,
+          messageId: externalMessageId,
+        });
+      }
     }
 
     let personId = conversation.twentyPersonId || undefined;

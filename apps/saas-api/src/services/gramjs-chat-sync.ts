@@ -5,7 +5,8 @@
  */
 import type { PrismaClient } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
-import { TwentyClient } from '@voxly/twenty-client';
+import { TwentyClient, phoneFingerprint, normalizePhoneToE164 } from '@voxly/twenty-client';
+import { enqueueTimelineSync } from '@voxly/ai-core';
 
 /** 0 = all private dialogs (paginate until done). */
 export const GRAMJS_CHAT_SYNC_ALL_DIALOGS = 0;
@@ -296,6 +297,29 @@ export async function runGramjsPrivateChatSync(opts: {
         },
       });
       messagesUpserted += 1;
+
+      // Timeline sync (Phase 5.3) — fire-and-forget
+      if (!m.out) {
+        const phoneFp = d.phone ? phoneFingerprint(normalizePhoneToE164(d.phone)) : null;
+        void enqueueTimelineSync({
+          tenantId,
+          twentyPersonId: conversation.twentyPersonId || null,
+          phoneFingerprint: phoneFp ?? null,
+          kind: 'chat_inbound',
+          channel: 'telegram_gramjs',
+          title: `Входящее (личный TG): ${content.slice(0, 80)}${content.length > 80 ? '…' : ''}`,
+          description: content,
+          meta: {
+            conversationId: conversation.id,
+            externalMessageId,
+            telegramId: d.userId,
+            username: d.username,
+            firstName: d.firstName,
+          },
+          conversationId: conversation.id,
+          messageId: externalMessageId,
+        });
+      }
     }
 
     // CRM Person + Opportunity (honor manual suppressDealCreation only).

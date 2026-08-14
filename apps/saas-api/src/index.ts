@@ -81,16 +81,21 @@ export async function buildServer() {
   });
 
   // --- JWT ---
+  const jwtSecret = process.env.JWT_SECRET?.trim();
+  if (process.env.NODE_ENV === 'production' && (!jwtSecret || jwtSecret === 'dev-secret-change-me')) {
+    throw new Error(
+      'FATAL: JWT_SECRET must be set to a secure secret in production (cannot use default dev-secret-change-me).',
+    );
+  }
   await fastify.register(jwt, {
-    secret: process.env.JWT_SECRET || 'dev-secret-change-me',
+    secret: jwtSecret || 'dev-secret-change-me',
     sign: { expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
   });
 
   // --- Rate limiting ---
   await fastify.register(rateLimit, {
-    max: 100,
+    max: 120,
     timeWindow: '1 minute',
-    // Stricter for auth routes
     keyGenerator: (req) => req.ip,
   });
 

@@ -142,7 +142,7 @@ paths_for_service() {
       echo "packages/"
       echo "apps/saas-portal/"
       ;;
-    saas-api)
+    saas-api|saas-worker)
       printf '%s\n' "${ROOT_MANIFESTS[@]}"
       echo "packages/"
       echo "apps/saas-api/"
@@ -231,7 +231,8 @@ compose_services_for() {
   local svc="$1"
   case "$svc" in
     saas-portal) echo "saas-portal" ;;
-    saas-api) echo "saas-api" ;;
+    saas-api) echo "saas-api saas-worker" ;;
+    saas-worker) echo "saas-worker" ;;
     gift-bot-worker) echo "gift-bot-worker" ;;
     manager-bot-service) echo "manager-bot-service" ;;
     platform-bot-service) echo "platform-bot-service" ;;
@@ -242,7 +243,7 @@ compose_services_for() {
     evolution-api) echo "evolution-api" ;;
     twenty) echo "twenty-server twenty-worker" ;;
     compose) echo "" ;; # files only
-    all-apps) echo "saas-api saas-portal gift-bot-worker manager-bot-service platform-bot-service ai-telegram-worker ai-whatsapp-worker twenty-server twenty-worker" ;;
+    all-apps) echo "saas-api saas-worker saas-portal gift-bot-worker manager-bot-service platform-bot-service ai-telegram-worker ai-whatsapp-worker twenty-server twenty-worker" ;;
     *) echo "" ;;
   esac
 }

@@ -596,6 +596,35 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
+  // --- Toggle chat timeline sync (Phase 5.3) ---
+  fastify.put('/tenants/:id/timeline-sync', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({
+      enabled: z.boolean(),
+    }).safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Body must include enabled: boolean' });
+    }
+
+    const tenant = await fastify.prisma.tenant.update({
+      where: { id },
+      data: { timelineSyncEnabled: body.data.enabled },
+      select: { id: true, slug: true, timelineSyncEnabled: true },
+    });
+
+    await fastify.prisma.auditLog.create({
+      data: {
+        tenantId: id,
+        actorUserId: actorUserId(request as any),
+        action: 'timeline_sync_toggle',
+        payload: { timelineSyncEnabled: body.data.enabled },
+      },
+    });
+
+    return reply.send({ ok: true, tenant });
+  });
+
   // --- Manual balance credit ---
   fastify.post('/tenants/:id/credit', async (request, reply) => {
     const { id } = request.params as { id: string };

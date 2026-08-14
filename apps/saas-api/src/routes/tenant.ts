@@ -1,6 +1,7 @@
 // Tenant routes: get tenant info, list members, update settings
 
 import type { FastifyPluginAsync } from 'fastify';
+import IORedis from 'ioredis';
 import bcrypt from 'bcryptjs';
 import { nanoid } from 'nanoid';
 import { evaluateCrmAccess, getAiTgExtraSlots, PRICING, PRODUCT_CODES } from '@voxly/shared';
@@ -8,6 +9,13 @@ import { decrypt, encrypt } from '@voxly/crypto';
 import { resolveTwentyPasswordForMember, provisionTwentyMemberForTenant } from '../services/twenty-member-provision.js';
 import { assertCrmAccessAllowed, loadCrmAccessForTenant } from '../services/crm-access.js';
 import { z } from 'zod';
+
+const TENANT_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const tenantRedis = new IORedis(TENANT_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
+const SUMMARY_CACHE_TTL_SEC = 5;
 
 function crmIsTrial(tenantStatus: string, crmSub: { periodMonths: number } | null): boolean {
   // Paid CRM sub (periodMonths > 0) is never trial — ignore stale tenant.status.
@@ -119,6 +127,17 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
   // --- Dashboard overview (stats for /dashboard) ---
   fastify.get('/dashboard', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const { tenantId } = (request as any).user;
+    const cacheKey = `portal:dashboard:${tenantId}`;
+
+    try {
+      const cached = await tenantRedis.get(cacheKey);
+      if (cached) {
+        return reply.header('X-Cache', 'HIT').send(JSON.parse(cached));
+      }
+    } catch {
+      /* fallback on Redis error */
+    }
+
     const prisma = fastify.prisma;
     const now = new Date();
     const since7 = new Date(now);
@@ -287,7 +306,7 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
       where: { tenantId, twentyOpportunityId: { not: null } },
     });
 
-    return reply.send({
+    const responseData = {
       tenant: {
         id: tenant.id,
         slug: tenant.slug,
@@ -366,7 +385,15 @@ export const tenantRoutes: FastifyPluginAsync = async (fastify) => {
         displayName: b.displayName,
         status: b.status,
       })),
-    });
+    };
+
+    try {
+      await tenantRedis.set(cacheKey, JSON.stringify(responseData), 'EX', SUMMARY_CACHE_TTL_SEC);
+    } catch {
+      /* ignore cache write fail */
+    }
+
+    return reply.header('X-Cache', 'MISS').send(responseData);
   });
 
   // --- CRM portal settings (single payload for /dashboard/crm) ---

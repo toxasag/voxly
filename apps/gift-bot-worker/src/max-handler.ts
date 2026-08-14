@@ -8,6 +8,7 @@ import { prisma } from '@voxly/db';
 import { decrypt } from '@voxly/crypto';
 import { fireGoal } from '@voxly/analytics-dispatchers';
 import { TwentyClient } from '@voxly/twenty-client';
+import { enqueueTimelineSync } from '@voxly/ai-core';
 import {
   DEFAULT_GIFT_FUNNEL,
   giftPromoStartPayload,
@@ -351,12 +352,31 @@ async function handleBotStarted(
     username,
     firstName,
   );
+  const startContent = payload ? `/start ${payload}` : '/start';
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
-      content: payload ? `/start ${payload}` : '/start',
+      content: startContent,
     },
+  });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  void enqueueTimelineSync({
+    tenantId,
+    twentyPersonId: crm.personId || null,
+    phoneFingerprint: null,
+    kind: 'chat_inbound',
+    channel: 'gift_max',
+    title: `Входящее (MAX-бот): ${startContent.slice(0, 80)}${startContent.length > 80 ? '…' : ''}`,
+    description: startContent,
+    meta: {
+      conversationId: conversation.id,
+      maxUserId: peerId,
+      username,
+      firstName,
+    },
+    conversationId: conversation.id,
   });
 
   const welcome =
@@ -397,15 +417,37 @@ async function handleMessageCreated(
     username,
     firstName,
   );
+  const finalMsgContent = String(text || '[сообщение]').slice(0, 8000);
+  const extMid = message.body?.mid || message.id
+    ? `max:${message.body?.mid || message.id}`
+    : undefined;
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
-      content: String(text || '[сообщение]').slice(0, 8000),
-      externalMessageId: message.body?.mid || message.id
-        ? `max:${message.body?.mid || message.id}`
-        : undefined,
+      content: finalMsgContent,
+      externalMessageId: extMid,
     },
+  });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  void enqueueTimelineSync({
+    tenantId,
+    twentyPersonId: conversation.twentyPersonId || null,
+    phoneFingerprint: null,
+    kind: 'chat_inbound',
+    channel: 'gift_max',
+    title: `Входящее (MAX-бот): ${finalMsgContent.slice(0, 80)}${finalMsgContent.length > 80 ? '…' : ''}`,
+    description: finalMsgContent,
+    meta: {
+      conversationId: conversation.id,
+      externalMessageId: extMid,
+      maxUserId: peerId,
+      username,
+      firstName,
+    },
+    conversationId: conversation.id,
+    messageId: extMid,
   });
   await prisma.giftSubscriber.updateMany({
     where: { tenantId, botInstanceId: botId, telegramId: peerId },

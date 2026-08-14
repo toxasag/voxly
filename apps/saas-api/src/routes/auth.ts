@@ -1,6 +1,7 @@
 // Auth routes: register, login, invite members
 
 import type { FastifyPluginAsync } from 'fastify';
+import IORedis from 'ioredis';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
@@ -16,6 +17,13 @@ import {
   verifyOtpChallenge,
 } from '../services/auth-otp.js';
 import { platformBotUsername } from '../services/platform-telegram.js';
+
+const AUTH_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const authRedis = new IORedis(AUTH_REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
+const ME_CACHE_TTL_SEC = 5;
 
 function buildCrmPublicUrl(crmSubdomain: string | null | undefined, slug: string): string {
   const voxlyDomain = process.env.VOXLY_DOMAIN?.trim() || 'getvoxly.ru';
@@ -48,8 +56,18 @@ const inviteSchema = z.object({
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
+  // Stricter rate-limiting for auth endpoints (15 req/min per IP)
+  const authRateLimit = {
+    config: {
+      rateLimit: {
+        max: 15,
+        timeWindow: '1 minute',
+      },
+    },
+  };
+
   // --- Register step 1: pending OTP session (no user yet) ---
-  fastify.post('/register/start', async (request, reply) => {
+  fastify.post('/register/start', authRateLimit, async (request, reply) => {
     const parsed = registerSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
@@ -84,7 +102,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // --- Register step 2: confirm OTP → create tenant + provision ---
-  fastify.post('/register/confirm', async (request, reply) => {
+  fastify.post('/register/confirm', authRateLimit, async (request, reply) => {
     const parsed = otpConfirmSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
@@ -262,7 +280,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // --- Login: superadmin JWT; others need Telegram OTP ---
-  fastify.post('/login', async (request, reply) => {
+  fastify.post('/login', authRateLimit, async (request, reply) => {
     const parsed = loginSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid credentials' });
@@ -324,7 +342,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 
-  fastify.post('/login/confirm', async (request, reply) => {
+  fastify.post('/login/confirm', authRateLimit, async (request, reply) => {
     const parsed = otpConfirmSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: parsed.error.flatten() });
@@ -397,6 +415,17 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // --- Get current user ---
   fastify.get('/me', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const userId = (request as any).user.sub;
+    const cacheKey = `portal:me:${userId}`;
+
+    try {
+      const cached = await authRedis.get(cacheKey);
+      if (cached) {
+        return reply.header('X-Cache', 'HIT').send(JSON.parse(cached));
+      }
+    } catch {
+      /* fallback to DB on Redis error */
+    }
+
     const prisma = fastify.prisma;
 
     const user = await prisma.user.findUnique({
@@ -428,7 +457,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       tenant?.subscriptions.find((s) => s.status === 'active') ?? tenant?.subscriptions[0] ?? null;
 
     // Flat shape expected by the portal dashboard
-    return reply.send({
+    const responseData = {
       id: user.id,
       email: user.email,
       firstName: user.firstName,
@@ -477,7 +506,15 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         status: m.tenant.status,
         role: m.role,
       })),
-    });
+    };
+
+    try {
+      await authRedis.set(cacheKey, JSON.stringify(responseData), 'EX', ME_CACHE_TTL_SEC);
+    } catch {
+      /* ignore cache write fail */
+    }
+
+    return reply.header('X-Cache', 'MISS').send(responseData);
   });
 
   // --- Invite member to tenant ---

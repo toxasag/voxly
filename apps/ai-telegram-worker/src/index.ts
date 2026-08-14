@@ -106,13 +106,13 @@ type TgAiPending = {
 
 const inboundAiDebouncer = createInboundDebouncer<TgAiPending>({
   settleMs: AI_INBOUND_DEBOUNCE_MS,
-  onFlush: async (_key, items) => {
+  onFlush: async (_key, items, signal) => {
     const last = items[items.length - 1];
     if (!last) return;
     const messageIds = items
       .map((i) => i.messageId)
       .filter((id): id is string => Boolean(id));
-    await flushTelegramAiReply(last, messageIds);
+    await flushTelegramAiReply(last, messageIds, signal);
   },
 });
 
@@ -1057,7 +1057,11 @@ async function handleInboundMessage(
   });
 }
 
-async function flushTelegramAiReply(pending: TgAiPending, messageIds: string[] = []) {
+async function flushTelegramAiReply(
+  pending: TgAiPending,
+  messageIds: string[] = [],
+  signal?: AbortSignal,
+) {
   const {
     botApi,
     tenantId,
@@ -1141,13 +1145,22 @@ async function flushTelegramAiReply(pending: TgAiPending, messageIds: string[] =
     await sendChatAction(botApi, chatId, 'typing', businessConnectionId);
 
     const sendStartedAt = new Date();
+    if (signal?.aborted) {
+      console.log(`[ai-telegram] aborted before generate conv=${conversation.id}`);
+      return;
+    }
     const { bubbles, chargeResult } = await generateAiBubbles({
       tenantId,
       conversationId: conversation.id,
       displayText,
       channel: AI_USAGE_CHANNELS.TELEGRAM_BUSINESS,
       persist: false,
+      signal,
     });
+    if (signal?.aborted) {
+      console.log(`[ai-telegram] aborted after generate conv=${conversation.id}`);
+      return;
+    }
 
     const sendResult = await sendHumanLike({
       botApi,
@@ -1156,6 +1169,7 @@ async function flushTelegramAiReply(pending: TgAiPending, messageIds: string[] =
       businessConnectionId,
       conversationId: conversation.id,
       sendStartedAt,
+      signal,
     });
 
     if (sendResult.aborted) {
@@ -1221,6 +1235,7 @@ async function generateAiBubbles(opts: {
   channel: AiUsageChannel;
   /** When false, caller stores the message after Telegram delivery (Business send). */
   persist?: boolean;
+  signal?: AbortSignal;
 }): Promise<{
   bubbles: string[];
   chargeResult: Awaited<ReturnType<typeof chargeAiUsage>> & {
@@ -1229,7 +1244,7 @@ async function generateAiBubbles(opts: {
     tokensCharged: number;
   };
 }> {
-  const { tenantId, conversationId, displayText } = opts;
+  const { tenantId, conversationId, displayText, signal } = opts;
   const persist = opts.persist !== false;
   const aiConfig = await getTenantAiConfig(tenantId);
   const assigned = await resolveAssignedAgent(conversationId);
@@ -1285,20 +1300,27 @@ async function generateAiBubbles(opts: {
   const model = agentModel || aiConfig.model || AI_MODEL_DEFAULTS.chat;
   const callModel = async (msgs: OpenAI.Chat.ChatCompletionMessageParam[]) => {
     try {
-      return await openai.chat.completions.create({
-        model,
-        messages: msgs,
-        temperature: aiConfig.temperature ?? 0.7,
-        max_tokens: aiConfig.maxTokens ?? 1000,
-        response_format: { type: 'json_object' },
-      });
-    } catch {
-      return await openai.chat.completions.create({
-        model,
-        messages: msgs,
-        temperature: aiConfig.temperature ?? 0.7,
-        max_tokens: aiConfig.maxTokens ?? 1000,
-      });
+      return await openai.chat.completions.create(
+        {
+          model,
+          messages: msgs,
+          temperature: aiConfig.temperature ?? 0.7,
+          max_tokens: aiConfig.maxTokens ?? 1000,
+          response_format: { type: 'json_object' },
+        },
+        signal ? { signal } : undefined,
+      );
+    } catch (err: any) {
+      if (signal?.aborted || err?.name === 'AbortError') throw err;
+      return await openai.chat.completions.create(
+        {
+          model,
+          messages: msgs,
+          temperature: aiConfig.temperature ?? 0.7,
+          max_tokens: aiConfig.maxTokens ?? 1000,
+        },
+        signal ? { signal } : undefined,
+      );
     }
   };
   let completion = await callModel(messages);
@@ -3019,6 +3041,7 @@ async function sendHumanLike(opts: {
   businessConnectionId?: string;
   conversationId?: string;
   sendStartedAt?: Date;
+  signal?: AbortSignal;
 }): Promise<{ sent: number; failed: number; lastError?: string; aborted?: boolean }> {
   const parts = opts.bubbles.filter((b) => b && b.trim()).slice(0, 4);
   if (!parts.length) return { sent: 0, failed: 0 };
@@ -3028,9 +3051,10 @@ async function sendHumanLike(opts: {
   let lastError: string | undefined;
   for (let i = 0; i < parts.length; i += 1) {
     if (
-      opts.conversationId &&
-      opts.sendStartedAt &&
-      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+      opts.signal?.aborted ||
+      (opts.conversationId &&
+        opts.sendStartedAt &&
+        (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt)))
     ) {
       return { sent, failed, lastError, aborted: true };
     }
@@ -3038,9 +3062,10 @@ async function sendHumanLike(opts: {
     await sendChatAction(opts.botApi, opts.chatId, 'typing', opts.businessConnectionId);
     await sleep(typingDelayMs(text));
     if (
-      opts.conversationId &&
-      opts.sendStartedAt &&
-      (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+      opts.signal?.aborted ||
+      (opts.conversationId &&
+        opts.sendStartedAt &&
+        (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt)))
     ) {
       return { sent, failed, lastError, aborted: true };
     }

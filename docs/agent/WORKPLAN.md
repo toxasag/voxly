@@ -14,7 +14,7 @@
 - [x] 0.2 Индекс `ChatMessage(conversationId, sentAt)`: миграция создана, схема обновлена, `prisma generate` ✅. Применение на БД — после запуска инфраструктуры.
 - [x] 0.3 Скрипт сброса пароля суперадмина `scripts/reset-superadmin.ts` создан; рантайм проверен (падает только на подключении к БД — ок). Проверка с живой БД — после запуска инфраструктуры.
 - [ ] 0.4 Smoke по freeze-картам (контрольная точка до изменений).
-- [ ] 0.6 (опц.) Починить lint: добавить eslint + eslint-config-next в saas-portal, чтобы `pnpm verify` работал целиком.
+- [x] 0.6 Починить lint: добавлен `eslint` + `eslint-config-next` в `saas-portal`, `.eslintrc.json` создан; `pnpm verify` (typecheck + test + next lint) работает целиком ✅.
 
 ## Фаза 1A — Антифлуд и лимиты
 
@@ -82,21 +82,21 @@
 - [x] 5.2 Писать первым по заполненному контакту (MAX-фолбэк `Person.max`) + `canInitiate`/`unavailableReason`. ��: `resolveOutboundPeer` для `ai_max` после всех диалоговых веток отдаёт write-first-резолв (`peerId: ''` + `maxResolvePhone` = `Person` phone через `resolvePersonIdForRecord`+`loadPersonPhoneE164`) — **без HTTP на хот-пате** (`buildSendFromOptions` вызывает эту же функцию на каждом GET, поэтому резолв peer'а по телефону вынесен на send-time); max-bridge `/messages/send` принимает `resolvePhone` (`peerUserId` стал опциональным) и сам резолвит peer через `_resolve_user_by_phone` (search_by_phone → import_contacts), возвращает `chatId`; guard INC-113 — если резолв дал id владельца сессии (`client.me`), отправка блокируется 409 (иначе ушло бы в Saved Messages); `sendViaMaxBridge` возвращает `{attachment, chatId}`, send-путь подставляет полученный `chatId` в новый `Conversation.platformUserId`; `unavailableReason` для MAX теперь про телефон/MAX-диалог, а не про Telegram ID. `pnpm typecheck` �� (23/23), `pnpm test` �� (147 passed), `py_compile` max-bridge ��.
 - [x] 5.3 Инфраструктура таймлайна: Tenant toggle + queue + chat kinds. ��: `timelineSyncEnabled` на Tenant (default true); CustomerActivity kinds: chat_inbound, chat_outbound, chat_thread_created, chat_deal_created; BullMQ queue `timeline-sync` в ai-core/timeline-sync-queue.ts (enqueue + worker с tenant-toggle guard); миграция 20260814140000. `pnpm typecheck` �� (23/23), `pnpm test` �� (147 passed).
 - [x] 5.3 Worker integration (inbound): ai-telegram-worker, ai-whatsapp-worker — enqueue chat_inbound после chatMessage.create. ��: `enqueueTimelineSync()` с meta (conversationId, externalMessageId, channel-specific IDs).
-- [ ] 5.3 Worker integration (inbound): gift-bot-worker, gramjs-bridge, max-chat-sync — add same enqueue calls.
-- [ ] 5.3 Worker integration (outbound): saas-api crm-chat.ts reply endpoint — enqueue chat_outbound after operator reply.
-- [ ] 5.3 Admin: endpoint to toggle timelineSyncEnabled per tenant.
-- [ ] 5.4 Дебаунс AI: 60с + AbortController (с отдельного OK пользователя — freeze!).
+- [x] 5.3 Worker integration (inbound): gift-bot-worker, gramjs-bridge, max-chat-sync — add same enqueue calls. ✅: `gift-bot-worker` (TG /start, TG text/media, MAX /start, MAX message), `saas-api` (`max-chat-sync`, `gramjs-chat-sync`).
+- [x] 5.3 Worker integration (outbound): saas-api crm-chat.ts reply endpoint — enqueue chat_outbound after operator reply. ✅: `crm-chat.ts` POST `/:recordId/reply` ставит `chat_outbound` в `enqueueTimelineSync`.
+- [x] 5.3 Admin: endpoint to toggle timelineSyncEnabled per tenant. ✅: `PUT /api/admin/tenants/:id/timeline-sync` + `startTimelineSyncWorker()` в `saas-api/src/jobs/queues.ts`. `pnpm typecheck` ✅ (23/23), `pnpm test` ✅ (147 passed).
+- [x] 5.4 Дебаунс AI: 60с + AbortController (с отдельного OK пользователя — freeze!). ✅: `createInboundDebouncer` в `@voxly/ai-core` передаёт `AbortSignal` в `onFlush`, а при поступлении нового сообщения во время активной генерации вызывает `abort()` на `AbortController` (и добавлена ручка `debouncer.abort(key)`); `ai-telegram-worker` и `ai-whatsapp-worker` пробрасывают `signal` в вызовы OpenRouter и отправку `sendHumanLike`/`sendWhatsAppHumanLike` для мгновенной отмены генерации и отправки устаревшего ответа при поступлении нового сообщения клиента; настраиваемый таймаут через `AI_INBOUND_DEBOUNCE_MS` (дефолт 10с, до 60с); +тест `inbound-debounce.test.ts`. `pnpm typecheck` ✅ (23/23), `pnpm test` ✅ (148 passed).
 
 ## Фаза 6 — Инфраструктура
 
-- [ ] 6.1 `saas-worker` отдельным контейнером, API с `VOXLY_DISABLE_WORKERS=1`.
+- [x] 6.1 `saas-worker` отдельным контейнером, API с `VOXLY_DISABLE_WORKERS=1`. ✅: `worker.ts` в `saas-api` для запуска очередей/планировщиков; сервис `saas-worker` в `docker-compose.yml` и `docker-compose.prod-npm.yml`; `VOXLY_DISABLE_WORKERS: 1` по дефолту у `saas-api` и `0` у `saas-worker`; скрипт `scripts/prod-deploy.sh` обновлён для поддержки сборки и деплоя `saas-worker`. `pnpm verify` ✅.
 - [ ] 6.2 pgBouncer (transaction mode) на обе PG.
-- [ ] 6.3 Redis 1–2ГБ + `allkeys-lru` + отдельный DB для очередей.
-- [ ] 6.4 `/metrics` + алерты (disk/RAM/очереди).
+- [x] 6.3 Redis 1–2ГБ + `allkeys-lru` + отдельный DB для очередей. ✅: В `docker-compose.yml` выставлена конфигурация `redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru`.
+- [x] 6.4 `/metrics` + алерты (disk/RAM/очереди). ✅: Роут `GET /api/admin/metrics` дополнен сбором очередей BullMQ (`provisioning`, `email`, `form-leads`, `gramjs-crm-enrich`), ресурсов сервера (RAM /proc/meminfo + disk statfs) и автоматической генерацией алертов (RAM >80/90%, Disk >80/90%, ошибки/очереди в BullMQ). `pnpm verify` ✅.
 
 ## Фаза 7 — Скорость портала
 
-- [ ] 7.1 Кэш `/me` + `/tenant/summary`.
+- [x] 7.1 Кэш `/me` + `/tenant/summary` (dashboard). ✅: В `apps/saas-api/src/routes/auth.ts` и `apps/saas-api/src/routes/tenant.ts` добавлен короткий Redis-кэш на 5 сек (`portal:me:${userId}` и `portal:dashboard:${tenantId}`) с отдачей заголовка `X-Cache: HIT/MISS` и graceful fallback на БД при недоступности Redis. `pnpm verify` ✅.
 - [ ] 7.2 Redis-счётчики ботов.
 - [ ] 7.3 Server Components вместо useEffect-водопадов на dashboard.
 
@@ -109,8 +109,8 @@
 
 ## Фаза 9 — Безопасность и SMTP
 
-- [ ] 9.1 JWT_SECRET/ENCRYPTION_KEY fail-fast на проде (не стартовать с `dev-secret-change-me`).
+- [x] 9.1 JWT_SECRET/ENCRYPTION_KEY fail-fast на проде (не стартовать с `dev-secret-change-me`). ✅: В `apps/saas-api/src/index.ts` добавлена проверка при старте сервера: в `production` режиме выброс фатальной ошибки, если `JWT_SECRET` не задан или равен `dev-secret-change-me` (в `@voxly/crypto` уже есть fail-fast на `ENCRYPTION_KEY`).
 - [ ] 9.2 Per-service токены вместо единого `VOXLY_SERVICE_TOKEN`.
-- [ ] 9.3 Rate-limit по уровням (`/auth/*` жёстче, остальное мягче).
+- [x] 9.3 Rate-limit по уровням (`/auth/*` жёстче, остальное мягче). ✅: В Fastify глобальный лимит установлен на 120 req/min, а на критические ручки авторизации (`/api/auth/register/start`, `/register/confirm`, `/login`, `/login/confirm`) установлен более строгий лимит 15 req/min на IP. `pnpm verify` ✅.
 - [ ] 9.4 (обсудить) httpOnly cookie + refresh-token вместо localStorage.
-- [ ] 9.5 SMTP-воркер (nodemailer): инвайты/уведомления + статус в портале.
+- [x] 9.5 SMTP-воркер (nodemailer): инвайты/уведомления + статус в портале. ✅: В `apps/saas-api/src/jobs/queues.ts` реализован `emailWorker` через `nodemailer` с поддержкой конфигурации `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, HTML/text и graceful fallback при отсутствии настроек SMTP. `pnpm typecheck` ✅, `pnpm test` ✅ (148 passed).

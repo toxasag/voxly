@@ -53,6 +53,7 @@ import {
   resolveProviderCostRub,
   DOC_MEDIA_MAX_BYTES,
   type OpenRouterUsageLike,
+  enqueueTimelineSync,
 } from '@voxly/ai-core';
 
 const PORT = 3004;
@@ -618,12 +619,31 @@ async function handleStart(
   });
   await invalidateCrmThreadCache(connection, tenantId, [crm.personId, crm.opportunityId]);
   await invalidateCrmUnreadCache(connection, tenantId);
+  const textContent = update.message.text || '/start';
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
-      content: update.message.text || '/start',
+      content: textContent,
     },
+  });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  void enqueueTimelineSync({
+    tenantId,
+    twentyPersonId: crm.personId || null,
+    phoneFingerprint: null,
+    kind: 'chat_inbound',
+    channel: 'gift_bot',
+    title: `Входящее (бот): ${textContent.slice(0, 80)}${textContent.length > 80 ? '…' : ''}`,
+    description: textContent,
+    meta: {
+      conversationId: conversation.id,
+      telegramId,
+      username,
+      firstName,
+    },
+    conversationId: conversation.id,
   });
   const sendCtx = { tenantId, botId, telegramId };
   await sendStartWithSubscribeButtons(botApi, chatId, funnel, campaign, sendCtx);
@@ -2481,19 +2501,41 @@ async function storeInboundMessage(
     update.message.from.username,
     update.message.from.first_name,
   );
+  const finalInboundText = text || attachmentPlaceholder(attachments[0]);
+  const extMsgId =
+    update.message.message_id != null ? String(update.message.message_id) : undefined;
   await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'user',
-      content: text || attachmentPlaceholder(attachments[0]),
+      content: finalInboundText,
       attachments: attachments.length ? attachments : undefined,
-      externalMessageId:
-        update.message.message_id != null ? String(update.message.message_id) : undefined,
+      externalMessageId: extMsgId,
     },
   });
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: { updatedAt: new Date() },
+  });
+
+  // Timeline sync (Phase 5.3) — fire-and-forget via queue
+  void enqueueTimelineSync({
+    tenantId,
+    twentyPersonId: conversation.twentyPersonId || null,
+    phoneFingerprint: null,
+    kind: 'chat_inbound',
+    channel: 'gift_bot',
+    title: `Входящее (бот): ${finalInboundText.slice(0, 80)}${finalInboundText.length > 80 ? '…' : ''}`,
+    description: finalInboundText,
+    meta: {
+      conversationId: conversation.id,
+      externalMessageId: extMsgId,
+      telegramId,
+      username: update.message.from.username,
+      firstName: update.message.from.first_name,
+    },
+    conversationId: conversation.id,
+    messageId: extMsgId,
   });
 
   // Mirror into Twenty Person note (ChatMessage custom object not installed yet)

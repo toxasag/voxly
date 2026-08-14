@@ -81,7 +81,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -200,6 +200,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      VOXLY_DISABLE_WORKERS: ${VOXLY_DISABLE_WORKERS:-1}
       DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       TWENTY_API_URL: http://twenty-server:3000/graphql
@@ -245,6 +246,62 @@ services:
       # - "traefik.http.routers.saas-api.tls.certresolver=le"
       - "traefik.http.routers.saas-api.service=saas-api"
       - "traefik.http.services.saas-api.loadbalancer.server.port=3002"
+    networks:
+      - voxly-net
+
+  # --- SaaS Background Worker (BullMQ consumers + schedulers) ---
+  saas-worker:
+    build:
+      context: ..
+      dockerfile: apps/saas-api/Dockerfile
+    restart: unless-stopped
+    command: ["node", "apps/saas-api/dist/worker.js"]
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+      postgres-twenty:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      VOXLY_DISABLE_WORKERS: "0"
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      REDIS_URL: redis://redis:6379
+      TWENTY_API_URL: http://twenty-server:3000/graphql
+      TWENTY_API_KEY: ${TWENTY_API_KEY}
+      TWENTY_SERVER_URL: ${TWENTY_SERVER_URL:-https://app.getvoxly.ru}
+      TWENTY_DATABASE_URL: postgresql://twenty:${POSTGRES_TWENTY_PASSWORD:-twenty_pass}@postgres-twenty:5432/twenty
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ROBOKASSA_LOGIN: ${ROBOKASSA_LOGIN}
+      ROBOKASSA_PASSWORD1: ${ROBOKASSA_PASSWORD1}
+      ROBOKASSA_PASSWORD2: ${ROBOKASSA_PASSWORD2}
+      ROBOKASSA_IS_TEST: ${ROBOKASSA_IS_TEST:-1}
+      ROBOKASSA_HASH_ALG: ${ROBOKASSA_HASH_ALG:-sha256}
+      TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
+      TELEGRAM_MANAGER_BOT_USERNAME: ${TELEGRAM_MANAGER_BOT_USERNAME:-VoxlyGiftbot}
+      PLATFORM_BOT_TOKEN: ${PLATFORM_BOT_TOKEN:-}
+      PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:-GetVoxlybot}
+      VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
+      AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      VOXLY_CHAT_API_URL: ${VOXLY_CHAT_API_URL:-http://saas-api:3002}
+      VOXLY_CRM_CHAT_TARBALL: ${VOXLY_CRM_CHAT_TARBALL:-/voxly/assets/voxly-crm-chat.tgz}
+      GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
+      MAX_BRIDGE_URL: ${MAX_BRIDGE_URL:-http://max-bridge:3010}
+      AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      USD_RUB_RATE: ${USD_RUB_RATE:-90}
+      AI_KNOWLEDGE_DIR: /voxly/data/ai-knowledge
+    volumes:
+      - ai-knowledge-data:/voxly/data/ai-knowledge
     networks:
       - voxly-net
 

@@ -129,9 +129,9 @@ type WaAiPending = {
 
 const inboundAiDebouncer = createInboundDebouncer<WaAiPending>({
   settleMs: AI_INBOUND_DEBOUNCE_MS,
-  onFlush: async (_key, items) => {
+  onFlush: async (_key, items, signal) => {
     if (!items.length) return;
-    await flushWhatsAppAiReply(items);
+    await flushWhatsAppAiReply(items, signal);
   },
 });
 
@@ -3668,16 +3668,17 @@ async function sendWhatsAppHumanLike(
   instanceName: string,
   to: string,
   bubbles: string[],
-  opts?: { conversationId?: string; sendStartedAt?: Date },
+  opts?: { conversationId?: string; sendStartedAt?: Date; signal?: AbortSignal },
 ): Promise<{ aborted?: boolean; sent: number }> {
   const parts = bubbles.map((b) => b.trim()).filter(Boolean).slice(0, 4);
   let sent = 0;
   try {
     for (let i = 0; i < parts.length; i += 1) {
       if (
-        opts?.conversationId &&
-        opts.sendStartedAt &&
-        (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+        opts?.signal?.aborted ||
+        (opts?.conversationId &&
+          opts.sendStartedAt &&
+          (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt)))
       ) {
         await clearWhatsAppTyping(instanceName, to);
         return { aborted: true, sent };
@@ -3693,9 +3694,10 @@ async function sendWhatsAppHumanLike(
       sent += 1;
       if (i < parts.length - 1) {
         if (
-          opts?.conversationId &&
-          opts.sendStartedAt &&
-          (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt))
+          opts?.signal?.aborted ||
+          (opts?.conversationId &&
+            opts.sendStartedAt &&
+            (await hasNewerUserMessage(opts.conversationId, opts.sendStartedAt)))
         ) {
           await clearWhatsAppTyping(instanceName, to);
           return { aborted: true, sent };
@@ -4826,7 +4828,7 @@ async function hasNewerUserMessage(conversationId: string, since: Date): Promise
   return n > 0;
 }
 
-async function flushWhatsAppAiReply(items: WaAiPending[]) {
+async function flushWhatsAppAiReply(items: WaAiPending[], signal?: AbortSignal) {
   const last = items[items.length - 1];
   if (!last) return;
   const { instanceName, from, conversationId, tenantId, botId, addonId } = last;
@@ -4930,20 +4932,27 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
 
   const callModel = async (msgs: OpenAI.Chat.ChatCompletionMessageParam[]) => {
     try {
-      return await openai.chat.completions.create({
-        model,
-        messages: msgs,
-        temperature: 0.7,
-        max_tokens: 1000,
-        response_format: { type: 'json_object' },
-      });
-    } catch {
-      return await openai.chat.completions.create({
-        model,
-        messages: msgs,
-        temperature: 0.7,
-        max_tokens: 1000,
-      });
+      return await openai.chat.completions.create(
+        {
+          model,
+          messages: msgs,
+          temperature: 0.7,
+          max_tokens: 1000,
+          response_format: { type: 'json_object' },
+        },
+        signal ? { signal } : undefined,
+      );
+    } catch (err: any) {
+      if (signal?.aborted || err?.name === 'AbortError') throw err;
+      return await openai.chat.completions.create(
+        {
+          model,
+          messages: msgs,
+          temperature: 0.7,
+          max_tokens: 1000,
+        },
+        signal ? { signal } : undefined,
+      );
     }
   };
 
@@ -4954,14 +4963,20 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     await markWhatsAppRead(instanceName, from, messageIds, preferredJid);
     await sendWhatsAppTyping(instanceName, from, 4000);
     typingStarted = true;
-    if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+    if (
+      signal?.aborted ||
+      (await hasNewerUserMessage(conversationId, sendStartedAt))
+    ) {
       console.log(
         `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound before OpenRouter`,
       );
       return;
     }
     let completion = await callModel(messages);
-    if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+    if (
+      signal?.aborted ||
+      (await hasNewerUserMessage(conversationId, sendStartedAt))
+    ) {
       console.log(
         `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound after OpenRouter`,
       );
@@ -4981,7 +4996,10 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
         { role: 'assistant', content: raw },
         { role: 'user', content: MEDIA_REFUSAL_RETRY_USER },
       ]);
-      if (await hasNewerUserMessage(conversationId, sendStartedAt)) {
+      if (
+        signal?.aborted ||
+        (await hasNewerUserMessage(conversationId, sendStartedAt))
+      ) {
         console.log(
           `[ai-whatsapp] skip flush conv=${conversationId} — newer inbound after refusal retry`,
         );
@@ -5030,6 +5048,7 @@ async function flushWhatsAppAiReply(items: WaAiPending[]) {
     const sendResult = await sendWhatsAppHumanLike(instanceName, from, bubbles, {
       conversationId,
       sendStartedAt,
+      signal,
     });
     typingStarted = false; // humanLike clears presence in finally
 

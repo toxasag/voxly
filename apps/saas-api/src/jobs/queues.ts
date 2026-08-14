@@ -17,7 +17,7 @@ import { syncOwnerProfileFromControlDb } from '../services/twenty-owner-profile-
 import { processFormLead } from '../services/form-lead-process.js';
 import { runTelegramCrmEnrich } from '../services/telegram-crm-enrich.js';
 import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
-import { startAiUsageWorker } from '@voxly/ai-core';
+import { startAiUsageWorker, startTimelineSyncWorker } from '@voxly/ai-core';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 /** Integration tests import the API without starting BullMQ workers. */
@@ -274,16 +274,42 @@ provisioningWorker?.on('failed', (job, err) => {
 });
 
 // =====================================
-// Worker: Send emails
+// Worker: Send emails (Phase 9.5)
 // =====================================
 export const emailWorker = WORKERS_ENABLED
   ? new Worker<EmailJobData>(
       'email',
       async (job) => {
-        const { to, subject, body } = job.data;
-        // TODO: Integrate with SMTP (nodemailer)
-        console.log(`[email] To: ${to}, Subject: ${subject}`);
-        // Placeholder: in production use nodemailer.sendMail()
+        const { to, subject, body, isHtml } = job.data;
+        const smtpHost = process.env.SMTP_HOST?.trim();
+        const smtpUser = process.env.SMTP_USER?.trim();
+        const smtpPass = process.env.SMTP_PASS?.trim();
+        const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10);
+
+        if (!smtpHost || !smtpUser || !smtpPass) {
+          console.log(`[email] (SMTP not configured, skip real send) To: ${to}, Subject: ${subject}`);
+          return;
+        }
+
+        const nodemailer = (await import('nodemailer')).default;
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: {
+            user: smtpUser,
+            pass: smtpPass,
+          },
+        });
+
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || `"Voxly" <${smtpUser}>`,
+          to,
+          subject,
+          [isHtml ? 'html' : 'text']: body,
+        });
+
+        console.log(`[email] Sent successfully to ${to}, Subject: ${subject}`);
       },
       { connection, concurrency: 5 },
     )
@@ -422,4 +448,10 @@ gramjsCrmEnrichWorker?.on('failed', (job, err) => {
 // `enqueueAiUsageCharge` (idempotent on `usageChargeKey`); retries transient DB errors.
 // =====================================
 export const aiUsageWorker = WORKERS_ENABLED ? startAiUsageWorker() : null;
+
+// =====================================
+// Worker: durable timeline sync (Phase 5.3)
+// Enqueues CustomerActivity rows for inbound/outbound chat messages and deals.
+// =====================================
+export const timelineSyncWorker = WORKERS_ENABLED ? startTimelineSyncWorker() : null;
 

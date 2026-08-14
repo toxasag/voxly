@@ -1,9 +1,61 @@
 import type { FastifyPluginAsync } from 'fastify';
 import IORedis from 'ioredis';
 import { prisma } from '@voxly/db';
+import {
+  provisioningQueue,
+  emailQueue,
+  formLeadQueue,
+  gramjsCrmEnrichQueue,
+} from '../jobs/queues.js';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const metricsRedis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: true });
+
+async function getQueueCounts(queue: any): Promise<{ waiting: number; active: number; failed: number; delayed: number }> {
+  try {
+    const counts = await queue.getJobCounts('waiting', 'active', 'failed', 'delayed');
+    return {
+      waiting: counts.waiting || 0,
+      active: counts.active || 0,
+      failed: counts.failed || 0,
+      delayed: counts.delayed || 0,
+    };
+  } catch {
+    return { waiting: 0, active: 0, failed: 0, delayed: 0 };
+  }
+}
+
+async function readPlatformResources() {
+  let memory = { totalBytes: 0, usedBytes: 0, availableBytes: 0 };
+  try {
+    const { readFile } = await import('node:fs/promises');
+    const meminfo = await readFile('/proc/meminfo', 'utf8');
+    const kb = (key: string) => {
+      const m = new RegExp(`${key}:\\s+(\\d+)`).exec(meminfo);
+      return m ? parseInt(m[1], 10) * 1024 : 0;
+    };
+    const totalBytes = kb('MemTotal');
+    const availableBytes = kb('MemAvailable') || kb('MemFree');
+    const usedBytes = Math.max(0, totalBytes - availableBytes);
+    memory = { totalBytes, usedBytes, availableBytes };
+  } catch {
+    /* not on linux / fallback */
+  }
+
+  let disk = { totalBytes: 0, usedBytes: 0, freeBytes: 0 };
+  try {
+    const { statfs } = await import('node:fs/promises');
+    const s = await statfs('/');
+    const totalBytes = s.blocks * s.bsize;
+    const freeBytes = s.bavail * s.bsize;
+    const usedBytes = Math.max(0, totalBytes - freeBytes);
+    disk = { totalBytes, usedBytes, freeBytes };
+  } catch {
+    /* fallback */
+  }
+
+  return { memory, disk };
+}
 
 export const metricsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', fastify.requireSuperadmin);
@@ -14,9 +66,17 @@ export const metricsRoutes: FastifyPluginAsync = async (fastify) => {
     dayStart.setHours(0, 0, 0, 0);
 
     const rotatedKey = `tg:rotated:${dayStart.toISOString().slice(0, 10)}`;
-    const rotatedTotal = Number((await metricsRedis.get(rotatedKey)) || 0);
-
-    const [chatMessages, botInstances] = await Promise.all([
+    const [
+      rotatedTotalRaw,
+      chatMessages,
+      botInstances,
+      provisioningCounts,
+      emailCounts,
+      formLeadCounts,
+      gramjsEnrichCounts,
+      resources,
+    ] = await Promise.all([
+      metricsRedis.get(rotatedKey),
       prisma.chatMessage.findMany({
         where: { role: 'assistant', sentAt: { gte: dayStart } },
         select: { conversation: { select: { platform: true } }, deliveryStatus: true },
@@ -24,7 +84,14 @@ export const metricsRoutes: FastifyPluginAsync = async (fastify) => {
       prisma.botInstance.findMany({
         select: { botType: true, floodedUntil: true },
       }),
+      getQueueCounts(provisioningQueue),
+      getQueueCounts(emailQueue),
+      getQueueCounts(formLeadQueue),
+      getQueueCounts(gramjsCrmEnrichQueue),
+      readPlatformResources(),
     ]);
+
+    const rotatedTotal = Number(rotatedTotalRaw || 0);
 
     const channels = ['telegram_gramjs', 'whatsapp', 'telegram_bot', 'max', 'channel'] as const;
     type Channel = (typeof channels)[number];
@@ -81,6 +148,68 @@ export const metricsRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
 
+    const alerts: Array<{ level: 'warning' | 'critical'; code: string; message: string }> = [];
+
+    // Memory alert: >90% used
+    if (resources.memory.totalBytes > 0) {
+      const memUsedRatio = resources.memory.usedBytes / resources.memory.totalBytes;
+      if (memUsedRatio >= 0.9) {
+        alerts.push({
+          level: 'critical',
+          code: 'RAM_CRITICAL',
+          message: `Использование оперативной памяти превышает 90% (${Math.round(memUsedRatio * 100)}%)`,
+        });
+      } else if (memUsedRatio >= 0.8) {
+        alerts.push({
+          level: 'warning',
+          code: 'RAM_HIGH',
+          message: `Использование оперативной памяти превышает 80% (${Math.round(memUsedRatio * 100)}%)`,
+        });
+      }
+    }
+
+    // Disk alert: >90% used
+    if (resources.disk.totalBytes > 0) {
+      const diskUsedRatio = resources.disk.usedBytes / resources.disk.totalBytes;
+      if (diskUsedRatio >= 0.9) {
+        alerts.push({
+          level: 'critical',
+          code: 'DISK_CRITICAL',
+          message: `Заполненность диска превышает 90% (${Math.round(diskUsedRatio * 100)}%)`,
+        });
+      } else if (diskUsedRatio >= 0.8) {
+        alerts.push({
+          level: 'warning',
+          code: 'DISK_HIGH',
+          message: `Заполненность диска превышает 80% (${Math.round(diskUsedRatio * 100)}%)`,
+        });
+      }
+    }
+
+    // Queue alerts: failed or high waiting count
+    const queueMap: Record<string, typeof provisioningCounts> = {
+      provisioning: provisioningCounts,
+      email: emailCounts,
+      'form-leads': formLeadCounts,
+      'gramjs-crm-enrich': gramjsEnrichCounts,
+    };
+    for (const [qName, qCounts] of Object.entries(queueMap)) {
+      if (qCounts.failed > 0) {
+        alerts.push({
+          level: 'warning',
+          code: `QUEUE_FAILURES_${qName.toUpperCase()}`,
+          message: `В очереди ${qName} обнаружено ${qCounts.failed} ошибочных задач (failed)`,
+        });
+      }
+      if (qCounts.waiting > 100) {
+        alerts.push({
+          level: 'warning',
+          code: `QUEUE_BACKLOG_${qName.toUpperCase()}`,
+          message: `В очереди ${qName} накопилось ${qCounts.waiting} задач в ожидании`,
+        });
+      }
+    }
+
     return {
       window: { since: dayStart.toISOString(), until: now.toISOString() },
       byChannel: metrics,
@@ -91,6 +220,9 @@ export const metricsRoutes: FastifyPluginAsync = async (fastify) => {
         totalRotated: Object.values(metrics).reduce((a, v) => a + v.rotated, 0),
       },
       floodedAccounts: floodedByType,
+      queues: queueMap,
+      resources,
+      alerts,
     };
   });
 };
