@@ -376,12 +376,15 @@ class QrPasswordBody(BaseModel):
 
 class SendBody(BaseModel):
     botId: str
-    peerUserId: str = Field(..., description="MAX peer / chat id")
+    peerUserId: str = Field("", description="MAX peer / chat id")
     text: str = ""
     replyTo: Optional[str] = None
     mediaBase64: Optional[str] = None
     mimeType: Optional[str] = None
     fileName: Optional[str] = None
+    # Phase 5.2 write-first: no prior dialog — resolve the peer from this E.164 phone
+    # (search_by_phone → import_contacts) before sending. Used only when peerUserId is empty.
+    resolvePhone: Optional[str] = None
 
 
 class MediaBody(BaseModel):
@@ -1921,12 +1924,44 @@ async def messages_send(
     if not text and not media_b64:
         raise HTTPException(400, detail="text or mediaBase64 required")
 
+    peer_raw = (body.peerUserId or "").strip()
+    resolve_phone = (body.resolvePhone or "").strip()
+    if not peer_raw and not resolve_phone:
+        raise HTTPException(400, detail="peerUserId or resolvePhone required")
+
+    # Phase 5.2 write-first: resolve peer by phone when CRM has no prior MAX dialog.
+    if not peer_raw:
+        resolver = await _ensure_live_client(body.botId)
+        resolved = await _resolve_user_by_phone(resolver, resolve_phone)
+        if resolved.get("error") == "bad_phone":
+            raise HTTPException(400, detail="resolvePhone is not a valid phone")
+        if not resolved.get("exists") or not resolved.get("userId"):
+            raise HTTPException(
+                404,
+                detail="Контакт не найден в MAX по номеру телефона — написать первым нельзя.",
+            )
+        # Never write to ourselves: search_by_phone falls back to client.me on a
+        # phone match, which would send the CRM reply into Saved Messages (INC-113).
+        me_id = _user_id_int(getattr(resolver, "me", None))
+        if me_id is not None and str(resolved["userId"]) == str(me_id):
+            raise HTTPException(
+                409,
+                detail=(
+                    "Телефон в карточке совпадает с номером подключённого MAX-аккаунта "
+                    "— отправка самому себе заблокирована."
+                ),
+            )
+        peer_raw = str(resolved["userId"])
+        logger.info(
+            "write-first resolved peer botId=%s peer=%s", body.botId, peer_raw
+        )
+
     try:
         chat_id: Any
         try:
-            chat_id = int(body.peerUserId)
+            chat_id = int(peer_raw)
         except Exception:
-            chat_id = body.peerUserId
+            chat_id = peer_raw
 
         attachments_arg: Optional[list[Any]] = None
         attachment_meta: Optional[dict[str, Any]] = None

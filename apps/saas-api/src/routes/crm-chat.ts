@@ -708,90 +708,6 @@ async function resolvePersonIdForRecord(
   return personId;
 }
 
-/**
- * Phase 5.2: MAX write-first path.
- * When no prior MAX dialog exists but Person.max link/phone is present,
- * resolve userId via MAX bridge /users/by-phone and set maxResolvePhone
- * so the reply path can resolve the peer at send-time.
- */
-async function resolveMaxWriteFirst(opts: {
-  prisma: FastifyInstance['prisma'];
-  tenantId: string;
-  recordId: string;
-  botId: string;
-  baseTarget: CrmChatTarget;
-}): Promise<{
-  ok: true;
-  peerId: string;
-  username: string | null;
-  firstName: string | null;
-  conversationId: null;
-  giftSubscriberId: null;
-  businessConnectionId: null;
-  twentyPersonId: string;
-  twentyOpportunityId: string | null;
-  phoneE164: string;
-  maxResolvePhone: string;
-} | null> {
-  const { prisma, tenantId, recordId, botId, baseTarget } = opts;
-  
-  // 1) Resolve personId
-  const personId = await resolvePersonIdForRecord(prisma, tenantId, recordId, baseTarget);
-  if (!personId) return null;
-  
-  // 2) Load phone from Person
-  const phoneE164 = await loadPersonPhoneE164(prisma, tenantId, personId);
-  if (!phoneE164) return null;
-  
-  // 3) Call MAX bridge /users/by-phone to resolve userId
-  const token = serviceToken();
-  if (!token) return null;
-  
-  try {
-    const res = await fetch(`${maxBridgeBase()}/users/by-phone`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        botId,
-        phone: phoneE164,
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-    
-    const json = (await res.json().catch(() => ({}))) as {
-      ok?: boolean;
-      exists?: boolean;
-      userId?: string;
-      username?: string;
-      firstName?: string;
-      error?: string;
-    };
-    
-    if (!res.ok || !json.ok || !json.exists || !json.userId) {
-      return null;
-    }
-    
-    return {
-      ok: true,
-      peerId: json.userId,
-      username: json.username || null,
-      firstName: json.firstName || baseTarget.firstName,
-      conversationId: null,
-      giftSubscriberId: null,
-      businessConnectionId: null,
-      twentyPersonId: personId,
-      twentyOpportunityId: baseTarget.twentyOpportunityId,
-      phoneE164,
-      maxResolvePhone: phoneE164,
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function findCrmChatTarget(
   prisma: FastifyInstance['prisma'],
   tenantId: string,
@@ -1203,26 +1119,38 @@ async function resolveOutboundPeer(opts: {
     }
   }
 
-  // Phase 5.2: MAX write-first — try resolving userId from Person.max phone via bridge.
+  // Phase 5.2: MAX write-first — signal maxResolvePhone for send-time resolve.
   if (bot.botType === 'ai_max') {
-    const maxWriteFirst = await resolveMaxWriteFirst({
-      prisma,
-      tenantId,
-      recordId,
-      botId: bot.id,
-      baseTarget,
-    });
-    if (maxWriteFirst) {
-      return maxWriteFirst;
+    const personId = await resolvePersonIdForRecord(prisma, tenantId, recordId, baseTarget);
+    if (personId) {
+      const phoneE164 = await loadPersonPhoneE164(prisma, tenantId, personId);
+      if (phoneE164) {
+        return {
+          ok: true,
+          peerId: '',
+          username: null,
+          firstName: baseTarget.firstName,
+          conversationId: null,
+          giftSubscriberId: null,
+          businessConnectionId: null,
+          twentyPersonId: personId,
+          twentyOpportunityId: baseTarget.twentyOpportunityId,
+          phoneE164,
+          maxResolvePhone: phoneE164,
+        };
+      }
     }
   }
 
-  const channelName =
-    bot.botType === 'ai_gramjs'
-      ? 'личного Telegram'
-      : bot.botType === 'ai_max'
-        ? 'личного MAX'
-        : 'бота';
+  if (bot.botType === 'ai_max') {
+    return {
+      ok: false,
+      error:
+        'Нет MAX-контакта — нельзя отправить с личного MAX. Нужен телефон в карточке или существующий MAX-диалог.',
+    };
+  }
+
+  const channelName = bot.botType === 'ai_gramjs' ? 'личного Telegram' : 'бота';
   return {
     ok: false,
     error: `Нет Telegram ID контакта — нельзя отправить с ${channelName}. Нужен Telegram в карточке (user id / @username) или gift/Telegram-диалог.`,
@@ -1785,12 +1713,14 @@ async function sendViaMaxBridge(opts: {
   botId: string;
   peerUserId: string;
   text: string;
+  /** Phase 5.2 write-first: bridge resolves the peer from this E.164 when peerUserId is empty. */
+  resolvePhone?: string | null;
   media?: {
     mediaBase64: string;
     mimeType: string;
     fileName: string;
   } | null;
-}): Promise<ChatAttachment | null> {
+}): Promise<{ attachment: ChatAttachment | null; chatId: string | null }> {
   const token = process.env.VOXLY_SERVICE_TOKEN || '';
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
@@ -1804,6 +1734,7 @@ async function sendViaMaxBridge(opts: {
     body: JSON.stringify({
       botId: opts.botId,
       peerUserId: opts.peerUserId,
+      ...(opts.resolvePhone ? { resolvePhone: opts.resolvePhone } : {}),
       text: opts.text,
       ...(opts.media
         ? {
@@ -1818,6 +1749,7 @@ async function sendViaMaxBridge(opts: {
     ok?: boolean;
     error?: string;
     detail?: string;
+    chatId?: string;
     attachment?: {
       type?: string;
       fileId?: string;
@@ -1831,16 +1763,20 @@ async function sendViaMaxBridge(opts: {
       json.error || json.detail || `MAX send failed (HTTP ${res.status})`,
     );
   }
+  const chatId = json.chatId ? String(json.chatId) : null;
   if (json.attachment?.fileId && json.attachment.type) {
     return {
-      type: json.attachment.type as ChatAttachment['type'],
-      fileId: json.attachment.fileId,
-      fileName: json.attachment.fileName,
-      mimeType: json.attachment.mimeType,
-      fileSize: json.attachment.fileSize,
+      attachment: {
+        type: json.attachment.type as ChatAttachment['type'],
+        fileId: json.attachment.fileId,
+        fileName: json.attachment.fileName,
+        mimeType: json.attachment.mimeType,
+        fileSize: json.attachment.fileSize,
+      },
+      chatId,
     };
   }
-  return null;
+  return { attachment: null, chatId };
 }
 
 function parseGramjsFileId(
@@ -3685,6 +3621,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       // Outbound identity — defaults to the active thread bot (unchanged path).
       let target: CrmChatTarget = { ...baseTarget };
       let gramjsPhoneE164: string | null = null;
+      /** Phase 5.2 write-first (MAX): bridge resolves the peer from this phone at send-time. */
+      let maxResolvePhone: string | null = null;
       if (sendFromBotId && sendFromBotId !== baseTarget.botInstanceId) {
         const altBot = await prisma.botInstance.findFirst({
           where: { id: sendFromBotId, tenantId, status: 'active' },
@@ -3704,6 +3642,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         }
         bot = altBot;
         gramjsPhoneE164 = resolved.phoneE164 || null;
+        maxResolvePhone = resolved.maxResolvePhone || null;
         target = {
           source: resolved.giftSubscriberId ? 'gift_subscriber' : 'conversation',
           telegramId: resolved.peerId,
@@ -3754,7 +3693,7 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'WhatsApp не подключён (нет сессии)' });
       }
 
-      const chatId = target.telegramId;
+      let chatId = target.telegramId;
       const bizId = target.businessConnectionId;
 
       let attachments: ChatAttachment[] = [];
@@ -3809,6 +3748,12 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             });
           }
         } else if (isMax) {
+          // Write-first: no peer id yet — bridge resolves it from the phone.
+          if (!chatId && !maxResolvePhone) {
+            return reply.code(400).send({
+              error: 'Нет peer MAX для отправки — нужен телефон в карточке или диалог MAX.',
+            });
+          }
           if (target.conversationId) {
             const recentInbound = await prisma.chatMessage.findMany({
               where: {
@@ -3839,9 +3784,10 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
                 : kind === 'photo' && !mimeType.startsWith('image/')
                   ? 'image/jpeg'
                   : mimeType;
-            const sent = await sendViaMaxBridge({
+            const result = await sendViaMaxBridge({
               botId: bot.id,
               peerUserId: chatId,
+              resolvePhone: chatId ? null : maxResolvePhone,
               text: text || '',
               media: {
                 mediaBase64: fileBuffer.toString('base64'),
@@ -3849,6 +3795,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
                 fileName: filename,
               },
             });
+            if (!chatId && result.chatId) chatId = result.chatId;
+            const sent = result.attachment;
             if (sent) {
               // Prefer UI type from filename/mime if bridge still returned document.
               const storedType =
@@ -3873,11 +3821,13 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
                     : `[файл: ${filename}]`;
             }
           } else {
-            await sendViaMaxBridge({
+            const result = await sendViaMaxBridge({
               botId: bot.id,
               peerUserId: chatId,
+              resolvePhone: chatId ? null : maxResolvePhone,
               text,
             });
+            if (!chatId && result.chatId) chatId = result.chatId;
           }
         } else if (isGiftMax) {
           const token = decrypt(bot.botTokenEncrypted!);
@@ -4025,7 +3975,8 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
             tenantId,
             botInstanceId: bot.id,
             platform: isWhatsapp ? 'whatsapp' : isMax || isGiftMax ? 'max' : 'telegram',
-            platformUserId: target.telegramId,
+            // Write-first MAX: peer id becomes known only after the bridge resolved it.
+            platformUserId: chatId || target.telegramId,
             platformUsername: target.username,
             platformFirstName: target.firstName,
             status: 'open',

@@ -79,7 +79,7 @@
 ## Фаза 5 — UI чата
 
 - [ ] 5.1 Переключение «от кого» → пустое окно / история именно канала.
-- [ ] 5.2 Писать первым по заполненному контакту (MAX-фолбэк `Person.max`) + `canInitiate`/`unavailableReason`.
+- [x] 5.2 Писать первым по заполненному контакту (MAX-фолбэк `Person.max`) + `canInitiate`/`unavailableReason`. ✅: `resolveOutboundPeer` для `ai_max` после всех диалоговых веток отдаёт write-first-резолв (`peerId: ''` + `maxResolvePhone` = `Person` phone через `resolvePersonIdForRecord`+`loadPersonPhoneE164`) — **без HTTP на хот-пате** (`buildSendFromOptions` вызывает эту же функцию на каждом GET, поэтому резолв peer'а по телефону вынесен на send-time); max-bridge `/messages/send` принимает `resolvePhone` (`peerUserId` стал опциональным) и сам резолвит peer через `_resolve_user_by_phone` (search_by_phone → import_contacts), возвращает `chatId`; guard INC-113 — если резолв дал id владельца сессии (`client.me`), отправка блокируется 409 (иначе ушло бы в Saved Messages); `sendViaMaxBridge` возвращает `{attachment, chatId}`, send-путь подставляет полученный `chatId` в новый `Conversation.platformUserId`; `unavailableReason` для MAX теперь про телефон/MAX-диалог, а не про Telegram ID. `pnpm typecheck` ✅ (23/23), `pnpm test` ✅ (147 passed), `py_compile` max-bridge ✅.
 - [ ] 5.3 Таймлайн CRM: синк истории через очередь + toggle per-tenant.
 - [ ] 5.4 Дебаунс AI: 60с + AbortController (с отдельного OK пользователя — freeze!).
 
