@@ -708,6 +708,90 @@ async function resolvePersonIdForRecord(
   return personId;
 }
 
+/**
+ * Phase 5.2: MAX write-first path.
+ * When no prior MAX dialog exists but Person.max link/phone is present,
+ * resolve userId via MAX bridge /users/by-phone and set maxResolvePhone
+ * so the reply path can resolve the peer at send-time.
+ */
+async function resolveMaxWriteFirst(opts: {
+  prisma: FastifyInstance['prisma'];
+  tenantId: string;
+  recordId: string;
+  botId: string;
+  baseTarget: CrmChatTarget;
+}): Promise<{
+  ok: true;
+  peerId: string;
+  username: string | null;
+  firstName: string | null;
+  conversationId: null;
+  giftSubscriberId: null;
+  businessConnectionId: null;
+  twentyPersonId: string;
+  twentyOpportunityId: string | null;
+  phoneE164: string;
+  maxResolvePhone: string;
+} | null> {
+  const { prisma, tenantId, recordId, botId, baseTarget } = opts;
+  
+  // 1) Resolve personId
+  const personId = await resolvePersonIdForRecord(prisma, tenantId, recordId, baseTarget);
+  if (!personId) return null;
+  
+  // 2) Load phone from Person
+  const phoneE164 = await loadPersonPhoneE164(prisma, tenantId, personId);
+  if (!phoneE164) return null;
+  
+  // 3) Call MAX bridge /users/by-phone to resolve userId
+  const token = serviceToken();
+  if (!token) return null;
+  
+  try {
+    const res = await fetch(`${maxBridgeBase()}/users/by-phone`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        botId,
+        phone: phoneE164,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    
+    const json = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      exists?: boolean;
+      userId?: string;
+      username?: string;
+      firstName?: string;
+      error?: string;
+    };
+    
+    if (!res.ok || !json.ok || !json.exists || !json.userId) {
+      return null;
+    }
+    
+    return {
+      ok: true,
+      peerId: json.userId,
+      username: json.username || null,
+      firstName: json.firstName || baseTarget.firstName,
+      conversationId: null,
+      giftSubscriberId: null,
+      businessConnectionId: null,
+      twentyPersonId: personId,
+      twentyOpportunityId: baseTarget.twentyOpportunityId,
+      phoneE164,
+      maxResolvePhone: phoneE164,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function findCrmChatTarget(
   prisma: FastifyInstance['prisma'],
   tenantId: string,
@@ -765,6 +849,12 @@ type OutboundPeerResolve =
       twentyOpportunityId: string | null;
       /** E.164 for GramJS ImportContacts when peer entity missing from session. */
       phoneE164?: string | null;
+      /**
+       * Phase 5.2 write-first (MAX): peer id is not known yet — the reply path must
+       * resolve it from this phone via the MAX bridge (`/users/by-phone`) before sending.
+       * Set only when `peerId` is empty. Never used on the hot GET path.
+       */
+      maxResolvePhone?: string | null;
     }
   | { ok: false; error: string };
 
@@ -1110,6 +1200,20 @@ async function resolveOutboundPeer(opts: {
         twentyOpportunityId: baseTarget.twentyOpportunityId,
         phoneE164,
       };
+    }
+  }
+
+  // Phase 5.2: MAX write-first — try resolving userId from Person.max phone via bridge.
+  if (bot.botType === 'ai_max') {
+    const maxWriteFirst = await resolveMaxWriteFirst({
+      prisma,
+      tenantId,
+      recordId,
+      botId: bot.id,
+      baseTarget,
+    });
+    if (maxWriteFirst) {
+      return maxWriteFirst;
     }
   }
 
@@ -1591,6 +1695,10 @@ function humanizeCrmChatSendError(raw: string): string {
   }
 
   return msg;
+}
+
+function serviceToken(): string {
+  return process.env.VOXLY_SERVICE_TOKEN || '';
 }
 
 function gramjsBridgeBase(): string {
