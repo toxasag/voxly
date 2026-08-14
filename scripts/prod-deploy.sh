@@ -91,7 +91,7 @@ fi
 
 ssh_base=(ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 rsync_ssh="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
-if [[ -n "${SSHPASS:-}" ]]; then
+if [[ -n "${SSHPASS:-}" ]] && ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${USER}@${HOST}" echo ok >/dev/null 2>&1; then
   if ! command -v sshpass >/dev/null 2>&1; then
     echo "SSHPASS is set but sshpass is not installed" >&2
     exit 1
@@ -147,6 +147,8 @@ paths_for_service() {
       echo "packages/"
       echo "apps/saas-api/"
       echo "twenty-app/voxly-crm-chat/"
+      echo "docker/docker-compose.yml"
+      echo "docker/docker-compose.prod-npm.yml"
       ;;
     gift-bot-worker)
       printf '%s\n' "${ROOT_MANIFESTS[@]}"

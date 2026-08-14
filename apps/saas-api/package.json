@@ -11,6 +11,7 @@
     "test": "VOXLY_DISABLE_WORKERS=1 vitest run --config ../../vitest.config.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^9.0.0",
     "@fastify/cors": "^9.0.0",
     "@fastify/jwt": "^8.0.0",
     "@fastify/multipart": "^8.3.0",

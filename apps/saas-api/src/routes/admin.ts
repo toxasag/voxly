@@ -1064,6 +1064,14 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       impersonatedBy: actorId,
     });
 
+    reply.setCookie('voxly_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
     await prisma.auditLog.create({
       data: {
         tenantId: id,

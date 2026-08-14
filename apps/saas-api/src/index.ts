@@ -4,6 +4,7 @@
 import { pathToFileURL } from 'node:url';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { prisma } from '@voxly/db';
@@ -78,6 +79,17 @@ export async function buildServer() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  });
+
+  // --- Cookie (for httpOnly auth tokens) ---
+  await fastify.register(cookie, {
+    secret: process.env.COOKIE_SECRET || process.env.JWT_SECRET || 'dev-secret-change-me',
+    hook: 'onRequest',
+    parseOptions: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    },
   });
 
   // --- JWT ---

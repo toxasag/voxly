@@ -97,8 +97,8 @@
 ## Фаза 7 — Скорость портала
 
 - [x] 7.1 Кэш `/me` + `/tenant/summary` (dashboard). ✅: В `apps/saas-api/src/routes/auth.ts` и `apps/saas-api/src/routes/tenant.ts` добавлен короткий Redis-кэш на 5 сек (`portal:me:${userId}` и `portal:dashboard:${tenantId}`) с отдачей заголовка `X-Cache: HIT/MISS` и graceful fallback на БД при недоступности Redis. `pnpm verify` ✅.
-- [ ] 7.2 Redis-счётчики ботов.
-- [ ] 7.3 Server Components вместо useEffect-водопадов на dashboard.
+- [x] 7.2 Redis-счётчики ботов. ✅: В `apps/saas-api/src/routes/bots.ts` добавлено кэширование результатов `groupBy` запросов (подписчики, доставленные подарки, диалоги, бизнес-соединения) в Redis с TTL 30 сек (`bots:counts:${tenantId}`). Кэш инвалидируется при создании/обновлении/удалении ботов (`/ai/connect`, `/gift/max/connect`, `PATCH /:botId`, `PATCH /:botId/flood-settings`, `DELETE /:botId`). `pnpm verify` ✅.
+- [x] 7.3 Server Components вместо useEffect-водопадов на dashboard. ✅: бэкенд — `@fastify/cookie` зарегистрирован в `apps/saas-api/src/index.ts` (hook onRequest, httpOnly/secure/sameSite=lax), httpOnly cookie `voxly_token` (maxAge 7д) ставится на `/login` (superadmin), `/login/confirm`, `/register/confirm` и admin `/tenants/:id/impersonate`; `POST /api/auth/logout` чистит cookie (`clearCookie`); типы `setCookie`/`clearCookie` добавлены в `apps/saas-api/src/types/fastify.d.ts`. Портал — `src/lib/dashboard-server.ts` (`getServerSession`/`getServerDashboard` читают cookie через `cookies()` из `next/headers`, fetch с `cache:'no-store'`, `redirect('/login')` при отсутствии токена); `app/dashboard/page.tsx` → async Server Component (нет `useEffect`-водопада), интерактив вынесен в `app/dashboard/dashboard-client.tsx` (`'use client'`); `app-shell.tsx` `logout()` дополнительно вызывает `POST /api/auth/logout`. `pnpm typecheck` (saas-api+saas-portal) ✅, `pnpm test` ✅ (148 passed), `next build` ✅ (`/dashboard` теперь `ƒ` dynamic SSR).
 
 ## Фаза 8 — Модули
 
@@ -113,4 +113,4 @@
 - [ ] 9.2 Per-service токены вместо единого `VOXLY_SERVICE_TOKEN`.
 - [x] 9.3 Rate-limit по уровням (`/auth/*` жёстче, остальное мягче). ✅: В Fastify глобальный лимит установлен на 120 req/min, а на критические ручки авторизации (`/api/auth/register/start`, `/register/confirm`, `/login`, `/login/confirm`) установлен более строгий лимит 15 req/min на IP. `pnpm verify` ✅.
 - [ ] 9.4 (обсудить) httpOnly cookie + refresh-token вместо localStorage.
-- [x] 9.5 SMTP-воркер (nodemailer): инвайты/уведомления + статус в портале. ✅: В `apps/saas-api/src/jobs/queues.ts` реализован `emailWorker` через `nodemailer` с поддержкой конфигурации `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, HTML/text и graceful fallback при отсутствии настроек SMTP. `pnpm typecheck` ✅, `pnpm test` ✅ (148 passed).
+- [x] 9.5 SMTP-воркер (nodemailer): инвайты/уведомления + статус в портале. ✅: В `apps/saas-api/src/jobs/queues.ts` реализован `emailWorker` через `nodemailer` с поддержкой конфигурации `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, HTML/text и graceful fallback при отсутствии настроек SMTP. В `POST /api/auth/invite` подключена постановка email в очередь `emailQueue` при приглашении сотрудников. `pnpm typecheck` ✅, `pnpm test` ✅ (148 passed), `pnpm verify` ✅.

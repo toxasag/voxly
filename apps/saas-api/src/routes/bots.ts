@@ -39,6 +39,22 @@ import {
   type ChannelTrialType,
 } from '../services/channel-trial.js';
 import { VOXLY_OPPORTUNITY_STAGE_OPTIONS } from '../services/twenty-opportunity-ru-defaults.js';
+import IORedis from 'ioredis';
+
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+const botsCacheRedis = new IORedis(REDIS_URL, {
+  maxRetriesPerRequest: null,
+  lazyConnect: true,
+});
+const BOTS_COUNTS_CACHE_TTL_SEC = 30;
+
+async function invalidateBotsCache(tenantId: string): Promise<void> {
+  try {
+    await botsCacheRedis.del(`bots:counts:${tenantId}`);
+  } catch {
+    // ignore cache errors
+  }
+}
 
 const giftMediaTypeSchema = z.enum(GIFT_PROMO_MEDIA_TYPES);
 
@@ -1494,6 +1510,8 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           data: { tenantId, ...botData },
         });
 
+    await invalidateBotsCache(tenantId);
+
     // Ensure default campaign shell (channel optional for MAX — gap documented)
     const campaignCount = await prisma.giftCampaignConfig.count({
       where: { botInstanceId: bot.id },
@@ -1684,6 +1702,8 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           data: { tenantId, ...botData },
         });
 
+    await invalidateBotsCache(tenantId);
+
     const webhook = await registerAiTgWebhook(token, tenantId, bot.id);
     if (webhook.secret) {
       await prisma.botInstance.update({
@@ -1860,29 +1880,33 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
     const { tenantId, sub: userId } = (request as any).user;
     const prisma = fastify.prisma;
 
-    const [bots, addon, aiAddon, gramjsAddon, waAddon, user, subCounts, giftedCounts, conversationCounts, businessAccountGroups, businessConnGroups] =
-      await Promise.all([
-        prisma.botInstance.findMany({
-          where: { tenantId },
-          include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
-          orderBy: { createdAt: 'desc' },
-        }),
-        prisma.addon.findUnique({
-          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
-        }),
-        prisma.addon.findUnique({
-          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
-        }),
-        prisma.addon.findUnique({
-          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
-        }),
-        prisma.addon.findUnique({
-          where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_WHATSAPP } },
-        }),
-        prisma.user.findUnique({
-          where: { id: userId },
-          select: { telegramUserId: true },
-        }),
+    const cacheKey = `bots:counts:${tenantId}`;
+    let cached = null;
+    try {
+      const cachedRaw = await botsCacheRedis.get(cacheKey);
+      if (cachedRaw) {
+        cached = JSON.parse(cachedRaw);
+      }
+    } catch {
+      // ignore cache errors
+    }
+
+    let subCounts, giftedCounts, conversationCounts, businessAccountGroups, businessConnGroups;
+    
+    // Declare Maps outside if/else so they're accessible later
+    const subscribersByBot = new Map<string, number>();
+    const giftedByBot = new Map<string, number>();
+    const conversationsByBot = new Map<string, number>();
+    const businessConnectionsByBot = new Map<string, number>();
+
+    if (cached) {
+      subCounts = cached.subCounts;
+      giftedCounts = cached.giftedCounts;
+      conversationCounts = cached.conversationCounts;
+      businessAccountGroups = cached.businessAccountGroups;
+      businessConnGroups = cached.businessConnGroups;
+    } else {
+      [subCounts, giftedCounts, conversationCounts, businessAccountGroups, businessConnGroups] = await Promise.all([
         prisma.giftSubscriber.groupBy({
           by: ['botInstanceId'],
           where: { tenantId },
@@ -1923,19 +1947,31 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
 
-    const subscribersByBot = new Map(
-      subCounts.map((row) => [row.botInstanceId, row._count._all]),
-    );
-    const giftedByBot = new Map(
-      giftedCounts.map((row) => [row.botInstanceId, row._count._all]),
-    );
-    const conversationsByBot = new Map(
-      conversationCounts.map((row) => [row.botInstanceId, row._count._all]),
-    );
-    const businessConnectionsByBot = new Map<string, number>();
+      try {
+        await botsCacheRedis.set(cacheKey, JSON.stringify({
+          subCounts,
+          giftedCounts,
+          conversationCounts,
+          businessAccountGroups,
+          businessConnGroups,
+        }), 'EX', BOTS_COUNTS_CACHE_TTL_SEC);
+      } catch {
+        // ignore cache write errors
+      }
+    }
+
+    // Populate Maps from counts (works for both cached and fresh data)
+    for (const row of subCounts) {
+      if (row.botInstanceId) subscribersByBot.set(row.botInstanceId, row._count._all);
+    }
+    for (const row of giftedCounts) {
+      if (row.botInstanceId) giftedByBot.set(row.botInstanceId, row._count._all);
+    }
+    for (const row of conversationCounts) {
+      if (row.botInstanceId) conversationsByBot.set(row.botInstanceId, row._count._all);
+    }
     for (const row of businessAccountGroups) {
-      if (!row.botInstanceId) continue;
-      businessConnectionsByBot.set(row.botInstanceId, row._count._all);
+      if (row.botInstanceId) businessConnectionsByBot.set(row.botInstanceId, row._count._all);
     }
     for (const row of businessConnGroups) {
       if (!row.botInstanceId) continue;
@@ -1945,6 +1981,30 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         (businessConnectionsByBot.get(row.botInstanceId) || 0) + 1,
       );
     }
+
+    const [bots, addon, aiAddon, gramjsAddon, waAddon, user] = await Promise.all([
+      prisma.botInstance.findMany({
+        where: { tenantId },
+        include: { giftCampaigns: { orderBy: { updatedAt: 'desc' } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.addon.findUnique({
+        where: { tenantId_type: { tenantId, type: PRODUCT_CODES.GIFT_BOT } },
+      }),
+      prisma.addon.findUnique({
+        where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_TELEGRAM } },
+      }),
+      prisma.addon.findUnique({
+        where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_GRAMJS } },
+      }),
+      prisma.addon.findUnique({
+        where: { tenantId_type: { tenantId, type: PRODUCT_CODES.AI_WHATSAPP } },
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { telegramUserId: true },
+      }),
+    ]);
 
     await grandfatherSplitGiftMaxAddon(prisma, tenantId);
     const giftMaxAddonRow = await prisma.addon.findUnique({
@@ -2257,6 +2317,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
           telegramShortDescription: shortDescription || null,
         },
       });
+      await invalidateBotsCache(tenantId);
 
       return reply.send({
         ok: true,
@@ -2312,6 +2373,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'Укажите dailySendLimit и/или dailyStoryLimit' });
       }
       const updated = await prisma.botInstance.update({ where: { id: bot.id }, data });
+      await invalidateBotsCache(tenantId);
       return reply.send({
         ok: true,
         dailySendLimit: updated.dailySendLimit,
@@ -4345,6 +4407,7 @@ export const botRoutes: FastifyPluginAsync = async (fastify) => {
       });
       try {
         await prisma.botInstance.delete({ where: { id: botId } });
+        await invalidateBotsCache(tenantId);
         return reply.send({ ok: true, botId, deleted: true });
       } catch {
         await prisma.botInstance.update({

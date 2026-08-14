@@ -12,4 +12,9 @@ declare module 'fastify' {
     authenticate: (request: any, reply: any) => Promise<void>;
     requireSuperadmin: (request: any, reply: any) => Promise<void>;
   }
+
+  interface FastifyReply {
+    setCookie(name: string, value: string, options?: any): this;
+    clearCookie(name: string, options?: any): this;
+  }
 }

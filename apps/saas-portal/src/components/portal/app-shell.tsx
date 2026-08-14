@@ -258,8 +258,13 @@ export function AppShell({
           ? 'max-w-6xl'
           : 'max-w-5xl';
 
-  const logout = () => {
+  const logout = async () => {
     localStorage.removeItem('voxly_token');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      /* ignore logout errors */
+    }
     router.push('/');
   };
 

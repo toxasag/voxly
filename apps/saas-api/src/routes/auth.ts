@@ -17,6 +17,7 @@ import {
   verifyOtpChallenge,
 } from '../services/auth-otp.js';
 import { platformBotUsername } from '../services/platform-telegram.js';
+import { emailQueue } from '../jobs/queues.js';
 
 const AUTH_REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const authRedis = new IORedis(AUTH_REDIS_URL, {
@@ -264,6 +265,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       tenantId: result.tenant.id,
     });
 
+    reply.setCookie('voxly_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
+
     return reply.code(201).send({
       token,
       user: { id: result.user.id, email, firstName, lastName },
@@ -312,6 +321,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         role: user.role,
         tenantRole: primaryMembership?.role,
         tenantId: primaryMembership?.tenantId,
+      });
+      reply.setCookie('voxly_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60, // 7 days
       });
       return reply.send({
         token,
@@ -391,6 +407,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       role: user.role,
       tenantRole: primaryMembership?.role,
       tenantId: primaryMembership?.tenantId,
+    });
+
+    reply.setCookie('voxly_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
     });
 
     return reply.send({
@@ -517,6 +541,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.header('X-Cache', 'MISS').send(responseData);
   });
 
+  // --- Logout ---
+  fastify.post('/logout', async (_request, reply) => {
+    reply.clearCookie('voxly_token', { path: '/' });
+    return reply.send({ ok: true });
+  });
+
   // --- Invite member to tenant ---
   fastify.post('/invite', { preHandler: [fastify.authenticate] }, async (request, reply) => {
     const parsed = inviteSchema.safeParse(request.body);
@@ -631,6 +661,25 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const provision = await provisionAndStore(member.id);
 
+      // Send invitation email
+      try {
+        await emailQueue.add('send', {
+          to: email,
+          subject: `Приглашение в рабочее пространство ${tenant.slug}`,
+          body: `<p>Вас пригласили присоединиться к рабочему пространству <strong>${tenant.slug}</strong> в Voxly CRM.</p>
+<p>Ваши учетные данные для входа:</p>
+<ul>
+  <li>Email: ${email}</li>
+  <li>Временный пароль: ${tempPassword}</li>
+</ul>
+<p>Ссылка для входа: <a href="${crmUrl}">${crmUrl}</a></p>
+<p>Рекомендуем сменить пароль после первого входа.</p>`,
+          isHtml: true,
+        });
+      } catch (emailErr) {
+        fastify.log.warn({ err: emailErr, to: email }, 'Failed to enqueue invitation email');
+      }
+
       return reply.code(201).send({
         message: 'Existing user added to workspace',
         userId: existingUser.id,
@@ -655,6 +704,25 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const provision = member
       ? await provisionAndStore(member.id)
       : { twentyProvisioned: false as const, warning: 'Member row missing after create' };
+
+    // Send invitation email
+    try {
+      await emailQueue.add('send', {
+        to: email,
+        subject: `Приглашение в рабочее пространство ${tenant.slug}`,
+        body: `<p>Вас пригласили присоединиться к рабочему пространству <strong>${tenant.slug}</strong> в Voxly CRM.</p>
+<p>Ваши учетные данные для входа:</p>
+<ul>
+  <li>Email: ${email}</li>
+  <li>Временный пароль: ${tempPassword}</li>
+</ul>
+<p>Ссылка для входа: <a href="${crmUrl}">${crmUrl}</a></p>
+<p>Рекомендуем сменить пароль после первого входа.</p>`,
+        isHtml: true,
+      });
+    } catch (emailErr) {
+      fastify.log.warn({ err: emailErr, to: email }, 'Failed to enqueue invitation email');
+    }
 
     return reply.code(201).send({
       message: 'Member invited',
