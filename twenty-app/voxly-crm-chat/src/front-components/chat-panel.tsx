@@ -1210,36 +1210,40 @@ const ChatPanel = () => {
                 }}
               >
                 <span>Пишем от:</span>
-                <select
-                  value={sendFromBotId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    const opt = sendFromOptions.find((o) => o.botId === nextId);
-                    setSendFromBotId(nextId);
-                    if (opt) {
-                      setMeta((m) => ({
-                        ...m,
-                        channelLabel: opt.channelLabel,
-                        identityLabel: opt.identityLabel,
-                        // gift_max only — GramJS/MAX/WA outbound attach are supported.
-                        supportsAttachments: opt.botType !== 'gift_max',
-                      }));
-                      if (opt.threadId) {
-                        const thr = threads.find((t) => t.id === opt.threadId);
-                        if (thr) {
-                          setActiveThreadId(thr.id);
-                          lastSig.current = '';
-                          void load(thr);
-                          return;
+<select
+                    value={sendFromBotId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      const opt = sendFromOptions.find((o) => o.botId === nextId);
+                      setSendFromBotId(nextId);
+                      if (opt) {
+                        setMeta((m) => ({
+                          ...m,
+                          channelLabel: opt.channelLabel,
+                          identityLabel: opt.identityLabel,
+                          // gift_max only — GramJS/MAX/WA outbound attach are supported.
+                          supportsAttachments: opt.botType !== 'gift_max',
+                        }));
+                        if (opt.threadId) {
+                          const thr = threads.find((t) => t.id === opt.threadId);
+                          if (thr) {
+                            setActiveThreadId(thr.id);
+                            lastSig.current = '';
+                            void load(thr);
+                            return;
+                          }
+                        }
+                        // No thread for this bot yet → show empty history (write-first)
+                        setActiveThreadId('');
+                        setMessages([]);
+                        lastSig.current = '';
+                        if (!opt.available && opt.unavailableReason) {
+                          setError(opt.unavailableReason);
+                        } else {
+                          setError(null);
                         }
                       }
-                      if (!opt.available && opt.unavailableReason) {
-                        setError(opt.unavailableReason);
-                      } else {
-                        setError(null);
-                      }
-                    }
-                  }}
+                    }}
                   style={{
                     maxWidth: 280,
                     fontSize: 12,
