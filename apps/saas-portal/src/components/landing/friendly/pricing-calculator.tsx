@@ -169,30 +169,30 @@ export function PricingCalculator({ refCode }: Props) {
   const seatProgress = Math.min(100, ((seats - 1) / (maxSeats - 1)) * 100);
 
   return (
-    <div className="overflow-hidden rounded-[1.75rem] border border-slate-200/80 bg-white shadow-[0_24px_60px_-28px_rgba(15,23,42,0.28)]">
+    <div className="overflow-hidden rounded-xl border border-[rgba(2,8,23,0.1)] bg-white shadow-[0_24px_60px_-40px_rgba(2,8,23,0.35)]">
       <div className="grid lg:grid-cols-[1.15fr_0.85fr]">
         {/* Config */}
         <div className="space-y-8 p-5 sm:p-8 lg:p-9">
           {/* CRM seats */}
           <section>
             <div className="mb-4 flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/25">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#020817] text-white">
                 <Users className="h-5 w-5" aria-hidden />
               </span>
               <div>
-                <h3 className="text-base font-semibold text-slate-900">Команда в CRM</h3>
-                <p className="text-xs text-slate-500">
+                <h3 className="text-base font-semibold text-[#020817]">Команда в CRM</h3>
+                <p className="text-xs text-[#64686f]">
                   База {rub(p.crm_base)} ₽ · до {included} мест · далее +{rub(p.extra_seat)} ₽
                 </p>
               </div>
             </div>
 
-            <div className="rounded-2xl bg-gradient-to-br from-slate-50 via-white to-blue-50/60 p-4 ring-1 ring-slate-200/80 sm:p-5">
+            <div className="rounded-lg bg-[#fafafa] p-4 ring-1 ring-[rgba(2,8,23,0.08)] sm:p-5">
               <div className="flex items-end justify-between gap-3">
-                <p className="text-sm font-medium text-slate-600">Сотрудников</p>
-                <p className="tabular-nums text-3xl font-semibold tracking-tight text-slate-900">
+                <p className="text-sm font-medium text-[#4b5160]">Сотрудников</p>
+                <p className="tabular-nums text-3xl font-semibold tracking-tight text-[#020817]">
                   {seats}
-                  <span className="ml-1 text-sm font-medium text-slate-400">/ {included}+</span>
+                  <span className="ml-1 text-sm font-medium text-[#9aa0aa]">/ {included}+</span>
                 </p>
               </div>
               <input
@@ -201,11 +201,11 @@ export function PricingCalculator({ refCode }: Props) {
                 max={maxSeats}
                 value={seats}
                 onChange={(e) => setSeats(Number(e.target.value))}
-                className="friendly-range mt-5 w-full"
+                className="vx-range mt-5 w-full"
                 aria-valuetext={`${seats} сотрудник${seats === 1 ? '' : seats < 5 ? 'а' : 'ов'}`}
                 style={
                   {
-                    background: `linear-gradient(to right, #2563eb 0%, #2563eb ${seatProgress}%, #e2e8f0 ${seatProgress}%, #e2e8f0 100%)`,
+                    background: `linear-gradient(to right, #8261fb 0%, #8261fb ${seatProgress}%, #e6e7ec ${seatProgress}%, #e6e7ec 100%)`,
                   } as React.CSSProperties
                 }
               />
@@ -219,8 +219,8 @@ export function PricingCalculator({ refCode }: Props) {
                       onClick={() => setSeats(n)}
                       className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                         seats === n
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-blue-300'
+                          ? 'bg-[#020817] text-white'
+                          : 'bg-white text-[#4b5160] ring-1 ring-[rgba(2,8,23,0.12)] hover:ring-[#8261fb]'
                       }`}
                     >
                       {n === included ? `${n} мест` : `${n}`}
@@ -229,7 +229,7 @@ export function PricingCalculator({ refCode }: Props) {
               </div>
             </div>
 
-            <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 ring-1 ring-emerald-100">
+            <div className="mt-3 flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2.5 text-sm text-emerald-800 ring-1 ring-emerald-100">
               <Check className="h-4 w-4 shrink-0" aria-hidden />
               Заявки с сайтов (Tilda / WordPress) — всегда бесплатно
             </div>
@@ -319,15 +319,15 @@ export function PricingCalculator({ refCode }: Props) {
               />
             </div>
             {secretary ? (
-              <div className="mt-3 rounded-2xl bg-violet-50/80 p-4 ring-1 ring-violet-100">
+              <div className="mt-3 rounded-lg bg-[#f4f2ff] p-4 ring-1 ring-[rgba(130,97,251,0.18)]">
                 <div className="flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-slate-800">Доп. аккаунты секретаря</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-sm font-medium text-[#3a4050]">Доп. аккаунты секретаря</p>
+                    <p className="text-xs text-[#64686f]">
                       +{rub(p.ai_tg_extra_conn)} ₽ сверх {catalog.secretaryIncludedAccounts}
                     </p>
                   </div>
-                  <span className="tabular-nums text-xl font-semibold text-violet-700">
+                  <span className="tabular-nums text-xl font-semibold text-[#8261fb]">
                     {secretaryExtra}
                   </span>
                 </div>
@@ -337,7 +337,7 @@ export function PricingCalculator({ refCode }: Props) {
                   max={20}
                   value={secretaryExtra}
                   onChange={(e) => setSecretaryExtra(Number(e.target.value))}
-                  className="friendly-range mt-3 w-full"
+                  className="vx-range mt-3 w-full"
                 />
               </div>
             ) : null}
@@ -345,35 +345,35 @@ export function PricingCalculator({ refCode }: Props) {
         </div>
 
         {/* Summary */}
-        <aside className="relative flex flex-col justify-between bg-gradient-to-b from-slate-900 via-slate-900 to-[#0b1220] p-5 text-white sm:p-8 lg:p-9">
+        <aside className="relative flex flex-col justify-between bg-[#0a0b07] p-5 text-white sm:p-8 lg:p-9">
           <div
-            className="pointer-events-none absolute inset-0 opacity-40"
+            className="pointer-events-none absolute inset-0 opacity-60"
             style={{
               background:
-                'radial-gradient(ellipse 80% 50% at 20% 0%, rgba(37,99,235,0.45), transparent 55%), radial-gradient(ellipse 60% 40% at 100% 100%, rgba(16,185,129,0.2), transparent 50%)',
+                'radial-gradient(ellipse 80% 50% at 20% 0%, rgba(130,97,251,0.4), transparent 55%), radial-gradient(ellipse 60% 40% at 100% 100%, rgba(224,254,86,0.16), transparent 50%)',
             }}
             aria-hidden
           />
           <div className="relative">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-blue-200/80">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#e0fe56]">
               Ваша оценка
             </p>
             <p className="mt-3 flex items-baseline gap-2">
               <span className="tabular-nums text-4xl font-semibold tracking-tight sm:text-5xl">
                 {rub(total)}
               </span>
-              <span className="text-base font-medium text-slate-400">₽ / мес</span>
+              <span className="text-base font-medium text-white/50">₽ / мес</span>
             </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full bg-white/10 px-2.5 py-1 text-slate-200">
+              <span className="rounded-full bg-white/10 px-2.5 py-1 text-white/80">
                 CRM {rub(crmPrice)} ₽
               </span>
               {modulesTotal > 0 ? (
-                <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-emerald-200">
+                <span className="rounded-full bg-[#e0fe56]/15 px-2.5 py-1 text-[#e0fe56]">
                   Модули {rub(modulesTotal)} ₽
                 </span>
               ) : (
-                <span className="rounded-full bg-white/10 px-2.5 py-1 text-slate-300">
+                <span className="rounded-full bg-white/10 px-2.5 py-1 text-white/70">
                   Только CRM
                 </span>
               )}
@@ -385,7 +385,7 @@ export function PricingCalculator({ refCode }: Props) {
                   key={line.label}
                   className="flex items-center justify-between gap-3 border-b border-white/10 pb-2.5 last:border-0"
                 >
-                  <span className="text-slate-300">{line.label}</span>
+                  <span className="text-white/70">{line.label}</span>
                   <span className="tabular-nums font-medium text-white">{rub(line.amount)} ₽</span>
                 </li>
               ))}
@@ -393,16 +393,16 @@ export function PricingCalculator({ refCode }: Props) {
           </div>
 
           <div className="relative mt-8 space-y-3">
-            <p className="rounded-xl bg-emerald-400/15 px-3 py-2.5 text-sm font-medium text-emerald-200 ring-1 ring-emerald-400/20">
+            <p className="rounded-md bg-[#e0fe56]/15 px-3 py-2.5 text-sm font-medium text-[#e0fe56] ring-1 ring-[#e0fe56]/20">
               Цены как в кабинете · формы бесплатно · без скрытых платежей
             </p>
             <RegisterLink
               refCode={refCode}
-              className="friendly-btn-light flex w-full items-center justify-center touch-manipulation"
+              className="vx-btn-lime flex w-full items-center justify-center touch-manipulation"
             >
               Тестировать 7 дней бесплатно
             </RegisterLink>
-            <p className="text-center text-xs text-slate-400">Без карты · полный доступ</p>
+            <p className="text-center text-xs text-white/50">Без карты · полный доступ</p>
           </div>
         </aside>
       </div>
@@ -423,17 +423,17 @@ function GroupTitle({
 }) {
   const toneCls =
     tone === 'sky'
-      ? 'bg-sky-50 text-sky-700 ring-sky-100'
-      : 'bg-violet-50 text-violet-700 ring-violet-100';
+      ? 'bg-[#e6f6fd] text-[#0e86c4] ring-[rgba(14,134,196,0.15)]'
+      : 'bg-[#f4f2ff] text-[#8261fb] ring-[rgba(130,97,251,0.18)]';
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-2.5">
-        <span className={`flex h-8 w-8 items-center justify-center rounded-xl ring-1 ${toneCls}`}>
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ring-1 ${toneCls}`}>
           {icon}
         </span>
-        <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+        <h3 className="text-base font-semibold text-[#020817]">{title}</h3>
       </div>
-      <span className="hidden text-xs text-slate-400 sm:inline">{hint}</span>
+      <span className="hidden text-xs text-[#9aa0aa] sm:inline">{hint}</span>
     </div>
   );
 }
@@ -456,41 +456,41 @@ function QtyCard({
   const active = qty > 0;
   return (
     <div
-      className={`rounded-2xl p-3.5 transition ring-1 ${
+      className={`rounded-lg p-3.5 transition ring-1 ${
         active
-          ? 'bg-blue-50/70 ring-blue-200 shadow-sm'
-          : 'bg-white ring-slate-200 hover:ring-slate-300'
+          ? 'bg-[#f4f2ff] ring-[rgba(130,97,251,0.3)] shadow-sm'
+          : 'bg-white ring-[rgba(2,8,23,0.1)] hover:ring-[rgba(2,8,23,0.2)]'
       }`}
     >
       <div className="flex items-start gap-2.5">
         <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${accent}`} aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-slate-900">{label}</p>
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="text-sm font-semibold text-[#020817]">{label}</p>
+          <p className="mt-0.5 text-xs text-[#64686f]">
             {rub(unitPrice)} ₽ · {unitHint}
           </p>
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="tabular-nums text-xs font-medium text-slate-500">
+        <span className="tabular-nums text-xs font-medium text-[#64686f]">
           {qty > 0 ? `${rub(unitPrice * qty)} ₽` : 'не выбрано'}
         </span>
         <div className="flex items-center gap-1" role="group" aria-label={label}>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-slate-700 ring-1 ring-slate-200 transition hover:ring-blue-300 disabled:opacity-35"
+            className="flex h-8 w-8 items-center justify-center rounded-md bg-white text-[#3a4050] ring-1 ring-[rgba(2,8,23,0.12)] transition hover:ring-[#8261fb] disabled:opacity-35"
             disabled={qty <= 0}
             onClick={() => onChange(Math.max(0, qty - 1))}
             aria-label="Меньше"
           >
             <Minus className="h-3.5 w-3.5" aria-hidden />
           </button>
-          <span className="min-w-[1.5rem] text-center tabular-nums text-sm font-semibold text-slate-900">
+          <span className="min-w-[1.5rem] text-center tabular-nums text-sm font-semibold text-[#020817]">
             {qty}
           </span>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-700 disabled:opacity-35"
+            className="flex h-8 w-8 items-center justify-center rounded-md bg-[#020817] text-white transition hover:bg-[#1a2233] disabled:opacity-35"
             disabled={qty >= QTY_MAX}
             onClick={() => onChange(Math.min(QTY_MAX, qty + 1))}
             aria-label="Больше"
@@ -523,32 +523,32 @@ function ToggleCard({
       type="button"
       onClick={() => onChange(!checked)}
       aria-pressed={checked}
-      className={`rounded-2xl p-3.5 text-left transition ring-1 ${
+      className={`rounded-lg p-3.5 text-left transition ring-1 ${
         checked
-          ? 'bg-violet-50/80 ring-violet-200 shadow-sm'
-          : 'bg-white ring-slate-200 hover:ring-slate-300'
+          ? 'bg-[#f4f2ff] ring-[rgba(130,97,251,0.3)] shadow-sm'
+          : 'bg-white ring-[rgba(2,8,23,0.1)] hover:ring-[rgba(2,8,23,0.2)]'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <span
-          className={`flex h-8 w-8 items-center justify-center rounded-xl ${
-            checked ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600'
+          className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+            checked ? 'bg-[#8261fb] text-white' : 'bg-[#f3f4f6] text-[#4b5160]'
           }`}
         >
           {icon}
         </span>
         <span
           className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-md ring-1 ${
-            checked ? 'bg-violet-600 ring-violet-600 text-white' : 'bg-white ring-slate-300'
+            checked ? 'bg-[#8261fb] ring-[#8261fb] text-white' : 'bg-white ring-[rgba(2,8,23,0.2)]'
           }`}
           aria-hidden
         >
           {checked ? <Check className="h-3.5 w-3.5" /> : null}
         </span>
       </div>
-      <p className="mt-3 text-sm font-semibold text-slate-900">{title}</p>
-      <p className="mt-0.5 text-xs font-medium text-slate-600">{price}</p>
-      {detail ? <p className="mt-1 text-[11px] text-slate-400">{detail}</p> : null}
+      <p className="mt-3 text-sm font-semibold text-[#020817]">{title}</p>
+      <p className="mt-0.5 text-xs font-medium text-[#4b5160]">{price}</p>
+      {detail ? <p className="mt-1 text-[11px] text-[#9aa0aa]">{detail}</p> : null}
     </button>
   );
 }

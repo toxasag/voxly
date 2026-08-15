@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { FriendlyLanding } from '@/components/landing/friendly/friendly-landing';
+import { VoxlyLanding } from '@/components/landing/voxly/voxly-landing';
 
 export const metadata: Metadata = {
   title: 'Voxly — все клиенты в одном окне на телефоне',
@@ -23,5 +23,5 @@ export default async function LandingPage({
   const { ref: rawRef } = await searchParams;
   const refCode = rawRef?.trim() || null;
 
-  return <FriendlyLanding refCode={refCode} />;
+  return <VoxlyLanding refCode={refCode} />;
 }

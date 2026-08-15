@@ -1,0 +1,288 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - navigation "Main" [ref=e6]:
+      - generic "Main" [ref=e7]:
+        - link "Latitude.sh" [ref=e9] [cursor=pointer]:
+          - /url: /
+        - list [ref=e44]:
+          - listitem [ref=e45]:
+            - button "Products" [ref=e46] [cursor=pointer]
+          - listitem [ref=e49]:
+            - button "Solutions" [ref=e50] [cursor=pointer]
+          - listitem [ref=e53]:
+            - button "Developers" [ref=e54] [cursor=pointer]
+          - listitem [ref=e57]:
+            - link "Customers" [ref=e58] [cursor=pointer]:
+              - /url: /customers
+          - listitem [ref=e59]:
+            - link "Pricing" [ref=e60] [cursor=pointer]:
+              - /url: /pricing
+        - list [ref=e63]:
+          - link "Log in" [ref=e64] [cursor=pointer]:
+            - /url: /dashboard
+          - link "Contact" [ref=e65] [cursor=pointer]:
+            - /url: /contact
+          - link "Get started" [ref=e68] [cursor=pointer]:
+            - /url: /dashboard/signup
+  - article [ref=e73]:
+    - generic [ref=e78]:
+      - generic [ref=e79]:
+        - heading "./lsh-for-AI" [level=2] [ref=e80]
+        - heading "Intelligent bare metal" [level=1] [ref=e81]
+        - generic [ref=e82]: Performant, flexible, cost-efficient GPU instances for next-gen AI models.
+      - generic [ref=e83]:
+        - link "Start now" [ref=e84] [cursor=pointer]:
+          - /url: /dashboard/signup
+        - link "Speak to sales" [ref=e89] [cursor=pointer]:
+          - /url: /contact
+    - generic [ref=e96]:
+      - list [ref=e97]:
+        - listitem [ref=e98]
+        - listitem [ref=e103]
+        - listitem [ref=e107]
+        - listitem [ref=e111]
+        - listitem [ref=e115]
+      - link "See how Zyte reduced costs by 30%" [ref=e120] [cursor=pointer]:
+        - /url: /customers/zyte
+    - generic [ref=e131]:
+      - generic [ref=e132]:
+        - generic [ref=e133]:
+          - generic [ref=e134]: "01"
+          - generic [ref=e137]:
+            - heading "Performance your models will be proud of" [level=1] [ref=e139]
+            - generic [ref=e140]: Say goodbye to virtualization overhead, maximize compute power, and unlock high-performance GPU acceleration for faster AI model training and real-time inference. No latency, ever.
+        - 'link "Bare metal for AI workloads: supporting LLMs and generative AI" [ref=e144] [cursor=pointer]':
+          - /url: https://www.latitude.sh/blog/bare-metal-for-ai-workloads-supporting-llms-and-generative-ai
+      - generic [ref=e150]:
+        - generic [ref=e151]: "02"
+        - generic [ref=e154]:
+          - heading "Purpose-built for AI workloads" [level=1] [ref=e156]
+          - generic [ref=e157]: Enjoy complete control over hardware configurations and optimized software stacks tailored to your AI workloads. Integrate seamlessly with your favorite AI tools and libraries, and never look back.
+    - generic [ref=e161]:
+      - generic [ref=e165]:
+        - heading "Full control of your infra. And costs." [level=1] [ref=e166]
+        - generic [ref=e167]: With dedicated bare metal servers managed in the cloud, Latitude.sh guarantees data security, compliance with regulations, and predictable performance — all while offering cost savings for long-term, large-scale projects.
+      - generic [ref=e178]:
+        - paragraph [ref=e182]: The overall stability, performance, and cost-effectiveness of the platform make it a reliable choice for our infrastructure needs.
+        - link "20% savings in total compute costs Web3" [ref=e184] [cursor=pointer]:
+          - /url: /customers/koii
+          - generic [ref=e198]:
+            - generic [ref=e199]: 20% savings in total compute costs
+            - generic [ref=e200]: Web3
+    - generic [ref=e204]:
+      - heading "Train and fine-tune your AI models" [level=1] [ref=e215]
+      - generic [ref=e219]:
+        - generic [ref=e221]:
+          - img "Latitude.sh Accelerate icon" [ref=e222]
+          - heading "Only the most powerful GPUs" [level=1] [ref=e223]
+          - generic [ref=e224]: Latitude.sh Metal GPU clusters come with the latest NVIDIA GPUs — like the RTX PRO 6000 and H100 — to help you train, fine-tune, and serve your models faster and more efficiently.
+        - generic [ref=e226]:
+          - img "Latitude.sh - locations icon" [ref=e227]
+          - heading "Global edge locations" [level=1] [ref=e228]
+          - generic [ref=e229]: Get the lowest latency for your users and the best performance for your models by deploying GPU instances in 25 locations around the world.
+          - link "Explore Locations" [ref=e232] [cursor=pointer]:
+            - /url: /locations
+        - generic [ref=e237]:
+          - generic [ref=e239]:
+            - img "Latitude.sh Metal icon" [ref=e240]
+            - heading "The most intuitive dashboard" [level=1] [ref=e241]
+            - generic [ref=e242]: Manage your GPU instances with Latitude.sh's powerful, friendly dashboard. Create views, organize your projects, and add resources with a few clicks.
+          - img "Latitude.sh - Dashboard" [ref=e244]
+      - generic [ref=e250]:
+        - generic [ref=e252]:
+          - heading "Purpose-built for AI workloads" [level=1] [ref=e254]
+          - generic [ref=e255]: Enjoy complete control over hardware configurations and optimized software stacks tailored to your AI workloads. Integrate seamlessly with your favorite AI tools and libraries, and never look back.
+        - link "Reduced compute costs in more than 3 times" [ref=e258] [cursor=pointer]:
+          - /url: /customers/eoracle
+    - generic [ref=e272]:
+      - generic [ref=e273]:
+        - generic [ref=e274]:
+          - heading "./built-for-developers" [level=2] [ref=e275]
+          - heading "Start with Terraform" [level=1] [ref=e276]
+        - generic [ref=e277]: Create GPU instances programmatically with Latitude.sh's powerful, friendly API. Get started quickly with integrations like Terraform and client libraries for your preferred programming language.
+        - link "Explore the API docs" [ref=e279] [cursor=pointer]:
+          - /url: https://www.latitude.sh/docs/api-reference
+      - generic [ref=e286]:
+        - generic [ref=e287]:
+          - button "Terraform" [ref=e288] [cursor=pointer]
+          - button "CLI" [ref=e294] [cursor=pointer]
+          - button "Go SDK" [ref=e299] [cursor=pointer]
+          - button "Node SDK" [ref=e306] [cursor=pointer]
+        - generic [ref=e317]:
+          - generic [ref=e318]: "1"
+          - generic [ref=e319]: "2"
+          - generic [ref=e320]: "3"
+          - generic [ref=e321]: "4"
+          - generic [ref=e322]: "5"
+          - generic [ref=e323]: "6"
+          - generic [ref=e324]: "7"
+          - generic [ref=e325]: "8"
+          - generic [ref=e326]: "9"
+          - generic [ref=e327]: "10"
+          - generic [ref=e328]: "11"
+          - generic [ref=e329]: "12"
+          - generic [ref=e330]: "13"
+          - generic [ref=e331]: "14"
+          - generic [ref=e332]: "15"
+          - generic [ref=e333]: "16"
+          - generic [ref=e334]: "17"
+          - generic [ref=e335]: "18"
+          - generic [ref=e336]: "19"
+          - generic [ref=e337]: "20"
+          - generic [ref=e338]: "21"
+          - generic [ref=e339]: "22"
+          - generic [ref=e340]: "23"
+          - generic [ref=e341]: "24"
+          - generic [ref=e342]: "25"
+          - generic [ref=e343]: "26"
+          - generic [ref=e344]: "27"
+        - link [ref=e347] [cursor=pointer]:
+          - /url: https://registry.terraform.io/providers/latitudesh/latitudesh/latest/docs
+    - generic [ref=e360]:
+      - heading "Power your AI models" [level=1] [ref=e362]
+      - generic [ref=e364]:
+        - link "Start now" [ref=e365] [cursor=pointer]:
+          - /url: /dashboard/signup
+        - link "Contact sales" [ref=e370] [cursor=pointer]:
+          - /url: /contact
+  - contentinfo [ref=e373]:
+    - navigation "Latitude.sh Directory" [ref=e376]:
+      - heading "Footer" [level=2] [ref=e377]
+      - generic [ref=e378]:
+        - generic [ref=e380]:
+          - list [ref=e413]:
+            - listitem [ref=e414]:
+              - link [ref=e415] [cursor=pointer]:
+                - /url: https://x.com/latitudesh
+            - listitem [ref=e418]:
+              - link [ref=e419] [cursor=pointer]:
+                - /url: https://github.com/latitudesh
+                - img "github" [ref=e420]
+            - listitem [ref=e422]:
+              - link [ref=e423] [cursor=pointer]:
+                - /url: https://www.linkedin.com/company/22318494/
+                - img "LinkedIn" [ref=e424]
+          - generic [ref=e426]:
+            - generic [ref=e427]: Stay updated with our latest news and updates
+            - generic [ref=e429]:
+              - textbox "Your email" [ref=e430]
+              - button "Loading..." [ref=e432] [cursor=pointer]
+        - generic [ref=e444]:
+          - generic [ref=e445]:
+            - generic [ref=e446]:
+              - heading "Platform" [level=1] [ref=e448]
+              - generic [ref=e449]:
+                - link "Locations" [ref=e451] [cursor=pointer]:
+                  - /url: /locations
+                - link "Network" [ref=e453] [cursor=pointer]:
+                  - /url: /network
+                - link "Pricing" [ref=e455] [cursor=pointer]:
+                  - /url: /pricing
+            - generic [ref=e456]:
+              - heading "Products" [level=1] [ref=e458]
+              - generic [ref=e459]:
+                - link "Metal" [ref=e461] [cursor=pointer]:
+                  - /url: /features
+                - link "Metal GPU" [ref=e463] [cursor=pointer]:
+                  - /url: /accelerate
+                - link "Kubernetes (LKS)" [ref=e465] [cursor=pointer]:
+                  - /url: https://www.latitude.sh/docs/kubernetes
+                - link "Virtual machines" [ref=e467] [cursor=pointer]:
+                  - /url: https://www.latitude.sh/docs/vms/virtual-machines
+                - link "Build" [ref=e469] [cursor=pointer]:
+                  - /url: /build
+                - link "Storage" [ref=e471] [cursor=pointer]:
+                  - /url: /storage
+                - link "Managed Postgres" [ref=e473] [cursor=pointer]:
+                  - /url: /databases
+                - link "Cloud Gateway" [ref=e475] [cursor=pointer]:
+                  - /url: /cloud-gateway
+                - link "Global Gateway" [ref=e477] [cursor=pointer]:
+                  - /url: /global-gateway
+                - link "Private Networks" [ref=e479] [cursor=pointer]:
+                  - /url: /docs/networking/private-networks
+                - link "Firewall" [ref=e481] [cursor=pointer]:
+                  - /url: https://www.latitude.sh/docs/networking/firewall
+                - link "DDoS Protection" [ref=e483] [cursor=pointer]:
+                  - /url: /ddos-protection
+          - generic [ref=e485]:
+            - heading "Solutions" [level=1] [ref=e487]
+            - generic [ref=e488]:
+              - link "AI" [ref=e490] [cursor=pointer]:
+                - /url: /accelerate
+              - link "Web3 & Crypto" [ref=e492] [cursor=pointer]:
+                - /url: /solutions/web3
+              - link "Solana" [ref=e494] [cursor=pointer]:
+                - /url: /solutions/solana
+              - link "Confidential Compute" [ref=e496] [cursor=pointer]:
+                - /url: /solutions/confidential-compute
+              - link "Ethereum" [ref=e498] [cursor=pointer]:
+                - /url: /solutions/ethereum
+              - link "AdTech" [ref=e500] [cursor=pointer]:
+                - /url: /solutions/adtech
+              - link "Gaming" [ref=e502] [cursor=pointer]:
+                - /url: /solutions/online-gaming
+              - link "Kubernetes" [ref=e504] [cursor=pointer]:
+                - /url: /solutions/containers
+              - link "Cloud Migration" [ref=e506] [cursor=pointer]:
+                - /url: /solutions/cloud-migration
+              - link "Video Streaming" [ref=e508] [cursor=pointer]:
+                - /url: /solutions/streaming
+          - generic [ref=e510]:
+            - heading "Developers" [level=1] [ref=e512]
+            - generic [ref=e513]:
+              - link "Docs" [ref=e515] [cursor=pointer]:
+                - /url: https://www.latitude.sh/docs
+              - link "API reference" [ref=e517] [cursor=pointer]:
+                - /url: https://www.latitude.sh/docs/api-reference/summary
+              - link "SDKs" [ref=e519] [cursor=pointer]:
+                - /url: https://www.latitude.sh/docs/api-reference/client-libraries
+              - link "CLI" [ref=e521] [cursor=pointer]:
+                - /url: https://www.latitude.sh/docs/cli
+              - link "Terraform" [ref=e523] [cursor=pointer]:
+                - /url: https://registry.terraform.io/providers/latitudesh/latitudesh/latest
+              - link "Examples" [ref=e525] [cursor=pointer]:
+                - /url: https://github.com/latitudesh/examples
+              - link "Blog" [ref=e527] [cursor=pointer]:
+                - /url: /blog
+              - link "Changelog" [ref=e529] [cursor=pointer]:
+                - /url: /changelog
+              - link "Service status" [ref=e531] [cursor=pointer]:
+                - /url: https://status.latitude.sh/
+              - link "Looking glass" [ref=e533] [cursor=pointer]:
+                - /url: https://lg.latitude.sh/
+          - generic [ref=e534]:
+            - generic [ref=e535]:
+              - heading "Company" [level=1] [ref=e537]
+              - generic [ref=e538]:
+                - link "Customers" [ref=e540] [cursor=pointer]:
+                  - /url: /customers
+                - link "About us" [ref=e542] [cursor=pointer]:
+                  - /url: /about
+                - link "Careers" [ref=e544] [cursor=pointer]:
+                  - /url: /careers
+                - link "Contact sales" [ref=e546] [cursor=pointer]:
+                  - /url: /contact
+                - link "Contact support" [ref=e548] [cursor=pointer]:
+                  - /url: https://www.latitude.sh/dashboard/account?contactSupport
+                - link "Brand assets" [ref=e550] [cursor=pointer]:
+                  - /url: https://www.megaport.com/brand-center/
+            - generic [ref=e551]:
+              - heading "Legal" [level=1] [ref=e553]
+              - generic [ref=e554]:
+                - link "DPA" [ref=e556] [cursor=pointer]:
+                  - /url: /legal/dpa
+                - link "Terms of Service" [ref=e558] [cursor=pointer]:
+                  - /url: /legal/terms
+                - link "Privacy Policy" [ref=e560] [cursor=pointer]:
+                  - /url: /legal/privacy
+                - link "Fair Usage Policy" [ref=e562] [cursor=pointer]:
+                  - /url: /legal/fair-usage
+                - link "Security" [ref=e564] [cursor=pointer]:
+                  - /url: /legal/security
+                - link "Trust Center" [ref=e566] [cursor=pointer]:
+                  - /url: https://trust.latitude.sh
+                - generic [ref=e567]: Manage cookies
+    - generic [ref=e571]:
+      - generic [ref=e572]: © Latitude.sh
+      - generic: ////////////////////////////////////////////////////////////////////////////////////////////////

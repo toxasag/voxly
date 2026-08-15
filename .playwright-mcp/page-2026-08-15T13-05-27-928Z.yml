@@ -1,0 +1,332 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - link "К основному содержимому" [ref=e3] [cursor=pointer]:
+      - /url: "#main"
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Voxly" [ref=e6] [cursor=pointer]:
+          - /url: /
+        - navigation "Разделы" [ref=e7]:
+          - link "Интеграции" [ref=e8] [cursor=pointer]:
+            - /url: "#integrations"
+          - link "С телефона" [ref=e9] [cursor=pointer]:
+            - /url: "#mobile"
+          - link "Возможности" [ref=e10] [cursor=pointer]:
+            - /url: "#features"
+          - link "Цены" [ref=e11] [cursor=pointer]:
+            - /url: "#pricing"
+          - link "Под ключ" [ref=e12] [cursor=pointer]:
+            - /url: "#custom-dev"
+        - generic [ref=e13]:
+          - link "Войти" [ref=e14] [cursor=pointer]:
+            - /url: /login
+          - link "7 дней бесплатно" [ref=e15] [cursor=pointer]:
+            - /url: /register
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - paragraph [ref=e19]: Voxly
+        - heading "Все Ваши клиенты из WhatsApp, Telegram, Max и сайтов — в одном понятном окне на вашем телефоне" [level=1] [ref=e20]
+        - paragraph [ref=e21]: Voxly автоматически найдёт все социальные сети клиента, ФИО, Дату рождения и заполнит карточку контакта. Без сложных настроек за 5 минут.
+        - generic [ref=e22]:
+          - link "Попробовать 7 дней бесплатно" [ref=e23] [cursor=pointer]:
+            - /url: /register
+          - paragraph [ref=e24]: Без банковской карты · Настройка занимает 3 минуты
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - paragraph [ref=e31]: Voxly · на телефоне
+          - paragraph [ref=e32]: Сделка · Мария К.
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e36]:
+              - paragraph [ref=e37]: Мария Ковалёва
+              - paragraph [ref=e38]: Сделка · Курс «Старт»
+            - generic [ref=e39]: В работе
+          - paragraph [ref=e40]: 48 000 ₽
+          - generic [ref=e41]:
+            - generic [ref=e42]: WhatsApp найден
+            - generic [ref=e45]: Telegram найден
+            - generic [ref=e48]: MAX проверен
+          - paragraph [ref=e51]: Номер ввели один раз — имя и мессенджеры подтянулись сами.
+        - tablist "Экраны демо" [ref=e52]:
+          - tab "Воронка" [ref=e53] [cursor=pointer]
+          - tab "Чат в сделке" [ref=e60] [cursor=pointer]
+          - tab "Карточка" [selected] [ref=e64] [cursor=pointer]
+    - generic [ref=e70]:
+      - heading "Мы уже интегрировали в систему:" [level=2] [ref=e71]
+      - paragraph [ref=e72]: Мессенджеры и боты подключены — работаете из одного окна.
+      - list [ref=e73]:
+        - listitem [ref=e74]:
+          - text: Telegram
+          - generic [ref=e76]: есть
+        - listitem [ref=e77]:
+          - text: MAX
+          - generic [ref=e79]: есть
+        - listitem [ref=e80]:
+          - text: WhatsApp
+          - generic [ref=e82]: есть
+        - listitem [ref=e83]:
+          - text: Telegram бот выдачи подарков
+          - generic [ref=e85]: есть
+        - listitem [ref=e86]:
+          - text: Бот MAX
+          - generic [ref=e88]: есть
+      - generic [ref=e89]:
+        - paragraph [ref=e90]: Скоро
+        - list [ref=e91]:
+          - listitem [ref=e92]:
+            - text: Авито
+            - generic [ref=e93]: скоро
+          - listitem [ref=e94]:
+            - text: ВКонтакте
+            - generic [ref=e95]: скоро
+          - listitem [ref=e96]:
+            - text: Одноклассники
+            - generic [ref=e97]: скоро
+          - listitem [ref=e98]:
+            - text: Тенчат
+            - generic [ref=e99]: скоро
+          - listitem [ref=e100]:
+            - text: Инстаграм
+            - generic [ref=e101]: скоро
+          - listitem [ref=e102]:
+            - text: Фейсбук
+            - generic [ref=e103]: скоро
+    - generic [ref=e105]:
+      - generic [ref=e106]:
+        - heading "Работать в Voxly CRM с телефона так же просто, как в обычном мессенджере" [level=2] [ref=e107]
+        - paragraph [ref=e108]: Не нужно скачивать приложения из App Store или Google Play. Откройте сайт с телефона — всё уже работает.
+        - list [ref=e109]:
+          - listitem [ref=e110]: Управление сделками на канбан доске
+          - listitem [ref=e113]: Карточка контакта и сделки редактируется
+          - listitem [ref=e116]: Чат с клиентом из любого мессенджера в одном окне
+      - generic [ref=e123]:
+        - generic [ref=e124]:
+          - paragraph [ref=e125]: Voxly · на телефоне
+          - paragraph [ref=e126]: Сделка · Мария К.
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - generic [ref=e130]:
+              - paragraph [ref=e131]: Мария Ковалёва
+              - paragraph [ref=e132]: Сделка · Курс «Старт»
+            - generic [ref=e133]: В работе
+          - paragraph [ref=e134]: 48 000 ₽
+          - generic [ref=e135]:
+            - generic [ref=e136]: WhatsApp найден
+            - generic [ref=e139]: Telegram найден
+            - generic [ref=e142]: MAX проверен
+          - paragraph [ref=e145]: Номер ввели один раз — имя и мессенджеры подтянулись сами.
+        - tablist "Экраны демо" [ref=e146]:
+          - tab "Воронка" [ref=e147] [cursor=pointer]
+          - tab "Чат в сделке" [ref=e154] [cursor=pointer]
+          - tab "Карточка" [selected] [ref=e158] [cursor=pointer]
+    - generic [ref=e164]:
+      - heading "Сложные технологии — простым языком" [level=2] [ref=e165]
+      - paragraph [ref=e166]: Шесть инструментов, которые закрывают хаос в продажах.
+      - generic [ref=e167]:
+        - article [ref=e168]:
+          - heading "«Магическая» карточка клиента" [level=3] [ref=e173]
+          - paragraph [ref=e174]: Ввели номер — Voxly сам найдёт имя, почту, дату рождения и проверит наличие Telegram, WhatsApp и MAX.
+        - article [ref=e175]:
+          - heading "Умный авто-прогрев через Stories" [level=3] [ref=e181]
+          - paragraph [ref=e182]: Загрузите акции один раз. Система сама опубликует их по расписанию в Telegram, WhatsApp и MAX.
+          - generic [ref=e183]: 100% безопасно, по официальным сценариям
+        - article [ref=e184]:
+          - heading "Бот-магнит (Gift-бот)" [level=3] [ref=e190]
+          - paragraph [ref=e191]: Дарите подарки за подписку на ваш канал. Бот проверит подписку, выдаст бонус и внесёт человека в базу рассылок.
+        - article [ref=e192]:
+          - heading "Самообучающийся AI-ассистент" [level=3] [ref=e202]
+          - paragraph [ref=e203]: Загрузите свои базы знаний и файлы. AI учится на успешных сделках и ответит клиенту так же, как ваш лучший менеджер.
+        - article [ref=e204]:
+          - heading "Бесплатные формы с Tilda и WordPress" [level=3] [ref=e209]
+          - paragraph [ref=e210]: Сколько бы у вас ни было сайтов — заявки прилетают моментально, без дублей и без доплаты.
+        - article [ref=e211]:
+          - heading "Управление AI в один тап" [level=3] [ref=e216]
+          - paragraph [ref=e217]: "В любой момент переключайте режим AI-помощника в чате: Вкл / Пауза / Выкл."
+    - generic [ref=e219]:
+      - generic [ref=e220]:
+        - heading "Рассчитайте стоимость за 5 секунд. Никаких скрытых платежей." [level=2] [ref=e221]
+        - paragraph [ref=e222]: CRM от 600 ₽ · формы с сайта бесплатно · модули — по желанию.
+      - generic [ref=e225]:
+        - generic [ref=e226]:
+          - generic [ref=e227]:
+            - generic [ref=e235]:
+              - heading "Команда в CRM" [level=3] [ref=e236]
+              - paragraph [ref=e237]: База 600 ₽ · до 10 мест · далее +300 ₽
+            - generic [ref=e238]:
+              - generic [ref=e239]:
+                - paragraph [ref=e240]: Сотрудников
+                - paragraph [ref=e241]:
+                  - text: "1"
+                  - generic [ref=e242]: / 10+
+              - slider [ref=e243]: "1"
+              - generic [ref=e244]:
+                - button "1" [ref=e245] [cursor=pointer]
+                - button "10 мест" [ref=e246] [cursor=pointer]
+                - button "12" [ref=e247] [cursor=pointer]
+            - generic [ref=e248]: Заявки с сайтов (Tilda / WordPress) — всегда бесплатно
+          - generic [ref=e251]:
+            - generic [ref=e252]:
+              - heading "Личные мессенджеры" [level=3] [ref=e257]
+              - generic [ref=e258]: Можно несколько аккаунтов
+            - generic [ref=e259]:
+              - generic [ref=e260]:
+                - generic [ref=e263]:
+                  - paragraph [ref=e264]: Telegram
+                  - paragraph [ref=e265]: 500 ₽ · аккаунт
+                - generic [ref=e266]:
+                  - generic [ref=e267]: не выбрано
+                  - group "Telegram" [ref=e268]:
+                    - button "Меньше" [disabled] [ref=e269] [cursor=pointer]
+                    - generic [ref=e271]: "0"
+                    - button "Больше" [ref=e272] [cursor=pointer]
+              - generic [ref=e274]:
+                - generic [ref=e277]:
+                  - paragraph [ref=e278]: WhatsApp
+                  - paragraph [ref=e279]: 500 ₽ · аккаунт
+                - generic [ref=e280]:
+                  - generic [ref=e281]: не выбрано
+                  - group "WhatsApp" [ref=e282]:
+                    - button "Меньше" [disabled] [ref=e283] [cursor=pointer]
+                    - generic [ref=e285]: "0"
+                    - button "Больше" [ref=e286] [cursor=pointer]
+              - generic [ref=e288]:
+                - generic [ref=e291]:
+                  - paragraph [ref=e292]: MAX
+                  - paragraph [ref=e293]: 500 ₽ · аккаунт
+                - generic [ref=e294]:
+                  - generic [ref=e295]: не выбрано
+                  - group "MAX" [ref=e296]:
+                    - button "Меньше" [disabled] [ref=e297] [cursor=pointer]
+                    - generic [ref=e299]: "0"
+                    - button "Больше" [ref=e300] [cursor=pointer]
+              - generic [ref=e302]:
+                - generic [ref=e305]:
+                  - paragraph [ref=e306]: Gift-бот
+                  - paragraph [ref=e307]: 500 ₽ · бот · канал
+                - generic [ref=e308]:
+                  - generic [ref=e309]: не выбрано
+                  - group "Gift-бот" [ref=e310]:
+                    - button "Меньше" [disabled] [ref=e311] [cursor=pointer]
+                    - generic [ref=e313]: "0"
+                    - button "Больше" [ref=e314] [cursor=pointer]
+          - generic [ref=e316]:
+            - generic [ref=e317]:
+              - heading "Автоматизация" [level=3] [ref=e323]
+              - generic [ref=e324]: Вкл / выкл модули
+            - generic [ref=e325]:
+              - button [ref=e326] [cursor=pointer]:
+                - paragraph [ref=e333]: Телеграм Секретарь
+                - paragraph [ref=e334]: 1 000 ₽/мес
+                - paragraph [ref=e335]: 10 аккаунтов в базе
+              - button [ref=e336] [cursor=pointer]:
+                - paragraph [ref=e343]: Рассылка из ботов
+                - paragraph [ref=e344]: 500 ₽/мес
+              - button [ref=e345] [cursor=pointer]:
+                - paragraph [ref=e354]: Рассылка с аккаунтов
+                - paragraph [ref=e355]: 500 ₽/мес
+              - button [ref=e356] [cursor=pointer]:
+                - paragraph [ref=e364]: Постинг Stories
+                - paragraph [ref=e365]: 1 000 ₽/мес
+        - complementary [ref=e366]:
+          - generic [ref=e367]:
+            - paragraph [ref=e368]: Ваша оценка
+            - paragraph [ref=e369]:
+              - generic [ref=e370]: "600"
+              - generic [ref=e371]: ₽ / мес
+            - generic [ref=e372]:
+              - generic [ref=e373]: CRM 600 ₽
+              - generic [ref=e374]: Только CRM
+            - list [ref=e375]:
+              - listitem [ref=e376]:
+                - generic [ref=e377]: CRM (до 10 мест)
+                - generic [ref=e378]: 600 ₽
+          - generic [ref=e379]:
+            - paragraph [ref=e380]: Цены как в кабинете · формы бесплатно · без скрытых платежей
+            - link "Тестировать 7 дней бесплатно" [ref=e381] [cursor=pointer]:
+              - /url: /register
+            - paragraph [ref=e382]: Без карты · полный доступ
+    - generic [ref=e384]:
+      - generic [ref=e385]:
+        - heading "Пользуйтесь Voxly бесплатно или зарабатывайте на рекомендациях" [level=2] [ref=e386]
+        - paragraph [ref=e387]:
+          - text: Рекомендуйте Voxly коллегам и получайте
+          - strong [ref=e388]: 20% с каждой их оплаты
+          - text: на постоянной основе.
+      - generic [ref=e389]:
+        - generic [ref=e390]:
+          - generic [ref=e391]:
+            - generic [ref=e392]: Сколько коллег вы можете порекомендовать?
+            - generic [ref=e393]: "5"
+          - slider "Сколько коллег вы можете порекомендовать? 5" [ref=e394]: "5"
+        - generic [ref=e395]:
+          - paragraph [ref=e396]: Ваш пассивный доход
+          - paragraph [ref=e397]: ~3 000 ₽/ мес
+          - paragraph [ref=e398]: 20% с оплат коллег на постоянной основе — это полностью перекрывает вашу подписку CRM.
+          - paragraph [ref=e399]: Оценка при среднем чеке коллеги ~3 000 ₽/мес (CRM + модули).
+        - link "Заработать с Voxly" [ref=e400] [cursor=pointer]:
+          - /url: /register
+    - generic [ref=e403]:
+      - heading "Нужна уникальная функция или интеграция? Сделаем под ключ." [level=2] [ref=e404]
+      - paragraph [ref=e405]: У вас специфический процесс или самописная система? Наша команда доработает Voxly под ваши задачи.
+      - list [ref=e406]:
+        - listitem [ref=e407]: Интеграции с 1С, складскими программами и любыми API.
+        - listitem [ref=e408]: Индивидуальные отчёты и аналитические дашборды.
+        - listitem [ref=e409]: Персональные AI-сценарии и логика ботов.
+      - generic [ref=e410]:
+        - button "Обсудить мою задачу" [ref=e411] [cursor=pointer]
+        - paragraph [ref=e412]: Оценка сроков и стоимости — за 24 часа
+    - generic [ref=e414]:
+      - heading "3 простых шага к порядку в продажах" [level=2] [ref=e415]
+      - list [ref=e416]:
+        - listitem [ref=e417]:
+          - generic [ref=e418]: "1"
+          - heading "Быстрая регистрация (1 мин)" [level=3] [ref=e419]
+          - paragraph [ref=e420]: Укажите почту или телефон. Карта не нужна.
+        - listitem [ref=e421]:
+          - generic [ref=e422]: "2"
+          - heading "Подключение за пару кликов (2 мин)" [level=3] [ref=e423]
+          - paragraph [ref=e424]: Отсканируйте QR-код для мессенджеров и вставьте ссылку для Tilda/WP.
+        - listitem [ref=e425]:
+          - generic [ref=e426]: "3"
+          - heading "Принимайте первые заявки" [level=3] [ref=e427]
+          - paragraph [ref=e428]: Вся работа идёт с телефона или компьютера.
+    - generic [ref=e430]:
+      - heading "Частые вопросы" [level=2] [ref=e431]
+      - generic [ref=e432]:
+        - heading [level=3] [ref=e434]:
+          - button "Нужно ли привязывать банковскую карту для 7 дней теста?" [ref=e435] [cursor=pointer]
+        - heading [level=3] [ref=e437]:
+          - button "Нужно ли скачивать приложение из App Store или Google Play?" [ref=e438] [cursor=pointer]
+        - heading [level=3] [ref=e440]:
+          - button "Безопасно ли использовать автопостинг сторис и мессенджеры?" [ref=e441] [cursor=pointer]
+        - heading [level=3] [ref=e443]:
+          - button "Сложно ли обучить сотрудников?" [ref=e444] [cursor=pointer]
+    - generic [ref=e445]:
+      - heading "Попробуйте Voxly 7 дней без ограничений и оплаты" [level=2] [ref=e446]
+      - paragraph [ref=e447]: Перенесите все чаты и заявки в один экран уже сегодня.
+      - link "Начать 7 дней бесплатно" [ref=e448] [cursor=pointer]:
+        - /url: /register
+    - contentinfo [ref=e449]:
+      - generic [ref=e450]:
+        - generic [ref=e451]:
+          - paragraph [ref=e452]: Voxly
+          - paragraph [ref=e453]: ИП Сагайдак Антон Геннадьевич
+          - paragraph [ref=e454]:
+            - link "anton@genadich.com" [ref=e455] [cursor=pointer]:
+              - /url: mailto:anton@genadich.com
+          - paragraph [ref=e456]: getvoxly.ru
+        - list [ref=e457]:
+          - listitem [ref=e458]:
+            - link "Пользовательское соглашение" [ref=e459] [cursor=pointer]:
+              - /url: /terms
+          - listitem [ref=e460]:
+            - link "Политика конфиденциальности" [ref=e461] [cursor=pointer]:
+              - /url: /privacy
+          - listitem [ref=e462]:
+            - link "Согласие на обработку персональных данных" [ref=e463] [cursor=pointer]:
+              - /url: /consent
+          - listitem [ref=e464]:
+            - link "Правила возврата средств" [ref=e465] [cursor=pointer]:
+              - /url: /refund
+    - button "Открыть виджет подарка" [ref=e467] [cursor=pointer]
+  - alert [ref=e472]
