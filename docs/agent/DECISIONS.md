@@ -1,5 +1,25 @@
 # Решения (короткие ADR)
 
+## ADR-029 — pgBouncer перед control-plane PG (transaction mode)
+
+**Статус:** ✅ 2026-08-15 (WORKPLAN 6.2)
+
+| Вопрос | Выбор |
+|---|---|
+| Проблема | 8 Prisma-сервисов держат независимые пулы к одному `postgres-control` (~13 conn/инстанс → ~100 коннектов, большинство idle). Упор в `max_connections` при росте пользователей и при выносе сервисов на отдельные ВПС |
+| Решение | `pgbouncer-control` (`edoburu/pgbouncer`) в transaction mode перед control-plane PG. Runtime Prisma → pgBouncer (`?pgbouncer=true`), миграции/DDL → напрямую (`directUrl`/`DIRECT_DATABASE_URL`) |
+| Почему только control-plane | Там 8 пулов и весь выигрыш; сервис не FROZEN; Prisma tx-mode — проверенный путь |
+| Почему НЕ Twenty PG | TypeORM + 22 сырых `pg.Pool` (`TWENTY_DATABASE_URL`) используют prepared statements / session-state, ломаются в transaction mode; Twenty FROZEN (ADR-014). При необходимости — отдельная задача с session mode |
+| Prisma tx-mode нюансы | `$transaction`, `pg_advisory_xact_lock` (billing InvId) работают в рамках одной tx — совместимо с transaction pooling. `directUrl` обязателен для `migrate deploy` (DDL/advisory/session) |
+| Dev | Без pgBouncer: `DIRECT_DATABASE_URL=DATABASE_URL`, `?pgbouncer=true` не мешает |
+| Настройки пула | DEFAULT_POOL_SIZE=25, MIN=5, RESERVE=5, MAX_CLIENT_CONN=1000, SERVER_RESET_QUERY=DISCARD ALL, IGNORE_STARTUP_PARAMETERS=extra_float_digits,search_path,options |
+
+**Отклонено:** пулинг Twenty PG сейчас; session-mode для control (меньше выигрыш по коннектам); внешний managed-pooler (лишняя зависимость на текущем масштабе).
+
+**Related:** WORKPLAN 6.2; ADR-013 (deploy); ADR-014 (Twenty freeze); CAPACITY.md.
+
+---
+
 ## ADR-028 — Per-service auth tokens (split-readiness)
 
 **Статус:** ✅ 2026-08-15 (WORKPLAN 9.2)

@@ -69,6 +69,42 @@ services:
     networks:
       - voxly-net
 
+  # --- PgBouncer (transaction pooling) in front of control-plane PG (6.2) ---
+  # Prisma runtime traffic (8 services) goes through here to cap direct PG
+  # connections. Migrations use DIRECT_DATABASE_URL (postgres-control:5432),
+  # because transaction mode cannot run DDL / advisory locks / session state.
+  # Twenty PG is intentionally NOT pooled (TypeORM + raw pg prepared statements).
+  pgbouncer-control:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    restart: unless-stopped
+    depends_on:
+      postgres-control:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres-control
+      DB_PORT: "5432"
+      DB_USER: voxly
+      DB_PASSWORD: ${POSTGRES_CONTROL_PASSWORD:-voxly_pass}
+      DB_NAME: voxly_control
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      # Prisma requires disabled server-side prepared statements in tx mode;
+      # clients also pass ?pgbouncer=true. Keep server_reset_query safe.
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "25"
+      MIN_POOL_SIZE: "5"
+      RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_TIMEOUT: "3"
+      SERVER_RESET_QUERY: DISCARD ALL
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path,options
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U voxly || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voxly-net
+
   # --- PostgreSQL for Twenty CRM ---
   postgres-twenty:
     image: postgres:16-alpine
@@ -208,6 +244,8 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       postgres-twenty:
         condition: service_healthy
       redis:
@@ -215,7 +253,8 @@ services:
     environment:
       NODE_ENV: production
       VOXLY_DISABLE_WORKERS: ${VOXLY_DISABLE_WORKERS:-1}
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
@@ -275,6 +314,8 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       postgres-twenty:
         condition: service_healthy
       redis:
@@ -282,7 +323,8 @@ services:
     environment:
       NODE_ENV: production
       VOXLY_DISABLE_WORKERS: "0"
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       TWENTY_API_URL: http://twenty-server:3000/graphql
       TWENTY_API_KEY: ${TWENTY_API_KEY}
@@ -368,11 +410,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       saas-api:
         condition: service_started
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       PLATFORM_BOT_TOKEN: ${PLATFORM_BOT_TOKEN}
       PLATFORM_BOT_USERNAME: ${PLATFORM_BOT_USERNAME:-GetVoxlybot}
       PLATFORM_WEBHOOK_URL: https://api.getvoxly.ru/bots/platform/webhook
@@ -399,11 +444,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       TELEGRAM_MANAGER_BOT_TOKEN: ${TELEGRAM_MANAGER_BOT_TOKEN}
@@ -429,11 +477,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       TWENTY_API_URL: http://twenty-server:3000/graphql
@@ -472,11 +523,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
@@ -505,11 +559,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       ai-telegram-worker:
         condition: service_started
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
       <<: *voxly-service-tokens
@@ -591,11 +648,14 @@ services:
     depends_on:
       postgres-control:
         condition: service_healthy
+      pgbouncer-control:
+        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
+      DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@pgbouncer-control:5432/voxly_control?schema=public&pgbouncer=true
+      DIRECT_DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       REDIS_URL: redis://redis:6379
       # Baileys lidMapping hash lives in Evolution Redis DB 6.
       EVOLUTION_REDIS_URI: redis://redis:6379/6

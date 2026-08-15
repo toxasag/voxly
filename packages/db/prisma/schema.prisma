@@ -7,8 +7,12 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Migrations / introspection bypass pgBouncer (transaction mode cannot run
+  // DDL, advisory locks, or session state). Falls back to DATABASE_URL when
+  // DIRECT_DATABASE_URL is unset (single-Postgres dev without pgBouncer).
+  directUrl = env("DIRECT_DATABASE_URL")
 }
 
 // ============================================================
