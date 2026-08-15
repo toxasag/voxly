@@ -2,7 +2,7 @@
 // Storage is platform-global; soft-gate ai_gramjs addon (see TG-AUDIENCE-GRAPH-TZ.md).
 
 import type { FastifyPluginAsync } from 'fastify';
-import { PRODUCT_CODES } from '@voxly/shared';
+import { PRODUCT_CODES, resolveServiceToken } from '@voxly/shared';
 
 async function softGramjsAddon(prisma: any, tenantId: string) {
   const addon = await prisma.addon.findUnique({
@@ -210,7 +210,7 @@ export const audienceRoutes: FastifyPluginAsync = async (fastify) => {
     });
     if (!bot) return reply.code(404).send({ error: 'account not found' });
 
-    const token = process.env.VOXLY_SERVICE_TOKEN || '';
+    const token = resolveServiceToken('gramjs-bridge');
     const base = (process.env.GRAMJS_BRIDGE_URL || 'http://gramjs-bridge:3008').replace(/\/$/, '');
     if (!token) {
       return reply.code(503).send({ error: 'VOXLY_SERVICE_TOKEN not configured' });

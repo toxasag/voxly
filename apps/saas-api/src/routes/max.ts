@@ -2,7 +2,7 @@
 // Browser never talks to max-bridge directly. Pattern mirrors gramjs.ts (ADR-025).
 
 import type { FastifyPluginAsync } from 'fastify';
-import { PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { PRODUCT_CODES, TRIAL_PERIOD_DAYS, resolveServiceToken } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 import { runMaxPrivateChatSync } from '../services/max-chat-sync.js';
 
@@ -15,7 +15,7 @@ function bridgeBase(): string {
 }
 
 function serviceToken(): string {
-  return process.env.VOXLY_SERVICE_TOKEN || '';
+  return resolveServiceToken('max-bridge');
 }
 
 /** In-process MAX history-sync jobs (avoid nginx/browser timeout). */

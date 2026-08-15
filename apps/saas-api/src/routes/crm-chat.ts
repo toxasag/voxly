@@ -17,6 +17,7 @@ import {
   writeCrmUnreadCache,
   invalidateCrmUnreadCache,
   claimCrmReadDebounce,
+  resolveServiceToken,
 } from '@voxly/shared';
 import IORedis from 'ioredis';
 import {
@@ -1627,8 +1628,15 @@ function humanizeCrmChatSendError(raw: string): string {
   return msg;
 }
 
-function serviceToken(): string {
-  return process.env.VOXLY_SERVICE_TOKEN || '';
+/** Outbound service tokens, resolved per target service (per-service or shared). */
+function gramjsToken(): string {
+  return resolveServiceToken('gramjs-bridge');
+}
+function maxToken(): string {
+  return resolveServiceToken('max-bridge');
+}
+function whatsappToken(): string {
+  return resolveServiceToken('ai-whatsapp-worker');
 }
 
 function gramjsBridgeBase(): string {
@@ -1660,7 +1668,7 @@ async function sendViaGramjsBridge(opts: {
     fileName: string;
   } | null;
 }): Promise<ChatAttachment | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = gramjsToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -1723,7 +1731,7 @@ async function sendViaMaxBridge(opts: {
     fileName: string;
   } | null;
 }): Promise<{ attachment: ChatAttachment | null; chatId: string | null }> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = maxToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -1798,7 +1806,7 @@ async function fetchGramjsMedia(opts: {
   botId: string;
   fileId: string;
 }): Promise<{ buffer: Buffer; contentType: string } | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = gramjsToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -1839,7 +1847,7 @@ async function fetchWhatsappMedia(opts: {
   /** Evolution key.fromMe — true for CRM/operator outbound */
   fromMe?: boolean;
 }): Promise<{ buffer: Buffer; contentType: string } | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = whatsappToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -1882,7 +1890,7 @@ async function sendViaWhatsappWorker(opts: {
     fileName: string;
   };
 }): Promise<ChatAttachment | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = whatsappToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -1935,7 +1943,7 @@ function fireWhatsappPresence(opts: {
   kind: 'typing' | 'read';
   messageIds?: string[];
 }): void {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = whatsappToken();
   if (!token) return;
   const path =
     opts.kind === 'typing' ? '/internal/chat/typing' : '/internal/chat/read';
@@ -1962,7 +1970,7 @@ function fireGramjsPresence(opts: {
   peerUserId: string;
   kind: 'typing' | 'read';
 }): void {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = gramjsToken();
   if (!token) return;
   const path =
     opts.kind === 'typing' ? '/messages/typing' : '/messages/read';
@@ -1986,7 +1994,7 @@ function fireMaxPresence(opts: {
   kind: 'read';
   messageIds?: string[];
 }): void {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = maxToken();
   if (!token) return;
   void fetch(`${maxBridgeBase()}/messages/read`, {
     method: 'POST',
@@ -2006,7 +2014,7 @@ async function fetchMaxMedia(opts: {
   botId: string;
   fileId: string;
 }): Promise<{ buffer: Buffer; contentType: string } | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = maxToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   }
@@ -2066,7 +2074,7 @@ async function fetchContactPresence(opts: {
   botId: string;
   peerUserId: string;
 }): Promise<CrmChatPresence | null> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = gramjsToken();
   if (!token || !opts.botId || !opts.peerUserId) return null;
 
   if (opts.botType === 'ai_gramjs') {

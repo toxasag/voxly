@@ -47,6 +47,9 @@ import {
   fetchWithTimeout,
   invalidateCrmThreadCache,
   invalidateCrmUnreadCache,
+  verifyServiceToken,
+  resolveServiceToken,
+  extractBearer,
 } from '@voxly/shared';
 import OpenAI from 'openai';
 import IORedis from 'ioredis';
@@ -177,8 +180,7 @@ async function main() {
       for await (const chunk of req) body += chunk;
       try {
         const auth = req.headers.authorization || '';
-        const expected = process.env.VOXLY_SERVICE_TOKEN || '';
-        if (!expected || auth !== `Bearer ${expected}`) {
+        if (!verifyServiceToken(extractBearer(auth), 'ai-telegram-worker')) {
           res.writeHead(401);
           res.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
           return;
@@ -2127,7 +2129,7 @@ async function requestCrossChannelEnrich(opts: {
   phone: string;
   channels?: Array<'telegram' | 'max' | 'whatsapp'>;
 }): Promise<void> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = resolveServiceToken('saas-api');
   const phone = String(opts.phone || '').replace(/\D/g, '');
   if (!token || !opts.personId || phone.length < 10) return;
   try {
@@ -2164,7 +2166,7 @@ async function enrichPersonFromGramjs(
   personId: string,
   opts: { telegramId?: string; username?: string },
 ): Promise<void> {
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = resolveServiceToken('gramjs-bridge');
   if (!token || !personId) return;
 
   const gramjsBotId = await prisma.botInstance

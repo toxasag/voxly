@@ -3,7 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS, resolveServiceToken } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 
 function canManageTenant(user: { role?: string; tenantRole?: string }): boolean {
@@ -18,7 +18,7 @@ function workerBase(): string {
 }
 
 function serviceToken(): string {
-  return process.env.VOXLY_SERVICE_TOKEN || '';
+  return resolveServiceToken('ai-whatsapp-worker');
 }
 
 async function workerFetch(

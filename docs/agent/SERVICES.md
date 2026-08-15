@@ -28,7 +28,7 @@
 | Package | Роль |
 |---|---|
 | `@voxly/db` | Prisma schema + client |
-| `@voxly/shared` | pricing, defaults funnel/promo, `buildVoxlyBotUsername`, telegram-md, media helpers |
+| `@voxly/shared` | pricing, defaults funnel/promo, `buildVoxlyBotUsername`, telegram-md, media helpers, **service-auth** (per-service tokens, ADR-028) |
 | `@voxly/billing` | Robokassa |
 | `@voxly/twenty-client` | GraphQL Twenty |
 | `@voxly/crypto` | AES-256-GCM |

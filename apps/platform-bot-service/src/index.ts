@@ -1,12 +1,13 @@
 // Voxly Platform Bot (@GetVoxlybot): OTP deep-links + support inbox webhook.
 
-import { fetchWithTimeout } from '@voxly/shared';
+import { fetchWithTimeout, resolveServiceToken } from '@voxly/shared';
 
 const PLATFORM_BOT_TOKEN = process.env.PLATFORM_BOT_TOKEN || '';
 const PLATFORM_BOT_USERNAME = process.env.PLATFORM_BOT_USERNAME || 'GetVoxlybot';
 const WEBHOOK_PORT = parseInt(process.env.PLATFORM_BOT_PORT || '3009', 10);
 const SAAS_API_URL = (process.env.SAAS_API_URL || 'http://saas-api:3002').replace(/\/+$/, '');
-const SERVICE_TOKEN = process.env.VOXLY_SERVICE_TOKEN || '';
+/** Token to authenticate outbound calls to saas-api (per-service or shared). */
+const SERVICE_TOKEN = resolveServiceToken('saas-api');
 const USE_POLLING = process.env.PLATFORM_USE_POLLING === 'true';
 
 if (!PLATFORM_BOT_TOKEN) {

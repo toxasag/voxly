@@ -10,7 +10,7 @@ import rateLimit from '@fastify/rate-limit';
 import { prisma } from '@voxly/db';
 import { RobokassaClient } from '@voxly/billing';
 import { TwentyClient } from '@voxly/twenty-client';
-import { PRICING } from '@voxly/shared';
+import { PRICING, verifyServiceToken, extractBearer } from '@voxly/shared';
 import { authRoutes } from './routes/auth.js';
 import { billingRoutes } from './routes/billing.js';
 import { tenantRoutes } from './routes/tenant.js';
@@ -173,8 +173,9 @@ export async function buildServer() {
 
   // --- Auth decorator ---
   // Portal JWT, short-lived crm-chat JWT, or Twenty app service token
-  // (Authorization: Bearer VOXLY_SERVICE_TOKEN + X-Twenty-Workspace-Id).
-  const serviceToken = process.env.VOXLY_SERVICE_TOKEN || '';
+  // (Authorization: Bearer <saas-api service token> + X-Twenty-Workspace-Id).
+  // Token verification uses @voxly/shared verifyServiceToken (per-service
+  // VOXLY_TOKEN_SAAS_API with VOXLY_SERVICE_TOKEN fallback).
 
   async function rejectIfCrmLocked(tenantId: string, reply: any): Promise<boolean> {
     const denied = await assertCrmAccessAllowed(prisma, tenantId);
@@ -194,11 +195,11 @@ export async function buildServer() {
 
   fastify.decorate('authenticate', async (request: any, reply: any) => {
     const authHeader = String(request.headers.authorization || '');
-    const bearer = authHeader.startsWith('Bearer ')
-      ? authHeader.slice('Bearer '.length).trim()
-      : '';
+    const bearer = extractBearer(authHeader);
 
-    if (serviceToken && bearer && bearer === serviceToken) {
+    // Twenty app / internal service token (per-service VOXLY_TOKEN_SAAS_API or
+    // shared VOXLY_SERVICE_TOKEN). Requires X-Twenty-Workspace-Id to scope tenant.
+    if (bearer && verifyServiceToken(bearer, 'saas-api')) {
       const workspaceId = String(
         request.headers['x-twenty-workspace-id'] || '',
       ).trim();

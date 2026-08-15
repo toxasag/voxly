@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import io
 import logging
 import os
@@ -24,7 +25,6 @@ logger = logging.getLogger("max-bridge")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 PORT = int(os.environ.get("MAX_BRIDGE_PORT", "3010"))
-SERVICE_TOKEN = os.environ.get("VOXLY_SERVICE_TOKEN", "")
 SAAS_API_URL = (os.environ.get("SAAS_API_URL") or "http://saas-api:3002").rstrip("/")
 SESSION_DIR = Path(os.environ.get("MAX_SESSION_DIR") or "/data/max-sessions")
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,16 +44,51 @@ except Exception as exc:  # pragma: no cover - optional at build/dev
 app = FastAPI(title="Voxly MAX bridge", version="0.1.0")
 
 
+def _service_token_env_name(service: str) -> str:
+    suffix = re.sub(r"[^A-Z0-9]+", "_", (service or "").upper()).strip("_")
+    return f"VOXLY_TOKEN_{suffix}"
+
+
+def resolve_service_token(target_service: str) -> str:
+    """Outbound: token to reach target_service (per-service, fallback shared)."""
+    return (
+        os.environ.get(_service_token_env_name(target_service), "").strip()
+        or os.environ.get("VOXLY_SERVICE_TOKEN", "").strip()
+    )
+
+
+def _self_tokens() -> list:
+    """Inbound: accept our per-service token or the shared token (migration)."""
+    out = []
+    per = os.environ.get(_service_token_env_name("max-bridge"), "").strip()
+    if per:
+        out.append(per)
+    shared = os.environ.get("VOXLY_SERVICE_TOKEN", "").strip()
+    if shared:
+        out.append(shared)
+    return out
+
+
 def require_auth(authorization: Optional[str]) -> None:
-    if not SERVICE_TOKEN:
-        raise HTTPException(503, detail="VOXLY_SERVICE_TOKEN not configured")
-    if not authorization or authorization != f"Bearer {SERVICE_TOKEN}":
+    candidates = _self_tokens()
+    if not candidates:
+        raise HTTPException(503, detail="service token not configured")
+    presented = ""
+    if authorization and authorization.startswith("Bearer "):
+        presented = authorization[len("Bearer "):].strip()
+    # constant-time compare against each candidate; no early exit.
+    # Compare bytes to avoid compare_digest TypeError on non-ASCII input.
+    presented_b = presented.encode("utf-8", "ignore")
+    ok = False
+    for c in candidates:
+        ok = hmac.compare_digest(presented_b, c.encode("utf-8", "ignore")) or ok
+    if not presented or not ok:
         raise HTTPException(401, detail="Unauthorized")
 
 
 async def saas_fetch(path: str, method: str = "GET", json_body: Any = None) -> dict:
     headers = {
-        "Authorization": f"Bearer {SERVICE_TOKEN}",
+        "Authorization": f"Bearer {resolve_service_token('saas-api')}",
         "X-Voxly-Service": "max-bridge",
         "Content-Type": "application/json",
     }
@@ -2213,8 +2248,8 @@ async def _restore_bot(bot_id: str) -> bool:
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    if not SERVICE_TOKEN:
-        logger.warning("VOXLY_SERVICE_TOKEN empty — bridge will reject calls")
+    if not _self_tokens():
+        logger.warning("no service token set (VOXLY_TOKEN_MAX_BRIDGE / VOXLY_SERVICE_TOKEN) — bridge will reject calls")
     if not PYMAX_AVAILABLE:
         logger.warning("PyMax missing — QR/send will return 503 until installed")
         return

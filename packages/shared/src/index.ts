@@ -792,6 +792,14 @@ export {
 export { fetchWithTimeout } from './fetch.js';
 
 export {
+  serviceTokenEnvName,
+  resolveServiceToken,
+  verifyServiceToken,
+  timingSafeEqualStr,
+  extractBearer,
+} from './service-auth.js';
+
+export {
   CRM_THREAD_CACHE_TTL_SEC,
   crmThreadCacheKey,
   readCrmThreadCache,

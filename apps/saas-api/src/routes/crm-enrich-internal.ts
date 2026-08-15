@@ -1,10 +1,11 @@
-// Internal cross-channel Person enrich by phone (VOXLY_SERVICE_TOKEN).
+// Internal cross-channel Person enrich by phone (service token).
 // Used by ai-telegram-worker / gift-bot-worker when E.164 is known.
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
 import { TwentyClient } from '@voxly/twenty-client';
+import { extractBearer, verifyServiceToken } from '@voxly/shared';
 import {
   enrichPersonCrossChannelByPhone,
   type EnrichChannel,
@@ -24,10 +25,10 @@ function requireService(request: {
   code: (n: number) => { send: (b: unknown) => unknown };
 }): boolean {
   const service = String(request.headers['x-voxly-service'] || '');
-  const auth = String(request.headers.authorization || '');
-  const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
-  if (!token || bearer !== token || !ALLOWED_SERVICES.has(service)) {
+  const bearer = extractBearer(String(request.headers.authorization || ''));
+  // saas-api is the target service; callers present its (per-service or shared)
+  // token. X-Voxly-Service must still name a known internal caller.
+  if (!verifyServiceToken(bearer, 'saas-api') || !ALLOWED_SERVICES.has(service)) {
     reply.code(401).send({ error: 'Unauthorized' });
     return false;
   }

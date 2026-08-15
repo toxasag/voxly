@@ -13,12 +13,13 @@ import { generateRandomLong } from 'telegram/Helpers.js';
 import { FloodWaitError } from 'telegram/errors/index.js';
 import { prisma } from '@voxly/db';
 import { encrypt, decrypt } from '@voxly/crypto';
-import { PRODUCT_CODES, PRICING, clientMdToTelegramHtml, fetchWithTimeout } from '@voxly/shared';
+import { PRODUCT_CODES, PRICING, clientMdToTelegramHtml, fetchWithTimeout, verifyServiceToken, resolveServiceToken, extractBearer } from '@voxly/shared';
 
 const PORT = Number(process.env.GRAMJS_BRIDGE_PORT || 3008);
 const API_ID = Number(process.env.TELEGRAM_API_ID || process.env.API_ID || 0);
 const API_HASH = String(process.env.TELEGRAM_API_HASH || process.env.API_HASH || '');
-const SERVICE_TOKEN = process.env.VOXLY_SERVICE_TOKEN || '';
+/** Token to authenticate outbound calls to ai-telegram-worker (per-service or shared). */
+const AI_WORKER_TOKEN = resolveServiceToken('ai-telegram-worker');
 const AI_WORKER_URL =
   process.env.AI_TELEGRAM_WORKER_URL || 'http://ai-telegram-worker:3005';
 /** saas-api for post-connect CRM enrich (docker DNS on prod). */
@@ -54,8 +55,7 @@ const membershipCheckAt = new Map<string, number>();
 const audienceSyncing = new Set<string>();
 
 function requireAuth(req: http.IncomingMessage): boolean {
-  if (!SERVICE_TOKEN) return false;
-  return req.headers.authorization === `Bearer ${SERVICE_TOKEN}`;
+  return verifyServiceToken(extractBearer(req.headers.authorization), 'gramjs-bridge');
 }
 
 async function readJson(req: http.IncomingMessage): Promise<any> {
@@ -1095,7 +1095,7 @@ async function askAiWorker(payload: {
   const res = await fetchWithTimeout(`${AI_WORKER_URL}/internal/inbound`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${SERVICE_TOKEN}`,
+      Authorization: `Bearer ${AI_WORKER_TOKEN}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ ...payload, channel: 'telegram_gramjs' }),
@@ -1624,8 +1624,8 @@ async function deleteAccount(tenantId: string, botId: string) {
 }
 
 async function main() {
-  if (!SERVICE_TOKEN) {
-    console.warn('[gramjs] VOXLY_SERVICE_TOKEN not set — all routes will 401');
+  if (!resolveServiceToken('gramjs-bridge')) {
+    console.warn('[gramjs] no service token set (VOXLY_TOKEN_GRAMJS_BRIDGE / VOXLY_SERVICE_TOKEN) — all routes will 401');
   }
   if (!API_ID || !API_HASH) {
     console.warn('[gramjs] TELEGRAM_API_ID/HASH missing — QR login disabled until set');

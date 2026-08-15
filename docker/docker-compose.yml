@@ -3,6 +3,18 @@
 # Twenty CRM (multi-workspace) + Control Plane + Bot Workers
 # ============================================================
 
+# Per-service auth tokens (9.2). Each defaults empty → services fall back to
+# the shared VOXLY_SERVICE_TOKEN, so existing single-token setups keep working.
+# Set only the ones you want to rotate independently when splitting to separate
+# hosts. Keyed by the TARGET service that verifies inbound calls.
+x-voxly-service-tokens: &voxly-service-tokens
+  VOXLY_TOKEN_SAAS_API: ${VOXLY_TOKEN_SAAS_API:-}
+  VOXLY_TOKEN_GRAMJS_BRIDGE: ${VOXLY_TOKEN_GRAMJS_BRIDGE:-}
+  VOXLY_TOKEN_MAX_BRIDGE: ${VOXLY_TOKEN_MAX_BRIDGE:-}
+  VOXLY_TOKEN_AI_TELEGRAM_WORKER: ${VOXLY_TOKEN_AI_TELEGRAM_WORKER:-}
+  VOXLY_TOKEN_AI_WHATSAPP_WORKER: ${VOXLY_TOKEN_AI_WHATSAPP_WORKER:-}
+  VOXLY_TOKEN_PLATFORM_BOT: ${VOXLY_TOKEN_PLATFORM_BOT:-}
+
 services:
   # --- Reverse Proxy (wildcard SSL for *.getvoxly.ru) ---
   traefik:
@@ -126,6 +138,7 @@ services:
       LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
       # Injected into LOCAL logic functions (voxly-crm-chat → saas-api)
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       VOXLY_API_URL: ${VOXLY_API_URL:-http://saas-api:3002}
       # API
       API_BASE_PATH: "/rest"
@@ -177,6 +190,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       VOXLY_API_URL: ${VOXLY_API_URL:-http://saas-api:3002}
     volumes:
       - twenty-storage:/app/packages/twenty-server/.local-storage
@@ -227,6 +241,7 @@ services:
       AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
       AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       VOXLY_CHAT_API_URL: ${VOXLY_CHAT_API_URL:-http://saas-api:3002}
       VOXLY_CRM_CHAT_TARBALL: ${VOXLY_CRM_CHAT_TARBALL:-/voxly/assets/voxly-crm-chat.tgz}
       # Internal only — never expose gramjs-bridge / max-bridge / Evolution publicly
@@ -293,6 +308,7 @@ services:
       AI_MARKUP_PERCENT: ${AI_MARKUP_PERCENT:-50}
       AI_TOPUP_MIN_RUB: ${AI_TOPUP_MIN_RUB:-500}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       VOXLY_CHAT_API_URL: ${VOXLY_CHAT_API_URL:-http://saas-api:3002}
       VOXLY_CRM_CHAT_TARBALL: ${VOXLY_CRM_CHAT_TARBALL:-/voxly/assets/voxly-crm-chat.tgz}
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
@@ -362,6 +378,7 @@ services:
       PLATFORM_WEBHOOK_URL: https://api.getvoxly.ru/bots/platform/webhook
       PLATFORM_BOT_PORT: "3009"
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       SAAS_API_URL: http://saas-api:3002
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
     labels:
@@ -424,6 +441,7 @@ services:
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       AI_TELEGRAM_WORKER_URL: ${AI_TELEGRAM_WORKER_URL:-http://ai-telegram-worker:3005}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
       AI_WHATSAPP_WORKER_URL: ${AI_WHATSAPP_WORKER_URL:-http://ai-whatsapp-worker:3006}
@@ -471,6 +489,7 @@ services:
       TWENTY_API_KEY: ${TWENTY_API_KEY}
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
       GRAMJS_BRIDGE_URL: ${GRAMJS_BRIDGE_URL:-http://gramjs-bridge:3008}
     networks:
@@ -493,6 +512,7 @@ services:
       DATABASE_URL: postgresql://voxly:${POSTGRES_CONTROL_PASSWORD:-voxly_pass}@postgres-control:5432/voxly_control?schema=public
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE:-}
@@ -515,6 +535,7 @@ services:
         condition: service_started
     environment:
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       SAAS_API_URL: ${SAAS_API_URL:-http://saas-api:3002}
       MAX_BRIDGE_PORT: 3010
       MAX_SESSION_DIR: /data/max-sessions
@@ -585,6 +606,7 @@ services:
       TWENTY_API_URL: http://twenty-server:3000/graphql
       VOXLY_DOMAIN: ${VOXLY_DOMAIN:-getvoxly.ru}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      <<: *voxly-service-tokens
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
       AI_WHATSAPP_WEBHOOK_URL: ${AI_WHATSAPP_WEBHOOK_URL:-http://ai-whatsapp-worker:3006/webhook/evolution}

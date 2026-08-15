@@ -43,6 +43,7 @@ import {
   fetchWithTimeout,
   invalidateCrmThreadCache,
   invalidateCrmUnreadCache,
+  resolveServiceToken,
 } from '@voxly/shared';
 import {
   chargeAiUsage,
@@ -1811,7 +1812,12 @@ async function sendViaGramjsStory(opts: {
 }
 
 function serviceToken(): string {
-  return process.env.VOXLY_SERVICE_TOKEN || '';
+  // Legacy single-token accessor; kept for gramjs-bridge targets.
+  return resolveServiceToken('gramjs-bridge');
+}
+
+function whatsappWorkerToken(): string {
+  return resolveServiceToken('ai-whatsapp-worker');
 }
 
 function gramjsBridgeBase(): string {
@@ -1903,7 +1909,7 @@ async function sendViaWhatsappWorker(opts: {
   text: string;
   media?: { mediaBase64: string; mimeType: string; fileName: string };
 }): Promise<void> {
-  const token = serviceToken();
+  const token = whatsappWorkerToken();
   if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   const body: Record<string, unknown> = {
     botId: opts.botId,
@@ -1938,7 +1944,7 @@ async function sendViaWhatsappStory(opts: {
   mediaType?: string;
   statusJidList?: string[];
 }): Promise<void> {
-  const token = serviceToken();
+  const token = whatsappWorkerToken();
   if (!token) throw new Error('VOXLY_SERVICE_TOKEN is not configured');
   const body: Record<string, unknown> = {
     botId: opts.botId,
@@ -2141,7 +2147,7 @@ async function syncPhoneToCrmPerson(
   await client.updatePersonPhone(personId, phone);
 
   // Phone shared → TG already known; fill MAX + WA via saas-api.
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = resolveServiceToken('saas-api');
   const saas =
     (process.env.SAAS_API_URL || 'http://saas-api:3002').replace(/\/$/, '');
   if (token) {

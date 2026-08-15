@@ -3,6 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { extractBearer, verifyServiceToken } from '@voxly/shared';
 
 const connectedSchema = z.object({
   tenantId: z.string().min(1),
@@ -13,10 +14,8 @@ const connectedSchema = z.object({
 export const gramjsInternalRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('preHandler', async (request, reply) => {
     const service = String(request.headers['x-voxly-service'] || '');
-    const auth = String(request.headers.authorization || '');
-    const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-    const token = process.env.VOXLY_SERVICE_TOKEN || '';
-    if (!token || bearer !== token || service !== 'gramjs-bridge') {
+    const bearer = extractBearer(String(request.headers.authorization || ''));
+    if (!verifyServiceToken(bearer, 'saas-api') || service !== 'gramjs-bridge') {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   });

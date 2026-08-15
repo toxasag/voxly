@@ -5,16 +5,15 @@ import type { FastifyPluginAsync, FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { encrypt, decrypt } from '@voxly/crypto';
 import { TwentyClient } from '@voxly/twenty-client';
+import { extractBearer, verifyServiceToken } from '@voxly/shared';
 import { stripOwnerPhone } from '../services/max-phone-guard.js';
 
 function requireMaxService(request: { headers: Record<string, unknown> }, reply: {
   code: (n: number) => { send: (b: unknown) => unknown };
 }): boolean {
   const service = String(request.headers['x-voxly-service'] || '');
-  const auth = String(request.headers.authorization || '');
-  const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
-  if (!token || bearer !== token || service !== 'max-bridge') {
+  const bearer = extractBearer(String(request.headers.authorization || ''));
+  if (!verifyServiceToken(bearer, 'saas-api') || service !== 'max-bridge') {
     reply.code(401).send({ error: 'Unauthorized' });
     return false;
   }

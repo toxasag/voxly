@@ -3,7 +3,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { dailySendLimitFor, PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS } from '@voxly/shared';
+import { dailySendLimitFor, PRICING, PRODUCT_CODES, TRIAL_PERIOD_DAYS, resolveServiceToken } from '@voxly/shared';
 import { startChannelTrial, trialMeta } from '../services/channel-trial.js';
 import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
 
@@ -16,7 +16,7 @@ function bridgeBase(): string {
 }
 
 function serviceToken(): string {
-  return process.env.VOXLY_SERVICE_TOKEN || '';
+  return resolveServiceToken('gramjs-bridge');
 }
 
 /** In-process GramJS history-sync jobs (long-running; avoid nginx/browser timeout). */

@@ -34,7 +34,7 @@ import {
   type TimelineSyncJobData,
 } from '@voxly/ai-core';
 import { fireGoal } from '@voxly/analytics-dispatchers';
-import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote, sleep, retryBackoffMs, fetchWithTimeout, invalidateCrmThreadCache, invalidateCrmUnreadCache } from '@voxly/shared';
+import { isAiConversationMode, PRODUCT_CODES, AI_MODEL_DEFAULTS, AI_USAGE_CHANNELS, isWithinMailingAttributionWindow, mailingAttributionNote, sleep, retryBackoffMs, fetchWithTimeout, invalidateCrmThreadCache, invalidateCrmUnreadCache, verifyServiceToken, resolveServiceToken, extractBearer } from '@voxly/shared';
 import { TwentyClient, normalizePhoneToE164, phoneFingerprint } from '@voxly/twenty-client';
 import OpenAI from 'openai';
 import pg from 'pg';
@@ -63,7 +63,6 @@ const WEBHOOK_PUBLIC_URL =
     /\/$/,
     '',
   );
-const SERVICE_TOKEN = process.env.VOXLY_SERVICE_TOKEN || '';
 const OPENROUTER_API_KEY =
   process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY || '';
 const OPENROUTER_BASE_URL =
@@ -266,9 +265,7 @@ if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
 }
 
 function requireServiceAuth(req: { headers: { authorization?: string } }): boolean {
-  if (!SERVICE_TOKEN) return false;
-  const h = req.headers.authorization || '';
-  return h === `Bearer ${SERVICE_TOKEN}`;
+  return verifyServiceToken(extractBearer(req.headers.authorization), 'ai-whatsapp-worker');
 }
 
 function evolutionConfigured(): boolean {
@@ -2159,7 +2156,7 @@ async function enrichMaxPresenceFromPhone(opts: {
     /\/$/,
     '',
   );
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = resolveServiceToken('max-bridge');
   if (!token) return;
 
   try {
@@ -2239,7 +2236,7 @@ async function enrichTelegramPresenceFromPhone(opts: {
     /\/$/,
     '',
   );
-  const token = process.env.VOXLY_SERVICE_TOKEN || '';
+  const token = resolveServiceToken('gramjs-bridge');
   if (token) {
     try {
       const res = await fetchWithTimeout(`${bridge}/users/by-phone`, {
@@ -6974,7 +6971,7 @@ async function main() {
       return sendJson(res, 200, {
         ok: true,
         evolutionConfigured: evolutionConfigured(),
-        serviceToken: Boolean(SERVICE_TOKEN),
+        serviceToken: Boolean(resolveServiceToken('ai-whatsapp-worker')),
       });
     }
 

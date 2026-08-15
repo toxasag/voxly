@@ -1,5 +1,25 @@
 # Решения (короткие ADR)
 
+## ADR-028 — Per-service auth tokens (split-readiness)
+
+**Статус:** ✅ 2026-08-15 (WORKPLAN 9.2)
+
+| Вопрос | Выбор |
+|---|---|
+| Проблема | Единый `VOXLY_SERVICE_TOKEN` на все внутренние вызовы: утечка = доступ ко всем модулям; мешает разнести сервисы по хостам |
+| Решение | Токен ключуется по **TARGET**-сервису: env `VOXLY_TOKEN_<SERVICE>` (напр. `VOXLY_TOKEN_GRAMJS_BRIDGE`). Verifier проверяет свой токен; caller резолвит токен цели |
+| Совместимость | Полный fallback на `VOXLY_SERVICE_TOKEN`, если per-service не задан — существующие деплои не ломаются, миграция постепенная |
+| Реализация | `@voxly/shared/service-auth`: `resolveServiceToken` (outbound), `verifyServiceToken` (inbound, принимает per-service **или** shared), `extractBearer`, `timingSafeEqualStr` (constant-time, чистый JS — helper бандлится и в портал, без `node:crypto`) |
+| Python | max-bridge дублирует логику: `resolve_service_token` / `require_auth` c `hmac.compare_digest` |
+| Compose | YAML-anchor `x-voxly-service-tokens` инжектит все `VOXLY_TOKEN_*` (default пусто) во все сервисы; `.env.example` документирует |
+| Идентичность вызова | Внутренние ingest-роуты по-прежнему требуют `X-Voxly-Service` (называет caller) поверх токена — токен = доступ, header = аудит/allowlist |
+
+**Отклонено:** mTLS/JWT между сервисами на этом этапе (оверинжиниринг для текущего масштаба); хранение токенов в БД; жёсткая (breaking) замена без fallback.
+
+**Related:** WORKPLAN 9.2/9.4; `CAPACITY.md` Stage 2 split by role; INC-предупреждение про cross-tenant при утечке единого токена (WORKLOG 2026-08 security-review).
+
+---
+
 ## ADR-027 — Gift-bot portal setup UX = canonical for all tenants
 
 **Статус:** ✅ 2026-08-04
