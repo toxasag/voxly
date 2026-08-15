@@ -1,4 +1,13 @@
-### 2026-08-15 — 9.2 Per-service auth tokens + deploy + disk hygiene
+### 2026-08-15 — 6.2 pgBouncer (transaction mode) перед control-plane PG + deploy
+
+- Goal: снять давление на `max_connections` control-plane PG (8 Prisma-сервисов × ~13 conn) и подготовить к сплиту сервисов по ВПС.
+- Changes: сервис `pgbouncer-control` (`edoburu/pgbouncer:v1.25.2-p0`, transaction, pool_size=25, max_client_conn=1000, scram-sha-256, IGNORE_STARTUP_PARAMETERS=extra_float_digits,search_path,options). 8 Prisma-сервисов → `DATABASE_URL=pgbouncer-control:5432?...&pgbouncer=true`; миграции → `DIRECT_DATABASE_URL=postgres-control:5432` (Prisma `directUrl`). Twenty PG не трогали (TypeORM + raw pg prepared statements, FROZEN). ADR-029; `.env.example` (dev: DIRECT=DATABASE_URL). Commit `<pgbouncer>`.
+- Verify (local): `prisma validate`/`generate` ✅, `docker compose config` ✅, typecheck saas-api ✅. Pre-deploy live smoke throwaway-контейнером на проде: pgbouncer→postgres-control принимает коннекты, `SELECT Tenant`, `BEGIN; pg_advisory_xact_lock; COMMIT` проходят через transaction pooling.
+- Deploy: `./scripts/prod-deploy.sh saas-api,gift-bot-worker,manager-bot-service,platform-bot-service,ai-telegram-worker,ai-whatsapp-worker,gramjs-bridge` backup снят; prisma migrate deploy (no-op) через DIRECT; `pgbouncer-control` healthy; все сервисы Up; smoke landing/api-health/dashboard×4 **200**.
+- Verify (post-deploy): backends к postgres-control **6** (active 1 / idle 5) — раньше 8 прямых пулов дали бы ~100; 0 db-ошибок (prepared statement/P1001/too many clients) во всех 8 сервисах за 3м; `POST /api/auth/login` → 401 (реальный запрос к БД через пул). pgbouncer health=healthy.
+- Next: при выносе сервисов на отдельные ВПС — тот же pgbouncer как единая точка коннектов; при упоре Twenty PG в коннекты — отдельная задача (session mode).
+
+
 
 - Goal: per-service tokens вместо единого `VOXLY_SERVICE_TOKEN` (split-readiness под рост нагрузки / вынос модулей на отдельные ВПС), безопасно для рабочего.
 - Changes: `@voxly/shared/service-auth` (`resolveServiceToken`/`verifyServiceToken`/`extractBearer`/`timingSafeEqualStr`, browser-safe). Токен ключуется по TARGET-сервису (`VOXLY_TOKEN_<SERVICE>`) с fallback на общий `VOXLY_SERVICE_TOKEN` (полная обратная совместимость). Inbound-verify: saas-api `authenticate` + `crm-enrich/max/platform-bot/gramjs`-internal; gramjs-bridge, ai-telegram `/internal/inbound`, ai-whatsapp, max-bridge (py `hmac.compare_digest`). Outbound: proxy-роуты saas-api + воркеры резолвят токен цели. docker-compose anchor `x-voxly-service-tokens` (default пусто) во все сервисы; `.env.example`. ADR-028.
