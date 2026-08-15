@@ -1,4 +1,13 @@
-### 2026-08-07 — INC-119 CRM «не открывается» / disk check
+### 2026-08-15 — 9.2 Per-service auth tokens + deploy + disk hygiene
+
+- Goal: per-service tokens вместо единого `VOXLY_SERVICE_TOKEN` (split-readiness под рост нагрузки / вынос модулей на отдельные ВПС), безопасно для рабочего.
+- Changes: `@voxly/shared/service-auth` (`resolveServiceToken`/`verifyServiceToken`/`extractBearer`/`timingSafeEqualStr`, browser-safe). Токен ключуется по TARGET-сервису (`VOXLY_TOKEN_<SERVICE>`) с fallback на общий `VOXLY_SERVICE_TOKEN` (полная обратная совместимость). Inbound-verify: saas-api `authenticate` + `crm-enrich/max/platform-bot/gramjs`-internal; gramjs-bridge, ai-telegram `/internal/inbound`, ai-whatsapp, max-bridge (py `hmac.compare_digest`). Outbound: proxy-роуты saas-api + воркеры резолвят токен цели. docker-compose anchor `x-voxly-service-tokens` (default пусто) во все сервисы; `.env.example`. ADR-028.
+- Verify (local): `pnpm typecheck` 23/23; `pnpm test` 163 passed (+12 `service-auth`); `py_compile` + auth-логика max-bridge; `docker compose config` OK. Commit `d60b7cb`.
+- Deploy: `./scripts/prod-deploy.sh saas-api,gramjs-bridge,ai-telegram-worker,ai-whatsapp-worker,platform-bot-service,gift-bot-worker,max-bridge` backup `20260815-*`; prisma migrate deploy (no-op, без новых миграций); все 7 контейнеров Up; smoke landing/api-health/dashboard×4 **200**; логи saas-api/bridges без 401/token-ошибок (fallback на общий токен работает — новые `VOXLY_TOKEN_*` на проде не заданы).
+- Ops (Stage 0 hygiene): `docker image prune -f` −24.82GB (88 dangling); backups 207→14 (451M→25M). Disk `/` **53G→27G used, 67G free (было 42G)**. RAM 9.7G (n8n/baserow ещё живут — по плану будут удалены). Volumes нетронуты, без `down -v`.
+- Next: при следующем сплите — задать индивидуальные `VOXLY_TOKEN_*` на разнесённых хостах; удалить n8n/baserow для RAM.
+
+
 
 - Goal: urgent — user CRM won't open; suspects low disk.
 - Findings: disk **OK** (57G→72G free after prune); CRM/Twenty/API **200**; containers Up; no OOM; volumes untouched. Disk **not** root cause.
