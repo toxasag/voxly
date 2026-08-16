@@ -115,9 +115,10 @@ pnpm --filter @voxly/saas-api --filter @voxly/saas-portal build
 ### 6.1. Перед деплоем на прод
 1. Зафиксировать контейнеры: `docker ps --format "{{.Names}}\t{{.Image}}"`.
 2. Бэкап БД: `pg_dump -Fc voxly_control > /opt/voxly/backups/pre-deploy-$(date +%Y%m%d-%H%M).dump`.
-3. Записать rollback-шаги в `docs/changelog/system-history.md`.
-4. Выполнить деплой.
-5. Проверить healthchecks (`docker ps` — все healthy).
+3. **CRM Chat / Twenty front-компонент**: при изменении `twenty-app/voxly-crm-chat/`, `apps/saas-api/src/routes/crm-chat.ts`, `packages/twenty-client/` или logic-functions обязательно деплоить **вместе `saas-api,saas-worker`**. `saas-api` запекает tarball, `saas-worker` сравнивает sha1 с Redis-маркером и автоматически обновляет приложение во **всех существующих** воркспейсах; новые порталы получают тот же tarball при provisioning. Нельзя выкатывать только saas-api или править Twenty local-storage вручную.
+4. Записать rollback-шаги в `docs/changelog/system-history.md`.
+5. Выполнить деплой.
+6. Проверить healthchecks (`docker ps` — все healthy) и логи `[crmchat-refresh]` при изменении CRM Chat.
 
 ---
 

@@ -56,6 +56,12 @@ export async function refreshCrmChatAppsIfTarballChanged(): Promise<AutoRefreshR
 2. Scheduler-lock → для каждого провижененного тенанта `refreshCrmChatAppForTenant` (auth под owner → uninstall/install → переменные приложения → INC-116 патч).
 3. Все OK → маркер сохраняется; любая ошибка → маркер НЕ пишется, ретрай при следующем старте воркера.
 
+## Гарантия покрытия
+
+- **Новый портал:** `runProvisioningJob` всегда читает tarball из образа `saas-api` и вызывает `ensureCrmChatAppInstalled({ forceReinstall: true })`; новый workspace сразу получает текущий CRM Chat (front components + logic functions).
+- **Существующий портал:** при следующем старте `saas-worker` `refreshCrmChatAppsIfTarballChanged()` сравнивает sha1 tarball с Redis-маркером и force-reinstall'ит приложение во всех provisioned workspace.
+- **Обязательный deploy coupling:** любое изменение `twenty-app/voxly-crm-chat/`, CRM-chat API или `packages/twenty-client` требует `./scripts/prod-deploy.sh saas-api,saas-worker`. В противном случае новый tarball может не попасть в образ или старые workspace не обновятся.
+
 ## Инварианты
 
 - Реинсталл идемпотентен и безопасен для повтора.

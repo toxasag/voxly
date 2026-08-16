@@ -86,3 +86,11 @@
 - **Влияние на систему (Impact)**: только документация; код/прод не менялись (прод уже на свежих версиях: api ok, max-bridge ok, pymax sessions=1, smoke 200).
 - **Результаты тестов (Verification)**: прод-хелсчи всех затронутых сервисов ✅; user-confirmed (MAX/TG/WA write-first, переключение тредов, отсутствие дублей).
 - **План отката (Rollback Plan)**: n/a (документация).
+
+### [2026-08-16] Правило deploy coupling для CRM Chat
+- **Причина (Why)**: закрепить гарантию, что новый portal получает весь текущий CRM Chat при provisioning, а существующие workspace обновляются без ручных действий при каждом изменении tarball.
+- **Затронутые файлы**: `AGENTS.md`, `.cursorrules`, `.windsurfrules`, `.kilocode/rules/agents.md`, `docs/INDEX.md`, `docs/02-twenty-crm-engine/crm-chat-app-auto-refresh.md`.
+- **Синхронизация индексов**: главный `docs/INDEX.md` дополнен гарантией CRM Chat.
+- **Влияние на систему (Impact)**: обязательный coupling: изменения CRM Chat → deploy `saas-api,saas-worker`; новый tarball устанавливается новым workspace при provisioning и всем существующим workspace авто-рефрешем по sha1.
+- **Результаты тестов (Verification)**: документационный инвариант отражает работающий прод-механизм `crmchat-refresh`.
+- **План отката (Rollback Plan)**: n/a (документация/правила).

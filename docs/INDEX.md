@@ -49,6 +49,14 @@
 
 ---
 
+## ✅ Гарантия CRM Chat для новых и существующих порталов
+
+**Новые порталы:** provisioning всегда устанавливает актуальный tarball `voxly-crm-chat`, запечённый в образ `saas-api`. Поэтому новый CRM-воркспейс сразу получает весь поддерживаемый cross-channel функционал: «Пишем от:» (WA/MAX/TG), «Открытые чаты:», MAX dialog-id, Telegram anti-duplicate, медиа и нормализацию Telegram-ссылок.
+
+**Существующие порталы:** `saas-worker` при старте сравнивает sha1 tarball с Redis-маркером и при изменении автоматом force-reinstall'ит приложение во всех provisioned workspace. Обязательное правило деплоя: при изменении CRM Chat всегда выкатывать `saas-api,saas-worker` вместе — см. `AGENTS.md` §6.1 и [`crm-chat-app-auto-refresh.md`](02-twenty-crm-engine/crm-chat-app-auto-refresh.md).
+
+---
+
 ## 📐 Протокол навигации
 
 1. **Каждый модуль содержит `INDEX.md`** — входная точка с оглавлением и ссылками.
