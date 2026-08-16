@@ -3281,3 +3281,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Verify (владелец): дублей нет; TG-чат работает; MAX «Пишем от:» отправляется (XOR chat_id); «Открытые чаты:» select на месте.
 - Docs: INC-120..123 в INCIDENTS.md (каждый с инвариантом «больше никогда»); write-first/max-bridge спеки усилены XOR-инвариантом; system-history — верификационная запись.
 - Остаток (не блокер): перенести /tmp/pg-бэкапы (pre-merge-full.dump, pre-twenty-merge.dump) в /opt/voxly/backups/; закоммитить ветку.
+
+### 2026-08-16 (commit) — 93de38e + финальный деплой
+- Commit `93de38e` (feature/cross-channel-enrich-opp-activity): весь write-first стек, авто-рефреш приложения, база знаний docs/, AGENTS.md+rules, INC-120..123, миграция chat_message_from_me.
+- Deploy: `prod-deploy.sh saas-api,saas-worker,ai-telegram-worker,gramjs-bridge,max-bridge` — образы пересобраны из закоммиченного дерева, хэши совпали с работающими (контейнеры не пересоздавались), smoke 200, crmchat-refresh OK.
+- Бэкапы слития перенесены: `/opt/voxly/backups/20260816-merge/` (voxly_control-pre-merge.dump 284K + twenty-pre-merge.dump 1.4M).
+- Остаток: push ветки / PR — по команде владельца.
