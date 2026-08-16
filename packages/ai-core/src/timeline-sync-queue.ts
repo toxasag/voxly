@@ -96,7 +96,14 @@ async function writeTimelineSyncDirect(data: TimelineSyncJobData): Promise<void>
   });
 }
 
-export async function startTimelineSyncWorker(): Promise<void> {
+export async function startTimelineSyncWorker(opts?: {
+  /**
+   * Secondary sink (e.g. Twenty «Временная шкала» chat events). Best-effort:
+   * local CustomerActivity stays the source of truth; errors never fail the job
+   * (a retry would duplicate the local row).
+   */
+  writeExternal?: (data: TimelineSyncJobData) => Promise<void>;
+}): Promise<void> {
   const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
   const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 
@@ -115,6 +122,16 @@ export async function startTimelineSyncWorker(): Promise<void> {
       }
 
       await writeTimelineSyncDirect(data);
+      if (opts?.writeExternal) {
+        try {
+          await opts.writeExternal(data);
+        } catch (err) {
+          console.warn(
+            '[timeline-sync] external sink failed:',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
     },
     {
       connection,

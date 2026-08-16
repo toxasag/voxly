@@ -895,6 +895,14 @@ const CREATE_NOTE = gql`
   }
 `;
 
+const CREATE_TIMELINE_ACTIVITY = gql`
+  mutation CreateTimelineActivity($data: TimelineActivityCreateInput!) {
+    createTimelineActivity(data: $data) {
+      id
+    }
+  }
+`;
+
 export type ResolveInvitationToken = (args: {
   workspaceId: string;
   memberEmail: string;
@@ -3476,6 +3484,57 @@ export class TwentyClient {
           this.getAuthHeaders(),
         );
         return (result as any).createNote;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  /**
+   * Chat event → Twenty Timeline activity (visible in «Временная шкала» and
+   * drives Kanban «Последнее обновление» sorting via touchOpportunityActivity).
+   */
+  async createChatTimelineActivity(input: {
+    personId?: string | null;
+    opportunityId?: string | null;
+    name: string;
+    body?: string | null;
+    happensAt?: Date | null;
+    properties?: Record<string, unknown>;
+  }): Promise<string | null> {
+    const data: Record<string, unknown> = {
+      name: input.name.slice(0, 200),
+      properties: {
+        ...(input.properties || {}),
+        ...(input.body ? { body: input.body.slice(0, 2000) } : {}),
+      },
+      ...(input.happensAt ? { happensAt: input.happensAt.toISOString() } : {}),
+      ...(input.personId ? { targetPersonId: input.personId } : {}),
+      ...(input.opportunityId ? { targetOpportunityId: input.opportunityId } : {}),
+    };
+    const headers = this.getAuthHeaders();
+    try {
+      const result = await this.client.request(
+        CREATE_TIMELINE_ACTIVITY,
+        { data },
+        headers,
+      );
+      return ((result as any).createTimelineActivity?.id as string) || null;
+    } catch {
+      // Alternate mutation argument shape (input: …) used by some 2.22 builds.
+      try {
+        const result = await this.client.request(
+          gql`
+            mutation CreateTimelineActivityAlt($input: TimelineActivityCreateInput!) {
+              createTimelineActivity(input: $input) {
+                id
+              }
+            }
+          `,
+          { input: data },
+          headers,
+        );
+        return ((result as any).createTimelineActivity?.id as string) || null;
       } catch {
         return null;
       }

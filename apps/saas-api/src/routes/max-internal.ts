@@ -7,6 +7,7 @@ import { encrypt, decrypt } from '@voxly/crypto';
 import { upsertCrmRecordLink } from '@voxly/db';
 import { TwentyClient } from '@voxly/twenty-client';
 import { extractBearer, verifyServiceToken } from '@voxly/shared';
+import { enqueueTimelineSync } from '@voxly/ai-core';
 import { stripOwnerPhone } from '../services/max-phone-guard.js';
 
 function requireMaxService(request: { headers: Record<string, unknown> }, reply: {
@@ -520,6 +521,18 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       twentyOpportunityId: linked?.twentyOpportunityId || null,
       source: 'outbound',
     });
+    void enqueueTimelineSync({
+      tenantId: bot.tenantId,
+      twentyPersonId: linked?.twentyPersonId || null,
+      phoneFingerprint: null,
+      kind: 'chat_outbound',
+      channel: 'ai_max',
+      title: `Исходящее (MAX): ${content.slice(0, 80)}`,
+      description: content,
+      meta: { conversationId: conversation.id, botId, externalMessageId: extId },
+      conversationId: conversation.id,
+      messageId: msg.id,
+    });
     return reply.send({
       ok: true,
       conversationId: conversation.id,
@@ -645,6 +658,19 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       selfPhone,
     }).catch((err) => {
       console.warn('[max-internal] CRM sync failed', err);
+    });
+
+    void enqueueTimelineSync({
+      tenantId: bot.tenantId,
+      twentyPersonId: conversation.twentyPersonId || null,
+      phoneFingerprint: null,
+      kind: 'chat_inbound',
+      channel: 'ai_max',
+      title: `Входящее (MAX): ${content.slice(0, 80)}`,
+      description: content,
+      meta: { conversationId: conversation.id, botId, externalMessageId: extId },
+      conversationId: conversation.id,
+      messageId: msg.id,
     });
 
     return reply.send({

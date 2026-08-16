@@ -452,6 +452,103 @@ export const aiUsageWorker = WORKERS_ENABLED ? startAiUsageWorker() : null;
 // =====================================
 // Worker: durable timeline sync (Phase 5.3)
 // Enqueues CustomerActivity rows for inbound/outbound chat messages and deals.
+// Secondary sink: Twenty «Временная шкала» chat events (targetPersonId /
+// targetOpportunityId) + touchOpportunityActivity so Kanban «Последнее
+// обновление» sorting follows chat activity.
 // =====================================
-export const timelineSyncWorker = WORKERS_ENABLED ? startTimelineSyncWorker() : null;
+
+/** Per-tenant authenticated TwentyClient cache (re-auth every 10 min). */
+const twentyClientCache = new Map<
+  string,
+  { client: TwentyClient; expiresAt: number }
+>();
+
+async function getTwentyClientForTenant(
+  tenantId: string,
+): Promise<TwentyClient | null> {
+  const cached = twentyClientCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) return cached.client;
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: {
+      twentyWorkspaceId: true,
+      twentyOwnerPasswordEncrypted: true,
+    },
+  });
+  if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+    return null;
+  }
+  const owner = await prisma.tenantMember.findFirst({
+    where: { tenantId, role: 'owner' },
+    include: { user: true },
+  });
+  if (!owner?.user?.email) return null;
+  const client = new TwentyClient({
+    apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+  });
+  await client.authenticateWorkspace(
+    owner.user.email,
+    decrypt(tenant.twentyOwnerPasswordEncrypted),
+    tenant.twentyWorkspaceId,
+  );
+  twentyClientCache.set(tenantId, {
+    client,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  });
+  return client;
+}
+
+const TIMELINE_CHANNEL_LABELS: Record<string, string> = {
+  ai_wa: 'WhatsApp',
+  ai_gramjs: 'Telegram',
+  ai_tg: 'Telegram',
+  gift: 'Telegram · бот подарков',
+  gift_max: 'MAX · бот подарков',
+  ai_max: 'MAX',
+};
+
+async function writeTimelineEventToTwenty(
+  data: import('@voxly/ai-core').TimelineSyncJobData,
+): Promise<void> {
+  let personId = data.twentyPersonId || null;
+  let opportunityId = data.opportunityId || null;
+  // Jobs without explicit links: resolve via Conversation CRM links.
+  if ((!personId || !opportunityId) && data.conversationId) {
+    const conv = await prisma.conversation.findUnique({
+      where: { id: data.conversationId },
+      select: { twentyPersonId: true, twentyOpportunityId: true },
+    });
+    personId = personId || conv?.twentyPersonId || null;
+    opportunityId = opportunityId || conv?.twentyOpportunityId || null;
+  }
+  if (!personId && !opportunityId) return;
+
+  const client = await getTwentyClientForTenant(data.tenantId);
+  if (!client) return;
+
+  const channelLabel =
+    TIMELINE_CHANNEL_LABELS[data.channel] ||
+    (data.channel ? String(data.channel) : 'Чат');
+  const direction =
+    data.kind === 'chat_outbound' ? 'Исходящее сообщение' : 'Входящее сообщение';
+  const created = await client.createChatTimelineActivity({
+    personId,
+    opportunityId,
+    name: `${direction} · ${channelLabel}`,
+    body: data.description || null,
+    properties: {
+      kind: data.kind,
+      channel: data.channel,
+      conversationId: data.conversationId || null,
+    },
+  });
+  if (created && opportunityId) {
+    // Kanban «Последнее обновление» follows chat activity.
+    await client.touchOpportunityActivity(opportunityId);
+  }
+}
+
+export const timelineSyncWorker = WORKERS_ENABLED
+  ? startTimelineSyncWorker({ writeExternal: writeTimelineEventToTwenty })
+  : null;
 
