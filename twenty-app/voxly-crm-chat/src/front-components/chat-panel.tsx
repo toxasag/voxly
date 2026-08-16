@@ -67,6 +67,7 @@ type ChatThread = {
   conversationId?: string | null;
   giftSubscriberId?: string | null;
   botId?: string;
+  botType?: string | null;
   channelLabel: string;
   identityLabel: string;
   peerLabel: string;
@@ -478,6 +479,46 @@ function workspaceAwareFetch(
 }
 
 const api = new RestApiClient({ fetch: workspaceAwareFetch });
+
+/** Compact select labels: TGUser/WAUser/MaxUser/TGBot Gift (+ identity). */
+function shortBotPrefix(botType?: string | null): string {
+  switch (botType) {
+    case 'ai_gramjs':
+      return 'TGUser';
+    case 'ai_wa':
+      return 'WAUser';
+    case 'ai_max':
+      return 'MaxUser';
+    case 'gift':
+      return 'TGBot Gift';
+    case 'gift_max':
+      return 'MaxBot Gift';
+    default:
+      return botType || 'Чат';
+  }
+}
+
+function shortFromLabel(o: { botType: string; identityLabel: string; label: string }): string {
+  const id = (o.identityLabel || o.label || '').trim();
+  const prefix = shortBotPrefix(o.botType);
+  // Gift bots read naturally without the dash (owner-approved wording).
+  return o.botType === 'gift' || o.botType === 'gift_max'
+    ? `${prefix} ${id}`
+    : `${prefix} - ${id}`;
+}
+
+function shortThreadLabel(t: {
+  botType?: string | null;
+  peerLabel: string;
+  identityLabel: string;
+  channelLabel: string;
+}): string {
+  const peer = (t.peerLabel || t.identityLabel || t.channelLabel || '').trim();
+  const prefix = shortBotPrefix(t.botType);
+  return t.botType === 'gift' || t.botType === 'gift_max'
+    ? `${prefix} ${peer}`
+    : `${prefix} - ${peer}`;
+}
 
 function roleLabel(
   role: string,
@@ -1279,18 +1320,19 @@ const ChatPanel = () => {
                     }
                   }}
                   style={{
-                    maxWidth: 280,
+                    maxWidth: 220,
                     fontSize: 12,
                     border: `1px solid ${border}`,
                     borderRadius: 8,
                     padding: '3px 6px',
                     background: panel,
                     color: ink,
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   {sendFromOptions.map((o) => (
                     <option key={o.botId} value={o.botId} disabled={!o.available}>
-                      {o.label}
+                      {shortFromLabel(o)}
                       {!o.available ? ' (недоступно)' : ''}
                     </option>
                   ))}
@@ -1319,24 +1361,21 @@ const ChatPanel = () => {
                       void load(t || null);
                     }}
                     style={{
-                      maxWidth: 320,
+                      maxWidth: 220,
                       fontSize: 12,
                       border: `1px solid ${border}`,
                       borderRadius: 8,
                       padding: '3px 6px',
                       background: panel,
                       color: ink,
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    {threads.map((t) => {
-                      const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
-                      return (
-                        <option key={t.id} value={t.id}>
-                          {label}
-                          {t.peerLabel ? ` → ${t.peerLabel}` : ''}
-                        </option>
-                      );
-                    })}
+                    {threads.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {shortThreadLabel(t)}
+                      </option>
+                    ))}
                   </select>
                 </label>
               )}
