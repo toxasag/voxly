@@ -3347,3 +3347,10 @@ WHERE type IN ('ai_tg', 'gift_bot')
 ### 2026-08-16 (UI-5) — Inter в композере + меню по выделению
 - Commit 581b23f: textarea fontFamily Inter (был browser-default monospace); формат-меню открывается АВТОМАТИЧЕСКИ при выделении текста в поле (mouseup + selectionStart≠selectionEnd, позиция left:12/bottom:148 над композером) — Remote DOM не проксирует ни contextmenu, ни right-button mousedown (портальное меню работает, т.к. портал — обычный DOM). Право-клик хендлеры оставлены на будущее.
 - Deploy: tarball → оба воркспейса (flush keysDeleted=67); в бандле Inter ✓ и bottom:148 ✓; api ok.
+
+### 2026-08-16 (UI-6) — меню формата работает: триггер onSelect/selRef; композер одной строкой
+- Причина: 581b23f не сработал — в Remote DOM у прокси-ноды textarea НЕ читается `selectionStart` в момент mouseup (hasSelection всегда false). Гарантированно доставляются `select`-события (старый тулбар формата брал выделение именно так через selRef).
+- Commit b012e98: `onSelect` теперь открывает меню при непустом выделении (selRef — источник истины) и закрывает «выделенное» меню при коллапсе; onMouseUp/onKeyUp — фолбэки на selRef (не на selectionStart). Право-клик хендлеры оставлены. Меню: фиксированно left:12/bottom:120 (над композером) или у курсора.
+- Композер перестроен в одну строку по скриншоту пользователя: 📎(с бейджем счётчика файлов) + 😊 (38px) + textarea rows=2 Inter flex:1 + синяя кнопка отправки ➤ (#2f7cf6, 38px, ⌘/Ctrl+Enter); эмодзи-палитра bottom:92; старые маркеры (bottom:148, order:-1, «Отправить» padding) удалены. Мёртвый formatItems-массив вычищен.
+- Verify: lint 0 (2 старых warning), tsgo exit 0; tarball 0.1.31 sha 79825ea6… → crmchat-refresh OK efim1/remtoua (flush keysDeleted=67); в прод-бандле bottom:120 ✓ #2f7cf6 ✓ width:38 ✓ minWidth:16 ✓ bottom:92 ✓; smoke 200.
+- Rollback: git revert b012e98 + prod-deploy.sh saas-api,saas-worker.
