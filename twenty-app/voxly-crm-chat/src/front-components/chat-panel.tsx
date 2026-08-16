@@ -1209,16 +1209,7 @@ const ChatPanel = () => {
     syncSelection(t);
   };
 
-  const formatItems = [
-    { label: 'Жирный', before: '**', after: '**' },
-    { label: 'Курсив', before: '__', after: '__' },
-    { label: 'Зачёркнутый', before: '~~', after: '~~' },
-    { label: 'Спойлер', before: '||', after: '||' },
-    { label: 'Код', before: '`', after: '`' },
-  ];
-  void formatItems;
-
-  /** Right-click formatting menu (replaces the old button toolbar). */
+  /** Selection-triggered formatting menu (Remote DOM has no contextmenu). */
   const [ctxMenu, setCtxMenu] = useState<{ x: number | null; y: number | null } | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
 
@@ -1740,140 +1731,54 @@ const ChatPanel = () => {
         <div
           style={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-            alignItems: 'stretch',
+            flexDirection: 'row',
+            gap: 8,
+            alignItems: 'flex-end',
           }}
         >
-          <textarea
-            key={composerKey}
-            ref={inputRef}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              noteSelection(e.target);
-            }}
-            onSelect={(e) => {
-              noteSelection(e.target as HTMLTextAreaElement);
-            }}
-            onKeyUp={(e) => {
-              noteSelection(e.target as HTMLTextAreaElement);
-            }}
-            onMouseUp={(e) => {
-              noteSelection(e.target as HTMLTextAreaElement);
-              // Remote DOM never proxies contextmenu/right-button — open the
-              // formatting menu automatically when the user selects draft text.
-              const ta = e.target as HTMLTextAreaElement;
-              const hasSelection =
-                typeof ta.selectionStart === 'number' &&
-                typeof ta.selectionEnd === 'number' &&
-                ta.selectionStart !== ta.selectionEnd;
-              if (hasSelection) {
-                setCtxMenu({ x: null, y: null });
-              }
-            }}
-            onContextMenu={(e) => {
-              // Right-click on selected draft text → formatting menu.
-              e.preventDefault();
-              noteSelection(e.target as HTMLTextAreaElement);
-              const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
-                ?.getBoundingClientRect?.();
-              const ev = e as unknown as { clientX?: number; clientY?: number };
-              setCtxMenu({
-                x: Math.max(8, (ev.clientX || 0) - (rect?.left || 0)),
-                y: Math.max(8, (ev.clientY || 0) - (rect?.top || 0)),
-              });
-            }}
-            onMouseDown={(e) => {
-              // Remote DOM may not proxy `contextmenu` — catch the right-button
-              // mousedown instead (selection still alive at this moment).
-              const ev = e as unknown as { button?: number };
-              if (ev.button === 2) {
-                noteSelection(e.target as HTMLTextAreaElement);
-                const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
-                  ?.getBoundingClientRect?.();
-                const cev = e as unknown as { clientX?: number; clientY?: number };
-                setCtxMenu({
-                  x: Math.max(8, (cev.clientX || 0) - (rect?.left || 0)),
-                  y: Math.max(8, (cev.clientY || 0) - (rect?.top || 0)),
-                });
-              }
-            }}
-            onKeyDown={(e) => {
-              // Enter = newline (multiline replies). Cmd/Ctrl+Enter = send.
-              // Plain Enter previously sent immediately → only the first line went out (INC-022).
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={`Ответ в ${
-              meta.channelLabel?.trim()
-                ? meta.channelLabel.split('·')[0].trim()
-                : 'чат'
-            }… (⌘/Ctrl+Enter — отправить)`}
-            rows={3}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              resize: 'none',
-              fontFamily: 'Inter, -apple-system, "Segoe UI", Roboto, sans-serif',
-              border: `1px solid ${border}`,
-              borderRadius: 10,
-              padding: '10px 12px',
-              background: bg,
-              color: ink,
-              fontSize: 13,
-              lineHeight: 1.4,
-              outline: 'none',
-            }}
-          />
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'row',
-              gap: 6,
-              flexShrink: 0,
-              alignItems: 'center',
-              order: -1,
-            }}
-          >
-            <button
-              type="button"
-              title="Смайлик — вставить эмодзи"
-              onClick={() => setShowEmoji((v) => !v)}
-              style={{
-                border: `1px solid ${border}`,
-                background: showEmoji ? (dark ? '#1e293b' : '#eff6ff') : panel,
-                color: ink,
-                borderRadius: 10,
-                padding: '6px 10px',
-                cursor: 'pointer',
-                fontSize: 15,
-                lineHeight: 1.2,
-              }}
-            >
-              😊
-            </button>
-            {meta.supportsAttachments ? (
+          {meta.supportsAttachments ? (
             <label
               title="Прикрепить файл"
               style={{
+                width: 38,
+                height: 38,
+                flexShrink: 0,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 border: `1px solid ${border}`,
                 background: panel,
                 color: ink,
                 borderRadius: 10,
-                padding: '6px 10px',
                 cursor: 'pointer',
-                fontSize: 15,
+                fontSize: 16,
                 lineHeight: 1.2,
-                whiteSpace: 'nowrap',
-                textAlign: 'center',
                 position: 'relative',
                 overflow: 'hidden',
               }}
             >
               📎
+              {pendingFiles.length > 0 ? (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: -1,
+                    right: -1,
+                    minWidth: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    background: '#2f7cf6',
+                    color: '#fff',
+                    fontSize: 10,
+                    lineHeight: '16px',
+                    textAlign: 'center',
+                    padding: '0 4px',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  {pendingFiles.length}
+                </span>
+              ) : null}
               <input
                 ref={fileRef}
                 type="file"
@@ -1915,34 +1820,146 @@ const ChatPanel = () => {
                 }}
               />
             </label>
-            ) : null}
-          </div>
-          <div
+          ) : null}
+          <button
+            type="button"
+            title="Смайлик — вставить эмодзи"
+            onClick={() => setShowEmoji((v) => !v)}
             style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
+              width: 38,
+              height: 38,
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: `1px solid ${border}`,
+              background: showEmoji ? (dark ? '#1e293b' : '#eff6ff') : panel,
+              color: ink,
+              borderRadius: 10,
+              cursor: 'pointer',
+              fontSize: 16,
+              lineHeight: 1.2,
             }}
           >
-            <button
-              type="button"
-              disabled={sending || !canSend}
-              onClick={() => void send()}
-              style={{
-                border: 'none',
-                background: sending || !canSend ? muted : ink,
-                color: panel,
-                borderRadius: 10,
-                padding: '10px 14px',
-                cursor: sending || !canSend ? 'default' : 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-                opacity: sending || !canSend ? 0.6 : 1,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Отправить
-            </button>
-          </div>
+            😊
+          </button>
+          <textarea
+            key={composerKey}
+            ref={inputRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              noteSelection(e.target);
+            }}
+            onSelect={(e) => {
+              noteSelection(e.target as HTMLTextAreaElement);
+              // Remote DOM never proxies contextmenu and selectionStart is not
+              // readable off the proxy node at mouseup — but `select` events DO
+              // arrive (the old format toolbar tracked selection this way).
+              // Non-empty draft selection → open the formatting menu; collapsed
+              // selection → close a selection-opened menu.
+              if (selRef.current.start !== selRef.current.end) {
+                setCtxMenu((prev) => (prev ? prev : { x: null, y: null }));
+              } else {
+                setCtxMenu((prev) =>
+                  prev && prev.x == null && prev.y == null ? null : prev,
+                );
+              }
+            }}
+            onKeyUp={(e) => {
+              noteSelection(e.target as HTMLTextAreaElement);
+              // Shift+arrows / keyboard selection opens the menu too.
+              if (selRef.current.start !== selRef.current.end) {
+                setCtxMenu((prev) => (prev ? prev : { x: null, y: null }));
+              }
+            }}
+            onMouseUp={(e) => {
+              noteSelection(e.target as HTMLTextAreaElement);
+              // Menu at mouse release if the select event missed the drag.
+              if (selRef.current.start !== selRef.current.end) {
+                setCtxMenu((prev) => (prev ? prev : { x: null, y: null }));
+              }
+            }}
+            onContextMenu={(e) => {
+              // Right-click on selected draft text → formatting menu.
+              e.preventDefault();
+              noteSelection(e.target as HTMLTextAreaElement);
+              const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
+                ?.getBoundingClientRect?.();
+              const ev = e as unknown as { clientX?: number; clientY?: number };
+              setCtxMenu({
+                x: Math.max(8, (ev.clientX || 0) - (rect?.left || 0)),
+                y: Math.max(8, (ev.clientY || 0) - (rect?.top || 0)),
+              });
+            }}
+            onMouseDown={(e) => {
+              // Remote DOM may not proxy `contextmenu` — catch the right-button
+              // mousedown instead (selection still alive at this moment).
+              const ev = e as unknown as { button?: number };
+              if (ev.button === 2) {
+                noteSelection(e.target as HTMLTextAreaElement);
+                const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
+                  ?.getBoundingClientRect?.();
+                const cev = e as unknown as { clientX?: number; clientY?: number };
+                setCtxMenu({
+                  x: Math.max(8, (cev.clientX || 0) - (rect?.left || 0)),
+                  y: Math.max(8, (cev.clientY || 0) - (rect?.top || 0)),
+                });
+              }
+            }}
+            onKeyDown={(e) => {
+              // Enter = newline (multiline replies). Cmd/Ctrl+Enter = send.
+              // Plain Enter previously sent immediately → only the first line went out (INC-022).
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            placeholder={`Ответ в ${
+              meta.channelLabel?.trim()
+                ? meta.channelLabel.split('·')[0].trim()
+                : 'чат'
+            }…`}
+            rows={2}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              resize: 'none',
+              fontFamily: 'Inter, -apple-system, "Segoe UI", Roboto, sans-serif',
+              border: `1px solid ${border}`,
+              borderRadius: 10,
+              padding: '10px 12px',
+              background: bg,
+              color: ink,
+              fontSize: 13,
+              lineHeight: 1.4,
+              outline: 'none',
+            }}
+          />
+          <button
+            type="button"
+            title="Отправить (⌘/Ctrl+Enter)"
+            disabled={sending || !canSend}
+            onClick={() => void send()}
+            style={{
+              width: 38,
+              height: 38,
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: 'none',
+              background: sending || !canSend ? muted : '#2f7cf6',
+              color: '#ffffff',
+              borderRadius: 10,
+              cursor: sending || !canSend ? 'default' : 'pointer',
+              fontSize: 17,
+              lineHeight: 1,
+              opacity: sending || !canSend ? 0.55 : 1,
+            }}
+          >
+            ➤
+          </button>
         </div>
       </div>
 
@@ -1964,7 +1981,7 @@ const ChatPanel = () => {
               // (text-selected trigger — Remote DOM has no coords for it).
               ...(ctxMenu.x != null && ctxMenu.y != null
                 ? { left: ctxMenu.x, top: ctxMenu.y }
-                : { left: 12, bottom: 148 }),
+                : { left: 12, bottom: 120 }),
               zIndex: 41,
               minWidth: 170,
               background: panel,
@@ -2020,7 +2037,7 @@ const ChatPanel = () => {
           style={{
             position: 'absolute',
             right: 12,
-            bottom: 96,
+            bottom: 92,
             zIndex: 42,
             width: 264,
             maxHeight: 200,
