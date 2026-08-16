@@ -303,8 +303,10 @@ export async function refreshCrmChatAppForTenant(opts: {
 
   // Twenty front renders FRONT_COMPONENT only when configuration.__typename is
   // "FrontComponentConfiguration" (Gt check). App install stores JSON without
-  // __typename; flat-map hydration then shows canvas empty state «Нет данных»
-  // (INC-116). Patch after every refresh so Chat/Mailing widgets mount.
+  // __typename (INC-116), AND the install migration may cache the un-patched
+  // configs into Redis flat-maps BEFORE this patch runs — metadataVersion bump
+  // alone does NOT drop them, so the SPA keeps «Нет данных» (INC-129).
+  // After patching DB: delete the workspace flat-map cache keys as well.
   if (connectionString) {
     const pgClient = new pg.Client({ connectionString });
     await pgClient.connect();
@@ -335,6 +337,23 @@ export async function refreshCrmChatAppForTenant(opts: {
     } finally {
       await pgClient.end();
     }
+  }
+
+  // Drop stale flat-maps (the real INC-129 fix): bumping metadataVersion is not
+  // enough when the cache was populated between install and this patch.
+  try {
+    const { flushTwentyWorkspaceRedisCache } = await import(
+      './twenty-redis-flush.js'
+    );
+    const flush = await flushTwentyWorkspaceRedisCache(tenant.twentyWorkspaceId!);
+    console.log(
+      `[crmchat-refresh] flat-map cache flushed for ${tenant.slug}: keysDeleted=${flush.keysDeleted} metadataVersion=${flush.metadataVersion}`,
+    );
+  } catch (err) {
+    console.warn(
+      '[crmchat-refresh] flat-map flush failed (metadata patch still applied):',
+      err instanceof Error ? err.message : String(err),
+    );
   }
 
   return { ok: true, versionHint: '0.1.10+' };
