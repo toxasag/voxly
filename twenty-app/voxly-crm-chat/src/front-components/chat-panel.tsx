@@ -836,6 +836,7 @@ const ChatPanel = () => {
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const lastSig = useRef('');
@@ -1215,6 +1216,76 @@ const ChatPanel = () => {
     { label: 'Спойлер', before: '||', after: '||' },
     { label: 'Код', before: '`', after: '`' },
   ];
+  void formatItems;
+
+  /** Right-click formatting menu (replaces the old button toolbar). */
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  const quoteSelection = () => {
+    if (inputRef.current) syncSelection(inputRef.current);
+    const value = readComposerText();
+    const len = value.length;
+    let { start, end } = selRef.current;
+    start = Math.max(0, Math.min(start, len));
+    end = Math.max(0, Math.min(end, len));
+    if (start > end) {
+      const tmp = start;
+      start = end;
+      end = tmp;
+    }
+    if (start === end) {
+      void enqueueSnackbar({ message: 'Сначала выделите текст в поле ввода', variant: 'error' });
+      return;
+    }
+    const quoted = value
+      .slice(start, end)
+      .split('\n')
+      .map((line) => `> ${line}`)
+      .join('\n');
+    const next = value.slice(0, start) + quoted + value.slice(end);
+    setDraft(next);
+    selRef.current = { start, end: start + quoted.length };
+  };
+
+  const linkSelection = () => {
+    if (inputRef.current) syncSelection(inputRef.current);
+    const value = readComposerText();
+    const len = value.length;
+    let { start, end } = selRef.current;
+    start = Math.max(0, Math.min(start, len));
+    end = Math.max(0, Math.min(end, len));
+    if (start > end) {
+      const tmp = start;
+      start = end;
+      end = tmp;
+    }
+    if (start === end) {
+      void enqueueSnackbar({ message: 'Сначала выделите текст ссылки', variant: 'error' });
+      return;
+    }
+    const url = 'https://';
+    const wrapped = `[${value.slice(start, end)}](${url})`;
+    const next = value.slice(0, start) + wrapped + value.slice(end);
+    setDraft(next);
+    // Cursor onto the URL part for immediate paste-over: [text](https://)
+    selRef.current = { start: end + 3, end: start + wrapped.length - 1 };
+  };
+
+  const insertAtCursor = (text: string) => {
+    const host = inputRef.current as { value?: string; selectionStart?: number | null } | null;
+    const value = readComposerText();
+    let at = value.length;
+    if (host && typeof host.selectionStart === 'number') {
+      at = Math.max(0, Math.min(host.selectionStart, value.length));
+    } else if (selRef.current.end > 0) {
+      at = Math.min(selRef.current.end, value.length);
+    }
+    const next = value.slice(0, at) + text + value.slice(at);
+    setDraft(next);
+    selRef.current = { start: at + text.length, end: at + text.length };
+    setShowEmoji(false);
+  };
 
   const canSend = Boolean(draft.trim() || pendingFiles.length);
   const bg = dark ? '#1a1a1a' : '#f7f7f7';
@@ -1235,6 +1306,7 @@ const ChatPanel = () => {
 
   return (
     <div
+      ref={rootRef}
       data-voxly-crm-chat="1"
       style={{
         // Fill the host widget box; never grow with messages (outer scroll-wrapper
@@ -1599,39 +1671,6 @@ const ChatPanel = () => {
           gap: 8,
         }}
       >
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 6,
-            alignItems: 'center',
-          }}
-        >
-          {formatItems.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onMouseDown={(e) => {
-                // Preserve textarea selection across Remote DOM button click.
-                e.preventDefault();
-                if (inputRef.current) syncSelection(inputRef.current);
-              }}
-              onClick={() => applyFormat(item.before, item.after)}
-              style={{
-                border: `1px solid ${border}`,
-                background: bg,
-                color: ink,
-                borderRadius: 8,
-                padding: '5px 9px',
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 500,
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
         {pendingFiles.length > 0 ? (
           <div
             style={{
@@ -1723,6 +1762,18 @@ const ChatPanel = () => {
             onMouseUp={(e) => {
               noteSelection(e.target as HTMLTextAreaElement);
             }}
+            onContextMenu={(e) => {
+              // Right-click on selected draft text → formatting menu.
+              e.preventDefault();
+              noteSelection(e.target as HTMLTextAreaElement);
+              const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
+                ?.getBoundingClientRect?.();
+              const ev = e as unknown as { clientX?: number; clientY?: number };
+              setCtxMenu({
+                x: Math.max(8, (ev.clientX || 0) - (rect?.left || 0)),
+                y: Math.max(8, (ev.clientY || 0) - (rect?.top || 0)),
+              });
+            }}
             onKeyDown={(e) => {
               // Enter = newline (multiline replies). Cmd/Ctrl+Enter = send.
               // Plain Enter previously sent immediately → only the first line went out (INC-022).
@@ -1760,24 +1811,42 @@ const ChatPanel = () => {
               alignItems: 'stretch',
             }}
           >
+            <button
+              type="button"
+              title="Смайлик — вставить эмодзи"
+              onClick={() => setShowEmoji((v) => !v)}
+              style={{
+                border: `1px solid ${border}`,
+                background: showEmoji ? (dark ? '#1e293b' : '#eff6ff') : panel,
+                color: ink,
+                borderRadius: 10,
+                padding: '6px 10px',
+                cursor: 'pointer',
+                fontSize: 15,
+                lineHeight: 1.2,
+              }}
+            >
+              😊
+            </button>
             {meta.supportsAttachments ? (
             <label
+              title="Прикрепить файл"
               style={{
                 border: `1px solid ${border}`,
                 background: panel,
                 color: ink,
                 borderRadius: 10,
-                padding: '8px 12px',
+                padding: '6px 10px',
                 cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 500,
+                fontSize: 15,
+                lineHeight: 1.2,
                 whiteSpace: 'nowrap',
                 textAlign: 'center',
                 position: 'relative',
                 overflow: 'hidden',
               }}
             >
-              Прикрепить
+              📎
               <input
                 ref={fileRef}
                 type="file"
@@ -1842,6 +1911,135 @@ const ChatPanel = () => {
           </div>
         </div>
       </div>
+
+      {/* Right-click formatting menu (draft text selection). */}
+      {ctxMenu ? (
+        <div
+          onClick={() => setCtxMenu(null)}
+          onContextMenu={(e) => e.preventDefault()}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 40,
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              left: ctxMenu.x,
+              top: ctxMenu.y,
+              zIndex: 41,
+              minWidth: 170,
+              background: panel,
+              border: `1px solid ${border}`,
+              borderRadius: 10,
+              boxShadow: dark ? '0 8px 24px rgba(0,0,0,.55)' : '0 8px 24px rgba(0,0,0,.14)',
+              padding: 4,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            {[
+              { label: 'Цитировать', action: () => quoteSelection() },
+              { label: 'Скрытый', action: () => applyFormat('||', '||') },
+              { label: 'Жирный', action: () => applyFormat('**', '**') },
+              { label: 'Зачеркнутый', action: () => applyFormat('~~', '~~') },
+              { label: 'Подчеркнутый', action: () => applyFormat('__', '__') },
+              { label: 'Ссылка', action: () => linkSelection() },
+            ].map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onMouseDown={(e) => {
+                  // Keep textarea selection alive across Remote DOM click.
+                  e.preventDefault();
+                  if (inputRef.current) syncSelection(inputRef.current);
+                }}
+                onClick={() => {
+                  item.action();
+                  setCtxMenu(null);
+                }}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: ink,
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  borderRadius: 7,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Emoji palette. */}
+      {showEmoji ? (
+        <div
+          style={{
+            position: 'absolute',
+            right: 12,
+            bottom: 96,
+            zIndex: 42,
+            width: 264,
+            maxHeight: 200,
+            overflowY: 'auto',
+            background: panel,
+            border: `1px solid ${border}`,
+            borderRadius: 10,
+            boxShadow: dark ? '0 8px 24px rgba(0,0,0,.55)' : '0 8px 24px rgba(0,0,0,.14)',
+            padding: 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 4,
+          }}
+        >
+          {[
+            '😀','😁','😂','🤣','😊','🙂','😉','😍','🥰','😘','😎','🤩','🤔','😅','😌',
+            '👍','👎','👏','🙏','💪','🤝','👌','✌️','🤞','👋','🔥','⭐️','✅','❌','⚡️',
+            '🎉','🎊','🎁','❤️','💚','💙','😢','😭','😤','😡','🤯','😱','🥳','😴','🤗',
+            '📞','📱','💬','📧','🕒','📅','💰','📊','📈','📉','🎯','📌','📎','🔗','🛠','🔨',
+          ]
+            .map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => insertAtCursor(emoji)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  fontSize: 18,
+                  lineHeight: 1.4,
+                  cursor: 'pointer',
+                  padding: '2px 4px',
+                  borderRadius: 6,
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+          <button
+            type="button"
+            onClick={() => setShowEmoji(false)}
+            style={{
+              border: `1px solid ${border}`,
+              background: bg,
+              color: muted,
+              borderRadius: 8,
+              fontSize: 11,
+              padding: '4px 8px',
+              cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+          >
+            Закрыть
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 };
