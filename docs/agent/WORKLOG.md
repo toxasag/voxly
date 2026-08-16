@@ -3324,3 +3324,8 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Fixes по ходу: BullMQ jobId НЕ может содержать ':' → ключи `tenant.kind.msg.<id>` (per-message; conversation-уровень глотал все события треда после первого); external sink вызывается и в direct-fallback (setTimelineSyncExternalSink).
 - Verify: синтет-джобы → worker log `conv=… opp=47ecff36`, timelineActivity `p=t o=t`, opportunity.updatedAt = now; тесты 192/15; typecheck 23/23. Диагностические записи удалены (DELETE 5).
 - Commits: be9cc1a, 779f901, f749274 + текущий (debug-лог резолва).
+
+### 2026-08-16 (UI) — компактная шапка чата
+- Commit a42a8b5: заголовок + presence в одну строку («@user был(а) в сети N мин. назад»); «От:» + «Чат:» в одной flex-строке; кнопка «Обновить» скрыта (display:none, data-voxly-chat-refresh сохранён — host-скрипт кликает её для live-refresh, click() работает на скрытых элементах).
+- Известный transient: при авто-реинсталле бандла открытая вкладка может показать «FrontComponent error: Failed to fetch» (in-memory метаданные со старыми id компонентов) — лечится перезагрузкой страницы; после reload проверено: presence inline, оба селекта в строке, сообщений/медиа OK.
+- Verify: tarball d7521a58… установлен авто-рефрешем (flush keysDeleted=67); браузерная проверка шапки/сообщений ✓.
