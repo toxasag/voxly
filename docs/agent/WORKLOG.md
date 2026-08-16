@@ -3343,3 +3343,7 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Commit a43f190 (минимальные правки, блок не переписывался): контейнер ввода column; ряд 😊+📎 получил order:-1 (рендер над полем); «Отправить» вынесен в отдельный right-aligned ряд под полем; кнопка Aa удалена (меню: правый клик / right-mousedown — паттерн telegram-md-textarea портала). Попутно восстановлен случайно съеденный <textarea> (поймано typecheck до коммита).
 - VPS: / 42G free (55%), /opt/voxly/backups 68M — память/диск в порядке, бэкапы не причина.
 - Verify: tsgo clean, lint 0; tarball 8acd7183 → оба воркспейса (flush 67×2); в бандле: Aa отсутствует, order:-1 ✓, flex-end ✓.
+
+### 2026-08-16 (UI-5) — Inter в композере + меню по выделению
+- Commit 581b23f: textarea fontFamily Inter (был browser-default monospace); формат-меню открывается АВТОМАТИЧЕСКИ при выделении текста в поле (mouseup + selectionStart≠selectionEnd, позиция left:12/bottom:148 над композером) — Remote DOM не проксирует ни contextmenu, ни right-button mousedown (портальное меню работает, т.к. портал — обычный DOM). Право-клик хендлеры оставлены на будущее.
+- Deploy: tarball → оба воркспейса (flush keysDeleted=67); в бандле Inter ✓ и bottom:148 ✓; api ok.
