@@ -794,6 +794,7 @@ const ChatPanel = () => {
   const [info, setInfo] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<PendingAttachment[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const lastSig = useRef('');
@@ -994,11 +995,18 @@ const ChatPanel = () => {
   }, [load]);
 
   // Auto-scroll to the LATEST message on open, thread switch and new messages.
-  // useLayoutEffect: runs after DOM mutation before paint, so scrollHeight is
-  // already final (plain useEffect raced the Remote DOM layout and landed at
-  // the top). Depends on the messages array identity (same length on thread
-  // switch must still scroll) + active thread + loading flip.
+  // Remote DOM: direct scrollTop on the proxied list node may be a no-op —
+  // scrollIntoView on the sentinel child proxies to the real host element.
   useLayoutEffect(() => {
+    const anchor = endRef.current as { scrollIntoView?: (o?: unknown) => void } | null;
+    if (anchor && typeof anchor.scrollIntoView === 'function') {
+      try {
+        anchor.scrollIntoView({ block: 'end' });
+        return;
+      } catch {
+        // fall through to scrollTop
+      }
+    }
     const el = listRef.current as { scrollTop?: number; scrollHeight?: number } | null;
     if (!el || typeof el.scrollHeight !== 'number') return;
     try {
@@ -1542,6 +1550,9 @@ const ChatPanel = () => {
             </div>
           );
         })}
+        {/* Auto-scroll anchor: scrollIntoView proxies to the real host element
+            in Remote DOM, unlike direct scrollTop assignment on a proxy node. */}
+        <div ref={endRef} style={{ height: 1 }} />
       </div>
 
       <div
