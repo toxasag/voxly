@@ -3287,3 +3287,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Deploy: `prod-deploy.sh saas-api,saas-worker,ai-telegram-worker,gramjs-bridge,max-bridge` — образы пересобраны из закоммиченного дерева, хэши совпали с работающими (контейнеры не пересоздавались), smoke 200, crmchat-refresh OK.
 - Бэкапы слития перенесены: `/opt/voxly/backups/20260816-merge/` (voxly_control-pre-merge.dump 284K + twenty-pre-merge.dump 1.4M).
 - Остаток: push ветки / PR — по команде владельца.
+
+### 2026-08-16 (follow-up) — native MAX/WA outbound ingest + Kanban default
+- Goal: подтянуть сообщения с телефона из MAX/WhatsApp в существующие CRM Person/Opportunity без дублей; сделать `updatedAt` частью дефолтной Kanban-card конфигурации новых порталов.
+- Changes: MAX `message.out` callback `/api/internal/max/outbound` (native id/idempotency, dialog key, operator/fromMe, CRM link); WA `fromMe` dedicated mirror (LID/PN merge, operator/fromMe, outbound timeline/cache, no AI/no new deal); outbound `CrmRecordLink` repair in CRM reply; `OPPORTUNITY_KANBAN_CARD_FIELDS` adds updatedAt; tests/docs/rules/INC-124..126.
+- Verify: typecheck 23/23; root tests 184 passed / 15 skipped; CRM Chat tarball build; portal lint warnings only; py_compile OK.
+- Deploy pending after commit: backup control/twenty, deploy `saas-api,saas-worker,max-bridge,ai-whatsapp-worker`, verify callbacks/logs and new portal Kanban defaults.

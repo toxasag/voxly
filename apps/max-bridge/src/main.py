@@ -1569,9 +1569,11 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
         async def on_msg(message: Any, event_client: Any = None) -> None:
             try:
                 api = event_client if event_client is not None else client
-                # Skip outgoing if flagged (Telethon-style) or sender == me (PyMax Message.sender is int).
-                if getattr(message, "out", False) or getattr(message, "is_out", False):
-                    return
+                # Outgoing messages from the connected MAX app are CRM events too.
+                # Do not feed them through inbound/AI; forward as operator outbound.
+                is_outgoing = bool(
+                    getattr(message, "out", False) or getattr(message, "is_out", False)
+                )
                 sender = getattr(message, "sender", None)
                 # CRITICAL: client.me is often a wrapper — User is on .contact (INC-113).
                 me_user = _unwrap_max_user(getattr(api, "me", None))
@@ -1581,7 +1583,12 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                     sender_id = int(sender) if sender is not None else None
                 except Exception:
                     sender_id = None
-                if me_id is not None and sender_id is not None and sender_id == me_id:
+                if (
+                    not is_outgoing
+                    and me_id is not None
+                    and sender_id is not None
+                    and sender_id == me_id
+                ):
                     return
 
                 peer = (
@@ -1652,14 +1659,19 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                         if user is not None:
                             if _is_bot_user(user):
                                 logger.info(
-                                    "skip bot inbound botId=%s peerUser=%s chat=%s",
+                                    "skip bot MAX message botId=%s peerUser=%s chat=%s",
                                     bot_id,
                                     peer_uid,
                                     peer,
                                 )
                                 return
                             got_id = _user_id_int(user)
-                            if me_id is not None and got_id is not None and got_id == me_id:
+                            if (
+                                not is_outgoing
+                                and me_id is not None
+                                and got_id is not None
+                                and got_id == me_id
+                            ):
                                 return
                             fn, un = _user_display_name(user)
                             if fn and not first_name:
@@ -1684,7 +1696,7 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                     {k: v for k, v in a.items() if k != "url"} for a in attachments
                 ]
                 await saas_fetch(
-                    "/api/internal/max/inbound",
+                    "/api/internal/max/outbound" if is_outgoing else "/api/internal/max/inbound",
                     method="POST",
                     json_body={
                         "botId": bot_id,
@@ -1698,14 +1710,14 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                         "username": username,
                         "firstName": first_name,
                         "phone": phone,
-                        # Belt: saas-api strips peer phone if it equals connected account.
                         "selfPhone": me_phone or None,
                         "maxLink": link,
                         "attachments": attachments_out,
                     },
                 )
                 logger.info(
-                    "inbound forwarded botId=%s chat=%s peerUser=%s mid=%s attaches=%s",
+                    "%s forwarded botId=%s chat=%s peerUser=%s mid=%s attaches=%s",
+                    "outbound" if is_outgoing else "inbound",
                     bot_id,
                     peer,
                     peer_uid,

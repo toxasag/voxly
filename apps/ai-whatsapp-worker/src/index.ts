@@ -3797,6 +3797,8 @@ async function syncLeadToCrm(opts: {
    * when personFirstName / phone is present (INC-097 v6).
    */
   forceNeedsReview?: boolean;
+  /** Native outbound may reconcile existing links but must not create a lead. */
+  allowOpportunityCreate?: boolean;
 }): Promise<void> {
   try {
     const conversation = await prisma.conversation.findUnique({
@@ -4181,7 +4183,12 @@ async function syncLeadToCrm(opts: {
       }
     }
 
-    if (!opportunityId && personId && !suppressDeal) {
+    if (
+      !opportunityId &&
+      personId &&
+      !suppressDeal &&
+      opts.allowOpportunityCreate !== false
+    ) {
       const botLabel = bot?.displayName || bot?.botUsername || 'WhatsApp';
       const oppName = opts.opportunityName || `${botLabel} · WA`;
       const opportunity = await client.createOpportunity({
@@ -6683,18 +6690,61 @@ async function mirrorWaPhoneOutbound(opts: {
             : '[файл]'
       : '[outbound]');
 
-  await prisma.chatMessage.create({
+  const created = await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'operator',
       content,
       externalMessageId: messageId,
+      fromMe: true,
       ...(atts ? { attachments: atts } : {}),
     },
   });
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: { updatedAt: new Date() },
+  });
+
+  // Reconcile CRM links without the inbound/AI path. syncLeadToCrm first
+  // reuses linked Person/Opportunity and cross-channel phone matches.
+  await syncLeadToCrm({
+    tenantId: bot.tenantId,
+    botId: bot.id,
+    conversationId: conversation.id,
+    platformUserId: conversation.platformUserId,
+    phoneE164,
+    allowOpportunityCreate: false,
+  });
+  const linked = await prisma.conversation.findUnique({
+    where: { id: conversation.id },
+    select: { twentyPersonId: true, twentyOpportunityId: true, platformUsername: true },
+  });
+  await upsertCrmRecordLink(prisma, {
+    tenantId: bot.tenantId,
+    conversationId: conversation.id,
+    twentyPersonId: linked?.twentyPersonId || null,
+    twentyOpportunityId: linked?.twentyOpportunityId || null,
+    source: 'outbound',
+  });
+  await invalidateCrmThreadCache(crmCacheRedis, bot.tenantId, [
+    linked?.twentyPersonId,
+    linked?.twentyOpportunityId,
+  ]);
+  await invalidateCrmUnreadCache(crmCacheRedis, bot.tenantId);
+  const phoneFp = linked?.platformUsername?.startsWith('+')
+    ? phoneFingerprint(linked.platformUsername)
+    : null;
+  void enqueueTimelineSync({
+    tenantId: bot.tenantId,
+    twentyPersonId: linked?.twentyPersonId || null,
+    phoneFingerprint: phoneFp ?? null,
+    kind: 'chat_outbound',
+    channel: 'ai_wa',
+    title: `Исходящее (WhatsApp): ${content.slice(0, 80)}${content.length > 80 ? '…' : ''}`,
+    description: content,
+    meta: { conversationId: conversation.id, externalMessageId: messageId, botId: bot.id },
+    conversationId: conversation.id,
+    messageId: created.id,
   });
   console.log(
     `[ai-whatsapp] phone-outbound mirrored conv=${conversation.id} mid=${messageId || '-'} peer=${from}`,
@@ -6764,6 +6814,15 @@ async function handleEvolutionWebhook(payload: any) {
       continue;
     }
     const messageId = item?.key?.id ? String(item.key.id) : undefined;
+    if (fromMe) {
+      // Native outbound from the connected WA app: mirror into the canonical
+      // existing CRM thread, never run inbound lead creation or AI replies.
+      await mirrorWaPhoneOutbound({
+        instanceName: String(instanceName),
+        item,
+      });
+      continue;
+    }
     const classified = classifyWaInbound(item?.message, messageId);
     if (!classified.text) continue;
     const phoneE164 = extractPhoneFromInboundItem(item);

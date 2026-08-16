@@ -60,3 +60,11 @@ Channel connect → Conversation + CRM lead **всегда**; AI reply **тол�
 - **Idempotency**: нет явной проверки webhook-id — при ретраях Evolution может отправить дубликат. Fast ACK + `isNearDuplicateReply` как mitigation.
 - **LID-контакт без телефона** — невозможно обогатить CRM-контакт.
 - **pg direct connect** — обходит pgbouncer (todo: оценить необходимость).
+
+## `fromMe` outbound webhook
+
+Evolution `key.fromMe=true` направляется в `mirrorWaPhoneOutbound`, а не в `handleInboundMessage`. Mirror сохраняет `role=operator`, `fromMe=true`, `externalMessageId`, переиспользует LID/PN conversation, восстанавливает CRM Person/Opportunity link и пишет timeline `chat_outbound`. AI-ответ и inbound lead creation запрещены для этого пути.
+
+## Native outbound guard
+
+Evolution `key.fromMe` must enter `mirrorWaPhoneOutbound`, not `handleInboundMessage`. The mirror reconciles an existing Person/Opportunity and `CrmRecordLink`, stores `fromMe=true`, and emits `chat_outbound`; it must not create a new deal when no CRM match exists and must not trigger AI.

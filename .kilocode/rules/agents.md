@@ -52,6 +52,9 @@
 - ❌ **Балансы и биллинг**: Списание токенов `ai_balance` строго через атомарный SQL-декремент на уровне БД. Запрещена математика в памяти JS.
 - ❌ **Изоляция тенантов**: Все запросы к БД обязаны содержать `{ where: { tenantId } }` (FindMany guards).
 - ❌ **Вебхуки мессенджеров**: Обработчики входящих вебхуков ОБЯЗАНЫ отдавать HTTP `200 OK` за <100ms, перекладывая полезную нагрузку в BullMQ очереди.
+- ❌ **Native outbound**: `message.out`/`key.fromMe` из MAX/WhatsApp нельзя пропускать через inbound/AI pipeline; сохранять как operator/fromMe с native external id и CRM-link.
+- ❌ **Native outbound deal safety**: MAX/WhatsApp исходящие с устройства не создают новый Opportunity без уже найденного Person/Opportunity; только reconcile existing CRM match.
+- ❌ **Kanban defaults**: поля Opportunity Kanban для новых порталов задаются только через ID-independent `OPPORTUNITY_KANBAN_CARD_FIELDS`; UUID конкретного tenant запрещено копировать.
 - ❌ **Twenty CRM**: Любое изменение метаданных CRM требует вызова `twenty-redis-flush.ts`.
 - ❌ **Контракты роутов**: Запрещено менять JSON-схему `*-internal.ts` без синхронного обновления всех вызывающих воркеров.
 - ❌ **Хранение медиа**: Запрещено сохранять бинарники/Base64 в PostgreSQL — только стриминг в S3 (MinIO / Cloudflare R2).

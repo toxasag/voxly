@@ -4,6 +4,7 @@
 import type { FastifyPluginAsync, FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { encrypt, decrypt } from '@voxly/crypto';
+import { upsertCrmRecordLink } from '@voxly/db';
 import { TwentyClient } from '@voxly/twenty-client';
 import { extractBearer, verifyServiceToken } from '@voxly/shared';
 import { stripOwnerPhone } from '../services/max-phone-guard.js';
@@ -64,6 +65,7 @@ async function syncMaxLeadToCrm(opts: {
   selfMaxUserId?: string | null;
   /** Connected account phone digits — never write onto peer Person (INC-113). */
   selfPhone?: string | null;
+  allowOpportunityCreate?: boolean;
 }): Promise<void> {
   const conversation = await opts.prisma.conversation.findUnique({
     where: { id: opts.conversationId },
@@ -199,7 +201,7 @@ async function syncMaxLeadToCrm(opts: {
     }
   }
 
-  if (!opportunityId && personId) {
+  if (!opportunityId && personId && opts.allowOpportunityCreate !== false) {
     const who =
       opts.username
         ? `@${opts.username.replace(/^@/, '')}`
@@ -268,6 +270,8 @@ const inboundSchema = z.object({
   maxLink: z.string().nullable().optional(),
   attachments: z.array(inboundAttachmentSchema).max(20).optional(),
 });
+
+const outboundSchema = inboundSchema;
 
 function maxAttachmentPlaceholder(atts: z.infer<typeof inboundAttachmentSchema>[]): string {
   const a = atts[0];
@@ -393,6 +397,136 @@ export const maxInternalRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
     return reply.send({ ok: true, botId });
+  });
+
+  /** Native outgoing MAX DM from the connected personal account → operator CRM message. */
+  fastify.post('/outbound', async (request, reply) => {
+    const parsed = outboundSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.flatten() });
+    }
+    const {
+      botId,
+      peerId,
+      maxUserId,
+      chatType,
+      text,
+      messageId,
+      username,
+      firstName,
+      phone,
+      selfPhone,
+      maxLink,
+      attachments,
+    } = parsed.data;
+    const prisma = fastify.prisma;
+    const bot = await prisma.botInstance.findFirst({
+      where: { id: botId, botType: 'ai_max', status: 'active' },
+    });
+    if (!bot) return reply.code(404).send({ error: 'bot not found' });
+
+    const chatTypeNorm = String(chatType || '').trim().toUpperCase();
+    if (chatTypeNorm && chatTypeNorm !== 'DIALOG') {
+      return reply.send({ ok: true, skipped: 'non_private_chat', chatType: chatTypeNorm });
+    }
+    if (String(peerId).trim().startsWith('-')) {
+      return reply.send({ ok: true, skipped: 'non_private_chat', chatType: 'negative_id' });
+    }
+    const selfMaxUserId = String(bot.phoneNumberId || '').trim() || null;
+    const peerUser = String(maxUserId || '').trim();
+    if (selfMaxUserId && (peerUser === selfMaxUserId || String(peerId) === selfMaxUserId)) {
+      return reply.send({ ok: true, skipped: 'self' });
+    }
+    const peerPhone = stripOwnerPhone(phone, selfPhone) || null;
+    const extId = messageId != null ? `max:${messageId}` : null;
+    if (extId) {
+      const dup = await prisma.chatMessage.findFirst({
+        where: { externalMessageId: extId, conversation: { botInstanceId: botId } },
+        select: { id: true, conversationId: true },
+      });
+      if (dup) return reply.send({ ok: true, duplicate: true, conversationId: dup.conversationId });
+    }
+
+    let conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: bot.tenantId,
+        botInstanceId: botId,
+        platform: 'max',
+        platformUserId: peerId,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          tenantId: bot.tenantId,
+          botInstanceId: botId,
+          platform: 'max',
+          platformUserId: peerId,
+          platformUsername: username || null,
+          platformFirstName: firstName || null,
+          channel: 'max_personal',
+          status: 'open',
+          mode: 'ai',
+        },
+      });
+    } else {
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          platformUsername: username || conversation.platformUsername,
+          platformFirstName: firstName || conversation.platformFirstName,
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    const atts = Array.isArray(attachments) ? attachments : [];
+    const content = (text || '').trim() || (atts.length ? maxAttachmentPlaceholder(atts) : '[сообщение]');
+    const msg = await prisma.chatMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'operator',
+        content,
+        externalMessageId: extId,
+        fromMe: true,
+        ...(atts.length ? { attachments: atts } : {}),
+      },
+    });
+
+    await syncMaxLeadToCrm({
+      prisma,
+      tenantId: bot.tenantId,
+      conversationId: conversation.id,
+      platformUserId: peerId,
+      maxUserId: peerUser || null,
+      username,
+      firstName,
+      phone: peerPhone,
+      maxLink,
+      selfMaxUserId,
+      selfPhone,
+      // Native outbound must attach to an existing CRM lead, never create one.
+      allowOpportunityCreate: false,
+    });
+    const linked = await prisma.conversation.findUnique({
+      where: { id: conversation.id },
+      select: { twentyPersonId: true, twentyOpportunityId: true },
+    });
+    await upsertCrmRecordLink(prisma, {
+      tenantId: bot.tenantId,
+      conversationId: conversation.id,
+      twentyPersonId: linked?.twentyPersonId || null,
+      twentyOpportunityId: linked?.twentyOpportunityId || null,
+      source: 'outbound',
+    });
+    return reply.send({
+      ok: true,
+      conversationId: conversation.id,
+      messageId: msg.id,
+      twentyPersonId: linked?.twentyPersonId || null,
+      twentyOpportunityId: linked?.twentyOpportunityId || null,
+    });
   });
 
   /** Inbound DM → Conversation + ChatMessage + CRM (no sales LLM). */

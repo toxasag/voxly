@@ -67,3 +67,24 @@ POST /messages/send → { ok, botId, peerUserId, resolvedPeerUserId?, messageId,
 
 - `findPersonByHint` link-фильтры зависят от GraphQL-шейпа Twenty (есть try/catch fallback).
 - Backfill числового id происходит на первом входящем; до него диалог ключён username'ом (матчинг обрабатывает).
+
+## Outbound ingest из подключённых приложений (2026-08-16)
+
+### MAX
+
+`max-bridge` не отбрасывает `message.out`/`is_out`: событие отправляется в `POST /api/internal/max/outbound`.
+Контракт использует `peerId` как **dialog chat id**, `maxUserId` как профильный user id и `messageId` как native id. SaaS сохраняет `ChatMessage.role='operator'`, `fromMe=true`, `externalMessageId='max:<messageId>'`, затем выполняет CRM matching и `upsertCrmRecordLink(source:'outbound')`. AI/inbound pipeline не запускается.
+
+### WhatsApp
+
+Webhook `key.fromMe` направляется в отдельный mirror path: сообщение сохраняется как operator/fromMe, существующая LID↔PN conversation и CRM-связи переиспользуются, timeline имеет `chat_outbound`; AI reply и inbound lead creation для этого события не запускаются.
+
+### Общий инвариант
+
+Любое исходящее сообщение из подключённого приложения должно быть идемпотентно сохранено в CRM и связано с Person/Opportunity при наличии существующего match. Физические Conversation разных каналов не объединяются: один канал/бот = отдельный тред под тем же CRM record.
+
+## Native outbound ingest (MAX / WhatsApp)
+
+- MAX `message.out`/`is_out` → `POST /api/internal/max/outbound`; сохраняется `role=operator`, `fromMe=true`, `externalMessageId=max:<nativeId>`, dialog `peerId`, CRM matching and outbound `CrmRecordLink`; AI/inbound lead creation не запускается.
+- WhatsApp `key.fromMe` → `mirrorWaPhoneOutbound`; LID/PN aliases merge before reconciliation, `fromMe=true`, `role=operator`, `chat_outbound`; no AI reply, no new Opportunity solely from native outbound.
+- SaaS CRM reply path также repairs/creates `CrmRecordLink` with `source:'outbound'` after final Conversation resolution.

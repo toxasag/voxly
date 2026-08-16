@@ -5,6 +5,27 @@
 
 ---
 
+### INC-124 — MAX/WhatsApp native outbound не попадал в CRM
+- **Симптом:** сообщения, отправленные с телефона из MAX/WhatsApp, отсутствовали в CRM, хотя Telegram подтягивался.
+- **Причина:** MAX listener отбрасывал `message.out`; WhatsApp `fromMe` шёл через inbound/AI pipeline, а не через outbound mirror.
+- **Фикс:** MAX `message.out` → `/api/internal/max/outbound` с native id; WA `fromMe` → operator mirror с `fromMe=true`, CRM link/cache/timeline outbound, без AI.
+- **Инвариант:** native outbound никогда не считать inbound и не запускать AI; idempotency по external id.
+- **Дата:** 2026-08-16.
+
+### INC-126 — Нативные MAX/WA outbound не синхронизировались с CRM
+- **Симптом:** ручное сообщение с телефона клиента через MAX/WhatsApp не появлялось в CRM, Telegram-поток работал.
+- **Причина:** MAX listener отбрасывал `message.out`; WA `fromMe` проходил inbound/AI path. Дополнительный риск — отсутствие outbound `CrmRecordLink` при ручном CRM send.
+- **Фикс:** MAX outbound endpoint с native id/идемпотентностью; WA mirror `role=operator/fromMe`, LID/PN reconciliation, no AI/no new deal; SaaS outbound всегда upsert link `source=outbound`.
+- **Инвариант:** нативные исходящие события не отбрасывать, не считать inbound, не запускать AI и не создавать новый Opportunity без существующего CRM match.
+- **Дата:** 2026-08-16.
+
+### INC-125 — Kanban card defaults не включали updatedAt
+- **Симптом:** новые порталы получали почти правильную карточку Opportunity, но без `updatedAt`.
+- **Причина:** глобальный ID-independent template `OPPORTUNITY_KANBAN_CARD_FIELDS` не содержал поле.
+- **Фикс:** добавлен `{ name:'updatedAt', position:1.5, size:100 }`; provisioning/reapply остаются источником истины.
+- **Инвариант:** не копировать UUID конкретного workspace; metadata names + metadataVersion/Redis flush.
+- **Дата:** 2026-08-16.
+
 ### INC-123 — TG write-first: входящий ответ создал дубль Person+сделки
 - **Симптом (remtoua 2026-08-16):** оператор написал первым из CRM (Telegram · личный) → контакт ответил из приложения TG → создались НОВЫЕ Person + сделка вместо попадания в существующий чат.
 - **Причина:** write-first диалог создан с `platformUserId='toxasagmsk'` (username — числовой id узнавался только в бридже и не возвращался), а inbound `ensureConversation` матчил ТОЛЬКО по числовому id (641470324) → новый диалог → новый Person (`findPersonByHint` не смотрел t.me-линки).

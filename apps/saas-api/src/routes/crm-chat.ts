@@ -8,6 +8,7 @@ import multipart from '@fastify/multipart';
 import pg from 'pg';
 import { z } from 'zod';
 import { decrypt } from '@voxly/crypto';
+import { upsertCrmRecordLink } from '@voxly/db';
 import {
   clientMdToMarkdownV2,
   AI_HANDOFF_PAUSE_MS,
@@ -4198,6 +4199,19 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       }
+
+      const finalConversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { twentyPersonId: true, twentyOpportunityId: true },
+      });
+      await upsertCrmRecordLink(prisma, {
+        tenantId,
+        conversationId,
+        twentyPersonId: target.twentyPersonId || finalConversation?.twentyPersonId || null,
+        twentyOpportunityId:
+          target.twentyOpportunityId || finalConversation?.twentyOpportunityId || null,
+        source: 'outbound',
+      });
 
       const operatorLabel = await resolveOperatorLabel({
         prisma,

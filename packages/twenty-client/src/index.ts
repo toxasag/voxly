@@ -441,7 +441,7 @@ const CREATE_VIEW_FIELD = gql`
 `;
 
 /** Default Opportunity kanban card fields (Voxly CRM board). */
-const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
+export const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
   name: string;
   position: number;
   size: number;
@@ -449,6 +449,7 @@ const OPPORTUNITY_KANBAN_CARD_FIELDS: Array<{
   { name: 'name', position: 0, size: 150 },
   { name: 'createdAt', position: 0.125, size: 100 },
   { name: 'amount', position: 1, size: 150 },
+  { name: 'updatedAt', position: 1.5, size: 100 },
   { name: 'createdBy', position: 2, size: 150 },
   { name: 'closeDate', position: 3, size: 150 },
   { name: 'company', position: 4, size: 150 },

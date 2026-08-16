@@ -94,3 +94,10 @@
 - **Влияние на систему (Impact)**: обязательный coupling: изменения CRM Chat → deploy `saas-api,saas-worker`; новый tarball устанавливается новым workspace при provisioning и всем существующим workspace авто-рефрешем по sha1.
 - **Результаты тестов (Verification)**: документационный инвариант отражает работающий прод-механизм `crmchat-refresh`.
 - **План отката (Rollback Plan)**: n/a (документация/правила).
+
+### [2026-08-16] Native MAX/WhatsApp outbound ingest + Kanban `updatedAt` default
+- **Причина (Why)**: сообщения, отправленные с телефона клиента через подключённые MAX/WhatsApp, не появлялись в CRM; MAX outbound отбрасывался, WA `fromMe` шёл через inbound/AI path. Настройка Kanban-карточки remtoua также требовала сделать `updatedAt` глобальным дефолтом новых порталов.
+- **Затронутые файлы**: `apps/max-bridge/src/main.py`, `apps/saas-api/src/routes/max-internal.ts`, `apps/ai-whatsapp-worker/src/index.ts`, `apps/saas-api/src/routes/crm-chat.ts`, `packages/twenty-client/src/index.ts`, `apps/saas-api/tests/native-outbound-contracts.test.ts`, `apps/saas-api/tests/opportunity-kanban-defaults.test.ts`, outbound/WA/Kanban specs and rules.
+- **Влияние на систему (Impact)**: MAX `message.out` → idempotent `/api/internal/max/outbound` with `max:<nativeId>`, operator/fromMe and CRM link; WA `key.fromMe` → mirror path with LID/PN reconciliation, no AI/no new Opportunity; manual CRM sends repair `CrmRecordLink(source:'outbound')`; `updatedAt` added to ID-independent `OPPORTUNITY_KANBAN_CARD_FIELDS` for all new provisioning.
+- **Результаты тестов (Verification)**: `pnpm typecheck` 23/23 ✅; root `pnpm test` — 184 passed / 15 skipped (26 files) ✅; `@voxly/twenty-client` build ✅; `yarn lint` CRM Chat 0 errors (2 existing warnings) ✅; portal lint existing warnings only ✅; `py_compile` max-bridge ✅; `git diff --check` ✅.
+- **План отката (Rollback Plan)**: revert commit and redeploy `saas-api,saas-worker,max-bridge,ai-whatsapp-worker`; restore DB only if an outbound ingest migration/data repair is introduced (this change has no schema migration); reapply prior Kanban template and flush metadata cache if required.

@@ -53,3 +53,11 @@
 `POST /messages/send` c `resolvePhone`: телефон → `_resolve_user_by_phone` → **`_resolve_dialog_chat_id(me_id, user_id)`** (`pymax.get_chat_id` — СИНХРОННЫЙ локальный XOR `me ^ user`, sync/coroutine-safe вызов; `add_contact` best-effort; INC-122) → `send_message(chat_id=…)`. Инвариант: MAX `send_message` принимает **id диалога**, не user_id (иначе `common.finder User not.found`). Возвращает `{ok, chatId}` — saas-api сохраняет его как platformUserId диалога.
 
 Подробности: [`../03-saas-api-internal/crm-chat-write-first.md`](../03-saas-api-internal/crm-chat-write-first.md)
+
+## Outbound event ingest
+
+`_listen_inbound` также обрабатывает PyMax `message.out`/`is_out` и отправляет native-событие в `POST /api/internal/max/outbound`. Событие содержит dialog `peerId`, participant `maxUserId`, native `messageId`, текст и вложения. Оно не должно попадать в inbound/AI pipeline. `messageId` обязателен для идемпотентности `max:<id>`.
+
+## Native outbound guard
+
+`message.out`/`is_out` forwarding is mandatory. It uses `/api/internal/max/outbound`, preserves native message id for `max:<id>` idempotency, and must never be silently dropped or sent through inbound/AI CRM logic. `peerId` is dialog chat id; `maxUserId` is profile id.

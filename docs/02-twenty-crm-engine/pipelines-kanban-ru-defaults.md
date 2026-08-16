@@ -36,3 +36,15 @@
 
 - **Обновление Twenty** может изменить схему opportunity — патчи сломаются.
 - **Мультиязычность** — RU hardcoded, для других языков нужен extension.
+
+## Глобальный шаблон карточки (2026-08-16)
+
+`OPPORTUNITY_KANBAN_CARD_FIELDS` в `packages/twenty-client/src/index.ts` — schema-independent шаблон для каждого нового workspace. Поля по умолчанию:
+
+`name`, `createdAt`, `amount`, `updatedAt`, `createdBy`, `closeDate`, `company`, `pointOfContact`, `taskTargets`, `noteTargets`.
+
+`updatedAt` добавлен после `amount` (position `1.5`, size `100`). Нельзя копировать UUID view/field из конкретного тенанта; provisioning разрешает поля по стабильным metadata names. После прямых metadata SQL-изменений обязательны `metadataVersion++` и `flushTwentyWorkspaceRedisCache`.
+
+## Provisioning invariant
+
+`OPPORTUNITY_KANBAN_CARD_FIELDS` is the single ID-independent source of truth for new portals. Current intended card fields include `updatedAt`; changes require a template test and the normal provisioning/reapply sequence plus metadata version/cache flush.
