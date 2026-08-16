@@ -1225,9 +1225,14 @@ const ChatPanel = () => {
         }}
       >
         <div>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>{meta.title}</div>
+          <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'baseline' }}>
+            <span>{meta.title}</span>
+            {meta.presenceLine ? (
+              <span style={{ fontWeight: 400, fontSize: 12, color: muted }}>{meta.presenceLine}</span>
+            ) : null}
+          </div>
           {sendFromOptions.length > 0 ? (
-            <div style={{ marginTop: 4 }}>
+            <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
               <label
                 style={{
                   fontSize: 12,
@@ -1238,41 +1243,41 @@ const ChatPanel = () => {
                   gap: 6,
                 }}
               >
-                <span>Пишем от:</span>
-<select
-                    value={sendFromBotId}
-                    onChange={(e) => {
-                      const nextId = e.target.value;
-                      const opt = sendFromOptions.find((o) => o.botId === nextId);
-                      setSendFromBotId(nextId);
-                      if (opt) {
-                        setMeta((m) => ({
-                          ...m,
-                          channelLabel: opt.channelLabel,
-                          identityLabel: opt.identityLabel,
-                          // gift_max only — GramJS/MAX/WA outbound attach are supported.
-                          supportsAttachments: opt.botType !== 'gift_max',
-                        }));
-                        if (opt.threadId) {
-                          const thr = threads.find((t) => t.id === opt.threadId);
-                          if (thr) {
-                            setActiveThreadId(thr.id);
-                            lastSig.current = '';
-                            void load(thr);
-                            return;
-                          }
-                        }
-                        // No thread for this bot yet → show empty history (write-first)
-                        setActiveThreadId('');
-                        setMessages([]);
-                        lastSig.current = '';
-                        if (!opt.available && opt.unavailableReason) {
-                          setError(opt.unavailableReason);
-                        } else {
-                          setError(null);
+                <span>От:</span>
+                <select
+                  value={sendFromBotId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const opt = sendFromOptions.find((o) => o.botId === nextId);
+                    setSendFromBotId(nextId);
+                    if (opt) {
+                      setMeta((m) => ({
+                        ...m,
+                        channelLabel: opt.channelLabel,
+                        identityLabel: opt.identityLabel,
+                        // gift_max only — GramJS/MAX/WA outbound attach are supported.
+                        supportsAttachments: opt.botType !== 'gift_max',
+                      }));
+                      if (opt.threadId) {
+                        const thr = threads.find((t) => t.id === opt.threadId);
+                        if (thr) {
+                          setActiveThreadId(thr.id);
+                          lastSig.current = '';
+                          void load(thr);
+                          return;
                         }
                       }
-                    }}
+                      // No thread for this bot yet → show empty history (write-first)
+                      setActiveThreadId('');
+                      setMessages([]);
+                      lastSig.current = '';
+                      if (!opt.available && opt.unavailableReason) {
+                        setError(opt.unavailableReason);
+                      } else {
+                        setError(null);
+                      }
+                    }
+                  }}
                   style={{
                     maxWidth: 280,
                     fontSize: 12,
@@ -1291,11 +1296,55 @@ const ChatPanel = () => {
                   ))}
                 </select>
               </label>
+              {threads.length > 1 && (
+                <label
+                  style={{
+                    fontSize: 12,
+                    color: muted,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <span>Чат:</span>
+                  <select
+                    value={activeThreadId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      const t = threads.find((x) => x.id === nextId);
+                      setActiveThreadId(nextId);
+                      if (t?.botId) setSendFromBotId(t.botId);
+                      lastSig.current = '';
+                      void load(t || null);
+                    }}
+                    style={{
+                      maxWidth: 320,
+                      fontSize: 12,
+                      border: `1px solid ${border}`,
+                      borderRadius: 8,
+                      padding: '3px 6px',
+                      background: panel,
+                      color: ink,
+                    }}
+                  >
+                    {threads.map((t) => {
+                      const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
+                      return (
+                        <option key={t.id} value={t.id}>
+                          {label}
+                          {t.peerLabel ? ` → ${t.peerLabel}` : ''}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              )}
               {(() => {
                 const cur = sendFromOptions.find((o) => o.botId === sendFromBotId);
                 if (cur && !cur.available && cur.unavailableReason) {
                   return (
-                    <div style={{ fontSize: 11, color: '#b45309', marginTop: 4, maxWidth: 360 }}>
+                    <div style={{ fontSize: 11, color: '#b45309', maxWidth: 360 }}>
                       {cur.unavailableReason}
                     </div>
                   );
@@ -1306,76 +1355,20 @@ const ChatPanel = () => {
           ) : (
             (meta.channelLabel || meta.identityLabel) && (
               <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-                Пишем от: {meta.channelLabel}
+                От: {meta.channelLabel}
                 {meta.identityLabel ? ` · ${meta.identityLabel}` : ''}
+                {meta.presenceLine ? ` · ${meta.presenceLine}` : ''}
               </div>
             )
           )}
-          {threads.length > 1 && (
-            <div style={{ marginTop: 8 }}>
-              <label
-                style={{
-                  fontSize: 12,
-                  color: muted,
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <span>Открытые чаты:</span>
-                <select
-                  value={activeThreadId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    const t = threads.find((x) => x.id === nextId);
-                    setActiveThreadId(nextId);
-                    if (t?.botId) setSendFromBotId(t.botId);
-                    lastSig.current = '';
-                    void load(t || null);
-                  }}
-                  style={{
-                    maxWidth: 320,
-                    fontSize: 12,
-                    border: `1px solid ${border}`,
-                    borderRadius: 8,
-                    padding: '3px 6px',
-                    background: panel,
-                    color: ink,
-                  }}
-                >
-                  {threads.map((t) => {
-                    const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
-                    return (
-                      <option key={t.id} value={t.id}>
-                        {label}
-                        {t.peerLabel ? ` → ${t.peerLabel}` : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
-            </div>
-          )}
-          {meta.presenceLine ? (
-            <div style={{ fontSize: 12, color: muted, marginTop: 2 }}>
-              {meta.presenceLine}
-            </div>
-          ) : null}
         </div>
+        {/* Hidden refresh marker: twenty-shell-ux clicks it for live refresh
+            (Remote DOM cannot setInterval). Never render visibly. */}
         <button
           type="button"
           data-voxly-chat-refresh="1"
           onClick={() => void load()}
-          style={{
-            border: `1px solid ${border}`,
-            background: panel,
-            color: ink,
-            borderRadius: 8,
-            padding: '6px 10px',
-            cursor: 'pointer',
-            fontSize: 12,
-          }}
+          style={{ display: 'none' }}
         >
           Обновить
         </button>
