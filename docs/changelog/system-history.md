@@ -116,3 +116,11 @@
 - **Влияние**: каждый реинсталл (авто-рефреш/ручной) теперь сам сбрасывает кэш; ручное лечение больше не требуется.
 - **Verification**: typecheck ✅; тесты 184/15 ✅; форс-цикл: reinstall → `keysDeleted=67` ×2 → браузер: «Пишем от:»/«Открытые чаты:» рендерятся, «Нет данных» нет.
 - **Rollback**: `git revert d4b176a`; ручное лечение: `redis-cli --scan --pattern 'engine:workspace:flat-maps:*:<wsId>*' | xargs redis-cli DEL` + версия++.
+
+### [2026-08-16] UI-6: рабочее формат-меню (onSelect/selRef) + композер одной строкой
+- **Причина (Why)**: формат-меню из UI-5 (mouseup + чтение `selectionStart` у прокси-ноды) не открывалось — в Remote DOM песочнице свойства выделения на прокси нечитаемы, а `contextmenu`/right-mousedown не проксируются вовсе. Требование пользователя: меню должно работать; блок ввода/отправки — одной строкой как в мессенджерах (скриншот).
+- **Затронутые файлы**: `twenty-app/voxly-crm-chat/src/front-components/chat-panel.tsx` (единственный код-файл), `docs/agent/modules/crm-chat-panel.md` (новая секция Remote DOM limits), `docs/agent/WORKLOG.md` (UI-6).
+- **Синхронизация индексов**: crm-chat-panel.md дополнен инвариантами песочницы (❌ contextmenu/right-mousedown/selectionStart-on-proxy/scrollTop; ✅ select/click/mouseup/keyup + selRef); версия спеки → 0.1.31.
+- **Влияние на систему (Impact)**: только фронт-компонент CRM Chat; воркеры/контракты/БД не затронуты. Триггер меню — `onSelect` с непустым `selRef` (открытие), коллапс выделения/клик по оверлею (закрытие), mouseup/keyup — фолбэки. Композер: 📎(бейдж-счётчик) + 😊 + textarea (Inter, rows=2) + синяя кнопка ➤ (#2f7cf6); Enter=newline (INC-022) сохранён.
+- **Результаты тестов (Verification)**: `yarn lint` 0 errors; `tsgo --noEmit` exit 0; tarball 0.1.31 sha `79825ea6…` установлен crmchat-refresh в **efim1 и remtoua** (flush keysDeleted=67 ×2 — INC-129 self-heal); прод-бандл содержит `bottom:120`, `#2f7cf6`, `width:38`, `minWidth:16`, `bottom:92`, старые маркеры отсутствуют; smoke 200.
+- **План отката (Rollback Plan)**: `git revert b012e98` → `./scripts/prod-deploy.sh saas-api,saas-worker` (tarball перезапекается в образ, авто-рефреш откатит оба воркспейса); БД не затронута, бэкап не требуется.

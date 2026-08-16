@@ -9,10 +9,10 @@ Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card
 
 ## Paths
 
-- `twenty-app/voxly-crm-chat/` — app ≥**0.1.29** (`package.json` version = tarball)
-- `twenty-app/voxly-crm-chat/src/front-components/chat-panel.tsx` — soft-refresh **fingerprint** = content + attachment `fileId`s (not ids-only); hide legacy `[media]`/`[документ]` when attachments present; document+`image/*` via mimeType; photo/sticker prefer signed URL (INC-115)
+- `twenty-app/voxly-crm-chat/` — app ≥**0.1.31** (`package.json` version = tarball)
+- `twenty-app/voxly-crm-chat/src/front-components/chat-panel.tsx` — soft-refresh **fingerprint** = content + attachment `fileId`s (not ids-only); hide legacy `[media]`/`[документ]` when attachments present; document+`image/*` via mimeType; photo/sticker prefer signed URL (INC-115). Composer = one-row messenger bar (📎+badge, 😊, textarea Inter rows=2, blue send ➤) since UI-6 `b012e98`.
 - `apps/saas-api/src/routes/crm-chat.ts` — history/reply/media; `resolveOutboundPeer` (**gift gate**, WA from Person.whatsapp); media resolve by attachment-owning conversation (multi-channel Person, INC-115)
-- `docker/twenty-shell-ux.js` — inbound toasts + unread badges (do not casually rewrite)
+- `docker/twenty-shell-ux.js` — inbound toasts + unread badges + chat auto-scroll-to-latest (do not casually rewrite)
 
 ## Contract (don’t break)
 
@@ -22,6 +22,21 @@ Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card
 - Media: signed URL + `/media/*`, MIME sniff/Range, Fastify `maxParamLength`
 - AI toggle / pause / suppressDealCreation (manual) / multi-thread / presence lines stay
 - After saas-api bake: `refresh-crm-chat` for affected tenants when tarball bumped
+
+### Remote DOM sandbox limits (UI-4…UI-6, commit b012e98)
+
+The front component runs in Twenty's Remote DOM sandbox. Verified behavior — build UI only on what works:
+
+- ❌ `contextmenu` event — **not proxied** (portal's telegram-md-textarea menu pattern does NOT transfer here)
+- ❌ right-button `mousedown` — not proxied
+- ❌ `selectionStart`/`selectionEnd` off the proxy node at `mouseup` — unreliable/unreadable
+- ❌ direct `scrollTop` assignment on proxy nodes (auto-scroll lives in `docker/twenty-shell-ux.js`)
+- ✅ `select` / `click` / `mouseup` / `keyup` events — DO arrive
+- ✅ `selRef` updated from `onSelect` — reliable selection source (old format toolbar used it)
+
+Format menu (Цитировать/Скрытый/Жирный/Зачеркнутый/Подчеркнутый/Ссылка) therefore opens from `onSelect` on non-empty selection (`selRef.current.start !== end`), closes on collapse/overlay-click; fixed pos `left:12/bottom:120` or cursor coords when a right-click handler does fire. Right-click handlers kept for future sandbox support.
+
+Composer (single row): 📎 (38px, count badge `#2f7cf6`) + 😊 (38px) + textarea (Inter, rows=2, flex:1) + send ➤ (`#2f7cf6`, disabled = muted, ⌘/Ctrl+Enter = send, plain Enter = newline INC-022). Emoji palette `right:12/bottom:92`. Enter=newline invariant stays.
 
 ## Frozen paths
 
@@ -39,6 +54,7 @@ Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card
 - INC-115 — WA media paperclip on Person that also has MAX (wrong default bot)
 - INC-116 — Chat «Нет данных» after refresh (missing configuration.__typename) — **closed** user-confirmed 2026-08-07 ~16:14
 - INC-063 / INC-050 / INC-055 / INC-057 / INC-067 — media/token/presence family
+- UI-5 581b23f — menu trigger via mouseup+selectionStart **dead in Remote DOM** (proxy props unreadable); fixed in UI-6 by onSelect/selRef trigger
 
 ## Smoke (~1–2 min)
 
@@ -51,6 +67,7 @@ Golden path: `CHAT.md` §1 + FLOWS CRM UI. Surface: `CAPABILITIES.md` (Deal-card
 
 ## Last verified / deploy
 
+- **2026-08-16 UI-6 `b012e98`:** format menu works via onSelect/selRef; one-row composer (📎😊 field ➤, Inter). crm-chat **0.1.31**, tarball sha `79825ea6…` auto-refreshed into **all existing workspaces** (efim1, remtoua, flush 67 keys each); new portals get the same tarball at provisioning. Bundle markers: `bottom:120`, `#2f7cf6`, `width:38`, `minWidth:16`. UI-1…UI-5 same day: compact header (title+presence one line, От:/Чат: one row, TGUser/WAUser/MaxUser/TGBot Gift labels), hidden `data-voxly-chat-refresh` button, shell-ux auto-scroll.
 - **2026-08-07 INC-117:** GramJS spoiler/code + attach (crm-chat **0.1.29**); MAX/WA freeze behavior preserved (attach still on those channels). Deploy via `gramjs-bridge,saas-api` + refresh.
 - **2026-08-07 ~16:14 MSK (user-confirmed WORKING):** MAX chat + WhatsApp chat both OK in CRM; crm-chat **0.1.28**. **Docs freeze only — no redeploy.**
 - **2026-08-07:** INC-116 Chat «Нет данных» after refresh — widget `configuration.__typename` missing; SQL+redis fix; refresh harden. crm-chat **0.1.28** kept (INC-115). Backup tip `20260807-130335`.
