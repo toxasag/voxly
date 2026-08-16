@@ -2017,6 +2017,38 @@ async function ensureConversation(opts: {
     });
   }
 
+  // CRM write-first keys the conversation by @username (numeric id is learned
+  // only at send time) — match inbound by username and backfill the real id,
+  // otherwise every reply would spawn a duplicate Person + deal.
+  const inboundUsername = opts.username?.trim().replace(/^@/, '');
+  if (
+    !conversation &&
+    inboundUsername &&
+    /^\d+$/.test(opts.platformUserId)
+  ) {
+    conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: opts.tenantId,
+        botInstanceId: opts.botId,
+        platformUsername: { equals: inboundUsername, mode: 'insensitive' },
+        channel: { not: 'telegram_business_account' },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (conversation) {
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          platformUserId: opts.platformUserId,
+          platformUsername: inboundUsername,
+          ...(opts.firstName && !conversation.platformFirstName
+            ? { platformFirstName: opts.firstName }
+            : {}),
+        },
+      });
+    }
+  }
+
   const connectionAllowed = await isBusinessConnectionAllowed(
     opts.tenantId,
     opts.botId,

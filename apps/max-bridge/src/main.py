@@ -605,6 +605,50 @@ def _me_profile_if_phone_match(client: Any, phone_e164: str) -> Optional[dict[st
     return None
 
 
+async def _resolve_dialog_chat_id(
+    client: Any, me_id: Optional[int], user_id: int
+) -> Optional[int]:
+    """USER id → DIALOG chat id (send_message needs the chat, not the user).
+
+    PyMax get_chat_id is a LOCAL sync formula: chat_id = me ^ user (XOR).
+    add_contact runs first (network) so a never-chatted contact becomes
+    addressable. Returns None only when the id cannot be computed.
+    """
+    get_chat_id_fn = getattr(client, "get_chat_id", None)
+    if not callable(get_chat_id_fn):
+        return None
+
+    if me_id is None:
+        try:
+            me = await resolve_me(client)
+            me_id = _user_id_int(me)
+        except Exception as exc:
+            logger.info("resolve_me for dialog chat failed: %s", exc)
+            return None
+    if me_id is None:
+        return None
+
+    add_fn = getattr(client, "add_contact", None)
+    if callable(add_fn):
+        try:
+            await add_fn(user_id)
+        except Exception as exc:
+            logger.info(
+                "add_contact user=%s failed (continuing): %s", user_id, exc
+            )
+
+    try:
+        result = get_chat_id_fn(me_id, user_id)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return int(result) if result is not None else None
+    except Exception as exc:
+        logger.info(
+            "get_chat_id me=%s user=%s failed: %s", me_id, user_id, exc
+        )
+        return None
+
+
 async def _resolve_user_by_phone(client: Any, phone_e164: str) -> dict[str, Any]:
     """PyMax search_by_phone, then import_contacts fallback. Never invent profile links."""
     phone = _normalize_max_phone(phone_e164)
@@ -1990,6 +2034,21 @@ async def messages_send(
         logger.info(
             "write-first resolved peer botId=%s peer=%s", body.botId, peer_raw
         )
+        # MAX send_message requires a DIALOG chat id, not a bare user id:
+        # passing the user id straight yields `common.finder User … not.found`.
+        # Convert user → dialog chat via get_chat_id(me, user); add_contact
+        # first so a never-chatted contact becomes addressable.
+        dialog_chat = await _resolve_dialog_chat_id(
+            resolver, me_id, int(peer_raw)
+        )
+        if dialog_chat is not None:
+            logger.info(
+                "write-first dialog chat botId=%s user=%s chat=%s",
+                body.botId,
+                peer_raw,
+                dialog_chat,
+            )
+            peer_raw = str(dialog_chat)
 
     try:
         chat_id: Any

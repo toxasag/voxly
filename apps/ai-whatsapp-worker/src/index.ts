@@ -4316,6 +4316,7 @@ async function handleInboundMessage(opts: {
   needsAsr?: boolean;
   needsDoc?: boolean;
   mimeHint?: string;
+  fromMe?: boolean;
 }) {
   // MVP: decrypt session payloads (tenant WA count is small).
   const candidates = await prisma.botInstance.findMany({
@@ -4667,12 +4668,13 @@ async function handleInboundMessage(opts: {
   // Persist + CRM sync BEFORE slow ASR/vision/doc extract so voice/video/image/doc
   // still create Person+Opportunity if media AI hangs or fails (personal WA wipe path).
   let displayText = opts.text;
-const createdMsg = await prisma.chatMessage.create({
+  const createdMsg = await prisma.chatMessage.create({
     data: {
       conversationId: conversation.id,
-      role: 'user',
+      role: opts.fromMe ? 'operator' : 'user',
       content: displayText,
       externalMessageId: opts.messageId,
+      fromMe: opts.fromMe || false,
       attachments:
         opts.attachments && opts.attachments.length ? opts.attachments : undefined,
     },
@@ -6749,7 +6751,7 @@ async function handleEvolutionWebhook(payload: any) {
   const data = payload?.data;
   const messages = Array.isArray(data) ? data : data ? [data] : [];
   for (const item of messages) {
-    if (item?.key?.fromMe) continue;
+    const fromMe = Boolean(item?.key?.fromMe);
     const remoteJid = resolveInboundWaJid(item);
     if (!remoteJid || String(remoteJid).endsWith('@g.us')) continue; // skip groups for MVP
     // Skip WhatsApp status / newsletters / broadcast lists (not human 1:1)
@@ -6782,6 +6784,7 @@ async function handleEvolutionWebhook(payload: any) {
       from: remoteJid,
       text: classified.text,
       messageId,
+      fromMe,
       pushName: item?.pushName,
       contactName: item?.pushName,
       phoneE164,
@@ -7087,9 +7090,15 @@ async function main() {
             caption: text || undefined,
           });
         } else {
-          // Multi-bubble like Telegram (JSON message1..n or paragraphs).
+          // CRM operator outbound — send instantly (no AI human-like typing delay).
+          // Split multi-bubble into short messages with minimal 600ms gap for readability.
           const bubbles = parseAiBubbles(text);
-          await sendWhatsAppHumanLike(session.instanceName, to, bubbles);
+          for (let i = 0; i < bubbles.length; i += 1) {
+            await sendWhatsAppText(session.instanceName, to, bubbles[i]);
+            if (i < bubbles.length - 1) {
+              await new Promise((r) => setTimeout(r, 600));
+            }
+          }
         }
 
         // Human outbound — store already done by CRM; do not auto-pause AI.

@@ -102,6 +102,7 @@ export default function AdminAiBalancePage() {
   const [globalDraft, setGlobalDraft] = useState('');
   const [search, setSearch] = useState('');
   const [tenantDraft, setTenantDraft] = useState<Record<string, string>>({});
+  const [creditDraft, setCreditDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
@@ -200,6 +201,36 @@ export default function AdminAiBalancePage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка сохранения');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const creditTenant = async (tenantId: string) => {
+    setBusy(`c-${tenantId}`);
+    setError('');
+    setNotice('');
+    try {
+      const raw = (creditDraft[tenantId] || '').trim();
+      if (!raw) {
+        throw new Error('Укажите сумму для пополнения');
+      }
+      const amountRub = Number(raw);
+      if (!Number.isFinite(amountRub) || amountRub <= 0) {
+        throw new Error('Сумма должна быть положительным числом');
+      }
+      const res = await fetch(`${API}/api/admin/tenants/${tenantId}/ai-credit`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amountRub }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || 'Не удалось пополнить баланс');
+      setNotice(`Баланс пополнен на ${formatRub(amountRub)} ₽`);
+      setCreditDraft((d) => ({ ...d, [tenantId]: '' }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка пополнения');
     } finally {
       setBusy('');
     }
@@ -413,6 +444,7 @@ export default function AdminAiBalancePage() {
               <tr className="border-b border-black/10">
                 <th className={TH}>Клиент</th>
                 <th className={TH}>Баланс</th>
+                <th className={TH}>Пополнить</th>
                 <th className={TH}>Наценка %</th>
                 <th className={TH}>Эффект.</th>
                 <th className={TH}>Списано</th>
@@ -434,6 +466,29 @@ export default function AdminAiBalancePage() {
                     </Badge>
                   </td>
                   <td className={`${TD} tabular-nums`}>{formatRub(t.balanceRub)} ₽</td>
+                  <td className={TD}>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        step={100}
+                        placeholder="сумма"
+                        className="w-24 rounded-md border border-black/15 px-2 py-1.5 text-sm tabular-nums"
+                        value={creditDraft[t.tenantId] ?? ''}
+                        onChange={(e) =>
+                          setCreditDraft((d) => ({ ...d, [t.tenantId]: e.target.value }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        disabled={busy === `c-${t.tenantId}`}
+                        onClick={() => void creditTenant(t.tenantId)}
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 hover:bg-emerald-700"
+                      >
+                        {busy === `c-${t.tenantId}` ? '…' : '+'}
+                      </button>
+                    </div>
+                  </td>
                   <td className={TD}>
                     <input
                       type="number"

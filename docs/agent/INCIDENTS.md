@@ -5,6 +5,34 @@
 
 ---
 
+### INC-123 — TG write-first: входящий ответ создал дубль Person+сделки
+- **Симптом (remtoua 2026-08-16):** оператор написал первым из CRM (Telegram · личный) → контакт ответил из приложения TG → создались НОВЫЕ Person + сделка вместо попадания в существующий чат.
+- **Причина:** write-first диалог создан с `platformUserId='toxasagmsk'` (username — числовой id узнавался только в бридже и не возвращался), а inbound `ensureConversation` матчил ТОЛЬКО по числовому id (641470324) → новый диалог → новый Person (`findPersonByHint` не смотрел t.me-линки).
+- **Фикс:** gramjs-bridge `/messages/send` возвращает `resolvedPeerUserId`; saas-api adoption числового id при создании диалога; `ensureConversation` username-fallback + backfill id; `findPersonByHint` ищет по `telegramPrimaryLinkUrl/Label` (t.me URL / @handle). Прод-данные слиты (backup pre-merge-full.dump / pre-twenty-merge.dump в /tmp PG-контейнеров).
+- **Инвариант:** диалоги ключуются ЧИСЛОВЫМ platform id; username — только как `platformUsername`.
+- **Дата:** 2026-08-16. ✅ user-confirmed.
+
+### INC-122 — MAX write-first: `common.finder User … not.found` (двухступенчатый)
+- **Симптом (remtoua 2026-08-16):** «Пишем от: MAX» → send → `Не найдено Key: common.finder, args: [User,346581106] [not.found]`. Воспроизводился после первого фикса.
+- **Причина (ступень 1):** MAX `send_message` принимает **chat_id ДИАЛОГА**, не user_id. **(ступень 2):** PyMax `Client.get_chat_id(me, user)` — **СИНХРОННЫЙ локальный XOR** (`first ^ second`, без запроса к серверу); `await` на нём → `TypeError: object int can't be used in 'await'` → dialog-resolve молча возвращал None → отправка снова шла с user_id.
+- **Фикс:** `_resolve_dialog_chat_id` — sync/coroutine-safe (`asyncio.iscoroutine`), `add_contact` best-effort до вычисления, отправка с XOR chat_id. Консистентно с inbound (`max-internal.ts`: peerId = chat id).
+- **Инвариант:** НЕ await'ить pymax-методы без проверки `iscoroutinefunction`; MAX peer для send = `me ^ user`.
+- **Дата:** 2026-08-16. ✅ user-confirmed (живая отправка).
+
+### INC-121 — Селектор «Пишем от:»: MAX/TG `available:false` при заполненной карточке
+- **Симптом (remtoua 2026-08-16):** у контакта заполнены телефон/TG/WA/MAX, но опции MAX и Telegram недоступны («Нет MAX-контакта», «Нет Telegram ID контакта»).
+- **Причина:** SQL к workspace-схеме Twenty выбирали колонки `person.telegram` / `person.whatsapp`, которых **в Twenty 2.22 нет** → весь запрос падал (`column does not exist`) → catch → null → резолверы пира считали данные отсутствующими. Затронуто 4 запроса (crm-chat ×3 + backfill-telegram-open-links).
+- **Фикс:** мёртвые колонки убраны (только `*PrimaryLinkUrl/Label`, `phonesPrimary*`); `loadPersonPhoneE164` собирает `callingCode + number` (не-РУ-безопасно). Тесты: `apps/saas-api/tests/crm-chat-peer-parse.test.ts` (8).
+- **Инвариант:** при апгрейде Twenty сверять колонки person-схемы с `information_schema`; в новых запросах использовать паттерн интроспекции (как `crm-deal-dedupe.ts`).
+- **Дата:** 2026-08-16. ✅ user-confirmed (3/3 available).
+
+### INC-120 — После деплоя у тенантов оставался старый UI чата, затем «Нет данных»
+- **Симптом (remtoua 2026-08-16):** (а) после выката нового saas-api чат-панель воркспейса отдавала СТАРЫЙ бандл (нет селектора каналов); (б) после force-реинсталла вкладка «Чат» → «Нет данных».
+- **Причина:** (а) Twenty ставит private-registry приложение **один раз при provisioning** — переустановки при деплое не было; (б) комбинация INC-116 (`__typename`) + устаревшие Redis flat-maps после шторма переустановок.
+- **Фикс (системный):** `crm-chat-app-auto-refresh.ts` — при старте saas-worker сравнивает sha1 запечённого tarball с Redis-маркером `voxly:crmchat-app:tarball-sha1` и force-reinstalls во все провижененные воркспейсы (scheduler-lock; при частичном сбое маркер не пишется → ретрай). Плюс ручной `POST /api/admin/tenants/:id/refresh-crm-chat`. Работает на 3 деплоях подряд (sha 80ef…→3f98…→4a46…).
+- **Инвариант:** любое изменение voxly-crm-chat требует деплоя saas-api/worker — обновление воркспейсов автоматическое; НИКОГДА не править built-front-component в local-storage руками вместо реинсталла.
+- **Дата:** 2026-08-16. ✅ user-confirmed.
+
 ### INC-119 — CRM «не открывается» — disk suspected (false alarm)
 - **Симптом (voxly 2026-08-07 ~18:00 MSK):** пользователь: CRM не открывается; follow-up «может места мало».
 - **Проверка:** `/` **не** full — **57G free (40%)** before ops; inodes 21%; logs max ~37MB; no OOM; twenty-server/worker/saas-api/traefik/NPM/PG/redis all **Up**; `https://voxly-crm.getvoxly.ru/` + `/healthz` + GraphQL + API health **200**. Twenty logs show live auth/metadata traffic minutes before report.

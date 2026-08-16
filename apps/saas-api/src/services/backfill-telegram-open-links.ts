@@ -39,17 +39,17 @@ async function readTelegramPrimaryUrl(
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    // Twenty 2.22 has no bare `telegram` column — LinkUrl only.
     const row = await client.query<{
       telegramPrimaryLinkUrl: string | null;
-      telegram: string | null;
     }>(
-      `SELECT "telegramPrimaryLinkUrl", telegram
+      `SELECT "telegramPrimaryLinkUrl"
        FROM "${schema}".person
        WHERE id = $1::uuid AND "deletedAt" IS NULL`,
       [personId],
     );
     const r = row.rows[0];
-    return (r?.telegramPrimaryLinkUrl || r?.telegram || null)?.trim() || null;
+    return r?.telegramPrimaryLinkUrl?.trim() || null;
   } catch {
     return null;
   } finally {

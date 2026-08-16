@@ -1030,15 +1030,19 @@ const ChatPanel = () => {
       });
       return;
     }
-    const selected = sendFromOptions.find((o) => o.botId === sendFromBotId);
-    if (selected && !selected.available) {
-      await enqueueSnackbar({
-        message: selected.unavailableReason || 'Нельзя отправить с этого аккаунта',
-        variant: 'error',
-      });
-      return;
-    }
-    setSending(true);
+      const selected = sendFromOptions.find((o) => o.botId === sendFromBotId);
+      if (selected && !selected.available) {
+        await enqueueSnackbar({
+          message: selected.unavailableReason || 'Нельзя отправить с этого аккаунта',
+          variant: 'error',
+        });
+        return;
+      }
+      setSending(true);
+      // Reply returns the conversation the message actually landed in. When
+      // write-first / channel switch created a NEW thread, the panel must
+      // switch to it instead of staying on the previously displayed one.
+      let sentConversationId: string | null = null;
     try {
       const threadKeys: Record<string, string> = {};
       if (meta.conversationId) threadKeys.conversationId = meta.conversationId;
@@ -1047,7 +1051,11 @@ const ChatPanel = () => {
       // saas-api accepts one file per /reply — send sequentially (caption on first).
       // dataBase64 already encoded on host file-change (INC-017); never FileReader here.
       if (files.length === 0) {
-        await api.post(`/s/crm-chat/${recordId}/reply`, { text, ...threadKeys });
+        const res = await api.post<{ conversationId?: string }>(
+          `/s/crm-chat/${recordId}/reply`,
+          { text, ...threadKeys },
+        );
+        if (res?.conversationId) sentConversationId = res.conversationId;
       } else {
         for (let i = 0; i < files.length; i++) {
           const file = files[i];
@@ -1059,13 +1067,17 @@ const ChatPanel = () => {
               `«${file.name}» слишком большой для отправки. Сожмите файл или отправьте отдельно.`,
             );
           }
-          await api.post(`/s/crm-chat/${recordId}/reply`, {
-            text: i === 0 ? text || undefined : undefined,
-            fileBase64: file.dataBase64,
-            fileName: file.name,
-            mimeType: file.type || 'application/octet-stream',
-            ...threadKeys,
-          });
+          const res = await api.post<{ conversationId?: string }>(
+            `/s/crm-chat/${recordId}/reply`,
+            {
+              text: i === 0 ? text || undefined : undefined,
+              fileBase64: file.dataBase64,
+              fileName: file.name,
+              mimeType: file.type || 'application/octet-stream',
+              ...threadKeys,
+            },
+          );
+          if (res?.conversationId) sentConversationId = res.conversationId;
         }
       }
       // Clear draft/files only after all successful send(s).
@@ -1091,7 +1103,12 @@ const ChatPanel = () => {
       setSending(false);
     }
     // Refresh outside the sending lock (never await load inside finally).
-    void load();
+    // A new thread (write-first / channel switch) becomes the displayed one.
+    void load(
+      sentConversationId && sentConversationId !== meta.conversationId
+        ? ({ conversationId: sentConversationId } as ChatThread)
+        : null,
+    );
   };
 
   const applyFormat = (before: string, after: string) => {
@@ -1151,7 +1168,6 @@ const ChatPanel = () => {
   const ink = dark ? '#f3f3f3' : '#1a1a1a';
   const muted = dark ? '#a0a0a0' : '#666666';
   const border = dark ? '#333' : '#e6e6e6';
-  const accent = dark ? '#60a5fa' : '#2563eb';
   const bubbleIn = dark ? '#2e2e2e' : '#ececec';
   const bubbleOut = dark ? '#1f3a2e' : '#e8f5ee';
 
@@ -1283,40 +1299,49 @@ const ChatPanel = () => {
             )
           )}
           {threads.length > 1 && (
-            <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {threads.map((t) => {
-                const active = t.id === activeThreadId;
-                const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveThreadId(t.id);
-                      if (t.botId) setSendFromBotId(t.botId);
-                      lastSig.current = '';
-                      void load(t);
-                    }}
-                    style={{
-                      border: `1px solid ${active ? accent : border}`,
-                      background: active ? (dark ? '#1e293b' : '#eff6ff') : panel,
-                      color: ink,
-                      borderRadius: 8,
-                      padding: '4px 8px',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      maxWidth: 220,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                    title={`${label} → ${t.peerLabel}`}
-                  >
-                    {label}
-                    {t.peerLabel ? ` → ${t.peerLabel}` : ''}
-                  </button>
-                );
-              })}
+            <div style={{ marginTop: 8 }}>
+              <label
+                style={{
+                  fontSize: 12,
+                  color: muted,
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span>Открытые чаты:</span>
+                <select
+                  value={activeThreadId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const t = threads.find((x) => x.id === nextId);
+                    setActiveThreadId(nextId);
+                    if (t?.botId) setSendFromBotId(t.botId);
+                    lastSig.current = '';
+                    void load(t || null);
+                  }}
+                  style={{
+                    maxWidth: 320,
+                    fontSize: 12,
+                    border: `1px solid ${border}`,
+                    borderRadius: 8,
+                    padding: '3px 6px',
+                    background: panel,
+                    color: ink,
+                  }}
+                >
+                  {threads.map((t) => {
+                    const label = `${t.channelLabel}${t.identityLabel ? ` · ${t.identityLabel}` : ''}`;
+                    return (
+                      <option key={t.id} value={t.id}>
+                        {label}
+                        {t.peerLabel ? ` → ${t.peerLabel}` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
             </div>
           )}
           {meta.presenceLine ? (

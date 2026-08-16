@@ -2129,10 +2129,20 @@ async function main() {
         }
 
         if (sent?.id != null) rememberAiSent(botId, Number(sent.id));
+        // Numeric TG user id when resolved (write-first CRM sends pass a
+        // @username as peerUserId; the conversation must be keyed by the id
+        // so inbound replies match it instead of creating a duplicate).
+        const resolvedNumericPeerId =
+          entity && typeof (entity as { id?: unknown }).id === 'number'
+            ? String((entity as { id: number }).id)
+            : null;
         sendJson(res, 200, {
           ok: true,
           botId,
           peerUserId: peerId,
+          ...(resolvedNumericPeerId && resolvedNumericPeerId !== peerId
+            ? { resolvedPeerUserId: resolvedNumericPeerId }
+            : {}),
           messageId: sent?.id != null ? String(sent.id) : null,
           ...(attachment ? { attachment } : {}),
         });

@@ -12,12 +12,22 @@ import {
   aiUsageWorker,
   timelineSyncWorker,
 } from './jobs/queues.js';
+import { refreshCrmChatAppsIfTarballChanged } from './services/crm-chat-app-auto-refresh.js';
 
 async function main() {
   console.log('[saas-worker] Starting background workers and schedulers...');
 
   // Start background schedulers (grace period, expiry notify, broadcasts, etc.)
   startScheduledJobs();
+
+  // Deploy hook: when the baked voxly-crm-chat tarball changed, force-reinstall
+  // the app in every provisioned workspace so existing tenants get the new UI.
+  void refreshCrmChatAppsIfTarballChanged().catch((err) => {
+    console.error(
+      '[crmchat-refresh] boot refresh failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+  });
 
   console.log('[saas-worker] Registered workers:', {
     provisioning: Boolean(provisioningWorker),

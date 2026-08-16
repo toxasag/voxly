@@ -1030,6 +1030,7 @@ model ChatMessage {
   /// Telegram media: [{ type, fileId, fileUniqueId?, fileName?, mimeType?, fileSize? }]
   attachments     Json?
   externalMessageId String? // Telegram/WhatsApp message ID
+  fromMe          Boolean  @default(false)
   /// sent | delivered | read | failed — mailing/outbound receipts (Phase 2)
   deliveryStatus  String?
   deliveredAt     DateTime?

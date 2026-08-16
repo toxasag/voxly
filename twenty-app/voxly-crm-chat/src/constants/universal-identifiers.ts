@@ -120,6 +120,10 @@ export const DEDUPE_ON_OPPORTUNITY_CREATE_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
 export const DEDUPE_ON_PERSON_SAVE_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
   'ab1b39c6-92f1-48e7-84fc-e457cbffc06e';
 
+/** Person.telegram link normalization (handle/id → canonical t.me URL + @handle label). */
+export const NORMALIZE_PERSON_TELEGRAM_LOGIC_FUNCTION_UNIVERSAL_IDENTIFIER =
+  '06bec0f2-2e21-46f0-8cfd-3ddce3c65b6e';
+
 export const VOXLY_API_URL_VARIABLE_UNIVERSAL_IDENTIFIER =
   '80f9ddb8-bf34-446c-9c14-1485daebec28';
 

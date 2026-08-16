@@ -77,7 +77,9 @@ export function telegramOpenLink(opts: {
     .replace(/^https?:\/\/t\.me\//i, '');
   if (rawUser && !/^\+?\d+$/.test(rawUser) && /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(rawUser)) {
     const url = `https://t.me/${rawUser}`;
-    return { url, label: url };
+    // Card shows the handle, not the full URL (parseTelegramPeerFromLink
+    // still resolves both '@username' labels and t.me URLs).
+    return { url, label: `@${rawUser}` };
   }
   const id = String(opts.userId ?? '').trim();
   if (!id || !/^\d{1,20}$/.test(id)) return undefined;
@@ -85,7 +87,7 @@ export function telegramOpenLink(opts: {
   const base = publicApiBase();
   // Twenty front ensureAbsoluteUrl mangles tg:// → https://tg://… so store https bridge.
   const url = base ? `${base}/open/tg/${id}` : deepLink;
-  return { url, label: deepLink, deepLink };
+  return { url, label: id, deepLink };
 }
 
 /**
@@ -2930,6 +2932,31 @@ export class TwentyClient {
           if (id) return { id };
         } catch {
           /* continue */
+        }
+      }
+    }
+
+    // Telegram link match: the card stores t.me URL + '@handle' label.
+    // Dedupe-by-username must find those people even when lastName differs.
+    const rawUser = hints.username?.trim().replace(/^@/, '');
+    if (rawUser && /^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(rawUser)) {
+      const linkVariants = [`https://t.me/${rawUser}`, `@${rawUser}`, rawUser];
+      for (const variant of linkVariants) {
+        for (const filter of [
+          { telegram: { primaryLinkUrl: { eq: variant } } },
+          { telegram: { primaryLinkLabel: { eq: variant } } },
+        ]) {
+          try {
+            const result = await this.client.request(
+              FIND_PEOPLE,
+              { filter },
+              this.getAuthHeaders(),
+            );
+            const id = (result as any).people?.edges?.[0]?.node?.id;
+            if (id) return { id };
+          } catch {
+            /* composite-link filter shape may not exist — continue */
+          }
         }
       }
     }

@@ -1,3 +1,22 @@
+### 2026-08-15 — saas-portal landing redesign (light latitude/accelerate style) — deploy
+
+- **Service:** `saas-portal`
+- **Host:** `150.241.98.135`
+- **Branch:** `feature/cross-channel-enrich-opp-activity` (commit `3dc82cb`)
+- **Changes:**
+  - Full landing page redesign to light theme matching `latitude.sh/accelerate` palette
+  - Off-white `#f9f9f9` background, ink `#020817` text, signature lime `#e0fe56` + purple `#8261fb` accents
+  - Vox robot mascot (SVG + framer-motion: float, blink, antenna pulse)
+  - Hero: three messenger windows (Telegram/WhatsApp/MAX) animate open → merge into single Voxly inbox
+  - Block 3: Interactive phone-enrich demo with clear "enter number" UX (illustrative, no public reverse-lookup)
+  - Blocks 7/9/12 (Pricing, Custom-dev, Final CTA) fully restyled to light palette
+  - PricingCalculator & ReferralCalculator restyled to latitude palette (ink/purple/lime)
+  - 11 numbered sections (01–11), mono eyebrow `./labels`, scroll-reveal + stagger animations
+  - `framer-motion` added to saas-portal deps; `prefers-reduced-motion` respected
+- **Smoke:** ✅ `https://getvoxly.ru/` (landing), `https://api.getvoxly.ru/health`, all dashboard routes 200 OK
+- **Backup:** Control + Twenty DBs backed up by deploy script
+- **Note:** Old landing preserved in git history (`friendly-landing` redirects to `/`); new code in `apps/saas-portal/src/components/landing/voxly/`
+
 ### 2026-08-15 — 6.2 pgBouncer (transaction mode) перед control-plane PG + deploy
 
 - Goal: снять давление на `max_connections` control-plane PG (8 Prisma-сервисов × ~13 conn) и подготовить к сплиту сервисов по ВПС.
@@ -3233,3 +3252,32 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Verify: `bash -n` синтаксис OK. Изолированный тест: рабочий URL (`getvoxly.ru`) — успех за 0 с; недоступный (`127.0.0.1:19999`) — корректный таймаут + exit 1. `--dry-run saas-api` — новое сообщение на месте. Боевой деплой `saas-api` — smoke `OK 200 (0s)` для обоих эндпоинтов. Все 4 адреса (health, /, partners, admin/partners) — 200. Логи saas-api чисты, контейнер не перезапускается.
 - Broken: ничего.
 - Next: —
+
+### 2026-08-16 — Total docs audit + CRM chat auto-refresh + cross-channel write-first (prod)
+
+- Goal: полная адресная база знаний docs/ (INDEX + 5 доменных модулей + changelog/ADR + AUDIT_CLEANUP_CANDIDATES + TEST_REPORT + AGENTS.md→rules); авто-обновление voxly-crm-chat при деплое; починка write-first «Пишем от:» во всех каналах (MAX/TG/WA) и дублей от входящих TG.
+- Changes:
+  - Документация: `docs/INDEX.md`, `docs/01-system-core/*` (6), `docs/02-twenty-crm-engine/*` (6+1 auto-refresh), `docs/03-saas-api-internal/*` (5), `docs/04-workers-and-bridges/*` (6), `docs/05-media-storage-pipeline/*` (4), `docs/changelog/*` (INDEX, system-history, ADR-0001..0003), `docs/AUDIT_CLEANUP_CANDIDATES.md`, `docs/TEST_REPORT.md`, `AGENTS.md` → `.cursorrules`/`.windsurfrules`/`.kilocode/rules/`.
+  - Авто-обновление CRM-чат приложения: `apps/saas-api/src/services/crm-chat-app-auto-refresh.ts` (sha1 tarball ↔ Redis-маркер `voxly:crmchat-app:tarball-sha1`, scheduler-lock, force-reinstall per tenant) + вызов в `worker.ts`. Twenty ставит private-registry app один раз при provisioning — без этого воркспейсы вечно жили со старым бандлом (инцидент «Нет данных»/отсутствие селектора каналов).
+  - Резолверы пира: убраны мёртвые колонки `person.telegram`/`person.whatsapp` из 4 SQL (crm-chat ×3, backfill-telegram-open-links) — запросы падали целиком → sendFromOptions MAX/TG `available:false`; `loadPersonPhoneE164` теперь собирает callingCode+number.
+  - MAX write-first: `apps/max-bridge` `_resolve_dialog_chat_id` (get_chat_id(me,user)+add_contact) — send_message требует id ДИАЛОГА, не user_id (ошибка `common.finder User not.found`).
+  - TG write-first: gramjs-bridge → `resolvedPeerUserId` (числовой id), saas-api_adoption в чат; ai-telegram-worker `ensureConversation` username-fallback + backfill числового id (дубль Person+сделки от входящего ответа); twenty-client `findPersonByHint` ищет и по t.me URL/label.
+  - Карточка: `telegramOpenLink` label = `@handle` (или id) при url=`https://t.me/…`; ручной ввод нормализуется через новую logic-function `normalize-person-telegram` + `POST /api/crm/chat/normalize-telegram` (идемпотентно).
+  - Фронт: chat-panel после send переключается на `conversationId` из ответа (write-first/смена канала).
+  - Инфра: access-логи Traefik (`--accesslog=true --accesslog.format=json`, compose на проде).
+- Deploy: `prod-deploy.sh saas-api,saas-worker` ×2, затем `saas-api,saas-worker,ai-telegram-worker,gramjs-bridge,max-bridge`; tarball 0.1.31 (32 файла) установлен авто-рефрешем в оба воркспейса (sha 3f987188…). Smoke 200.
+- Prod data: слиты TG-диалоги-дубли (cmsvmuksa→cmsvmxzpg, 4 сообщения, CrmRecordLink пере-поинчен, дубль closed); Twenty soft-delete дубля person 83404cbc / opp 34e4f6fa; label оригинала → @toxasagmsk; metadataVersion++; flush flat-maps. Бэкапы: `pre-merge-full.dump` (control), `pre-twenty-merge.dump` (twenty) в /tmp контейнеров PG — ПЕРЕНЕСТИ в /opt/voxly/backups при следующем деплое.
+- Verify: pnpm typecheck (all) ✅; pnpm test 178 passed / 15 skipped (+15 новых тестов: crm-chat-app-refresh 7, crm-chat-peer-parse 8); py_compile max-bridge ✅. API: threads=[whatsapp, telegram_gramjs @toxasagmsk] 12 сообщений, sendFrom 3/3 available. Access-логи Traefik идут.
+- Broken: ничего критичного. Остаток: MAX write-first отправку проверить живым сообщением (диалог resolve теперь через get_chat_id); бэкапы из /tmp PG-контейнеров перенести в постоянное хранилище.
+- Next: live-проверка MAX отправки пользователем; перенос бэкапов; чистка AUDIT_CLEANUP_CANDIDATES после подтверждения.
+
+### 2026-08-16 (доп.) — MAX get_chat_id sync-XOR + «Открытые чаты:» select
+- Changes: max-bridge `_resolve_dialog_chat_id` переписан (PyMax `get_chat_id` — sync-формула `me ^ user`; прежний await → TypeError → send с user_id → `common.finder not.found`); chat-panel: пилюли тредов → select «Открытые чаты:» (стиль «Пишем от:»), убран unused `accent`.
+- Deploy: `prod-deploy.sh max-bridge,saas-api,saas-worker`; tarball sha 4a463e36… установлен авто-рефрешем в efim1/remtoua. Smoke 200.
+- Verify: py_compile OK; lint 0 errors; логи воркера — refresh OK. Живая MAX-отправка — у владельца.
+- Next: подтверждение живой MAX-отправкой; перенести /tmp-бэкапы PG в /opt/voxly/backups.
+
+### 2026-08-16 (финал) — user-confirmed, инциденты зафиксированы
+- Verify (владелец): дублей нет; TG-чат работает; MAX «Пишем от:» отправляется (XOR chat_id); «Открытые чаты:» select на месте.
+- Docs: INC-120..123 в INCIDENTS.md (каждый с инвариантом «больше никогда»); write-first/max-bridge спеки усилены XOR-инвариантом; system-history — верификационная запись.
+- Остаток (не блокер): перенести /tmp/pg-бэкапы (pre-merge-full.dump, pre-twenty-merge.dump) в /opt/voxly/backups/; закоммитить ветку.

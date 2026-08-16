@@ -25,6 +25,7 @@ import {
   normalizePhoneToE164,
   parseTelegramPeerFromLink,
   phoneFingerprint,
+  telegramOpenLink,
 } from '@voxly/twenty-client';
 import { enqueueTimelineSync } from '@voxly/ai-core';
 import { resolveTwentyOperatorLabel } from '../services/twenty-member-display-names.js';
@@ -516,19 +517,19 @@ async function resolvePersonWhatsappFromTwentyDb(
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    // Twenty 2.22 person schema has no bare `whatsapp` column — only
+    // whatsappPrimaryLinkUrl/Label (plain columns made the whole query throw).
     const row = await pool.query<{
-      whatsapp: string | null;
       whatsappPrimaryLinkUrl: string | null;
     }>(
       `SELECT
-         whatsapp,
          "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
        FROM "${schema}".person
        WHERE id = $1::uuid AND "deletedAt" IS NULL
        LIMIT 1`,
       [personId],
     );
-    const raw = row.rows[0]?.whatsappPrimaryLinkUrl || row.rows[0]?.whatsapp;
+    const raw = row.rows[0]?.whatsappPrimaryLinkUrl;
     const e164 = normalizePhoneToE164(raw);
     return e164 || null;
   } catch {
@@ -561,20 +562,17 @@ async function resolvePersonTelegramPeerFromTwentyDb(
     );
     const schema = ws.rows[0]?.databaseSchema;
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
+    // No bare `telegram`/`whatsapp` columns in Twenty 2.22 — Link fields only.
     const row = await pool.query<{
-      telegram: string | null;
       telegramPrimaryLinkUrl: string | null;
       telegramPrimaryLinkLabel: string | null;
       phonesPrimaryPhoneNumber: string | null;
-      whatsapp: string | null;
       whatsappPrimaryLinkUrl: string | null;
     }>(
       `SELECT
-         telegram,
          "telegramPrimaryLinkUrl" AS "telegramPrimaryLinkUrl",
          "telegramPrimaryLinkLabel" AS "telegramPrimaryLinkLabel",
          "phonesPrimaryPhoneNumber" AS "phonesPrimaryPhoneNumber",
-         whatsapp,
          "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
        FROM "${schema}".person
        WHERE id = $1::uuid AND "deletedAt" IS NULL
@@ -587,7 +585,6 @@ async function resolvePersonTelegramPeerFromTwentyDb(
     for (const raw of [
       p.telegramPrimaryLinkUrl,
       p.telegramPrimaryLinkLabel,
-      p.telegram,
     ]) {
       const parsed = parseTelegramPeerFromLink(raw);
       if (parsed?.userId || parsed?.username) {
@@ -599,7 +596,6 @@ async function resolvePersonTelegramPeerFromTwentyDb(
     const phoneE164 =
       normalizePhoneToE164(p.phonesPrimaryPhoneNumber) ||
       normalizePhoneToE164(p.whatsappPrimaryLinkUrl) ||
-      normalizePhoneToE164(p.whatsapp) ||
       undefined;
     if (phoneE164) peer.phoneE164 = phoneE164;
     return peer;
@@ -653,12 +649,12 @@ async function loadPersonPhoneE164(
     if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) return null;
     const row = await pool.query<{
       phonesPrimaryPhoneNumber: string | null;
-      whatsapp: string | null;
+      phonesPrimaryPhoneCallingCode: string | null;
       whatsappPrimaryLinkUrl: string | null;
     }>(
       `SELECT
          "phonesPrimaryPhoneNumber" AS "phonesPrimaryPhoneNumber",
-         whatsapp,
+         "phonesPrimaryPhoneCallingCode" AS "phonesPrimaryPhoneCallingCode",
          "whatsappPrimaryLinkUrl" AS "whatsappPrimaryLinkUrl"
        FROM "${schema}".person
        WHERE id = $1::uuid AND "deletedAt" IS NULL
@@ -667,10 +663,16 @@ async function loadPersonPhoneE164(
     );
     const p = row.rows[0];
     if (!p) return null;
+    // Calling code + national number first (works for non-RU too), then RU
+    // heuristics inside normalizePhoneToE164 for bare values.
+    const composed =
+      p.phonesPrimaryPhoneCallingCode && p.phonesPrimaryPhoneNumber
+        ? `${p.phonesPrimaryPhoneCallingCode}${p.phonesPrimaryPhoneNumber}`
+        : null;
     return (
+      normalizePhoneToE164(composed) ||
       normalizePhoneToE164(p.phonesPrimaryPhoneNumber) ||
       normalizePhoneToE164(p.whatsappPrimaryLinkUrl) ||
-      normalizePhoneToE164(p.whatsapp) ||
       null
     );
   } catch {
@@ -1654,6 +1656,9 @@ function whatsappWorkerBase(): string {
   );
 }
 
+/** Numeric TG peer id from the last sendViaGramjsBridge call (username write-first). */
+let lastGramjsResolvedPeerId: string | null = null;
+
 async function sendViaGramjsBridge(opts: {
   botId: string;
   peerUserId: string;
@@ -1668,6 +1673,9 @@ async function sendViaGramjsBridge(opts: {
     fileName: string;
   } | null;
 }): Promise<ChatAttachment | null> {
+  // Side-channel for the numeric peer id resolved by the bridge (username
+  // write-first). Read right after await — single-flight per request.
+  lastGramjsResolvedPeerId = null;
   const token = gramjsToken();
   if (!token) {
     throw new Error('VOXLY_SERVICE_TOKEN is not configured');
@@ -1696,6 +1704,8 @@ async function sendViaGramjsBridge(opts: {
   const json = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
     error?: string;
+    /** Numeric TG user id when the bridge resolved a @username peer. */
+    resolvedPeerUserId?: string;
     attachment?: {
       type?: string;
       fileId?: string;
@@ -1706,6 +1716,11 @@ async function sendViaGramjsBridge(opts: {
   };
   if (!res.ok || !json.ok) {
     throw new Error(json.error || `GramJS send failed (HTTP ${res.status})`);
+  }
+  // Write-first: peer was a @username — key the new conversation by the real
+  // numeric id so inbound replies match it (no duplicate Person/deal).
+  if (json.resolvedPeerUserId) {
+    lastGramjsResolvedPeerId = String(json.resolvedPeerUserId);
   }
   if (json.attachment?.fileId && json.attachment.type) {
     return {
@@ -2671,13 +2686,44 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const target = await findCrmChatTarget(prisma, tenantId, recordId, preferred);
       if (!target) {
-        // 200 (not 404): RestApiClient in CRM Chat tab treats non-2xx as hard failure.
-        // No bot / no lead yet is a normal empty state, not a broken tab.
+        // Build options even if chat doesn't exist yet (for write-first)
+        const sendFromOptions = await buildSendFromOptions({
+          prisma,
+          tenantId,
+          recordId,
+          baseTarget: { 
+            botInstanceId: '', 
+            telegramId: '', 
+            username: null, 
+            firstName: null, 
+            source: 'conversation', 
+            conversationId: null,
+            twentyPersonId: null, 
+            twentyOpportunityId: null,
+            giftSubscriberId: null,
+            businessConnectionId: null,
+            updatedAt: new Date(),
+          },
+          threads: allTargets.map(t => ({
+            id: t.conversationId || t.giftSubscriberId || t.botInstanceId,
+            source: t.source,
+            conversationId: t.conversationId,
+            giftSubscriberId: t.giftSubscriberId,
+            botId: t.botInstanceId,
+            botType: null,
+            channel: 'unknown',
+            channelLabel: '',
+            identityLabel: '',
+            peerLabel: '',
+          })),
+        });
+
         return reply.send({
           recordId,
           messages: [],
           threads: [],
-          info: 'Нет чата для этой записи. Напишите клиенту в Telegram / WhatsApp или дождитесь входящего сообщения.',
+          sendFromOptions,
+          info: 'Нет чата для этой записи. Выберите канал и напишите первым.',
         });
       }
 
@@ -3126,6 +3172,106 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
         status: updated.status,
         action: body.data.action,
       });
+    },
+  );
+
+  /**
+   * Canonicalize Person.telegram links after manual card edits:
+   * `toxasagmsk` / `@toxasagmsk` → url https://t.me/toxasagmsk, label @toxasagmsk;
+   * numeric id → /open/tg/{id} url + id label. Idempotent (skips when canonical).
+   */
+  fastify.post(
+    '/normalize-telegram',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { tenantId } = (request as any).user;
+      const body = (request.body || {}) as { personId?: string };
+      const personId = String(body.personId || '').trim();
+      if (!personId) {
+        return reply.code(400).send({ error: 'personId required' });
+      }
+      try {
+        const tenant = await fastify.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { twentyWorkspaceId: true, twentyOwnerPasswordEncrypted: true },
+        });
+        if (!tenant?.twentyWorkspaceId || !tenant.twentyOwnerPasswordEncrypted) {
+          return reply
+            .code(409)
+            .send({ ok: false, error: 'crm_not_provisioned' });
+        }
+        // Read raw link fields straight from the workspace schema.
+        const pool = twentyPersonPgPool();
+        if (!pool) {
+          return reply.code(503).send({ ok: false, error: 'twenty_db_unavailable' });
+        }
+        const ws = await pool.query<{ databaseSchema: string | null }>(
+          `SELECT "databaseSchema" FROM core.workspace WHERE id = $1::uuid`,
+          [tenant.twentyWorkspaceId],
+        );
+        const schema = ws.rows[0]?.databaseSchema;
+        if (!schema || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) {
+          return reply.code(503).send({ ok: false, error: 'schema_unavailable' });
+        }
+        const row = await pool.query<{ url: string | null; label: string | null }>(
+          `SELECT "telegramPrimaryLinkUrl" AS url, "telegramPrimaryLinkLabel" AS label
+           FROM "${schema}".person
+           WHERE id = $1::uuid AND "deletedAt" IS NULL
+           LIMIT 1`,
+          [personId],
+        );
+        const p = row.rows[0];
+        if (!p) {
+          return reply.code(404).send({ ok: false, error: 'person_not_found' });
+        }
+        const parsed =
+          parseTelegramPeerFromLink(p.url) ||
+          parseTelegramPeerFromLink(p.label);
+        if (!parsed?.userId && !parsed?.username) {
+          return reply.send({ ok: true, changed: false, reason: 'no_telegram' });
+        }
+        const canonical = telegramOpenLink({
+          username: parsed.username || null,
+          userId: parsed.userId || null,
+        });
+        if (!canonical) {
+          return reply.send({ ok: true, changed: false, reason: 'unparseable' });
+        }
+        if (p.url === canonical.url && (p.label || '') === canonical.label) {
+          return reply.send({ ok: true, changed: false });
+        }
+        const owner = await fastify.prisma.tenantMember.findFirst({
+          where: { tenantId, role: 'owner' },
+          include: { user: true },
+        });
+        if (!owner?.user?.email) {
+          return reply.code(404).send({ ok: false, error: 'owner_not_found' });
+        }
+        const client = new TwentyClient({
+          apiUrl: process.env.TWENTY_API_URL || 'http://twenty-server:3000/graphql',
+        });
+        await client.authenticateWorkspace(
+          owner.user.email,
+          decrypt(tenant.twentyOwnerPasswordEncrypted),
+          tenant.twentyWorkspaceId,
+        );
+        await client.updatePersonTelegram(personId, {
+          username: parsed.username || null,
+          userId: parsed.userId || null,
+        });
+        return reply.send({
+          ok: true,
+          changed: true,
+          url: canonical.url,
+          label: canonical.label,
+        });
+      } catch (err) {
+        request.log.warn({ err }, 'normalize-telegram failed');
+        return reply.code(500).send({
+          ok: false,
+          error: err instanceof Error ? err.message : 'normalize_failed',
+        });
+      }
     },
   );
 
@@ -3613,12 +3759,33 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const prisma = fastify.prisma;
-      const baseTarget = await findCrmChatTarget(prisma, tenantId, recordId, {
+      let baseTarget = await findCrmChatTarget(prisma, tenantId, recordId, {
         conversationId: preferredConversationId,
         giftSubscriberId: preferredGiftId,
       });
+
+      // Write-first: no existing chat, but operator picked an account to write from.
+      // Synthesize a base target on the chosen bot; resolveOutboundPeer below will
+      // fill the real peer / resolvePhone from the CRM contact.
+      let writeFirst = false;
       if (!baseTarget) {
-        return reply.code(404).send({ error: 'No chat linked to this CRM record' });
+        if (!sendFromBotId) {
+          return reply.code(404).send({ error: 'No chat linked to this CRM record' });
+        }
+        writeFirst = true;
+        baseTarget = {
+          source: 'conversation',
+          telegramId: '',
+          username: null,
+          firstName: null,
+          conversationId: null,
+          twentyPersonId: null,
+          twentyOpportunityId: null,
+          botInstanceId: sendFromBotId,
+          giftSubscriberId: null,
+          businessConnectionId: null,
+          updatedAt: new Date(),
+        };
       }
 
       let bot = await prisma.botInstance.findFirst({
@@ -3633,9 +3800,9 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
       let gramjsPhoneE164: string | null = null;
       /** Phase 5.2 write-first (MAX): bridge resolves the peer from this phone at send-time. */
       let maxResolvePhone: string | null = null;
-      if (sendFromBotId && sendFromBotId !== baseTarget.botInstanceId) {
+      if (writeFirst || (sendFromBotId && sendFromBotId !== baseTarget.botInstanceId)) {
         const altBot = await prisma.botInstance.findFirst({
-          where: { id: sendFromBotId, tenantId, status: 'active' },
+          where: { id: sendFromBotId!, tenantId, status: 'active' },
         });
         if (!altBot) {
           return reply.code(404).send({ error: 'Выбранный аккаунт не найден или неактивен' });
@@ -3739,6 +3906,14 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
                 fileName: filename,
               },
             });
+            // Username write-first: adopt the numeric TG id resolved by the bridge.
+            if (
+              lastGramjsResolvedPeerId &&
+              lastGramjsResolvedPeerId !== chatId &&
+              !/^\d+$/.test(chatId)
+            ) {
+              chatId = lastGramjsResolvedPeerId;
+            }
             if (sent) attachments = [sent];
             if (!text) {
               text =
@@ -3756,6 +3931,13 @@ export const crmChatRoutes: FastifyPluginAsync = async (fastify) => {
               phone: gramjsPhoneE164,
               username: target.username,
             });
+            if (
+              lastGramjsResolvedPeerId &&
+              lastGramjsResolvedPeerId !== chatId &&
+              !/^\d+$/.test(chatId)
+            ) {
+              chatId = lastGramjsResolvedPeerId;
+            }
           }
         } else if (isMax) {
           // Write-first: no peer id yet — bridge resolves it from the phone.
