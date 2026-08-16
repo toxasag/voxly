@@ -17,7 +17,11 @@ import { syncOwnerProfileFromControlDb } from '../services/twenty-owner-profile-
 import { processFormLead } from '../services/form-lead-process.js';
 import { runTelegramCrmEnrich } from '../services/telegram-crm-enrich.js';
 import { runGramjsPrivateChatSync } from '../services/gramjs-chat-sync.js';
-import { startAiUsageWorker, startTimelineSyncWorker } from '@voxly/ai-core';
+import {
+  startAiUsageWorker,
+  startTimelineSyncWorker,
+  setTimelineSyncExternalSink,
+} from '@voxly/ai-core';
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 /** Integration tests import the API without starting BullMQ workers. */
@@ -547,6 +551,9 @@ async function writeTimelineEventToTwenty(
     await client.touchOpportunityActivity(opportunityId);
   }
 }
+
+// Direct-write fallback path (queue unavailable) must reach the same sink.
+setTimelineSyncExternalSink(writeTimelineEventToTwenty);
 
 export const timelineSyncWorker = WORKERS_ENABLED
   ? startTimelineSyncWorker({ writeExternal: writeTimelineEventToTwenty })

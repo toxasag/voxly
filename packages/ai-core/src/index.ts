@@ -17,6 +17,7 @@ export {
   TIMELINE_SYNC_QUEUE_NAME,
   buildTimelineSyncKey,
   enqueueTimelineSync,
+  setTimelineSyncExternalSink,
   startTimelineSyncWorker,
   type TimelineSyncJobData,
 } from './timeline-sync-queue.js';

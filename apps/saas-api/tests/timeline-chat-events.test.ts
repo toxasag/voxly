@@ -28,7 +28,9 @@ describe('chat events in Twenty Timeline', () => {
 
   it('timeline-sync worker has a best-effort external sink hook', () => {
     expect(aiCore).toContain('writeExternal?: (data: TimelineSyncJobData) => Promise<void>');
-    expect(aiCore).toContain('opts.writeExternal(data)');
+    expect(aiCore).toContain('runExternalSinkWith(opts.writeExternal, data)');
+    // Direct-write fallback (queue unavailable) reaches the same sink.
+    expect(aiCore).toContain('setTimelineSyncExternalSink');
   });
 
   it('saas-api maps queue events to Twenty timeline + kanban updatedAt touch', () => {

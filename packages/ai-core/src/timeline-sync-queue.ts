@@ -39,13 +39,45 @@ export function buildTimelineSyncKey(parts: {
   conversationId?: string | null;
   messageId?: string | null;
 }): string {
-  const base = `${parts.tenantId}:${parts.kind}`;
+  // BullMQ custom ids must not contain ':' — use '.' separators.
+  const base = `${parts.tenantId}.${parts.kind}`;
   // Message events must be keyed per message: a conversation-level jobId is
   // dropped by BullMQ as a duplicate after the FIRST event ever processed,
   // silencing the whole thread (chat timeline never advances).
-  if (parts.messageId) return `${base}:msg:${parts.messageId}`;
-  if (parts.conversationId) return `${base}:${parts.conversationId}`;
-  return `${base}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  if (parts.messageId) return `${base}.msg.${parts.messageId}`;
+  if (parts.conversationId) return `${base}.conv.${parts.conversationId}`;
+  return `${base}.${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * External sink (Twenty Timeline) shared by the worker and the direct-write
+ * fallback path. Set once by the host app (saas-api jobs/queues.ts).
+ */
+let externalSink: ((data: TimelineSyncJobData) => Promise<void>) | null = null;
+
+export function setTimelineSyncExternalSink(
+  fn: ((data: TimelineSyncJobData) => Promise<void>) | null,
+): void {
+  externalSink = fn;
+}
+
+async function runExternalSink(data: TimelineSyncJobData): Promise<void> {
+  if (!externalSink) return;
+  await runExternalSinkWith(externalSink, data);
+}
+
+async function runExternalSinkWith(
+  fn: (data: TimelineSyncJobData) => Promise<void>,
+  data: TimelineSyncJobData,
+): Promise<void> {
+  try {
+    await fn(data);
+  } catch (err) {
+    console.warn(
+      '[timeline-sync] external sink failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
 export async function enqueueTimelineSync(
@@ -75,6 +107,8 @@ export async function enqueueTimelineSync(
     // Fallback: direct write (best-effort, no retries)
     try {
       await writeTimelineSyncDirect(data);
+      // Keep the external sink in sync even on the fallback path.
+      await runExternalSink(data);
       return { ok: true, jobId: key, error: 'queue_unavailable_fallback_used' };
     } catch (e) {
       console.error('[timeline-sync] direct write also failed:', e);
@@ -126,14 +160,7 @@ export async function startTimelineSyncWorker(opts?: {
 
       await writeTimelineSyncDirect(data);
       if (opts?.writeExternal) {
-        try {
-          await opts.writeExternal(data);
-        } catch (err) {
-          console.warn(
-            '[timeline-sync] external sink failed:',
-            err instanceof Error ? err.message : String(err),
-          );
-        }
+        await runExternalSinkWith(opts.writeExternal, data);
       }
     },
     {
