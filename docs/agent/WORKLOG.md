@@ -3338,3 +3338,8 @@ WHERE type IN ('ai_tg', 'gift_bot')
 ### 2026-08-16 (UI-3) — кнопки в строку + фолбэки меню
 - Commit 1cc443f: 😊/📎 в одну горизонтальную строку (+ alignSelf flex-end у ряда); Remote DOM НЕ доставляет contextmenu → ловим right-button mousedown на textarea; добавлена кнопка «Aa», открывающая то же меню над композером (гарантированный путь). Позиция меню: курсор (правый клик) или right:12/bottom:150 (кнопка).
 - Verify: lint 0 / tsgo clean; tarball → деплой saas-api,saas-worker; crmchat-refresh OK оба воркспейса (flush keysDeleted=67); в бандле `button===2` и `Aa`; api health ok.
+
+### 2026-08-16 (UI-4) — композер: 😊/📎 сверху, Отправить снизу, без Aa
+- Commit a43f190 (минимальные правки, блок не переписывался): контейнер ввода column; ряд 😊+📎 получил order:-1 (рендер над полем); «Отправить» вынесен в отдельный right-aligned ряд под полем; кнопка Aa удалена (меню: правый клик / right-mousedown — паттерн telegram-md-textarea портала). Попутно восстановлен случайно съеденный <textarea> (поймано typecheck до коммита).
+- VPS: / 42G free (55%), /opt/voxly/backups 68M — память/диск в порядке, бэкапы не причина.
+- Verify: tsgo clean, lint 0; tarball 8acd7183 → оба воркспейса (flush 67×2); в бандле: Aa отсутствует, order:-1 ✓, flex-end ✓.
