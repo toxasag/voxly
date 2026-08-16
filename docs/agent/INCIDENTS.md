@@ -12,6 +12,12 @@
 - **Инвариант:** native outbound никогда не считать inbound и не запускать AI; idempotency по external id.
 - **Дата:** 2026-08-16.
 
+### INC-127 — MAX native outbound: PyMax Message не имеет поля .out; реконнект теряет listener
+- **Симптом:** WA/TG нативные исходящие подтянулись, MAX — нет; в логах bridge ни события, ни ошибки. После keepalive-разрыва (12:28) событий не было вовсе.
+- **Причина:** (1) PyMax `Message` не имеет поля `out`/`is_out` — исходящесть определяется только `sender == me` (как в history-экспортере); старый guard `sender==me → return` молча гасил свои же сообщения. (2) Внутренний реконнект PyMax (`connection receive loop failed`) не переустанавливает зарегистрированный обработчик.
+- **Фикс:** sender-based `is_outgoing` (+ XOR-резолв пира `chat ^ me` для DIALOG, guard `peer==me`); watchdog пере-регистрирует обработчик каждые 5 мин; дублики поглощаются идемпотентностью `max:<id>`.
+- **Инвариант:** для PyMax исходящесть = `int(sender) == int(me_id)`; после реконнектов библиотеки слушатель нужно пере-цеплять.
+- **Дата:** 2026-08-16.
 ### INC-126 — Нативные MAX/WA outbound не синхронизировались с CRM
 - **Симптом:** ручное сообщение с телефона клиента через MAX/WhatsApp не появлялось в CRM, Telegram-поток работал.
 - **Причина:** MAX listener отбрасывал `message.out`; WA `fromMe` проходил inbound/AI path. Дополнительный риск — отсутствие outbound `CrmRecordLink` при ручном CRM send.

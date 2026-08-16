@@ -3300,3 +3300,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Deploy: `./scripts/prod-deploy.sh saas-api,saas-worker,max-bridge,ai-whatsapp-worker`; Prisma migrate deploy completed (no destructive schema changes); smoke all 200.
 - Verify: `max-internal.js` contains `/outbound`; max-bridge `/health` `{ok:true, pymax:true, sessions:1}`; all four containers Up; worker confirms CRM-chat tarball unchanged (expected — no front-component source change).
 - Manual smoke pending: send a real WhatsApp and a real MAX message from the connected phone to a Person already linked to an Opportunity; both must appear as operator messages in their channel threads with no AI reply and no duplicate Person/Opportunity. New portal provisioning must show Opportunity `updatedAt` on Kanban card.
+
+### 2026-08-16 (deploy 2) — MAX outgoing detect + listener watchdog + chat auto-scroll
+- Commit `d337061`. Root causes: PyMax Message has no `.out` (outgoing = sender==me — старый guard гасил события молча); PyMax internal reconnect (12:28 keepalive drop) не пере-цепляет handler; chat panel scroll гонялся с layout Remote DOM.
+- Fix: sender-based is_outgoing + XOR peer (chat^me) + peer==me guard; `_listener_watchdog` re-attach каждые 300s (дублики → max:<id> dedupe); chat-panel `useLayoutEffect` скролл на последнее сообщение (deps: messages/activeThreadId/loading).
+- Verify: py_compile OK; lint 0 errors; typecheck 23/23; tests 184/15; deploy max-bridge,saas-api,saas-worker — smoke 200; `[crmchat-refresh]` установил tarball 27fd9af8… в efim1/remtoua; bridge: Restored session + Attached on_message; health ok.
+- Pending user smoke: MAX сообщение с телефона → operator-сообщение в CRM-чате; открытие чата сразу показывает последнее сообщение.
