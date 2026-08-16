@@ -1219,7 +1219,7 @@ const ChatPanel = () => {
   void formatItems;
 
   /** Right-click formatting menu (replaces the old button toolbar). */
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number | null; y: number | null } | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
 
   const quoteSelection = () => {
@@ -1774,6 +1774,21 @@ const ChatPanel = () => {
                 y: Math.max(8, (ev.clientY || 0) - (rect?.top || 0)),
               });
             }}
+            onMouseDown={(e) => {
+              // Remote DOM may not proxy `contextmenu` — catch the right-button
+              // mousedown instead (selection still alive at this moment).
+              const ev = e as unknown as { button?: number };
+              if (ev.button === 2) {
+                noteSelection(e.target as HTMLTextAreaElement);
+                const rect = (rootRef.current as { getBoundingClientRect?: () => DOMRect } | null)
+                  ?.getBoundingClientRect?.();
+                const cev = e as unknown as { clientX?: number; clientY?: number };
+                setCtxMenu({
+                  x: Math.max(8, (cev.clientX || 0) - (rect?.left || 0)),
+                  y: Math.max(8, (cev.clientY || 0) - (rect?.top || 0)),
+                });
+              }
+            }}
             onKeyDown={(e) => {
               // Enter = newline (multiline replies). Cmd/Ctrl+Enter = send.
               // Plain Enter previously sent immediately → only the first line went out (INC-022).
@@ -1805,12 +1820,31 @@ const ChatPanel = () => {
           <div
             style={{
               display: 'flex',
-              flexDirection: 'column',
+              flexDirection: 'row',
               gap: 6,
               flexShrink: 0,
-              alignItems: 'stretch',
+              alignItems: 'center',
+              alignSelf: 'flex-end',
             }}
           >
+            <button
+              type="button"
+              title="Форматирование (или правый клик по выделенному тексту)"
+              onClick={() => setCtxMenu({ x: null, y: null })}
+              style={{
+                border: `1px solid ${border}`,
+                background: ctxMenu ? (dark ? '#1e293b' : '#eff6ff') : panel,
+                color: ink,
+                borderRadius: 10,
+                padding: '6px 10px',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 600,
+                lineHeight: 1.6,
+              }}
+            >
+              Aa
+            </button>
             <button
               type="button"
               title="Смайлик — вставить эмодзи"
@@ -1926,8 +1960,9 @@ const ChatPanel = () => {
           <div
             style={{
               position: 'absolute',
-              left: ctxMenu.x,
-              top: ctxMenu.y,
+              ...(ctxMenu.x != null && ctxMenu.y != null
+                ? { left: ctxMenu.x, top: ctxMenu.y }
+                : { right: 12, bottom: 150 }),
               zIndex: 41,
               minWidth: 170,
               background: panel,
