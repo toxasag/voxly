@@ -55,7 +55,8 @@
 - ❌ **Native outbound**: `message.out`/`key.fromMe` из MAX/WhatsApp нельзя пропускать через inbound/AI pipeline; сохранять как operator/fromMe с native external id и CRM-link.
 - ❌ **Native outbound deal safety**: MAX/WhatsApp исходящие с устройства не создают новый Opportunity без уже найденного Person/Opportunity; только reconcile existing CRM match.
 - ❌ **Kanban defaults**: поля Opportunity Kanban для новых порталов задаются только через ID-independent `OPPORTUNITY_KANBAN_CARD_FIELDS`; UUID конкретного tenant запрещено копировать.
-- ❌ **Twenty CRM**: Любое изменение метаданных CRM требует вызова `twenty-redis-flush.ts`.
+- ❌ **Twenty CRM**: Любое изменение метаданных CRM требует вызова `twenty-redis-flush.ts` (flat-map keys + metadataVersion; бамп версии БЕЗ удаления ключей недостаточен — INC-129 «Нет данных»).
+- ❌ **Widget-конфиги вне Twenty**: SQL-патч `pageLayoutWidget.configuration` (например `__typename` после реинсталла CRM Chat) обязан завершаться `flushTwentyWorkspaceRedisCache(workspaceId)`.
 - ❌ **Контракты роутов**: Запрещено менять JSON-схему `*-internal.ts` без синхронного обновления всех вызывающих воркеров.
 - ❌ **Хранение медиа**: Запрещено сохранять бинарники/Base64 в PostgreSQL — только стриминг в S3 (MinIO / Cloudflare R2).
 - ❌ **Секреты**: Запрещено хардкодить токены, пароли и API-ключи в код или документацию (только ENV-переменные и плейсхолдеры).

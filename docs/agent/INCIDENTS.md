@@ -12,6 +12,13 @@
 - **Инвариант:** native outbound никогда не считать inbound и не запускать AI; idempotency по external id.
 - **Дата:** 2026-08-16.
 
+### INC-129 — Рецидив «Нет данных» после каждого реинсталла CRM Chat
+- **Симптом:** после авто-обновления tarball вкладка «Чат» снова показывает «Нет данных», хотя в БД `__typename` патч применён.
+- **Причина (полная, INC-116 был неполон):** install-миграция Twenty кэширует НЕПАТЧЕНЫЕ widget-конфиги в Redis flat-maps (`engine:workspace:flat-maps:*`) ДО того, как `refreshCrmChatAppForTenant` выполняет `jsonb_set(__typename)`. Бамп `metadataVersion` НЕ удаляет эти ключи → SPA продолжает получать конфиги без `__typename` → Gt-чек фейлится → пустой canvas.
+- **Фикс:** `refreshCrmChatAppForTenant` после SQL-патча вызывает `flushTwentyWorkspaceRedisCache(workspaceId)` — удаление flat-map ключей + версия. Каждый авто-рефреш/реинсталл теперь само-лечащийся.
+- **Инвариант:** любое изменение `pageLayoutWidget.configuration` вне Twenty-миграций = SQL-патч + ОБЯЗАТЕЛЬНЫЙ сброс flat-map ключей workspace (бамп версии недостаточен).
+- **Verify (2026-08-16):** форс-цикл (маркер сброшен): `flat-map cache flushed keysDeleted=67` × оба воркспейса; браузер: панель чата рендерится после переустановки.
+- **Дата:** 2026-08-16.
 ### INC-128 — Чат открывается на первом сообщении; gift-бот создал дубль сделки
 - **Симптом:** (1) вкладка «Чат» стартует сверху, нужен ручной скролл; (2) сообщение gift-боту с @toxasagmsk (существующий контакт) создало новую Person+сделку.
 - **Причина:** (1) Remote DOM проксирует узлы — scrollTop/scrollIntoView из компонента не применяются к хост-элементу. (2) gift-bot-worker работал на старом twenty-client (без t.me-link матчинга в findPersonByHint) и без Twenty-side fallback открытой сделки.

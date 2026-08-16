@@ -3312,3 +3312,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Gift dup deal root cause: gift-bot-worker не redeploy-ился с новым twenty-client (нет t.me-link hint match) + в реюз-цепочке нет Twenty `findOpenOpportunityByPerson`. Fix: fallback добавлен (parity WA/MAX); gift-bot redeployed с новым packages.
 - Prod merge (backup /opt/voxly/backups/20260816-gift-merge/): GiftSubscriber cmsvtq4no + conversation cmsvtq4oq → fca157a8/47ecff36; twenty soft-delete dup opp 49a8235b + person c19b2550; metadataVersion++; flat-maps flushed.
 - Commit `605bc59`; deploy gift-bot-worker,saas-api,saas-worker; tarball (с data-атрибутом) установлен авто-рефрешем в оба воркспейса; тесты 184/15, lint 0, node --check OK.
+
+### 2026-08-16 (incident) — INC-129 рецидив «Нет данных» + само-лечащийся рефреш
+- Root cause: install-миграция кэширует непатченые widget-конфиги в Redis flat-maps ДО INC-116 патча; бамп metadataVersion не удаляет ключи → SPA видит конфиги без __typename. Утренний_manual flush маскировал; каждый реинсталл воспроизводил.
+- Immediate heal: DEL flat-maps (67×2) + версия; браузер-verify: панель чата рендерится.
+- Permanent: `refreshCrmChatAppForTenant` → `flushTwentyWorkspaceRedisCache` после патча (commit d4b176a). Force-verify: сброс маркера → реинсталл → `keysDeleted=67` ×2 → рендер OK.
+- Docs: INC-129, spec-инвариант, AGENTS+rules правило «SQL-патч widget-конфига = обязательный flush».

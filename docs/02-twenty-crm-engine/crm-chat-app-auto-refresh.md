@@ -64,6 +64,8 @@ export async function refreshCrmChatAppsIfTarballChanged(): Promise<AutoRefreshR
 
 ## Инварианты
 
+- **После каждого реинсталла** (авто-рефреш/ручной refresh-crm-chat) виджет-конфиги патчатся (`__typename`) И сбрасывается flat-map кэш workspace (`flushTwentyWorkspaceRedisCache`) — install-миграция кэширует непатченые конфиги ДО патча, бамп версии их не удаляет (INC-129). Лог: `[crmchat-refresh] flat-map cache flushed … keysDeleted=N`.
+
 - Реинсталл идемпотентен и безопасен для повтора.
 - Изменение контракта `ensureCrmChatAppInstalled` синхронно с `packages/twenty-client`.
 - Тенанты без `twentyOwnerPasswordEncrypted` исключаются из выборки (иначе вечный retry-цикл).

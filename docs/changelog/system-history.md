@@ -109,3 +109,10 @@
 - **Влияние на систему (Impact)**: native MAX outbound event ingested through protected internal route; WA `fromMe` isolated from AI/inbound; future workspace Kanban template includes updatedAt.
 - **Результаты тестов (Verification)**: backup `/opt/voxly/backups/20260816-native-outbound/`; deploy smoke all 200; API dist confirms `/outbound`; max-bridge health `{ok:true, pymax:true, sessions:1}`; affected containers Up.
 - **План отката (Rollback Plan)**: redeploy prior commit images / `git revert 6e5b36b`; restore the two named DB dumps only if data repair becomes necessary.
+
+### [2026-08-16] INC-129: само-лечащийся flush после реинсталла CRM Chat
+- **Причина (Why)**: после авто-обновления приложения вкладка «Чат» показывала «Нет данных»: Redis flat-maps хранили widget-конфиги без `__typename`, закэшированные install-миграцией ДО патча refresh-функции; бамп версии ключи не удалял.
+- **Затронутые файлы**: `apps/saas-api/src/services/purge-tenant.ts` (flush после патча), доки (INC-129, auto-refresh spec, AGENTS+rules), WORKLOG.
+- **Влияние**: каждый реинсталл (авто-рефреш/ручной) теперь сам сбрасывает кэш; ручное лечение больше не требуется.
+- **Verification**: typecheck ✅; тесты 184/15 ✅; форс-цикл: reinstall → `keysDeleted=67` ×2 → браузер: «Пишем от:»/«Открытые чаты:» рендерятся, «Нет данных» нет.
+- **Rollback**: `git revert d4b176a`; ручное лечение: `redis-cli --scan --pattern 'engine:workspace:flat-maps:*:<wsId>*' | xargs redis-cli DEL` + версия++.
