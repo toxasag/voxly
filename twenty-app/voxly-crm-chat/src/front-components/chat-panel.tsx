@@ -6,7 +6,7 @@ import {
   useRecordId,
 } from 'twenty-sdk/front-component';
 import { RestApiClient } from 'twenty-client-sdk/rest';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { CHAT_FRONT_COMPONENT_UNIVERSAL_IDENTIFIER } from 'src/constants/universal-identifiers';
 
@@ -993,7 +993,12 @@ const ChatPanel = () => {
     void load(null);
   }, [load]);
 
-  useEffect(() => {
+  // Auto-scroll to the LATEST message on open, thread switch and new messages.
+  // useLayoutEffect: runs after DOM mutation before paint, so scrollHeight is
+  // already final (plain useEffect raced the Remote DOM layout and landed at
+  // the top). Depends on the messages array identity (same length on thread
+  // switch must still scroll) + active thread + loading flip.
+  useLayoutEffect(() => {
     const el = listRef.current as { scrollTop?: number; scrollHeight?: number } | null;
     if (!el || typeof el.scrollHeight !== 'number') return;
     try {
@@ -1001,7 +1006,7 @@ const ChatPanel = () => {
     } catch {
       // Remote DOM scroll may be unsupported
     }
-  }, [messages.length]);
+  }, [messages, activeThreadId, loading]);
 
   const readComposerText = (): string => {
     // Remote DOM: host textarea value can diverge from React `draft` (INC-016).

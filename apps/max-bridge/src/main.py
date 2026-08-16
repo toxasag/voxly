@@ -1559,6 +1559,19 @@ def _ensure_listener(bot_id: str, client: Any) -> None:
     listener_tasks[bot_id] = asyncio.create_task(_listen_inbound(bot_id, client))
 
 
+async def _listener_watchdog() -> None:
+    """PyMax internal reconnects ('connection receive loop failed' → library
+    restart) can drop the registered message handler. Re-attach every 5 min;
+    duplicate deliveries are absorbed by max:<id> idempotency on saas-api."""
+    while True:
+        await asyncio.sleep(300)
+        for bot_id, client in list(live_clients.items()):
+            try:
+                _ensure_listener(bot_id, client)
+            except Exception:
+                logger.debug("listener re-attach failed botId=%s", bot_id, exc_info=True)
+
+
 async def _listen_inbound(bot_id: str, client: Any) -> None:
     """Attach message handler if PyMax exposes one; otherwise poll is N/A."""
     try:
@@ -1569,11 +1582,6 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
         async def on_msg(message: Any, event_client: Any = None) -> None:
             try:
                 api = event_client if event_client is not None else client
-                # Outgoing messages from the connected MAX app are CRM events too.
-                # Do not feed them through inbound/AI; forward as operator outbound.
-                is_outgoing = bool(
-                    getattr(message, "out", False) or getattr(message, "is_out", False)
-                )
                 sender = getattr(message, "sender", None)
                 # CRITICAL: client.me is often a wrapper — User is on .contact (INC-113).
                 me_user = _unwrap_max_user(getattr(api, "me", None))
@@ -1583,12 +1591,17 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                     sender_id = int(sender) if sender is not None else None
                 except Exception:
                     sender_id = None
-                if (
-                    not is_outgoing
-                    and me_id is not None
+                # PyMax Message has NO .out field — outgoing == sender is me
+                # (same rule as the history exporter). Attribute check kept for
+                # future PyMax versions only.
+                is_outgoing = bool(
+                    getattr(message, "out", False) or getattr(message, "is_out", False)
+                ) or (
+                    me_id is not None
                     and sender_id is not None
                     and sender_id == me_id
-                ):
+                )
+                if not is_outgoing and me_id is not None and sender_id is not None and sender_id == me_id:
                     return
 
                 peer = (
@@ -1599,6 +1612,13 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                 )
                 if peer is None:
                     return
+                # Outgoing without a real dialog chat id (peer fell back to me) is unusable.
+                if is_outgoing and me_id is not None:
+                    try:
+                        if int(peer) == int(me_id):
+                            return
+                    except Exception:
+                        pass
                 try:
                     peer_i = int(peer)
                 except Exception:
@@ -1640,6 +1660,19 @@ async def _listen_inbound(bot_id: str, client: Any) -> None:
                     peer_uid = sender_id
                 if peer_uid is None:
                     peer_uid = _peer_user_id_from_chat(chat_obj, me_id)
+                # Outgoing fallback: DIALOG chat_id = me ^ peer (local XOR) → peer = chat ^ me.
+                if (
+                    peer_uid is None
+                    and is_outgoing
+                    and me_id is not None
+                    and peer_i is not None
+                ):
+                    try:
+                        xor_peer = peer_i ^ me_id
+                    except Exception:
+                        xor_peer = None
+                    if xor_peer and xor_peer > 0 and xor_peer != me_id:
+                        peer_uid = xor_peer
                 # Never treat chat_id as user id when it is not the other participant.
                 if peer_uid is None:
                     logger.info(
@@ -2324,6 +2357,7 @@ async def on_startup() -> None:
     if not PYMAX_AVAILABLE:
         logger.warning("PyMax missing — QR/send will return 503 until installed")
         return
+    asyncio.create_task(_listener_watchdog())
     try:
         data = await saas_fetch("/api/internal/max/bots/active")
         for bot in data.get("bots") or []:
