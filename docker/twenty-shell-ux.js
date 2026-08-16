@@ -460,6 +460,40 @@
   }
 
   /**
+   * Chat messages list must open on the LATEST message. Remote DOM proxies make
+   * in-component scrollTop/scrollIntoView unreliable — the host scrolls the REAL
+   * element. Sticks to bottom on open / thread switch / new messages; respects
+   * the user manually scrolling up (no jump while reading history).
+   */
+  var chatListScrollState = new WeakMap();
+
+  function scrollChatListToLatest() {
+    var canvas = findOpenChatCanvas();
+    if (!canvas) return;
+    var lists = canvas.querySelectorAll('[data-voxly-chat-list="1"]');
+    for (var i = 0; i < lists.length; i++) {
+      var el = lists[i];
+      var st = chatListScrollState.get(el);
+      if (!st) {
+        st = { h: 0, bottom: true };
+        chatListScrollState.set(el, st);
+      }
+      var sh = el.scrollHeight;
+      var ch = el.clientHeight;
+      if (sh !== st.h) {
+        // Content changed (open / thread switch / new message).
+        if (st.bottom || st.h === 0) {
+          try {
+            el.scrollTop = sh;
+          } catch (e) {}
+        }
+        st.h = sh;
+      }
+      st.bottom = ch === 0 || sh - el.scrollTop - ch < 48;
+    }
+  }
+
+  /**
    * Twenty wraps CANVAS tabs in `.page-layout-scroll-wrapper { overflow: auto }`.
    * When the front component grows with messages, that outer scroller moves the
    * whole widget — including the composer. For Voxly Chat, lock the wrapper and
@@ -1203,6 +1237,7 @@
     dedupeCabinetNav();
     fixOpportunityCreateCta();
     pinChatCanvasScroll();
+    scrollChatListToLatest();
     expandKanbanNoteLines();
     hideExtraKanbanNotes();
     maybeOpenChatTab();

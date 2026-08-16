@@ -2370,6 +2370,21 @@ async function syncSubscriberToCRM(
         opportunityId = fromConv.twentyOpportunityId;
       }
     }
+    // Twenty-side open deal fallback (parity with WA/MAX sync): Person may
+    // exist with an open Opportunity while no local row references it yet.
+    if (!opportunityId && personId) {
+      try {
+        const open = await client.findOpenOpportunityByPerson(personId);
+        if (open?.id) {
+          opportunityId = open.id;
+          console.log(
+            `[gift-bot] reuse open Opportunity ${opportunityId} for person=${personId}`,
+          );
+        }
+      } catch {
+        /* optional */
+      }
+    }
 
     if (!opportunityId && personId && !suppressDeal) {
       const who = person.username

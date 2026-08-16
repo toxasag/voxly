@@ -1478,6 +1478,7 @@ const ChatPanel = () => {
 
       <div
         ref={listRef}
+        data-voxly-chat-list="1"
         style={{
           flex: 1,
           minHeight: 0,
