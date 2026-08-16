@@ -1740,9 +1740,9 @@ const ChatPanel = () => {
         <div
           style={{
             display: 'flex',
-            flexDirection: 'row',
-            gap: 8,
-            alignItems: 'flex-end',
+            flexDirection: 'column',
+            gap: 6,
+            alignItems: 'stretch',
           }}
         >
           <textarea
@@ -1824,27 +1824,9 @@ const ChatPanel = () => {
               gap: 6,
               flexShrink: 0,
               alignItems: 'center',
-              alignSelf: 'flex-end',
+              order: -1,
             }}
           >
-            <button
-              type="button"
-              title="Форматирование (или правый клик по выделенному тексту)"
-              onClick={() => setCtxMenu({ x: null, y: null })}
-              style={{
-                border: `1px solid ${border}`,
-                background: ctxMenu ? (dark ? '#1e293b' : '#eff6ff') : panel,
-                color: ink,
-                borderRadius: 10,
-                padding: '6px 10px',
-                cursor: 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-                lineHeight: 1.6,
-              }}
-            >
-              Aa
-            </button>
             <button
               type="button"
               title="Смайлик — вставить эмодзи"
@@ -1923,6 +1905,13 @@ const ChatPanel = () => {
               />
             </label>
             ) : null}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+            }}
+          >
             <button
               type="button"
               disabled={sending || !canSend}
@@ -1960,9 +1949,8 @@ const ChatPanel = () => {
           <div
             style={{
               position: 'absolute',
-              ...(ctxMenu.x != null && ctxMenu.y != null
-                ? { left: ctxMenu.x, top: ctxMenu.y }
-                : { right: 12, bottom: 150 }),
+              left: ctxMenu.x ?? 0,
+              top: ctxMenu.y ?? 0,
               zIndex: 41,
               minWidth: 170,
               background: panel,
