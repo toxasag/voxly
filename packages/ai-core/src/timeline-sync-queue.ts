@@ -40,8 +40,11 @@ export function buildTimelineSyncKey(parts: {
   messageId?: string | null;
 }): string {
   const base = `${parts.tenantId}:${parts.kind}`;
-  if (parts.conversationId) return `${base}:${parts.conversationId}`;
+  // Message events must be keyed per message: a conversation-level jobId is
+  // dropped by BullMQ as a duplicate after the FIRST event ever processed,
+  // silencing the whole thread (chat timeline never advances).
   if (parts.messageId) return `${base}:msg:${parts.messageId}`;
+  if (parts.conversationId) return `${base}:${parts.conversationId}`;
   return `${base}:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
