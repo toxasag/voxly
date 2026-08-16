@@ -527,6 +527,10 @@ async function writeTimelineEventToTwenty(
   }
   if (!personId && !opportunityId) return;
 
+  console.log(
+    `[timeline-sync] twenty event kind=${data.kind} conv=${data.conversationId || '-'} person=${personId || '-'} opp=${opportunityId || '-'}`,
+  );
+
   const client = await getTwentyClientForTenant(data.tenantId);
   if (!client) return;
 

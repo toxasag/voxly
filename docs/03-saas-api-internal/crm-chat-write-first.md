@@ -63,6 +63,13 @@ POST /messages/send → { ok, botId, peerUserId, resolvedPeerUserId?, messageId,
 
 Переключатель тредов записи — выпадающий список **«Открытые чаты:»** (стиль «Пишем от:»), опции `Канал · Аккаунт → Контакт`. После send фронт переключается на `conversationId` из ответа.
 
+## Timeline-события чатов (2026-08-16)
+
+`enqueueTimelineSync` (ai-core) → worker: локальная `CustomerActivity` + **Twenty timelineActivity** (`createChatTimelineActivity`: targetPersonId+targetOpportunityId, name «Входящее/Исходящее сообщение · Канал») + `touchOpportunityActivity` (бамп `updatedAt` → сортировка канбана «Последнее обновление»).
+
+- Инварианты: BullMQ jobId без `:`; ключ **per-message** (`tenant.kind.msg.<messageId>`) — conversation-ключ дедуплицирует весь тред после первого события; direct-fallback тоже зовёт внешний sink (`setTimelineSyncExternalSink`).
+- Живые источники enqueue: WA inbound/fromMe-mirror, TG worker, MAX internal inbound/outbound, gift, CRM reply, history-sync.
+
 ## Риски
 
 - `findPersonByHint` link-фильтры зависят от GraphQL-шейпа Twenty (есть try/catch fallback).

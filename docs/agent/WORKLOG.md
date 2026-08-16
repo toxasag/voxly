@@ -3318,3 +3318,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Immediate heal: DEL flat-maps (67×2) + версия; браузер-verify: панель чата рендерится.
 - Permanent: `refreshCrmChatAppForTenant` → `flushTwentyWorkspaceRedisCache` после патча (commit d4b176a). Force-verify: сброс маркера → реинсталл → `keysDeleted=67` ×2 → рендер OK.
 - Docs: INC-129, spec-инвариант, AGENTS+rules правило «SQL-патч widget-конфига = обязательный flush».
+
+### 2026-08-16 (deploy 5) — Chat events в Twenty Timeline + kanban updatedAt
+- Feature: `writeTimelineEventToTwenty` (saas-api jobs/queues.ts) — timeline-sync worker создаёт Twenty timeline activities («Входящее/Исходящее сообщение · Канал», targetPersonId + targetOpportunityId, body в properties) и вызывает touchOpportunityActivity → Kanban «Последнее обновление» следует за чатами. twenty-client `createChatTimelineActivity` (data/input fallback). Кэш аутентифицированных клиентов per-tenant (10 мин). MAX live inbound/outbound теперь тоже enqueue (прежде только WA/TG/gift/CRM-reply/history-sync).
+- Fixes по ходу: BullMQ jobId НЕ может содержать ':' → ключи `tenant.kind.msg.<id>` (per-message; conversation-уровень глотал все события треда после первого); external sink вызывается и в direct-fallback (setTimelineSyncExternalSink).
+- Verify: синтет-джобы → worker log `conv=… opp=47ecff36`, timelineActivity `p=t o=t`, opportunity.updatedAt = now; тесты 192/15; typecheck 23/23. Диагностические записи удалены (DELETE 5).
+- Commits: be9cc1a, 779f901, f749274 + текущий (debug-лог резолва).
