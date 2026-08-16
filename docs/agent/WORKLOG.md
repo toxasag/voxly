@@ -3334,3 +3334,7 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Commit 24875db: убрана панель формат-кнопок; контекстное меню на выделенном тексте поля ввода (Цитировать `> `/Скрытый `||`/Жирный `**`/Зачеркнутый `~~`/Подчеркнутый `__`/Ссылка `[текст](url)` с курсором на url); кнопки 😊 (палитра ~60 эмодзи, вставка в курсор) и 📎 (бывш. «Прикрепить») вместо текстовых кнопок. Selection удерживается через onMouseDown preventDefault + selRef (Remote DOM).
 - Deploy: tarball f818ff55 → оба воркспейса (flush keysDeleted=67); в бандле подтверждены onContextMenu + меню/палитра (zIndex 41/42; кириллица экранируется — строковые grep невалидны).
 - Известное ограничение: если Remote DOM не доставит contextmenu — меню не откроется; fallback не добавлял, ждём фидбек владельца.
+
+### 2026-08-16 (UI-3) — кнопки в строку + фолбэки меню
+- Commit 1cc443f: 😊/📎 в одну горизонтальную строку (+ alignSelf flex-end у ряда); Remote DOM НЕ доставляет contextmenu → ловим right-button mousedown на textarea; добавлена кнопка «Aa», открывающая то же меню над композером (гарантированный путь). Позиция меню: курсор (правый клик) или right:12/bottom:150 (кнопка).
+- Verify: lint 0 / tsgo clean; tarball → деплой saas-api,saas-worker; crmchat-refresh OK оба воркспейса (flush keysDeleted=67); в бандле `button===2` и `Aa`; api health ok.
