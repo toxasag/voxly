@@ -3306,3 +3306,9 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Fix: sender-based is_outgoing + XOR peer (chat^me) + peer==me guard; `_listener_watchdog` re-attach каждые 300s (дублики → max:<id> dedupe); chat-panel `useLayoutEffect` скролл на последнее сообщение (deps: messages/activeThreadId/loading).
 - Verify: py_compile OK; lint 0 errors; typecheck 23/23; tests 184/15; deploy max-bridge,saas-api,saas-worker — smoke 200; `[crmchat-refresh]` установил tarball 27fd9af8… в efim1/remtoua; bridge: Restored session + Attached on_message; health ok.
 - Pending user smoke: MAX сообщение с телефона → operator-сообщение в CRM-чате; открытие чата сразу показывает последнее сообщение.
+
+### 2026-08-16 (deploy 3) — host auto-scroll + gift open-deal reuse + merges
+- Scroll root cause: Remote DOM proxies → in-component scrollTop/scrollIntoView no-ops. Fix: panel marks list `data-voxly-chat-list="1"`; `twenty-shell-ux.js` `scrollChatListToLatest()` (host DOM, MutationObserver tick) sticks to bottom on open/switch/new messages, respects manual scroll-up. Hot-patched into running twenty-server (`dist/front/voxly-shell-ux.js`, served-verified ×2); source committed — попадёт в image при следующем twenty-ребилде.
+- Gift dup deal root cause: gift-bot-worker не redeploy-ился с новым twenty-client (нет t.me-link hint match) + в реюз-цепочке нет Twenty `findOpenOpportunityByPerson`. Fix: fallback добавлен (parity WA/MAX); gift-bot redeployed с новым packages.
+- Prod merge (backup /opt/voxly/backups/20260816-gift-merge/): GiftSubscriber cmsvtq4no + conversation cmsvtq4oq → fca157a8/47ecff36; twenty soft-delete dup opp 49a8235b + person c19b2550; metadataVersion++; flat-maps flushed.
+- Commit `605bc59`; deploy gift-bot-worker,saas-api,saas-worker; tarball (с data-атрибутом) установлен авто-рефрешем в оба воркспейса; тесты 184/15, lint 0, node --check OK.

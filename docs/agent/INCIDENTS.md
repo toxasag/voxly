@@ -12,6 +12,12 @@
 - **Инвариант:** native outbound никогда не считать inbound и не запускать AI; idempotency по external id.
 - **Дата:** 2026-08-16.
 
+### INC-128 — Чат открывается на первом сообщении; gift-бот создал дубль сделки
+- **Симптом:** (1) вкладка «Чат» стартует сверху, нужен ручной скролл; (2) сообщение gift-боту с @toxasagmsk (существующий контакт) создало новую Person+сделку.
+- **Причина:** (1) Remote DOM проксирует узлы — scrollTop/scrollIntoView из компонента не применяются к хост-элементу. (2) gift-bot-worker работал на старом twenty-client (без t.me-link матчинга в findPersonByHint) и без Twenty-side fallback открытой сделки.
+- **Фикс:** (1) host-скролл в twenty-shell-ux.js по `data-voxly-chat-list` (реальный DOM, stick-to-bottom, уважает ручной скролл); (2) `findOpenOpportunityByPerson` fallback в gift-синке + redeploy с новым twenty-client.
+- **Инвариант:** программный скролл Remote DOM-компонентов делать только из host-скрипта по data-маркеру; каждый канал/бот обязан проверять открытую сделку в Twenty перед созданием новой.
+- **Дата:** 2026-08-16.
 ### INC-127 — MAX native outbound: PyMax Message не имеет поля .out; реконнект теряет listener
 - **Симптом:** WA/TG нативные исходящие подтянулись, MAX — нет; в логах bridge ни события, ни ошибки. После keepalive-разрыва (12:28) событий не было вовсе.
 - **Причина:** (1) PyMax `Message` не имеет поля `out`/`is_out` — исходящесть определяется только `sender == me` (как в history-экспортере); старый guard `sender==me → return` молча гасил свои же сообщения. (2) Внутренний реконнект PyMax (`connection receive loop failed`) не переустанавливает зарегистрированный обработчик.
