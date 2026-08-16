@@ -1761,6 +1761,16 @@ const ChatPanel = () => {
             }}
             onMouseUp={(e) => {
               noteSelection(e.target as HTMLTextAreaElement);
+              // Remote DOM never proxies contextmenu/right-button — open the
+              // formatting menu automatically when the user selects draft text.
+              const ta = e.target as HTMLTextAreaElement;
+              const hasSelection =
+                typeof ta.selectionStart === 'number' &&
+                typeof ta.selectionEnd === 'number' &&
+                ta.selectionStart !== ta.selectionEnd;
+              if (hasSelection) {
+                setCtxMenu({ x: null, y: null });
+              }
             }}
             onContextMenu={(e) => {
               // Right-click on selected draft text → formatting menu.
@@ -1807,6 +1817,7 @@ const ChatPanel = () => {
               flex: 1,
               minWidth: 0,
               resize: 'none',
+              fontFamily: 'Inter, -apple-system, "Segoe UI", Roboto, sans-serif',
               border: `1px solid ${border}`,
               borderRadius: 10,
               padding: '10px 12px',
@@ -1949,8 +1960,11 @@ const ChatPanel = () => {
           <div
             style={{
               position: 'absolute',
-              left: ctxMenu.x ?? 0,
-              top: ctxMenu.y ?? 0,
+              // Cursor position (right-click) or fixed above the composer
+              // (text-selected trigger — Remote DOM has no coords for it).
+              ...(ctxMenu.x != null && ctxMenu.y != null
+                ? { left: ctxMenu.x, top: ctxMenu.y }
+                : { left: 12, bottom: 148 }),
               zIndex: 41,
               minWidth: 170,
               background: panel,
