@@ -3293,3 +3293,10 @@ WHERE type IN ('ai_tg', 'gift_bot')
 - Changes: MAX `message.out` callback `/api/internal/max/outbound` (native id/idempotency, dialog key, operator/fromMe, CRM link); WA `fromMe` dedicated mirror (LID/PN merge, operator/fromMe, outbound timeline/cache, no AI/no new deal); outbound `CrmRecordLink` repair in CRM reply; `OPPORTUNITY_KANBAN_CARD_FIELDS` adds updatedAt; tests/docs/rules/INC-124..126.
 - Verify: typecheck 23/23; root tests 184 passed / 15 skipped; CRM Chat tarball build; portal lint warnings only; py_compile OK.
 - Deploy pending after commit: backup control/twenty, deploy `saas-api,saas-worker,max-bridge,ai-whatsapp-worker`, verify callbacks/logs and new portal Kanban defaults.
+
+### 2026-08-16 (deploy) — native MAX/WA outbound + Kanban activity default
+- Commit: `6e5b36b feat(crm): ingest native MAX WA outbound and default kanban activity`.
+- Backup before deploy: `/opt/voxly/backups/20260816-native-outbound/` (`voxly_control.dump` 279K, `twenty.dump` 1.4M).
+- Deploy: `./scripts/prod-deploy.sh saas-api,saas-worker,max-bridge,ai-whatsapp-worker`; Prisma migrate deploy completed (no destructive schema changes); smoke all 200.
+- Verify: `max-internal.js` contains `/outbound`; max-bridge `/health` `{ok:true, pymax:true, sessions:1}`; all four containers Up; worker confirms CRM-chat tarball unchanged (expected — no front-component source change).
+- Manual smoke pending: send a real WhatsApp and a real MAX message from the connected phone to a Person already linked to an Opportunity; both must appear as operator messages in their channel threads with no AI reply and no duplicate Person/Opportunity. New portal provisioning must show Opportunity `updatedAt` on Kanban card.

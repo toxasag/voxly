@@ -101,3 +101,11 @@
 - **Влияние на систему (Impact)**: MAX `message.out` → idempotent `/api/internal/max/outbound` with `max:<nativeId>`, operator/fromMe and CRM link; WA `key.fromMe` → mirror path with LID/PN reconciliation, no AI/no new Opportunity; manual CRM sends repair `CrmRecordLink(source:'outbound')`; `updatedAt` added to ID-independent `OPPORTUNITY_KANBAN_CARD_FIELDS` for all new provisioning.
 - **Результаты тестов (Verification)**: `pnpm typecheck` 23/23 ✅; root `pnpm test` — 184 passed / 15 skipped (26 files) ✅; `@voxly/twenty-client` build ✅; `yarn lint` CRM Chat 0 errors (2 existing warnings) ✅; portal lint existing warnings only ✅; `py_compile` max-bridge ✅; `git diff --check` ✅.
 - **План отката (Rollback Plan)**: revert commit and redeploy `saas-api,saas-worker,max-bridge,ai-whatsapp-worker`; restore DB only if an outbound ingest migration/data repair is introduced (this change has no schema migration); reapply prior Kanban template and flush metadata cache if required.
+
+### [2026-08-16] Deploy native MAX/WA outbound ingest + Kanban activity default
+- **Причина (Why)**: выкатить commit `6e5b36b` после тестов для подтягивания нативных исходящих MAX/WhatsApp и глобального `updatedAt` в Kanban новых порталов.
+- **Затронутые файлы**: деплой `saas-api,saas-worker,max-bridge,ai-whatsapp-worker`; operational docs.
+- **Синхронизация индексов**: выполнена в commit `6e5b36b`.
+- **Влияние на систему (Impact)**: native MAX outbound event ingested through protected internal route; WA `fromMe` isolated from AI/inbound; future workspace Kanban template includes updatedAt.
+- **Результаты тестов (Verification)**: backup `/opt/voxly/backups/20260816-native-outbound/`; deploy smoke all 200; API dist confirms `/outbound`; max-bridge health `{ok:true, pymax:true, sessions:1}`; affected containers Up.
+- **План отката (Rollback Plan)**: redeploy prior commit images / `git revert 6e5b36b`; restore the two named DB dumps only if data repair becomes necessary.
