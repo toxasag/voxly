@@ -999,7 +999,7 @@ ON CONFLICT (slug) DO NOTHING;
 CREATE TABLE IF NOT EXISTS channel_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  channel TEXT NOT NULL CHECK (channel IN ('telegram', 'whatsapp', 'max', 'avito', 'instagram')),
+  channel TEXT NOT NULL CHECK (channel IN ('telegram', 'whatsapp', 'max', 'avito', 'instagram', 'webchat')),
   label TEXT NOT NULL,
   -- Идентификатор на стороне канала: @username, номер телефона, id профиля.
   external_id TEXT NOT NULL,

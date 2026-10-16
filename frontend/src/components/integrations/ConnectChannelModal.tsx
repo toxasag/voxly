@@ -27,6 +27,7 @@ const IDENTIFIER_HINTS: Record<ChannelSlug, { label: string; placeholder: string
   max: { label: "Идентификатор бота MAX", placeholder: "@my_company" },
   avito: { label: "Идентификатор профиля Avito", placeholder: "12345678" },
   instagram: { label: "Имя аккаунта", placeholder: "@my_company" },
+  webchat: { label: "Домен или название сайта", placeholder: "example.com" },
 };
 
 interface ConnectChannelModalProps {

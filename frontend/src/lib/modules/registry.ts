@@ -3,6 +3,7 @@ import {
   Hash,
   Instagram,
   MessageCircle,
+  MessageSquareText,
   Receipt,
   Send,
   Store,
@@ -77,6 +78,13 @@ const CHANNEL_REGISTRY: Record<ChannelSlug, ModuleRegistryEntry> = {
     label: "Instagram",
     href: "/integrations/instagram",
     icon: Instagram,
+    permission: "tenant:admin",
+  },
+  webchat: {
+    slug: "webchat",
+    label: "Онлайн-чат",
+    href: "/integrations/webchat",
+    icon: MessageSquareText,
     permission: "tenant:admin",
   },
 };

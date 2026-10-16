@@ -21,7 +21,7 @@ export type PlatformRole = "platform_owner";
  */
 export const BASE_MODULE_SLUG = "core_crm";
 
-export const CHANNEL_SLUGS = ["telegram", "whatsapp", "max", "avito", "instagram"] as const;
+export const CHANNEL_SLUGS = ["telegram", "whatsapp", "max", "avito", "instagram", "webchat"] as const;
 
 export type ChannelSlug = (typeof CHANNEL_SLUGS)[number];
 

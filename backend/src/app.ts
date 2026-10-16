@@ -15,12 +15,15 @@ import invoiceRoutes from "./modules/finance/invoices.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
+import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import adminTenantRoutes from "./modules/admin/admin-tenants.routes.js";
 import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
+import { onDealWon } from "./modules/crm/deals/deals.service.js";
+import { DealLearningService } from "./modules/ai/deal-learning.service.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import fastify from "fastify";
@@ -149,6 +152,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // каналов нет двухшагового входа с кодом и облачным паролем.
   await app.register(telegramIntegrationRoutes, { prefix: "/api/v1/integrations/telegram" });
 
+  // Публичный онлайн-чат на сайте (виджет для клиентов)
+  await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
+
   // AI-агенты и баланс ИИ.
   await app.register(aiRoutes, { prefix: "/api/v1/ai" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
@@ -156,6 +162,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
   await app.register(tenantRoutes, { prefix: "/api/v1/tenant" });
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
+
+  // Автоматический сбор опыта в базу знаний AI при успешном закрытии сделок
+  const dealLearningService = new DealLearningService();
+  onDealWon((payload) => void dealLearningService.harvestWonDeal(payload));
 
   app.get("/health", async (_request, reply) => {
     const dbReachable = await checkConnection();
