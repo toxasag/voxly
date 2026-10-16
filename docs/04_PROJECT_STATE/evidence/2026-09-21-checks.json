@@ -1,0 +1,52 @@
+{
+  "date": "2026-09-21",
+  "seedRepeatUnchanged": true,
+  "syntheticCounts": [
+    "companies|7",
+    "contacts|11",
+    "deals|12",
+    "invoices|1",
+    "pipelines|2",
+    "repairs|1",
+    "users|5"
+  ],
+  "frontend": {
+    "files": 38,
+    "passed": 265
+  },
+  "backend": {
+    "files": 16,
+    "passed": 225
+  },
+  "auditRuntimeTests": 9,
+  "deployMockTests": 5,
+  "apiSmokeAssertions": 37,
+  "productionDeploy": false,
+  "browser": [
+    {
+      "page": "contacts",
+      "width": 768,
+      "scrollWidth": 768,
+      "sidebar": "flex"
+    },
+    {
+      "page": "contact-company-stack",
+      "dialogs": 2,
+      "nestedButtons": 0,
+      "keyboardChildEditorCount": 0
+    },
+    {
+      "page": "billing",
+      "tenantOwnerManualCreditButton": false,
+      "supportExplanation": true,
+      "width": 768,
+      "scrollWidth": 768
+    }
+  ],
+  "limitations": [
+    "Production login unavailable",
+    "Twenty authenticated reference unavailable",
+    "Requested mobile viewport was reset to 450px; not proof of 375px",
+    "Escape synthetic event did not close nested stack; full browser keyboard verification pending"
+  ]
+}

@@ -1,0 +1,88 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - heading "Проверка таблицы записей" [level=1] [ref=e5]
+      - paragraph [ref=e6]: "Кликните в таблицу, затем: ArrowDown/Up — по строкам, Enter — войти в строку, стрелки — по ячейкам (вправо на последней колонке переносит на следующую строку), Enter — редактор, Escape — назад. Первая колонка с непустым значением открывает запись, пустая — редактор. Правую границу заголовка можно тянуть, заголовки со второго — перетаскивать."
+    - generic [ref=e8]:
+      - button "Колонки скрыто 1" [ref=e221]:
+        - text: Колонки
+        - generic [ref=e224]: скрыто 1
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - checkbox "Выбрать все" [ref=e13]
+          - generic [ref=e14]:
+            - button "Имя ▼" [ref=e15]:
+              - generic [ref=e16]: Имя
+              - generic [ref=e17]: ▼
+            - separator [ref=e18]
+          - generic [ref=e19]:
+            - button "Должность ▼" [ref=e27]:
+              - generic [ref=e28]: Должность
+              - generic [ref=e29]: ▼
+            - separator [ref=e30]
+          - generic [ref=e31]:
+            - button "Телефон ▼" [ref=e39]:
+              - generic [ref=e40]: Телефон
+              - generic [ref=e41]: ▼
+            - separator [ref=e42]
+          - generic [ref=e43]:
+            - button "Город ▼" [ref=e51]:
+              - generic [ref=e52]: Город
+              - generic [ref=e53]: ▼
+            - separator [ref=e54]
+        - generic [ref=e56] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e58]
+          - generic [ref=e59]: Запись 1
+          - generic [ref=e63]: Директор
+          - generic [active] [ref=e68]: "+79990000000"
+          - generic [ref=e71]: Москва
+        - generic [ref=e76] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e78]
+          - generic [ref=e79]: Запись 2
+          - generic [ref=e83]: Указать должность
+          - generic [ref=e86]: "+79990000001"
+          - generic [ref=e90]: Казань
+        - generic [ref=e95] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e97]
+          - generic [ref=e98]: Запись 3
+          - generic [ref=e102]: Директор
+          - generic [ref=e106]: "+79990000002"
+          - generic [ref=e110]: Сочи
+        - generic [ref=e115] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e117]
+          - generic [ref=e118]: Указать имя
+          - generic [ref=e121]: Указать должность
+          - generic [ref=e124]: "+79990000003"
+          - generic [ref=e128]: Пермь
+        - generic [ref=e133] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e135]
+          - generic [ref=e136]: Запись 5
+          - generic [ref=e140]: Директор
+          - generic [ref=e144]: "+79990000004"
+          - generic [ref=e148]: Москва
+        - generic [ref=e153] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e155]
+          - generic [ref=e156]: Запись 6
+          - generic [ref=e160]: Указать должность
+          - generic [ref=e163]: "+79990000005"
+          - generic [ref=e167]: Казань
+        - generic [ref=e172] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e174]
+          - generic [ref=e175]: Запись 7
+          - generic [ref=e179]: Директор
+          - generic [ref=e183]: "+79990000006"
+          - generic [ref=e187]: Сочи
+        - generic [ref=e192] [cursor=pointer]:
+          - checkbox "Выбрать строку" [ref=e194]
+          - generic [ref=e195]: Запись 8
+          - generic [ref=e199]: Указать должность
+          - generic [ref=e202]: "+79990000007"
+          - generic [ref=e206]: Пермь
+        - generic [ref=e211]: 8 записей
+    - generic [ref=e218]:
+      - paragraph [ref=e219]: "Последняя открытая запись: row-1"
+      - list [ref=e235]:
+        - listitem [ref=e236]: 18:17:14 открыта запись row-1
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=e230] [cursor=pointer]
+  - alert [ref=e234]

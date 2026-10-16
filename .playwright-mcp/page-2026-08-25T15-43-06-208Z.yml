@@ -1,0 +1,235 @@
+- generic [ref=f6e1]:
+  - generic [ref=f6e2]:
+    - complementary [ref=f6e3]:
+      - generic [ref=f6e4]:
+        - generic [ref=f6e5]: G
+        - generic [ref=f6e7]:
+          - generic [ref=f6e8]: GETVOXLY
+          - generic [ref=f6e9]: Платформа для бизнеса
+      - button "Л Локальный Арендатор local.getvoxly.ru" [ref=f6e103]:
+        - generic [ref=f6e12]: Л
+        - generic [ref=f6e104]:
+          - paragraph [ref=f6e105]: Локальный Арендатор
+          - paragraph [ref=f6e106]: local.getvoxly.ru
+      - navigation [ref=f6e16]:
+        - link "Панель" [ref=f6e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f6e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f6e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f6e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f6e43] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f6e49] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Маркетплейс модулей" [ref=f6e54] [cursor=pointer]:
+          - /url: /marketplace
+      - generic [ref=f6e60]:
+        - link "ЛТ Локальный Тест local@test.dev" [ref=f6e107] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f6e62]: ЛТ
+          - generic [ref=f6e108]:
+            - paragraph [ref=f6e109]: Локальный Тест
+            - paragraph [ref=f6e110]: local@test.dev
+        - button "Выйти" [ref=f6e63]
+      - button [ref=f6e67]
+    - generic [ref=f6e70]:
+      - banner [ref=f6e71]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f6e73]:
+          - generic [ref=f6e77]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f6e78]: ⌘K
+        - generic [ref=f6e79]:
+          - button "Создать" [ref=f6e81]
+          - button "Уведомления" [ref=f6e85]:
+            - generic [ref=f6e89]: "3"
+          - button "Включить тёмную тему" [ref=f6e90]
+      - main [ref=f6e93]:
+        - generic [ref=f6e111]:
+          - generic [ref=f6e112]:
+            - generic [ref=f6e113]:
+              - heading "Контакты" [level=1] [ref=f6e114]
+              - paragraph [ref=f6e115]: 5 контактов · страница 1 из 1
+            - button "Создать контакт" [ref=f6e117]
+          - generic [ref=f6e119]:
+            - searchbox "Поиск контактов" [ref=f6e124]
+            - generic [ref=f6e125]:
+              - button "Все" [pressed] [ref=f6e126]
+              - button "Telegram" [ref=f6e127]
+              - button "WhatsApp" [ref=f6e128]
+              - button "RuMAX" [ref=f6e129]
+              - button "Телефон" [ref=f6e130]
+              - button "E-mail" [ref=f6e131]
+          - generic [ref=f6e134]:
+            - button "Колонки" [ref=f6e136]
+            - generic [active] [ref=f6e140]:
+              - generic [ref=f6e141]:
+                - generic [ref=f6e142]:
+                  - button "Имя ▼" [ref=f6e143]:
+                    - generic [ref=f6e144]: Имя
+                    - generic [ref=f6e145]: ▼
+                  - separator [ref=f6e146]
+                - generic [ref=f6e147]:
+                  - button "Должность ▼" [ref=f6e155]:
+                    - generic [ref=f6e156]: Должность
+                    - generic [ref=f6e157]: ▼
+                  - separator [ref=f6e158]
+                - generic [ref=f6e159]:
+                  - button "Телефон ▼" [ref=f6e167]:
+                    - generic [ref=f6e168]: Телефон
+                    - generic [ref=f6e169]: ▼
+                  - separator [ref=f6e170]
+                - generic [ref=f6e171]:
+                  - button "E-mail ▼" [ref=f6e179]:
+                    - generic [ref=f6e180]: E-mail
+                    - generic [ref=f6e181]: ▼
+                  - separator [ref=f6e182]
+                - generic [ref=f6e183]:
+                  - button "Компания ▼" [ref=f6e191]:
+                    - generic [ref=f6e192]: Компания
+                    - generic [ref=f6e193]: ▼
+                  - separator [ref=f6e194]
+                - generic [ref=f6e195]:
+                  - button "Канал ▼" [ref=f6e203]:
+                    - generic [ref=f6e204]: Канал
+                    - generic [ref=f6e205]: ▼
+                  - separator [ref=f6e206]
+                - generic [ref=f6e207]:
+                  - button "Сделок ▼" [ref=f6e215]:
+                    - generic [ref=f6e216]: Сделок
+                    - generic [ref=f6e217]: ▼
+                  - separator [ref=f6e218]
+                - generic [ref=f6e219]:
+                  - button "Создан ▼" [ref=f6e227]:
+                    - generic [ref=f6e228]: Создан
+                    - generic [ref=f6e229]: ▼
+                  - separator [ref=f6e230]
+              - generic [ref=f6e232] [cursor=pointer]:
+                - generic [ref=f6e235]:
+                  - generic [ref=f6e236]: ДО
+                  - generic [ref=f6e238]: Дмитрий Орлов
+                - generic [ref=f6e239]: Указать должность
+                - generic [ref=f6e242]: "+79991000004"
+                - generic [ref=f6e246]: дмитрий@example.ru
+                - generic [ref=f6e250]: ТехноПром
+                - generic [ref=f6e260]: telegram
+                - generic [ref=f6e264]: "1"
+                - generic "25 августа 2026 г." [ref=f6e271]: 8 мин
+              - generic [ref=f6e273] [cursor=pointer]:
+                - generic [ref=f6e276]:
+                  - generic [ref=f6e277]: МК
+                  - generic [ref=f6e279]: Мария Кузнецова
+                - generic [ref=f6e280]: Финансовый директор
+                - generic [ref=f6e284]: "+79991000003"
+                - generic [ref=f6e288]: Указать e-mail
+                - generic [ref=f6e291]: Ромашка
+                - generic [ref=f6e301]: email
+                - generic [ref=f6e305]: "1"
+                - generic "25 августа 2026 г." [ref=f6e312]: 8 мин
+              - generic [ref=f6e314] [cursor=pointer]:
+                - generic [ref=f6e317]:
+                  - generic [ref=f6e318]: ПИ
+                  - generic [ref=f6e320]: Пётр Иванов
+                - generic [ref=f6e321]: Закупщик
+                - generic [ref=f6e325]: "+79991000002"
+                - generic [ref=f6e329]: пётр@example.ru
+                - generic [ref=f6e333]: СтройГрад
+                - generic [ref=f6e343]: phone
+                - generic [ref=f6e347]: "1"
+                - generic "25 августа 2026 г." [ref=f6e354]: 8 мин
+              - generic [ref=f6e356] [cursor=pointer]:
+                - generic [ref=f6e359]:
+                  - generic [ref=f6e360]: АС
+                  - generic [ref=f6e362]: Анна Смирнова
+                - generic [ref=f6e363]: Указать должность
+                - generic [ref=f6e366]: "+79991000001"
+                - generic [ref=f6e370]: Указать e-mail
+                - generic [ref=f6e373]: ТехноПром
+                - generic [ref=f6e383]: whatsapp
+                - generic [ref=f6e387]: "1"
+                - generic "25 августа 2026 г." [ref=f6e394]: 8 мин
+              - generic [ref=f6e396] [cursor=pointer]:
+                - generic [ref=f6e399]:
+                  - generic [ref=f6e400]: СВ
+                  - generic [ref=f6e402]: Сергей Волков
+                - generic [ref=f6e403]: Технический директор
+                - generic [ref=f6e407]: "+79991000000"
+                - generic [ref=f6e411]: сергей@example.ru
+                - generic [ref=f6e415]: Ромашка
+                - generic [ref=f6e425]: telegram
+                - generic [ref=f6e429]: "2"
+                - generic "25 августа 2026 г." [ref=f6e436]: 8 мин
+          - 'dialog "Карточка контакта: Дмитрий Орлов" [ref=f6e438]':
+            - generic [ref=f6e439]:
+              - generic [ref=f6e440]:
+                - generic [ref=f6e441]:
+                  - generic [ref=f6e442]: ДО
+                  - generic [ref=f6e444]:
+                    - heading "Дмитрий Орлов" [level=2] [ref=f6e445]
+                    - paragraph [ref=f6e446]: Добавлено 8 мин
+                - generic [ref=f6e447]:
+                  - button "Все поля" [ref=f6e448]
+                  - button "Удалить запись" [ref=f6e449]
+                  - button "Закрыть панель" [ref=f6e453]
+              - generic [ref=f6e457]:
+                - button "Главная" [ref=f6e458]
+                - button "Заметки" [ref=f6e459]
+              - generic [ref=f6e461]:
+                - generic [ref=f6e462]:
+                  - button "Общее" [expanded] [ref=f6e463]
+                  - generic [ref=f6e466]:
+                    - generic [ref=f6e467]:
+                      - generic [ref=f6e468]: Эл. почта
+                      - button [ref=f6e473]:
+                        - link "дмитрий@example.ru" [ref=f6e475] [cursor=pointer]:
+                          - /url: mailto:дмитрий@example.ru
+                    - generic [ref=f6e481]:
+                      - generic [ref=f6e482]: Телефон
+                      - button [ref=f6e486]:
+                        - link "+79991000004" [ref=f6e488] [cursor=pointer]:
+                          - /url: tel:+79991000004
+                    - generic [ref=f6e494]:
+                      - generic [ref=f6e495]: Telegram
+                      - button "Telegram" [ref=f6e499]
+                    - generic [ref=f6e500]:
+                      - generic [ref=f6e501]: WhatsApp
+                      - button "WhatsApp" [ref=f6e505]
+                    - generic [ref=f6e506]:
+                      - generic [ref=f6e507]: Канал
+                      - button "telegram" [ref=f6e515]
+                - generic [ref=f6e518]:
+                  - button "Работа" [expanded] [ref=f6e519]
+                  - generic [ref=f6e522]:
+                    - generic [ref=f6e523]:
+                      - generic [ref=f6e524]: Компания
+                      - button "ТехноПром" [ref=f6e530]
+                    - generic [ref=f6e539]:
+                      - generic [ref=f6e540]: Должность
+                      - button "Должность" [ref=f6e545]
+                - generic [ref=f6e546]:
+                  - button "Социальные сети" [expanded] [ref=f6e547]
+                  - generic [ref=f6e551]:
+                    - generic [ref=f6e552]: LinkedIn
+                    - button "LinkedIn" [ref=f6e558]
+                - generic [ref=f6e559]:
+                  - button "Система" [expanded] [ref=f6e560]
+                  - generic [ref=f6e563]:
+                    - generic [ref=f6e564]:
+                      - generic [ref=f6e565]: Создан
+                      - button "8 мин" [disabled] [ref=f6e571]
+                    - generic [ref=f6e573]:
+                      - generic [ref=f6e574]: Создал
+                      - button "Локальный Тест" [disabled] [ref=f6e580]
+                - button "Ещё" [ref=f6e583]
+                - generic [ref=f6e586]:
+                  - generic [ref=f6e587]: Компания
+                  - generic [ref=f6e589]: ТехноПром
+                - generic [ref=f6e597]:
+                  - generic [ref=f6e598]:
+                    - generic [ref=f6e599]: Сделки
+                    - generic [ref=f6e600]: "1"
+                  - generic [ref=f6e601]: 1 связанных сделок
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=f6e613] [cursor=pointer]
+  - alert [ref=f6e617]

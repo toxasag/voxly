@@ -1,0 +1,68 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - generic [ref=f3e3]:
+      - banner [ref=f3e4]:
+        - generic [ref=f3e5]: G
+        - generic [ref=f3e8]:
+          - button [ref=f3e10]
+          - button "Уведомления" [ref=f3e13]:
+            - generic [ref=f3e17]: "3"
+          - button "Включить тёмную тему" [ref=f3e18]
+      - main [ref=f3e21]:
+        - generic [ref=f3e22]:
+          - link "?" [ref=f3e23] [cursor=pointer]:
+            - /url: /settings/profile
+            - generic:
+              - paragraph
+              - paragraph
+          - generic [ref=f3e25]:
+            - heading "Рабочее пространство" [level=2] [ref=f3e26]
+            - generic [ref=f3e27]:
+              - link "Панель" [ref=f3e28] [cursor=pointer]:
+                - /url: /dashboard
+              - link "Аналитика" [ref=f3e35] [cursor=pointer]:
+                - /url: /analytics
+              - link "Сделки" [ref=f3e39] [cursor=pointer]:
+                - /url: /crm/deals
+              - link "Контакты" [ref=f3e46] [cursor=pointer]:
+                - /url: /crm/contacts
+              - link "Компании" [ref=f3e53] [cursor=pointer]:
+                - /url: /crm/companies
+              - link "Задачи" [ref=f3e59] [cursor=pointer]:
+                - /url: /crm/tasks
+              - link "Маркетплейс модулей" [ref=f3e64] [cursor=pointer]:
+                - /url: /marketplace
+          - generic [ref=f3e69]:
+            - heading "Компания" [level=2] [ref=f3e70]
+            - generic [ref=f3e71]:
+              - link "Мой профиль Личные данные, пароль, каналы" [ref=f3e72] [cursor=pointer]:
+                - /url: /settings/profile
+                - generic [ref=f3e77]:
+                  - generic [ref=f3e78]: Мой профиль
+                  - generic [ref=f3e79]: Личные данные, пароль, каналы
+              - link "Сотрудники Приглашения, роли, доступ" [ref=f3e80] [cursor=pointer]:
+                - /url: /settings/team
+                - generic [ref=f3e86]:
+                  - generic [ref=f3e87]: Сотрудники
+                  - generic [ref=f3e88]: Приглашения, роли, доступ
+              - link "Тариф и оплата Подписка и детализация счёта" [ref=f3e89] [cursor=pointer]:
+                - /url: /settings/billing
+                - generic [ref=f3e92]:
+                  - generic [ref=f3e93]: Тариф и оплата
+                  - generic [ref=f3e94]: Подписка и детализация счёта
+              - link "Настройки Параметры рабочего пространства" [ref=f3e95] [cursor=pointer]:
+                - /url: /settings
+                - generic [ref=f3e99]:
+                  - generic [ref=f3e100]: Настройки
+                  - generic [ref=f3e101]: Параметры рабочего пространства
+          - generic [ref=f3e103]:
+            - link "Интеграции" [ref=f3e104] [cursor=pointer]:
+              - /url: /integrations
+            - button "Выйти" [ref=f3e107]
+    - navigation "Основная навигация" [ref=f3e111]:
+      - link "Панель" [ref=f3e112] [cursor=pointer]:
+        - /url: /dashboard
+      - button "Поиск" [ref=f3e118]
+      - link "Меню" [ref=f3e122] [cursor=pointer]:
+        - /url: /menu
+  - region "Notifications alt+T"

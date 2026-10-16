@@ -1,0 +1,53 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - banner [ref=f1e4]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f1e6]:
+          - generic [ref=f1e10]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f1e11]: ⌘K
+        - generic [ref=f1e12]:
+          - button [ref=f1e14]
+          - button "Уведомления" [ref=f1e17]:
+            - generic [ref=f1e21]: "3"
+          - button "Включить тёмную тему" [ref=f1e22]
+      - main [ref=f1e25]:
+        - generic [ref=f1e26]:
+          - generic [ref=f1e27]:
+            - heading "С возвращением," [level=1] [ref=f1e28]
+            - paragraph [ref=f1e29]: — тариф
+          - generic [ref=f1e30]:
+            - generic [ref=f1e31]:
+              - generic [ref=f1e32]: Всего сделок
+              - generic [ref=f1e40]:
+                - generic [ref=f1e41]: "24"
+                - generic [ref=f1e42]: +12%
+            - generic [ref=f1e46]:
+              - generic [ref=f1e47]: Активные контакты
+              - generic [ref=f1e55]:
+                - generic [ref=f1e56]: "148"
+                - generic [ref=f1e57]: +8%
+            - generic [ref=f1e61]:
+              - generic [ref=f1e62]: Компании
+              - generic [ref=f1e69]:
+                - generic [ref=f1e70]: "32"
+                - generic [ref=f1e71]: +3%
+            - generic [ref=f1e75]:
+              - generic [ref=f1e76]: Открытые задачи
+              - generic [ref=f1e82]:
+                - generic [ref=f1e83]: "17"
+                - generic [ref=f1e84]: "-5%"
+          - generic [ref=f1e88]:
+            - generic [ref=f1e89]:
+              - heading "Последние сделки" [level=2] [ref=f1e90]
+              - paragraph [ref=f1e91]: Здесь появится воронка сделок.
+            - generic [ref=f1e92]:
+              - heading "Ближайшие задачи" [level=2] [ref=f1e93]
+              - paragraph [ref=f1e94]: Здесь появится список ваших задач.
+          - heading "Установленные модули" [level=2] [ref=f1e102]
+    - navigation "Основная навигация" [ref=f1e103]:
+      - link "Панель" [ref=f1e104] [cursor=pointer]:
+        - /url: /dashboard
+      - button "Поиск" [ref=f1e110]
+      - link "Меню" [ref=f1e114] [cursor=pointer]:
+        - /url: /menu
+  - region "Notifications alt+T"

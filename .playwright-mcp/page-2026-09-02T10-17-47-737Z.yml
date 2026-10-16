@@ -1,0 +1,21 @@
+- generic [active] [ref=f8e1]:
+  - generic [ref=f8e2]:
+    - generic [ref=f8e3]:
+      - banner [ref=f8e4]:
+        - generic [ref=f8e5]: G
+        - generic [ref=f8e8]:
+          - button [ref=f8e10]
+          - button "Уведомления" [ref=f8e13]:
+            - generic [ref=f8e17]: "3"
+          - button "Включить тёмную тему" [ref=f8e18]
+      - main [ref=f8e21]:
+        - generic [ref=f8e22]:
+          - heading "Нет доступа к контактам" [level=3] [ref=f8e29]
+          - paragraph [ref=f8e30]: У вашей роли нет права contacts:read. Запросите доступ у администратора рабочего пространства.
+    - navigation "Основная навигация" [ref=f8e31]:
+      - link "Панель" [ref=f8e32] [cursor=pointer]:
+        - /url: /dashboard
+      - button "Поиск" [ref=f8e38]
+      - link "Меню" [ref=f8e42] [cursor=pointer]:
+        - /url: /menu
+  - region "Notifications alt+T"

@@ -1,0 +1,50 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e2]:
+    - complementary [ref=f4e3]:
+      - generic [ref=f4e4]:
+        - generic [ref=f4e5]: G
+        - generic [ref=f4e7]:
+          - generic [ref=f4e8]: GETVOXLY
+          - generic [ref=f4e9]: Платформа для бизнеса
+      - button [ref=f4e11]:
+        - generic:
+          - paragraph
+          - paragraph
+      - navigation [ref=f4e16]:
+        - link "Панель" [ref=f4e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f4e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f4e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f4e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f4e43] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f4e49] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Маркетплейс модулей" [ref=f4e54] [cursor=pointer]:
+          - /url: /marketplace
+      - generic [ref=f4e60]:
+        - link "?" [ref=f4e61] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic:
+            - paragraph
+            - paragraph
+        - button "Выйти" [ref=f4e63]
+      - button [ref=f4e67]
+    - generic [ref=f4e70]:
+      - banner [ref=f4e71]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f4e73]:
+          - generic [ref=f4e77]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f4e78]: ⌘K
+        - generic [ref=f4e79]:
+          - button "Создать" [ref=f4e81]
+          - button "Уведомления" [ref=f4e85]:
+            - generic [ref=f4e89]: "3"
+          - button "Включить тёмную тему" [ref=f4e90]
+      - main [ref=f4e93]:
+        - generic [ref=f4e94]:
+          - heading "Нет доступа к контактам" [level=3] [ref=f4e101]
+          - paragraph [ref=f4e102]: У вашей роли нет права contacts:read. Запросите доступ у администратора рабочего пространства.
+  - region "Notifications alt+T"

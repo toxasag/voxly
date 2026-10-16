@@ -1,0 +1,38 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - heading "GETVOXLY" [level=1] [ref=f3e5]
+      - paragraph [ref=f3e6]: Вход в рабочее пространство
+    - generic [ref=f3e8]:
+      - generic [ref=f3e9]:
+        - generic [ref=f3e10]: E-mail
+        - textbox "E-mail" [ref=f3e12]:
+          - /placeholder: you@company.ru
+          - text: owner@localco.test
+      - generic [ref=f3e13]:
+        - generic [ref=f3e14]: Пароль
+        - generic [ref=f3e15]:
+          - textbox "Пароль" [ref=f3e16]:
+            - /placeholder: ••••••••
+            - text: local-password-1
+          - button "Показать пароль" [ref=f3e17]
+      - group "Доставка одноразового кода" [ref=f3e21]:
+        - generic [ref=f3e23]:
+          - button "Telegram" [ref=f3e24]
+          - button "MAX" [ref=f3e28]
+        - paragraph [ref=f3e31]: Код придёт в Telegram. Если бот ещё не привязан, появится ссылка на подключение.
+      - button "Получить код" [ref=f3e32]
+      - button "Войти" [disabled] [ref=f3e35]
+      - paragraph [ref=f3e38]:
+        - button "Забыли пароль?" [ref=f3e39]
+      - paragraph [ref=f3e40]:
+        - text: Нет аккаунта?
+        - link "Зарегистрировать компанию" [ref=f3e41] [cursor=pointer]:
+          - /url: /register
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f3e54]:
+        - button "Close toast" [ref=f3e55] [cursor=pointer]
+        - generic [ref=f3e62]: Telegram-бот не настроен. Обратитесь к администратору платформы.
+  - button "Open Next.js Dev Tools" [ref=f3e47] [cursor=pointer]
+  - alert [ref=f3e51]

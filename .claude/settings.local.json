@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lsof -nP -iTCP -sTCP:LISTEN)",
+      "Bash(command -v docker)",
+      "Bash(command -v chromium-cli)",
+      "Bash(command -v node)",
+      "Bash(docker version *)",
+      "Bash(git -C /Users/antonsagajdak/Desktop/GETVOXLY rev-parse --is-inside-work-tree)",
+      "Bash(command -v psql)",
+      "Bash(command -v colima)",
+      "Bash(psql -X -h 127.0.0.1 -d postgres -Atc \"SELECT version\\(\\); SELECT name, default_version, installed_version FROM pg_available_extensions WHERE name IN \\('vector','pgcrypto','uuid-ossp'\\); SELECT datname FROM pg_database WHERE datname LIKE 'getvoxly%' ORDER BY datname;\")",
+      "Bash(node /Users/antonsagajdak/Desktop/GETVOXLY/backend/scripts/audit-db.mjs)",
+      "Bash(lsof -nP -iTCP:4100 -sTCP:LISTEN)",
+      "Bash(lsof -nP -iTCP:3100 -sTCP:LISTEN)"
+    ]
+  }
+}

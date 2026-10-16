@@ -1,0 +1,4 @@
+[    1646ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://getvoxly.ru/favicon.ico:0
+[    2108ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://api.getvoxly.ru/api/v1/profile:0
+[    2113ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://api.getvoxly.ru/auth/refresh:0
+[    2206ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://api.getvoxly.ru/auth/refresh:0

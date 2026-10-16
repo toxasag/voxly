@@ -1,0 +1,17 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - generic [ref=f3e3]:
+      - paragraph [ref=f3e5]: 1 234 567 ₽
+      - paragraph [ref=f3e7]: 7 654 321 ₽
+      - paragraph [ref=f3e9]: "-999 999 ₽"
+    - generic [ref=f3e10]:
+      - generic [ref=f3e11]: боковая колонка
+      - generic [ref=f3e12]: основной контент
+    - generic [ref=f3e14]:
+      - generic [ref=f3e15]: Intake
+      - generic [ref=f3e21]: Diagnostics
+      - generic [ref=f3e27]: Approval
+      - generic [ref=f3e33]: In Progress
+      - generic [ref=f3e39]: Ready
+      - generic [ref=f3e45]: Issued
+  - region "Notifications alt+T"

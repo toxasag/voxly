@@ -1,0 +1,23 @@
+[     715ms] [VERBOSE] [DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o @ https://voxly.getvoxly.ru/settings/profile:0
+[  120144ms] NotFoundError: Failed to execute 'setPointerCapture' on 'Element': No active pointer with the given id is found.
+    at https://voxly.getvoxly.ru/_next/static/chunks/app/(dashboard)/settings/profile/page-4548b589a600315d.js:1:10927
+    at i8 (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:135369)
+    at https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:141455
+    at nz (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:19203)
+    at sn (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:136602)
+    at cc (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163604)
+    at ci (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163426)
+    at eval (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:25:6)
+    at async eval (eval at evaluate (:311:30), <anonymous>:4:30)
+    at async <anonymous>:337:30
+[  120468ms] NotFoundError: Failed to execute 'setPointerCapture' on 'Element': No active pointer with the given id is found.
+    at https://voxly.getvoxly.ru/_next/static/chunks/app/(dashboard)/settings/profile/page-4548b589a600315d.js:1:10927
+    at i8 (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:135369)
+    at https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:141455
+    at nz (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:19203)
+    at sn (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:136602)
+    at cc (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163604)
+    at ci (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163426)
+    at eval (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:37:6)
+    at async eval (eval at evaluate (:311:30), <anonymous>:4:30)
+    at async <anonymous>:337:30

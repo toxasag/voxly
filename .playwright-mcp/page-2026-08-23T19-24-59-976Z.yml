@@ -1,0 +1,107 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]: G
+        - generic [ref=e7]:
+          - generic [ref=e8]: GETVOXLY
+          - generic [ref=e9]: Платформа для бизнеса
+      - button "V Voxly Platform voxly.getvoxly.ru" [ref=e100]:
+        - generic [ref=e12]: V
+        - generic [ref=e101]:
+          - paragraph [ref=e102]: Voxly Platform
+          - paragraph [ref=e103]: voxly.getvoxly.ru
+      - navigation [ref=e16]:
+        - link "Панель" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=e42] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=e48] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Сервисный центр" [ref=e104] [cursor=pointer]:
+          - /url: /repairs
+        - link "Финансы" [ref=e108] [cursor=pointer]:
+          - /url: /finance
+        - link "AI-боты" [ref=e113] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=e53] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=e118]: Каналы связи
+        - link "Telegram" [ref=e122] [cursor=pointer]:
+          - /url: /integrations/telegram
+        - link "WhatsApp" [ref=e128] [cursor=pointer]:
+          - /url: /integrations/whatsapp
+        - link "MAX" [ref=e132] [cursor=pointer]:
+          - /url: /integrations/max
+        - link "Avito" [ref=e137] [cursor=pointer]:
+          - /url: /integrations/avito
+        - link "Instagram" [ref=e144] [cursor=pointer]:
+          - /url: /integrations/instagram
+        - generic [ref=e149]: Управление платформой
+        - link "Все компании" [ref=e154] [cursor=pointer]:
+          - /url: /admin/tenants
+        - link "Тарифы и биллинг" [ref=e160] [cursor=pointer]:
+          - /url: /admin/billing
+        - link "Метрики системы" [ref=e164] [cursor=pointer]:
+          - /url: /admin/metrics
+        - link "Системные логи" [ref=e168] [cursor=pointer]:
+          - /url: /admin/logs
+      - generic [ref=e59]:
+        - link [ref=e173] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=e174]:
+            - paragraph [ref=e175]: Антон
+            - paragraph [ref=e176]: anton@genadich.com
+        - button "Выйти" [ref=e62]
+      - button [ref=e66]
+    - generic [ref=e69]:
+      - banner [ref=e70]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=e72]:
+          - generic [ref=e76]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=e77]: ⌘K
+        - generic [ref=e78]:
+          - button "Создать" [ref=e80]
+          - button "Уведомления" [ref=e84]:
+            - generic [ref=e88]: "3"
+          - button "Включить тёмную тему" [ref=e89]
+      - main [ref=e92]:
+        - generic [ref=e177]:
+          - generic [ref=e178]:
+            - generic [ref=e184]:
+              - generic [ref=e185]:
+                - heading "Telegram" [level=1] [ref=e186]
+                - generic [ref=e187]: Активен
+              - paragraph [ref=e191]: 0 из 1 аккаунт по тарифу
+            - button "Подключить аккаунт" [ref=e192]
+          - generic [ref=e195]:
+            - heading "Нет подключённых аккаунтов Telegram" [level=3] [ref=e199]
+            - paragraph [ref=e200]: Подключите личный аккаунт по коду из приложения Telegram, чтобы переписка с клиентами попадала в CRM.
+            - button "Подключить аккаунт" [ref=e202]
+          - dialog [ref=e203]:
+            - generic [ref=e204]:
+              - generic [ref=e205]:
+                - generic [ref=e211]:
+                  - heading "Подключить аккаунт Telegram" [level=2] [ref=e212]
+                  - paragraph [ref=e213]: Шаг 1 из 2 — номер телефона
+                - button "Закрыть" [ref=e214]
+              - generic [ref=e218]:
+                - generic [ref=e219]:
+                  - generic [ref=e220]: Название подключения
+                  - textbox "Название подключения" [active] [ref=e221]:
+                    - /placeholder: Рабочий номер
+                - generic [ref=e222]:
+                  - generic [ref=e223]: Номер телефона аккаунта
+                  - textbox "Номер телефона аккаунта" [ref=e225]:
+                    - /placeholder: +7 900 000-00-00
+                - paragraph [ref=e226]: CRM получит доступ к переписке этого аккаунта, как обычный клиент Telegram. Сессия хранится в зашифрованном виде и отзывается в настройках Telegram в любой момент.
+                - generic [ref=e227]:
+                  - button "Отмена" [ref=e228]
+                  - button "Получить код" [ref=e229]
+  - region "Notifications alt+T"
+  - alert [ref=e99]

@@ -1,0 +1,36 @@
+[     688ms] [VERBOSE] [DOM] Password forms should have (optionally hidden) username fields for accessibility: (More info: https://goo.gl/9p2vKq) %o @ https://voxly.getvoxly.ru/settings/profile:0
+[   44926ms] NotFoundError: Failed to execute 'setPointerCapture' on 'Element': No active pointer with the given id is found.
+    at https://voxly.getvoxly.ru/_next/static/chunks/app/(dashboard)/settings/profile/page-3e4035b221d5a962.js:1:11063
+    at i8 (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:135369)
+    at https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:141455
+    at nz (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:19203)
+    at sn (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:136602)
+    at cc (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163604)
+    at ci (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163426)
+    at drag (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:25:8)
+    at eval (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:35:9)
+    at eval (eval at evaluate (:311:30), <anonymous>:4:50)
+[   45070ms] NotFoundError: Failed to execute 'setPointerCapture' on 'Element': No active pointer with the given id is found.
+    at https://voxly.getvoxly.ru/_next/static/chunks/app/(dashboard)/settings/profile/page-3e4035b221d5a962.js:1:11063
+    at i8 (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:135369)
+    at https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:141455
+    at nz (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:19203)
+    at sn (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:136602)
+    at cc (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163604)
+    at ci (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163426)
+    at drag (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:25:8)
+    at eval (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:36:9)
+    at async eval (eval at evaluate (:311:30), <anonymous>:4:30)
+[   45313ms] NotFoundError: Failed to execute 'setPointerCapture' on 'Element': No active pointer with the given id is found.
+    at https://voxly.getvoxly.ru/_next/static/chunks/app/(dashboard)/settings/profile/page-3e4035b221d5a962.js:1:11063
+    at i8 (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:135369)
+    at https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:141455
+    at nz (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:19203)
+    at sn (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:136602)
+    at cc (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163604)
+    at ci (https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:1:163426)
+    at drag (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:25:8)
+    at eval (eval at <anonymous> (eval at evaluate (:311:30)), <anonymous>:38:9)
+    at async eval (eval at evaluate (:311:30), <anonymous>:4:30)
+[  100919ms] [ERROR] Unable to preventDefault inside passive event listener invocation. @ https://voxly.getvoxly.ru/_next/static/chunks/4bd1b696-100b9d70ed4e49c1.js:0
+[  121833ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://api.getvoxly.ru/api/v1/tenant/profile:0

@@ -1,0 +1,109 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary [ref=f2e3]:
+      - generic [ref=f2e4]:
+        - generic [ref=f2e5]: G
+        - generic [ref=f2e7]:
+          - generic [ref=f2e8]: GETVOXLY
+          - generic [ref=f2e9]: Платформа для бизнеса
+      - button "V Voxly Platform voxly.getvoxly.ru" [ref=f2e126]:
+        - generic [ref=f2e12]: V
+        - generic [ref=f2e127]:
+          - paragraph [ref=f2e128]: Voxly Platform
+          - paragraph [ref=f2e129]: voxly.getvoxly.ru
+      - navigation [ref=f2e16]:
+        - link "Панель" [ref=f2e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f2e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f2e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f2e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f2e42] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f2e48] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Сервисный центр" [ref=f2e130] [cursor=pointer]:
+          - /url: /repairs
+        - link "Финансы" [ref=f2e134] [cursor=pointer]:
+          - /url: /finance
+        - link "AI-боты" [ref=f2e139] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=f2e53] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=f2e144]: Каналы связи
+        - link "Telegram" [ref=f2e148] [cursor=pointer]:
+          - /url: /integrations/telegram
+        - link "WhatsApp" [ref=f2e154] [cursor=pointer]:
+          - /url: /integrations/whatsapp
+        - link "MAX" [ref=f2e158] [cursor=pointer]:
+          - /url: /integrations/max
+        - link "Avito" [ref=f2e163] [cursor=pointer]:
+          - /url: /integrations/avito
+        - link "Instagram" [ref=f2e170] [cursor=pointer]:
+          - /url: /integrations/instagram
+        - generic [ref=f2e175]: Управление платформой
+        - link "Все компании" [ref=f2e180] [cursor=pointer]:
+          - /url: /admin/tenants
+        - link "Тарифы и биллинг" [ref=f2e186] [cursor=pointer]:
+          - /url: /admin/billing
+        - link "Метрики системы" [ref=f2e190] [cursor=pointer]:
+          - /url: /admin/metrics
+        - link "Системные логи" [ref=f2e194] [cursor=pointer]:
+          - /url: /admin/logs
+      - generic [ref=f2e59]:
+        - link [ref=f2e199] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f2e200]:
+            - paragraph [ref=f2e201]: Антон
+            - paragraph [ref=f2e202]: anton@genadich.com
+        - button "Выйти" [ref=f2e62]
+      - button [ref=f2e66]
+    - generic [ref=f2e69]:
+      - banner [ref=f2e70]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f2e72]:
+          - generic [ref=f2e76]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f2e77]: ⌘K
+        - generic [ref=f2e78]:
+          - button "Создать" [ref=f2e80]
+          - button "Уведомления" [ref=f2e84]:
+            - generic [ref=f2e88]: "3"
+          - button "Включить тёмную тему" [ref=f2e89]
+      - main [ref=f2e92]:
+        - generic [ref=f2e100]:
+          - generic [ref=f2e101]:
+            - generic [ref=f2e107]:
+              - generic [ref=f2e108]:
+                - heading "Telegram" [level=1] [ref=f2e109]
+                - generic [ref=f2e110]: Активен
+              - paragraph [ref=f2e114]:
+                - text: 1 из 1 аккаунт по тарифу
+                - generic [ref=f2e247]: · 1 в сети
+            - link "Увеличить количество" [ref=f2e248] [cursor=pointer]:
+              - /url: /marketplace
+          - table [ref=f2e252]:
+            - rowgroup [ref=f2e253]:
+              - row [ref=f2e254]:
+                - columnheader "Название" [ref=f2e255]
+                - columnheader "Идентификатор" [ref=f2e256]
+                - columnheader "Статус" [ref=f2e257]
+                - columnheader "Привязан" [ref=f2e258]
+                - columnheader "Действия" [ref=f2e259]
+            - rowgroup [ref=f2e260]:
+              - row [ref=f2e261]:
+                - cell [ref=f2e262]:
+                  - paragraph [ref=f2e263]: "985"
+                - cell "@genadich_agency" [ref=f2e264]
+                - cell "В сети" [ref=f2e265]
+                - cell "23 авг. 2026 г." [ref=f2e267]
+                - cell [ref=f2e268]:
+                  - generic [ref=f2e269]:
+                    - button "Проверить сессию 985" [ref=f2e270]
+                    - button "Удалить 985" [ref=f2e276]
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f2e285]:
+        - button "Close toast" [ref=f2e286] [cursor=pointer]
+        - generic [ref=f2e293]: "«985»: сессия активна"
+  - alert [ref=f2e99]

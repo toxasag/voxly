@@ -1,0 +1,550 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { AuthService } from "./auth.service.js";
+import { AuthSessionService } from "./auth-session.service.js";
+import { PasswordResetService } from "./password-reset.service.js";
+import { InviteService } from "../tenant/invite.service.js";
+import { TelegramService } from "./telegram.service.js";
+import { MaxService } from "../../services/max.service.js";
+import { EmailService } from "../../services/email.service.js";
+import { getEnv } from "../../config/env.js";
+
+const phoneField = z
+  .string()
+  .min(10, "Phone must be at least 10 characters")
+  .max(20, "Phone must be at most 20 characters");
+
+const sendOtpBody = z.object({
+  phone: phoneField,
+});
+
+const verifyOtpBody = z.object({
+  phone: phoneField,
+  code: z.string().length(6, "Code must be exactly 6 digits").regex(/^\d{6}$/, "Code must be digits only"),
+});
+
+const loginBody = z.object({
+  email: z.string().email("Invalid email"),
+  password: z.string().min(1, "Password is required"),
+});
+
+const refreshBody = z.object({
+  refresh_token: z.string().min(1, "Refresh token is required"),
+});
+
+/**
+ * Subdomain label. Must stay in sync with the `tenants_slug_format` CHECK in
+ * schema.sql and with SLUG_PATTERN in auth.service.ts — the value becomes a
+ * hostname, so it is validated at every layer rather than trusted from the UI.
+ */
+const slugField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3, "Минимум 3 символа")
+  .max(63, "Максимум 63 символа")
+  .regex(
+    /^[a-z0-9]([a-z0-9-]{1,61}[a-z0-9])?$/,
+    "Допустимы латиница, цифры и дефис (не в начале и не в конце)",
+  );
+
+/**
+ * Регистрация сведена к минимуму: поддомен, e-mail, пароль, телефон и код из
+ * бота. Название компании и имя владельца больше не спрашиваются — они
+ * выводятся из slug и e-mail и меняются в настройках арендатора.
+ */
+const registerBody = z.object({
+  slug: slugField,
+  email: z.string().trim().toLowerCase().email("Некорректный e-mail"),
+  phone: phoneField,
+  password: z.string().min(8, "Пароль должен быть не короче 8 символов").max(200),
+  session_id: z.string().uuid("Некорректная сессия подтверждения"),
+  code: z.string().length(6, "Код состоит из 6 цифр").regex(/^\d{6}$/, "Только цифры"),
+});
+
+const slugQuery = z.object({ slug: slugField });
+
+const channelField = z.enum(["telegram", "max"], {
+  errorMap: () => ({ message: "Выберите Telegram или MAX" }),
+});
+
+/**
+ * Запрос кода. Для `register` телефон вводит пользователь; для `login` он
+ * неизвестен форме и резолвится по e-mail на сервере, поэтому `phone`
+ * необязателен, а требование «хоть что-то одно» проверяется явно.
+ */
+const requestCodeBody = z
+  .object({
+    purpose: z.enum(["register", "login"]),
+    channel: channelField,
+    phone: z.string().trim().optional(),
+    email: z.string().trim().toLowerCase().email("Некорректный e-mail").optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.purpose === "register") {
+      if (value.phone === undefined || value.phone.replace(/\D/g, "").length < 10) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["phone"],
+          message: "Укажите номер телефона",
+        });
+      }
+      return;
+    }
+
+    if (value.email === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["email"],
+        message: "Укажите e-mail",
+      });
+    }
+  });
+
+const sessionQuery = z.object({ session_id: z.string().uuid() });
+
+/**
+ * Проверка секрета webhook.
+ *
+ * Отсутствие ожидаемого значения трактуется как отказ, а не как «проверка не
+ * требуется»: публичный эндпоинт без секрета позволил бы любому, кто узнает URL,
+ * привязать произвольный аккаунт к сессии подтверждения. Сравнение
+ * constant-time — заголовок подконтролен вызывающему, и посимвольный выход
+ * раскрывал бы секрет по времени ответа.
+ */
+function verifyWebhookSecret(provided: unknown, expected: string | undefined): boolean {
+  if (expected === undefined || expected.length === 0) return false;
+  if (typeof provided !== "string") return false;
+  return AuthService.safeEqual(provided, expected);
+}
+
+/**
+ * Потолок для webhook-ов вместо полного отсутствия лимита.
+ *
+ * Общий лимит (100/мин на IP) для них не годится: платформы повторяют
+ * недоставленное обновление, а MAX отписывает бота после 8 часов неудач, поэтому
+ * троттлинг отключил бы канал. Но и безлимитный публичный обработчик, делающий
+ * записи в БД, оставлять нельзя — берём заведомо больше реального трафика бота
+ * (MAX держит не более 30 rps на весь домен).
+ */
+const WEBHOOK_RATE_LIMIT = { max: 600, timeWindow: "1 minute" } as const;
+
+const loginWithCodeBody = z.object({
+  email: z.string().trim().toLowerCase().email("Некорректный e-mail"),
+  password: z.string().min(1, "Введите пароль"),
+  session_id: z.string().uuid("Некорректная сессия подтверждения"),
+  code: z.string().length(6, "Код состоит из 6 цифр").regex(/^\d{6}$/, "Только цифры"),
+});
+
+/**
+ * Telegram-обновление. Разбирается вручную и мягко: Bot API добавляет поля со
+ * временем, и строгая схема отклоняла бы валидные апдейты, из-за чего
+ * привязка чата просто перестала бы работать.
+ */
+const telegramUpdate = z.object({
+  message: z
+    .object({
+      chat: z.object({ id: z.number() }),
+      from: z.object({ username: z.string().optional() }).optional(),
+      text: z.string().optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Обновление MAX (объект `Update`). Разбирается так же мягко и так же по
+ * минимуму, но структура иная: событие называется `update_type`, отправитель
+ * лежит в `user` (`bot_started`) либо в `message.sender` (`message_created`), а
+ * идентификатор — числовой `user_id`, а не `chat.id`.
+ *
+ * Payload от `bot_started` содержит то, что было после `?start=` в ссылке, —
+ * это основной путь привязки; текст сообщения разбирается дополнительно, потому
+ * что клиент MAX может прислать `/start auth_<token>` обычным сообщением.
+ */
+const maxUpdate = z.object({
+  update_type: z.string().optional(),
+  payload: z.string().optional(),
+  user: z
+    .object({
+      user_id: z.number(),
+      username: z.string().nullish(),
+    })
+    .optional(),
+  message: z
+    .object({
+      sender: z
+        .object({
+          user_id: z.number(),
+          username: z.string().nullish(),
+        })
+        .optional(),
+      body: z.object({ text: z.string().nullish() }).optional(),
+    })
+    .optional(),
+});
+
+const forgotPasswordBody = z.object({
+  email: z.string().trim().toLowerCase().email("Некорректный e-mail"),
+});
+
+const inviteTokenQuery = z.object({
+  token: z.string().min(10, "Некорректная ссылка приглашения").max(512),
+});
+
+const acceptInviteBody = z.object({
+  token: z.string().min(10, "Некорректная ссылка приглашения").max(512),
+  password: z.string().min(8, "Пароль должен быть не короче 8 символов").max(200),
+  phone: z
+    .string()
+    .trim()
+    .refine((value) => value.replace(/\D/g, "").length >= 10, "Укажите корректный телефон"),
+});
+
+const resetPasswordBody = z.object({
+  token: z.string().min(10, "Некорректная ссылка восстановления").max(512),
+  password: z.string().min(8, "Пароль должен быть не короче 8 символов").max(200),
+});
+
+/**
+ * Public auth routes, mounted at /auth by app.ts.
+ *
+ * No authenticate hook here by design: these endpoints mint the credentials
+ * that the protected groups then require.
+ */
+const authRoutes = async (app: FastifyInstance): Promise<void> => {
+  const service = new AuthService(app);
+  const sessions = new AuthSessionService(app);
+  const passwordReset = new PasswordResetService(app);
+  const invites = new InviteService();
+  const telegram = new TelegramService();
+  const max = new MaxService();
+
+  /**
+   * Запрос кода подтверждения через бота.
+   *
+   * Ответ одинаков для известного и неизвестного номера: иначе эндпоинт стал бы
+   * инструментом перебора зарегистрированных пользователей.
+   */
+  app.post(
+    "/code/request",
+    {
+      // Строже общего лимита (100/мин): каждый вызов отправляет сообщение в
+      // Telegram, поэтому эндпоинт иначе стал бы средством спама в чужой чат и
+      // перебора зарегистрированных номеров.
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = requestCodeBody.parse(request.body);
+      const result = await sessions.requestCode(body);
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  /**
+   * Опрос состояния сессии: код мог быть доставлен уже после ответа на
+   * /code/request — в момент, когда пользователь нажал Start в боте.
+   */
+  app.get("/code/status", async (request, reply) => {
+    const { session_id } = sessionQuery.parse(request.query);
+    const result = await sessions.status(session_id);
+    return reply.status(200).send({ data: result });
+  });
+
+  /**
+   * Webhook Telegram. Публичный по необходимости — его вызывает Telegram, — но
+   * защищён секретом из заголовка `X-Telegram-Bot-Api-Secret-Token`: без него
+   * любой, кто узнает URL, мог бы привязать произвольный chat_id к сессии.
+   */
+  app.post("/telegram/webhook", { config: { rateLimit: WEBHOOK_RATE_LIMIT } }, async (request, reply) => {
+    if (
+      !verifyWebhookSecret(
+        request.headers["x-telegram-bot-api-secret-token"],
+        getEnv().TELEGRAM_WEBHOOK_SECRET,
+      )
+    ) {
+      // 401 без подробностей: подсказывать причину постороннему не нужно.
+      return reply.status(401).send({ ok: false });
+    }
+
+    const parsed = telegramUpdate.safeParse(request.body);
+
+    // Telegram повторяет доставку при не-2xx. Некорректный апдейт повторять
+    // бессмысленно, поэтому отвечаем 200 и просто игнорируем его.
+    if (!parsed.success || parsed.data.message === undefined) {
+      return reply.status(200).send({ ok: true });
+    }
+
+    const message = parsed.data.message;
+    const chatId = message.chat.id;
+    const text = message.text ?? "";
+    const startMatch = /^\/start(?:\s+auth_([A-Za-z0-9_-]+))?/.exec(text);
+
+    if (startMatch === null) {
+      return reply.status(200).send({ ok: true });
+    }
+
+    const token = startMatch[1];
+
+    if (token === undefined) {
+      await telegram.sendGreeting(chatId);
+      return reply.status(200).send({ ok: true });
+    }
+
+    const bound = await sessions.bindTelegramChat({
+      token,
+      chatId,
+      ...(message.from?.username !== undefined && { username: message.from.username }),
+    });
+
+    if (!bound.bound) await telegram.sendLinkExpired(chatId);
+
+    return reply.status(200).send({ ok: true });
+  });
+
+  /**
+   * Webhook MAX. Публичный по необходимости — его вызывает платформа, — но
+   * защищён секретом из заголовка `X-Max-Bot-Api-Secret`: без него любой, кто
+   * узнает URL, мог бы привязать произвольный аккаунт к сессии.
+   *
+   * Токен привязки приходит двумя путями: в `payload` события `bot_started`
+   * (переход по deep-link) и в тексте сообщения `/start auth_<token>`, если
+   * клиент отправил команду обычным сообщением.
+   */
+  app.post("/max/webhook", { config: { rateLimit: WEBHOOK_RATE_LIMIT } }, async (request, reply) => {
+    // Секрет обязателен, а не «проверяется, если задан»: пропуск проверки при
+    // пустом значении делал бы публичный эндпоинт открытым для подделки
+    // обновлений. Обязательность гарантируется схемой env (см. superRefine), но
+    // здесь она подтверждается ещё раз — 401 безопаснее, чем молчаливый пропуск.
+    if (!verifyWebhookSecret(request.headers["x-max-bot-api-secret"], getEnv().MAX_WEBHOOK_SECRET)) {
+      // 401 без подробностей: подсказывать причину постороннему не нужно.
+      return reply.status(401).send({ ok: false });
+    }
+
+    const parsed = maxUpdate.safeParse(request.body);
+
+    // MAX повторяет доставку при не-2xx до 10 раз и отписывает бота после 8
+    // часов неудач. Некорректный апдейт повторять бессмысленно, поэтому
+    // отвечаем 200 и просто игнорируем его.
+    if (!parsed.success) return reply.status(200).send({ ok: true });
+
+    const update = parsed.data;
+    const sender = update.user ?? update.message?.sender;
+
+    if (sender === undefined) return reply.status(200).send({ ok: true });
+
+    const maxUserId = String(sender.user_id);
+    const username = sender.username ?? undefined;
+
+    // `payload` события bot_started содержит всё, что стояло после `?start=`.
+    const fromPayload = /^auth_([A-Za-z0-9_-]+)$/.exec(update.payload ?? "")?.[1];
+    const fromText = /^\/start(?:\s+auth_([A-Za-z0-9_-]+))?/.exec(
+      update.message?.body?.text ?? "",
+    );
+
+    const token = fromPayload ?? fromText?.[1];
+
+    if (token === undefined) {
+      // Приветствие только на явный старт, чтобы бот не отвечал на каждое
+      // сообщение в диалоге.
+      if (update.update_type === "bot_started" || fromText !== null) {
+        await max.sendGreeting(maxUserId);
+      }
+      return reply.status(200).send({ ok: true });
+    }
+
+    const bound = await sessions.bindMaxUser({
+      token,
+      maxUserId,
+      ...(username !== undefined && { username }),
+    });
+
+    if (!bound.bound) await max.sendLinkExpired(maxUserId);
+
+    return reply.status(200).send({ ok: true });
+  });
+
+  /**
+   * Вход с обязательным кодом из бота (второй фактор).
+   *
+   * Пароль проверяется первым: код без пароля не должен пускать в систему, а
+   * пароль без кода — тем более.
+   */
+  app.post("/login/verify", async (request, reply) => {
+    const body = loginWithCodeBody.parse(request.body);
+    const result = await service.loginWithPasswordAndCode(sessions, body);
+    return reply.status(200).send({ data: result });
+  });
+
+  app.post("/otp/send", async (request, reply) => {
+    const body = sendOtpBody.parse(request.body);
+    const result = await service.sendOtp(body.phone);
+    return reply.status(200).send({ data: result });
+  });
+
+  app.post("/otp/verify", async (request, reply) => {
+    const body = verifyOtpBody.parse(request.body);
+    const result = await service.verifyOtp(body.phone, body.code);
+    return reply.status(200).send({ data: result });
+  });
+
+  app.post("/login", async (request, reply) => {
+    const body = loginBody.parse(request.body);
+    const result = await service.loginWithPassword(body.email, body.password);
+    return reply.status(200).send({ data: result });
+  });
+
+  /**
+   * Public self-service registration: creates the tenant, its subdomain and
+   * the owner account, then signs the owner in.
+   */
+  app.post("/register", async (request, reply) => {
+    const body = registerBody.parse(request.body);
+
+    // Код проверяется до создания арендатора: иначе неподтверждённый номер мог
+    // бы занять поддомен.
+    await sessions.verifyCode(body.session_id, body.code);
+
+    const recipient = await sessions.verifiedRecipient(body.session_id);
+
+    // Гашение сессии передаётся внутрь транзакции создания арендатора, а не
+    // выполняется здесь. При `SLUG_TAKEN`, занятом e-mail или уже привязанном
+    // Telegram транзакция откатывается вместе с гашением, и пользователь
+    // исправляет поле тем же кодом. Прежде код гасился до вставок, поэтому
+    // ошибка в одном поле требовала нового кода и повторного открытия бота
+    // (`M0.12.8`).
+    const result = await service.register({
+      slug: body.slug,
+      email: body.email,
+      phone: body.phone,
+      password: body.password,
+      telegram_chat_id: recipient.telegram_chat_id,
+      max_user_id: recipient.max_user_id,
+      consumeSession: (tx) =>
+        sessions.consumeVerifiedIn(tx, {
+          sessionId: body.session_id,
+          purpose: "register",
+          phone: body.phone,
+          email: body.email,
+        }),
+    });
+
+    // Приветственное письмо вторично: арендатор уже создан, и недоступность
+    // SMTP не должна превращать успешную регистрацию в ошибку. Поэтому
+    // отправка не ожидается и её отказ только логируется.
+    void EmailService.sendWelcomeEmail(body.email, body.slug).then((sent) => {
+      if (!sent.sent) {
+        app.log.warn({ email: body.email, reason: sent.error }, "Welcome email not sent");
+      }
+    });
+
+    return reply.status(201).send({ data: result });
+  });
+
+  /**
+   * Live availability check for the subdomain field.
+   *
+   * Advisory only — two registrations can pass this check concurrently, and the
+   * unique index on `tenants.slug` is what actually resolves the race.
+   */
+  app.get("/slug-available", async (request, reply) => {
+    const { slug } = slugQuery.parse(request.query);
+    const result = await service.isSlugAvailable(slug);
+    return reply.status(200).send({ data: result });
+  });
+
+  /**
+   * Запрос ссылки восстановления пароля.
+   *
+   * Ответ одинаков для известного и неизвестного адреса: иначе эндпоинт стал бы
+   * инструментом проверки, зарегистрирован ли e-mail. Лимит строже общего —
+   * каждый вызов отправляет письмо.
+   */
+  app.post(
+    "/forgot-password",
+    {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = forgotPasswordBody.parse(request.body);
+      const result = await passwordReset.request({ email: body.email, ip: request.ip });
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  /**
+   * Смена пароля по токену из письма. Лимит строже общего: эндпоинт принимает
+   * токен, и общий 100/мин оставлял бы слишком широкое окно для подбора.
+   */
+  app.post(
+    "/reset-password",
+    {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = resetPasswordBody.parse(request.body);
+      const result = await passwordReset.confirm({ token: body.token, password: body.password });
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  /**
+   * Данные приглашения для формы активации.
+   *
+   * Публичный по необходимости: приглашённый сотрудник ещё не может войти.
+   * Наружу отдаются только имя компании, роль и e-mail — идентификаторы и хеши
+   * остаются внутри.
+   */
+  app.get(
+    "/invite",
+    { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const { token } = inviteTokenQuery.parse(request.query);
+      const data = await invites.preview(token);
+      return reply.send({ data });
+    },
+  );
+
+  /** Активация учётной записи по приглашению: пароль и телефон. */
+  app.post(
+    "/invite/accept",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      const body = acceptInviteBody.parse(request.body);
+      const result = await invites.accept({
+        token: body.token,
+        password: body.password,
+        phone: body.phone,
+      });
+      return reply.send({ data: result });
+    },
+  );
+
+  app.post("/refresh", async (request, reply) => {
+    const body = refreshBody.parse(request.body);
+    const result = await service.refreshToken(body.refresh_token);
+    return reply.status(200).send({ data: result });
+  });
+
+  app.post("/logout", async (request, reply) => {
+    const body = refreshBody.parse(request.body);
+    const result = await service.logout(body.refresh_token);
+    return reply.status(200).send({ data: result });
+  });
+};
+
+export default authRoutes;

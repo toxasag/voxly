@@ -1,0 +1,251 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e2]:
+    - complementary [ref=f4e3]:
+      - generic [ref=f4e4]:
+        - generic [ref=f4e5]: G
+        - generic [ref=f4e7]:
+          - generic [ref=f4e8]: GETVOXLY
+          - generic [ref=f4e9]: Платформа для бизнеса
+      - button "V Voxly Platform voxly.getvoxly.ru" [ref=f4e11]:
+        - generic [ref=f4e12]: V
+        - generic [ref=f4e13]:
+          - paragraph [ref=f4e14]: Voxly Platform
+          - paragraph [ref=f4e15]: voxly.getvoxly.ru
+      - navigation [ref=f4e19]:
+        - link "Панель" [ref=f4e20] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f4e27] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f4e31] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f4e38] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f4e45] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f4e51] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Сервисный центр" [ref=f4e56] [cursor=pointer]:
+          - /url: /repairs
+        - link "Финансы" [ref=f4e60] [cursor=pointer]:
+          - /url: /finance
+        - link "AI-боты" [ref=f4e65] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=f4e70] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=f4e76]: Каналы связи
+        - link "Telegram" [ref=f4e80] [cursor=pointer]:
+          - /url: /integrations/telegram
+        - link "WhatsApp" [ref=f4e85] [cursor=pointer]:
+          - /url: /integrations/whatsapp
+        - link "MAX" [ref=f4e89] [cursor=pointer]:
+          - /url: /integrations/max
+        - link "Instagram" [ref=f4e101] [cursor=pointer]:
+          - /url: /integrations/instagram
+        - generic [ref=f4e106]: Управление платформой
+        - link "Все компании" [ref=f4e111] [cursor=pointer]:
+          - /url: /admin/tenants
+        - link "Тарифы и биллинг" [ref=f4e117] [cursor=pointer]:
+          - /url: /admin/billing
+        - link "Метрики системы" [ref=f4e121] [cursor=pointer]:
+          - /url: /admin/metrics
+        - link "Системные логи" [ref=f4e125] [cursor=pointer]:
+          - /url: /admin/logs
+      - generic [ref=f4e131]:
+        - link [ref=f4e132] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f4e133]:
+            - paragraph [ref=f4e134]: Антон
+            - paragraph [ref=f4e135]: anton@genadich.com
+        - button "Выйти" [ref=f4e136]
+      - button [ref=f4e140]
+    - generic [ref=f4e143]:
+      - banner [ref=f4e144]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f4e146]:
+          - generic [ref=f4e150]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f4e151]: ⌘K
+        - generic [ref=f4e152]:
+          - button "Создать" [ref=f4e154]
+          - button "Уведомления" [ref=f4e158]:
+            - generic [ref=f4e162]: "3"
+          - button "Включить тёмную тему" [ref=f4e163]
+      - main [ref=f4e166]:
+        - generic [ref=f4e167]:
+          - generic [ref=f4e168]:
+            - heading "Маркетплейс модулей" [level=1] [ref=f4e169]
+            - paragraph [ref=f4e170]: Подключайте модули и каналы. Каждый новый модуль — 14 дней бесплатно.
+          - generic [ref=f4e172]:
+            - generic [ref=f4e173]:
+              - paragraph [ref=f4e174]: К оплате в месяц
+              - paragraph [ref=f4e175]: 2 600 ₽
+              - paragraph [ref=f4e176]:
+                - text: после окончания пробных периодов —
+                - generic [ref=f4e177]: 4 100 ₽/мес
+            - generic [ref=f4e178]:
+              - generic [ref=f4e179]:
+                - paragraph [ref=f4e180]: Пользователей в портале
+                - link "1" [ref=f4e181] [cursor=pointer]:
+                  - /url: /settings/team
+              - link "Оплатить и управлять подпиской" [ref=f4e182] [cursor=pointer]:
+                - /url: /settings/billing
+          - generic [ref=f4e185]:
+            - button "Все" [ref=f4e186]
+            - button "Ядро CRM" [ref=f4e187]
+            - button "Сервис" [ref=f4e188]
+            - button "Финансы" [ref=f4e189]
+            - button "AI и автоматизация" [ref=f4e190]
+            - button "Интеграции" [ref=f4e191]
+          - generic [ref=f4e192]:
+            - generic [ref=f4e193]:
+              - generic [ref=f4e194]: Базовый тариф
+              - heading "Базовая CRM" [level=3] [ref=f4e206]
+              - paragraph [ref=f4e207]: Контакты, компании, сделки с Kanban-воронкой и хронологией общения.
+              - paragraph [ref=f4e209]: 600 ₽/мес за 10 пользователей, далее +200 ₽ за каждого
+              - generic [ref=f4e210]:
+                - generic [ref=f4e211]: Контакты и компании
+                - generic [ref=f4e215]: Воронка сделок
+                - generic [ref=f4e219]: Задачи
+                - generic [ref=f4e223]: Хронология и чат
+              - link "Управление пользователями" [ref=f4e227] [cursor=pointer]:
+                - /url: /settings/team
+            - generic [ref=f4e233]:
+              - button "Отключить Сервисный центр" [ref=f4e238]
+              - heading "Сервисный центр" [level=3] [ref=f4e243]
+              - paragraph [ref=f4e244]: Наряд-заказы, диагностика, учёт работ и запчастей.
+              - paragraph [ref=f4e246]: 500 ₽/мес
+              - generic [ref=f4e247]:
+                - generic [ref=f4e248]: Приёмка оборудования
+                - generic [ref=f4e252]: Диагностика
+                - generic [ref=f4e256]: Работы и запчасти
+                - generic [ref=f4e260]: Печать квитанций
+            - generic [ref=f4e264]:
+              - button "Отключить Финансы и счета" [ref=f4e270]
+              - heading "Финансы и счета" [level=3] [ref=f4e275]
+              - paragraph [ref=f4e276]: Управленческий учёт, кассы, счёта и отчёт о прибылях и убытках.
+              - paragraph [ref=f4e278]: 500 ₽/мес
+              - generic [ref=f4e279]:
+                - generic [ref=f4e280]: Кассы и переводы
+                - generic [ref=f4e284]: Журнал операций
+                - generic [ref=f4e288]: Выставление счетов
+                - generic [ref=f4e292]: Отчёт P&L
+            - generic [ref=f4e296]:
+              - button "Отключить AI-агенты" [ref=f4e302]
+              - heading "AI-агенты" [level=3] [ref=f4e307]
+              - paragraph [ref=f4e308]: "AI-ассистенты для переписки: подсказки ответов и автоответы клиентам. Подключаются к Telegram, WhatsApp и MAX."
+              - generic [ref=f4e309]:
+                - paragraph [ref=f4e310]: 500 ₽/мес за 1 агент
+                - paragraph [ref=f4e311]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e312]: 500 ₽/мес
+              - generic [ref=f4e313]:
+                - button "Уменьшить количество" [disabled] [ref=f4e314]
+                - generic [ref=f4e316]: 1 агент
+                - button "Увеличить количество" [ref=f4e317]
+              - generic [ref=f4e319]:
+                - generic [ref=f4e320]: Автоответы и подсказки
+                - generic [ref=f4e324]: Шаблоны промптов
+                - generic [ref=f4e328]: Выбор модели
+                - generic [ref=f4e332]: Учёт токенов
+            - generic [ref=f4e336]:
+              - button "Отключить Telegram" [ref=f4e342]
+              - heading "Telegram" [level=3] [ref=f4e347]
+              - paragraph [ref=f4e348]: Приём и отправка сообщений Telegram. Несколько аккаунтов в одном портале.
+              - generic [ref=f4e349]:
+                - paragraph [ref=f4e350]: 500 ₽/мес за 1 аккаунт
+                - paragraph [ref=f4e351]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e352]: 500 ₽/мес
+              - generic [ref=f4e353]:
+                - button "Уменьшить количество" [disabled] [ref=f4e354]
+                - generic [ref=f4e356]: 1 аккаунт
+                - button "Увеличить количество" [ref=f4e357]
+              - generic [ref=f4e359]:
+                - generic [ref=f4e360]: Мульти-аккаунт
+                - generic [ref=f4e364]: Вложения и медиа
+                - generic [ref=f4e368]: Автоприветствие
+                - generic [ref=f4e372]: История в сделке
+            - generic [ref=f4e376]:
+              - button "Отключить WhatsApp" [ref=f4e381]
+              - generic [ref=f4e385]:
+                - heading "WhatsApp" [level=3] [ref=f4e386]
+                - generic [ref=f4e387]: Бесплатно ещё 14 дн.
+              - paragraph [ref=f4e392]: Переписка WhatsApp внутри CRM. Несколько номеров в одном портале.
+              - generic [ref=f4e393]:
+                - paragraph [ref=f4e394]: 500 ₽/мес за 1 аккаунт
+                - paragraph [ref=f4e395]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e396]: 500 ₽/мес
+              - generic [ref=f4e397]:
+                - button "Уменьшить количество" [disabled] [ref=f4e398]
+                - generic [ref=f4e400]: 1 аккаунт
+                - button "Увеличить количество" [ref=f4e401]
+              - generic [ref=f4e403]:
+                - generic [ref=f4e404]: Мульти-аккаунт
+                - generic [ref=f4e408]: Вложения и медиа
+                - generic [ref=f4e412]: Шаблоны сообщений
+                - generic [ref=f4e416]: История в сделке
+            - generic [ref=f4e420]:
+              - button "Отключить MAX" [ref=f4e426]
+              - generic [ref=f4e430]:
+                - heading "MAX" [level=3] [ref=f4e431]
+                - generic [ref=f4e432]: Бесплатно ещё 14 дн.
+              - paragraph [ref=f4e437]: "Мессенджер MAX: приём и отправка сообщений. Несколько аккаунтов."
+              - generic [ref=f4e438]:
+                - paragraph [ref=f4e439]: 500 ₽/мес за 1 аккаунт
+                - paragraph [ref=f4e440]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e441]: 500 ₽/мес
+              - generic [ref=f4e442]:
+                - button "Уменьшить количество" [disabled] [ref=f4e443]
+                - generic [ref=f4e445]: 1 аккаунт
+                - button "Увеличить количество" [ref=f4e446]
+              - generic [ref=f4e448]:
+                - generic [ref=f4e449]: Мульти-аккаунт
+                - generic [ref=f4e453]: Вложения
+                - generic [ref=f4e457]: Автоответы
+                - generic [ref=f4e461]: История в сделке
+            - generic [ref=f4e465]:
+              - button "Подключить Avito" [ref=f4e580]
+              - generic [ref=f4e477]:
+                - heading "Avito" [level=3] [ref=f4e478]
+                - generic [ref=f4e479]: 14 дней бесплатно
+              - paragraph [ref=f4e484]: Сообщения и объявления Avito. Несколько аккаунтов в одном портале.
+              - generic [ref=f4e485]:
+                - paragraph [ref=f4e486]: 500 ₽/мес за 1 аккаунт
+                - paragraph [ref=f4e487]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e488]: 500 ₽/мес
+              - generic [ref=f4e489]:
+                - button "Уменьшить количество" [disabled] [ref=f4e490]
+                - generic [ref=f4e492]: 1 аккаунт
+                - button "Увеличить количество" [ref=f4e493]
+              - generic [ref=f4e495]:
+                - generic [ref=f4e496]: Мульти-аккаунт
+                - generic [ref=f4e500]: Чаты по объявлениям
+                - generic [ref=f4e504]: Автоответы
+                - generic [ref=f4e508]: Лид в сделку
+            - generic [ref=f4e512]:
+              - button "Отключить Instagram" [ref=f4e518]
+              - generic [ref=f4e522]:
+                - heading "Instagram" [level=3] [ref=f4e523]
+                - generic [ref=f4e524]: Бесплатно ещё 14 дн.
+              - paragraph [ref=f4e529]: Direct-переписка Instagram. Несколько аккаунтов в одном портале.
+              - generic [ref=f4e530]:
+                - paragraph [ref=f4e531]: 500 ₽/мес за 1 аккаунт
+                - paragraph [ref=f4e532]:
+                  - text: 1 × 500 ₽ =
+                  - generic [ref=f4e533]: 500 ₽/мес
+              - generic [ref=f4e534]:
+                - button "Уменьшить количество" [disabled] [ref=f4e535]
+                - generic [ref=f4e537]: 1 аккаунт
+                - button "Увеличить количество" [ref=f4e538]
+              - generic [ref=f4e540]:
+                - generic [ref=f4e541]: Мульти-аккаунт
+                - generic [ref=f4e545]: Direct и комментарии
+                - generic [ref=f4e549]: Автоответы
+                - generic [ref=f4e553]: Лид в сделку
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=f4e584]:
+        - button "Close toast" [ref=f4e585] [cursor=pointer]
+        - generic [ref=f4e592]: Avito отключён
+  - alert [ref=f4e557]

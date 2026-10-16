@@ -1,0 +1,30 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - heading "GETVOXLY" [level=1] [ref=e5]
+      - paragraph [ref=e6]: Вход в рабочее пространство
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - generic [ref=e10]: E-mail
+        - textbox "E-mail" [active] [ref=e12]:
+          - /placeholder: you@company.ru
+      - generic [ref=e13]:
+        - generic [ref=e14]: Пароль
+        - generic [ref=e15]:
+          - textbox "Пароль" [ref=e16]:
+            - /placeholder: ••••••••
+          - button "Показать пароль" [ref=e17]
+      - group "Доставка одноразового кода" [ref=e21]:
+        - generic [ref=e23]:
+          - button "Telegram" [ref=e24]
+          - button "MAX" [ref=e28]
+        - paragraph [ref=e31]: Код придёт в Telegram. Если бот ещё не привязан, появится ссылка на подключение.
+      - button "Получить код" [ref=e32]
+      - button "Войти" [disabled] [ref=e35]
+      - paragraph [ref=e38]:
+        - button "Забыли пароль?" [ref=e39]
+      - paragraph [ref=e40]:
+        - text: Нет аккаунта?
+        - link "Зарегистрировать компанию" [ref=e41] [cursor=pointer]:
+          - /url: /register
+  - region "Notifications alt+T"

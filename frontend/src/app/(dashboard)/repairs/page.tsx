@@ -1,0 +1,227 @@
+"use client";
+
+import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { Plus, Wrench, Clock, CheckCircle2 } from "lucide-react";
+import { RepairsTable } from "@/components/repairs/RepairsTable";
+import { RepairIntakeModal } from "@/components/repairs/RepairIntakeModal";
+import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
+import { Guard } from "@/components/shared/Guard";
+import type { RepairTicket, RepairFilterStatus } from "@/lib/repairs/repairs.types";
+import type { RepairOrderDTO } from "@/lib/api/use-repairs";
+import { useRepairs, useCreateRepair } from "@/lib/api/use-repairs";
+import type { CreateRepairPayload } from "@/schemas/repair.schema";
+import { cn } from "@/lib/utils";
+
+export default function RepairsPage() {
+  return (
+    <Suspense fallback={null}>
+      <RepairsPageContent />
+    </Suspense>
+  );
+}
+
+function RepairsPageContent() {
+  const [filterStatus, setFilterStatus] = useState<RepairFilterStatus>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [receiptTarget, setReceiptTarget] = useState<RepairTicket | null>(null);
+  const searchParams = useSearchParams();
+
+  const { data, isLoading, isError, error } = useRepairs({
+    status: filterStatus === "all" ? undefined : filterStatus,
+    search: searchQuery || undefined,
+    limit: 25,
+    offset: 0,
+  });
+
+  const createMutation = useCreateRepair();
+
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setCreateModalOpen(true);
+    }
+  }, [searchParams]);
+
+  const tickets = useMemo(() => {
+    if (!data?.items) return [];
+    return data.items.map((item: RepairOrderDTO): RepairTicket => ({
+      id: item.id,
+      ticket_number: item.ticketNumber,
+      customer_name: item.customerName,
+      customer_phone: item.customerPhone,
+      customer_id: item.customerId,
+      equipment: {
+        type: item.equipment.type,
+        brand: item.equipment.brand,
+        model: item.equipment.model,
+        serial_number: item.equipment.serialNumber,
+        package_contents: item.equipment.packageContents,
+        appearance: item.equipment.appearance,
+      },
+      defect_description: item.defectDescription,
+      defect_photos: item.defectPhotos,
+      status: item.status,
+      priority: item.priority,
+      master_name: item.masterName,
+      master_id: item.masterId,
+      estimated_cost: item.estimatedCost,
+      final_cost: item.finalCost,
+      received_at: item.receivedAt,
+      completed_at: item.completedAt,
+      delivered_at: item.deliveredAt,
+      notes: item.notes,
+      diagnostics: item.diagnostics
+        ? {
+            performed_at: item.diagnostics.performed_at,
+            performed_by: item.diagnostics.performed_by,
+            findings: item.diagnostics.findings,
+            recommended_action: item.diagnostics.recommended_action,
+            condition_notes: item.diagnostics.condition_notes,
+          }
+        : null,
+      work_items: [],
+      parts_used: [],
+      nextStatus: item.nextStatus,
+      allowedTransitions: item.allowedTransitions,
+    }));
+  }, [data]);
+
+  const statsTotal = data?.total ?? 0;
+  const statsInProgress = tickets.filter(
+    (t) => t.status === "intake" || t.status === "diagnostics" || t.status === "approval" || t.status === "in_progress",
+  ).length;
+  const statsReady = tickets.filter((t) => t.status === "ready").length;
+
+  const handleCreateRepair = useCallback(
+    async (payload: CreateRepairPayload) => {
+      const created = await createMutation.mutateAsync(payload);
+      setReceiptTarget({
+        id: created.id,
+        ticket_number: created.ticketNumber,
+        customer_name: created.customerName,
+        customer_phone: created.customerPhone,
+        customer_id: created.customerId,
+        equipment: {
+          type: created.equipment.type,
+          brand: created.equipment.brand,
+          model: created.equipment.model,
+          serial_number: created.equipment.serialNumber,
+          package_contents: created.equipment.packageContents,
+          appearance: created.equipment.appearance,
+        },
+        defect_description: created.defectDescription,
+        defect_photos: created.defectPhotos,
+        status: created.status,
+        priority: created.priority,
+        master_name: created.masterName,
+        master_id: created.masterId,
+        estimated_cost: created.estimatedCost,
+        final_cost: created.finalCost,
+        received_at: created.receivedAt,
+        completed_at: created.completedAt,
+        delivered_at: created.deliveredAt,
+        notes: created.notes,
+        diagnostics: created.diagnostics
+          ? {
+              performed_at: created.diagnostics.performed_at,
+              performed_by: created.diagnostics.performed_by,
+              findings: created.diagnostics.findings,
+              recommended_action: created.diagnostics.recommended_action,
+              condition_notes: created.diagnostics.condition_notes,
+            }
+          : null,
+        work_items: [],
+        parts_used: [],
+        nextStatus: created.nextStatus,
+        allowedTransitions: created.allowedTransitions,
+      });
+    },
+    [createMutation],
+  );
+
+  return (
+    <Guard requiredPermission="service_center:read" requiredModule="service_center">
+      <div className="space-y-6">
+        {/* Page Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-slate-100">Сервисный центр</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              Приёмка оборудования в ремонт, диагностика и контроль
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreateModalOpen(true)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors",
+              "bg-amber-500 text-slate-950 hover:bg-amber-400",
+            )}
+          >
+            <Plus className="h-4 w-4" />
+            Новая приёмка
+          </button>
+        </div>
+
+        {/* Stats Bar */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-sky-500/10 p-1.5">
+                <Wrench className="h-4 w-4 text-sky-400" />
+              </div>
+              <span className="text-xs font-medium text-slate-500">Всего наряд-заказов</span>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-slate-100">{statsTotal}</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-amber-500/10 p-1.5">
+                <Clock className="h-4 w-4 text-amber-400" />
+              </div>
+              <span className="text-xs font-medium text-slate-500">В работе</span>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-slate-100">{statsInProgress}</p>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-emerald-500/10 p-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              </div>
+              <span className="text-xs font-medium text-slate-500">Готовы к выдаче</span>
+            </div>
+            <p className="mt-2 text-2xl font-bold text-slate-100">{statsReady}</p>
+          </div>
+        </div>
+
+        {/* Table */}
+        <RepairsTable
+          tickets={tickets}
+          filterStatus={filterStatus}
+          onFilterStatusChange={setFilterStatus}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          onPrintReceipt={(ticket) => setReceiptTarget(ticket)}
+          isLoading={isLoading}
+          isError={isError}
+          error={error}
+        />
+
+        {/* Modals */}
+        <RepairIntakeModal
+          open={createModalOpen}
+          onClose={() => setCreateModalOpen(false)}
+          onSubmit={handleCreateRepair}
+          initialCustomerId={searchParams.get("customer_id") ?? undefined}
+          isSubmitting={createMutation.isPending}
+        />
+        <RepairReceiptModal
+          open={!!receiptTarget}
+          ticket={receiptTarget}
+          onClose={() => setReceiptTarget(null)}
+        />
+      </div>
+    </Guard>
+  );
+}

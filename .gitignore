@@ -1,0 +1,19 @@
+# Секреты и локальные артефакты не попадают в репозиторий.
+# Причина явного правила: docker-compose.yml раньше держал пароль БД и
+# JWT_SECRET литералами, а backend/.env лежал в дереве проекта.
+
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Локальный изолированный Browser/audit-стенд: runtime.json содержит временные
+# DB credentials, а база имеет одноразовое имя getvoxly_audit_<timestamp>.
+backend/.audit/
+
+.DS_Store

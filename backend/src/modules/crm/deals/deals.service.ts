@@ -1,0 +1,884 @@
+import type {
+  CreateDealMessagePayload,
+  CreateDealPayload,
+  CreateStagePayload,
+  DealDTO,
+  DealMessageDTO,
+  DealMessageRow,
+  DealRow,
+  DeliveryStatus,
+  KanbanColumn,
+  PipelineDTO,
+  StageRow,
+  UpdateDealPayload,
+  UpdateStagePayload,
+} from "./deals.types.js";
+import { toDealDTO, toDealMessageDTO } from "./deals.types.js";
+import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
+import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+
+const DEAL_COLUMNS = `
+  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
+  budget, currency, custom_fields, created_by, owner_id, close_date, position,
+  closed_at, created_at, updated_at
+`;
+
+/**
+ * Те же колонки с префиксом и подписями связей.
+ *
+ * JOIN'ы вместо отдельных запросов на строку: таблица записей рисует чипы
+ * компании, контактного лица и ответственного в каждой строке, и без этого
+ * список из 50 сделок стоил бы 150 дополнительных запросов.
+ */
+const DEAL_COLUMNS_WITH_LABELS = `
+  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
+  d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
+  d.close_date, d.position, d.closed_at, d.created_at, d.updated_at,
+  co.name AS company_name,
+  ct.first_name AS contact_first_name,
+  ct.last_name AS contact_last_name,
+  ow.name AS owner_name
+`;
+
+/**
+ * Каждый JOIN ограничен арендатором сделки.
+ *
+ * Не «на всякий случай»: `deals.contact_id` и `company_id` до сих пор без FK, а
+ * `users` вообще не входит в список таблиц под RLS (см. schema.sql, блок
+ * `tenant_isolation`) — суперпользователь и роль-владелец её политиками не
+ * ограничены, да и политики для неё нет. Поэтому чужой идентификатор,
+ * оказавшийся в `owner_id` или `company_id`, без этих предикатов подставил бы в
+ * ответ имя пользователя или название компании другого арендатора.
+ */
+const DEAL_LABEL_JOINS = `
+  LEFT JOIN companies co
+    ON co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
+  LEFT JOIN contacts ct
+    ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+  LEFT JOIN users ow
+    ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
+`;
+
+const MESSAGE_COLUMNS = `
+  id, tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
+  attachment, attachment_type, delivery_status, delivery_error, created_at
+`;
+
+/** Treats "" from form payloads as "no value". */
+function nullIfBlank(value: string | undefined): string | null {
+  if (value === undefined || value === "") return null;
+  return value;
+}
+
+export interface ListDealsOptions {
+  pipelineId?: string;
+  stageId?: string;
+  search?: string;
+  /** Секция «Сделки» на карточке контакта. */
+  contactId?: string;
+  /** Секция «Сделки» на карточке компании. */
+  companyId?: string;
+  limit: number;
+  offset: number;
+}
+
+export class DealsService {
+  // -------------------------------------------------------------------------
+  // Reads
+  // -------------------------------------------------------------------------
+
+  async list(
+    tenantId: string,
+    options: ListDealsOptions,
+  ): Promise<{ items: DealDTO[]; total: number }> {
+    const conditions: string[] = ["d.tenant_id = $1", "d.deleted_at IS NULL"];
+    const params: SqlParam[] = [tenantId];
+
+    if (options.pipelineId !== undefined) {
+      params.push(options.pipelineId);
+      conditions.push(`d.pipeline_id = $${params.length}`);
+    }
+
+    if (options.stageId !== undefined) {
+      params.push(options.stageId);
+      conditions.push(`d.stage_id = $${params.length}`);
+    }
+
+    if (options.search !== undefined && options.search.length > 0) {
+      params.push(`%${options.search}%`);
+      conditions.push(`(d.title ILIKE $${params.length} OR d.description ILIKE $${params.length})`);
+    }
+
+    if (options.contactId !== undefined) {
+      params.push(options.contactId);
+      conditions.push(`d.contact_id = $${params.length}`);
+    }
+
+    if (options.companyId !== undefined) {
+      params.push(options.companyId);
+      conditions.push(`d.company_id = $${params.length}`);
+    }
+
+    const where = conditions.join(" AND ");
+
+    const countRow = await queryOne<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM deals d WHERE ${where}`,
+      params,
+    );
+
+    params.push(options.limit, options.offset);
+
+    const rows = await query<DealRow>(
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE ${where}
+       ORDER BY d.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+
+    return { items: rows.map(toDealDTO), total: Number(countRow?.total ?? 0) };
+  }
+
+  async get(tenantId: string, id: string): Promise<DealDTO | null> {
+    const row = await queryOne<DealRow>(
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, id],
+    );
+
+    return row === null ? null : toDealDTO(row);
+  }
+
+  /**
+   * Pipeline catalog for the current tenant.
+   *
+   * `GET /deals/kanban` and `POST /deals` both require a pipeline UUID. The
+   * project previously exposed neither the IDs nor a list endpoint, forcing
+   * the UI to keep a fake hardcoded board. This intentionally returns only
+   * pipeline metadata; stages and deals remain the Kanban projection's job.
+   */
+  async listPipelines(tenantId: string): Promise<PipelineDTO[]> {
+    const rows = await query<{ id: string; name: string; sort_order: number }>(
+      `SELECT id, name, sort_order
+       FROM pipelines
+       WHERE tenant_id = $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [tenantId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      sortOrder: row.sort_order,
+    }));
+  }
+
+  /**
+   * Kanban projection: every stage of the pipeline with its deals, count and
+   * budget total. Empty stages are returned so the board renders all columns.
+   */
+  async kanban(tenantId: string, pipelineId: string): Promise<KanbanColumn[]> {
+    const stages = await query<StageRow>(
+      `SELECT s.id, s.pipeline_id, s.name, s.sort_order, s.is_won, s.is_lost, s.is_system, s.color
+       FROM stages s
+       JOIN pipelines p ON p.id = s.pipeline_id
+       WHERE s.pipeline_id = $1 AND p.tenant_id = $2
+       ORDER BY s.sort_order ASC`,
+      [pipelineId, tenantId],
+    );
+
+    if (stages.length === 0) {
+      throw new NotFoundError("Pipeline not found or has no stages");
+    }
+
+    // Порядок внутри колонки: сначала position (ручное перетаскивание), затем
+    // дата — у сделок, созданных до появления поля, position одинаковый.
+    const rows = await query<DealRow>(
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE d.tenant_id = $1 AND d.pipeline_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.position ASC, d.created_at DESC`,
+      [tenantId, pipelineId],
+    );
+
+    const grouped = new Map<string, DealDTO[]>();
+    for (const row of rows) {
+      const dto = toDealDTO(row);
+      const bucket = grouped.get(dto.stageId);
+      if (bucket === undefined) {
+        grouped.set(dto.stageId, [dto]);
+      } else {
+        bucket.push(dto);
+      }
+    }
+
+    return stages.map((stage) => {
+      const deals = grouped.get(stage.id) ?? [];
+      return {
+        stageId: stage.id,
+        stageName: stage.name,
+        sortOrder: stage.sort_order,
+        isWon: stage.is_won,
+        isLost: stage.is_lost,
+        isSystem: stage.is_system,
+        stageColor: stage.color,
+        dealCount: deals.length,
+        budgetTotal: deals.reduce((sum, deal) => sum + deal.budget, 0),
+        deals,
+      };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Writes
+  // -------------------------------------------------------------------------
+
+  async create(
+    tenantId: string,
+    createdBy: string,
+    payload: CreateDealPayload,
+  ): Promise<DealDTO> {
+    return withTenant(tenantId, async (tx) => {
+      return this.createInTx(tx, tenantId, createdBy, payload);
+    });
+  }
+
+  async createInTx(
+    tx: import("../../../db/client.js").TransactionClient,
+    tenantId: string,
+    createdBy: string,
+    payload: CreateDealPayload,
+  ): Promise<DealDTO> {
+      // The stage must belong to the pipeline, and the pipeline to this tenant.
+      const stage = await tx.queryOne<{ id: string }>(
+        `SELECT s.id
+         FROM stages s
+         JOIN pipelines p ON p.id = s.pipeline_id
+         WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+        [payload.stage_id, payload.pipeline_id, tenantId],
+      );
+
+      if (stage === null) {
+        throw new ValidationError("stage_id does not belong to the given pipeline", {
+          stage_id: ["Unknown stage for this pipeline"],
+        });
+      }
+
+      // Новая карточка встаёт первой в своей колонке: менеджер только что её
+      // завёл и ждёт увидеть её сверху, а не в хвосте после старых сделок.
+      const first = await tx.queryOne<{ position: number | null }>(
+        `SELECT MIN(position) AS position FROM deals
+         WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+        [tenantId, payload.stage_id],
+      );
+
+      const row = await tx.queryOneOrThrow<DealRow>(
+        `INSERT INTO deals
+           (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
+            budget, currency, custom_fields, created_by, owner_id, close_date, position)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+         RETURNING ${DEAL_COLUMNS}`,
+        [
+          tenantId,
+          payload.pipeline_id,
+          payload.stage_id,
+          nullIfBlank(payload.contact_id),
+          nullIfBlank(payload.company_id),
+          payload.title,
+          payload.description ?? "",
+          payload.budget,
+          payload.currency,
+          JSON.stringify(payload.custom_fields ?? {}),
+          createdBy,
+          // Ответственный по умолчанию — создатель: сделка без владельца
+          // выпадает из отчётов по менеджерам.
+          nullIfBlank(payload.owner_id) ?? createdBy,
+          nullIfBlank(payload.close_date),
+          (first?.position ?? 1) - 1,
+        ],
+      );
+
+      await tx.query(
+        `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+         VALUES ($1, $2, NULL, $3, $4)`,
+        [tenantId, row.id, payload.stage_id, createdBy],
+      );
+
+      return toDealDTO(row);
+  }
+
+  async update(
+    tenantId: string,
+    id: string,
+    payload: UpdateDealPayload,
+  ): Promise<DealDTO | null> {
+    // Каждая переданная ссылка проверяется на принадлежность арендатору.
+    //
+    // `createInTx` и `moveStage` это делали, а `update` — нет: он писал
+    // `stage_id`, `contact_id`, `company_id` и `owner_id` прямо из тела запроса.
+    // FK здесь не страховка — у `deals.contact_id` и `company_id` его нет вовсе,
+    // а `stages.id` и `users.id` уникальны глобально, без привязки к арендатору.
+    // Поэтому `PATCH /deals/:id` позволял привязать свою сделку к стадии,
+    // контакту, компании или ответственному другого арендатора, попутно обходя
+    // проверку «стадия принадлежит воронке сделки», которую делает `moveStage`.
+    await this.assertOwnedReferences(tenantId, id, payload);
+
+    const assignments: string[] = [];
+    const params: SqlParam[] = [tenantId, id];
+
+    const push = (column: string, value: SqlParam): void => {
+      params.push(value);
+      assignments.push(`${column} = $${params.length}`);
+    };
+
+    if (payload.title !== undefined) push("title", payload.title);
+    if (payload.description !== undefined) push("description", payload.description);
+    if (payload.budget !== undefined) push("budget", payload.budget);
+    if (payload.currency !== undefined) push("currency", payload.currency);
+    if (payload.stage_id !== undefined) push("stage_id", payload.stage_id);
+    if (payload.contact_id !== undefined) push("contact_id", nullIfBlank(payload.contact_id));
+    if (payload.company_id !== undefined) push("company_id", nullIfBlank(payload.company_id));
+    if (payload.owner_id !== undefined) push("owner_id", nullIfBlank(payload.owner_id));
+    if (payload.close_date !== undefined) push("close_date", nullIfBlank(payload.close_date));
+    if (payload.position !== undefined) push("position", payload.position);
+
+    if (payload.custom_fields !== undefined) {
+      params.push(JSON.stringify(payload.custom_fields));
+      assignments.push(`custom_fields = $${params.length}::jsonb`);
+    }
+
+    if (payload.closed_at !== undefined) {
+      const closedAt = nullIfBlank(payload.closed_at);
+      push("closed_at", closedAt === null ? null : new Date(closedAt).toISOString());
+    }
+
+    if (assignments.length === 0) {
+      return this.get(tenantId, id);
+    }
+
+    const row = await queryOne<{ id: string }>(
+      `UPDATE deals SET ${assignments.join(", ")}
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+       RETURNING id`,
+      params,
+    );
+
+    if (row === null) return null;
+
+    // Перечитываем через get: RETURNING не отдаёт подписи связей (они приходят
+    // JOIN'ами), и ответ на inline-правку обнулял бы чипы в таблице.
+    return this.get(tenantId, id);
+  }
+
+  /**
+   * Отклоняет ссылки на записи чужого арендатора.
+   *
+   * Пустая строка означает «снять связь» и проверки не требует. Стадия
+   * сверяется не просто по арендатору, а по воронке самой сделки: сделка не может
+   * стоять в стадии другой воронки, и `moveStage` это уже гарантирует.
+   */
+  private async assertOwnedReferences(
+    tenantId: string,
+    dealId: string,
+    payload: UpdateDealPayload,
+  ): Promise<void> {
+    const contactId = nullIfBlank(payload.contact_id);
+    if (contactId !== null) {
+      const contact = await queryOne<{ id: string }>(
+        `SELECT id FROM contacts
+         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [contactId, tenantId],
+      );
+
+      if (contact === null) {
+        throw new ValidationError("contact_id does not belong to this tenant", {
+          contact_id: ["Unknown contact"],
+        });
+      }
+    }
+
+    const companyId = nullIfBlank(payload.company_id);
+    if (companyId !== null) {
+      const company = await queryOne<{ id: string }>(
+        `SELECT id FROM companies
+         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [companyId, tenantId],
+      );
+
+      if (company === null) {
+        throw new ValidationError("company_id does not belong to this tenant", {
+          company_id: ["Unknown company"],
+        });
+      }
+    }
+
+    const ownerId = nullIfBlank(payload.owner_id);
+    if (ownerId !== null) {
+      const owner = await queryOne<{ id: string }>(
+        `SELECT id FROM users
+         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [ownerId, tenantId],
+      );
+
+      if (owner === null) {
+        throw new ValidationError("owner_id does not belong to this tenant", {
+          owner_id: ["Unknown user"],
+        });
+      }
+    }
+
+    if (payload.stage_id !== undefined) {
+      const stage = await queryOne<{ id: string }>(
+        `SELECT s.id
+         FROM stages s
+         JOIN pipelines p ON p.id = s.pipeline_id
+         JOIN deals d ON d.pipeline_id = s.pipeline_id
+         WHERE s.id = $1
+           AND p.tenant_id = $2
+           AND d.id = $3
+           AND d.tenant_id = $2
+           AND d.deleted_at IS NULL`,
+        [payload.stage_id, tenantId, dealId],
+      );
+
+      if (stage === null) {
+        throw new ValidationError("stage_id does not belong to the deal's pipeline", {
+          stage_id: ["Unknown stage for this pipeline"],
+        });
+      }
+    }
+  }
+
+  /**
+   * Moves a deal to another stage inside its own pipeline and records the
+   * transition. Reaching a won/lost stage stamps `closed_at`; moving back out
+   * clears it.
+   */
+  async moveStage(
+    tenantId: string,
+    id: string,
+    stageId: string,
+    changedBy: string,
+    /**
+     * Позиция внутри целевой колонки: индекс места, куда карточку отпустили.
+     * Не передан — карточка встаёт первой (обычный переход стрелками).
+     */
+    targetIndex?: number,
+  ): Promise<DealDTO | null> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ stage_id: string; pipeline_id: string }>(
+        `SELECT stage_id, pipeline_id
+         FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, id],
+      );
+
+      if (deal === null) return null;
+
+      const stage = await tx.queryOne<{ is_won: boolean; is_lost: boolean }>(
+        `SELECT s.is_won, s.is_lost
+         FROM stages s
+         JOIN pipelines p ON p.id = s.pipeline_id
+         WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+        [stageId, deal.pipeline_id, tenantId],
+      );
+
+      if (stage === null) {
+        throw new ValidationError("Target stage does not belong to the deal's pipeline", {
+          stage_id: ["Unknown stage for this pipeline"],
+        });
+      }
+
+      const isTerminal = stage.is_won || stage.is_lost;
+      const position = await this.positionForIndex(tx, tenantId, stageId, id, targetIndex);
+
+      await tx.query(
+        `UPDATE deals
+         SET stage_id = $3,
+             position = $5,
+             closed_at = CASE WHEN $4::boolean THEN COALESCE(closed_at, now()) ELSE NULL END
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id, stageId, isTerminal, position],
+      );
+
+      if (deal.stage_id !== stageId) {
+        await tx.query(
+          `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, id, deal.stage_id, stageId, changedBy],
+        );
+      }
+
+      const row = await tx.queryOneOrThrow<DealRow>(
+        `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+         FROM deals d
+         ${DEAL_LABEL_JOINS}
+         WHERE d.tenant_id = $1 AND d.id = $2`,
+        [tenantId, id],
+      );
+
+      return toDealDTO(row);
+    });
+  }
+
+  /**
+   * Позиция для вставки карточки на место `targetIndex` в колонке.
+   *
+   * Считается как среднее между соседями (дробный DOUBLE PRECISION), а не
+   * пересчётом всех строк: перенумерация колонки означала бы UPDATE на каждую
+   * карточку при каждом перетаскивании и конфликты при одновременной работе
+   * двух менеджеров.
+   */
+  private async positionForIndex(
+    tx: import("../../../db/client.js").TransactionClient,
+    tenantId: string,
+    stageId: string,
+    excludeDealId: string,
+    targetIndex?: number,
+  ): Promise<number> {
+    const rows = await tx.query<{ position: number }>(
+      `SELECT position FROM deals
+       WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL AND id <> $3
+       ORDER BY position ASC`,
+      [tenantId, stageId, excludeDealId],
+    );
+
+    if (rows.length === 0) return 0;
+
+    const index = targetIndex ?? 0;
+    const before = index > 0 ? rows[index - 1]?.position : undefined;
+    const after = rows[index]?.position;
+
+    if (before === undefined && after !== undefined) return after - 1;
+    if (before !== undefined && after === undefined) return before + 1;
+    if (before !== undefined && after !== undefined) return (before + after) / 2;
+
+    return 0;
+  }
+
+  /** Soft delete — the row stays for audit and is filtered from every read. */
+  async softDelete(tenantId: string, id: string): Promise<boolean> {
+    const row = await queryOne<{ id: string }>(
+      `UPDATE deals SET deleted_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+       RETURNING id`,
+      [tenantId, id],
+    );
+
+    return row !== null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Timeline
+  // -------------------------------------------------------------------------
+
+  async listMessages(tenantId: string, dealId: string): Promise<DealMessageDTO[]> {
+    const rows = await query<DealMessageRow>(
+      `SELECT ${MESSAGE_COLUMNS}
+       FROM deal_messages
+       WHERE tenant_id = $1 AND deal_id = $2
+       ORDER BY created_at ASC`,
+      [tenantId, dealId],
+    );
+
+    return rows.map(toDealMessageDTO);
+  }
+
+  /**
+   * Записывает строку в таймлайн.
+   *
+   * Отправкой в канал не занимается — это делает `DealMessagingService`, чтобы
+   * запись и доставка оставались раздельными шагами: строка обязана появиться в
+   * таймлайне даже при недоступном транспорте, иначе менеджер потеряет текст
+   * ответа вместе с ошибкой сети.
+   */
+  async createMessage(
+    tenantId: string,
+    dealId: string,
+    senderName: string,
+    payload: CreateDealMessagePayload,
+    deliveryStatus: DeliveryStatus = "neutral",
+  ): Promise<DealMessageDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, dealId],
+      );
+
+      if (deal === null) {
+        throw new NotFoundError("Deal not found");
+      }
+
+      const row = await tx.queryOneOrThrow<DealMessageRow>(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
+            attachment, attachment_type, delivery_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING ${MESSAGE_COLUMNS}`,
+        [
+          tenantId,
+          dealId,
+          nullIfBlank(payload.channel_account_id),
+          payload.source,
+          payload.direction,
+          senderName,
+          payload.content,
+          payload.channel,
+          nullIfBlank(payload.attachment),
+          nullIfBlank(payload.attachment_type),
+          deliveryStatus,
+        ],
+      );
+
+      return toDealMessageDTO(row);
+    });
+  }
+
+  /**
+   * Отмечает результат доставки уже записанного сообщения.
+   *
+   * Отдельным запросом, а не полем при вставке: отправка идёт после коммита
+   * строки, и держать транзакцию открытой на время сетевого вызова к Telegram
+   * означало бы удерживать соединение пула секундами.
+   */
+  async markMessageDelivery(
+    tenantId: string,
+    messageId: string,
+    status: DeliveryStatus,
+    error: string | null = null,
+  ): Promise<DealMessageDTO | null> {
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOne<DealMessageRow>(
+        `UPDATE deal_messages
+         SET delivery_status = $3, delivery_error = $4
+         WHERE tenant_id = $1 AND id = $2
+         RETURNING ${MESSAGE_COLUMNS}`,
+        [tenantId, messageId, status, error],
+      );
+
+      return row === null ? null : toDealMessageDTO(row);
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Stages (визуальный редактор воронки)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Новая стадия в конце воронки.
+   *
+   * Воронка проверяется на принадлежность арендатору до INSERT: иначе UUID
+   * чужой воронки дал бы ошибку внешнего ключа вместо честного 404.
+   */
+  async createStage(
+    tenantId: string,
+    pipelineId: string,
+    payload: CreateStagePayload,
+  ): Promise<KanbanColumn> {
+    return withTenant(tenantId, async (tx) => {
+      const pipeline = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM pipelines WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, pipelineId],
+      );
+
+      if (pipeline === null) {
+        throw new NotFoundError("Pipeline not found");
+      }
+
+      // Новый этап встаёт ПЕРЕД закрывающими, а не в самый конец: «успех» и
+      // «провал» обязаны оставаться предпоследним и последним. Иначе созданный
+      // этап оказывался после «Закрыто и не реализовано», и порядок воронки
+      // терял смысл.
+      const lastOpen = await tx.queryOne<{ sort_order: number }>(
+        `SELECT sort_order FROM stages
+         WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+         ORDER BY sort_order DESC LIMIT 1`,
+        [pipelineId],
+      );
+      const insertOrder = (lastOpen?.sort_order ?? -1) + 1;
+
+      // Закрывающие сдвигаются вправо, чтобы освободить номер.
+      await tx.query(
+        `UPDATE stages SET sort_order = sort_order + 1
+         WHERE pipeline_id = $1 AND sort_order >= $2 AND (is_won = true OR is_lost = true)`,
+        [pipelineId, insertOrder],
+      );
+
+      const row = await tx.queryOneOrThrow<StageRow>(
+        `INSERT INTO stages (pipeline_id, name, sort_order, color)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, pipeline_id, name, sort_order, is_won, is_lost, is_system, color`,
+        [pipelineId, payload.name, insertOrder, payload.color],
+      );
+
+      return {
+        stageId: row.id,
+        stageName: row.name,
+        sortOrder: row.sort_order,
+        isWon: row.is_won,
+        isLost: row.is_lost,
+        isSystem: row.is_system,
+        stageColor: row.color,
+        dealCount: 0,
+        budgetTotal: 0,
+        deals: [],
+      };
+    });
+  }
+
+  /**
+   * Переименование, смена цвета и перестановка стадии.
+   *
+   * Перестановка (`sort_order`) — присвоение нового номера без пересчёта
+   * соседей: фронтенд отправляет целевые номера для обеих переставляемых
+   * стадий двумя запросами, а полный реордер одной транзакцией не нужен для
+   * обмена двух колонок.
+   */
+  async updateStage(
+    tenantId: string,
+    pipelineId: string,
+    stageId: string,
+    payload: UpdateStagePayload,
+  ): Promise<KanbanColumn | null> {
+    return withTenant(tenantId, async (tx) => {
+      // Системный этап не правится: на входе стоит попадание сделки в воронку,
+      // на терминальных — семантика закрытия и агрегаты. Проверка на сервере, а
+      // не только в UI: кнопок в интерфейсе нет, но запрос отправить можно.
+      const existing = await tx.queryOne<{ is_system: boolean }>(
+        `SELECT s.is_system
+         FROM stages s
+         JOIN pipelines p ON p.id = s.pipeline_id
+         WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+        [stageId, pipelineId, tenantId],
+      );
+
+      if (existing === null) return null;
+
+      if (existing.is_system) {
+        throw new ValidationError("Cannot modify a system stage", {
+          stage_id: ["Системный этап нельзя переименовать, перекрасить или переместить"],
+        });
+      }
+
+      const assignments: string[] = [];
+      const params: SqlParam[] = [tenantId, pipelineId, stageId];
+
+      const push = (column: string, value: SqlParam): void => {
+        params.push(value);
+        assignments.push(`${column} = $${params.length}`);
+      };
+
+      if (payload.name !== undefined) push("name", payload.name);
+      if (payload.color !== undefined) push("color", payload.color);
+      if (payload.sort_order !== undefined) push("sort_order", payload.sort_order);
+
+      if (assignments.length === 0) return this.kanbanStage(tx, tenantId, pipelineId, stageId);
+
+      const row = await tx.queryOne<StageRow>(
+        `UPDATE stages s SET ${assignments.join(", ")}
+         FROM pipelines p
+         WHERE s.id = $3 AND s.pipeline_id = $2 AND p.tenant_id = $1
+         RETURNING s.id, s.pipeline_id, s.name, s.sort_order, s.is_won, s.is_lost, s.is_system, s.color`,
+        params,
+      );
+
+      if (row === null) return null;
+      return this.kanbanStage(tx, tenantId, pipelineId, row.id);
+    });
+  }
+
+  /**
+   * Удаление пустой пользовательской стадии.
+   *
+   * Стадии «успех» и «провал» удалить нельзя: на них держится семантика
+   * закрытия сделок и агрегаты воронки. Непустая стадия удаляется только после
+   * переноса или удаления сделок — молча раскидывать сделки по соседям опасно:
+   * часть воронки исчезла бы незаметно для менеджера.
+   */
+  async deleteStage(tenantId: string, pipelineId: string, stageId: string): Promise<boolean> {
+    return withTenant(tenantId, async (tx) => {
+      const stage = await tx.queryOne<{ is_won: boolean; is_lost: boolean; is_system: boolean }>(
+        `SELECT s.is_won, s.is_lost, s.is_system
+         FROM stages s
+         JOIN pipelines p ON p.id = s.pipeline_id
+         WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+        [stageId, pipelineId, tenantId],
+      );
+
+      if (stage === null) return false;
+
+      // Помимо терминальных защищён и вход в воронку: без первого этапа новой
+      // сделке некуда попасть.
+      if (stage.is_system) {
+        throw new ValidationError("Cannot delete a system stage", {
+          stage_id: ["Системный этап удалить нельзя"],
+        });
+      }
+
+      const occupied = await tx.queryOne<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM deals
+         WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+        [tenantId, stageId],
+      );
+
+      if (Number(occupied?.total ?? 0) > 0) {
+        throw new ValidationError("Stage is not empty", {
+          stage_id: ["Сначала перенесите или удалите сделки этой стадии"],
+        });
+      }
+
+      const deleted = await tx.queryOne<{ id: string }>(
+        `DELETE FROM stages s
+         USING pipelines p
+         WHERE s.pipeline_id = p.id AND s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3
+         RETURNING s.id`,
+        [stageId, pipelineId, tenantId],
+      );
+
+      return deleted !== null;
+    });
+  }
+
+  /** Проекция одной стадии в форме колонки канбана (для ответов PATCH). */
+  private async kanbanStage(
+    tx: import("../../../db/client.js").TransactionClient,
+    tenantId: string,
+    pipelineId: string,
+    stageId: string,
+  ): Promise<KanbanColumn> {
+    const stage = await tx.queryOneOrThrow<StageRow>(
+      `SELECT s.id, s.pipeline_id, s.name, s.sort_order, s.is_won, s.is_lost, s.is_system, s.color
+       FROM stages s
+       JOIN pipelines p ON p.id = s.pipeline_id
+       WHERE s.id = $1 AND s.pipeline_id = $2 AND p.tenant_id = $3`,
+      [stageId, pipelineId, tenantId],
+    );
+
+    const rows = await tx.query<DealRow>(
+      `SELECT ${DEAL_COLUMNS}
+       FROM deals
+       WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+      [tenantId, stageId],
+    );
+
+    const deals = rows.map(toDealDTO);
+    return {
+      stageId: stage.id,
+      stageName: stage.name,
+      sortOrder: stage.sort_order,
+      isWon: stage.is_won,
+      isLost: stage.is_lost,
+      isSystem: stage.is_system,
+      stageColor: stage.color,
+      dealCount: deals.length,
+      budgetTotal: deals.reduce((sum, deal) => sum + deal.budget, 0),
+      deals,
+    };
+  }
+}

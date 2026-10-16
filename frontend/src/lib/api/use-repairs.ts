@@ -1,0 +1,538 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query";
+import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClient";
+
+// ---------------------------------------------------------------------------
+// DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
+// ---------------------------------------------------------------------------
+
+export type RepairStatus = "intake" | "diagnostics" | "approval" | "in_progress" | "ready" | "issued" | "rejected";
+export type RepairPriority = "low" | "normal" | "high" | "urgent";
+
+export interface EquipmentDTO {
+  type: string;
+  brand: string;
+  model: string;
+  serialNumber: string;
+  packageContents: string;
+  appearance: string;
+}
+
+export interface DiagnosticsDTO {
+  performed_at: string;
+  performed_by: string;
+  findings: string;
+  recommended_action: string;
+  condition_notes: string;
+}
+
+export interface RepairWorkDTO {
+  id: string;
+  description: string;
+  masterId: string;
+  masterName: string;
+  cost: number;
+  createdAt: string;
+}
+
+export interface RepairPartDTO {
+  id: string;
+  name: string;
+  article: string;
+  quantity: number;
+  retailPrice: number;
+  costPrice: number;
+  retailTotal: number;
+  costTotal: number;
+  margin: number;
+  createdAt: string;
+}
+
+export interface RepairNoteDTO {
+  id: string;
+  authorId: string;
+  authorName: string;
+  kind: string;
+  content: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  createdAt: string;
+}
+
+export interface RepairPhotoDTO {
+  id: string;
+  url: string;
+  caption: string;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export interface RepairTotalsDTO {
+  worksTotal: number;
+  partsRetailTotal: number;
+  partsCostTotal: number;
+  grandTotal: number;
+  margin: number;
+  marginPercent: number;
+}
+
+export interface RepairOrderDTO {
+  id: string;
+  ticketNumber: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  equipment: EquipmentDTO;
+  defectDescription: string;
+  defectPhotos: string[];
+  status: RepairStatus;
+  nextStatus: RepairStatus | null;
+  allowedTransitions: RepairStatus[];
+  priority: RepairPriority;
+  masterId: string;
+  masterName: string;
+  estimatedCost: number;
+  finalCost: number | null;
+  notes: string;
+  diagnostics: DiagnosticsDTO | null;
+  receivedAt: string;
+  completedAt: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RepairOrderDetailDTO extends RepairOrderDTO {
+  works: RepairWorkDTO[];
+  parts: RepairPartDTO[];
+  notes_log: RepairNoteDTO[];
+  photos: RepairPhotoDTO[];
+  totals: RepairTotalsDTO;
+}
+
+export interface RepairsListResult {
+  items: RepairOrderDTO[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface RepairsQueryParams {
+  status?: RepairStatus;
+  priority?: RepairPriority;
+  masterId?: string;
+  customerId?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreateRepairPayload {
+  customer_id: string;
+  customer_name: string;
+  customer_phone: string;
+  equipment_type: string;
+  equipment_brand: string;
+  equipment_model: string;
+  equipment_serial?: string;
+  package_contents?: string;
+  appearance?: string;
+  defect_description: string;
+  defect_photos?: string[];
+  priority?: RepairPriority;
+  master_id: string;
+  master_name: string;
+  estimated_cost: number;
+  notes?: string;
+}
+
+export interface UpdateRepairPayload {
+  customer_name?: string;
+  customer_phone?: string;
+  equipment_type?: string;
+  equipment_brand?: string;
+  equipment_model?: string;
+  equipment_serial?: string;
+  package_contents?: string;
+  appearance?: string;
+  defect_description?: string;
+  priority?: RepairPriority;
+  master_id?: string;
+  master_name?: string;
+  estimated_cost?: number;
+  final_cost?: number;
+  notes?: string;
+}
+
+export interface ChangeStatusPayload {
+  status: RepairStatus;
+  comment?: string;
+  diagnostics?: {
+    findings: string;
+    recommended_action: string;
+    condition_notes?: string;
+  };
+}
+
+export interface CreateWorkPayload {
+  description: string;
+  master_id: string;
+  master_name: string;
+  cost: number;
+}
+
+export interface UpdateWorkPayload {
+  description?: string;
+  master_id?: string;
+  master_name?: string;
+  cost?: number;
+}
+
+export interface CreatePartPayload {
+  name: string;
+  article?: string;
+  quantity?: number;
+  retail_price: number;
+  cost_price?: number;
+}
+
+export interface UpdatePartPayload {
+  name?: string;
+  article?: string;
+  quantity?: number;
+  retail_price?: number;
+  cost_price?: number;
+}
+
+export interface CreateNotePayload {
+  content: string;
+}
+
+export interface CreatePhotoPayload {
+  url: string;
+  caption?: string;
+}
+
+const BASE_PATH = "/api/v1/repairs";
+
+export const DEFAULT_PAGE_SIZE = 25;
+
+// ---------------------------------------------------------------------------
+// Query keys
+// ---------------------------------------------------------------------------
+
+export const repairKeys = {
+  all: ["repairs"] as const,
+  list: (params: RepairsQueryParams) => ["repairs", "list", params] as const,
+  detail: (id: string) => ["repairs", "detail", id] as const,
+  totals: (id: string) => ["repairs", "totals", id] as const,
+  works: (id: string) => ["repairs", "works", id] as const,
+  parts: (id: string) => ["repairs", "parts", id] as const,
+  notes: (id: string) => ["repairs", "notes", id] as const,
+  photos: (id: string) => ["repairs", "photos", id] as const,
+};
+
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
+export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<RepairsListResult, ApiClientError> {
+  const limit = params.limit ?? DEFAULT_PAGE_SIZE;
+  const offset = params.offset ?? 0;
+
+  return useQuery<RepairsListResult, ApiClientError>({
+    queryKey: repairKeys.list({ ...params, limit, offset }),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairOrderDTO[]>(BASE_PATH, {
+        query: {
+          status: params.status,
+          priority: params.priority,
+          master_id: params.masterId,
+          customer_id: params.customerId,
+          search: params.search,
+          limit,
+          offset,
+        },
+      });
+
+      const meta: ApiMeta = res.meta ?? {};
+
+      return {
+        items: res.data,
+        total: typeof meta.total === "number" ? meta.total : res.data.length,
+        limit: typeof meta.limit === "number" ? meta.limit : limit,
+        offset: typeof meta.offset === "number" ? meta.offset : offset,
+      };
+    },
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useRepair(id: string | null): UseQueryResult<RepairOrderDetailDTO, ApiClientError> {
+  return useQuery<RepairOrderDetailDTO, ApiClientError>({
+    queryKey: repairKeys.detail(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairOrderDetailDTO>(`${BASE_PATH}/${id ?? ""}`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairTotals(id: string | null): UseQueryResult<RepairTotalsDTO, ApiClientError> {
+  return useQuery<RepairTotalsDTO, ApiClientError>({
+    queryKey: repairKeys.totals(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairTotalsDTO>(`${BASE_PATH}/${id ?? ""}/totals`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairWorks(id: string | null): UseQueryResult<RepairWorkDTO[], ApiClientError> {
+  return useQuery<RepairWorkDTO[], ApiClientError>({
+    queryKey: repairKeys.works(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairWorkDTO[]>(`${BASE_PATH}/${id ?? ""}/works`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairParts(id: string | null): UseQueryResult<RepairPartDTO[], ApiClientError> {
+  return useQuery<RepairPartDTO[], ApiClientError>({
+    queryKey: repairKeys.parts(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairPartDTO[]>(`${BASE_PATH}/${id ?? ""}/parts`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairNotes(id: string | null): UseQueryResult<RepairNoteDTO[], ApiClientError> {
+  return useQuery<RepairNoteDTO[], ApiClientError>({
+    queryKey: repairKeys.notes(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairNoteDTO[]>(`${BASE_PATH}/${id ?? ""}/notes`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairPhotos(id: string | null): UseQueryResult<RepairPhotoDTO[], ApiClientError> {
+  return useQuery<RepairPhotoDTO[], ApiClientError>({
+    queryKey: repairKeys.photos(id ?? ""),
+    queryFn: async () => {
+      const res = await apiClient.get<RepairPhotoDTO[]>(`${BASE_PATH}/${id ?? ""}/photos`);
+      return res.data;
+    },
+    enabled: id !== null && id.length > 0,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientError, CreateRepairPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO, ApiClientError, CreateRepairPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<RepairOrderDTO>(BASE_PATH, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientError, { id: string; payload: UpdateRepairPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO, ApiClientError, { id: string; payload: UpdateRepairPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<RepairOrderDTO>(`${BASE_PATH}/${id}`, payload);
+      return res.data;
+    },
+    onSuccess: (order) => {
+      queryClient.setQueryData(repairKeys.detail(order.id), (old: RepairOrderDetailDTO | undefined) => {
+        if (!old) return old;
+        return { ...old, ...order };
+      });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useDeleteRepair(): UseMutationResult<void, ApiClientError, string> {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiClientError, string>({
+    mutationFn: async (id) => {
+      await apiClient.delete(`${BASE_PATH}/${id}`);
+    },
+    onSuccess: (_, id) => {
+      queryClient.removeQueries({ queryKey: repairKeys.detail(id) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiClientError, { id: string; payload: ChangeStatusPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO, ApiClientError, { id: string; payload: ChangeStatusPayload }>({
+    mutationFn: async ({ id, payload }) => {
+      const res = await apiClient.patch<RepairOrderDTO>(`${BASE_PATH}/${id}/status`, payload);
+      return res.data;
+    },
+    onSuccess: (order) => {
+      queryClient.setQueryData(repairKeys.detail(order.id), (old: RepairOrderDetailDTO | undefined) => {
+        if (!old) return old;
+        return { ...old, ...order };
+      });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError, { orderId: string; payload: CreateWorkPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairWorkDTO, ApiClientError, { orderId: string; payload: CreateWorkPayload }>({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairWorkDTO>(`${BASE_PATH}/${orderId}/works`, payload);
+      return res.data;
+    },
+    onSuccess: (work, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useUpdateWork(): UseMutationResult<RepairWorkDTO, ApiClientError, { orderId: string; workId: string; payload: UpdateWorkPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairWorkDTO, ApiClientError, { orderId: string; workId: string; payload: UpdateWorkPayload }>({
+    mutationFn: async ({ orderId, workId, payload }) => {
+      const res = await apiClient.patch<RepairWorkDTO>(`${BASE_PATH}/${orderId}/works/${workId}`, payload);
+      return res.data;
+    },
+    onSuccess: (work, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useDeleteWork(): UseMutationResult<{ id: string; deleted: boolean }, ApiClientError, { orderId: string; workId: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: string; deleted: boolean }, ApiClientError, { orderId: string; workId: string }>({
+    mutationFn: async ({ orderId, workId }) => {
+      const res = await apiClient.delete<{ id: string; deleted: boolean }>(`${BASE_PATH}/${orderId}/works/${workId}`);
+      return res.data ?? { id: workId, deleted: true };
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useCreatePart(): UseMutationResult<RepairPartDTO, ApiClientError, { orderId: string; payload: CreatePartPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairPartDTO, ApiClientError, { orderId: string; payload: CreatePartPayload }>({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairPartDTO>(`${BASE_PATH}/${orderId}/parts`, payload);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useUpdatePart(): UseMutationResult<RepairPartDTO, ApiClientError, { orderId: string; partId: string; payload: UpdatePartPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairPartDTO, ApiClientError, { orderId: string; partId: string; payload: UpdatePartPayload }>({
+    mutationFn: async ({ orderId, partId, payload }) => {
+      const res = await apiClient.patch<RepairPartDTO>(`${BASE_PATH}/${orderId}/parts/${partId}`, payload);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useDeletePart(): UseMutationResult<{ id: string; deleted: boolean }, ApiClientError, { orderId: string; partId: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: string; deleted: boolean }, ApiClientError, { orderId: string; partId: string }>({
+    mutationFn: async ({ orderId, partId }) => {
+      const res = await apiClient.delete<{ id: string; deleted: boolean }>(`${BASE_PATH}/${orderId}/parts/${partId}`);
+      return res.data ?? { id: partId, deleted: true };
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.parts(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+    },
+  });
+}
+
+export function useCreateNote(): UseMutationResult<RepairNoteDTO, ApiClientError, { orderId: string; payload: CreateNotePayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairNoteDTO, ApiClientError, { orderId: string; payload: CreateNotePayload }>({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairNoteDTO>(`${BASE_PATH}/${orderId}/notes`, payload);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.notes(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+    },
+  });
+}
+
+export function useCreatePhoto(): UseMutationResult<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairPhotoDTO, ApiClientError, { orderId: string; payload: CreatePhotoPayload }>({
+    mutationFn: async ({ orderId, payload }) => {
+      const res = await apiClient.post<RepairPhotoDTO>(`${BASE_PATH}/${orderId}/photos`, payload);
+      return res.data;
+    },
+    onSuccess: (_, variables) => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.photos(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export function repairFullName(ticket: RepairOrderDTO): string {
+  return `${ticket.customerName} (${ticket.customerPhone})`;
+}

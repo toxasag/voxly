@@ -1,0 +1,198 @@
+- generic [active] [ref=f3e1]:
+  - generic [ref=f3e2]:
+    - complementary [ref=f3e3]:
+      - generic [ref=f3e4]:
+        - generic [ref=f3e5]: G
+        - generic [ref=f3e7]:
+          - generic [ref=f3e8]: GETVOXLY
+          - generic [ref=f3e9]: Платформа для бизнеса
+      - button "V Voxly Platform voxly.getvoxly.ru" [ref=f3e100]:
+        - generic [ref=f3e12]: V
+        - generic [ref=f3e101]:
+          - paragraph [ref=f3e102]: Voxly Platform
+          - paragraph [ref=f3e103]: voxly.getvoxly.ru
+      - navigation [ref=f3e16]:
+        - link "Панель" [ref=f3e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f3e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f3e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f3e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f3e42] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f3e48] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Сервисный центр" [ref=f3e104] [cursor=pointer]:
+          - /url: /repairs
+        - link "Финансы" [ref=f3e108] [cursor=pointer]:
+          - /url: /finance
+        - link "AI-боты" [ref=f3e113] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=f3e53] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=f3e118]: Каналы связи
+        - link "Telegram" [ref=f3e122] [cursor=pointer]:
+          - /url: /integrations/telegram
+        - link "WhatsApp" [ref=f3e127] [cursor=pointer]:
+          - /url: /integrations/whatsapp
+        - link "MAX" [ref=f3e131] [cursor=pointer]:
+          - /url: /integrations/max
+        - link "Avito" [ref=f3e136] [cursor=pointer]:
+          - /url: /integrations/avito
+        - link "Instagram" [ref=f3e143] [cursor=pointer]:
+          - /url: /integrations/instagram
+        - generic [ref=f3e148]: Управление платформой
+        - link "Все компании" [ref=f3e153] [cursor=pointer]:
+          - /url: /admin/tenants
+        - link "Тарифы и биллинг" [ref=f3e159] [cursor=pointer]:
+          - /url: /admin/billing
+        - link "Метрики системы" [ref=f3e163] [cursor=pointer]:
+          - /url: /admin/metrics
+        - link "Системные логи" [ref=f3e167] [cursor=pointer]:
+          - /url: /admin/logs
+      - generic [ref=f3e59]:
+        - link [ref=f3e172] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f3e173]:
+            - paragraph [ref=f3e174]: Антон
+            - paragraph [ref=f3e175]: anton@genadich.com
+        - button "Выйти" [ref=f3e62]
+      - button [ref=f3e66]
+    - generic [ref=f3e69]:
+      - banner [ref=f3e70]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f3e72]:
+          - generic [ref=f3e76]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f3e77]: ⌘K
+        - generic [ref=f3e78]:
+          - button "Создать" [ref=f3e80]
+          - button "Уведомления" [ref=f3e84]:
+            - generic [ref=f3e88]: "3"
+          - button "Включить тёмную тему" [ref=f3e89]
+      - main [ref=f3e92]:
+        - generic [ref=f3e176]:
+          - generic [ref=f3e177]:
+            - heading "Тариф и оплата" [level=1] [ref=f3e178]
+            - paragraph [ref=f3e179]: Абонентская плата за модули и каналы, отдельно — баланс ИИ
+          - heading "Абонентская плата" [level=2] [ref=f3e184]
+          - generic [ref=f3e186]:
+            - generic [ref=f3e187]:
+              - generic [ref=f3e188]:
+                - paragraph [ref=f3e189]: Текущий тариф
+                - generic [ref=f3e190]: Активна
+              - paragraph [ref=f3e191]: Корпоративный
+            - generic [ref=f3e192]:
+              - paragraph [ref=f3e193]: К оплате в месяц
+              - paragraph [ref=f3e194]: 3 100 ₽
+              - paragraph [ref=f3e195]:
+                - text: после пробных периодов —
+                - generic [ref=f3e196]: 4 600 ₽/мес
+          - generic [ref=f3e197]:
+            - generic [ref=f3e198]:
+              - generic [ref=f3e199]: Детализация за месяц
+              - generic [ref=f3e200]: 1 польз.
+            - table [ref=f3e206]:
+              - rowgroup [ref=f3e207]:
+                - row [ref=f3e208]:
+                  - cell "Базовая CRM 1 польз. — включено 10 в пакет" [ref=f3e209]:
+                    - generic [ref=f3e210]: Базовая CRM
+                    - paragraph [ref=f3e212]: 1 польз. — включено 10 в пакет
+                  - cell "600 ₽/мес" [ref=f3e213]
+                - row [ref=f3e214]:
+                  - cell "Сервисный центр Фиксированная стоимость пакета" [ref=f3e215]:
+                    - generic [ref=f3e216]: Сервисный центр
+                    - paragraph [ref=f3e218]: Фиксированная стоимость пакета
+                  - cell "500 ₽/мес" [ref=f3e219]
+                - row [ref=f3e220]:
+                  - cell "Финансы и счета Фиксированная стоимость пакета" [ref=f3e221]:
+                    - generic [ref=f3e222]: Финансы и счета
+                    - paragraph [ref=f3e224]: Фиксированная стоимость пакета
+                  - cell "500 ₽/мес" [ref=f3e225]
+                - row [ref=f3e226]:
+                  - cell "AI-агенты 1 × 500 ₽ за агент" [ref=f3e227]:
+                    - generic [ref=f3e228]: AI-агенты
+                    - paragraph [ref=f3e230]: 1 × 500 ₽ за агент
+                  - cell "500 ₽/мес" [ref=f3e231]
+                - row [ref=f3e232]:
+                  - cell "Telegram 1 × 500 ₽ за аккаунт" [ref=f3e233]:
+                    - generic [ref=f3e234]: Telegram
+                    - paragraph [ref=f3e236]: 1 × 500 ₽ за аккаунт
+                  - cell "500 ₽/мес" [ref=f3e237]
+                - row [ref=f3e238]:
+                  - cell "WhatsApp бесплатно ещё 14 дн. 1 × 500 ₽ за аккаунт" [ref=f3e239]:
+                    - generic [ref=f3e240]:
+                      - generic [ref=f3e241]: WhatsApp
+                      - generic [ref=f3e242]: бесплатно ещё 14 дн.
+                    - paragraph [ref=f3e247]: 1 × 500 ₽ за аккаунт
+                  - cell "0 ₽/мес" [ref=f3e248]
+                - row [ref=f3e249]:
+                  - cell "MAX бесплатно ещё 14 дн. 1 × 500 ₽ за аккаунт" [ref=f3e250]:
+                    - generic [ref=f3e251]:
+                      - generic [ref=f3e252]: MAX
+                      - generic [ref=f3e253]: бесплатно ещё 14 дн.
+                    - paragraph [ref=f3e258]: 1 × 500 ₽ за аккаунт
+                  - cell "0 ₽/мес" [ref=f3e259]
+                - row [ref=f3e260]:
+                  - cell "Avito 1 × 500 ₽ за аккаунт" [ref=f3e261]:
+                    - generic [ref=f3e262]: Avito
+                    - paragraph [ref=f3e264]: 1 × 500 ₽ за аккаунт
+                  - cell "500 ₽/мес" [ref=f3e265]
+                - row [ref=f3e266]:
+                  - cell "Instagram бесплатно ещё 14 дн. 1 × 500 ₽ за аккаунт" [ref=f3e267]:
+                    - generic [ref=f3e268]:
+                      - generic [ref=f3e269]: Instagram
+                      - generic [ref=f3e270]: бесплатно ещё 14 дн.
+                    - paragraph [ref=f3e275]: 1 × 500 ₽ за аккаунт
+                  - cell "0 ₽/мес" [ref=f3e276]
+              - rowgroup [ref=f3e277]:
+                - row [ref=f3e278]:
+                  - cell "Итого к оплате" [ref=f3e279]
+                  - cell "3 100 ₽/мес" [ref=f3e280]
+            - paragraph [ref=f3e282]:
+              - text: Число пользователей влияет на стоимость базовой CRM —
+              - link "управление сотрудниками" [ref=f3e283] [cursor=pointer]:
+                - /url: /settings/team
+              - text: . Состав модулей —
+              - link "маркетплейс" [ref=f3e284] [cursor=pointer]:
+                - /url: /marketplace
+              - text: .
+          - heading "Баланс ИИ (токены)" [level=2] [ref=f3e288]
+          - generic [ref=f3e289]:
+            - generic [ref=f3e290]:
+              - generic [ref=f3e291]:
+                - paragraph [ref=f3e295]: Баланс ИИ
+                - paragraph [ref=f3e296]: 1 000 ₽
+                - paragraph [ref=f3e297]: ≈ 5 494 505 токенов на GPT-4o mini
+              - generic [ref=f3e298]:
+                - paragraph [ref=f3e299]: Расход за месяц
+                - paragraph [ref=f3e303]: 0 ₽
+                - paragraph [ref=f3e304]: 0 запросов · всего 0 ₽
+            - generic [ref=f3e339]:
+              - paragraph [ref=f3e340]: Сумма пополнения
+              - generic [ref=f3e341]:
+                - button "500 ₽" [ref=f3e342]
+                - button "1 000 ₽" [pressed] [ref=f3e343]
+                - button "5 000 ₽" [ref=f3e344]
+              - paragraph [ref=f3e345]: "Онлайн-оплата пока не подключена: сумма зачисляется на баланс сразу, счёт выставляется вручную. Операция попадает в журнал пополнений."
+              - generic [ref=f3e346]:
+                - button "Отмена" [ref=f3e347]
+                - button "Пополнить на 1 000 ₽" [ref=f3e348]
+          - generic [ref=f3e309]:
+            - heading "Способы оплаты" [level=2] [ref=f3e310]
+            - paragraph [ref=f3e311]: Выберите, как оплачивать подписку после пробного периода
+            - generic [ref=f3e315]:
+              - paragraph [ref=f3e316]: Автоматическое списание пока недоступно
+              - paragraph [ref=f3e317]: Платёжный провайдер в процессе подключения. Оставьте заявку — менеджер выставит счёт и активирует подписку вручную. Доступ к данным при этом не ограничивается.
+            - generic [ref=f3e318]:
+              - button [ref=f3e319]:
+                - generic [ref=f3e323]:
+                  - paragraph [ref=f3e324]: Привязать карту
+                  - paragraph [ref=f3e325]: Автопродление подписки каждый месяц
+              - button [ref=f3e326]:
+                - generic [ref=f3e332]:
+                  - paragraph [ref=f3e333]: Счёт для юрлица или ИП
+                  - paragraph [ref=f3e334]: Оплата по счёту с указанием ИНН
+          - paragraph [ref=f3e335]: Счёта вашим клиентам выставляются в модуле «Финансы» — этот раздел о подписке на платформу.
+  - region "Notifications alt+T"
+  - alert [ref=f3e99]

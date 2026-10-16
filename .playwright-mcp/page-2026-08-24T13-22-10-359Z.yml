@@ -1,0 +1,90 @@
+- generic [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary [ref=f2e3]:
+      - generic [ref=f2e4]:
+        - generic [ref=f2e5]: G
+        - generic [ref=f2e7]:
+          - generic [ref=f2e8]: GETVOXLY
+          - generic [ref=f2e9]: Платформа для бизнеса
+      - button "K KB Co kbco.getvoxly.ru" [ref=f2e101]:
+        - generic [ref=f2e12]: K
+        - generic [ref=f2e102]:
+          - paragraph [ref=f2e103]: KB Co
+          - paragraph [ref=f2e104]: kbco.getvoxly.ru
+      - navigation [ref=f2e16]:
+        - link "Панель" [ref=f2e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f2e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f2e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f2e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f2e42] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f2e48] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "AI-боты" [ref=f2e105] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=f2e53] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=f2e111]: Каналы связи
+        - link "Telegram" [ref=f2e115] [cursor=pointer]:
+          - /url: /integrations/telegram
+      - generic [ref=f2e59]:
+        - link "O owner owner@kbco.test" [ref=f2e120] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f2e61]: O
+          - generic [ref=f2e121]:
+            - paragraph [ref=f2e122]: owner
+            - paragraph [ref=f2e123]: owner@kbco.test
+        - button "Выйти" [ref=f2e62]
+      - button [ref=f2e66]
+    - generic [ref=f2e69]:
+      - banner [ref=f2e70]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f2e72]:
+          - generic [ref=f2e76]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f2e77]: ⌘K
+        - generic [ref=f2e78]:
+          - button "Создать" [ref=f2e80]
+          - button "Уведомления" [ref=f2e84]:
+            - generic [ref=f2e88]: "3"
+          - button "Включить тёмную тему" [ref=f2e89]
+      - main [ref=f2e92]:
+        - generic [ref=f2e124]:
+          - link "Назад к AI-ботам" [ref=f2e125] [cursor=pointer]:
+            - /url: /modules/ai-bots
+          - generic [ref=f2e128]:
+            - generic [ref=f2e134]:
+              - generic [ref=f2e135]:
+                - heading "Поддержка" [level=1] [ref=f2e136]
+                - generic [ref=f2e137]: Активен
+              - paragraph
+              - generic [ref=f2e139]:
+                - generic [ref=f2e140]: GPT-4o mini
+                - generic [ref=f2e141]: OpenAI
+                - generic [ref=f2e142]: Автоответы
+                - generic [ref=f2e143]: temp 0.7 · макс. 1024 ток.
+            - generic [ref=f2e144]:
+              - button "Пауза" [ref=f2e145]
+              - button "Настроить" [ref=f2e146]
+          - generic [ref=f2e150]:
+            - button "Чат" [ref=f2e151]
+            - button "Промпт" [ref=f2e154]
+            - button "База знаний" [ref=f2e158]
+            - button "Подключенные каналы" [active] [ref=f2e162]
+            - button "Использование" [ref=f2e165]
+          - generic [ref=f2e288]:
+            - generic [ref=f2e289]:
+              - generic [ref=f2e290]:
+                - heading "Подключенные каналы" [level=3] [ref=f2e291]
+                - paragraph [ref=f2e292]: Аккаунты, в которых агент будет отвечать. Обмен сообщениями заработает после подключения транспорта — сейчас привязка только сохраняется.
+              - button "Сохранить" [disabled] [ref=f2e293]
+            - button "Основной Telegram · @genadich_agency Подключён" [ref=f2e300]:
+              - generic [ref=f2e304]:
+                - paragraph [ref=f2e305]: Основной
+                - paragraph [ref=f2e306]: Telegram · @genadich_agency
+              - generic [ref=f2e307]: Подключён
+  - region "Notifications alt+T"
+  - button "Open Next.js Dev Tools" [ref=f2e202] [cursor=pointer]
+  - alert [ref=f2e206]

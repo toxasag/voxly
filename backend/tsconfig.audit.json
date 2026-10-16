@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "scripts/audit-*.ts", "scripts/audit-*.mjs"],
+  "exclude": ["node_modules", "dist", ".audit"]
+}

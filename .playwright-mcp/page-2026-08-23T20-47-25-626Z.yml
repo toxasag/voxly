@@ -1,0 +1,164 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - complementary [ref=f2e3]:
+      - generic [ref=f2e4]:
+        - generic [ref=f2e5]: G
+        - generic [ref=f2e7]:
+          - generic [ref=f2e8]: GETVOXLY
+          - generic [ref=f2e9]: Платформа для бизнеса
+      - button "V Voxly Platform voxly.getvoxly.ru" [ref=f2e98]:
+        - generic [ref=f2e12]: V
+        - generic [ref=f2e99]:
+          - paragraph [ref=f2e100]: Voxly Platform
+          - paragraph [ref=f2e101]: voxly.getvoxly.ru
+      - navigation [ref=f2e16]:
+        - link "Панель" [ref=f2e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Аналитика" [ref=f2e24] [cursor=pointer]:
+          - /url: /analytics
+        - link "Сделки" [ref=f2e28] [cursor=pointer]:
+          - /url: /crm/deals
+        - link "Контакты" [ref=f2e35] [cursor=pointer]:
+          - /url: /crm/contacts
+        - link "Компании" [ref=f2e42] [cursor=pointer]:
+          - /url: /crm/companies
+        - link "Задачи" [ref=f2e48] [cursor=pointer]:
+          - /url: /crm/tasks
+        - link "Сервисный центр" [ref=f2e102] [cursor=pointer]:
+          - /url: /repairs
+        - link "Финансы" [ref=f2e106] [cursor=pointer]:
+          - /url: /finance
+        - link "AI-боты" [ref=f2e111] [cursor=pointer]:
+          - /url: /modules/ai-bots
+        - link "Маркетплейс модулей" [ref=f2e53] [cursor=pointer]:
+          - /url: /marketplace
+        - generic [ref=f2e116]: Каналы связи
+        - link "Telegram" [ref=f2e120] [cursor=pointer]:
+          - /url: /integrations/telegram
+        - link "WhatsApp" [ref=f2e125] [cursor=pointer]:
+          - /url: /integrations/whatsapp
+        - link "MAX" [ref=f2e129] [cursor=pointer]:
+          - /url: /integrations/max
+        - link "Avito" [ref=f2e134] [cursor=pointer]:
+          - /url: /integrations/avito
+        - link "Instagram" [ref=f2e141] [cursor=pointer]:
+          - /url: /integrations/instagram
+        - generic [ref=f2e146]: Управление платформой
+        - link "Все компании" [ref=f2e151] [cursor=pointer]:
+          - /url: /admin/tenants
+        - link "Тарифы и биллинг" [ref=f2e157] [cursor=pointer]:
+          - /url: /admin/billing
+        - link "Метрики системы" [ref=f2e161] [cursor=pointer]:
+          - /url: /admin/metrics
+        - link "Системные логи" [ref=f2e165] [cursor=pointer]:
+          - /url: /admin/logs
+      - generic [ref=f2e59]:
+        - link [ref=f2e170] [cursor=pointer]:
+          - /url: /settings/profile
+          - generic [ref=f2e171]:
+            - paragraph [ref=f2e172]: Антон
+            - paragraph [ref=f2e173]: anton@genadich.com
+        - button "Выйти" [ref=f2e62]
+      - button [ref=f2e66]
+    - generic [ref=f2e69]:
+      - banner [ref=f2e70]:
+        - button "Поиск сделок, контактов, наряд-заказов... ⌘K" [ref=f2e72]:
+          - generic [ref=f2e76]: Поиск сделок, контактов, наряд-заказов...
+          - generic [ref=f2e77]: ⌘K
+        - generic [ref=f2e78]:
+          - button "Создать" [ref=f2e80]
+          - button "Уведомления" [ref=f2e84]:
+            - generic [ref=f2e88]: "3"
+          - button "Включить тёмную тему" [ref=f2e89]
+      - main [ref=f2e92]:
+        - generic [ref=f2e93]:
+          - generic [ref=f2e174]:
+            - heading "Мой профиль" [level=1] [ref=f2e175]
+            - paragraph [ref=f2e176]: Личные данные, пароль и каналы для входа
+          - generic [ref=f2e177]:
+            - heading "Личные данные" [level=2] [ref=f2e178]
+            - paragraph [ref=f2e179]: Как вас видят коллеги в системе
+            - generic [ref=f2e180]:
+              - generic [ref=f2e181]:
+                - generic [ref=f2e182]:
+                  - img "Ваше фото" [ref=f2e183]
+                  - button "Загрузить фото" [ref=f2e184]
+                - generic [ref=f2e188]:
+                  - paragraph [ref=f2e189]: JPEG, PNG или WebP
+                  - button "Удалить фото" [ref=f2e190]
+              - generic [ref=f2e191]:
+                - generic [ref=f2e192]:
+                  - generic [ref=f2e193]: Имя и фамилия
+                  - textbox "Имя и фамилия" [ref=f2e195]: Антон
+                - generic [ref=f2e196]:
+                  - generic [ref=f2e197]: E-mail
+                  - textbox "E-mail" [disabled] [ref=f2e199]: anton@genadich.com
+                  - paragraph [ref=f2e200]: Служит логином. Для смены обратитесь к администратору компании.
+                - generic [ref=f2e201]:
+                  - generic [ref=f2e202]: Телефон
+                  - textbox "Телефон" [ref=f2e204]:
+                    - /placeholder: +7 999 123 45 67
+                    - text: +7 985 501 40 40
+                  - paragraph [ref=f2e205]: На него приходит код подтверждения при входе
+                - generic [ref=f2e206]:
+                  - generic [ref=f2e207]: "Роль: Владелец"
+                  - button "Сохранить изменения" [disabled] [ref=f2e208]
+            - dialog [ref=f2e288]:
+              - generic [ref=f2e289]:
+                - generic [ref=f2e290]:
+                  - heading "Выберите область фото" [level=2] [ref=f2e291]
+                  - button "Закрыть" [ref=f2e292]
+                - generic [ref=f2e296]:
+                  - generic [ref=f2e298]:
+                    - button "Уменьшить" [disabled] [ref=f2e299]
+                    - slider "Масштаб" [ref=f2e301] [cursor=pointer]: "1"
+                    - button "Увеличить" [ref=f2e302]
+                  - paragraph [ref=f2e304]: Перетащите фото мышью, масштаб — ползунком или колесом
+                  - generic [ref=f2e305]:
+                    - button "Отмена" [ref=f2e306]
+                    - button "Применить" [ref=f2e307]
+          - generic [ref=f2e211]:
+            - heading "Безопасность" [level=2] [ref=f2e212]
+            - paragraph [ref=f2e213]: После смены пароля сессии на других устройствах будут завершены
+            - generic [ref=f2e214]:
+              - generic [ref=f2e215]:
+                - generic [ref=f2e216]: Текущий пароль
+                - generic [ref=f2e217]:
+                  - textbox "Текущий пароль" [ref=f2e218]:
+                    - /placeholder: ••••••••
+                  - button "Показать пароль" [ref=f2e219]
+              - generic [ref=f2e223]:
+                - generic [ref=f2e224]: Новый пароль
+                - generic [ref=f2e225]:
+                  - textbox "Новый пароль" [ref=f2e226]:
+                    - /placeholder: ••••••••
+                  - button "Показать пароль" [ref=f2e227]
+                - paragraph [ref=f2e231]: Минимум 8 символов
+              - generic [ref=f2e232]:
+                - generic [ref=f2e233]: Повторите новый пароль
+                - generic [ref=f2e234]:
+                  - textbox "Повторите новый пароль" [ref=f2e235]:
+                    - /placeholder: ••••••••
+                  - button "Показать пароль" [ref=f2e236]
+              - button "Обновить пароль" [ref=f2e240]
+          - generic [ref=f2e244]:
+            - heading "Каналы для входа" [level=2] [ref=f2e245]
+            - paragraph [ref=f2e246]: В привязанный канал приходит код подтверждения при входе
+            - generic [ref=f2e247]:
+              - generic [ref=f2e249]:
+                - generic [ref=f2e255]:
+                  - generic [ref=f2e256]:
+                    - generic [ref=f2e257]: Telegram
+                    - generic [ref=f2e258]: Привязан
+                  - paragraph [ref=f2e259]: "ID: 5973721183"
+                - button "Отвязать" [disabled] [ref=f2e260]
+              - generic [ref=f2e265]:
+                - generic [ref=f2e271]:
+                  - generic [ref=f2e272]:
+                    - generic [ref=f2e273]: MAX
+                    - generic [ref=f2e274]: Не привязан
+                  - paragraph [ref=f2e275]: Бот @id505030516451_bot
+                - button "Привязать MAX" [ref=f2e276]
+          - paragraph [ref=f2e281]: Удаление собственной учётной записи выполняет администратор компании в разделе «Сотрудники».
+  - region "Notifications alt+T"
+  - alert [ref=f2e97]

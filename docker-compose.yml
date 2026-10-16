@@ -1,0 +1,206 @@
+# =============================================================================
+# GETVOXLY — production compose (VPS 150.241.98.135, каталог /opt/getvoxly)
+#
+# Сервисы подключены к внешней сети automation_automation_net, чтобы Nginx
+# Proxy Manager (automation-npm-1) проксировал домены напрямую по именам:
+#   api.getvoxly.ru            -> http://backend:4000
+#   app.getvoxly.ru / основной -> http://frontend:3000
+# =============================================================================
+# ВНИМАНИЕ: сеть automation_automation_net и стек /opt/automation не трогать —
+# compose только присоединяется к существующей сети (external: true).
+# =============================================================================
+
+# Секреты читаются из файла .env рядом с этим compose (POSTGRES_PASSWORD,
+# APP_DB_PASSWORD, JWT_SECRET). Литеральных значений здесь нет: предыдущая
+# версия держала пароль БД и подписной ключ прямо в репозитории.
+# =============================================================================
+
+services:
+  db:
+    # postgres:16-alpine + pgvector 0.8.0, собранный из исходников.
+    #
+    # Готового alpine-образа с pgvector не существует: проект публикует только
+    # Debian-теги. Переход на Debian сменил бы libc с musl на glibc, то есть
+    # библиотеку сортировки строк, и все 66 текстовых индексов существующего тома
+    # `getvoxly_pg_data` (включая UNIQUE по `lower(email)` и `slug`) разошлись бы с
+    # данными до полного `REINDEX DATABASE`. Сборка расширения дешевле и
+    # сохраняет окружение тома неизменным.
+    build:
+      context: .
+      dockerfile: docker/postgres-pgvector.Dockerfile
+    image: getvoxly-postgres-pgvector:16-0.8.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: getvoxly
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: getvoxly
+    volumes:
+      - getvoxly_pg_data:/var/lib/postgresql/data
+      # 27 таблиц ядра + сид владельца (+79150946944, owner); выполняются
+      # docker-entrypoint-initdb.d только на первый старт чистого volume.
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/src/db/02-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U getvoxly -d getvoxly"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - automation
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4000
+      # Подключение идёт непривилегированной ролью app_user, а не владельцем
+      # схемы: владелец (и тем более SUPERUSER) обходит RLS-политики, поэтому
+      # изоляция арендаторов на владельце не работала бы даже с FORCE.
+      DATABASE_URL: postgresql://app_user:${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}@db:5432/getvoxly
+      # Отдельное подключение только для миграций (M6.2.7).
+      #
+      # Нужно потому, что app_user намеренно лишён прав на DDL — проверено:
+      # `CREATE TABLE` от его имени отдаёт `permission denied for schema public`.
+      # Выдать ему права на схему означало бы обесценить RLS, ради которого он и
+      # создан. Поэтому раннер использует роль-владельца, и это подключение живёт
+      # только на время прогона в entrypoint, до старта Node.
+      MIGRATION_DATABASE_URL: postgresql://getvoxly:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/getvoxly
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ACCESS_TOKEN_TTL: 15m
+      REFRESH_TOKEN_TTL_DAYS: 30
+      OTP_TTL_MINUTES: 5
+      OTP_MAX_ATTEMPTS: 5
+      # Каждый арендатор работает на своём поддомене, перечислить их нельзя,
+      # поэтому шаблон `*.` — он раскрывается ровно в одну метку, так что
+      # `getvoxly.ru.evil.com` и `a.b.getvoxly.ru` не проходят (см.
+      # config/env.ts corsOriginMatcher).
+      CORS_ORIGIN: https://getvoxly.ru,https://www.getvoxly.ru,https://app.getvoxly.ru,https://api.getvoxly.ru,https://*.getvoxly.ru
+      # Бот доставки кодов подтверждения (@GetVoxlybot).
+      TELEGRAM_AUTH_BOT_TOKEN: ${TELEGRAM_AUTH_BOT_TOKEN:?TELEGRAM_AUTH_BOT_TOKEN is required}
+      TELEGRAM_AUTH_BOT_USERNAME: GetVoxlybot
+      # Секрет проверяется в заголовке X-Telegram-Bot-Api-Secret-Token: без него
+      # любой, кто узнает URL webhook, мог бы привязать чужой chat_id к сессии.
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?TELEGRAM_WEBHOOK_SECRET is required}
+      # ---------------------------------------------------------------------
+      # Бот доставки кодов через MAX (@id505030516451_bot).
+      #
+      # Канал необязателен: без MAX_BOT_TOKEN он отвечает 503 MAX_UNAVAILABLE, а
+      # вход через Telegram продолжает работать. Требовать токен через `:?`
+      # означало бы, что забытая переменная останавливает весь API.
+      #
+      # Пустая строка трактуется как «не задано» (см. optionalNonEmpty в
+      # config/env.ts): форма `${VAR:-}` подставляет именно "", и без этого
+      # необязательная переменная валила бы валидацию окружения на старте.
+      #
+      # MAX_WEBHOOK_SECRET обязателен, КОГДА задан MAX_BOT_TOKEN: webhook
+      # публичен, и без секрета любой, кто узнает URL, привязал бы чужой аккаунт
+      # к сессии подтверждения. Проверку выполняет config/env.ts на старте.
+      # ---------------------------------------------------------------------
+      # ---------------------------------------------------------------------
+      # Telegram MTProto: подключение пользовательских аккаунтов (my.telegram.org).
+      #
+      # Это не токен бота выше: бот доставляет коды входа в саму CRM, а MTProto
+      # даёт доступ к личной переписке аккаунта, который пользователь подключил.
+      #
+      # Пара необязательна: без ключей канал отвечает 503
+      # TELEGRAM_MTPROTO_UNAVAILABLE, остальной API работает. Заданный только
+      # один из двух валит проверку окружения на старте — MTProto нужны оба.
+      #
+      # CREDENTIALS_ENCRYPTION_KEY обязателен, КОГДА задан TELEGRAM_API_ID:
+      # сохранённая сессия — полный доступ к аккаунту Telegram, и в открытом виде
+      # в БД её держать нельзя (дамп или бэкап раскрыл бы чужие переписки).
+      # ---------------------------------------------------------------------
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      # ---------------------------------------------------------------------
+      # Шлюз LLM (OpenAI-совместимый API) для эмбеддингов базы знаний.
+      #
+      # Пара «адрес + ключ» задаётся целиком: с одним из двух вызов упал бы 401 у
+      # провайдера, поэтому валидация окружения требует оба. Без них база знаний
+      # отвечает 503 EMBEDDINGS_UNAVAILABLE, остальной API работает.
+      #
+      # LLM_EMBEDDING_MODEL нельзя менять без миграции: размерность вектора зашита
+      # в тип колонки vector(1536), и векторы другой длины в одной таблице
+      # несравнимы — поиск молча возвращал бы мусор.
+      # ---------------------------------------------------------------------
+      LLM_API_BASE_URL: ${LLM_API_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL:-openrouter/openai/text-embedding-3-small}
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+      MAX_BOT_USERNAME: id505030516451_bot
+      # Заголовок X-Max-Bot-Api-Secret; допустимо [A-Za-z0-9_-], 5–256 символов.
+      MAX_WEBHOOK_SECRET: ${MAX_WEBHOOK_SECRET:-}
+      # Корень Минцифры для Node.
+      #
+      # Недостаточно установить сертификат в системный store образа: Node
+      # использует собственный вкомпилированный набор корней и системный
+      # игнорирует. Проверено в контейнере: `wget` к platform-api2.max.ru
+      # проходит, а `fetch` из Node падает с UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+      # из-за чего регистрация webhook отдавала `fetch failed`. С этой
+      # переменной тот же вызов доходит до API.
+      NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/russian_trusted_root_ca_pem.crt
+      # Внешний адрес API — используется для регистрации webhook при старте.
+      # Из HOST/PORT его вывести нельзя: сервис слушает 0.0.0.0:4000 за прокси.
+      PUBLIC_API_URL: https://api.getvoxly.ru
+      # Внешний адрес приложения — для ссылок внутри писем.
+      PUBLIC_APP_URL: https://app.getvoxly.ru
+
+      # ---------------------------------------------------------------------
+      # Почта (SMTP.bz). Пароль — из .env, остальное не секретно.
+      #
+      # Порт 465 (неявный TLS) выбран после проверки с сервера: 465, 587, 25 и
+      # 2525 все открыты, поэтому fallback на 587/STARTTLS не потребовался.
+      # ---------------------------------------------------------------------
+      SMTP_HOST: connect.smtp.bz
+      SMTP_PORT: 465
+      SMTP_SECURE: "true"
+      SMTP_USER: admin@getvoxly.ru
+      SMTP_PASS: ${SMTP_PASS:?SMTP_PASS is required}
+      SMTP_FROM: '"Voxly" <admin@getvoxly.ru>'
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - automation
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://api.getvoxly.ru
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - automation
+
+volumes:
+  getvoxly_pg_data:
+    name: getvoxly_pg_data
+
+networks:
+  automation:
+    external: true
+    name: automation_automation_net

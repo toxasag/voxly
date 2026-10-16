@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "browser-diagnostic",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4173", "--bind", "127.0.0.1", "--directory", "docs/04_PROJECT_STATE"],
+      "port": 4173
+    },
+    {
+      "name": "audit-backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["backend/node_modules/tsx/dist/cli.mjs", "backend/scripts/audit-server.ts"],
+      "port": 4100
+    },
+    {
+      "name": "audit-frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["scripts/audit-frontend.sh"],
+      "port": 3100
+    }
+  ]
+}
