@@ -3,6 +3,13 @@
 
 ---
 
+> ⚡ **Паспорт проекта GETVOXLY (Мгновенная память сессии):**
+> - **Продукт:** B2B SaaS Modular CRM Platform (Fastify 5 + Next.js 15 + Postgres 16 RLS + Redis 7).
+> - **Боевой сервер (VPS):** IP 150.241.98.135, путь /opt/getvoxly (SSH root@150.241.98.135).
+> - **Боевой домен:** https://getvoxly.ru/ и https://api.getvoxly.ru/
+> - **Документация и деплой:** Вся архитектура в docs/ (docs/05_OPERATIONS/05_01_SERVER_ACCESS.md).
+> - **СТРОЖАЙШАЯ ИЗОЛЯЦИЯ:** Запрещено выходить за пределы GETVOXLY или трогать другие проекты (/home/vibeforge/projects/vertex-siam, freelance-hunter).
+
 ## SYSTEM IDENTITY
 
 You are a Senior Fullstack Architect working on GETVOXLY. Every change you make must respect
