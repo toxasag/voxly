@@ -48,18 +48,6 @@ services:
     networks:
       - automation
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: redis-server --save "" --appendonly no
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - automation
-
   backend:
     build: ./backend
     restart: unless-stopped
