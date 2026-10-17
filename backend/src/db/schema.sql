@@ -505,6 +505,7 @@ CREATE INDEX IF NOT EXISTS idx_page_layout_tabs_object_active
 
 -- Soft-delete columns (see .cursorrules §10: queries filter deleted_at IS NULL)
 ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS suppress_deal_creation BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE companies  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE deals      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE crm_tasks  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -846,11 +847,16 @@ CREATE TABLE IF NOT EXISTS ai_usage_log (
   charged_kopecks BIGINT NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'error')),
   error_message TEXT NOT NULL DEFAULT '',
+  usage_charge_key TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_usage_log_tenant_created
   ON ai_usage_log (tenant_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_log_charge_key
+  ON ai_usage_log (usage_charge_key)
+  WHERE usage_charge_key IS NOT NULL;
 
 -- Relax the historical NOT NULL on existing installations: internal transfers
 -- and invoice payments legitimately carry no tenant category. DROP NOT NULL is
@@ -1152,6 +1158,108 @@ CREATE INDEX IF NOT EXISTS idx_agent_channel_bindings_account
   ON ai_agent_channel_bindings (channel_account_id)
   WHERE is_enabled;
 
+-- =============================================================================
+-- SAAS BILLING & SUBSCRIPTIONS (Robokassa)
+-- =============================================================================
+
+CREATE SEQUENCE IF NOT EXISTS robokassa_inv_id_seq START 100001;
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  product_code TEXT NOT NULL,
+  period_months INT NOT NULL DEFAULT 1,
+  seats_included INT NOT NULL DEFAULT 10,
+  extra_seats INT NOT NULL DEFAULT 0,
+  starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ends_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'cancelled', 'past_due')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_tenant_id ON subscriptions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_ends_at ON subscriptions(ends_at);
+
+CREATE TABLE IF NOT EXISTS billing_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  subscription_id UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
+  robokassa_inv_id INT NOT NULL UNIQUE,
+  amount NUMERIC(10, 2) NOT NULL CHECK (amount >= 0),
+  balance_applied_rub NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'failed', 'cancelled')),
+  product_code TEXT NOT NULL,
+  period_months INT DEFAULT 1,
+  description TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  fiscal_receipt JSONB DEFAULT NULL,
+  paid_at TIMESTAMPTZ DEFAULT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_payments_tenant_id ON billing_payments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_billing_payments_status ON billing_payments(status);
+CREATE INDEX IF NOT EXISTS idx_billing_payments_robokassa_inv_id ON billing_payments(robokassa_inv_id);
+CREATE INDEX IF NOT EXISTS idx_billing_payments_idempotency_key ON billing_payments(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS story_posts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  channel_account_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  channel TEXT NOT NULL DEFAULT 'telegram',
+  media_url TEXT NOT NULL,
+  media_type TEXT NOT NULL DEFAULT 'photo',
+  text TEXT NOT NULL DEFAULT '',
+  link_url TEXT,
+  link_text TEXT,
+  views_count INT NOT NULL DEFAULT 0,
+  reactions_count INT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('draft', 'scheduled', 'published', 'failed')),
+  scheduled_at TIMESTAMPTZ,
+  posted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_story_posts_tenant_posted ON story_posts(tenant_id, posted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_story_posts_tenant_status ON story_posts(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS mailing_stage_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  pipeline_id UUID REFERENCES crm_pipelines(id) ON DELETE CASCADE,
+  stage_id UUID REFERENCES crm_pipeline_stages(id) ON DELETE CASCADE,
+  channel_account_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
+  channel TEXT NOT NULL DEFAULT 'telegram',
+  name TEXT NOT NULL,
+  delay_seconds INT NOT NULL DEFAULT 0,
+  template_text TEXT NOT NULL,
+  media_url TEXT,
+  media_type TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mailing_stage_rules_lookup ON mailing_stage_rules(tenant_id, stage_id, is_active);
+
+CREATE TABLE IF NOT EXISTS ai_sales_examples (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  deal_id UUID REFERENCES deals(id) ON DELETE CASCADE,
+  customer_query TEXT NOT NULL,
+  agent_reply TEXT NOT NULL,
+  embedding vector(1536),
+  source_message_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_sales_examples_tenant ON ai_sales_examples(tenant_id, created_at DESC);
+
+
 -- Один аккаунт нельзя привязать дважды: сообщения приходили бы в два
 -- подключения, а тариф считал бы два аккаунта. Частичный индекс — удалённое
 -- подключение не мешает привязать тот же аккаунт снова.
@@ -1251,7 +1359,7 @@ BEGIN
   FOREACH target_table IN ARRAY ARRAY[
      'tenants', 'users', 'contacts', 'companies', 'deals', 'crm_tasks', 'notes',
      'record_table_layouts', 'page_layout_tabs', 'repair_orders', 'cash_accounts', 'invoices',
-     'channel_accounts', 'telegram_auth_sessions', 'ai_agents'
+     'channel_accounts', 'telegram_auth_sessions', 'ai_agents', 'subscriptions', 'billing_payments'
   ]
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%1$s_updated_at ON %1$s', target_table);
@@ -1308,7 +1416,9 @@ BEGIN
     'device_models', 'cash_accounts', 'finance_categories', 'transactions', 'invoices',
      'installed_modules', 'module_data_purges', 'channel_accounts', 'telegram_auth_sessions',
     'ai_agents', 'ai_usage_log', 'ai_balance_topups',
-    'knowledge_base_documents', 'knowledge_base_chunks', 'ai_agent_channel_bindings'
+    'knowledge_base_documents', 'knowledge_base_chunks', 'ai_agent_channel_bindings',
+    'subscriptions', 'billing_payments',
+    'story_posts', 'mailing_stage_rules', 'ai_sales_examples'
   ]
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target_table);

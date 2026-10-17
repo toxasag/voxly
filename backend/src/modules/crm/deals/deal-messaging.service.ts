@@ -29,6 +29,15 @@ interface OutboundRoute {
   recipient: string;
 }
 
+export interface SendFromOptionDTO {
+  channelAccountId: string;
+  channel: string;
+  label: string;
+  available: boolean;
+  unavailableReason?: string;
+  isDefault: boolean;
+}
+
 interface Logger {
   warn: (obj: object, message: string) => void;
   error: (obj: object, message: string) => void;
@@ -39,6 +48,86 @@ export class DealMessagingService {
     private readonly deals: DealsService = new DealsService(),
     private readonly log: Logger | null = null,
   ) {}
+
+  /**
+   * Возвращает список доступных аккаунтов («Пишем от:») для сделки с учетом контактных данных клиента.
+   */
+  async getSendFromOptions(tenantId: string, dealId: string): Promise<SendFromOptionDTO[]> {
+    const contactRows = await query<{
+      telegram_chat_id: string | null;
+      telegram_username: string | null;
+      whatsapp: string | null;
+      phone: string;
+    }>(
+      `SELECT c.telegram_chat_id::text AS telegram_chat_id,
+              c.telegram_username,
+              c.whatsapp,
+              c.phone
+       FROM deals d
+       LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id AND c.deleted_at IS NULL
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    const contact = contactRows[0] ?? {
+      telegram_chat_id: null,
+      telegram_username: null,
+      whatsapp: null,
+      phone: "",
+    };
+
+    const accounts = await query<{ id: string; channel: string; name: string }>(
+      `SELECT id, channel, name
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+      [tenantId],
+    );
+
+    const lastMsgAccountRow = await query<{ channel_account_id: string }>(
+      `SELECT channel_account_id FROM deal_messages
+       WHERE tenant_id = $1 AND deal_id = $2 AND channel_account_id IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [tenantId, dealId],
+    );
+    const defaultAccountId = lastMsgAccountRow[0]?.channel_account_id ?? accounts[0]?.id;
+
+    return accounts.map((acc) => {
+      let available = false;
+      let unavailableReason: string | undefined;
+
+      if (acc.channel === "telegram") {
+        if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан Telegram или номер телефона";
+        }
+      } else if (acc.channel === "whatsapp") {
+        if (contact.whatsapp || contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан телефон для WhatsApp";
+        }
+      } else if (acc.channel === "rumax" || acc.channel === "max") {
+        if (contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан телефон для MAX";
+        }
+      } else {
+        available = true;
+      }
+
+      return {
+        channelAccountId: acc.id,
+        channel: acc.channel,
+        label: `${acc.name || acc.channel} (${acc.channel})`,
+        available,
+        unavailableReason,
+        isDefault: acc.id === defaultAccountId,
+      };
+    });
+  }
 
   /**
    * Записывает ответ менеджера и отправляет его в канал.
@@ -181,10 +270,21 @@ export class DealMessagingService {
     const row = rows[0];
     if (row === undefined) return null;
 
-    const channelAccountId =
+    let channelAccountId =
       payload.channel_account_id !== undefined && payload.channel_account_id.length > 0
         ? payload.channel_account_id
         : row.channel_account_id;
+
+    // Write-First fallback: если переписка ещё не велась, берём первый активный аккаунт этого канала
+    if (!channelAccountId) {
+      const fallbackAccount = await query<{ id: string }>(
+        `SELECT id FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY created_at ASC LIMIT 1`,
+        [tenantId, payload.channel],
+      );
+      channelAccountId = fallbackAccount[0]?.id ?? null;
+    }
 
     if (channelAccountId === null || channelAccountId.length === 0) return null;
 

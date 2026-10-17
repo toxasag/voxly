@@ -213,4 +213,13 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.status(201).send({ data: message });
   });
+
+  /**
+   * Список доступных аккаунтов («Пишем от:») для отправки первого или очередного сообщения.
+   */
+  app.get("/:id/send-from-options", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const options = await messaging.getSendFromOptions(request.tenant_id, id);
+    return reply.send({ data: options, meta: { total: options.length } });
+  });
 }

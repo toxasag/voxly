@@ -36,6 +36,12 @@ export const ALL_PERMISSIONS: readonly Permission[] = [
   "ai_bots:configure",
   "tenant:admin",
   "billing:manage",
+  "billing:view",
+  "stories:read",
+  "stories:write",
+  "stories:publish",
+  "chat:read",
+  "chat:write",
 ];
 
 export const VALID_PERMISSIONS: ReadonlySet<string> = new Set<string>(ALL_PERMISSIONS);
@@ -78,6 +84,12 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "ai_bots:read",
     "ai_bots:configure",
     "tenant:admin",
+    "billing:view",
+    "stories:read",
+    "stories:write",
+    "stories:publish",
+    "chat:read",
+    "chat:write",
   ],
 
   manager: [
@@ -92,6 +104,9 @@ export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     "service_center:read",
     "finance:read",
     "ai_bots:read",
+    "stories:read",
+    "chat:read",
+    "chat:write",
   ],
 
   technician: [
