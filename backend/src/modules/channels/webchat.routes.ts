@@ -16,6 +16,20 @@ const messageBodySchema = z.object({
   senderName: z.string().trim().max(100).optional(),
   senderPhone: z.string().trim().max(30).optional(),
   pageUrl: z.string().trim().max(500).optional(),
+  utmTags: z.record(z.string()).optional(),
+  ymUid: z.string().trim().max(100).optional(),
+  gaId: z.string().trim().max(100).optional(),
+  visitCount: z.number().int().min(0).optional(),
+  pageHistory: z
+    .array(
+      z.object({
+        step: z.number(),
+        time: z.string(),
+        url: z.string(),
+      }),
+    )
+    .optional(),
+  isDraft: z.boolean().optional(),
 });
 
 const historyQuerySchema = z.object({
@@ -66,6 +80,12 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         senderName: body.senderName,
         senderPhone: body.senderPhone,
         pageUrl: body.pageUrl,
+        utmTags: body.utmTags,
+        ymUid: body.ymUid,
+        gaId: body.gaId,
+        visitCount: body.visitCount,
+        pageHistory: body.pageHistory,
+        isDraft: body.isDraft,
       });
 
       return reply.status(200).send({ data: result });
