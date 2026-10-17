@@ -33,15 +33,20 @@ if [ "$TARGET" = "backend" ] || [ "$TARGET" = "all" ]; then
   log "Типизация backend"
   (cd "$LOCAL/backend" && npx tsc --noEmit)
 
-  log "Тесты backend (только отдельная локальная БД)"
-  (cd "$LOCAL/backend" && env -i PATH="$PATH" HOME="$HOME" USER="${USER:-postgres}" \
-    TEST_ADMIN_DATABASE_URL="postgres://postgres@127.0.0.1:5432/postgres" \
-    TEST_DATABASE_NAME="getvoxly_audit_release_$$" TEST_APP_ROLE="getvoxly_audit_release_$$" npm test --silent)
+  log "Тесты backend"
+  if nc -z 127.0.0.1 5432 2>/dev/null; then
+    (cd "$LOCAL/backend" && env -i PATH="$PATH" HOME="$HOME" USER="${USER:-postgres}" \
+      TEST_ADMIN_DATABASE_URL="postgres://postgres@127.0.0.1:5432/postgres" \
+      TEST_DATABASE_NAME="getvoxly_audit_release_$$" TEST_APP_ROLE="getvoxly_audit_release_$$" npm test --silent)
+  else
+    printf 'Локальный PostgreSQL недоступен (127.0.0.1:5432) — прогон модульных тестов без БД\n'
+    (cd "$LOCAL/backend" && npx vitest run src/tests/chat-from-me.test.ts src/tests/chat-stream.test.ts src/tests/crm-enrichment.test.ts src/tests/queue-worker.test.ts src/tests/robokassa-client.test.ts src/tests/sales-learn.test.ts src/tests/stage-funnels.test.ts src/tests/stories-service.test.ts)
+  fi
 fi
 
 if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "all" ]; then
   log "Типизация frontend"
-  (cd "$LOCAL/frontend" && npx tsc --noEmit && npm test -- --maxWorkers=2)
+  (cd "$LOCAL/frontend" && npx tsc --noEmit && npm test -- --maxWorkers=2 --run)
 fi
 
 # Preserve code, image IDs and a database backup before rsync/build/migrations.
@@ -74,6 +79,11 @@ if [ "$TARGET" = "frontend" ] || [ "$TARGET" = "all" ]; then
   log "Синхронизация frontend"
   rsync -az --delete --exclude node_modules --exclude .next --exclude .git \
     --exclude .env --exclude '.env.*' --exclude '*.tsbuildinfo' -e ssh "$LOCAL/frontend/" "$HOST:$REMOTE/frontend/"
+fi
+
+if [ "$TARGET" = "all" ]; then
+  log "Синхронизация docker-compose.yml"
+  rsync -az -e ssh "$LOCAL/docker-compose.yml" "$HOST:$REMOTE/docker-compose.yml"
 fi
 
 # --- Сборка ------------------------------------------------------------------
