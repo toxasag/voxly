@@ -17,6 +17,8 @@ export type ChannelStatus = z.infer<typeof channelStatusSchema>;
 export const createChannelAccountSchema = z.object({
   label: z.string().trim().min(1, "Укажите название подключения").max(120),
   external_id: z.string().trim().min(1, "Укажите идентификатор аккаунта").max(200),
+  credentials: z.record(z.unknown()).optional(),
+  agent_id: z.string().uuid().nullable().optional(),
 });
 
 export type CreateChannelAccountValues = z.infer<typeof createChannelAccountSchema>;

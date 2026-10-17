@@ -134,7 +134,15 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
     const rows = await query<CatalogRow>(
       `SELECT m.slug, m.name, m.description, m.price_monthly, m.billing_kind,
-              m.base_price, m.unit_price, m.included_units, m.unit_label,
+              m.base_price,
+              COALESCE(
+                CASE WHEN i.locked_unit_price IS NOT NULL AND (i.next_billing_date IS NULL OR i.next_billing_date > now())
+                     THEN i.locked_unit_price
+                     ELSE m.unit_price
+                END,
+                m.unit_price
+              ) AS unit_price,
+              m.included_units, m.unit_label,
               m.is_multi, m.category, m.icon, m.trial_days, m.features,
               true AS installed, i.installed_at, i.quantity, i.trial_ends_at
        FROM installed_modules i

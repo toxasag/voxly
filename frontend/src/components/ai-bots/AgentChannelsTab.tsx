@@ -33,6 +33,9 @@ const CHANNEL_LABEL: Record<string, string> = {
   max: "MAX",
   avito: "Avito",
   instagram: "Instagram",
+  webchat: "Онлайн-чат (Сайт)",
+  telegram_bot: "Telegram-бот",
+  max_bot: "MAX-бот",
 };
 
 const STATUS_LABEL: Record<string, string> = {

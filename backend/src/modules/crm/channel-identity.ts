@@ -69,6 +69,7 @@ const CONTACT_CHANNEL_BY_SLUG: Readonly<Record<string, ContactChannel>> = {
   telegram: "telegram",
   whatsapp: "whatsapp",
   max: "rumax",
+  webchat: "phone",
   phone: "phone",
   email: "email",
 };
@@ -79,6 +80,7 @@ const SOCIAL_KIND_BY_SLUG: Readonly<Record<string, SocialKind>> = {
   whatsapp: "whatsapp",
   max: "max",
   instagram: "instagram",
+  webchat: "other",
 };
 
 /** Номер в E.164: схема контакта отвергает разделители и требует `+`. */

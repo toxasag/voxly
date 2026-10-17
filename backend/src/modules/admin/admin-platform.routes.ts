@@ -235,4 +235,249 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
       meta: { limit, offset, total: Number(totalRow?.total ?? 0) },
     });
   });
+
+  /**
+   * Каталог модулей маркетплейса с ценами для настройки супер-админом.
+   */
+  app.get("/marketplace/modules", { onRequest: platformOwner }, async (_request, reply) => {
+    const rows = await query<{
+      slug: string;
+      name: string;
+      description: string;
+      price_monthly: string;
+      billing_kind: string;
+      base_price: string;
+      unit_price: string;
+      included_units: number;
+      unit_label: string;
+      is_multi: boolean;
+      category: string;
+      icon: string;
+      trial_days: number;
+      is_available: boolean;
+      sort_order: number;
+      pending_unit_price: string | null;
+      pending_effective_at: Date | string | null;
+    }>(
+      `SELECT slug, name, description, price_monthly, billing_kind,
+              base_price, unit_price, included_units, unit_label,
+              is_multi, category, icon, trial_days, is_available, sort_order,
+              pending_unit_price, pending_effective_at
+       FROM marketplace_modules
+       ORDER BY sort_order ASC, name ASC`,
+    );
+
+    return reply.send({
+      data: rows.map((r) => ({
+        slug: r.slug,
+        name: r.name,
+        description: r.description,
+        priceMonthly: Number(r.price_monthly),
+        billingKind: r.billing_kind,
+        basePrice: Number(r.base_price),
+        unitPrice: Number(r.unit_price),
+        includedUnits: r.included_units,
+        unitLabel: r.unit_label,
+        isMulti: r.is_multi,
+        category: r.category,
+        icon: r.icon,
+        trialDays: r.trial_days,
+        isAvailable: r.is_available,
+        sortOrder: r.sort_order,
+        pendingUnitPrice: r.pending_unit_price ? Number(r.pending_unit_price) : null,
+        pendingEffectiveAt: r.pending_effective_at ? toIso(r.pending_effective_at) : null,
+      })),
+    });
+  });
+
+  /**
+   * Обновление цен и квот модуля маркетплейса с поддержкой отложенного применения.
+   */
+  app.put("/marketplace/modules/:slug", { onRequest: platformOwner }, async (request, reply) => {
+    const { slug } = z.object({ slug: z.string() }).parse(request.params);
+    const body = z
+      .object({
+        unit_price: z.number().min(0).optional(),
+        base_price: z.number().min(0).optional(),
+        included_units: z.number().int().min(0).optional(),
+        is_available: z.boolean().optional(),
+        delayed_for_existing: z.boolean().default(true),
+      })
+      .parse(request.body);
+
+    const existing = await queryOne<{ unit_price: string; base_price: string; included_units: number }>(
+      `SELECT unit_price, base_price, included_units FROM marketplace_modules WHERE slug = $1`,
+      [slug],
+    );
+
+    if (!existing) {
+      return reply.status(404).send({ message: "Модуль не найден" });
+    }
+
+    const newUnitPrice = body.unit_price ?? Number(existing.unit_price);
+    const newBasePrice = body.base_price ?? Number(existing.base_price);
+    const newIncludedUnits = body.included_units ?? existing.included_units;
+
+    if (body.delayed_for_existing && newUnitPrice !== Number(existing.unit_price)) {
+      await query(
+        `UPDATE installed_modules
+         SET locked_unit_price = COALESCE(locked_unit_price, $2),
+             next_billing_date = COALESCE(next_billing_date, now() + INTERVAL '1 month')
+         WHERE slug = $1`,
+        [slug, Number(existing.unit_price)],
+      );
+
+      await query(
+        `UPDATE marketplace_modules
+         SET unit_price = $2,
+             base_price = $3,
+             included_units = $4,
+             is_available = COALESCE($5, is_available),
+             pending_unit_price = $2,
+             pending_effective_at = now() + INTERVAL '1 month'
+         WHERE slug = $1`,
+        [slug, newUnitPrice, newBasePrice, newIncludedUnits, body.is_available ?? null],
+      );
+    } else {
+      await query(
+        `UPDATE marketplace_modules
+         SET unit_price = $2,
+             base_price = $3,
+             included_units = $4,
+             is_available = COALESCE($5, is_available),
+             pending_unit_price = NULL,
+             pending_effective_at = NULL
+         WHERE slug = $1`,
+        [slug, newUnitPrice, newBasePrice, newIncludedUnits, body.is_available ?? null],
+      );
+    }
+
+    return reply.send({ success: true, slug });
+  });
+
+  /**
+   * Конфигурация Базового тарифа CRM и бесплатных квот.
+   */
+  app.get("/billing/config", { onRequest: platformOwner }, async (_request, reply) => {
+    const config = await queryOne<{
+      id: string;
+      base_crm_price: string;
+      base_crm_users: number;
+      base_crm_extra_user_price: string;
+      base_crm_included_ai_agents: number;
+      base_crm_included_telegram: number;
+      base_crm_included_whatsapp: number;
+      base_crm_included_max: number;
+      base_crm_included_webchat: number;
+      updated_at: Date | string;
+    }>(
+      `SELECT id, base_crm_price, base_crm_users, base_crm_extra_user_price,
+              base_crm_included_ai_agents, base_crm_included_telegram,
+              base_crm_included_whatsapp, base_crm_included_max,
+              base_crm_included_webchat, updated_at
+       FROM platform_billing_config
+       WHERE id = 'default'`,
+    );
+
+    if (!config) {
+      return reply.send({
+        data: {
+          baseCrmPrice: 600,
+          baseCrmUsers: 10,
+          baseCrmExtraUserPrice: 200,
+          baseCrmIncludedAiAgents: 2,
+          baseCrmIncludedTelegram: 2,
+          baseCrmIncludedWhatsapp: 2,
+          baseCrmIncludedMax: 2,
+          baseCrmIncludedWebchat: 1,
+        },
+      });
+    }
+
+    return reply.send({
+      data: {
+        baseCrmPrice: Number(config.base_crm_price),
+        baseCrmUsers: config.base_crm_users,
+        baseCrmExtraUserPrice: Number(config.base_crm_extra_user_price),
+        baseCrmIncludedAiAgents: config.base_crm_included_ai_agents,
+        baseCrmIncludedTelegram: config.base_crm_included_telegram,
+        baseCrmIncludedWhatsapp: config.base_crm_included_whatsapp,
+        baseCrmIncludedMax: config.base_crm_included_max,
+        baseCrmIncludedWebchat: config.base_crm_included_webchat,
+        updatedAt: toIso(config.updated_at),
+      },
+    });
+  });
+
+  /**
+   * Обновление конфигурации Базового тарифа CRM.
+   */
+  app.put("/billing/config", { onRequest: platformOwner }, async (request, reply) => {
+    const body = z
+      .object({
+        base_crm_price: z.number().min(0).optional(),
+        base_crm_users: z.number().int().min(1).optional(),
+        base_crm_extra_user_price: z.number().min(0).optional(),
+        base_crm_included_ai_agents: z.number().int().min(0).optional(),
+        base_crm_included_telegram: z.number().int().min(0).optional(),
+        base_crm_included_whatsapp: z.number().int().min(0).optional(),
+        base_crm_included_max: z.number().int().min(0).optional(),
+        base_crm_included_webchat: z.number().int().min(0).optional(),
+      })
+      .parse(request.body);
+
+    const updated = await queryOne<{
+      base_crm_price: string;
+      base_crm_users: number;
+      base_crm_extra_user_price: string;
+      base_crm_included_ai_agents: number;
+      base_crm_included_telegram: number;
+      base_crm_included_whatsapp: number;
+      base_crm_included_max: number;
+      base_crm_included_webchat: number;
+      updated_at: Date | string;
+    }>(
+      `UPDATE platform_billing_config
+       SET base_crm_price = COALESCE($1, base_crm_price),
+           base_crm_users = COALESCE($2, base_crm_users),
+           base_crm_extra_user_price = COALESCE($3, base_crm_extra_user_price),
+           base_crm_included_ai_agents = COALESCE($4, base_crm_included_ai_agents),
+           base_crm_included_telegram = COALESCE($5, base_crm_included_telegram),
+           base_crm_included_whatsapp = COALESCE($6, base_crm_included_whatsapp),
+           base_crm_included_max = COALESCE($7, base_crm_included_max),
+           base_crm_included_webchat = COALESCE($8, base_crm_included_webchat),
+           updated_at = now()
+       WHERE id = 'default'
+       RETURNING base_crm_price, base_crm_users, base_crm_extra_user_price,
+                 base_crm_included_ai_agents, base_crm_included_telegram,
+                 base_crm_included_whatsapp, base_crm_included_max,
+                 base_crm_included_webchat, updated_at`,
+      [
+        body.base_crm_price ?? null,
+        body.base_crm_users ?? null,
+        body.base_crm_extra_user_price ?? null,
+        body.base_crm_included_ai_agents ?? null,
+        body.base_crm_included_telegram ?? null,
+        body.base_crm_included_whatsapp ?? null,
+        body.base_crm_included_max ?? null,
+        body.base_crm_included_webchat ?? null,
+      ],
+    );
+
+    return reply.send({
+      data: updated
+        ? {
+            baseCrmPrice: Number(updated.base_crm_price),
+            baseCrmUsers: updated.base_crm_users,
+            baseCrmExtraUserPrice: Number(updated.base_crm_extra_user_price),
+            baseCrmIncludedAiAgents: updated.base_crm_included_ai_agents,
+            baseCrmIncludedTelegram: updated.base_crm_included_telegram,
+            baseCrmIncludedWhatsapp: updated.base_crm_included_whatsapp,
+            baseCrmIncludedMax: updated.base_crm_included_max,
+            baseCrmIncludedWebchat: updated.base_crm_included_webchat,
+            updatedAt: toIso(updated.updated_at),
+          }
+        : null,
+    });
+  });
 }

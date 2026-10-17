@@ -32,7 +32,16 @@ export type PlatformRole = "platform_owner";
  * каталоге уже отделяет каналы от прочих модулей, поэтому префикс в слаге не
  * добавил бы информации, а переименование потребовало бы миграции данных.
  */
-export const CHANNEL_SLUGS = ["telegram", "whatsapp", "max", "avito", "instagram"] as const;
+export const CHANNEL_SLUGS = [
+  "telegram",
+  "whatsapp",
+  "max",
+  "avito",
+  "instagram",
+  "webchat",
+  "telegram_bot",
+  "max_bot",
+] as const;
 
 export type ChannelSlug = (typeof CHANNEL_SLUGS)[number];
 

@@ -5,6 +5,7 @@ import { PlatformOwnerGuard } from "@/components/auth/PlatformOwnerGuard";
 import { useAdminBilling } from "@/lib/api/use-admin";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { AdminPricingCatalogEditor } from "@/components/admin/AdminPricingCatalogEditor";
 import { cn } from "@/lib/utils";
 
 function formatMoney(value: number): string {
@@ -144,6 +145,8 @@ export default function AdminBillingPage() {
                 </tbody>
               </table>
             </div>
+
+            <AdminPricingCatalogEditor />
           </>
         )}
       </div>

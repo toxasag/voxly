@@ -64,6 +64,22 @@ const MESSAGE_COLUMNS = `
   attachment, attachment_type, delivery_status, delivery_error, created_at
 `;
 
+export type DealWonHandler = (payload: { tenantId: string; dealId: string }) => void | Promise<void>;
+const dealWonHandlers: DealWonHandler[] = [];
+
+/**
+ * Регистрация слушателя успешного закрытия сделки.
+ * Позволяет внешним модулям (например, AI DealLearningService) обучаться на
+ * выигранных сделках без жесткой циклической связи с CRM-ядром.
+ */
+export function onDealWon(handler: DealWonHandler): () => void {
+  dealWonHandlers.push(handler);
+  return () => {
+    const idx = dealWonHandlers.indexOf(handler);
+    if (idx !== -1) dealWonHandlers.splice(idx, 1);
+  };
+}
+
 /** Treats "" from form payloads as "no value". */
 function nullIfBlank(value: string | undefined): string | null {
   if (value === undefined || value === "") return null;
@@ -513,6 +529,12 @@ export class DealsService {
            VALUES ($1, $2, $3, $4, $5)`,
           [tenantId, id, deal.stage_id, stageId, changedBy],
         );
+
+        if (stage.is_won) {
+          for (const handler of dealWonHandlers) {
+            Promise.resolve(handler({ tenantId, dealId: id })).catch(() => undefined);
+          }
+        }
       }
 
       const row = await tx.queryOneOrThrow<DealRow>(
