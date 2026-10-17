@@ -57,6 +57,12 @@ export interface WebchatMessageInput {
   senderName?: string;
   senderPhone?: string;
   pageUrl?: string;
+  utmTags?: Record<string, string>;
+  ymUid?: string;
+  gaId?: string;
+  visitCount?: number;
+  pageHistory?: Array<{ step: number; time: string; url: string }>;
+  isDraft?: boolean;
 }
 
 export interface WebchatMessageResult {
@@ -166,6 +172,48 @@ export class WebchatService {
       throw new AppError(400, "EMPTY_MESSAGE", "Текст сообщения не может быть пустым");
     }
 
+    // Автоматическое определение номера телефона из текста, если не был передан явно
+    let detectedPhone = input.senderPhone?.trim();
+    if (!detectedPhone) {
+      const phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
+      if (phoneMatch) {
+        const digits = phoneMatch[0].replace(/\D/g, "");
+        if (digits.length === 11) {
+          detectedPhone = `+7${digits.slice(1)}`;
+        }
+      }
+    }
+
+    // Формируем структурированный контекст для CRM и менеджеров
+    const contextLines: string[] = [];
+    if (input.isDraft) {
+      contextLines.push("[Черновик / Неотправленное обращение]");
+    }
+    if (input.pageUrl) {
+      contextLines.push(`[Страница: ${input.pageUrl}]`);
+    }
+    if (input.visitCount && input.visitCount > 1) {
+      contextLines.push(`[Визит №${input.visitCount}]`);
+    }
+    if (input.utmTags && Object.keys(input.utmTags).length > 0) {
+      const utmStr = Object.entries(input.utmTags)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ");
+      contextLines.push(`[UTM: ${utmStr}]`);
+    }
+    if (input.ymUid) {
+      contextLines.push(`[YM ClientID: ${input.ymUid}]`);
+    }
+    if (input.gaId) {
+      contextLines.push(`[GA ClientID: ${input.gaId}]`);
+    }
+    if (input.pageHistory && input.pageHistory.length > 1) {
+      const historyStr = input.pageHistory.map((h) => h.url).join(" -> ");
+      contextLines.push(`[История переходов: ${historyStr}]`);
+    }
+
+    const crmInboundText = contextLines.length > 0 ? `${contextLines.join("\n")}\n\n${text}` : text;
+
     const senderDisplayName =
       input.senderName && input.senderName.trim().length > 0
         ? input.senderName.trim()
@@ -178,19 +226,31 @@ export class WebchatService {
         channel: "webchat",
         channelAccountId: account.id,
         chatId: input.visitorId,
-        text: input.pageUrl ? `[Страница: ${input.pageUrl}]\n${text}` : text,
+        text: crmInboundText,
         senderName: senderDisplayName,
-        senderPhone: input.senderPhone?.trim() || undefined,
+        senderPhone: detectedPhone || undefined,
       }),
     );
 
+    // Если это неотправленный черновик (lead salvage) — фиксируем в CRM, но не шлем автоответ клиенту
+    if (input.isDraft) {
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "queued",
+      };
+    }
+
     // 2. Вызываем AI-агента для генерации ответа.
+    // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
+    const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
     const outcome = await runWithTenantContext(account.tenantId, () =>
       this.agentPipeline.prepareReply({
         tenantId: account.tenantId,
         channelAccountId: account.id,
         chatId: input.visitorId,
-        text,
+        text: promptText,
       }),
     );
 
