@@ -123,40 +123,48 @@ export class CrmPipelineService {
       if (activeDeal !== null) {
         dealId = activeDeal.id;
       } else {
-        let pipelineId = await this.getFirstPipelineId(tx, input.tenantId);
+        const isSuppressed = await this.shouldSuppressDeal(tx, input.tenantId, contactId);
+        const lastDeal = isSuppressed ? await this.findLastDeal(tx, input.tenantId, contactId) : null;
 
-        if (pipelineId === null) {
-          pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
+        if (isSuppressed && lastDeal !== null) {
+          dealId = lastDeal.id;
+          isNewDeal = false;
+        } else {
+          let pipelineId = await this.getFirstPipelineId(tx, input.tenantId);
+
+          if (pipelineId === null) {
+            pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
+          }
+
+          const stage = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages WHERE pipeline_id = $1 ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineId],
+          );
+
+          if (stage === null) {
+            throw new NotFoundError("No stage found for pipeline");
+          }
+
+          const createdBy = await this.findFallbackUserId(tx, input.tenantId);
+
+          const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
+            title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
+            description: input.text.slice(0, 500),
+            budget: 0,
+            currency: "RUB",
+            pipeline_id: pipelineId,
+            stage_id: stage.id,
+            // Связь обязательна, а не для полноты карточки: `findActiveDeal`
+            // ищет открытую сделку по `contact_id`, поэтому сделка без него
+            // не находится, и каждое следующее сообщение клиента создавало
+            // новую — канал плодил дубли.
+            contact_id: contactId,
+            custom_fields: {},
+          });
+
+          dealId = deal.id;
+          isNewDeal = true;
         }
-
-        const stage = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM stages WHERE pipeline_id = $1 ORDER BY sort_order ASC LIMIT 1`,
-          [pipelineId],
-        );
-
-        if (stage === null) {
-          throw new NotFoundError("No stage found for pipeline");
-        }
-
-        const createdBy = await this.findFallbackUserId(tx, input.tenantId);
-
-        const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
-          title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
-          description: input.text.slice(0, 500),
-          budget: 0,
-          currency: "RUB",
-          pipeline_id: pipelineId,
-          stage_id: stage.id,
-          // Связь обязательна, а не для полноты карточки: `findActiveDeal`
-          // ищет открытую сделку по `contact_id`, поэтому сделка без него
-          // не находится, и каждое следующее сообщение клиента создавало
-          // новую — канал плодил дубли.
-          contact_id: contactId,
-          custom_fields: {},
-        });
-
-        dealId = deal.id;
-        isNewDeal = true;
       }
 
       await tx.query(
@@ -287,6 +295,41 @@ export class CrmPipelineService {
          AND s.is_won = false
          AND s.is_lost = false
        ORDER BY d.created_at DESC
+       LIMIT 1`,
+      [tenantId, contactId],
+    );
+    return row;
+  }
+
+  /**
+   * Проверяет, включено ли подавление создания сделок для контакта.
+   */
+  private async shouldSuppressDeal(
+    tx: TransactionClient,
+    tenantId: string,
+    contactId: string,
+  ): Promise<boolean> {
+    const row = await tx.queryOne<{ suppress_deal_creation: boolean }>(
+      `SELECT suppress_deal_creation FROM contacts
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, contactId],
+    );
+    return row?.suppress_deal_creation ?? false;
+  }
+
+  /**
+   * Ищет последнюю сделку контакта (включая завершённые), чтобы привязать сообщение
+   * без создания новой сделки-спама при активном suppress_deal_creation.
+   */
+  private async findLastDeal(
+    tx: TransactionClient,
+    tenantId: string,
+    contactId: string,
+  ): Promise<{ id: string } | null> {
+    const row = await tx.queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+       ORDER BY created_at DESC
        LIMIT 1`,
       [tenantId, contactId],
     );

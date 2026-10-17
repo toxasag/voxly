@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ContactsService } from "./contacts.service.js";
+import { ContactDedupeService } from "./dedupe.service.js";
 import {
   contactChannelSchema,
   createContactSchema,
@@ -99,5 +100,53 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return reply.status(204).send();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Дедупликация и слияние контактов (CRM Dedupe & Soft Merge)
+  // ---------------------------------------------------------------------------
+
+  const dedupeService = new ContactDedupeService();
+
+  const duplicatesQuerySchema = z.object({
+    phone: z.string().min(1, "phone query parameter is required"),
+    exclude_id: z.string().uuid().optional(),
+  });
+
+  app.get("/duplicates", { onRequest: canRead }, async (request, reply) => {
+    const { phone, exclude_id } = duplicatesQuerySchema.parse(request.query);
+    const duplicates = await dedupeService.findDuplicatesByPhone(
+      request.tenant_id,
+      phone,
+      exclude_id,
+    );
+    return reply.send({ data: duplicates, meta: { total: duplicates.length } });
+  });
+
+  const mergeContactsSchema = z.object({
+    primary_id: z.string().uuid("primary_id must be a UUID"),
+    loser_ids: z.array(z.string().uuid("loser_id must be a UUID")).min(1, "Укажите хотя бы один дубликат"),
+  });
+
+  app.post("/merge", { onRequest: canWrite }, async (request, reply) => {
+    const body = mergeContactsSchema.parse(request.body);
+    const result = await dedupeService.mergeContacts(
+      request.tenant_id,
+      body.primary_id,
+      body.loser_ids,
+      request.authUser.id,
+    );
+    return reply.send({ data: result });
+  });
+
+  const suppressDealsSchema = z.object({
+    suppress: z.boolean(),
+  });
+
+  app.patch("/:id/suppress-deals", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { suppress } = suppressDealsSchema.parse(request.body);
+    await dedupeService.setSuppressDealCreation(request.tenant_id, id, suppress);
+    return reply.send({ data: { id, suppress_deal_creation: suppress } });
   });
 }

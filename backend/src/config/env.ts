@@ -160,6 +160,21 @@ const baseSchema = z.object({
     * выполняется в рантайме (`embeddings.service.ts`).
     */
   LLM_EMBEDDING_MODEL: z.string().min(1).default("openrouter/openai/text-embedding-3-small"),
+
+  /**
+   * Эквайринг Robokassa для SaaS-тарифов и пополнения AI-баланса.
+   * Опционально: если не заданы, сервер запускается, но генерация платежных ссылок
+   * выдает понятную ошибку 503 ROBOKASSA_NOT_CONFIGURED.
+   */
+  ROBOKASSA_MERCHANT_LOGIN: optionalNonEmpty(z.string()),
+  ROBOKASSA_PASSWORD_1: optionalNonEmpty(z.string()),
+  ROBOKASSA_PASSWORD_2: optionalNonEmpty(z.string()),
+  ROBOKASSA_IS_TEST: z
+    .string()
+    .default("true")
+    .transform((val) => val.toLowerCase() === "true" || val === "1"),
+  ROBOKASSA_HASH_ALGO: z.enum(["MD5", "SHA256"]).default("SHA256"),
+  ROBOKASSA_TAX: z.enum(["none", "vat0", "vat10", "vat20", "vat22", "vat5", "vat7"]).default("none"),
 });
 
 /**
@@ -228,6 +243,20 @@ const envSchema = baseSchema.superRefine((env, ctx) => {
       path: [hasLlmUrl ? "LLM_API_KEY" : "LLM_API_BASE_URL"],
       message:
         "LLM_API_BASE_URL and LLM_API_KEY must be set together: the gateway rejects a request without a key, so a half-configured pair breaks the knowledge base at runtime instead of at boot.",
+    });
+  }
+
+  // Параметры Robokassa задаются комплексно: логин и оба пароля
+  const hasRoboLogin = env.ROBOKASSA_MERCHANT_LOGIN !== undefined;
+  const hasRoboPass1 = env.ROBOKASSA_PASSWORD_1 !== undefined;
+  const hasRoboPass2 = env.ROBOKASSA_PASSWORD_2 !== undefined;
+
+  if (hasRoboLogin && (!hasRoboPass1 || !hasRoboPass2)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [!hasRoboPass1 ? "ROBOKASSA_PASSWORD_1" : "ROBOKASSA_PASSWORD_2"],
+      message:
+        "ROBOKASSA_PASSWORD_1 and ROBOKASSA_PASSWORD_2 must be set when ROBOKASSA_MERCHANT_LOGIN is provided: payment generation and webhook verification require both passwords.",
     });
   }
 

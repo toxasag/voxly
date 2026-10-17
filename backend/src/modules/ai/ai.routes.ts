@@ -5,6 +5,8 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { AiService } from "./ai.service.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
+import { BillingService } from "../finance/billing/billing.service.js";
+import { PRODUCT_CODES } from "../finance/billing/billing.types.js";
 import {
   createAgentSchema,
   topupBalanceSchema,
@@ -248,5 +250,23 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.send({ data: balance });
+  });
+
+  // Пополнение баланса через платёжный шлюз Robokassa
+  app.post("/balance/checkout", { onRequest: [app.requirePermission("billing:manage")] }, async (request, reply) => {
+    const body = topupBalanceSchema.parse(request.body);
+    const billing = new BillingService();
+
+    const checkout = await billing.createCheckout({
+      tenantId: request.tenant_id,
+      actorId: request.authUser.id,
+      payload: {
+        amount_rubles: body.amount_rubles,
+        product_code: PRODUCT_CODES.AI_TOPUP,
+        description: `Пополнение баланса ИИ (${body.amount_rubles} руб.)`,
+      },
+    });
+
+    return reply.status(201).send({ data: checkout });
   });
 }

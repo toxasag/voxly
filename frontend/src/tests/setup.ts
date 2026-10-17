@@ -1,5 +1,13 @@
+import * as React from "react";
+import { act } from "react";
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
+
+// React 19 compatibility with testing-library
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+if (typeof (React as any).act !== "function") {
+  (React as any).act = act;
+}
 
 // Размонтирование между тестами: `@testing-library/react` не делает этого сам,
 // когда `globals` включены, и следующий тест находил бы поля предыдущего.
@@ -12,7 +20,9 @@ import { cleanup } from "@testing-library/react";
 // определён, и протечь может из любого.
 afterEach(() => {
   cleanup();
-  window.localStorage?.clear();
+  if (typeof window !== "undefined") {
+    window.localStorage?.clear();
+  }
 });
 
 /**
