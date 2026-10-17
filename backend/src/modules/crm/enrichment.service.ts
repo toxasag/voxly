@@ -1,0 +1,375 @@
+import { queryOne, transaction } from "../../db/client.js";
+import type { ContactSocialJson } from "./contacts/contacts.types.js";
+
+// ---------------------------------------------------------------------------
+// Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
+//
+// Источник: CRM-PLUS enrich-person-by-phone.ts.
+// Принцип «Never invent»: никогда не генерировать синтетические ссылки вида
+// `t.me/+7900...` или `wa.me/...` без подтверждения существования аккаунта
+// провайдером (Telegram MTProto, MAX API, Evolution WhatsApp).
+// ---------------------------------------------------------------------------
+
+export interface TelegramProfileResolved {
+  exists: boolean;
+  userId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  avatarUrl?: string;
+  error?: string;
+}
+
+export interface MaxProfileResolved {
+  exists: boolean;
+  userId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  link?: string;
+  error?: string;
+}
+
+export interface WhatsAppProfileResolved {
+  exists: boolean;
+  jid?: string;
+  phone?: string;
+  error?: string;
+}
+
+export interface CrossChannelProviders {
+  checkTelegram: (phone: string, tenantId: string) => Promise<TelegramProfileResolved>;
+  checkMax: (phone: string, tenantId: string) => Promise<MaxProfileResolved>;
+  checkWhatsApp: (phone: string, tenantId: string) => Promise<WhatsAppProfileResolved>;
+}
+
+export interface EnrichContactResult {
+  contactId: string;
+  phone: string;
+  ok: boolean;
+  enrichedFields: string[];
+  channelsChecked: string[];
+  error?: string;
+}
+
+function normalizePhoneDigits(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("8")) {
+    return `7${digits.slice(1)}`;
+  }
+  return digits;
+}
+
+function isPlaceholderName(firstName: string | null | undefined, lastName: string | null | undefined): boolean {
+  const full = `${firstName ?? ""} ${lastName ?? ""}`.trim().toLowerCase();
+  return (
+    full.length === 0 ||
+    full === "клиент" ||
+    full === "client" ||
+    /^noname\d*$/.test(full) ||
+    /^клиент\s*\d*$/.test(full)
+  );
+}
+
+export class CrmEnrichmentService {
+  private providers: CrossChannelProviders;
+
+  constructor(customProviders?: Partial<CrossChannelProviders>) {
+    this.providers = {
+      checkTelegram: customProviders?.checkTelegram ?? this.defaultTelegramProvider.bind(this),
+      checkMax: customProviders?.checkMax ?? this.defaultMaxProvider.bind(this),
+      checkWhatsApp: customProviders?.checkWhatsApp ?? this.defaultWhatsAppProvider.bind(this),
+    };
+  }
+
+  /**
+   * Обогащает контакт по его основному или дополнительному номеру телефона.
+   */
+  async enrichContact(
+    tenantId: string,
+    contactId: string,
+    options?: {
+      phoneOverride?: string;
+      channels?: Array<"telegram" | "max" | "whatsapp">;
+    },
+  ): Promise<EnrichContactResult> {
+    const contact = await queryOne<{
+      id: string;
+      first_name: string;
+      last_name: string | null;
+      phone: string;
+      telegram_username: string | null;
+      telegram_chat_id: string | null;
+      whatsapp: string | null;
+      socials: ContactSocialJson[];
+    }>(
+      `SELECT id, first_name, last_name, phone, telegram_username,
+              telegram_chat_id::text, whatsapp, socials
+       FROM contacts
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+      [contactId, tenantId],
+    );
+
+    if (contact === null) {
+      return {
+        contactId,
+        phone: "",
+        ok: false,
+        enrichedFields: [],
+        channelsChecked: [],
+        error: "Contact not found",
+      };
+    }
+
+    const rawPhone = options?.phoneOverride ?? contact.phone;
+    const phoneDigits = normalizePhoneDigits(rawPhone);
+
+    if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+      return {
+        contactId,
+        phone: rawPhone,
+        ok: false,
+        enrichedFields: [],
+        channelsChecked: [],
+        error: "Invalid phone number length",
+      };
+    }
+
+    const selectedChannels = options?.channels ?? ["telegram", "max", "whatsapp"];
+    const enrichedFields: string[] = [];
+    const channelsChecked: string[] = [];
+
+    const existingSocials = Array.isArray(contact.socials) ? [...contact.socials] : [];
+    let updatedFirstName = contact.first_name;
+    let updatedLastName = contact.last_name;
+    let updatedTgUsername = contact.telegram_username;
+    let updatedTgChatId = contact.telegram_chat_id;
+    let updatedWhatsapp = contact.whatsapp;
+
+    const shouldUpdateName = isPlaceholderName(contact.first_name, contact.last_name);
+
+    // 1. Проверка Telegram (через GramJS bridge/MTProto)
+    if (selectedChannels.includes("telegram")) {
+      channelsChecked.push("telegram");
+      try {
+        const tgRes = await this.providers.checkTelegram(phoneDigits, tenantId);
+        if (tgRes.exists) {
+          if (tgRes.username && !updatedTgUsername) {
+            updatedTgUsername = tgRes.username;
+            enrichedFields.push("telegram_username");
+          }
+          if (tgRes.userId && !updatedTgChatId) {
+            updatedTgChatId = tgRes.userId;
+            enrichedFields.push("telegram_chat_id");
+          }
+          const hasTgSocial = existingSocials.some((s) => s.kind === "telegram");
+          if (!hasTgSocial && (tgRes.username || tgRes.userId)) {
+            existingSocials.push({
+              kind: "telegram",
+              value: tgRes.username ? `@${tgRes.username.replace(/^@/, "")}` : `tg://user?id=${tgRes.userId}`,
+            });
+            enrichedFields.push("socials:telegram");
+          }
+          if (shouldUpdateName && (tgRes.firstName || tgRes.lastName)) {
+            if (tgRes.firstName) updatedFirstName = tgRes.firstName;
+            if (tgRes.lastName) updatedLastName = tgRes.lastName;
+            enrichedFields.push("name");
+          }
+        }
+      } catch (err) {
+        // Ошибка проверки одного канала не должна ломать остальные
+      }
+    }
+
+    // 2. Проверка MAX
+    if (selectedChannels.includes("max")) {
+      channelsChecked.push("max");
+      try {
+        const maxRes = await this.providers.checkMax(phoneDigits, tenantId);
+        if (maxRes.exists) {
+          const hasMaxSocial = existingSocials.some((s) => s.kind === "max");
+          if (!hasMaxSocial && (maxRes.link || maxRes.username || maxRes.userId)) {
+            existingSocials.push({
+              kind: "max",
+              value: maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : `max://user?id=${maxRes.userId}`),
+            });
+            enrichedFields.push("socials:max");
+          }
+          if (shouldUpdateName && !enrichedFields.includes("name") && (maxRes.firstName || maxRes.lastName)) {
+            if (maxRes.firstName) updatedFirstName = maxRes.firstName;
+            if (maxRes.lastName) updatedLastName = maxRes.lastName;
+            enrichedFields.push("name");
+          }
+        }
+      } catch (err) {
+        // пропускаем ошибку канала
+      }
+    }
+
+    // 3. Проверка WhatsApp
+    if (selectedChannels.includes("whatsapp")) {
+      channelsChecked.push("whatsapp");
+      try {
+        const waRes = await this.providers.checkWhatsApp(phoneDigits, tenantId);
+        if (waRes.exists) {
+          const waValue = `+${phoneDigits}`;
+          if (!updatedWhatsapp) {
+            updatedWhatsapp = waValue;
+            enrichedFields.push("whatsapp");
+          }
+          const hasWaSocial = existingSocials.some((s) => s.kind === "whatsapp");
+          if (!hasWaSocial) {
+            existingSocials.push({
+              kind: "whatsapp",
+              value: waValue,
+            });
+            enrichedFields.push("socials:whatsapp");
+          }
+        }
+      } catch (err) {
+        // пропускаем ошибку канала
+      }
+    }
+
+    // 4. Если хотя бы одно поле обогатилось — обновляем контакт в транзакции
+    if (enrichedFields.length > 0) {
+      await transaction(async (tx) => {
+        await tx.query(
+          `UPDATE contacts
+           SET first_name = $1,
+               last_name = $2,
+               telegram_username = $3,
+               telegram_chat_id = $4,
+               whatsapp = $5,
+               socials = $6,
+               updated_at = now()
+           WHERE id = $7 AND tenant_id = $8`,
+          [
+            updatedFirstName,
+            updatedLastName,
+            updatedTgUsername,
+            updatedTgChatId,
+            updatedWhatsapp,
+            JSON.stringify(existingSocials),
+            contactId,
+            tenantId,
+          ],
+        );
+      });
+    }
+
+    return {
+      contactId,
+      phone: rawPhone,
+      ok: true,
+      enrichedFields,
+      channelsChecked,
+    };
+  }
+
+  // --- Реализации провайдеров по умолчанию ---
+
+  private async defaultTelegramProvider(phone: string, _tenantId: string): Promise<TelegramProfileResolved> {
+    const bridgeUrl = process.env.GRAMJS_BRIDGE_URL ?? "http://gramjs-bridge:3008";
+    const token = process.env.VOXLY_SERVICE_TOKEN;
+    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+
+    try {
+      const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ phone: `+${phone}` }),
+      });
+      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        exists?: boolean;
+        userId?: string;
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+        avatarUrl?: string;
+      };
+      return {
+        exists: Boolean(data.ok && data.exists),
+        userId: data.userId,
+        username: data.username,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        avatarUrl: data.avatarUrl,
+      };
+    } catch (err) {
+      return { exists: false, error: String(err) };
+    }
+  }
+
+  private async defaultMaxProvider(phone: string, _tenantId: string): Promise<MaxProfileResolved> {
+    const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
+    const token = process.env.VOXLY_SERVICE_TOKEN;
+    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+
+    try {
+      const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ phone: `+${phone}` }),
+      });
+      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        exists?: boolean;
+        userId?: string;
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+        link?: string;
+      };
+      return {
+        exists: Boolean(data.ok && data.exists),
+        userId: data.userId,
+        username: data.username,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        link: data.link,
+      };
+    } catch (err) {
+      return { exists: false, error: String(err) };
+    }
+  }
+
+  private async defaultWhatsAppProvider(phone: string, _tenantId: string): Promise<WhatsAppProfileResolved> {
+    const workerUrl = process.env.AI_WHATSAPP_WORKER_URL ?? "http://ai-whatsapp-worker:3006";
+    const token = process.env.VOXLY_SERVICE_TOKEN;
+    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+
+    try {
+      const res = await fetch(`${workerUrl.replace(/\/$/, "")}/internal/crm/check-on-whatsapp`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ phone: `+${phone}` }),
+      });
+      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        exists?: boolean;
+        jid?: string;
+      };
+      return {
+        exists: Boolean(data.ok && data.exists),
+        jid: data.jid,
+        phone: `+${phone}`,
+      };
+    } catch (err) {
+      return { exists: false, error: String(err) };
+    }
+  }
+}

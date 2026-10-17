@@ -18,6 +18,7 @@ import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
+import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import adminTenantRoutes from "./modules/admin/admin-tenants.routes.js";
 import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
@@ -160,6 +161,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
+
+  // Внутренний чат CRM в реальном времени (SSE стрим и дельта-поллинг)
+  await app.register(chatStreamRoutes, { prefix: "/api/v1" });
 
   // AI-агенты и баланс ИИ.
   await app.register(aiRoutes, { prefix: "/api/v1/ai" });

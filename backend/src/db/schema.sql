@@ -392,6 +392,7 @@ CREATE TABLE IF NOT EXISTS deals (
   close_date DATE,
   position DOUBLE PRECISION NOT NULL DEFAULT 0,
   closed_at TIMESTAMPTZ,
+  ai_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1314,6 +1315,7 @@ CREATE INDEX IF NOT EXISTS idx_deal_messages_failed_delivery
   ON deal_messages (tenant_id, deal_id)
   WHERE delivery_status = 'failed';
 CREATE INDEX IF NOT EXISTS idx_deals_stage_id ON deals(stage_id);
+CREATE INDEX IF NOT EXISTS idx_deals_ai_paused_until ON deals(tenant_id, ai_paused_until) WHERE ai_paused_until IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_crm_tasks_assignee_id ON crm_tasks(assignee_id);
 
 -- unique ticket number per tenant
