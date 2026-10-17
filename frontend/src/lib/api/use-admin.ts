@@ -177,3 +177,110 @@ export function renewSubscriptionDate(current: string | null, days: number): str
   base.setDate(base.getDate() + days);
   return base.toISOString();
 }
+
+export interface AdminMarketplaceModuleDTO {
+  slug: string;
+  name: string;
+  description: string;
+  priceMonthly: number;
+  billingKind: string;
+  basePrice: number;
+  unitPrice: number;
+  includedUnits: number;
+  unitLabel: string;
+  isMulti: boolean;
+  category: string;
+  icon: string;
+  trialDays: number;
+  isAvailable: boolean;
+  sortOrder: number;
+  pendingUnitPrice: number | null;
+  pendingEffectiveAt: string | null;
+}
+
+export interface AdminPlatformBillingConfigDTO {
+  baseCrmPrice: number;
+  baseCrmUsers: number;
+  baseCrmExtraUserPrice: number;
+  baseCrmIncludedAiAgents: number;
+  baseCrmIncludedTelegram: number;
+  baseCrmIncludedWhatsapp: number;
+  baseCrmIncludedMax: number;
+  baseCrmIncludedWebchat: number;
+  updatedAt?: string;
+}
+
+export function useAdminMarketplaceModules(): UseQueryResult<AdminMarketplaceModuleDTO[], ApiClientError> {
+  return useQuery({
+    queryKey: ["admin", "marketplace", "modules"],
+    queryFn: async () =>
+      (await apiClient.get<AdminMarketplaceModuleDTO[]>("/api/v1/admin/marketplace/modules")).data,
+  });
+}
+
+export function useUpdateMarketplaceModule(): UseMutationResult<
+  { success: boolean; slug: string },
+  ApiClientError,
+  {
+    slug: string;
+    unit_price?: number;
+    base_price?: number;
+    included_units?: number;
+    is_available?: boolean;
+    delayed_for_existing?: boolean;
+  }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ slug, ...payload }) =>
+      (
+        await apiClient.put<{ success: boolean; slug: string }>(
+          `/api/v1/admin/marketplace/modules/${slug}`,
+          payload,
+        )
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "marketplace", "modules"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "billing"] });
+    },
+  });
+}
+
+export function useAdminBillingConfig(): UseQueryResult<AdminPlatformBillingConfigDTO, ApiClientError> {
+  return useQuery({
+    queryKey: ["admin", "billing", "config"],
+    queryFn: async () =>
+      (await apiClient.get<AdminPlatformBillingConfigDTO>("/api/v1/admin/billing/config")).data,
+  });
+}
+
+export function useUpdateAdminBillingConfig(): UseMutationResult<
+  AdminPlatformBillingConfigDTO,
+  ApiClientError,
+  Partial<AdminPlatformBillingConfigDTO>
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) => {
+      const snakePayload = {
+        base_crm_price: payload.baseCrmPrice,
+        base_crm_users: payload.baseCrmUsers,
+        base_crm_extra_user_price: payload.baseCrmExtraUserPrice,
+        base_crm_included_ai_agents: payload.baseCrmIncludedAiAgents,
+        base_crm_included_telegram: payload.baseCrmIncludedTelegram,
+        base_crm_included_whatsapp: payload.baseCrmIncludedWhatsapp,
+        base_crm_included_max: payload.baseCrmIncludedMax,
+        base_crm_included_webchat: payload.baseCrmIncludedWebchat,
+      };
+      return (
+        await apiClient.put<AdminPlatformBillingConfigDTO>(
+          "/api/v1/admin/billing/config",
+          snakePayload,
+        )
+      ).data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "billing", "config"] });
+    },
+  });
+}

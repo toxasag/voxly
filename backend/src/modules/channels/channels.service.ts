@@ -16,15 +16,14 @@ interface ChannelAccountRow {
   external_id: string;
   status: ChannelStatus;
   status_message: string;
-  /**
-   * Признак заполненности, а не сами токены: `credentials` не покидает сервер,
-   * поэтому SQL отдаёт результат проверки вместо содержимого.
-   */
   has_credentials: boolean;
+  credentials?: Record<string, unknown>;
   remote_user_id: string | null;
   last_sync_at: Date | string | null;
   connected_at: Date | string | null;
   created_at: Date | string;
+  bound_agent_id?: string | null;
+  bound_agent_name?: string | null;
 }
 
 function toIso(value: Date | string | null): string | null {
@@ -50,11 +49,13 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     status: row.status,
     statusMessage: row.status_message,
     hasCredentials: row.has_credentials,
+    credentials: row.credentials,
     remoteUserId: row.remote_user_id,
     lastSyncAt: toIso(row.last_sync_at),
     connectedAt: toIso(row.connected_at),
-    // created_at NOT NULL — приведение к строке безопасно.
     createdAt: toIso(row.created_at) ?? "",
+    boundAgentId: row.bound_agent_id ?? null,
+    boundAgentName: row.bound_agent_name ?? null,
   };
 }
 
@@ -64,8 +65,9 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
  * первом же логировании запроса на клиенте.
  */
 const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
-        (credentials <> '{}'::jsonb) AS has_credentials, remote_user_id,
-        last_sync_at, connected_at, created_at`;
+        (credentials <> '{}'::jsonb) AS has_credentials,
+        CASE WHEN channel = 'webchat' THEN credentials ELSE '{}'::jsonb END AS credentials,
+        remote_user_id, last_sync_at, connected_at, created_at`;
 
 /**
  * Каналы, у которых подключение идёт своим маршрутом авторизации.
@@ -81,10 +83,21 @@ export class ChannelsService {
   /** Подключения одного канала. Удалённые скрыты: их вернёт только реактивация модуля. */
   async list(tenantId: string, channel: ChannelSlug): Promise<ChannelAccountDTO[]> {
     const rows = await query<ChannelAccountRow>(
-      `SELECT ${SELECT_COLUMNS}
-       FROM channel_accounts
-       WHERE tenant_id = $1 AND channel = $2 AND deleted_at IS NULL
-       ORDER BY created_at ASC`,
+      `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
+              (c.credentials <> '{}'::jsonb) AS has_credentials,
+              CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at,
+              b.agent_id AS bound_agent_id,
+              a.name AS bound_agent_name
+       FROM channel_accounts c
+       LEFT JOIN LATERAL (
+         SELECT agent_id FROM ai_agent_channel_bindings
+         WHERE channel_account_id = c.id AND tenant_id = c.tenant_id AND is_enabled = true
+         LIMIT 1
+       ) b ON true
+       LEFT JOIN ai_agents a ON a.id = b.agent_id AND a.deleted_at IS NULL
+       WHERE c.tenant_id = $1 AND c.channel = $2 AND c.deleted_at IS NULL
+       ORDER BY c.created_at ASC`,
       [tenantId, channel],
     );
 
@@ -196,18 +209,47 @@ export class ChannelsService {
         );
       }
 
+      const defaultCredentials = channel === "webchat" ? {
+        accentColor: "#F59E0B",
+        theme: "auto",
+        title: "Онлайн-консультант",
+        greeting: "Здравствуйте! Чем я могу вам помочь?",
+        placeholder: "Напишите сообщение...",
+        position: "bottom-right",
+        showTelegramBanner: false,
+      } : {};
+
+      const initialCredentials = { ...defaultCredentials, ...(payload.credentials ?? {}) };
+      const initialStatus: ChannelStatus = channel === "webchat" ? "connected" : "pending";
+
       const row = await tx.queryOneOrThrow<ChannelAccountRow>(
-        `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, credentials)
-         VALUES ($1, $2, $3, $4, $5::jsonb)
+        `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, credentials, connected_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, CASE WHEN $5 = 'connected' THEN now() ELSE NULL END)
          RETURNING ${SELECT_COLUMNS}`,
         [
           tenantId,
           channel,
           payload.label,
           payload.external_id,
-          JSON.stringify(payload.credentials ?? {}),
+          initialStatus,
+          JSON.stringify(initialCredentials),
         ],
       );
+
+      if (payload.agent_id) {
+        await tx.query(
+          `INSERT INTO ai_agent_channel_bindings (tenant_id, agent_id, channel_account_id, is_enabled)
+           VALUES ($1, $2, $3, TRUE)
+           ON CONFLICT (agent_id, channel_account_id) DO UPDATE SET is_enabled = TRUE`,
+          [tenantId, payload.agent_id, row.id],
+        );
+        const agentRow = await tx.queryOne<{ name: string }>(
+          `SELECT name FROM ai_agents WHERE id = $1 AND tenant_id = $2`,
+          [payload.agent_id, tenantId],
+        );
+        row.bound_agent_id = payload.agent_id;
+        row.bound_agent_name = agentRow?.name ?? null;
+      }
 
       return toDTO(row);
     });
@@ -231,7 +273,10 @@ export class ChannelsService {
          label = COALESCE($4, label),
          status = COALESCE($5, status),
          status_message = COALESCE($6, status_message),
-         credentials = COALESCE($7::jsonb, credentials),
+         credentials = CASE
+           WHEN $7::jsonb IS NOT NULL THEN credentials || $7::jsonb
+           ELSE credentials
+         END,
          connected_at = CASE
            WHEN $5 = 'connected' AND connected_at IS NULL THEN now()
            ELSE connected_at
@@ -250,6 +295,34 @@ export class ChannelsService {
     );
 
     if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    if (payload.agent_id !== undefined) {
+      await withTenant(tenantId, async (tx) => {
+        await tx.query(
+          `DELETE FROM ai_agent_channel_bindings WHERE tenant_id = $1 AND channel_account_id = $2`,
+          [tenantId, id],
+        );
+        if (payload.agent_id) {
+          await tx.query(
+            `INSERT INTO ai_agent_channel_bindings (tenant_id, agent_id, channel_account_id, is_enabled)
+             VALUES ($1, $2, $3, TRUE)
+             ON CONFLICT (agent_id, channel_account_id) DO UPDATE SET is_enabled = TRUE`,
+            [tenantId, payload.agent_id, id],
+          );
+        }
+      });
+    }
+
+    const bound = await queryOne<{ agent_id: string; name: string }>(
+      `SELECT a.id AS agent_id, a.name
+       FROM ai_agent_channel_bindings b
+       JOIN ai_agents a ON a.id = b.agent_id
+       WHERE b.tenant_id = $1 AND b.channel_account_id = $2 AND b.is_enabled = true
+       LIMIT 1`,
+      [tenantId, id],
+    );
+    row.bound_agent_id = bound?.agent_id ?? null;
+    row.bound_agent_name = bound?.name ?? null;
 
     return toDTO(row);
   }

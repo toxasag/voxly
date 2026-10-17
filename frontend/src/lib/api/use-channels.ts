@@ -23,11 +23,14 @@ export interface ChannelAccountDTO {
   statusMessage: string;
   /** Признак заполненности авторизации: сами токены сервер не отдаёт. */
   hasCredentials: boolean;
+  credentials?: Record<string, unknown>;
   /** Числовой id аккаунта на стороне канала; у Telegram — id пользователя. */
   remoteUserId: string | null;
   lastSyncAt: string | null;
   connectedAt: string | null;
   createdAt: string;
+  boundAgentId?: string | null;
+  boundAgentName?: string | null;
 }
 
 export interface ChannelSummaryDTO {
@@ -107,12 +110,21 @@ export function useCreateChannelAccount(
   });
 }
 
+export interface UpdateChannelAccountPayload {
+  id: string;
+  label?: string;
+  status?: ChannelStatus;
+  status_message?: string;
+  credentials?: Record<string, unknown>;
+  agent_id?: string | null;
+}
+
 export function useUpdateChannelAccount(
   channel: ChannelSlug,
 ): UseMutationResult<
   ChannelAccountDTO,
   ApiClientError,
-  { id: string; label?: string; status?: ChannelStatus }
+  UpdateChannelAccountPayload
 > {
   const queryClient = useQueryClient();
 

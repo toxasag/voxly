@@ -28,6 +28,8 @@ const IDENTIFIER_HINTS: Record<ChannelSlug, { label: string; placeholder: string
   avito: { label: "Идентификатор профиля Avito", placeholder: "12345678" },
   instagram: { label: "Имя аккаунта", placeholder: "@my_company" },
   webchat: { label: "Домен или название сайта", placeholder: "example.com" },
+  telegram_bot: { label: "Username бота в Telegram", placeholder: "@my_company_bot" },
+  max_bot: { label: "Идентификатор бота MAX", placeholder: "@my_company_bot" },
 };
 
 interface ConnectChannelModalProps {

@@ -13,6 +13,7 @@ import {
   Loader2,
   Lock,
   MessageCircle,
+  MessageSquareText,
   Minus,
   Plus,
   Puzzle,
@@ -52,6 +53,7 @@ const ICONS: Record<string, LucideIcon> = {
   Bot,
   Send,
   MessageCircle,
+  MessageSquareText,
   Hash,
   Store,
   Instagram,
@@ -72,6 +74,9 @@ function priceCaption(module: MarketplaceModuleDTO): string {
     case "per_seat":
       return `${formatRub(module.basePrice)}/мес за ${module.includedUnits} пользователей, далее +${formatRub(module.unitPrice)} за каждого`;
     case "per_unit":
+      if (module.includedUnits > 0) {
+        return `${module.includedUnits} ${pluralUnit(module.includedUnits, module.unitLabel)} в базе бесплатно, далее +${formatRub(module.unitPrice)}/мес за каждый`;
+      }
       return `${formatRub(module.unitPrice)}/мес за 1 ${module.unitLabel}`;
     case "flat":
       return `${formatRub(module.basePrice)}/мес`;
@@ -93,6 +98,20 @@ function pluralUnit(count: number, label: string): string {
     if (mod10 === 1 && mod100 !== 11) return "аккаунт";
     if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
     return "аккаунтов";
+  }
+  if (label === "сайт") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "сайт";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "сайта";
+    return "сайтов";
+  }
+  if (label === "бот") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "бот";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "бота";
+    return "ботов";
   }
   return label;
 }

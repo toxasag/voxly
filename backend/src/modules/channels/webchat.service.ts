@@ -20,6 +20,14 @@ export interface WebchatAccountInfo {
   botName: string;
   isAiEnabled: boolean;
   status: string;
+  accentColor?: string;
+  theme?: "dark" | "light";
+  title?: string;
+  greeting?: string;
+  placeholder?: string;
+  position?: "bottom-right" | "bottom-left";
+  telegramBot?: string;
+  showTelegramBanner?: boolean;
 }
 
 interface ChannelAccountRow {
@@ -28,6 +36,7 @@ interface ChannelAccountRow {
   label: string;
   status: string;
   external_id: string;
+  credentials: Record<string, unknown> | null;
 }
 
 interface TenantRow {
@@ -86,7 +95,7 @@ export class WebchatService {
   async resolveAccount(channelAccountId: string): Promise<WebchatAccountInfo> {
     const account = await runWithPlatformScope(() =>
       queryOne<ChannelAccountRow>(
-        `SELECT id, tenant_id, label, status, external_id
+        `SELECT id, tenant_id, label, status, external_id, credentials
          FROM channel_accounts
          WHERE id = $1
            AND channel = 'webchat'
@@ -125,6 +134,8 @@ export class WebchatService {
       ),
     );
 
+    const creds = (account.credentials ?? {}) as Record<string, unknown>;
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -133,6 +144,14 @@ export class WebchatService {
       botName: agent?.name ?? "AI-ассистент",
       isAiEnabled: agent !== null && agent.status === "active",
       status: account.status,
+      accentColor: typeof creds.accentColor === "string" ? creds.accentColor : "#f59e0b",
+      theme: creds.theme === "light" ? "light" : "dark",
+      title: typeof creds.title === "string" && creds.title.trim().length > 0 ? creds.title.trim() : (tenant?.name ?? "Онлайн-консультант"),
+      greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
+      placeholder: typeof creds.placeholder === "string" ? creds.placeholder : "Введите ваш вопрос...",
+      position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
+      telegramBot: typeof creds.telegramBot === "string" ? creds.telegramBot.replace(/^@/, "").trim() : undefined,
+      showTelegramBanner: creds.showTelegramBanner !== false,
     };
   }
 

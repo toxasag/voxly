@@ -36,6 +36,7 @@ export const createChannelAccountSchema = z.object({
   label: z.string().trim().min(1, "Укажите название подключения").max(120),
   external_id: z.string().trim().min(1, "Укажите идентификатор аккаунта").max(200),
   credentials: z.record(z.unknown()).optional(),
+  agent_id: z.string().uuid().nullable().optional(),
 });
 
 export type CreateChannelAccountPayload = z.infer<typeof createChannelAccountSchema>;
@@ -46,6 +47,7 @@ export const updateChannelAccountSchema = z
     status: channelStatusSchema.optional(),
     status_message: z.string().max(500).optional(),
     credentials: z.record(z.unknown()).optional(),
+    agent_id: z.string().uuid().nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "Нечего обновлять: не передано ни одного поля",
@@ -56,8 +58,8 @@ export type UpdateChannelAccountPayload = z.infer<typeof updateChannelAccountSch
 /**
  * DTO подключения.
  *
- * `credentials` отсутствует намеренно: токены не покидают сервер. Клиенту нужен
- * только признак того, что авторизация заполнена — `hasCredentials`.
+ * `credentials` отсутствует намеренно для внешних каналов (токены не покидают сервер).
+ * Для webchat возвращаются безопасные параметры внешнего вида виджета.
  */
 export interface ChannelAccountDTO {
   id: string;
@@ -67,11 +69,14 @@ export interface ChannelAccountDTO {
   status: ChannelStatus;
   statusMessage: string;
   hasCredentials: boolean;
+  credentials?: Record<string, unknown>;
   /** Числовой id пользователя на стороне канала; у Telegram — tgUserId. */
   remoteUserId: string | null;
   lastSyncAt: string | null;
   connectedAt: string | null;
   createdAt: string;
+  boundAgentId?: string | null;
+  boundAgentName?: string | null;
 }
 
 /** Сводка по каналу для шапки страницы. */

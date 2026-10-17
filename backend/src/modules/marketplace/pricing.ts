@@ -41,8 +41,10 @@ export function monthlyPrice(input: PricingInput): number {
       return input.basePrice + extraSeats * input.unitPrice;
     }
 
-    case "per_unit":
-      return input.unitPrice * Math.max(1, input.quantity);
+    case "per_unit": {
+      const extraUnits = Math.max(0, input.quantity - input.includedUnits);
+      return input.basePrice + extraUnits * input.unitPrice;
+    }
   }
 }
 

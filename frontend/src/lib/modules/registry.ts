@@ -87,6 +87,20 @@ const CHANNEL_REGISTRY: Record<ChannelSlug, ModuleRegistryEntry> = {
     icon: MessageSquareText,
     permission: "tenant:admin",
   },
+  telegram_bot: {
+    slug: "telegram_bot",
+    label: "Telegram-бот",
+    href: "/integrations/telegram_bot",
+    icon: Bot,
+    permission: "tenant:admin",
+  },
+  max_bot: {
+    slug: "max_bot",
+    label: "MAX-бот",
+    href: "/integrations/max_bot",
+    icon: Hash,
+    permission: "tenant:admin",
+  },
 };
 
 /**

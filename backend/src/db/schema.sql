@@ -212,6 +212,8 @@ CREATE TABLE IF NOT EXISTS installed_modules (
   -- Окончание пробного периода. NULL — пробный период не применялся;
   -- активность определяется сравнением с now().
   trial_ends_at TIMESTAMPTZ,
+  next_billing_date TIMESTAMPTZ DEFAULT (now() + INTERVAL '1 month'),
+  locked_unit_price NUMERIC,
   installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, slug),
   CONSTRAINT installed_modules_quantity_positive CHECK (quantity >= 1)
@@ -904,6 +906,8 @@ CREATE TABLE IF NOT EXISTS marketplace_modules (
   features TEXT[] NOT NULL DEFAULT '{}',
   sort_order INT NOT NULL DEFAULT 100,
   is_available BOOLEAN NOT NULL DEFAULT true,
+  pending_unit_price NUMERIC,
+  pending_effective_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT marketplace_modules_billing_kind
     CHECK (billing_kind IN ('flat', 'per_seat', 'per_unit'))
@@ -960,19 +964,19 @@ VALUES
    ARRAY['Кассы и переводы', 'Журнал операций', 'Выставление счетов', 'Отчёт P&L'], 30),
   ('ai_bots', 'AI-агенты',
    'AI-ассистенты для переписки: подсказки ответов и автоответы клиентам. Подключаются к Telegram, WhatsApp и MAX.',
-   500, 'per_unit', 0, 500, 0, 'агент', true, 'ai', 'Bot', 14,
+   500, 'per_unit', 0, 500, 2, 'агент', true, 'ai', 'Bot', 14,
    ARRAY['Автоответы и подсказки', 'Шаблоны промптов', 'Выбор модели', 'Учёт токенов'], 40),
   ('telegram', 'Telegram',
    'Приём и отправка сообщений Telegram. Несколько аккаунтов в одном портале.',
-   500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'Send', 14,
+   500, 'per_unit', 0, 500, 2, 'аккаунт', true, 'integration', 'Send', 14,
    ARRAY['Мульти-аккаунт', 'Вложения и медиа', 'Автоприветствие', 'История в сделке'], 50),
   ('whatsapp', 'WhatsApp',
    'Переписка WhatsApp внутри CRM. Несколько номеров в одном портале.',
-   500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'MessageCircle', 14,
+   500, 'per_unit', 0, 500, 2, 'аккаунт', true, 'integration', 'MessageCircle', 14,
    ARRAY['Мульти-аккаунт', 'Вложения и медиа', 'Шаблоны сообщений', 'История в сделке'], 60),
   ('max', 'MAX',
    'Мессенджер MAX: приём и отправка сообщений. Несколько аккаунтов.',
-   500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'Hash', 14,
+   500, 'per_unit', 0, 500, 2, 'аккаунт', true, 'integration', 'Hash', 14,
    ARRAY['Мульти-аккаунт', 'Вложения', 'Автоответы', 'История в сделке'], 70),
   ('avito', 'Avito',
    'Сообщения и объявления Avito. Несколько аккаунтов в одном портале.',
@@ -981,8 +985,38 @@ VALUES
   ('instagram', 'Instagram',
    'Direct-переписка Instagram. Несколько аккаунтов в одном портале.',
    500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'Instagram', 14,
-   ARRAY['Мульти-аккаунт', 'Direct и комментарии', 'Автоответы', 'Лид в сделку'], 90)
+   ARRAY['Мульти-аккаунт', 'Direct и комментарии', 'Автоответы', 'Лид в сделку'], 90),
+  ('webchat', 'Онлайн-чат на сайт',
+   'Виджет чата для сайтов с AI-ассистентом. 1 сайт включен бесплатно, дополнительные сайты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'сайт', true, 'integration', 'MessageSquareText', 14,
+   ARRAY['1 сайт бесплатно в тарифе', 'Дополнительные сайты — 500 ₽/мес', 'Привязка AI-ассистентов', 'Сбор контактов в CRM'], 95),
+  ('telegram_bot', 'Telegram-бот компании',
+   'Официальный публичный бот компании через Bot API токен (@BotFather).',
+   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Bot', 14,
+   ARRAY['Подключение по Bot API токену', 'Неограниченно клиентов', 'Команды и меню', 'Интеграция с AI-агентами'], 55),
+  ('max_bot', 'MAX-бот компании',
+   'Официальный публичный бот в мессенджере MAX по Bot API токену.',
+   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Hash', 14,
+   ARRAY['Подключение по Bot API токену', 'Каналы и группы', 'Интеграция с AI-агентами'], 75)
 ON CONFLICT (slug) DO NOTHING;
+
+-- Платформенные настройки квот и цен Базовой CRM
+CREATE TABLE IF NOT EXISTS platform_billing_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  base_crm_price NUMERIC(10, 2) NOT NULL DEFAULT 600,
+  base_crm_users INT NOT NULL DEFAULT 10,
+  base_crm_extra_user_price NUMERIC(10, 2) NOT NULL DEFAULT 200,
+  base_crm_included_ai_agents INT NOT NULL DEFAULT 2,
+  base_crm_included_telegram INT NOT NULL DEFAULT 2,
+  base_crm_included_whatsapp INT NOT NULL DEFAULT 2,
+  base_crm_included_max INT NOT NULL DEFAULT 2,
+  base_crm_included_webchat INT NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO platform_billing_config (id)
+VALUES ('default')
+ON CONFLICT (id) DO NOTHING;
 
 -- =============================================================================
 -- 4c. Подключённые аккаунты каналов связи
@@ -999,7 +1033,7 @@ ON CONFLICT (slug) DO NOTHING;
 CREATE TABLE IF NOT EXISTS channel_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  channel TEXT NOT NULL CHECK (channel IN ('telegram', 'whatsapp', 'max', 'avito', 'instagram', 'webchat')),
+  channel TEXT NOT NULL CHECK (channel IN ('telegram', 'whatsapp', 'max', 'avito', 'instagram', 'webchat', 'telegram_bot', 'max_bot')),
   label TEXT NOT NULL,
   -- Идентификатор на стороне канала: @username, номер телефона, id профиля.
   external_id TEXT NOT NULL,

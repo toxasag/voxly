@@ -13,6 +13,7 @@ import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramM
 import { channelEntry } from "@/lib/modules/registry";
 import { pluralAccounts, useChannelAccounts } from "@/lib/api/use-channels";
 import { trialDaysLeft } from "@/lib/api/use-marketplace";
+import { WebchatManagementView } from "@/components/integrations/WebchatManagementView";
 import { isChannelSlug, type ChannelSlug } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,17 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
 
   const openConnect = useCallback(() => setConnectOpen(true), []);
   const Icon = entry.icon;
+
+  if (channel === "webchat") {
+    return (
+      <WebchatManagementView
+        accounts={accounts}
+        summary={summary}
+        isLoading={isLoading}
+        limitReached={limitReached}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

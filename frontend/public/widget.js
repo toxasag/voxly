@@ -289,13 +289,43 @@
         const data = (await res.json()).data;
         visitorId = data.visitorId;
         localStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
-        botTitle.textContent = `${data.tenantName} (${data.botName})`;
+        botTitle.textContent = data.title || `${data.tenantName} (${data.botName})`;
+
+        // Динамическая настройка акцентного цвета
+        if (data.accentColor) {
+          bubble.style.background = data.accentColor;
+          bubble.style.boxShadow = `0 8px 24px ${data.accentColor}55`;
+          sendBtn.style.background = data.accentColor;
+        }
+
+        // Позиция виджета
+        if (data.position === 'bottom-left') {
+          bubble.style.left = '24px';
+          bubble.style.right = 'auto';
+          win.style.left = '24px';
+          win.style.right = 'auto';
+        }
+
+        // Плейсхолдер ввода
+        if (data.placeholder) {
+          inputEl.placeholder = data.placeholder;
+        }
+
+        // Приветственное сообщение
+        if (data.greeting && messagesContainer.children.length === 1) {
+          const firstMsg = messagesContainer.children[0];
+          if (firstMsg && firstMsg.classList.contains('getvoxly-msg-bot')) {
+            firstMsg.textContent = data.greeting;
+          }
+        }
 
         // Настройка Telegram deep-link
         const botName = telegramBot || data.telegramBot;
-        if (botName) {
+        if (botName && data.showTelegramBanner !== false) {
           tgBanner.style.display = 'flex';
           tgLink.href = `https://t.me/${botName}?start=site_${visitorId}`;
+        } else {
+          tgBanner.style.display = 'none';
         }
       }
     } catch (e) {
