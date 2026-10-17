@@ -16,6 +16,8 @@ import { resolve } from "node:path";
 // компонентах не разрешатся.
 // ---------------------------------------------------------------------------
 
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -24,7 +26,10 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    setupFiles: ["./src/tests/setup.ts"],
+    env: {
+      NODE_ENV: "test",
+    },
+    setupFiles: ["./src/tests/react-19-patch.ts", "./src/tests/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     /**
      * 20 секунд вместо 5 по умолчанию.

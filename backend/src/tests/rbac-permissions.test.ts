@@ -58,11 +58,9 @@ describe("RBAC Permissions Configuration & Verification", () => {
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             };
-            req.user_id = "user-1";
             req.tenant_id = "tenant-1";
-            req.role = "manager";
-            req.platform_role = null;
             req.permissions = new Set(["stories:read", "stories:write"]);
+            req.installed_modules = [];
           },
           app.requirePermission("stories:publish"),
         ],

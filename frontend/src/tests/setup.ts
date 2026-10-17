@@ -4,10 +4,20 @@ import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 
 // React 19 compatibility with testing-library
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-if (typeof (React as any).act !== "function") {
-  (React as any).act = act;
-}
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+(React as unknown as { act: typeof act }).act = act;
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const cjsReact = require("react") as { act?: typeof act };
+  if (cjsReact) cjsReact.act = act;
+} catch {}
+
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const cjsDomUtils = require("react-dom/test-utils") as { act?: typeof act };
+  if (cjsDomUtils) cjsDomUtils.act = act;
+} catch {}
 
 // Размонтирование между тестами: `@testing-library/react` не делает этого сам,
 // когда `globals` включены, и следующий тест находил бы поля предыдущего.

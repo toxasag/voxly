@@ -40,12 +40,12 @@
   - Баланс не может опуститься ниже нуля при включенном `noDebt`.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/ai-usage-charge.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 1.2. Обучение ИИ на закрытых успешных сделках (Closed-Won Sales Learning)
 - **Компонент:** `ai-sales-learn` / RAG retrieval
 - **Источник:** `CRM-PLUS/apps/saas-api/src/services/ai-sales-learn.ts` (строки 1–210), `CRM-PLUS/packages/ai-core/src/rag.ts`
-- **Целевой файл:** `backend/src/modules/ai/sales-learn.service.ts`, миграция `0032_ai_sales_examples.sql`
+- **Целевой файл:** `backend/src/modules/ai/sales-learn.service.ts`, миграция `0033_stories_stage_rules_and_ai_sales.sql`
 - **Описание задачи:**
   - Создать таблицу `ai_sales_examples` (`tenant_id`, `deal_id`, `customer_query`, `agent_reply`, `embedding vector(1536)`, `created_at`) под RLS.
   - Хук при смене стадии сделки на `closed_won` (системный этап `is_won=true`): парсинг переписки из `deal_messages`, извлечение диалоговых пар (вопрос клиента -> успешный ответ менеджера).
@@ -56,7 +56,7 @@
   - Запрос клиента с аналогичной темой извлекает пример успешной продажи в системный контекст модели.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/sales-learn.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 1.3. Разделение клиентского платного баланса и платформенного manual credit
 - **Компонент:** `ai-balance` security guard
@@ -79,7 +79,7 @@
 #### 2.1. Схема данных и сервис публикации Сторис (Stories Engine)
 - **Компонент:** `stories-engine`
 - **Источник:** `CRM-PLUS/packages/db/prisma/migrations/20260812151400_story_post/migration.sql`, `CRM-PLUS/apps/gramjs-bridge`, `CRM-PLUS/apps/max-bridge`
-- **Целевой файл:** `backend/src/db/migrations/0033_stories_and_stage_rules.sql`, `backend/src/modules/stories/stories.service.ts`, `backend/src/modules/stories/stories.routes.ts`
+- **Целевой файл:** `backend/src/db/migrations/0033_stories_stage_rules_and_ai_sales.sql`, `backend/src/modules/stories/stories.service.ts`, `backend/src/modules/stories/stories.routes.ts`
 - **Описание задачи:**
   - Создать таблицу `story_posts` (`id UUID`, `tenant_id`, `channel_account_id`, `channel`, `media_url`, `media_type`, `text`, `link_url`, `link_text`, `tracking_link_id`, `views_count`, `reactions_count`, `posted_at`, `status`).
   - Реализовать транспорт публикации:
@@ -92,7 +92,7 @@
   - Эндпоинт отправляет команду в адаптер соответствующего канала и возвращает `story_id`.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/stories-service.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 2.2. Автоворонки по этапам сделок (CRM Stage Rules & Bot Broadcasts)
 - **Компонент:** `stage-funnels`
@@ -106,7 +106,7 @@
   - Перевод сделки на стадию автоматически инициирует отправку сообщения в привязанный канал клиента.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/stage-funnels.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 2.3. Frontend-панели управления Сторис и Автоворонками
 - **Компонент:** `frontend/stories-and-broadcasts`
@@ -142,7 +142,7 @@
   - Страницы `/crm/companies`, `/crm/contacts`, `/crm/deals` визуально идентичны референсному скриншоту Twenty.
 - **Команда проверки (Live Proof):**
   `npm --prefix frontend test src/app/responsive-layout.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 3.2. Карточка Компании (Companies / Accounts): паритет полей и связей
 - **Компонент:** `components/crm/companies/CompanyCard.tsx`
@@ -268,7 +268,7 @@
   - Менеджер может нажать «Написать», выбрать нужный подключенный аккаунт Telegram/MAX/WhatsApp и первым отправить сообщение клиенту.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/chat-write-first.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 5.3. Поддержка вложений, голосовых сообщений и зеркалирование нативных исходящих (`fromMe`)
 - **Компонент:** `chat-media-and-native-outbound`
@@ -371,7 +371,7 @@
   - Менеджер без права `stories:publish` получает `403` при попытке отправить сторис.
 - **Команда проверки (Live Proof):**
   `npm --prefix backend test src/tests/rbac-permissions.test.ts`
-- **Статус:** `[ ]`
+- **Статус:** `[x]`
 
 #### 7.2. Внедрение очередей фоновых воркеров (BullMQ + Redis 7)
 - **Компонент:** `infrastructure/queues`

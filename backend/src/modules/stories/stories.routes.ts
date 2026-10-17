@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { StoriesService } from "./stories.service.js";
 
 const createStorySchema = z.object({
@@ -14,10 +15,10 @@ const createStorySchema = z.object({
 });
 
 export default async function storiesRoutes(app: FastifyInstance): Promise<void> {
-  const service = new StoriesService();
-
   // Все роуты сторис требуют авторизованного пользователя тенанта
-  app.addHook("onRequest", app.authenticate);
+  await app.register(authenticatePlugin);
+
+  const service = new StoriesService();
 
   app.get(
     "/",
@@ -37,10 +38,10 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
-  app.get(
+  app.get<{ Params: { id: string } }>(
     "/:id",
     { preHandler: [app.requirePermission("stories:read")] },
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    async (request, reply) => {
       const { tenant_id } = request;
       const story = await service.getById(tenant_id, request.params.id);
       return reply.send(story);
@@ -68,20 +69,20 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
     },
   );
 
-  app.post(
+  app.post<{ Params: { id: string } }>(
     "/:id/publish",
     { preHandler: [app.requirePermission("stories:publish")] },
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    async (request, reply) => {
       const { tenant_id } = request;
       const story = await service.publish(tenant_id, request.params.id);
       return reply.send(story);
     },
   );
 
-  app.delete(
+  app.delete<{ Params: { id: string } }>(
     "/:id",
     { preHandler: [app.requirePermission("stories:write")] },
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    async (request, reply) => {
       const { tenant_id } = request;
       const deleted = await service.delete(tenant_id, request.params.id);
       return reply.status(deleted ? 204 : 404).send();
