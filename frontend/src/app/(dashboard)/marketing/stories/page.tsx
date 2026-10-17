@@ -108,7 +108,7 @@ export default function MarketingStoriesPage() {
                 <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
                   Канал публикации
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setChannel("telegram")}
@@ -159,7 +159,7 @@ export default function MarketingStoriesPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 uppercase tracking-wider mb-1.5">
                     Ссылка перехода (URL)
