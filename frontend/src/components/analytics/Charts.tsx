@@ -47,8 +47,8 @@ const FUNNEL_COLORS = [
 
 export const FunnelChart = memo(function FunnelChart({ data }: FunnelChartProps) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200 mb-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111] mb-4">
         Воронка продаж
       </h2>
       <ResponsiveContainer width="100%" height={300}>
@@ -57,17 +57,17 @@ export const FunnelChart = memo(function FunnelChart({ data }: FunnelChartProps)
           layout="vertical"
           margin={{ top: 4, right: 40, bottom: 4, left: 20 }}
         >
-          <CartesianGrid stroke="rgb(51, 65, 85)" strokeDasharray="3 3" horizontal={false} />
+          <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" horizontal={false} />
           <XAxis
             type="number"
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "rgb(51, 65, 85)" }}
+            tick={{ fill: "#666666", fontSize: 12 }}
+            axisLine={{ stroke: "#e5e5e5" }}
             tickLine={false}
           />
           <YAxis
             dataKey="name"
             type="category"
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
+            tick={{ fill: "#666666", fontSize: 12 }}
             axisLine={false}
             tickLine={false}
             width={100}
@@ -80,9 +80,10 @@ export const FunnelChart = memo(function FunnelChart({ data }: FunnelChartProps)
               borderRadius: "8px",
               fontSize: "13px",
               color: "#111111",
-              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)",
             }}
-            itemStyle={{ padding: "2px 0" }}
+            itemStyle={{ padding: "2px 0", color: "#111111" }}
+            labelStyle={{ color: "#666666" }}
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={32}>
             {data.map((_, index) => (
@@ -92,7 +93,7 @@ export const FunnelChart = memo(function FunnelChart({ data }: FunnelChartProps)
               dataKey="percentage"
               position="right"
               formatter={(v) => `${Number(v)}%`}
-              style={{ fill: "#94a3b8", fontSize: 11, fontWeight: 600 }}
+              style={{ fill: "#666666", fontSize: 11, fontWeight: 600 }}
             />
           </Bar>
         </BarChart>
@@ -109,8 +110,8 @@ const TOP_COLORS = ["#4a38f5", "#0ea5e9", "#10b981", "#8b5cf6", "#f43f5e"];
 
 export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepairsChartProps) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200 mb-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111] mb-4">
         Топ-5 частых ремонтов
       </h2>
       <ResponsiveContainer width="100%" height={280}>
@@ -119,17 +120,17 @@ export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepair
           layout="vertical"
           margin={{ top: 4, right: 40, bottom: 4, left: 20 }}
         >
-          <CartesianGrid stroke="rgb(51, 65, 85)" strokeDasharray="3 3" horizontal={false} />
+          <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" horizontal={false} />
           <XAxis
             type="number"
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "rgb(51, 65, 85)" }}
+            tick={{ fill: "#666666", fontSize: 12 }}
+            axisLine={{ stroke: "#e5e5e5" }}
             tickLine={false}
           />
           <YAxis
             dataKey="name"
             type="category"
-            tick={{ fill: "#94a3b8", fontSize: 11 }}
+            tick={{ fill: "#666666", fontSize: 11 }}
             axisLine={false}
             tickLine={false}
             width={120}
@@ -153,9 +154,10 @@ export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepair
               borderRadius: "8px",
               fontSize: "13px",
               color: "#111111",
-              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)",
             }}
-            itemStyle={{ padding: "2px 0" }}
+            itemStyle={{ padding: "2px 0", color: "#111111" }}
+            labelStyle={{ color: "#666666" }}
           />
           <Bar dataKey="count" name="Количество" radius={[0, 4, 4, 0]} barSize={28}>
             {data.map((_, index) => (
@@ -164,7 +166,7 @@ export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepair
             <LabelList
               dataKey="count"
               position="right"
-              style={{ fill: "#94a3b8", fontSize: 12, fontWeight: 600 }}
+              style={{ fill: "#666666", fontSize: 12, fontWeight: 600 }}
             />
           </Bar>
         </BarChart>
@@ -179,8 +181,8 @@ interface MasterLoadChartProps {
 
 export const MasterLoadChart = memo(function MasterLoadChart({ data }: MasterLoadChartProps) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200 mb-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111] mb-4">
         Загрузка мастеров
       </h2>
       <div className="space-y-3">
@@ -192,12 +194,12 @@ export const MasterLoadChart = memo(function MasterLoadChart({ data }: MasterLoa
           return (
             <div key={master.name} className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-300">{master.name}</span>
-                <span className="text-xs text-slate-500">
+                <span className="text-xs font-medium text-[#111111]">{master.name}</span>
+                <span className="text-xs text-[#666666]">
                   {master.active} в работе · {master.completed} завершено
                 </span>
               </div>
-              <div className="flex h-2.5 w-full rounded-full bg-slate-800 overflow-hidden">
+              <div className="flex h-2.5 w-full rounded-full bg-[#f0f0f0] overflow-hidden">
                 <div
                   className="h-full bg-[#4a38f5] transition-all duration-500"
                   style={{ width: `${activePct}%` }}

@@ -122,7 +122,7 @@ export function RecordDetailShell({
                 onClick={onDelete}
                 disabled={isDeleting}
                 aria-label="Удалить запись"
-                className="rounded-lg border border-rose-500/30 p-1.5 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-50"
+                className="rounded-lg border border-rose-200 p-1.5 text-rose-600 transition-colors hover:bg-rose-50 disabled:opacity-50"
               >
                 {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               </button>
@@ -137,7 +137,7 @@ export function RecordDetailShell({
               type="button"
               onClick={onClose}
               aria-label="Закрыть панель"
-              className="flex h-11 w-11 items-center justify-center rounded-[8px] text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#000000] md:h-8 md:w-8"
+              className="flex h-11 w-11 items-center justify-center rounded-[8px] text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#111111] md:h-8 md:w-8"
             >
               <X className="h-5 w-5 md:h-4 md:w-4" />
             </button>
@@ -155,8 +155,8 @@ export function RecordDetailShell({
                 className={cn(
                   "shrink-0 border-b-2 px-2 py-2 text-xs font-medium transition-colors",
                   tab.id === active?.id
-                    ? "border-[#000000] text-[#000000]"
-                    : "border-transparent text-[#666666] hover:text-[#000000]",
+                    ? "border-[#4a38f5] text-[#4a38f5]"
+                    : "border-transparent text-[#666666] hover:text-[#111111]",
                 )}
               >
                 {tab.label}

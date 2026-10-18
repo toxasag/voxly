@@ -186,13 +186,13 @@ function TasksContent() {
               type="button"
               onClick={(event) => { event.stopPropagation(); change(task); }}
               aria-label={done ? "Вернуть в работу" : "Завершить"}
-              className={cn("shrink-0", done ? "text-emerald-400" : "text-slate-600 hover:text-emerald-400")}
+              className={cn("shrink-0", done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]")}
             >
               {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
             </button>
             <div className="min-w-0">
-              <p className={cn("truncate text-sm font-medium", done ? "text-slate-500 line-through" : "text-slate-200")}>{task.title}</p>
-              {task.description !== "" && <p className="truncate text-xs text-slate-500">{task.description}</p>}
+              <p className={cn("truncate text-sm font-medium", done ? "text-[#888888] line-through" : "text-[#111111]")}>{task.title}</p>
+              {task.description !== "" && <p className="truncate text-xs text-[#888888]">{task.description}</p>}
             </div>
           </div>
         );
@@ -206,10 +206,10 @@ function TasksContent() {
       sortValue: (task) => PRIORITY_ORDER[task.priority] ?? 0,
       render: (task) => (
         <span className={cn(
-          "rounded-full border px-2 py-0.5 text-xs",
-          task.priority === "high" ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
-            : task.priority === "medium" ? "border-[#4a38f5]/20 bg-[#4a38f5]/10 text-[#4a38f5]"
-            : "border-slate-700 bg-slate-800 text-slate-400",
+          "rounded-full border px-2 py-0.5 text-xs font-medium",
+          task.priority === "high" ? "border-rose-200 bg-rose-50 text-rose-700"
+            : task.priority === "medium" ? "border-amber-200 bg-amber-50 text-amber-700"
+            : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
         )}>
           {PRIORITY_LABELS[task.priority] ?? task.priority}
         </span>
@@ -223,7 +223,7 @@ function TasksContent() {
       // Пустой срок сортируется в конец: задача без даты не «самая срочная».
       sortValue: (task) => task.dueDate ?? "9999-12-31",
       render: (task) => (
-        <span className={cn("text-xs", task.isOverdue ? "font-medium text-rose-400" : "text-slate-400")}>
+        <span className={cn("text-xs", task.isOverdue ? "font-medium text-rose-600" : "text-[#666666]")}>
           {formatDue(task.dueDate)}
         </span>
       ),
@@ -243,7 +243,7 @@ function TasksContent() {
       hideable: true,
       sortValue: (task) => task.linkedEntityType ?? "",
       render: (task) => (
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-[#888888]">
           {task.linkedEntityType === null ? "—" : LINK_LABELS[task.linkedEntityType] ?? task.linkedEntityType}
         </span>
       ),
@@ -257,8 +257,8 @@ function TasksContent() {
         <Guard requiredPermission="tasks:write">
           {/* Как в канбане: на мобильном кнопки видны без наведения. */}
           <span className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-            <button type="button" onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }} aria-label="Изменить задачу" className="rounded p-1 text-slate-600 hover:text-slate-300"><Pencil className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }} aria-label="Удалить задачу" className="rounded p-1 text-slate-600 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }} aria-label="Изменить задачу" className="rounded p-1 text-[#888888] hover:text-[#111111]"><Pencil className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }} aria-label="Удалить задачу" className="rounded p-1 text-[#888888] hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
           </span>
         </Guard>
       ),
