@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, type KeyboardEvent } from "react";
+import { useState, useCallback } from "react";
 import { Package, Plus, Trash2 } from "lucide-react";
 import type { PartItem } from "@/lib/repairs/repairs.types";
 import { cn } from "@/lib/utils";
@@ -24,9 +24,6 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
   const [newQty, setNewQty] = useState("");
   const [newRetail, setNewRetail] = useState("");
   const [newCostPrice, setNewCostPrice] = useState("");
-
-  const totalRetail = items.reduce((sum, p) => sum + p.retail_price * p.quantity, 0);
-  const totalCostPrice = items.reduce((sum, p) => sum + p.cost_price * p.quantity, 0);
 
   const handleAdd = useCallback(() => {
     const name = newName.trim();

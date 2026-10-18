@@ -1,13 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
-  AlertCircle,
-  Banknote,
   Bot,
   Building2,
   Calendar,
-  CalendarClock,
   Check,
   CheckCircle2,
   ChevronUp,
@@ -15,15 +12,11 @@ import {
   DollarSign,
   Handshake,
   ListChecks,
-  Loader2,
-  MessageCircle,
   Paperclip,
   Pencil,
   Plus,
-  Send,
   User,
   UserCircle2,
-  X,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -40,11 +33,10 @@ import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany"
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
-import type { DealMessageDTO, DealDTO, PipelineDTO } from "@/lib/api/use-deals";
+import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
-import { timeAgo } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------

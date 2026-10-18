@@ -48,7 +48,8 @@ function renderPalette() {
 }
 
 /** Панель палитры: контейнер поля ввода и списка. */
-function panel(container: HTMLElement): HTMLElement {
+function panel(_container: HTMLElement): HTMLElement {
+  void _container;
   const input = screen.getByPlaceholderText(/Поиск/);
   const found = input.closest("div")?.parentElement;
   if (found === null || found === undefined) throw new Error("Панель палитры не найдена");

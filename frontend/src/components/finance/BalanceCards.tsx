@@ -1,31 +1,12 @@
 "use client";
 
 import { memo } from "react";
-import { Wallet, Building2, CreditCard, TrendingUp, TrendingDown } from "lucide-react";
-import type { AccountBalance, AccountType } from "@/lib/finance/finance.types";
-import { cn } from "@/lib/utils";
+import { Wallet, TrendingUp } from "lucide-react";
+import type { AccountBalance } from "@/lib/finance/finance.types";
 
 interface BalanceCardsProps {
   accounts: AccountBalance[];
 }
-
-const ACCOUNT_ICONS: Record<AccountType, typeof Wallet> = {
-  cash: Wallet,
-  bank: Building2,
-  acquiring: CreditCard,
-};
-
-const ACCOUNT_COLORS: Record<AccountType, string> = {
-  cash: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/20",
-  bank: "bg-sky-500/10 text-sky-400 border-sky-500/20",
-  acquiring: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-};
-
-const ACCOUNT_BG_HOVER: Record<AccountType, string> = {
-  cash: "hover:border-[#4a38f5]/40",
-  bank: "hover:border-sky-500/40",
-  acquiring: "hover:border-emerald-500/40",
-};
 
 function formatBalance(amount: number): string {
   return new Intl.NumberFormat("ru-RU", {

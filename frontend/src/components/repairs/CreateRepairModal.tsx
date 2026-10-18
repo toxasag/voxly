@@ -275,6 +275,7 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
               <div className="flex flex-wrap gap-2">
                 {photoPreviews.map((preview, index) => (
                   <div key={preview} className="relative group">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={preview}
                       alt="Превью"

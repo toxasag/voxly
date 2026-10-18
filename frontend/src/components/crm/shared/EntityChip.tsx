@@ -101,6 +101,7 @@ export function EntityChip({
           )}
         >
           {showFavicon ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={faviconUrl}
               alt=""
@@ -129,6 +130,7 @@ export function EntityChip({
         )}
       >
         {showFavicon ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={faviconUrl}
             alt=""

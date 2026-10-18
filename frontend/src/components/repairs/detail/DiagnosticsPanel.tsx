@@ -3,7 +3,6 @@
 import { memo } from "react";
 import { ClipboardCheck, User, Calendar, AlertTriangle, CheckCircle2 } from "lucide-react";
 import type { DiagnosticsResult } from "@/lib/repairs/repairs.types";
-import { cn } from "@/lib/utils";
 
 interface DiagnosticsPanelProps {
   diagnostics: DiagnosticsResult | null;

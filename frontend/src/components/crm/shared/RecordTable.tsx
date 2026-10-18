@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Check, Columns3, Eye, EyeOff, GripVertical, Plus, Search, Settings } from "lucide-react";
+import { Check, Columns3, GripVertical, Plus, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   RECORD_TABLE_CHECKBOX_WIDTH,

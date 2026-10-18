@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Bot,
   Check,
-  ChevronRight,
   ExternalLink,
   Laptop,
   Loader2,

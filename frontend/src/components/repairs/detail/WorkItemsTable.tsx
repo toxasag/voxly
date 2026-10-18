@@ -23,7 +23,6 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
   const [newDesc, setNewDesc] = useState("");
   const [newMaster, setNewMaster] = useState("");
   const [newCost, setNewCost] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
 
   const totalWork = items.reduce((sum, item) => sum + item.cost, 0);
 

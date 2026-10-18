@@ -198,8 +198,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //
   // Проверка идёт через `isModuleSlug`, а не перечислением слагов: список жил
   // здесь копией, и каналы, добавленные в каталог, в него не попали.
+  const currentTenantId = state.tenant?.tenantId;
   useEffect(() => {
-    if (state.tenant === null || liveModules === undefined) return;
+    if (!currentTenantId || liveModules === undefined) return;
 
     const installedModules: InstalledModule[] = liveModules
       .filter((module): module is typeof module & { slug: ModuleSlug } =>
@@ -227,7 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tenant: { ...previous.tenant, installedModules },
       };
     });
-  }, [liveModules, state.tenant?.tenantId]);
+  }, [liveModules, currentTenantId]);
 
   const applySession = useCallback((dto: AuthTokensDTO) => {
     writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
@@ -419,7 +420,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * tenant; none exists. Kept on the interface so callers compile, but it
    * fails loudly instead of pretending to work.
    */
-  const switchTenant = useCallback(async (_tenantId: string) => {
+  const switchTenant = useCallback(async (tenantId: string) => {
+    void tenantId;
     throw new ApiClientError(501, {
       error: {
         code: "NOT_IMPLEMENTED",
