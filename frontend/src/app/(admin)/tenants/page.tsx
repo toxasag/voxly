@@ -106,7 +106,7 @@ export default function TenantsPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-amber-500/10 p-1.5"><Building2 className="h-4 w-4 text-amber-400" /></div>
+            <div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><Building2 className="h-4 w-4 text-amber-400" /></div>
             <span className="text-xs font-medium text-slate-500">Всего компаний</span>
           </div>
           <p className="mt-2 text-2xl font-bold text-slate-100">{totalTenants}</p>
@@ -137,7 +137,7 @@ export default function TenantsPage() {
           className={cn(
             "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             activeTab === "tenants"
-              ? "bg-amber-500 text-slate-950"
+              ? "bg-[#4a38f5] text-white"
               : "text-slate-400 hover:text-slate-200",
           )}
         >
@@ -150,7 +150,7 @@ export default function TenantsPage() {
           className={cn(
             "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             activeTab === "referrals"
-              ? "bg-amber-500 text-slate-950"
+              ? "bg-[#4a38f5] text-white"
               : "text-slate-400 hover:text-slate-200",
           )}
         >

@@ -40,7 +40,7 @@ interface FunnelChartProps {
 const FUNNEL_COLORS = [
   "#64748b",
   "#0ea5e9",
-  "#f59e0b",
+  "#4a38f5",
   "#10b981",
   "#10b981",
 ];
@@ -75,11 +75,12 @@ export const FunnelChart = memo(function FunnelChart({ data }: FunnelChartProps)
           <Tooltip
             formatter={(value) => [`${Number(value)} ${pluralDeals(Number(value))}`, "Количество"]}
             contentStyle={{
-              backgroundColor: "rgb(15, 23, 42)",
-              border: "1px solid rgb(51, 65, 85)",
+              backgroundColor: "#ffffff",
+              border: "1px solid #e5e5e5",
               borderRadius: "8px",
               fontSize: "13px",
-              color: "#e2e8f0",
+              color: "#111111",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
             }}
             itemStyle={{ padding: "2px 0" }}
           />
@@ -104,7 +105,7 @@ interface TopRepairsChartProps {
   data: TopRepairDefect[];
 }
 
-const TOP_COLORS = ["#f59e0b", "#0ea5e9", "#10b981", "#8b5cf6", "#f43f5e"];
+const TOP_COLORS = ["#4a38f5", "#0ea5e9", "#10b981", "#8b5cf6", "#f43f5e"];
 
 export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepairsChartProps) {
   return (
@@ -147,11 +148,12 @@ export const TopRepairsChart = memo(function TopRepairsChart({ data }: TopRepair
               ];
             }}
             contentStyle={{
-              backgroundColor: "rgb(15, 23, 42)",
-              border: "1px solid rgb(51, 65, 85)",
+              backgroundColor: "#ffffff",
+              border: "1px solid #e5e5e5",
               borderRadius: "8px",
               fontSize: "13px",
-              color: "#e2e8f0",
+              color: "#111111",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
             }}
             itemStyle={{ padding: "2px 0" }}
           />
@@ -197,7 +199,7 @@ export const MasterLoadChart = memo(function MasterLoadChart({ data }: MasterLoa
               </div>
               <div className="flex h-2.5 w-full rounded-full bg-slate-800 overflow-hidden">
                 <div
-                  className="h-full bg-amber-500 transition-all duration-500"
+                  className="h-full bg-[#4a38f5] transition-all duration-500"
                   style={{ width: `${activePct}%` }}
                   title={`В работе: ${master.active}`}
                 />

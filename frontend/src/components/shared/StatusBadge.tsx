@@ -32,9 +32,9 @@ const variantConfig: Record<
     icon: CheckCircle,
   },
   warning: {
-    bg: "bg-amber-500/10",
+    bg: "bg-[#4a38f5]/10",
     text: "text-amber-400",
-    border: "border-amber-500/30",
+    border: "border-[#4a38f5]/30",
     icon: AlertTriangle,
   },
   destructive: {

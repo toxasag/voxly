@@ -238,7 +238,7 @@ function BillingContent() {
             action={
               <Link
                 href="/marketplace"
-                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
+                className="rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
               >
                 Открыть маркетплейс
               </Link>
@@ -303,11 +303,11 @@ function BillingContent() {
             <div className="border-t border-slate-800 px-5 py-3">
               <p className="text-xs text-slate-500">
                 Число пользователей влияет на стоимость базовой CRM —{" "}
-                <Link href="/settings/team" className="text-amber-500 hover:text-amber-400">
+                <Link href="/settings/team" className="text-[#4a38f5] hover:text-[#4a38f5]">
                   управление сотрудниками
                 </Link>
                 . Состав модулей —{" "}
-                <Link href="/marketplace" className="text-amber-500 hover:text-amber-400">
+                <Link href="/marketplace" className="text-[#4a38f5] hover:text-[#4a38f5]">
                   маркетплейс
                 </Link>
                 .
@@ -358,7 +358,7 @@ function BillingContent() {
             }}
             className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-left transition-colors hover:border-slate-600"
           >
-            <div className="rounded-lg bg-amber-500/10 p-2">
+            <div className="rounded-lg bg-[#4a38f5]/10 p-2">
               <CreditCard className="h-4 w-4 text-amber-400" />
             </div>
             <div>
@@ -406,7 +406,7 @@ function BillingContent() {
                     Напишите на{" "}
                     <a
                       href="mailto:admin@getvoxly.ru"
-                      className="text-amber-500 hover:text-amber-400"
+                      className="text-[#4a38f5] hover:text-[#4a38f5]"
                     >
                       admin@getvoxly.ru
                     </a>{" "}

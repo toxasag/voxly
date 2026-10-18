@@ -113,7 +113,7 @@ export function CrmTable<T>({
                       type="checkbox"
                       checked={rows.length > 0 && rows.every((row) => selectedIds?.has(getRowId(row)) === true)}
                       onChange={toggleAll}
-                      className="h-3.5 w-3.5 accent-amber-500"
+                      className="h-3.5 w-3.5 accent-[#4a38f5]"
                     />
                   </th>
                 )}
@@ -161,7 +161,7 @@ export function CrmTable<T>({
                     onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                     className={cn(
                       "group cursor-pointer transition-colors",
-                      isSelected ? "bg-amber-500/[0.06]" : "hover:bg-slate-800/40",
+                      isSelected ? "bg-[#4a38f5]/[0.06]" : "hover:bg-slate-800/40",
                     )}
                   >
                     {selectable && (
@@ -182,7 +182,7 @@ export function CrmTable<T>({
                           onChange={() => toggleOne(id)}
                           aria-label={`Выбрать строку ${index + 1}`}
                           className={cn(
-                            "h-3.5 w-3.5 accent-amber-500 transition-opacity",
+                            "h-3.5 w-3.5 accent-[#4a38f5] transition-opacity",
                             isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                           )}
                         />

@@ -111,7 +111,7 @@ export default function SettingsIndexPage() {
               {info.trialDaysLeft} {pluralDays(info.trialDaysLeft)}
             </span>
             .{" "}
-            <Link href="/settings/billing" className="text-amber-500 hover:text-amber-400">
+            <Link href="/settings/billing" className="text-[#4a38f5] hover:text-[#4a38f5]">
               Посмотреть тариф
             </Link>
           </p>

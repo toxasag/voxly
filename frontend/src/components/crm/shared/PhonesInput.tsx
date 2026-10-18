@@ -199,7 +199,7 @@ export function PhonesInput({ value, onChange, error, idPrefix = "phone" }: Phon
                 aria-label="Код страны"
                 value={row.countryCode}
                 onChange={(event) => handleCountryChange(index, event.target.value as CountryCode)}
-                className="w-[124px] shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="w-[124px] shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
               >
                 {COUNTRY_OPTIONS_SORTED.map((option) => (
                   <option key={option.code} value={option.code}>
@@ -219,8 +219,8 @@ export function PhonesInput({ value, onChange, error, idPrefix = "phone" }: Phon
                     placeholder="916 123 45 67"
                     aria-invalid={invalid}
                     className={cn(
-                      "w-full min-w-0 rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                      invalid ? "border-rose-500" : "border-slate-700 focus:border-amber-500",
+                      "w-full min-w-0 rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      invalid ? "border-rose-500" : "border-slate-700 focus:border-[#4a38f5]",
                     )}
                   />
 
@@ -237,7 +237,7 @@ export function PhonesInput({ value, onChange, error, idPrefix = "phone" }: Phon
                       onClick={() => makePrimary(index)}
                       title="Сделать основным"
                       aria-label="Сделать основным"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-800 hover:text-amber-400"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-800 hover:text-[#4a38f5]"
                     >
                       <Star className="h-3.5 w-3.5" />
                     </button>

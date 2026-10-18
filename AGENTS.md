@@ -240,88 +240,91 @@ Usage:
 
 ---
 
-## 6. UI / DESIGN SYSTEM
+## 6. UI / DESIGN SYSTEM (Twenty CRM / Table Reference)
 
-### Color Palette (Tailwind tokens — dark-first)
+> Официальная спецификация интерфейса, дизайн-токенов, сетки и компонентов GETVOXLY.
+> Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
 
-| Role | Token | Usage |
+### Color Palette & Tokens (Light Canvas)
+
+| Role | Token / Value | Usage |
 |---|---|---|
-| Page background | `slate-950` | `<body>` / main layout wrapper |
-| Card / Panel / Modal background | `slate-900` | Cards, dialogs, drawers |
-| Elevated surface | `slate-800` | Hovered cards, popovers, dropdowns |
-| Border (subtle) | `slate-700` / `slate-800` | Card borders, input borders |
-| Text primary | `slate-100` | Headings, body text |
-| Text secondary / muted | `slate-400` | Descriptions, placeholders, captions |
-| Text muted (disabled) | `slate-500` | Disabled fields, tertiary info |
-| **Primary accent** | `amber-500` | Primary buttons, active tab underline, selection check |
-| **Secondary accent** | `orange-400` | Badges, highlights, hover states, notifications |
-| Success | `emerald-500` | Positive statuses (closed_won, paid, active) |
-| Danger / Destructive | `rose-500` | Delete buttons, error states, overdue |
-| Warning | `yellow-400` | Pending status, warnings |
-| Info / Link | `sky-400` | Links, info badges |
+| **Canvas Background** | `#ffffff` (`--color-bg`) | Основной фон страниц, панелей, ячеек |
+| **Sidebar / Secondary** | `#fbfbfb` / `#fcfcfc` (`--color-bg-secondary`) | Сайдбар навигации, шапка, подложки |
+| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, поповеры |
+| **Border / Divider** | `#e5e5e5` (`--color-border`) | Разделители строк, границы колонок, инпутов |
+| **Text Primary** | `#000000` / `#111111` | Заголовки, значения в ячейках, основной текст |
+| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, таймстампы |
+| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), иконки в тулбарах |
+| **Primary CTA Accent** | `#4a38f5` (`--color-primary`) | Главная кнопка действия, бренд-маркер, активный таб |
+| **Secondary Accent** | `#aaaaaa` (`--color-secondary`) | Второстепенные контролы, неактивные переключатели |
+| **Focus State** | `#03b2cb` | Рамка активного ввода |
+| **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
+| Success | `emerald-600` / `#dcfce7` | Положительные статусы (closed_won, paid, ready) |
+| Danger / Destructive | `rose-600` / `#ffe4e6` | Кнопки удаления, ошибки, отказ |
+| Warning | `amber-600` / `#fef9c3` | Ожидание, несогласованно, предупреждения |
+| Info | `sky-600` / `#e0f2fe` | Информационные бейджи, ссылки |
+
+### Typography & Spacing
+- **Шрифты:** `Inter` (текст и заголовки), `DM Mono` (числа, суммы, номера заказов).
+- **Размеры:** Display `13.3px`, H1 `13px`, Body `12px` (`text-xs`), Label `11px`, Tiny `10px`.
+- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`).
+- **Скругления:** `16px` (карточки, шторки), `8px` (кнопки), `4px` (инпуты, чипы).
 
 ### Component Patterns
 
 **Card:**
 ```tsx
-<div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+<div className="rounded-[16px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
 ```
 
 **Primary Button:**
 ```tsx
-<Button className="bg-amber-500 text-slate-950 hover:bg-amber-400">
-  Save
+<Button className="bg-[#4a38f5] text-white hover:bg-[#3b2be0] transition-colors rounded-[8px] text-xs font-medium">
+  Сохранить
 </Button>
 ```
 
-**Destructive Button (variant="destructive" from shadcn, overridden):**
+**Destructive Button:**
 ```tsx
-<Button className="bg-rose-600 text-white hover:bg-rose-500">
-  Delete
+<Button className="bg-rose-600 text-white hover:bg-rose-500 rounded-[8px] text-xs font-medium">
+  Удалить
 </Button>
 ```
 
 **Input:**
 ```tsx
-<Input className="border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:ring-amber-500/20" />
+<Input className="border-[#e5e5e5] bg-white text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20 rounded-[4px] text-xs" />
 ```
 
-**Status Badge:**
+**Status Badge (TagPill):**
 ```tsx
-const statusVariants: Record<string, string> = {
-  active:       'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  pending:      'bg-yellow-400/10 text-yellow-400 border-yellow-400/30',
-  closed_won:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  closed_lost:  'bg-rose-500/10 text-rose-400 border-rose-500/30',
-  overdue:      'bg-rose-500/10 text-rose-400 border-rose-500/30',
-};
+import { TagPill, type TagColor } from "@/components/ui/tag";
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn(
-      'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium',
-      statusVariants[status] ?? 'bg-slate-800 text-slate-300 border-slate-700'
-    )}>
-      {status}
-    </span>
-  );
-}
+<TagPill color="emerald">Активен</TagPill>
+<TagPill color="amber">В обработке</TagPill>
+<TagPill color="rose">Отменён</TagPill>
 ```
 
-**Table row (hover state):**
+**Table (RecordTable):**
 ```tsx
-<tr className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+<RecordTable
+  rows={items}
+  columns={columns}
+  getRowId={(item) => item.id}
+  tableId="module_table"
+/>
 ```
 
 ### Layout Rules
-- Max content width: `max-w-7xl` with `mx-auto` centering.
-- Sidebar: fixed width `w-60` (collapsible to `w-16` on toggle), `bg-slate-900 border-r border-slate-800`. **На мобильном (< 768px) сайдбара нет вовсе** — он скрывается классом `hidden md:flex`, а навигация уходит в маршрут-меню и нижний бар.
-- Header: `h-14` or `h-16`, `bg-slate-900 border-b border-slate-800`, sticky to top.
-- Grid gaps: `gap-4` or `gap-6` between cards.
-- Один брейкпоинт на портал — `md:` (768px). **Структурная раскладка строится на Tailwind-префиксах, а не на хуке `useIsMobile`:** `matchMedia` недоступен при SSR, поэтому любая структурная зависимость от хука даёт вспышку десктопной раскладки на телефоне.
-- **Прокрутку фона и закрытие по Escape делает только `useOverlay`** (`lib/utils/use-scroll-lock.ts`). Прямые обращения к `document.body.style.overflow` и собственные слушатели `keydown` в компонентах запрещены: 18 независимых реализаций уже дали два дефекта — прокрутка возвращалась при закрытии верхнего из нескольких оверлеев, а Escape закрывал их все разом.
+- **Паттерн боковых шторок (Slide-Over Drawers):** Просмотр и редактирование сущностей происходят в правой боковой шторке (`Sheet.tsx`), а не в центрированных модальных окнах. Синхронизируется с URL (`?record=<id>`).
+- **Строка таблицы:** Фиксированная высота `32px`, липкие колонки чекбокса (`28px`) и первой колонки (`COLLAPSED_IDENTIFIER_WIDTH = 38px`), ресайз колонок через CSS-переменные напрямую в DOM.
+- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`).
+- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky.
+- **Один брейкпоинт:** `md:` (768px). Структурная раскладка строится на Tailwind-префиксах, а не на `useIsMobile`.
+- **Оверлеи:** Прокрутку фона и закрытие по Escape выполняет исключительно `useOverlay` (`lib/utils/use-scroll-lock.ts`).
 
-Полные правила вёрстки — `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
+Полные правила вёрстки — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
 
 ---
 
@@ -378,7 +381,7 @@ export function CreateContactForm({ onSuccess }: { onSuccess: () => void }) {
           )}
         />
         {/* ...remaining fields */}
-        <Button type="submit" disabled={mutation.isPending} className="bg-amber-500 text-slate-950 hover:bg-amber-400">
+        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3b2be0]">
           {mutation.isPending ? 'Saving...' : 'Create Contact'}
         </Button>
       </form>

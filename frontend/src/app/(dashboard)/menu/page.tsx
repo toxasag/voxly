@@ -92,7 +92,7 @@ export default function MenuPage() {
           // eslint-disable-next-line @next/next/no-img-element -- аватар приходит base64 из профиля
           <img src={avatarUrl} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover" />
         ) : (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-sm font-bold text-amber-400">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#4a38f5]/10 text-sm font-bold text-amber-400">
             {userInitials(displayName)}
           </div>
         )}

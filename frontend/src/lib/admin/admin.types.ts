@@ -63,13 +63,13 @@ const STATUS_COLORS: Record<TenantStatus, string> = {
   active: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   trial: "bg-sky-500/10 text-sky-400 border-sky-500/30",
   expired: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  suspended: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  suspended: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
 };
 
 const PLAN_COLORS: Record<SubscriptionPlan, string> = {
   trial: "bg-sky-500/10 text-sky-400 border-sky-500/30",
   starter: "bg-slate-500/10 text-slate-400 border-slate-500/30",
-  professional: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  professional: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
   enterprise: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
 };
 

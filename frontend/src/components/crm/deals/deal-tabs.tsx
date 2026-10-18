@@ -1080,7 +1080,7 @@ function TasksTab({ dealId }: { dealId: string }) {
                 <span className={cn(
                   "rounded-full border px-2 py-0.5 text-xs",
                   task.status === "done" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                  task.status === "in_progress" && "border-amber-500/30 bg-amber-500/10 text-amber-400",
+                  task.status === "in_progress" && "border-[#4a38f5]/30 bg-[#4a38f5]/10 text-[#4a38f5]",
                   task.status === "todo" && "border-slate-700 bg-slate-800 text-slate-400",
                 )}>
                   {task.status}

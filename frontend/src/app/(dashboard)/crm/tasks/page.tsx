@@ -208,7 +208,7 @@ function TasksContent() {
         <span className={cn(
           "rounded-full border px-2 py-0.5 text-xs",
           task.priority === "high" ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
-            : task.priority === "medium" ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
+            : task.priority === "medium" ? "border-[#4a38f5]/20 bg-[#4a38f5]/10 text-[#4a38f5]"
             : "border-slate-700 bg-slate-800 text-slate-400",
         )}>
           {PRIORITY_LABELS[task.priority] ?? task.priority}
@@ -298,12 +298,12 @@ function TasksContent() {
         */}
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
           {FILTERS.map(({ value, label, Icon }) => (
-            <button key={value} type="button" onClick={() => setFilter(value)} className={cn("flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs", filter === value ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-slate-700 text-slate-500")}><Icon className="h-3 w-3" />{label}</button>
+            <button key={value} type="button" onClick={() => setFilter(value)} className={cn("flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs", filter === value ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]" : "border-slate-700 text-slate-500")}><Icon className="h-3 w-3" />{label}</button>
           ))}
         </div>
         <div className="ml-auto flex rounded-lg border border-slate-700 p-0.5">
-          <button type="button" onClick={() => setView("table")} aria-label="Таблица" className={cn("rounded-md p-1.5", view === "table" ? "bg-amber-500 text-slate-950" : "text-slate-500")}><List className="h-4 w-4" /></button>
-          <button type="button" onClick={() => setView("kanban")} aria-label="Канбан" className={cn("rounded-md p-1.5", view === "kanban" ? "bg-amber-500 text-slate-950" : "text-slate-500")}><LayoutGrid className="h-4 w-4" /></button>
+          <button type="button" onClick={() => setView("table")} aria-label="Таблица" className={cn("rounded-md p-1.5", view === "table" ? "bg-[#4a38f5] text-white" : "text-slate-500")}><List className="h-4 w-4" /></button>
+          <button type="button" onClick={() => setView("kanban")} aria-label="Канбан" className={cn("rounded-md p-1.5", view === "kanban" ? "bg-[#4a38f5] text-white" : "text-slate-500")}><LayoutGrid className="h-4 w-4" /></button>
         </div>
       </div>
 

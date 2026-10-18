@@ -173,7 +173,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
               <button
                 type="button"
                 onClick={onConnect}
-                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
+                className="rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
               >
                 Подключить аккаунт
               </button>

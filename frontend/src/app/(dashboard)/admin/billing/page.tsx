@@ -98,7 +98,7 @@ export default function AdminBillingPage() {
                 <p className="text-xs uppercase tracking-wider text-slate-500">
                   MRR (расчётный)
                 </p>
-                <p className="mt-2 text-3xl font-bold text-amber-500">
+                <p className="mt-2 text-3xl font-bold text-[#4a38f5]">
                   {formatMoney(data.totals.estimatedMrr)}
                 </p>
               </div>
@@ -137,7 +137,7 @@ export default function AdminBillingPage() {
                       <td className="px-4 py-3 text-slate-300">
                         {plan.aiTokensBalance.toLocaleString("ru-RU")}
                       </td>
-                      <td className="px-4 py-3 font-medium text-amber-500">
+                      <td className="px-4 py-3 font-medium text-[#4a38f5]">
                         {formatMoney(plan.estimatedMonthly)}
                       </td>
                     </tr>

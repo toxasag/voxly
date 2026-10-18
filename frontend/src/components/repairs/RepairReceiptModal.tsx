@@ -39,18 +39,18 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({ open, ticke
   const margin = grandTotal - partsCost;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-2xl my-8 space-y-4">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 backdrop-blur-[0.5px] p-4 overflow-y-auto" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-2xl my-8 space-y-3">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-slate-200">Предпросмотр квитанции</span>
+          <span className="text-sm font-semibold text-[#111111]">Предпросмотр квитанции</span>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={handlePrint} className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 hover:border-slate-600 transition-colors">
+            <button type="button" onClick={handlePrint} className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors">
               <Printer className="h-3.5 w-3.5" /> Печать</button>
-            <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><X className="h-4 w-4" /></button>
+            <button type="button" onClick={onClose} className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/5 hover:text-[#111111] transition-colors"><X className="h-4 w-4" /></button>
           </div>
         </div>
 
-        <div ref={printRef} className="rounded-xl border border-slate-800 bg-white text-slate-900 p-10 shadow-2xl font-sans">
+        <div ref={printRef} className="rounded-[16px] border border-[#e5e5e5] bg-white text-slate-900 p-10 shadow-2xl font-sans">
           <div className="text-center mb-6">
             <h1>GETVOXLY Сервисный центр</h1>
             <p className="sub">Квитанция о приёмке оборудования</p>

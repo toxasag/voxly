@@ -12,13 +12,13 @@ interface TaskCardProps {
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
   high: "border-l-rose-500",
-  medium: "border-l-amber-500",
+  medium: "border-l-[#4a38f5]",
   low: "border-l-slate-600",
 };
 
 const PRIORITY_BADGE: Record<TaskPriority, string> = {
   high: "bg-rose-500/10 text-rose-400 border-rose-500/20",
-  medium: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  medium: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/20",
   low: "bg-slate-800 text-slate-400 border-slate-700",
 };
 

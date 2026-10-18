@@ -293,29 +293,29 @@ function CompaniesContent() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">Компании</h1>
-          <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+          <h1 className="text-xl font-bold text-[#111111]">Компании</h1>
+          <p className="mt-1 text-xs text-[#666666]">{subtitle}</p>
         </div>
         <Guard requiredPermission="companies:write">
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-blue-700"
+            className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]"
           >
-            <Plus className="h-4 w-4" />Добавить компанию
+            <Plus className="h-3.5 w-3.5" />Добавить компанию
           </button>
         </Guard>
       </div>
 
       <div className="relative max-w-xs">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+        <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
         <input
           type="search"
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder="Поиск по названию, ИНН, телефону, ответственному..."
           aria-label="Поиск компаний"
-          className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+          className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
         />
       </div>
 
@@ -355,7 +355,7 @@ function CompaniesContent() {
               description={search !== "" ? "Измените поисковый запрос." : "Добавьте первую компанию."}
               action={
                 <Guard requiredPermission="companies:write">
-                  <button type="button" onClick={() => setCreateOpen(true)} className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-blue-700">
+                  <button type="button" onClick={() => setCreateOpen(true)} className="rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
                     Добавить компанию
                   </button>
                 </Guard>
@@ -364,10 +364,10 @@ function CompaniesContent() {
           }
           pagination={
             pages > 1 ? (
-              <div className="flex justify-between border-t border-slate-800 px-4 py-3">
-                <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="text-xs text-slate-400 disabled:opacity-40">Назад</button>
-                <span className="text-xs text-slate-500">Страница {page} из {pages}</span>
-                <button type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="text-xs text-slate-400 disabled:opacity-40">Вперёд</button>
+              <div className="flex justify-between border-t border-[#e5e5e5] px-4 py-3">
+                <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="text-xs text-[#666666] disabled:opacity-40">Назад</button>
+                <span className="text-xs text-[#666666]">Страница {page} из {pages}</span>
+                <button type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)} className="text-xs text-[#666666] disabled:opacity-40">Вперёд</button>
               </div>
             ) : undefined
           }

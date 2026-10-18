@@ -109,7 +109,7 @@ function MetricCard({
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 transition-colors duration-200 hover:border-slate-700">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/10">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#4a38f5]/10">
           <Icon className="h-4 w-4 text-amber-400" />
         </div>
         <span className="text-sm text-slate-400">{label}</span>
@@ -202,7 +202,7 @@ function TenantsTable() {
                     const plan = PLAN_OPTIONS.find((p) => p.value === e.target.value)?.value;
                     if (plan !== undefined) patch(t.id, { plan });
                   }}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-amber-500/20 disabled:opacity-50"
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-[#4a38f5]/20 disabled:opacity-50"
                 >
                   {PLAN_OPTIONS.map((p) => (
                     <option key={p.value} value={p.value}>
@@ -228,7 +228,7 @@ function TenantsTable() {
                         ),
                       })
                     }
-                    className="mt-0.5 inline-flex w-fit items-center gap-1 text-xs text-amber-400 transition-colors hover:text-amber-300 disabled:opacity-50"
+                    className="mt-0.5 inline-flex w-fit items-center gap-1 text-xs text-amber-400 transition-colors hover:text-[#3b2be0] disabled:opacity-50"
                   >
                     <Clock className="h-3 w-3" />+30 дней
                   </button>
@@ -345,12 +345,12 @@ export default function SuperadminPage() {
       <div className="flex min-h-screen flex-col bg-slate-950">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-slate-800 bg-slate-900 px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500 text-slate-950">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#4a38f5] text-white">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
               <span className="text-sm font-bold tracking-tight text-slate-100">GETVOXLY</span>
-              <span className="ml-2 rounded bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-400">
+              <span className="ml-2 rounded bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-semibold text-amber-400">
                 SUPERADMIN
               </span>
             </div>

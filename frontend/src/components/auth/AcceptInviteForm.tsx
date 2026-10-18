@@ -111,7 +111,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="inline-flex items-center justify-center rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           Перейти к входу
         </a>
@@ -139,7 +139,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           Войти
           <ArrowRight className="h-4 w-4" />
@@ -159,7 +159,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="inline-flex items-center justify-center rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           Перейти к входу
         </a>
@@ -173,7 +173,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
     <form onSubmit={form.handleSubmit((values) => void handleSubmit(values))} className="space-y-5">
       <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5]/10">
             <Building2 className="h-4 w-4 text-amber-400" />
           </div>
           <div className="min-w-0">
@@ -223,7 +223,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
             }
             className={cn(
               "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-              "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
               errors.phone !== undefined ? "border-rose-500" : "border-slate-700",
             )}
           />
@@ -240,7 +240,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         disabled={isSubmitting}
         className={cn(
           "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-          "bg-amber-500 text-slate-950 hover:bg-amber-400",
+          "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >

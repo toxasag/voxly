@@ -1,9 +1,12 @@
 "use client";
 
-import { memo } from "react";
-import { Search, Building2, Users, Wrench, Receipt, BellRing, Loader2, AlertCircle } from "lucide-react";
+import { memo, useMemo } from "react";
+import { Search, Building2, Wrench, Receipt, BellRing, AlertCircle, Settings } from "lucide-react";
 import type { PlatformTenant } from "@/lib/admin/admin.types";
-import { getPlanLabel, getPlanColors, getStatusLabel, getStatusColors } from "@/lib/admin/admin.types";
+import { getPlanLabel, getStatusLabel } from "@/lib/admin/admin.types";
+import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
+import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
 interface TenantsTableProps {
@@ -41,11 +44,32 @@ const MODULE_ICONS: Record<string, typeof Wrench> = {
   ai_bots: BellRing,
 };
 
-const MODULE_COLORS: Record<string, string> = {
-  service_center: "bg-sky-500/10 text-sky-400 border-sky-500/20",
-  finance: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  ai_bots: "bg-violet-500/10 text-violet-400 border-violet-500/20",
-};
+function tenantPlanColor(plan: string): TagColor {
+  switch (plan) {
+    case "enterprise":
+      return "amber";
+    case "pro":
+      return "violet";
+    case "starter":
+      return "sky";
+    default:
+      return "slate";
+  }
+}
+
+function tenantStatusColor(status: string): TagColor {
+  switch (status) {
+    case "active":
+      return "emerald";
+    case "trial":
+      return "cyan";
+    case "expired":
+    case "suspended":
+      return "rose";
+    default:
+      return "slate";
+  }
+}
 
 const STATUSES = [
   { value: "all" as const, label: "Все" },
@@ -67,28 +91,152 @@ export const TenantsTable = memo(function TenantsTable({
   error,
   onRetry,
 }: TenantsTableProps) {
+  const columns = useMemo<RecordColumn<PlatformTenant>[]>(
+    () => [
+      {
+        id: "company",
+        header: "Компания",
+        width: 220,
+        sortValue: (t) => t.company_name,
+        render: (t) => (
+          <RecordCellShell isLabelIdentifier>
+            <div className="truncate text-xs">
+              <span className="font-medium text-[#111111]">{t.company_name}</span>
+              <span className="ml-1.5 text-[#888888]">{t.slug}.getvoxly.ru</span>
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "owner",
+        header: "Владелец",
+        width: 180,
+        sortValue: (t) => t.owner_name,
+        render: (t) => (
+          <RecordCellShell>
+            <div className="truncate text-xs">
+              <span className="text-[#111111]">{t.owner_name}</span>
+              <span className="ml-1 text-[#888888]">({t.owner_email})</span>
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "registered",
+        header: "Регистрация",
+        width: 104,
+        sortValue: (t) => t.registered_at,
+        render: (t) => (
+          <RecordCellShell>
+            <span className="text-xs text-[#666666]">{formatDate(t.registered_at)}</span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "plan",
+        header: "Тариф",
+        width: 104,
+        sortValue: (t) => t.plan,
+        render: (t) => (
+          <RecordCellShell>
+            <TagPill color={tenantPlanColor(t.plan)}>
+              {getPlanLabel(t.plan)}
+            </TagPill>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "status",
+        header: "Статус",
+        width: 110,
+        sortValue: (t) => t.status,
+        render: (t) => (
+          <RecordCellShell>
+            <TagPill color={tenantStatusColor(t.status)}>
+              {getStatusLabel(t.status)}
+            </TagPill>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "modules",
+        header: "Модули",
+        width: 150,
+        render: (t) => (
+          <RecordCellShell>
+            <div className="flex items-center gap-1 flex-wrap">
+              {t.installed_modules.length === 0 && <span className="text-xs text-[#888888]">Нет</span>}
+              {t.installed_modules.map((mod) => {
+                const Icon = MODULE_ICONS[mod];
+                return (
+                  <span
+                    key={mod}
+                    className="inline-flex items-center gap-1 rounded bg-[#f5f5f5] px-1.5 py-0.5 text-[10px] font-medium text-[#666666] border border-[#e5e5e5]"
+                  >
+                    {Icon && <Icon className="h-2.5 w-2.5 text-[#888888]" />}
+                    {mod === "service_center" ? "SC" : mod === "finance" ? "FIN" : mod === "ai_bots" ? "AI" : mod}
+                  </span>
+                );
+              })}
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "revenue",
+        header: "Выручка",
+        width: 130,
+        align: "right",
+        sortValue: (t) => t.total_revenue,
+        render: (t) => (
+          <RecordCellShell align="right">
+            <span className="font-mono text-xs font-medium text-[#111111]">
+              {formatRevenue(t.total_revenue)}
+            </span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        width: 50,
+        render: (t) => (
+          <RecordCellShell>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onManage(t);
+              }}
+              className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
+              title="Управление"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
+          </RecordCellShell>
+        ),
+      },
+    ],
+    [onManage],
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-xs">
-            <div className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-10 pr-4 text-sm text-slate-500 animate-pulse">Загрузка...</div>
+            <div className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#888888] animate-pulse">Загрузка...</div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {["all", "active", "trial", "expired", "suspended"].map((s) => (
-              <div key={s} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-900/50">{s}</div>
+            {STATUSES.map((s) => (
+              <div key={s.value} className="rounded-[8px] border border-[#e5e5e5] px-2.5 py-1 text-xs text-[#888888] bg-white">{s.label}</div>
             ))}
           </div>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-          <div className="divide-y divide-slate-800">
+        <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-4">
+          <div className="space-y-2">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="px-4 py-3.5 flex items-center gap-4">
-                <div className="h-4 w-32 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 w-40 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 w-20 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 flex-1 bg-slate-800 rounded animate-pulse" />
-              </div>
+              <div key={i} className="h-8 w-full bg-[#f5f5f5] rounded animate-pulse" />
             ))}
           </div>
         </div>
@@ -98,13 +246,13 @@ export const TenantsTable = memo(function TenantsTable({
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 flex items-center gap-3">
-        <AlertCircle className="h-5 w-5 text-rose-400" />
+      <div className="rounded-[16px] border border-rose-500/30 bg-rose-500/5 p-6 flex items-center gap-3">
+        <AlertCircle className="h-5 w-5 text-rose-500" />
         <div>
-          <p className="text-sm font-medium text-rose-400">Не удалось загрузить тенантов</p>
-          <p className="text-xs text-slate-500 mt-1">{error?.message ?? "Unknown error"}</p>
+          <p className="text-xs font-medium text-rose-600">Не удалось загрузить тенантов</p>
+          <p className="text-xs text-[#888888] mt-1">{error?.message ?? "Unknown error"}</p>
           {onRetry && (
-            <button type="button" onClick={onRetry} className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700">
+            <button type="button" onClick={onRetry} className="mt-3 rounded-[6px] bg-[#f5f5f5] px-3 py-1.5 text-xs text-[#111111] hover:bg-[#ebebeb] transition-colors">
               Повторить
             </button>
           )}
@@ -114,124 +262,50 @@ export const TenantsTable = memo(function TenantsTable({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Поиск по компании или владельцу..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
           />
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
           {STATUSES.map((s) => (
             <button
               key={s.value}
               type="button"
               onClick={() => onFilterStatusChange(s.value)}
               className={cn(
-                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
                 filterStatus === s.value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
-                  : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
               )}
             >
               {s.label}
             </button>
           ))}
         </div>
-        <span className="ml-auto text-xs text-slate-600">{tenants.length} tenants</span>
+        <span className="ml-auto text-xs text-[#888888]">{tenants.length} tenants</span>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Компания</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Владелец</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[85px]">Регистрация</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[95px]">Тариф</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[85px]">Статус</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Модули</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-[110px]">Выручка</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[48px]"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {tenants.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-16 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <Building2 className="h-8 w-8 text-slate-700" />
-                      <p className="text-sm text-slate-600">Компании не найдены</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-              {tenants.map((t) => (
-                <tr key={t.id} className="transition-colors hover:bg-slate-800/50">
-                  <td className="px-4 py-3.5">
-                    <div>
-                      <p className="text-sm font-medium text-slate-200">{t.company_name}</p>
-                      <p className="text-xs text-slate-500">{t.slug}.getvoxly.ru</p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div>
-                      <p className="text-sm text-slate-300">{t.owner_name}</p>
-                      <p className="text-xs text-slate-500">{t.owner_email}</p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="text-xs text-slate-400">{formatDate(t.registered_at)}</span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", getPlanColors(t.plan))}>
-                      {getPlanLabel(t.plan)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap", getStatusColors(t.status))}>
-                      {getStatusLabel(t.status)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {t.installed_modules.length === 0 && <span className="text-xs text-slate-600">Нет</span>}
-                      {t.installed_modules.map((mod) => {
-                        const Icon = MODULE_ICONS[mod];
-                        return (
-                          <span key={mod} className={cn("inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium", MODULE_COLORS[mod] ?? "bg-slate-800 text-slate-400")}>
-                            {Icon && <Icon className="h-2.5 w-2.5" />}
-                            {mod === "service_center" ? "SC" : mod === "finance" ? "FIN" : mod === "ai_bots" ? "AI" : mod}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5 text-right">
-                    <span className="text-sm font-semibold text-slate-200">{formatRevenue(t.total_revenue)}</span>
-                    <span className="block text-xs text-slate-600">{t.active_users} users</span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <button
-                      type="button"
-                      onClick={() => onManage(t)}
-                      className="rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-400 hover:border-slate-600 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-                    >
-                      Manage
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <RecordTable
+        rows={tenants}
+        columns={columns}
+        getRowId={(t) => t.id}
+        tableId="admin_tenants"
+        emptyState={
+          <div className="flex flex-col items-center gap-2 py-16 text-center">
+            <Building2 className="h-8 w-8 text-[#888888]" />
+            <p className="text-xs text-[#666666]">Компании не найдены</p>
+          </div>
+        }
+      />
     </div>
   );
 });

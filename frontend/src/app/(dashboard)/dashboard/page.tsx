@@ -90,7 +90,7 @@ export default function DashboardPage() {
           {displayTenant.installedModules.map((mod) => (
             <span
               key={mod.slug}
-              className="rounded-md bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 border border-amber-500/20"
+              className="rounded-md bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-medium text-amber-400 border border-[#4a38f5]/20"
             >
               {mod.name}
             </span>

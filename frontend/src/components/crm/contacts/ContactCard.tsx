@@ -253,7 +253,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => commit({ phones: phoneDraft })}
-                  className="rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
                 >
                   Сохранить
                 </button>
@@ -346,7 +346,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => commit({ socials: socialDraft })}
-                  className="rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
                 >
                   Сохранить
                 </button>

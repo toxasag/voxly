@@ -404,19 +404,19 @@ function ContactsPageContent() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">Контакты</h1>
-          <p className="mt-1 text-sm text-slate-400">{subtitle}</p>
+          <h1 className="text-xl font-bold text-[#111111]">Контакты</h1>
+          <p className="mt-1 text-xs text-[#666666]">{subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           {query.isFetching && !query.isLoading && (
-            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+            <span className="flex items-center gap-1.5 text-xs text-[#666666]">
               <RefreshCw className="h-3.5 w-3.5 animate-spin" />Обновляем
             </span>
           )}
           <Guard requiredPermission="contacts:write">
             <button type="button" onClick={() => setCreateOpen(true)}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-blue-700">
-              <Plus className="h-4 w-4" />Создать контакт
+              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
+              <Plus className="h-3.5 w-3.5" />Создать контакт
             </button>
           </Guard>
         </div>
@@ -424,10 +424,10 @@ function ContactsPageContent() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
           <input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Поиск по имени, телефону, e-mail, компании..." aria-label="Поиск контактов"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
+            className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white py-1.5 pl-8 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
         </div>
         {/*
           Фильтры каналов на 360px не помещались в ряд и выносили страницу за
@@ -439,10 +439,10 @@ function ContactsPageContent() {
             <button key={filter.value} type="button"
               onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); }}
               aria-pressed={channelFilter === filter.value}
-              className={cn("shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              className={cn("shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors",
                 channelFilter === filter.value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
-                  : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300")}>
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]")}>
               {filter.label}
             </button>
           ))}
@@ -473,13 +473,13 @@ function ContactsPageContent() {
             : "Создайте первый контакт, чтобы начать работу."}
           action={hasFilters ? (
             <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); }}
-              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800">
+              className="rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa]">
               Сбросить фильтры
             </button>
           ) : (
             <Guard requiredPermission="contacts:write">
               <button type="button" onClick={() => setCreateOpen(true)}
-                className="rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-blue-700">
+                className="rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0]">
                 Создать контакт
               </button>
             </Guard>

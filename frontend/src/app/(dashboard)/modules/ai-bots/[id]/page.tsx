@@ -178,7 +178,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             <button
               type="button"
               onClick={() => setConfigOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+              className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
             >
               <Settings2 className="h-3.5 w-3.5" />
               Настроить
@@ -199,7 +199,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
               className={cn(
                 "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
                 tab === entry.key
-                  ? "bg-amber-500 text-slate-950"
+                  ? "bg-[#4a38f5] text-white"
                   : "text-slate-400 hover:text-slate-200",
               )}
             >
@@ -218,7 +218,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       */}
       {tab === "chat" && (
         <div className="space-y-3">
-          <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+          <div className="flex items-start gap-2.5 rounded-xl border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-4 py-3">
             <Braces className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
             <p className="text-xs leading-relaxed text-slate-400">
               Демонстрационный режим: ответы формируются локально в браузере, модель не
@@ -257,7 +257,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                   type="button"
                   onClick={savePrompt}
                   disabled={!promptDirty}
-                  className="rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Сохранить промпт
                 </button>
@@ -286,7 +286,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                 {bot.context_entities.map((entity) => (
                   <span
                     key={entity}
-                    className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400"
+                    className="rounded-md border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-amber-400"
                   >
                     {getContextEntityLabel(entity)}
                   </span>
