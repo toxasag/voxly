@@ -220,7 +220,7 @@ export function LoginForm() {
         e.preventDefault();
         void handleSubmit();
       }}
-      className="space-y-5"
+      className="space-y-4"
     >
       {/* E-mail */}
       <div className="space-y-2">
@@ -268,12 +268,12 @@ export function LoginForm() {
             >
               {isSendingReset ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin text-[#666666]" />
                   Отправляем ссылку...
                 </>
               ) : (
                 <>
-                  <KeyRound className="h-4 w-4" />
+                  <KeyRound className="h-4 w-4 text-[#4a38f5]" />
                   Забыли пароль? Восстановить доступ
                 </>
               )}
@@ -316,7 +316,7 @@ export function LoginForm() {
           onClick={() => void handleRequestCode()}
           disabled={code.stage === "requesting"}
           className={cn(
-            "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+            "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
             "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
@@ -382,7 +382,7 @@ export function LoginForm() {
               setOtpError(null);
             }}
             className={cn(
-              "w-full rounded-[8px] border bg-white py-3 text-center text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors",
+              "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors tabular-nums",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
               otpError !== null ? "border-rose-500" : "border-[#e5e5e5]",
             )}
@@ -411,7 +411,7 @@ export function LoginForm() {
         type="submit"
         disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
         className={cn(
-          "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+          "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
           "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}

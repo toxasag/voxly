@@ -102,11 +102,11 @@ export function CrmTable<T>({
     <div className="space-y-3">
       {selectable && selectedIds !== undefined && selectedIds.size > 0 && bulkBar}
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+      <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
         <div className="overflow-x-auto">
           <table className="w-full table-fixed">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-900">
+              <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
                 {selectable && (
                   <th className="w-10 px-3 py-2" aria-label="Выбрать все">
                     <input
@@ -122,7 +122,7 @@ export function CrmTable<T>({
                     key={column.id}
                     scope="col"
                     className={cn(
-                      "px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500",
+                      "px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[#666666]",
                       column.align === "right" ? "text-right" : "text-left",
                       index === 0 && !selectable && "pl-10",
                       column.widthClass,
@@ -133,12 +133,12 @@ export function CrmTable<T>({
                         type="button"
                         onClick={() => handleSort(column.id)}
                         className={cn(
-                          "inline-flex items-center gap-1 transition-colors hover:text-slate-300",
-                          sortColumn === column.id ? "text-slate-200" : "text-slate-500",
+                          "inline-flex items-center gap-1 transition-colors hover:text-[#111111]",
+                          sortColumn === column.id ? "text-[#111111]" : "text-[#666666]",
                         )}
                       >
                         {column.header}
-                        <span className={cn("text-xs", sortColumn === column.id ? "opacity-100 text-amber-400" : "opacity-30")}>
+                        <span className={cn("text-xs", sortColumn === column.id ? "opacity-100 text-[#4a38f5]" : "opacity-30")}>
                           {sortColumn === column.id && sortAsc ? "▲" : "▼"}
                         </span>
                       </button>
@@ -150,7 +150,7 @@ export function CrmTable<T>({
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-800/70">
+            <tbody className="divide-y divide-[#f0f0f0]">
               {sortedRows.map((row, index) => {
                 const id = getRowId(row);
                 const isSelected = selectable && selectedIds?.has(id) === true;
@@ -161,7 +161,7 @@ export function CrmTable<T>({
                     onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                     className={cn(
                       "group cursor-pointer transition-colors",
-                      isSelected ? "bg-[#4a38f5]/[0.06]" : "hover:bg-slate-800/40",
+                      isSelected ? "bg-[#4a38f5]/[0.06]" : "hover:bg-[#f5f5f5]",
                     )}
                   >
                     {selectable && (
@@ -171,7 +171,7 @@ export function CrmTable<T>({
                       >
                         {/* Номер строки виден всегда; чекбокс проявляется на ховере строки. */}
                         <span className={cn(
-                          "absolute left-3 top-1/2 -translate-y-1/2 select-none text-xs tabular-nums text-slate-600 transition-opacity",
+                          "absolute left-3 top-1/2 -translate-y-1/2 select-none text-xs tabular-nums text-[#888888] transition-opacity",
                           isSelected ? "opacity-0" : "group-hover:opacity-0",
                         )}>
                           {index + 1}
@@ -192,7 +192,7 @@ export function CrmTable<T>({
                       <td
                         key={column.id}
                         className={cn(
-                          "min-w-0 truncate px-4 py-2.5 text-sm text-slate-300",
+                          "min-w-0 truncate px-4 py-2.5 text-[13px] text-[#111111]",
                           column.align === "right" ? "text-right" : "text-left",
                           index === 0 && !selectable && "pl-10",
                         )}
@@ -221,10 +221,10 @@ export function TableEmptyState({ icon: Icon, title, description, action }: {
   action?: ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/50 px-6 py-16 text-center">
-      <Icon className="mx-auto h-8 w-8 text-slate-600" />
-      <p className="mt-3 text-sm font-semibold text-slate-300">{title}</p>
-      <p className="mt-1 text-sm text-slate-500">{description}</p>
+    <div className="rounded-[8px] border border-dashed border-[#e5e5e5] bg-[#fafafa] px-6 py-16 text-center">
+      <Icon className="mx-auto h-8 w-8 text-[#888888]" />
+      <p className="mt-3 text-sm font-semibold text-[#111111]">{title}</p>
+      <p className="mt-1 text-sm text-[#666666]">{description}</p>
       {action !== undefined && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );

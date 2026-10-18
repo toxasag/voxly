@@ -12,7 +12,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       aria-hidden="true"
-      className={cn("animate-pulse rounded-md bg-slate-800", className)}
+      className={cn("animate-pulse rounded-md bg-[#f0f0f0]", className)}
     />
   );
 }
@@ -30,18 +30,18 @@ export function SkeletonTable({
 }) {
   return (
     <div
-      className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden"
+      className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden"
       role="status"
       aria-label="Загрузка данных"
     >
-      <div className="border-b border-slate-800 px-4 py-3">
+      <div className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
         <div className="flex gap-4">
           {Array.from({ length: columns }, (_, i) => (
             <Skeleton key={i} className={cn("h-3 flex-1", columnVisibility(i))} />
           ))}
         </div>
       </div>
-      <div className="divide-y divide-slate-800">
+      <div className="divide-y divide-[#f0f0f0]">
         {Array.from({ length: rows }, (_, rowIndex) => (
           <div key={rowIndex} className="flex items-center gap-4 px-4 py-4">
             {Array.from({ length: columns }, (_, colIndex) => (

@@ -36,32 +36,32 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
   return (
     <div className="space-y-5">
       {/* Summary KPI */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-500/10 p-1.5"><TrendingUp className="h-4 w-4 text-emerald-400" /></div><span className="text-xs font-medium text-slate-500">Доходы</span></div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{formatCost(totalIncome)}</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-50 p-1.5"><TrendingUp className="h-4 w-4 text-emerald-700" /></div><span className="text-xs font-medium text-[#666666]">Доходы</span></div>
+          <p className="mt-2 text-2xl font-bold text-[#111111]">{formatCost(totalIncome)}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-rose-500/10 p-1.5"><TrendingDown className="h-4 w-4 text-rose-400" /></div><span className="text-xs font-medium text-slate-500">Расходы</span></div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{formatCost(totalExpense)}</p>
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2"><div className="rounded-lg bg-rose-50 p-1.5"><TrendingDown className="h-4 w-4 text-rose-700" /></div><span className="text-xs font-medium text-[#666666]">Расходы</span></div>
+          <p className="mt-2 text-2xl font-bold text-[#111111]">{formatCost(totalExpense)}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-amber-400" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div>
-          <p className={cn("mt-2 text-2xl font-bold", profit >= 0 ? "text-emerald-400" : "text-rose-400")}>{formatCost(profit)}<span className="text-xs ml-1.5 text-slate-500">наценка {margin}%</span></p>
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-[#666666]">Чистая прибыль</span></div>
+          <p className={cn("mt-2 text-2xl font-bold", profit >= 0 ? "text-emerald-700" : "text-rose-700")}>{formatCost(profit)}<span className="text-xs ml-1.5 text-[#666666]">наценка {margin}%</span></p>
         </div>
       </div>
 
       {/* Income breakdown */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-        <h3 className="text-sm font-semibold text-slate-200 mb-4">Структура доходов</h3>
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+        <h3 className="text-sm font-semibold text-[#111111] mb-4">Структура доходов</h3>
         <div className="space-y-2.5">
           {INCOME_CATEGORIES.map(cat => {
             const val = incomeByCategory[cat] ?? 0;
             const pct = totalIncome > 0 ? Math.round((val / totalIncome) * 100) : 0;
             return (
               <div key={cat} className="space-y-1">
-                <div className="flex items-center justify-between text-xs"><span className="text-slate-400">{getCategoryLabel(cat)}</span><span className="text-slate-300">{formatCost(val)} <span className="text-slate-500">({pct}%)</span></span></div>
-                <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden"><div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
+                <div className="flex items-center justify-between text-xs"><span className="text-[#666666]">{getCategoryLabel(cat)}</span><span className="text-[#111111] font-medium">{formatCost(val)} <span className="text-[#888888]">({pct}%)</span></span></div>
+                <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden"><div className="h-full rounded-full bg-emerald-600 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
               </div>
             );
           })}
@@ -69,16 +69,16 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
       </div>
 
       {/* Expense breakdown */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-        <h3 className="text-sm font-semibold text-slate-200 mb-4">Структура расходов</h3>
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+        <h3 className="text-sm font-semibold text-[#111111] mb-4">Структура расходов</h3>
         <div className="space-y-2.5">
           {EXPENSE_CATEGORIES.map(cat => {
             const val = expenseByCategory[cat] ?? 0;
             const pct = totalExpense > 0 ? Math.round((val / totalExpense) * 100) : 0;
             return (
               <div key={cat} className="space-y-1">
-                <div className="flex items-center justify-between text-xs"><span className="text-slate-400">{getCategoryLabel(cat)}</span><span className="text-slate-300">{formatCost(val)} <span className="text-slate-500">({pct}%)</span></span></div>
-                <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden"><div className="h-full rounded-full bg-rose-500 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
+                <div className="flex items-center justify-between text-xs"><span className="text-[#666666]">{getCategoryLabel(cat)}</span><span className="text-[#111111] font-medium">{formatCost(val)} <span className="text-[#888888]">({pct}%)</span></span></div>
+                <div className="h-2 w-full rounded-full bg-[#f0f0f0] overflow-hidden"><div className="h-full rounded-full bg-rose-600 transition-all duration-500" style={{ width: `${Math.max(1, (val / maxValue) * 100)}%` }} /></div>
               </div>
             );
           })}

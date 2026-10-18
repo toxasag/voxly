@@ -252,7 +252,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
         </div>
       ) : notes.isError ? (
         <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-3">
-          <p className="text-sm font-medium text-rose-800">Не удалось загрузить заметки</p>
+          <p className="text-sm font-medium text-rose-700">Не удалось загрузить заметки</p>
           <button
             type="button"
             onClick={() => void notes.refetch()}

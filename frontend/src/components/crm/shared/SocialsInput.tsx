@@ -97,7 +97,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
 
   return (
     <div className="space-y-2">
-      <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+      <span className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
         <MessageCircle className="h-3 w-3" /> Социальные сети
       </span>
 
@@ -112,7 +112,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
                 aria-label="Сеть"
                 value={row.kind}
                 onChange={(event) => updateAt(index, { kind: event.target.value as SocialKind })}
-                className="w-[124px] shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
+                className="w-[124px] shrink-0 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-2 text-[13px] text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               >
                 {SOCIAL_DEFINITIONS.map((option) => (
                   <option key={option.kind} value={option.kind}>
@@ -128,7 +128,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
                 onChange={(event) => updateAt(index, { value: event.target.value })}
                 placeholder={definition.placeholder}
                 className={cn(
-                  "min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                  "min-w-0 flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                 )}
               />
 
@@ -138,7 +138,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
                   onClick={() => removeAt(index)}
                   title="Удалить профиль"
                   aria-label="Удалить профиль"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-800 hover:text-rose-400"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] text-[#888888] transition-colors hover:bg-rose-50 hover:text-rose-600"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -148,12 +148,12 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
         })}
       </div>
 
-      {error !== undefined && <p className="text-xs text-rose-400">{error}</p>}
+      {error !== undefined && <p className="text-xs text-rose-500">{error}</p>}
 
       <button
         type="button"
         onClick={() => apply([...rows, emptyRow()])}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800"
+        className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5]"
       >
         <Plus className="h-3.5 w-3.5" /> Добавить сеть
       </button>

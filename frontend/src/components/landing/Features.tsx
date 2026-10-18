@@ -54,13 +54,13 @@ const features: Feature[] = [
 
 export function Features() {
   return (
-    <section className="px-6 py-24">
+    <section className="px-6 py-24 border-t border-[#e5e5e5] bg-[#fafafa]">
       <div className="mx-auto max-w-6xl">
         <div className="text-center">
-          <h2 className="text-3xl font-bold tracking-tight text-slate-100 sm:text-4xl">
+          <h2 className="text-3xl font-bold tracking-tight text-[#111111] sm:text-4xl">
             Всё, что нужно вашему бизнесу
           </h2>
-          <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-400">
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-[#666666]">
             Каждый модуль работает самостоятельно и интегрируется с другими.
             Подключайте то, что нужно сейчас — остальное добавите позже.
           </p>
@@ -72,15 +72,15 @@ export function Features() {
             return (
               <div
                 key={f.title}
-                className="rounded-xl border border-slate-800 bg-slate-900 p-6 transition-colors duration-200 hover:border-slate-700"
+                className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs transition-colors duration-200 hover:border-[#cccccc] hover:shadow-xs"
               >
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[#4a38f5]/10">
-                  <Icon className="h-5 w-5 text-amber-400" />
+                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-[8px] bg-[#4a38f5]/10">
+                  <Icon className="h-5 w-5 text-[#4a38f5]" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-100">
+                <h3 className="text-lg font-semibold text-[#111111]">
                   {f.title}
                 </h3>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                <p className="mt-2 text-sm leading-relaxed text-[#666666]">
                   {f.description}
                 </p>
               </div>

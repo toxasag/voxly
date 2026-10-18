@@ -50,7 +50,7 @@ export const RepairReceiptModal = memo(function RepairReceiptModal({ open, ticke
           </div>
         </div>
 
-        <div ref={printRef} className="rounded-[16px] border border-[#e5e5e5] bg-white text-slate-900 p-10 shadow-2xl font-sans">
+        <div ref={printRef} className="rounded-[16px] border border-[#e5e5e5] bg-white text-[#111111] p-10 shadow-2xl font-sans">
           <div className="text-center mb-6">
             <h1>GETVOXLY Сервисный центр</h1>
             <p className="sub">Квитанция о приёмке оборудования</p>

@@ -83,15 +83,15 @@ export function PromptTemplateEditor({
       <div className="flex items-center justify-between">
         <label
           htmlFor="prompt-template-body"
-          className="flex items-center gap-1.5 text-xs font-medium text-slate-400"
+          className="flex items-center gap-1.5 text-xs font-medium text-[#666666]"
         >
-          <Braces className="h-3.5 w-3.5 text-slate-500" />
+          <Braces className="h-3.5 w-3.5 text-[#888888]" />
           {label}
         </label>
         <button
           type="button"
           onClick={togglePreview}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
         >
           {showPreview ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
           {showPreview ? "Редактировать" : "Предпросмотр"}
@@ -101,11 +101,11 @@ export function PromptTemplateEditor({
       {/* Editor / preview */}
       {showPreview ? (
         <div
-          className="min-h-[180px] whitespace-pre-wrap rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-3 text-sm leading-relaxed text-slate-300"
+          className="min-h-[180px] whitespace-pre-wrap rounded-lg border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-3 text-sm leading-relaxed text-[#111111]"
           aria-live="polite"
         >
           {preview.length > 0 ? preview : (
-            <span className="text-slate-600">Пока нечего показать.</span>
+            <span className="text-[#888888]">Пока нечего показать.</span>
           )}
         </div>
       ) : (
@@ -118,28 +118,28 @@ export function PromptTemplateEditor({
           onChange={handleChange}
           placeholder="Вы — ассистент по продажам для {{tenant.name}}. Ответьте {{contact.name}} по теме {{deal.title}}..."
           className={cn(
-            "w-full resize-y rounded-lg border bg-slate-950 px-3.5 py-3 font-mono text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-            error ? "border-rose-500 focus:border-rose-500" : "border-slate-700 focus:border-[#4a38f5]",
+            "w-full resize-y rounded-lg border bg-white px-3.5 py-3 font-mono text-sm leading-relaxed text-[#111111] placeholder:text-[#888888] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+            error ? "border-rose-500 focus:border-rose-500" : "border-[#e5e5e5] focus:border-[#4a38f5]",
           )}
         />
       )}
 
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error && <p className="text-xs text-rose-600">{error}</p>}
 
       {/* Token budget */}
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-            <Hash className="h-3 w-3" />~{new Intl.NumberFormat("ru-RU").format(tokens)} токенов
-            <span className="text-slate-600">
+          <span className="inline-flex items-center gap-1 text-xs text-[#666666]">
+            <Hash className="h-3 w-3 text-[#888888]" />~{new Intl.NumberFormat("ru-RU").format(tokens)} токенов
+            <span className="text-[#888888]">
               / {new Intl.NumberFormat("en-US", { notation: "compact" }).format(contextWindow)} контекст
             </span>
           </span>
-          <span className="text-xs text-slate-600">
+          <span className="text-xs text-[#888888]">
             {value.length} / {MAX_LENGTH} симв.
           </span>
         </div>
-        <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-[#f0f0f0]">
           <div
             className={cn(
               "h-full rounded-full transition-all",
@@ -152,11 +152,11 @@ export function PromptTemplateEditor({
 
       {/* Unknown variable warning */}
       {unknownVariables.length > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-3 py-2">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-          <p className="text-xs text-amber-400/90">
+        <div className="flex items-start gap-2 rounded-lg border border-[#fef08a] bg-[#fefce8] px-3 py-2 text-[#854d0e]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#854d0e]" />
+          <p className="text-xs leading-relaxed">
             Неизвестные переменные:{" "}
-            <span className="font-mono">{unknownVariables.join(", ")}</span>. Они не будут
+            <span className="font-mono font-medium">{unknownVariables.join(", ")}</span>. Они не будут
             подставлены во время выполнения и попадут в модель как есть.
           </p>
         </div>
@@ -164,7 +164,7 @@ export function PromptTemplateEditor({
 
       {/* Variable palette */}
       <div>
-        <p className="mb-1.5 text-xs uppercase tracking-wider text-slate-600">
+        <p className="mb-1.5 text-xs uppercase tracking-wider text-[#888888]">
           Вставить переменную
         </p>
         <div className="flex flex-wrap gap-1.5">
@@ -180,7 +180,7 @@ export function PromptTemplateEditor({
                   "rounded-md border px-2 py-1 font-mono text-xs transition-colors",
                   isUsed
                     ? "border-[#4a38f5]/40 bg-[#4a38f5]/10 text-[#4a38f5]"
-                    : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                 )}
               >
                 {`{{${variable.token}}}`}

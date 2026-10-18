@@ -37,9 +37,9 @@ function Tile({
   accent?: string;
 }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
-      <p className={cn("mt-2 text-2xl font-bold text-slate-100", accent)}>{value}</p>
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <p className="text-xs uppercase tracking-wider text-[#666666]">{label}</p>
+      <p className={cn("mt-2 text-2xl font-bold text-[#111111]", accent)}>{value}</p>
     </div>
   );
 }
@@ -52,8 +52,8 @@ export default function AdminMetricsPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">Метрики системы</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">Метрики системы</h1>
+            <p className="mt-1 text-sm text-[#666666]">
               Агрегированные показатели по всем арендаторам платформы
             </p>
           </div>
@@ -61,7 +61,7 @@ export default function AdminMetricsPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить
@@ -81,7 +81,7 @@ export default function AdminMetricsPage() {
         ) : data === undefined ? null : (
           <>
             <section className="space-y-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#111111]">
                 <Users className="h-4 w-4 text-[#4a38f5]" />
                 Арендаторы и данные
               </h2>
@@ -106,7 +106,7 @@ export default function AdminMetricsPage() {
             </section>
 
             <section className="space-y-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#111111]">
                 <Database className="h-4 w-4 text-[#4a38f5]" />
                 База данных
               </h2>
@@ -118,7 +118,7 @@ export default function AdminMetricsPage() {
             </section>
 
             <section className="space-y-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#111111]">
                 <Activity className="h-4 w-4 text-[#4a38f5]" />
                 Очередь задач
               </h2>
@@ -130,11 +130,11 @@ export default function AdminMetricsPage() {
               {data.queue.implemented ? (
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Tile label="В обработке" value={data.queue.pending} />
-                  <Tile label="Ошибок" value={data.queue.failed} accent="text-rose-400" />
+                  <Tile label="Ошибок" value={data.queue.failed} accent="text-rose-600 font-medium" />
                 </div>
               ) : (
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-                  <p className="text-sm text-slate-400">
+                <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+                  <p className="text-sm text-[#666666]">
                     Очередь задач не развёрнута: Redis и BullMQ пока не входят в стек, поэтому
                     фоновые задания (уведомления, экспорт, напоминания по счетам) не выполняются.
                   </p>
@@ -142,7 +142,7 @@ export default function AdminMetricsPage() {
               )}
             </section>
 
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[#888888]">
               Данные на{" "}
               {new Intl.DateTimeFormat("ru-RU", {
                 dateStyle: "medium",

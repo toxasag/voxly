@@ -38,9 +38,8 @@ export const viewport: Viewport = {
  */
 const THEME_INIT_SCRIPT = `
 try {
-  var isDark = localStorage.getItem('getvoxly_theme') === 'dark';
-  document.documentElement.classList.toggle('dark', isDark);
-  document.documentElement.classList.toggle('light', !isDark);
+  document.documentElement.classList.add('light');
+  document.documentElement.classList.remove('dark');
 } catch (e) {}
 `;
 
@@ -56,11 +55,10 @@ export default function RootLayout({
       </head>
       {/*
         `text-sm` базовым размером: без него неразмеченный текст наследовал
-        браузерные 16px, а вся оболочка набрана 14px и 12px — на страницах CRM
-        это читалось как «шрифт в карточках крупный» и «вёрстка косая». У Twenty
-        база тоже 13-14px, а не 16px.
+        браузерные 16px, а вся оболочка набрана 13px и 12px. У Twenty
+        база 13px, чистый белый холст (#ffffff) и высококонтрастный текст (#111111).
       */}
-      <body className="min-h-screen bg-slate-950 text-sm text-slate-100 antialiased">
+      <body className="min-h-screen bg-white text-sm text-[#111111] antialiased">
         {/*
           AuthProvider sits at the root, not per route group: /login needs it
           too (the OTP form calls useAuth), and one provider per group would
@@ -74,7 +72,7 @@ export default function RootLayout({
           показываются ошибки входа, а нейтральный toast читался бы как
           статусное сообщение, а не ошибка.
         */}
-        <Toaster position="bottom-right" richColors closeButton />
+        <Toaster position="bottom-right" richColors closeButton theme="light" />
       </body>
     </html>
   );

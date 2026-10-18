@@ -16,8 +16,8 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Аналитика</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-xl font-bold text-[#111111]">Аналитика</h1>
+        <p className="mt-1 text-sm text-[#666666]">
           Выручка, воронка, ремонты и эффективность команды
         </p>
       </div>

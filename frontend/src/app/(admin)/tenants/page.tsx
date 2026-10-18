@@ -98,39 +98,39 @@ export default function TenantsPage() {
     <Guard requiredRole={["owner"]}>
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Администрирование платформы</h1>
-        <p className="mt-1 text-sm text-slate-400">Tenant management, subscriptions, and referral program</p>
+        <h1 className="text-xl font-bold text-[#111111]">Администрирование платформы</h1>
+        <p className="mt-1 text-sm text-[#666666]">Управление тенантами, подписками и реферальной программой</p>
       </div>
 
       {/* Summary Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><Building2 className="h-4 w-4 text-amber-400" /></div>
-            <span className="text-xs font-medium text-slate-500">Всего компаний</span>
+            <div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><Building2 className="h-4 w-4 text-[#4a38f5]" /></div>
+            <span className="text-xs font-medium text-[#666666]">Всего компаний</span>
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{totalTenants}</p>
+          <p className="mt-2 text-2xl font-bold text-[#111111]">{totalTenants}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-emerald-500/10 p-1.5"><Users className="h-4 w-4 text-emerald-400" /></div>
-            <span className="text-xs font-medium text-slate-500">Активные компании</span>
+            <div className="rounded-lg bg-emerald-50 p-1.5"><Users className="h-4 w-4 text-emerald-600" /></div>
+            <span className="text-xs font-medium text-[#666666]">Активные компании</span>
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{activeTenants}</p>
+          <p className="mt-2 text-2xl font-bold text-[#111111]">{activeTenants}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-violet-500/10 p-1.5"><Building2 className="h-4 w-4 text-violet-400" /></div>
-            <span className="text-xs font-medium text-slate-500">Выручка платформы</span>
+            <div className="rounded-lg bg-violet-50 p-1.5"><Building2 className="h-4 w-4 text-violet-600" /></div>
+            <span className="text-xs font-medium text-[#666666]">Выручка платформы</span>
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">
+          <p className="mt-2 text-2xl font-bold text-[#111111]">
             {new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(totalRevenue)}
           </p>
         </div>
       </div>
 
       {/* Tab Switcher */}
-      <div className="flex items-center gap-1 rounded-lg bg-slate-900 border border-slate-800 p-1 w-fit">
+      <div className="flex items-center gap-1 rounded-lg bg-white border border-[#e5e5e5] p-1 w-fit">
         <button
           type="button"
           onClick={() => setActiveTab("tenants")}
@@ -138,11 +138,11 @@ export default function TenantsPage() {
             "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             activeTab === "tenants"
               ? "bg-[#4a38f5] text-white"
-              : "text-slate-400 hover:text-slate-200",
+              : "text-[#666666] hover:text-[#111111]",
           )}
         >
           <Building2 className="h-4 w-4" />
-          Tenants
+          Тенанты
         </button>
         <button
           type="button"
@@ -151,11 +151,11 @@ export default function TenantsPage() {
             "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
             activeTab === "referrals"
               ? "bg-[#4a38f5] text-white"
-              : "text-slate-400 hover:text-slate-200",
+              : "text-[#666666] hover:text-[#111111]",
           )}
         >
           <Users className="h-4 w-4" />
-          Referral Program
+          Реферальная программа
         </button>
       </div>
 

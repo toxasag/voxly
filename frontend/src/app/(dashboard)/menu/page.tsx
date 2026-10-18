@@ -38,18 +38,18 @@ function NavSection({ title, items }: { title: string; items: readonly NavItem[]
 
   return (
     <section className="space-y-1">
-      <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+      <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-[#888888]">
         {title}
       </h2>
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800/70">
+      <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] shadow-2xs">
         {items.map((item) => (
           <Link
             key={item.href}
             href={item.href}
             // `py-3` даёт область нажатия около 48px — выше минимума 44px.
-            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-200 transition-colors hover:bg-slate-800"
+            className="flex items-center gap-3 px-4 py-3 text-[13px] text-[#111111] transition-colors hover:bg-[#fafafa]"
           >
-            <item.icon className="h-4 w-4 shrink-0 text-slate-400" />
+            <item.icon className="h-4 w-4 shrink-0 text-[#666666]" />
             <span className="truncate">{item.label}</span>
           </Link>
         ))}
@@ -86,19 +86,19 @@ export default function MenuPage() {
       {/* Блок пользователя: на десктопе он живёт в нижней части сайдбара. */}
       <Link
         href="/settings/profile"
-        className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 transition-colors hover:bg-slate-800"
+        className="flex items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 shadow-2xs transition-colors hover:bg-[#fafafa]"
       >
         {avatarUrl !== null ? (
           // eslint-disable-next-line @next/next/no-img-element -- аватар приходит base64 из профиля
           <img src={avatarUrl} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover" />
         ) : (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#4a38f5]/10 text-sm font-bold text-amber-400">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#4a38f5]/10 text-xs font-bold text-[#4a38f5]">
             {userInitials(displayName)}
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-slate-100">{displayName}</p>
-          <p className="truncate text-xs text-slate-500">{displayEmail}</p>
+          <p className="truncate text-[13px] font-medium text-[#111111]">{displayName}</p>
+          <p className="truncate text-xs text-[#666666]">{displayEmail}</p>
         </div>
       </Link>
 
@@ -109,20 +109,20 @@ export default function MenuPage() {
       {/* Разделы компании: те же, что в выпадающем меню сайдбара, но с описанием —
           на экране меню место есть, а подпись объясняет назначение раздела. */}
       <section className="space-y-1">
-        <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-[#888888]">
           {tenant?.tenantName ?? "Компания"}
         </h2>
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800/70">
+        <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] shadow-2xs">
           {TENANT_MENU.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-slate-800"
+              className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-[#fafafa]"
             >
-              <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+              <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-[#666666]" />
               <span className="min-w-0">
-                <span className="block truncate text-sm text-slate-200">{item.label}</span>
-                <span className="block truncate text-xs text-slate-500">{item.description}</span>
+                <span className="block truncate text-[13px] text-[#111111]">{item.label}</span>
+                <span className="block truncate text-xs text-[#666666]">{item.description}</span>
               </span>
             </Link>
           ))}
@@ -133,18 +133,18 @@ export default function MenuPage() {
           иначе владелец любого арендатора увидел бы управление платформой. */}
       {isPlatformOwner && (
         <section className="space-y-1">
-          <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h2 className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wider text-[#888888]">
             <ShieldCheck className="h-3 w-3" />
             Управление платформой
           </h2>
-          <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800/70">
+          <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] shadow-2xs">
             {PLATFORM_NAV.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                className="flex items-center gap-3 px-4 py-3 text-sm text-slate-200 transition-colors hover:bg-slate-800"
+                className="flex items-center gap-3 px-4 py-3 text-[13px] text-[#111111] transition-colors hover:bg-[#fafafa]"
               >
-                <item.icon className="h-4 w-4 shrink-0 text-slate-400" />
+                <item.icon className="h-4 w-4 shrink-0 text-[#666666]" />
                 <span className="truncate">{item.label}</span>
               </Link>
             ))}
@@ -153,12 +153,12 @@ export default function MenuPage() {
       )}
 
       <section className="space-y-1">
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900 divide-y divide-slate-800/70">
+        <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white divide-y divide-[#f0f0f0] shadow-2xs">
           <Link
             href="/integrations"
-            className="flex items-center gap-3 px-4 py-3 text-sm text-slate-200 transition-colors hover:bg-slate-800"
+            className="flex items-center gap-3 px-4 py-3 text-[13px] text-[#111111] transition-colors hover:bg-[#fafafa]"
           >
-            <Plug className="h-4 w-4 shrink-0 text-slate-400" />
+            <Plug className="h-4 w-4 shrink-0 text-[#666666]" />
             Интеграции
           </Link>
           {/*
@@ -173,7 +173,7 @@ export default function MenuPage() {
                 window.location.href = "/login";
               });
             }}
-            className="flex w-full items-center gap-3 px-4 py-3 text-sm text-rose-400 transition-colors hover:bg-rose-500/10"
+            className="flex w-full items-center gap-3 px-4 py-3 text-[13px] text-rose-600 transition-colors hover:bg-rose-50"
           >
             <LogOut className="h-4 w-4 shrink-0" />
             Выйти

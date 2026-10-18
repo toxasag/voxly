@@ -26,10 +26,10 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">
+        <h1 className="text-[15px] font-semibold text-[#111111]">
           С возвращением, {displayUser.name.split(" ")[0]}
         </h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <p className="mt-1 text-xs text-[#666666]">
           {displayTenant.tenantName} — тариф {displayTenant.plan}
         </p>
       </div>
@@ -38,19 +38,21 @@ export default function DashboardPage() {
         {STATS.map((stat) => (
           <div
             key={stat.label}
-            className="rounded-xl border border-slate-800 bg-slate-900 p-5 transition-colors hover:border-slate-700"
+            className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs transition-colors hover:border-[#cccccc]"
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">{stat.label}</span>
-              <div className="rounded-lg bg-slate-800 p-1.5">
-                <stat.icon className="h-4 w-4 text-slate-400" />
+              <span className="text-xs font-medium text-[#666666]">{stat.label}</span>
+              <div className="rounded-[6px] border border-[#f0f0f0] bg-[#fafafa] p-1.5">
+                <stat.icon className="h-4 w-4 text-[#666666]" />
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-slate-100">{stat.value}</span>
+              <span className="text-xl font-semibold font-mono tabular-nums text-[#111111]">{stat.value}</span>
               <span
-                className={`inline-flex items-center gap-0.5 text-xs font-medium ${
-                  stat.up ? "text-emerald-400" : "text-rose-400"
+                className={`inline-flex items-center gap-0.5 rounded-[4px] px-1.5 py-0.5 font-mono text-xs font-medium tabular-nums border ${
+                  stat.up
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-rose-200 bg-rose-50 text-rose-700"
                 }`}
               >
                 {stat.up ? (
@@ -66,31 +68,31 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-          <h2 className="text-sm font-semibold text-slate-200">Последние сделки</h2>
-          <p className="mt-3 text-sm text-slate-500">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+          <h2 className="text-[13px] font-semibold text-[#111111]">Последние сделки</h2>
+          <p className="mt-3 text-xs text-[#888888]">
             Здесь появится воронка сделок.
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-          <h2 className="text-sm font-semibold text-slate-200">Ближайшие задачи</h2>
-          <p className="mt-3 text-sm text-slate-500">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+          <h2 className="text-[13px] font-semibold text-[#111111]">Ближайшие задачи</h2>
+          <p className="mt-3 text-xs text-[#888888]">
             Здесь появится список ваших задач.
           </p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
         <div className="flex items-center gap-2">
-          <LayoutDashboard className="h-4 w-4 text-slate-500" />
-          <h2 className="text-sm font-semibold text-slate-200">Установленные модули</h2>
+          <LayoutDashboard className="h-4 w-4 text-[#888888]" />
+          <h2 className="text-[13px] font-semibold text-[#111111]">Установленные модули</h2>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {displayTenant.installedModules.map((mod) => (
             <span
               key={mod.slug}
-              className="rounded-md bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-medium text-amber-400 border border-[#4a38f5]/20"
+              className="rounded-[4px] bg-[#4a38f5]/10 px-2.5 py-1 text-xs font-medium text-[#4a38f5] border border-[#4a38f5]/20"
             >
               {mod.name}
             </span>

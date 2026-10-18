@@ -268,7 +268,7 @@ export function AvatarCropModal({
           {/* Область предпросмотра с круглой рамкой */}
           <div
             className={cn(
-              "relative mx-auto overflow-hidden rounded-lg bg-slate-950 select-none",
+              "relative mx-auto overflow-hidden rounded-lg bg-black select-none",
               isDragging ? "cursor-grabbing" : "cursor-grab",
             )}
             style={{ width: VIEWPORT, height: VIEWPORT }}

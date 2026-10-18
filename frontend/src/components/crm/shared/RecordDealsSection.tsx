@@ -99,7 +99,7 @@ export function RecordDealsSection({
             onClick={() => { setComposing(true); setTitle(`Сделка — ${targetLabel}`); }}
             title="Создать сделку"
             aria-label="Создать сделку"
-            className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-[#4a38f5]"
+            className="rounded p-1 text-[#888888] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -108,7 +108,7 @@ export function RecordDealsSection({
     >
       <div className="space-y-2">
         {composing && (
-          <div className="rounded border border-slate-700 bg-slate-950/60 p-2">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-2">
             <input
               value={title}
               autoFocus
@@ -124,13 +124,13 @@ export function RecordDealsSection({
                 }
               }}
               placeholder="Название сделки"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none"
+              className="w-full rounded border border-[#e5e5e5] bg-white px-2 py-1.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
             <div className="mt-2 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setComposing(false)}
-                className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111]"
               >
                 Отмена
               </button>
@@ -138,7 +138,7 @@ export function RecordDealsSection({
                 type="button"
                 onClick={submit}
                 disabled={create.isPending || title.trim() === ""}
-                className="inline-flex items-center gap-1.5 rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
               >
                 {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                 Создать
@@ -150,7 +150,7 @@ export function RecordDealsSection({
         {deals.isLoading ? (
           <Skeleton className="h-8 w-full" />
         ) : items.length === 0 ? (
-          <p className="px-1 text-xs text-slate-600">
+          <p className="px-1 text-xs text-[#888888]">
             {canCreate ? "Сделок нет — создайте первую" : "Сделок нет"}
           </p>
         ) : (
@@ -161,12 +161,12 @@ export function RecordDealsSection({
               onClick={() => onOpenDeal?.(deal.id)}
               className={cn(
                 "flex w-full items-center gap-2 rounded px-1 py-1 text-left transition-colors",
-                onOpenDeal !== undefined && "hover:bg-slate-800/60",
+                onOpenDeal !== undefined && "hover:bg-[#f5f5f5]",
               )}
             >
               <EntityChip name={deal.title} icon={Handshake} size="sm" />
-              <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{deal.title}</span>
-              <span className="shrink-0 text-xs tabular-nums text-amber-400">{money.format(deal.budget)}</span>
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-[#111111]">{deal.title}</span>
+              <span className="shrink-0 text-xs tabular-nums text-[#666666]">{money.format(deal.budget)}</span>
             </button>
           ))
         )}

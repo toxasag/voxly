@@ -66,7 +66,7 @@ function DealDetailContent() {
         title="Сделка не найдена"
         description={deal.error.message}
         action={
-          <Link href="/crm/deals" className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300">
+          <Link href="/crm/deals" className="rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2 text-sm text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]">
             Назад к воронке
           </Link>
         }

@@ -119,18 +119,18 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       {/* Breadcrumb */}
       <Link
         href="/modules/ai-bots"
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
       >
         <ChevronLeft className="h-3.5 w-3.5" />
         Назад к AI-ботам
       </Link>
 
       {/* Top bar */}
-      <div className="flex items-start justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
+      <div className="flex items-start justify-between gap-4 rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
         <div className="flex min-w-0 items-start gap-3">
           <div
             className={cn(
-              "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg",
+              "flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px]",
               getAccentClasses(bot.accent),
             )}
           >
@@ -138,23 +138,23 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-lg font-bold text-slate-100">{bot.name}</h1>
+              <h1 className="truncate text-lg font-bold text-[#111111]">{bot.name}</h1>
               <StatusBadge variant={isActive ? "success" : "neutral"} size="sm" withDot>
                 {isActive ? "Активен" : "На паузе"}
               </StatusBadge>
             </div>
-            <p className="mt-1 text-sm text-slate-400">{bot.description}</p>
+            <p className="mt-1 text-[13px] text-[#666666]">{bot.description}</p>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 font-mono text-xs text-slate-400">
+              <span className="rounded-[4px] border border-[#e5e5e5] bg-[#f5f5f5] px-2 py-0.5 font-mono text-xs text-[#666666]">
                 {model.label}
               </span>
-              <span className="text-xs text-slate-600">
+              <span className="text-xs text-[#888888]">
                 {getProviderLabel(model.provider)}
               </span>
-              <span className="rounded-md border border-orange-400/30 bg-orange-400/10 px-2 py-0.5 text-xs font-medium text-orange-400">
+              <span className="rounded-[4px] border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                 {getBotModeLabel(bot.mode)}
               </span>
-              <span className="text-xs text-slate-600">
+              <span className="text-xs text-[#888888]">
                 temp {bot.temperature.toFixed(1)} · макс. {bot.max_tokens} ток.
               </span>
             </div>
@@ -166,10 +166,10 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             type="button"
             onClick={handleToggleStatus}
             className={cn(
-              "rounded-lg border px-3 py-2 text-xs font-medium transition-colors",
+              "rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors shadow-2xs",
               isActive
-                ? "border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200"
-                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20",
+                ? "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
             )}
           >
             {isActive ? "Пауза" : "Активировать"}
@@ -178,7 +178,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             <button
               type="button"
               onClick={() => setConfigOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
             >
               <Settings2 className="h-3.5 w-3.5" />
               Настроить
@@ -188,7 +188,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       </div>
 
       {/* Tabs */}
-      <div className="flex w-fit items-center gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1">
+      <div className="flex w-fit items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-2xs">
         {TABS.map((entry) => {
           const Icon = entry.icon;
           return (
@@ -197,10 +197,10 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
               type="button"
               onClick={() => setTab(entry.key)}
               className={cn(
-                "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                "flex items-center gap-2 rounded-[6px] px-3.5 py-1.5 text-[13px] font-medium transition-colors",
                 tab === entry.key
-                  ? "bg-[#4a38f5] text-white"
-                  : "text-slate-400 hover:text-slate-200",
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-[#fafafa]",
               )}
             >
               <Icon className="h-4 w-4" />
@@ -218,9 +218,9 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       */}
       {tab === "chat" && (
         <div className="space-y-3">
-          <div className="flex items-start gap-2.5 rounded-xl border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-4 py-3">
-            <Braces className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-            <p className="text-xs leading-relaxed text-slate-400">
+          <div className="flex items-start gap-2.5 rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3">
+            <Braces className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="text-xs leading-relaxed text-amber-800">
               Демонстрационный режим: ответы формируются локально в браузере, модель не
               вызывается и баланс ИИ не расходуется. Реальные ответы появятся после
               подключения провайдера.
@@ -233,7 +233,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       {tab === "prompt" && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
           <div className="space-y-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
               <PromptTemplateEditor
                 value={promptDraft}
                 onChange={setPromptDraft}
@@ -241,15 +241,15 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                 rows={12}
               />
 
-              <div className="mt-4 flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+              <div className="mt-4 flex items-center justify-end gap-3 border-t border-[#e5e5e5] pt-4">
                 {promptDirty && (
-                  <span className="mr-auto text-xs text-amber-400">Несохранённые изменения</span>
+                  <span className="mr-auto text-xs text-amber-700">Несохранённые изменения</span>
                 )}
                 <button
                   type="button"
                   onClick={resetPrompt}
                   disabled={!promptDirty}
-                  className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2 text-[13px] font-medium text-[#666666] shadow-2xs transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Сбросить
                 </button>
@@ -257,7 +257,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                   type="button"
                   onClick={savePrompt}
                   disabled={!promptDirty}
-                  className="rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-[8px] bg-[#4a38f5] px-5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Сохранить промпт
                 </button>
@@ -265,14 +265,14 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             </div>
 
             {/* Resolved preview */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-              <h3 className="mb-3 text-sm font-semibold text-slate-200">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+              <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">
                 Подстановка во время выполнения
-                <span className="ml-1.5 text-xs font-normal text-slate-600">
+                <span className="ml-1.5 text-xs font-normal text-[#888888]">
                   примерные значения
                 </span>
               </h3>
-              <p className="whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm leading-relaxed text-slate-300">
+              <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm leading-relaxed text-[#111111]">
                 {renderPromptPreview(promptDraft)}
               </p>
             </div>
@@ -280,52 +280,52 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
 
           {/* Side panel */}
           <div className="space-y-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-              <h3 className="mb-3 text-sm font-semibold text-slate-200">Сущности контекста</h3>
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+              <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">Сущности контекста</h3>
               <div className="flex flex-wrap gap-1.5">
                 {bot.context_entities.map((entity) => (
                   <span
                     key={entity}
-                    className="rounded-md border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-amber-400"
+                    className="rounded-[4px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
                   >
                     {getContextEntityLabel(entity)}
                   </span>
                 ))}
               </div>
-              <p className="mt-3 text-xs leading-relaxed text-slate-600">
+              <p className="mt-3 text-xs leading-relaxed text-[#666666]">
                 Записи этих сущностей загружаются в рамках тенанта вызывающего пользователя и
                 подставляются перед отправкой промпта.
               </p>
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-              <h3 className="mb-1 text-sm font-semibold text-slate-200">Режим</h3>
-              <p className="text-xs leading-relaxed text-slate-500">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+              <h3 className="mb-1 text-[13px] font-semibold text-[#111111]">Режим</h3>
+              <p className="text-xs leading-relaxed text-[#666666]">
                 {getBotModeDescription(bot.mode)}
               </p>
             </div>
 
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-              <h3 className="mb-3 text-sm font-semibold text-slate-200">Шаблоны</h3>
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+              <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">Шаблоны</h3>
               <div className="space-y-2">
                 {PROMPT_TEMPLATES.map((template) => (
                   <button
                     key={template.id}
                     type="button"
                     onClick={() => applyTemplate(template.body)}
-                    className="w-full rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2.5 text-left transition-colors hover:border-slate-700"
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2.5 text-left transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
                   >
-                    <span className="block text-xs font-medium text-slate-300">
+                    <span className="block text-xs font-medium text-[#111111]">
                       {template.name}
                     </span>
-                    <span className="mt-0.5 block line-clamp-2 text-xs text-slate-600">
+                    <span className="mt-0.5 block line-clamp-2 text-xs text-[#666666]">
                       {template.description}
                     </span>
                     <span className="mt-1.5 flex flex-wrap gap-1">
                       {template.variables.slice(0, 3).map((variable) => (
                         <span
                           key={variable}
-                          className="rounded border border-slate-700 px-1 py-0.5 font-mono text-xs text-slate-500"
+                          className="rounded-[4px] border border-[#e5e5e5] bg-[#f5f5f5] px-1 py-0.5 font-mono text-xs text-[#666666]"
                         >
                           {variable}
                         </span>
@@ -384,10 +384,9 @@ function BotDetailLoader({ id }: { id: string }) {
 
   if (isError || data === undefined) {
     return (
-      <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
-          Не удалось загрузить агента: {error?.message ?? "неизвестная ошибка"}
-        </p>
+      <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm font-semibold text-rose-900">Не удалось загрузить агента</p>
+        <p className="mt-1 text-sm text-rose-700">{error?.message ?? "неизвестная ошибка"}</p>
       </div>
     );
   }
@@ -406,7 +405,7 @@ export default function BotDetailPage() {
       requiredPermission="ai_bots:read"
       requiredModule="ai_bots"
       fallback={
-        <div className="rounded-xl border border-slate-800 bg-slate-900">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
           <EmptyState
             icon={Bot}
             title="Нет доступа к AI-агентам"

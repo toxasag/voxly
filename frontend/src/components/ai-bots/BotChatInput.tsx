@@ -75,11 +75,13 @@ export const BotChatInput = memo(function BotChatInput({
   const canSend = value.trim().length > 0 && !disabled && !isStreaming;
 
   return (
-    <form onSubmit={handleSubmit} className="border-t border-slate-800 bg-slate-900 p-4">
+    <form onSubmit={handleSubmit} className="border-t border-[#e5e5e5] bg-[#fafafa] p-4">
       <div
         className={cn(
-          "flex items-end gap-2 rounded-lg border bg-slate-950 px-3 py-2.5 transition-colors",
-          error ? "border-rose-500" : "border-slate-700 focus-within:border-[#4a38f5]",
+          "flex items-end gap-2 rounded-lg border bg-white px-3 py-2.5 transition-colors",
+          error
+            ? "border-rose-500"
+            : "border-[#e5e5e5] focus-within:border-[#4a38f5] focus-within:ring-1 focus-within:ring-[#4a38f5]/20",
         )}
       >
         <textarea
@@ -96,14 +98,14 @@ export const BotChatInput = memo(function BotChatInput({
               : "Спросите бота… (Enter — отправить, Shift+Enter — новая строка)"
           }
           aria-label="Сообщение"
-          className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-600"
+          className="max-h-40 flex-1 resize-none bg-transparent text-sm leading-relaxed text-[#111111] placeholder:text-[#888888] focus:outline-none disabled:cursor-not-allowed disabled:text-[#888888]"
         />
 
         {isStreaming ? (
           <button
             type="button"
             onClick={onStop}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-semibold text-rose-400 transition-colors hover:bg-rose-500/20"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-100"
           >
             <Square className="h-3 w-3" />
             Остановить
@@ -122,13 +124,13 @@ export const BotChatInput = memo(function BotChatInput({
 
       <div className="mt-1.5 flex items-center justify-between px-1">
         {error ? (
-          <p className="text-xs text-rose-400">{error}</p>
+          <p className="text-xs text-rose-600">{error}</p>
         ) : (
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-[#888888]">
             ~{new Intl.NumberFormat("ru-RU").format(estimateTokens(value))} токенов
           </p>
         )}
-        <p className={cn("text-xs", isNearLimit ? "text-amber-400" : "text-slate-600")}>
+        <p className={cn("text-xs", isNearLimit ? "text-amber-600 font-medium" : "text-[#888888]")}>
           {value.length} / {MAX_LENGTH}
         </p>
       </div>
