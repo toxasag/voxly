@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   AlertCircle,
   Banknote,
@@ -8,6 +8,7 @@ import {
   Building2,
   Calendar,
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronUp,
   DollarSign,
@@ -17,16 +18,20 @@ import {
   MessageCircle,
   Paperclip,
   Pencil,
+  Search,
   Send,
   User,
   UserCircle2,
+  X,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
-import { useDealTimeline, useSendDealMessage } from "@/lib/api/use-deals";
+import { useDealTimeline, useKanban, useMoveDealStage, useSendDealMessage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useTasks } from "@/lib/api/use-tasks";
+import { useCompanies } from "@/lib/api/use-companies";
+import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
@@ -35,6 +40,7 @@ import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
 import { timeAgo } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // Содержимое карточки сделки: вкладки «Главная», «Чат», «Задачи», «Файлы».
@@ -297,8 +303,25 @@ function HomeTab({
   const [relationsOpen, setRelationsOpen] = useState(true);
   const [systemOpen, setSystemOpen] = useState(true);
 
-  // Владелец и создатель — разные поля (миграция 0018): сделку может завести
-  // AI-агент, а вести живой менеджер, поэтому owner_id читается отдельно.
+  // Редактирование суммы
+  const [isEditingBudget, setIsEditingBudget] = useState(false);
+  const [budgetVal, setBudgetVal] = useState(String(deal.budget));
+
+  // Редактирование даты закрытия
+  const [isEditingCloseDate, setIsEditingCloseDate] = useState(false);
+
+  // Поповеры выбора: "stage" | "company" | "contact" | "owner"
+  const [activePicker, setActivePicker] = useState<"stage" | "company" | "contact" | "owner" | null>(null);
+  const [pickerAnchor, setPickerAnchor] = useState<"row" | "card">("row");
+  const [pickerSearch, setPickerSearch] = useState("");
+
+  const updateDeal = useUpdateDeal();
+  const moveStage = useMoveDealStage();
+
+  const kanban = useKanban(deal.pipelineId);
+  const companiesQuery = useCompanies({ limit: 100 });
+  const contactsQuery = useContacts({ limit: 100 });
+
   const owner = deal.ownerId !== null ? usersById.get(deal.ownerId) : undefined;
   const creator = usersById.get(deal.createdBy);
   const pipelineName = pipelines?.find((pipeline) => pipeline.id === deal.pipelineId)?.name;
@@ -310,52 +333,491 @@ function HomeTab({
   const dateOnly = (iso: string): string =>
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
 
+  const stagesList = useMemo(() => {
+    if (kanban.data && kanban.data.length > 0) {
+      return kanban.data.map((c) => ({
+        stageId: c.stageId,
+        stageName: c.stageName,
+        stageColor: c.stageColor,
+        isWon: c.isWon,
+        isLost: c.isLost,
+      }));
+    }
+    if (stagesById) {
+      return Array.from(stagesById.entries()).map(([id, info]) => ({
+        stageId: id,
+        stageName: info.name,
+        stageColor: info.colorKey,
+        isWon: info.isWon,
+        isLost: info.isLost,
+      }));
+    }
+    return [];
+  }, [kanban.data, stagesById]);
+
+  const filteredStages = useMemo(() => {
+    const q = pickerSearch.trim().toLowerCase();
+    if (!q) return stagesList;
+    return stagesList.filter((s) => s.stageName.toLowerCase().includes(q));
+  }, [stagesList, pickerSearch]);
+
+  const filteredCompanies = useMemo(() => {
+    const items = companiesQuery.data?.items ?? [];
+    const q = pickerSearch.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((c) => c.name.toLowerCase().includes(q));
+  }, [companiesQuery.data?.items, pickerSearch]);
+
+  const filteredContacts = useMemo(() => {
+    const items = contactsQuery.data?.items ?? [];
+    const q = pickerSearch.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((c) => contactFullName(c).toLowerCase().includes(q));
+  }, [contactsQuery.data?.items, pickerSearch]);
+
+  const filteredUsers = useMemo(() => {
+    const items = Array.from(usersById.values());
+    const q = pickerSearch.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((u) => u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  }, [usersById, pickerSearch]);
+
+  const commitBudget = () => {
+    const num = Number(budgetVal);
+    if (!isNaN(num) && num >= 0 && num !== deal.budget) {
+      updateDeal.mutate(
+        { id: deal.id, pipelineId: deal.pipelineId, payload: { budget: num } },
+        {
+          onSuccess: () => toast.success("Сумма обновлена"),
+          onError: (err) => toast.error(err.message || "Ошибка обновления суммы"),
+        },
+      );
+    }
+    setIsEditingBudget(false);
+  };
+
+  const openPicker = (type: "stage" | "company" | "contact" | "owner", anchor: "row" | "card") => {
+    setActivePicker(type);
+    setPickerAnchor(anchor);
+    setPickerSearch("");
+  };
+
+  const renderCompanyPicker = () => (
+    <>
+      <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
+      <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
+        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
+          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+          <input
+            type="text"
+            placeholder="Поиск компании..."
+            value={pickerSearch}
+            onChange={(e) => setPickerSearch(e.target.value)}
+            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto space-y-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              updateDeal.mutate(
+                { id: deal.id, pipelineId: deal.pipelineId, payload: { company_id: "" } },
+                {
+                  onSuccess: () => toast.success("Компания очищена"),
+                  onError: (err) => toast.error(err.message || "Ошибка"),
+                },
+              );
+              setActivePicker(null);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
+              deal.companyId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+            )}
+          >
+            <span>— Без компании</span>
+            {deal.companyId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+          </button>
+          {filteredCompanies.map((comp) => {
+            const isSelected = comp.id === deal.companyId;
+            return (
+              <button
+                key={comp.id}
+                type="button"
+                onClick={() => {
+                  if (comp.id !== deal.companyId) {
+                    updateDeal.mutate(
+                      { id: deal.id, pipelineId: deal.pipelineId, payload: { company_id: comp.id } },
+                      {
+                        onSuccess: () => toast.success("Компания обновлена"),
+                        onError: (err) => toast.error(err.message || "Ошибка"),
+                      },
+                    );
+                  }
+                  setActivePicker(null);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  isSelected && "bg-[#f5f5f5] font-medium",
+                )}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <EntityChip name={comp.name} label={comp.name} icon={Building2} size="sm" />
+                </div>
+                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderContactPicker = () => (
+    <>
+      <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
+      <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
+        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
+          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+          <input
+            type="text"
+            placeholder="Поиск контакта..."
+            value={pickerSearch}
+            onChange={(e) => setPickerSearch(e.target.value)}
+            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto space-y-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              updateDeal.mutate(
+                { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: "" } },
+                {
+                  onSuccess: () => toast.success("Контакт очищен"),
+                  onError: (err) => toast.error(err.message || "Ошибка"),
+                },
+              );
+              setActivePicker(null);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
+              deal.contactId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+            )}
+          >
+            <span>— Без контакта</span>
+            {deal.contactId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+          </button>
+          {filteredContacts.map((contact) => {
+            const isSelected = contact.id === deal.contactId;
+            const name = contactFullName(contact);
+            return (
+              <button
+                key={contact.id}
+                type="button"
+                onClick={() => {
+                  if (contact.id !== deal.contactId) {
+                    updateDeal.mutate(
+                      { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: contact.id } },
+                      {
+                        onSuccess: () => toast.success("Контакт обновлён"),
+                        onError: (err) => toast.error(err.message || "Ошибка"),
+                      },
+                    );
+                  }
+                  setActivePicker(null);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  isSelected && "bg-[#f5f5f5] font-medium",
+                )}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <EntityChip name={name} label={name} size="sm" />
+                </div>
+                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
+  const renderOwnerPicker = () => (
+    <>
+      <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
+      <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
+        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
+          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+          <input
+            type="text"
+            placeholder="Поиск сотрудника..."
+            value={pickerSearch}
+            onChange={(e) => setPickerSearch(e.target.value)}
+            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto space-y-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              updateDeal.mutate(
+                { id: deal.id, pipelineId: deal.pipelineId, payload: { owner_id: "" } },
+                {
+                  onSuccess: () => toast.success("Ответственный очищен"),
+                  onError: (err) => toast.error(err.message || "Ошибка"),
+                },
+              );
+              setActivePicker(null);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
+              deal.ownerId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+            )}
+          >
+            <span>— Без владельца</span>
+            {deal.ownerId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+          </button>
+          {filteredUsers.map((user) => {
+            const isSelected = user.id === deal.ownerId;
+            return (
+              <button
+                key={user.id}
+                type="button"
+                onClick={() => {
+                  if (user.id !== deal.ownerId) {
+                    updateDeal.mutate(
+                      { id: deal.id, pipelineId: deal.pipelineId, payload: { owner_id: user.id } },
+                      {
+                        onSuccess: () => toast.success("Ответственный обновлён"),
+                        onError: (err) => toast.error(err.message || "Ошибка"),
+                      },
+                    );
+                  }
+                  setActivePicker(null);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  isSelected && "bg-[#f5f5f5] font-medium",
+                )}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <UserAvatar user={user} fallbackLabel="?" size="sm" />
+                  <span className="truncate">{user.fullName}</span>
+                </div>
+                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <div className="py-2 text-[#111111]">
       {deal.description !== "" && (
         <div className="px-4 pb-3">
-          <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] text-[#333333]">{deal.description}</p>
+          <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] text-[#333333]">
+            {deal.description}
+          </p>
         </div>
       )}
 
-      {/* Section: Fields */}
-      <div className="px-4 pt-1 pb-1 text-xs font-semibold text-[#111111]">Fields</div>
-
-      {/* Accordion Group 1: Deal */}
+      {/* Accordion Group 1: Сделка */}
       <div className="mt-1">
         <button
           type="button"
           onClick={() => setDealOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
-          <span>Deal</span>
+          <span>Сделка</span>
           <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !dealOpen && "rotate-180")} />
         </button>
         {dealOpen && (
           <div className="space-y-0.5 py-0.5">
-            <FieldRow icon={DollarSign} label="Amount">
-              <span className="font-normal text-[#111111] tabular-nums">
-                {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
-              </span>
-            </FieldRow>
-            <FieldRow icon={CheckCircle2} label="Stage">
-              {stage === undefined ? (
-                <span className="text-[#888888]">—</span>
+            {/* Сумма */}
+            <FieldRow icon={DollarSign} label="Сумма">
+              {isEditingBudget ? (
+                <div className="inline-flex items-center rounded-[6px] border border-[#3b82f6] bg-white shadow-xs overflow-hidden">
+                  <div className="flex items-center gap-1 bg-[#fafafa] px-2 py-1 text-xs font-medium text-[#666666] border-r border-[#e5e5e5] select-none">
+                    <span>{deal.currency}</span>
+                  </div>
+                  <div className="flex items-center px-2 py-1 gap-1">
+                    <span className="text-xs text-[#888888]">₽</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={budgetVal}
+                      onChange={(e) => setBudgetVal(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitBudget();
+                        } else if (e.key === "Escape") {
+                          setIsEditingBudget(false);
+                        }
+                      }}
+                      onBlur={commitBudget}
+                      className="w-24 bg-transparent text-xs font-medium text-[#111111] outline-none tabular-nums"
+                      autoFocus
+                    />
+                  </div>
+                </div>
               ) : (
-                <TagPill color={stage.isWon ? "emerald" : stage.isLost ? "rose" : stageTagColor(stage.colorKey)}>
-                  {stage.name}
-                </TagPill>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingBudget(true);
+                    setBudgetVal(String(deal.budget));
+                  }}
+                  className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left font-normal text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                  title="Нажмите для редактирования суммы"
+                >
+                  <span className="tabular-nums">
+                    {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
+                  </span>
+                  <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                </button>
               )}
             </FieldRow>
-            <FieldRow icon={Calendar} label="Close date">
-              {deal.closeDate !== null ? (
-                <span className="text-[#111111]">{dateOnly(deal.closeDate)}</span>
+
+            {/* Этап */}
+            <FieldRow icon={CheckCircle2} label="Этап">
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={() => openPicker("stage", "row")}
+                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
+                  title="Нажмите для выбора этапа"
+                >
+                  {stage === undefined ? (
+                    <span className="text-[#888888]">—</span>
+                  ) : (
+                    <TagPill color={stage.isWon ? "emerald" : stage.isLost ? "rose" : stageTagColor(stage.colorKey)}>
+                      {stage.name}
+                    </TagPill>
+                  )}
+                </button>
+
+                {activePicker === "stage" && (
+                  <>
+                    <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
+                    <div className="absolute left-0 top-full z-40 mt-1 w-56 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
+                      <div className="px-1.5 pb-1.5 border-b border-[#f0f0f0] mb-1">
+                        <input
+                          type="text"
+                          placeholder="Поиск"
+                          value={pickerSearch}
+                          onChange={(e) => setPickerSearch(e.target.value)}
+                          className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none py-0.5"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="max-h-56 overflow-y-auto space-y-0.5">
+                        {filteredStages.map((st) => {
+                          const isSelected = st.stageId === deal.stageId;
+                          return (
+                            <button
+                              key={st.stageId}
+                              type="button"
+                              onClick={() => {
+                                if (st.stageId !== deal.stageId) {
+                                  moveStage.mutate(
+                                    { id: deal.id, stageId: st.stageId, pipelineId: deal.pipelineId },
+                                    {
+                                      onSuccess: () => toast.success("Этап обновлён"),
+                                      onError: (err) => toast.error(err.message || "Ошибка обновления этапа"),
+                                    },
+                                  );
+                                }
+                                setActivePicker(null);
+                              }}
+                              className={cn(
+                                "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs transition-colors hover:bg-[#f5f5f5]",
+                                isSelected && "bg-[#f5f5f5]",
+                              )}
+                            >
+                              <TagPill color={st.isWon ? "emerald" : st.isLost ? "rose" : stageTagColor(st.stageColor)}>
+                                {st.stageName}
+                              </TagPill>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </FieldRow>
+
+            {/* Дата Закрытия */}
+            <FieldRow icon={Calendar} label="Дата Закрытия">
+              {isEditingCloseDate ? (
+                <div className="inline-flex items-center gap-2">
+                  <input
+                    type="date"
+                    defaultValue={deal.closeDate ? deal.closeDate.slice(0, 10) : ""}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateDeal.mutate(
+                        { id: deal.id, pipelineId: deal.pipelineId, payload: { close_date: val || "" } },
+                        {
+                          onSuccess: () => toast.success("Дата закрытия обновлена"),
+                          onError: (err) => toast.error(err.message || "Ошибка"),
+                        },
+                      );
+                      setIsEditingCloseDate(false);
+                    }}
+                    onBlur={() => setIsEditingCloseDate(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setIsEditingCloseDate(false);
+                    }}
+                    className="rounded-[6px] border border-[#3b82f6] px-2 py-0.5 text-xs text-[#111111] outline-none"
+                    autoFocus
+                  />
+                  {deal.closeDate && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateDeal.mutate(
+                          { id: deal.id, pipelineId: deal.pipelineId, payload: { close_date: "" } },
+                          {
+                            onSuccess: () => toast.success("Дата закрытия очищена"),
+                            onError: (err) => toast.error(err.message || "Ошибка"),
+                          },
+                        );
+                        setIsEditingCloseDate(false);
+                      }}
+                      className="text-[11px] text-[#888888] hover:text-rose-600 transition-colors"
+                      title="Очистить"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               ) : (
-                <span className="text-[#888888]">—</span>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingCloseDate(true)}
+                  className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                  title="Нажмите для редактирования даты"
+                >
+                  <span className={deal.closeDate !== null ? "text-[#111111]" : "text-[#888888]"}>
+                    {deal.closeDate !== null ? dateOnly(deal.closeDate) : "—"}
+                  </span>
+                  <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover/btn:opacity-100 transition-opacity" />
+                </button>
               )}
             </FieldRow>
+
+            {/* Воронка */}
             {pipelineName && (
-              <FieldRow icon={Handshake} label="Pipeline">
+              <FieldRow icon={Handshake} label="Воронка">
                 <span className="text-[#111111]">{pipelineName}</span>
               </FieldRow>
             )}
@@ -363,64 +825,101 @@ function HomeTab({
         )}
       </div>
 
-      {/* Accordion Group 2: Relations */}
+      {/* Accordion Group 2: Связи */}
       <div className="mt-2">
         <button
           type="button"
           onClick={() => setRelationsOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
-          <span>Relations</span>
+          <span>Связи</span>
           <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !relationsOpen && "rotate-180")} />
         </button>
         {relationsOpen && (
           <div className="space-y-0.5 py-0.5">
-            <FieldRow icon={Building2} label="Company">
-              {deal.companyName !== null && deal.companyName !== "" ? (
-                <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-              ) : (
-                <span className="text-[#888888]">—</span>
-              )}
+            {/* Компания */}
+            <FieldRow icon={Building2} label="Компания">
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={() => openPicker("company", "row")}
+                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
+                  title="Нажмите для выбора компании"
+                >
+                  {deal.companyName !== null && deal.companyName !== "" ? (
+                    <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                  ) : (
+                    <span className="text-[#888888] hover:text-[#111111]">—</span>
+                  )}
+                </button>
+                {activePicker === "company" && pickerAnchor === "row" && renderCompanyPicker()}
+              </div>
             </FieldRow>
-            <FieldRow icon={User} label="Point of Contact">
-              {deal.contactName !== null && deal.contactName !== "" ? (
-                <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
-              ) : (
-                <span className="text-[#888888]">—</span>
-              )}
+
+            {/* Контактное лицо */}
+            <FieldRow icon={User} label="Контактное лицо">
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={() => openPicker("contact", "row")}
+                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
+                  title="Нажмите для выбора контакта"
+                >
+                  {deal.contactName !== null && deal.contactName !== "" ? (
+                    <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                  ) : (
+                    <span className="text-[#888888] hover:text-[#111111]">—</span>
+                  )}
+                </button>
+                {activePicker === "contact" && pickerAnchor === "row" && renderContactPicker()}
+              </div>
             </FieldRow>
-            <FieldRow icon={UserCircle2} label="Owner">
-              {owner !== undefined ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-                  <UserAvatar user={owner} fallbackLabel="?" size="sm" />
-                  <span>{owner.fullName}</span>
-                </span>
-              ) : deal.ownerName !== null && deal.ownerName !== "" ? (
-                <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
-              ) : (
-                <span className="text-[#888888]">—</span>
-              )}
+
+            {/* Владелец */}
+            <FieldRow icon={UserCircle2} label="Владелец">
+              <div className="relative inline-block">
+                <button
+                  type="button"
+                  onClick={() => openPicker("owner", "row")}
+                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
+                  title="Нажмите для выбора владельца"
+                >
+                  {owner !== undefined ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
+                      <UserAvatar user={owner} fallbackLabel="?" size="sm" />
+                      <span>{owner.fullName}</span>
+                    </span>
+                  ) : deal.ownerName !== null && deal.ownerName !== "" ? (
+                    <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
+                  ) : (
+                    <span className="text-[#888888] hover:text-[#111111]">—</span>
+                  )}
+                </button>
+                {activePicker === "owner" && pickerAnchor === "row" && renderOwnerPicker()}
+              </div>
             </FieldRow>
           </div>
         )}
       </div>
 
-      {/* Accordion Group 3: System */}
+      {/* Accordion Group 3: Система */}
       <div className="mt-2">
         <button
           type="button"
           onClick={() => setSystemOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
-          <span>System</span>
+          <span>Система</span>
           <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !systemOpen && "rotate-180")} />
         </button>
         {systemOpen && (
           <div className="space-y-0.5 py-0.5">
-            <FieldRow icon={Calendar} label="Creation date">
-              <span title={fullDate(deal.createdAt)} className="text-[#111111]">{timeAgo(deal.createdAt)}</span>
+            <FieldRow icon={Calendar} label="Дата создания">
+              <span title={fullDate(deal.createdAt)} className="text-[#111111]">
+                {timeAgo(deal.createdAt)}
+              </span>
             </FieldRow>
-            <FieldRow icon={Bot} label="Created by">
+            <FieldRow icon={Bot} label="Создано">
               <span className="inline-flex items-center gap-1.5 text-[#111111]">
                 <Bot className="h-3 w-3 text-[#888888]" />
                 <span>{creator !== undefined ? creator.fullName : "System"}</span>
@@ -431,68 +930,92 @@ function HomeTab({
       </div>
 
       {/* Separate Relation Cards with Pencil Edit Icon (matches Twenty Screenshot 2) */}
-      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4">
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Point of Contact</span>
+          <span className="text-xs font-medium text-[#111111]">Контактное лицо</span>
           <button
             type="button"
             aria-label="Редактировать контактное лицо"
+            onClick={() => openPicker("contact", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div>
-          {deal.contactName !== null && deal.contactName !== "" ? (
-            <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
-          ) : (
-            <span className="text-xs text-[#888888]">—</span>
-          )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => openPicker("contact", "card")}
+            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+          >
+            {deal.contactName !== null && deal.contactName !== "" ? (
+              <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
+          </button>
+          {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
         </div>
       </div>
 
-      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4">
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Company</span>
+          <span className="text-xs font-medium text-[#111111]">Компания</span>
           <button
             type="button"
             aria-label="Редактировать компанию"
+            onClick={() => openPicker("company", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div>
-          {deal.companyName !== null && deal.companyName !== "" ? (
-            <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-          ) : (
-            <span className="text-xs text-[#888888]">—</span>
-          )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => openPicker("company", "card")}
+            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+          >
+            {deal.companyName !== null && deal.companyName !== "" ? (
+              <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
+          </button>
+          {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
         </div>
       </div>
 
-      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4 pb-4">
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4 pb-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Owner</span>
+          <span className="text-xs font-medium text-[#111111]">Владелец</span>
           <button
             type="button"
             aria-label="Редактировать ответственного"
+            onClick={() => openPicker("owner", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div>
-          {owner !== undefined ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-              <UserAvatar user={owner} fallbackLabel="?" size="sm" />
-              <span>{owner.fullName}</span>
-            </span>
-          ) : deal.ownerName !== null && deal.ownerName !== "" ? (
-            <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
-          ) : (
-            <span className="text-xs text-[#888888]">—</span>
-          )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => openPicker("owner", "card")}
+            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+          >
+            {owner !== undefined ? (
+              <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
+                <UserAvatar user={owner} fallbackLabel="?" size="sm" />
+                <span>{owner.fullName}</span>
+              </span>
+            ) : deal.ownerName !== null && deal.ownerName !== "" ? (
+              <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
+          </button>
+          {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
         </div>
       </div>
     </div>
