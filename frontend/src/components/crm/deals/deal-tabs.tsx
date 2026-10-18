@@ -31,14 +31,13 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useDealTimeline, useKanban, useMoveDealStage, useSendDealMessage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useTasks } from "@/lib/api/use-tasks";
-import { useCompanies, useCreateCompany } from "@/lib/api/use-companies";
-import { contactFullName, useContacts, useCreateContact } from "@/lib/api/use-contacts";
+import { useCompanies } from "@/lib/api/use-companies";
+import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
-import { CompanyModal } from "@/components/crm/companies/CompanyModal";
-import { ContactModal } from "@/components/crm/contacts/ContactModal";
-import type { CreateCompanyPayload } from "@/schemas/company.schema";
-import type { CreateContactPayload } from "@/schemas/contact.schema";
+import { Sheet } from "@/components/ui/sheet";
+import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
+import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import type { DealMessageDTO, DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -333,39 +332,7 @@ function HomeTab({
   const kanban = useKanban(deal.pipelineId);
   const companiesQuery = useCompanies({ limit: 100 });
   const contactsQuery = useContacts({ limit: 100 });
-  const createCompany = useCreateCompany();
-  const createContact = useCreateContact();
-
-  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
-  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
-
-  const handleCreateCompany = useCallback(
-    async (payload: CreateCompanyPayload) => {
-      const newComp = await createCompany.mutateAsync(payload);
-      updateDeal.mutate(
-        { id: deal.id, pipelineId: deal.pipelineId, payload: { company_id: newComp.id } },
-        {
-          onSuccess: () => toast.success("Компания создана и привязана"),
-          onError: (err) => toast.error(err.message || "Ошибка привязки компании"),
-        },
-      );
-    },
-    [createCompany, updateDeal, deal.id, deal.pipelineId],
-  );
-
-  const handleCreateContact = useCallback(
-    async (payload: CreateContactPayload) => {
-      const newContact = await createContact.mutateAsync(payload);
-      updateDeal.mutate(
-        { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: newContact.id } },
-        {
-          onSuccess: () => toast.success("Контакт создан и привязан"),
-          onError: (err) => toast.error(err.message || "Ошибка привязки контакта"),
-        },
-      );
-    },
-    [createContact, updateDeal, deal.id, deal.pipelineId],
-  );
+  const [localCreateDrawer, setLocalCreateDrawer] = useState<"company" | "contact" | null>(null);
 
   const owner = deal.ownerId !== null ? usersById.get(deal.ownerId) : undefined;
   const creator = usersById.get(deal.createdBy);
@@ -542,7 +509,7 @@ function HomeTab({
               if (onRequestCreateCompany) {
                 onRequestCreateCompany();
               } else {
-                setIsCompanyModalOpen(true);
+                setLocalCreateDrawer("company");
               }
             }}
             className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
@@ -642,7 +609,7 @@ function HomeTab({
               if (onRequestCreateContact) {
                 onRequestCreateContact();
               } else {
-                setIsContactModalOpen(true);
+                setLocalCreateDrawer("contact");
               }
             }}
             className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1200,16 +1167,52 @@ function HomeTab({
         </div>
       </div>
 
-      <CompanyModal
-        open={isCompanyModalOpen}
-        onClose={() => setIsCompanyModalOpen(false)}
-        onSubmit={handleCreateCompany}
-      />
-      <ContactModal
-        open={isContactModalOpen}
-        onClose={() => setIsContactModalOpen(false)}
-        onSubmit={handleCreateContact}
-      />
+      <Sheet
+        open={localCreateDrawer === "company"}
+        onClose={() => setLocalCreateDrawer(null)}
+        resizable
+      >
+        <DrawerCreateCompany
+          deal={deal}
+          dealId={deal.id}
+          dealTitle={deal.title}
+          onBack={() => setLocalCreateDrawer(null)}
+          onClose={() => setLocalCreateDrawer(null)}
+          onSuccess={(id) => {
+            updateDeal.mutate(
+              { id: deal.id, pipelineId: deal.pipelineId, payload: { company_id: id } },
+              {
+                onSuccess: () => toast.success("Компания создана и привязана"),
+                onError: (err) => toast.error(err.message || "Ошибка привязки компании"),
+              },
+            );
+            setLocalCreateDrawer(null);
+          }}
+        />
+      </Sheet>
+      <Sheet
+        open={localCreateDrawer === "contact"}
+        onClose={() => setLocalCreateDrawer(null)}
+        resizable
+      >
+        <DrawerCreateContact
+          deal={deal}
+          dealId={deal.id}
+          dealTitle={deal.title}
+          onBack={() => setLocalCreateDrawer(null)}
+          onClose={() => setLocalCreateDrawer(null)}
+          onSuccess={(id) => {
+            updateDeal.mutate(
+              { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: id } },
+              {
+                onSuccess: () => toast.success("Контакт создан и привязан"),
+                onError: (err) => toast.error(err.message || "Ошибка привязки контакта"),
+              },
+            );
+            setLocalCreateDrawer(null);
+          }}
+        />
+      </Sheet>
     </div>
   );
 }

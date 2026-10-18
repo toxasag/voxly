@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Building2, Search, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { CompanyModal } from "@/components/crm/companies/CompanyModal";
+import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
+import { Sheet } from "@/components/ui/sheet";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { ContactCard } from "@/components/crm/contacts/ContactCard";
 import { useContact } from "@/lib/api/use-contacts";
@@ -372,7 +374,20 @@ function CompaniesContent() {
         />
       )}
 
-      <CompanyModal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={onCreate} />
+      <Sheet open={createOpen} onClose={() => setCreateOpen(false)} resizable>
+        <DrawerCreateCompany
+          onBack={() => setCreateOpen(false)}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            void query.refetch();
+          }}
+          onSuccess={() => {
+            setCreateOpen(false);
+            void query.refetch();
+          }}
+        />
+      </Sheet>
 
       {edit !== null && (
         <CompanyModal open onClose={() => setEdit(null)} onSubmit={onUpdate} initial={initialValues} />

@@ -145,14 +145,6 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
           dealTitle={deal.data.title}
           onBack={() => setCardView("deal")}
           onClose={onClose}
-          onCreated={({ id }) => {
-            updateDeal.mutate({
-              id: deal.data!.id,
-              pipelineId: deal.data!.pipelineId,
-              payload: { company_id: id },
-            });
-            setCardView("deal");
-          }}
           onSuccess={(id) => {
             updateDeal.mutate({
               id: deal.data!.id,
@@ -170,14 +162,6 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
           dealTitle={deal.data.title}
           onBack={() => setCardView("deal")}
           onClose={onClose}
-          onCreated={({ id }) => {
-            updateDeal.mutate({
-              id: deal.data!.id,
-              pipelineId: deal.data!.pipelineId,
-              payload: { contact_id: id },
-            });
-            setCardView("deal");
-          }}
           onSuccess={(id) => {
             updateDeal.mutate({
               id: deal.data!.id,
