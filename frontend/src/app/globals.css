@@ -40,6 +40,12 @@ html {
     background-color: #ffffff !important;
   }
 
+  & .bg-slate-900\/80,
+  & .bg-slate-900\/50,
+  & .bg-slate-900\/30 {
+    background-color: #fafafa !important;
+  }
+
   & .bg-slate-800 {
     background-color: #fafafa !important;
   }
@@ -58,7 +64,9 @@ html {
 
   /* Borders: clean Twenty 1px border */
   & .border-slate-800,
+  & .border-slate-800\/70,
   & .border-slate-700,
+  & .border-slate-700\/70,
   & .border-slate-600,
   & .border-slate-200,
   & .border-slate-100 {
