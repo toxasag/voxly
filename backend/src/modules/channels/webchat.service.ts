@@ -242,7 +242,29 @@ export class WebchatService {
       };
     }
 
-    // 2. Вызываем AI-агента для генерации ответа.
+    // 2. Проверяем AI Handoff (если оператор перехватил диалог, бот временно на паузе)
+    if (crmResult.dealId) {
+      const isAiPaused = await runWithTenantContext(account.tenantId, async () => {
+        const row = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+           LIMIT 1`,
+          [account.tenantId, crmResult.dealId],
+        );
+        return row !== null;
+      }).catch(() => false);
+
+      if (isAiPaused) {
+        return {
+          dealId: crmResult.dealId,
+          contactId: crmResult.contactId,
+          replies: [],
+          status: "operator_needed",
+        };
+      }
+    }
+
+    // 3. Вызываем AI-агента для генерации ответа.
     // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
     const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
     const outcome = await runWithTenantContext(account.tenantId, () =>
