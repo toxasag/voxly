@@ -77,7 +77,7 @@ export function ConfirmDialog({
               "rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               variant === "destructive"
                 ? "bg-rose-600 text-white hover:bg-rose-500"
-                : "bg-amber-500 text-slate-950 hover:bg-amber-400"
+                : "bg-[#4a38f5] text-white hover:bg-[#3b2be0]"
             )}
           >
             {isPending ? "Выполняем..." : confirmLabel}

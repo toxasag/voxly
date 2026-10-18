@@ -97,7 +97,7 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
         <div className="sticky top-0 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-4">
-          <div className="flex items-center gap-2.5"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10"><Handshake className="h-4 w-4 text-amber-400" /></div><div><h2 className="text-sm font-semibold text-slate-100">Новая сделка</h2><p className="text-xs text-slate-500">Добавьте сделку на стадию воронки</p></div></div>
+          <div className="flex items-center gap-2.5"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10"><Handshake className="h-4 w-4 text-amber-400" /></div><div><h2 className="text-sm font-semibold text-slate-100">Новая сделка</h2><p className="text-xs text-slate-500">Добавьте сделку на стадию воронки</p></div></div>
           <button type="button" onClick={onClose} aria-label="Закрыть" className="p-1.5 text-slate-500 hover:text-slate-300"><X className="h-4 w-4" /></button>
         </div>
 
@@ -106,20 +106,20 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
 
           <div className="space-y-2">
             <label htmlFor="deal-title" className="block text-xs font-medium text-slate-400">Название сделки *</label>
-            <input id="deal-title" autoFocus placeholder="Внедрение CRM" {...form.register("title")} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none", errors.title ? "border-rose-500" : "border-slate-700")} />
+            <input id="deal-title" autoFocus placeholder="Внедрение CRM" {...form.register("title")} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none", errors.title ? "border-rose-500" : "border-slate-700")} />
             {message(errors.title) && <p className="text-xs text-rose-400">{message(errors.title)}</p>}
           </div>
 
           <div className="space-y-2">
             <label htmlFor="deal-budget" className="block text-xs font-medium text-slate-400">Сумма</label>
-            <div className="relative"><Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input id="deal-budget" type="number" min={0} placeholder="450000" {...form.register("budget", { valueAsNumber: true })} className={cn("w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-amber-500 focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none", errors.budget ? "border-rose-500" : "border-slate-700")} /></div>
+            <div className="relative"><Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input id="deal-budget" type="number" min={0} placeholder="450000" {...form.register("budget", { valueAsNumber: true })} className={cn("w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none", errors.budget ? "border-rose-500" : "border-slate-700")} /></div>
             {message(errors.budget) && <p className="text-xs text-rose-400">{message(errors.budget)}</p>}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label htmlFor="deal-pipeline" className="block text-xs font-medium text-slate-400">Воронка *</label>
-              <select id="deal-pipeline" {...form.register("pipeline_id")} disabled={pipelines.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none", errors.pipeline_id ? "border-rose-500" : "border-slate-700")}>
+              <select id="deal-pipeline" {...form.register("pipeline_id")} disabled={pipelines.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none", errors.pipeline_id ? "border-rose-500" : "border-slate-700")}>
                 <option value="" disabled>{pipelines.isLoading ? "Loading…" : "Select pipeline"}</option>
                 {pipelines.data?.map((pipeline) => <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>)}
               </select>
@@ -127,7 +127,7 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
             </div>
             <div className="space-y-2">
               <label htmlFor="deal-stage" className="block text-xs font-medium text-slate-400">Стадия *</label>
-              <select id="deal-stage" {...form.register("stage_id")} disabled={pipelineId.length === 0 || kanban.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none disabled:opacity-50", errors.stage_id ? "border-rose-500" : "border-slate-700")}>
+              <select id="deal-stage" {...form.register("stage_id")} disabled={pipelineId.length === 0 || kanban.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none disabled:opacity-50", errors.stage_id ? "border-rose-500" : "border-slate-700")}>
                 <option value="" disabled>{kanban.isLoading ? "Loading…" : "Select stage"}</option>
                 {stages.map((stage) => <option key={stage.stageId} value={stage.stageId}>{stage.stageName}</option>)}
               </select>
@@ -138,17 +138,17 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <label htmlFor="deal-contact" className="block text-xs font-medium text-slate-400">Контакт</label>
-              <div className="relative"><User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-contact" {...form.register("contact_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"><option value="">Без контакта</option>{contacts.data?.items.map((contact) => <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>)}</select></div>
+              <div className="relative"><User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-contact" {...form.register("contact_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"><option value="">Без контакта</option>{contacts.data?.items.map((contact) => <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>)}</select></div>
             </div>
             <div className="space-y-2">
               <label htmlFor="deal-company" className="block text-xs font-medium text-slate-400">Компания</label>
-              <div className="relative"><Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-company" {...form.register("company_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"><option value="">Без компании</option>{companies.data?.items.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></div>
+              <div className="relative"><Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-company" {...form.register("company_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"><option value="">Без компании</option>{companies.data?.items.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></div>
             </div>
           </div>
 
           <div className="flex justify-end gap-3 border-t border-slate-800 pt-3">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Отмена</button>
-            <button type="submit" disabled={!isValid || isSubmitting} className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50">{isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}Create Deal</button>
+            <button type="submit" disabled={!isValid || isSubmitting} className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#3b2be0] disabled:opacity-50">{isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}Create Deal</button>
           </div>
         </form>
       </div>

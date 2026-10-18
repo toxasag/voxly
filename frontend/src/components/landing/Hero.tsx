@@ -5,10 +5,10 @@ export function Hero() {
   return (
     <section className="relative flex min-h-[85vh] items-center justify-center overflow-hidden px-6 py-24">
       {/* Градиентный фон-акцент */}
-      <div className="pointer-events-none absolute -top-40 left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-amber-500/[0.07] blur-3xl" />
+      <div className="pointer-events-none absolute -top-40 left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-[#4a38f5]/[0.07] blur-3xl" />
 
       <div className="relative z-10 mx-auto max-w-3xl text-center">
-        <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-1.5 text-sm font-medium text-amber-400">
+        <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-4 py-1.5 text-sm font-medium text-amber-400">
           CRM нового поколения
         </span>
 
@@ -29,7 +29,7 @@ export function Hero() {
         <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-6 py-3 text-base font-semibold text-slate-950 transition-all duration-200 hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 active:scale-[0.97]"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#4a38f5] px-6 py-3 text-base font-semibold text-slate-950 transition-all duration-200 hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 active:scale-[0.97]"
           >
             Попробовать бесплатно
             <ArrowRight className="h-4 w-4" />

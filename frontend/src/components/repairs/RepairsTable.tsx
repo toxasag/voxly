@@ -1,18 +1,19 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Wrench,
   Search,
   Printer,
   User,
-  Loader2,
   AlertCircle,
 } from "lucide-react";
 import type { RepairTicket, RepairStatus, RepairFilterStatus } from "@/lib/repairs/repairs.types";
-import { getRepairStatusLabel, getRepairStatusColors } from "@/lib/repairs/repairs.types";
-import { MOCK_MASTERS } from "@/lib/repairs/mock-repairs";
+import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
+import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
+import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
 interface RepairsTableProps {
@@ -38,18 +39,6 @@ const ALL_STATUSES: { value: RepairFilterStatus; label: string }[] = [
   { value: "rejected", label: "Отказ" },
 ];
 
-const TABLE_COLUMNS = [
-  { key: "ticket_number", label: "Наряд №", width: "w-[110px]" },
-  { key: "received_at", label: "Принят", width: "w-[90px]" },
-  { key: "customer_name", label: "Клиент", width: "" },
-  { key: "equipment", label: "Оборудование", width: "" },
-  { key: "defect_description", label: "Неисправность", width: "min-w-[140px] max-w-[200px]" },
-  { key: "status", label: "Статус", width: "w-[110px]" },
-  { key: "master_name", label: "Мастер", width: "w-[110px]" },
-  { key: "estimated_cost", label: "Сумма", width: "w-[100px]" },
-  { key: "actions", label: "", width: "w-[48px]" },
-] as const;
-
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
@@ -65,6 +54,27 @@ function formatCost(amount: number | null): string {
     currency: "RUB",
     maximumFractionDigits: 0,
   }).format(amount);
+}
+
+function repairStatusColor(status: RepairStatus): TagColor {
+  switch (status) {
+    case "ready":
+      return "emerald";
+    case "in_progress":
+      return "cyan";
+    case "approval":
+      return "amber";
+    case "diagnostics":
+      return "violet";
+    case "intake":
+      return "sky";
+    case "issued":
+      return "slate";
+    case "rejected":
+      return "rose";
+    default:
+      return "slate";
+  }
 }
 
 export const RepairsTable = memo(function RepairsTable({
@@ -87,33 +97,155 @@ export const RepairsTable = memo(function RepairsTable({
     [router],
   );
 
+  const columns = useMemo<RecordColumn<RepairTicket>[]>(
+    () => [
+      {
+        id: "ticket_number",
+        header: "Наряд №",
+        width: 120,
+        sortValue: (t) => t.ticket_number,
+        render: (ticket) => (
+          <RecordCellShell isLabelIdentifier>
+            <span className="font-mono text-xs font-medium text-[#111111]">
+              {ticket.ticket_number}
+            </span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "received_at",
+        header: "Принят",
+        width: 104,
+        sortValue: (t) => t.received_at,
+        render: (ticket) => (
+          <RecordCellShell>
+            <span className="text-xs text-[#666666]">{formatDate(ticket.received_at)}</span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "customer_name",
+        header: "Клиент",
+        width: 180,
+        sortValue: (t) => t.customer_name,
+        render: (ticket) => (
+          <RecordCellShell>
+            <div className="truncate text-xs">
+              <span className="font-medium text-[#111111]">{ticket.customer_name}</span>
+              <span className="ml-1.5 text-[#888888]">{ticket.customer_phone}</span>
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "equipment",
+        header: "Оборудование",
+        width: 200,
+        sortValue: (t) => `${t.equipment.brand} ${t.equipment.model}`,
+        render: (ticket) => (
+          <RecordCellShell>
+            <span className="truncate text-xs text-[#111111]">
+              {ticket.equipment.brand} {ticket.equipment.model}
+            </span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "defect_description",
+        header: "Неисправность",
+        width: 220,
+        render: (ticket) => (
+          <RecordCellShell>
+            <span className="truncate text-xs text-[#666666]">{ticket.defect_description}</span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "status",
+        header: "Статус",
+        width: 130,
+        sortValue: (t) => t.status,
+        render: (ticket) => (
+          <RecordCellShell>
+            <TagPill color={repairStatusColor(ticket.status)}>
+              {getRepairStatusLabel(ticket.status)}
+            </TagPill>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "master_name",
+        header: "Мастер",
+        width: 130,
+        sortValue: (t) => t.master_name,
+        render: (ticket) => (
+          <RecordCellShell>
+            <div className="flex items-center gap-1.5 truncate text-xs text-[#666666]">
+              <User className="h-3 w-3 shrink-0 text-[#888888]" />
+              <span className="truncate">{ticket.master_name}</span>
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "cost",
+        header: "Сумма",
+        width: 120,
+        align: "right",
+        sortValue: (t) => t.final_cost ?? t.estimated_cost ?? 0,
+        render: (ticket) => (
+          <RecordCellShell align="right">
+            <span className="font-mono text-xs font-medium text-[#111111]">
+              {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
+            </span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        width: 48,
+        render: (ticket) => (
+          <RecordCellShell>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPrintReceipt(ticket);
+              }}
+              className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
+              title="Печать квитанции"
+            >
+              <Printer className="h-3.5 w-3.5" />
+            </button>
+          </RecordCellShell>
+        ),
+      },
+    ],
+    [onPrintReceipt],
+  );
+
   if (isLoading) {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-xs">
-            <div className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-10 pr-4 text-sm text-slate-500 animate-pulse">
+            <div className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#888888] animate-pulse">
               Загрузка...
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {ALL_STATUSES.map((st) => (
-              <div key={st.value} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-900/50">
+              <div key={st.value} className="rounded-[8px] border border-[#e5e5e5] px-2.5 py-1 text-xs text-[#888888] bg-white">
                 {st.label}
               </div>
             ))}
           </div>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-          <div className="divide-y divide-slate-800">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="px-4 py-3.5 flex items-center gap-4">
-                <div className="h-4 w-16 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 w-20 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 w-32 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 w-40 bg-slate-800 rounded animate-pulse" />
-                <div className="h-4 flex-1 bg-slate-800 rounded animate-pulse" />
-              </div>
+        <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-4">
+          <div className="space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-8 w-full bg-[#f5f5f5] rounded animate-pulse" />
             ))}
           </div>
         </div>
@@ -123,42 +255,42 @@ export const RepairsTable = memo(function RepairsTable({
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 flex items-center gap-3">
-        <AlertCircle className="h-5 w-5 text-rose-400" />
+      <div className="rounded-[16px] border border-rose-500/30 bg-rose-500/5 p-6 flex items-center gap-3">
+        <AlertCircle className="h-5 w-5 text-rose-500" />
         <div>
-          <p className="text-sm font-medium text-rose-400">Не удалось загрузить наряд-заказы</p>
-          <p className="text-xs text-slate-500 mt-1">{error?.message ?? "Unknown error"}</p>
+          <p className="text-xs font-medium text-rose-600">Не удалось загрузить наряд-заказы</p>
+          <p className="text-xs text-[#888888] mt-1">{error?.message ?? "Unknown error"}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Top Bar: Search + Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#888888]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="Поиск по наряду, клиенту, бренду..."
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 pl-9 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap">
           {ALL_STATUSES.map((st) => (
             <button
               key={st.value}
               type="button"
               onClick={() => onFilterStatusChange(st.value)}
               className={cn(
-                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
                 filterStatus === st.value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
-                  : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
               )}
             >
               {st.label}
@@ -166,146 +298,25 @@ export const RepairsTable = memo(function RepairsTable({
           ))}
         </div>
 
-        <span className="ml-auto text-xs text-slate-600">
+        <span className="ml-auto text-xs text-[#888888]">
           {tickets.length} наряд-заказов
         </span>
       </div>
 
-      {/* Table */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-800">
-                {TABLE_COLUMNS.map((col) => (
-                  <th
-                    key={col.key}
-                    className={cn(
-                      "px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap",
-                      col.width,
-                    )}
-                  >
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {tickets.length === 0 && (
-                <tr>
-                  <td colSpan={TABLE_COLUMNS.length} className="px-4 py-16 text-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <Wrench className="h-8 w-8 text-slate-700" />
-                      <p className="text-sm text-slate-600">Нет наряд-заказов</p>
-                    </div>
-                  </td>
-                </tr>
-              )}
-              {tickets.map((ticket) => (
-                <tr
-                  key={ticket.id}
-                  onClick={() => handleRowClick(ticket.id)}
-                  className="transition-colors hover:bg-slate-800/50 cursor-pointer"
-                >
-                  {/* Ticket № */}
-                  <td className="px-4 py-3.5">
-                    <span className="text-sm font-mono font-semibold text-slate-200">
-                      {ticket.ticket_number}
-                    </span>
-                  </td>
-
-                  {/* Received Date */}
-                  <td className="px-4 py-3.5">
-                    <span className="text-xs text-slate-400">
-                      {formatDate(ticket.received_at)}
-                    </span>
-                  </td>
-
-                  {/* Client */}
-                  <td className="px-4 py-3.5">
-                    <div>
-                      <p className="text-sm font-medium text-slate-200 truncate max-w-[160px]">
-                        {ticket.customer_name}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {ticket.customer_phone}
-                      </p>
-                    </div>
-                  </td>
-
-                  {/* Equipment */}
-                  <td className="px-4 py-3.5">
-                    <div>
-                      <p className="text-sm text-slate-300 truncate max-w-[180px]">
-                        {ticket.equipment.brand} {ticket.equipment.model}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {ticket.equipment.type} · S/N: {ticket.equipment.serial_number}
-                      </p>
-                    </div>
-                  </td>
-
-                  {/* Defect */}
-                  <td className="px-4 py-3.5">
-                    <p className="text-xs text-slate-400 line-clamp-2 max-w-[200px] leading-relaxed">
-                      {ticket.defect_description}
-                    </p>
-                  </td>
-
-                  {/* Status */}
-                  <td className="px-4 py-3.5">
-                    <span
-                      className={cn(
-                        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-                        getRepairStatusColors(ticket.status),
-                      )}
-                    >
-                      {getRepairStatusLabel(ticket.status)}
-                    </span>
-                  </td>
-
-                  {/* Master */}
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-1.5">
-                      <User className="h-3 w-3 text-slate-500" />
-                      <span className="text-xs text-slate-400 truncate max-w-[90px]">
-                        {ticket.master_name}
-                      </span>
-                    </div>
-                  </td>
-
-                  {/* Amount */}
-                  <td className="px-4 py-3.5">
-                    <span className={cn(
-                      "text-sm font-semibold",
-                      ticket.final_cost
-                        ? "text-emerald-400"
-                        : "text-amber-400",
-                    )}>
-                      {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
-                    </span>
-                  </td>
-
-                  {/* Actions: Print Receipt */}
-                  <td className="px-4 py-3.5">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPrintReceipt(ticket);
-                      }}
-                      className="rounded-md p-1.5 text-slate-500 hover:text-amber-400 hover:bg-slate-800 transition-colors"
-                      title="Печать квитанции"
-                    >
-                      <Printer className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* RecordTable */}
+      <RecordTable
+        rows={tickets}
+        columns={columns}
+        getRowId={(ticket) => ticket.id}
+        tableId="repairs"
+        onRowClick={(ticket) => handleRowClick(ticket.id)}
+        emptyState={
+          <div className="flex flex-col items-center gap-2 py-16 text-center">
+            <Wrench className="h-8 w-8 text-[#888888]" />
+            <p className="text-xs text-[#666666]">Нет наряд-заказов</p>
+          </div>
+        }
+      />
     </div>
   );
 });

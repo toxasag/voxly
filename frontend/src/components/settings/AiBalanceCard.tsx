@@ -136,7 +136,7 @@ export function AiBalanceCard() {
         <button
           type="button"
           onClick={() => setFormOpen(true)}
-          className="mt-5 flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="mt-5 flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           <Wallet className="h-4 w-4" />
           Начислить вручную (администратор)
@@ -155,7 +155,7 @@ export function AiBalanceCard() {
                 className={cn(
                   "rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                   selected === amount
-                    ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                     : "border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200",
                 )}
               >
@@ -187,7 +187,7 @@ export function AiBalanceCard() {
               type="button"
               onClick={() => void handleTopup()}
               disabled={topup.isPending}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {topup.isPending ? (
                 <>

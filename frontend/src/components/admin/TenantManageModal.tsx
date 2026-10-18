@@ -165,7 +165,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   className={cn(
                     "rounded-lg border px-3 py-2.5 text-xs font-medium transition-colors",
                     plan === p.value
-                      ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                       : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
                   )}
                 >
@@ -180,7 +180,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   type="datetime-local"
                   value={trialEndsAt ? trialEndsAt.slice(0, 16) : ""}
                   onChange={(e) => setTrialEndsAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
                 />
               </div>
               <div>
@@ -189,7 +189,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   type="datetime-local"
                   value={subEndsAt ? subEndsAt.slice(0, 16) : ""}
                   onChange={(e) => setSubEndsAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
                 />
               </div>
             </div>
@@ -211,7 +211,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                     className={cn(
                       "flex items-center gap-2 rounded-lg border px-4 py-3 text-xs font-medium transition-colors",
                       isOn
-                        ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                         : "border-slate-700 text-slate-500 hover:border-slate-600",
                     )}
                   >
@@ -247,7 +247,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   min={0}
                   value={deepseekTotal}
                   onChange={(e) => setDeepseekTotal(Number(e.target.value))}
-                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
                 <span className="text-xs text-slate-500">total tokens</span>
               </div>
@@ -270,7 +270,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   min={0}
                   value={openaiTotal}
                   onChange={(e) => setOpenaiTotal(Number(e.target.value))}
-                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
                 <span className="text-xs text-slate-500">total tokens</span>
               </div>
@@ -297,7 +297,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
               type="button"
               onClick={handleSave}
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold bg-amber-500 text-slate-950 hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold bg-[#4a38f5] text-white hover:bg-[#3b2be0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save className="h-4 w-4" />
               {isSubmitting ? "Saving..." : "Save Changes"}

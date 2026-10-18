@@ -45,7 +45,7 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
 
 const PRIORITY_CLASSES: Record<TaskPriority, string> = {
   high: "border-rose-500/30 bg-rose-500/10 text-rose-400",
-  medium: "border-amber-500/30 bg-amber-500/10 text-amber-400",
+  medium: "border-[#4a38f5]/30 bg-[#4a38f5]/10 text-[#4a38f5]",
   low: "border-slate-700 bg-slate-800 text-slate-400",
 };
 
@@ -168,14 +168,14 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                 }
               }}
               placeholder="Что нужно сделать?"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none"
             />
             <div className="flex items-center gap-2">
               <select
                 aria-label="Приоритет"
                 value={priority}
                 onChange={(event) => setPriority(event.target.value as TaskPriority)}
-                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none"
               >
                 <option value="high">Высокий</option>
                 <option value="medium">Средний</option>
@@ -186,7 +186,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                 aria-label="Срок"
                 value={dueDate}
                 onChange={(event) => setDueDate(event.target.value)}
-                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none"
               />
               <span className="ml-auto flex items-center gap-2">
                 <button
@@ -200,7 +200,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                   type="button"
                   onClick={submit}
                   disabled={create.isPending || title.trim() === "" || user === null}
-                  className="inline-flex items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
                 >
                   {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                   Создать

@@ -39,7 +39,7 @@ interface TaskModalProps {
 
 const PRIORITIES = [
   { value: "high" as const, label: "Высокий", color: "border-rose-500 bg-rose-500/10 text-rose-400" },
-  { value: "medium" as const, label: "Средний", color: "border-amber-500 bg-amber-500/10 text-amber-400" },
+  { value: "medium" as const, label: "Средний", color: "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]" },
   { value: "low" as const, label: "Низкий", color: "border-slate-500 bg-slate-800 text-slate-400" },
 ];
 
@@ -61,7 +61,7 @@ const EMPTY: CreateTaskPayload = {
 };
 
 const INPUT_CLASS =
-  "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none";
+  "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none";
 
 function message(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
@@ -274,7 +274,7 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
           <div className="flex justify-end gap-3 border-t border-slate-800 pt-3">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-400">Отмена</button>
             <button type="submit" disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50">
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#3b2be0] disabled:opacity-50">
               {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
               {initial === undefined ? "Создать задачу" : "Сохранить"}
             </button>

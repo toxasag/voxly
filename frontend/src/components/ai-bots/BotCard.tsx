@@ -91,8 +91,8 @@ export const BotCard = memo(function BotCard({
           aria-label={isActive ? `Поставить на паузу: ${bot.name}` : `Активировать: ${bot.name}`}
           onClick={handleToggle}
           className={cn(
-            "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/40",
-            isActive ? "bg-amber-500" : "bg-slate-700",
+            "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/40",
+            isActive ? "bg-[#4a38f5]" : "bg-slate-700",
           )}
         >
           <span
@@ -143,7 +143,7 @@ export const BotCard = memo(function BotCard({
                 usagePercent > 80
                   ? "bg-rose-500"
                   : usagePercent > 50
-                    ? "bg-amber-500"
+                    ? "bg-[#4a38f5]"
                     : "bg-emerald-500",
               )}
               style={{ width: `${usagePercent}%` }}
@@ -182,7 +182,7 @@ export const BotCard = memo(function BotCard({
       <div className="mt-4 flex items-center gap-2">
         <Link
           href={`/modules/ai-bots/${bot.id}`}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           <MessageSquare className="h-3.5 w-3.5" />
           Чат

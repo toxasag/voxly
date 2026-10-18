@@ -121,8 +121,8 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
             onClick={handleSave}
             disabled={!isDirty || save.isPending}
             className={cn(
-              "flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
-              "hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50",
+              "flex shrink-0 items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
+              "hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
             {save.isPending ? (
@@ -170,7 +170,7 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
                   className={cn(
                     "flex w-full items-center gap-4 rounded-lg border px-4 py-3 text-left transition-colors",
                     isChecked
-                      ? "border-amber-500 bg-amber-500/10"
+                      ? "border-[#4a38f5] bg-[#4a38f5]/10"
                       : "border-slate-800 bg-slate-950/40 hover:bg-slate-800/50",
                     !canEdit && "cursor-default",
                   )}
@@ -182,7 +182,7 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
                     className={cn(
                       "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
                       isChecked
-                        ? "border-amber-500 bg-amber-500 text-slate-950"
+                        ? "border-[#4a38f5] bg-[#4a38f5] text-white"
                         : "border-slate-600",
                     )}
                   >

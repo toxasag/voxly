@@ -126,7 +126,7 @@ function MessageBubble({ message }: { message: DealMessageDTO }) {
             <span className="text-xs text-slate-300">{message.senderName}</span>
             <span className={cn(
               "rounded px-1.5 py-0.5 text-xs",
-              message.source === "manager" && "text-amber-400 bg-amber-500/10",
+              message.source === "manager" && "text-[#4a38f5] bg-[#4a38f5]/10",
               message.source === "client" && "text-sky-400 bg-sky-500/10",
               message.source === "human" && "text-sky-400 bg-sky-500/10",
               message.source === "ai" && "text-violet-400 bg-violet-500/10",
@@ -143,7 +143,7 @@ function MessageBubble({ message }: { message: DealMessageDTO }) {
           // Неотправленное сообщение обязано отличаться от отправленного:
           // иначе менеджер ждёт ответа на то, что до клиента не дошло.
           failed ? "border border-rose-500/30 bg-rose-500/5 text-slate-200" :
-          outbound ? "border border-amber-500/20 bg-amber-500/10 text-slate-200" :
+          outbound ? "border border-[#4a38f5]/20 bg-[#4a38f5]/10 text-slate-200" :
           "bg-slate-800 text-slate-200"
         )}>
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
@@ -1239,7 +1239,7 @@ function TasksTab({ dealId }: { dealId: string }) {
                 <span className={cn(
                   "rounded-full border px-2 py-0.5 text-xs",
                   task.status === "done" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                  task.status === "in_progress" && "border-amber-500/30 bg-amber-500/10 text-amber-400",
+                  task.status === "in_progress" && "border-[#4a38f5]/30 bg-[#4a38f5]/10 text-[#4a38f5]",
                   task.status === "todo" && "border-slate-700 bg-slate-800 text-slate-400",
                 )}>
                   {task.status}

@@ -46,7 +46,7 @@ export const ProfitLossView = memo(function ProfitLossView({ transactions }: Pro
           <p className="mt-2 text-2xl font-bold text-slate-100">{formatCost(totalExpense)}</p>
         </div>
         <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-amber-500/10 p-1.5"><DollarSign className="h-4 w-4 text-amber-400" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div>
+          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-amber-400" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div>
           <p className={cn("mt-2 text-2xl font-bold", profit >= 0 ? "text-emerald-400" : "text-rose-400")}>{formatCost(profit)}<span className="text-xs ml-1.5 text-slate-500">наценка {margin}%</span></p>
         </div>
       </div>

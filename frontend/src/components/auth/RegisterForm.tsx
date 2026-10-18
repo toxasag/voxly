@@ -243,7 +243,7 @@ export function RegisterForm() {
   const inputClass = (hasError: boolean): string =>
     cn(
       "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-      "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
       hasError ? "border-rose-500" : "border-slate-700",
     );
 
@@ -372,7 +372,7 @@ export function RegisterForm() {
               className={cn(
                 "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium transition-colors",
                 channel === value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                   : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600 hover:text-slate-300",
               )}
             >
@@ -395,7 +395,7 @@ export function RegisterForm() {
           disabled={code.stage === "requesting"}
           className={cn(
             "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-            "bg-amber-500 text-slate-950 hover:bg-amber-400",
+            "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
@@ -415,7 +415,7 @@ export function RegisterForm() {
 
       {/* Привязка бота: код придёт после нажатия Start */}
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
-        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+        <div className="space-y-3 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
           <p className="text-sm text-slate-300">
             Откройте бота <span className="font-medium text-amber-400">@{code.botUsername}</span> и
             нажмите «Start» — код придёт автоматически.
@@ -457,7 +457,7 @@ export function RegisterForm() {
             }}
             className={cn(
               "w-full rounded-lg border bg-slate-900 py-4 text-center text-2xl tracking-[0.5em] text-slate-100 placeholder:text-slate-600 transition-colors",
-              "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
               otpError !== null ? "border-rose-500" : "border-slate-700",
             )}
           />
@@ -474,7 +474,7 @@ export function RegisterForm() {
               <button
                 type="button"
                 onClick={() => void handleRequestCode()}
-                className="text-xs font-medium text-amber-500 hover:text-amber-400"
+                className="text-xs font-medium text-[#4a38f5] hover:text-[#4a38f5]"
               >
                 Отправить код повторно
               </button>
@@ -489,7 +489,7 @@ export function RegisterForm() {
         disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
         className={cn(
           "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-          "bg-amber-500 text-slate-950 hover:bg-amber-400",
+          "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
@@ -508,7 +508,7 @@ export function RegisterForm() {
 
       <p className="text-center text-sm text-slate-400">
         Уже есть аккаунт?{" "}
-        <a href="/login" className="font-medium text-amber-500 hover:text-amber-400">
+        <a href="/login" className="font-medium text-[#4a38f5] hover:text-[#4a38f5]">
           Войти
         </a>
       </p>

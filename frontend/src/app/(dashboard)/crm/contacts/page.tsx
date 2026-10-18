@@ -427,7 +427,7 @@ function ContactsPageContent() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input type="search" value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Поиск по имени, телефону, e-mail, компании..." aria-label="Поиск контактов"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
+            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20" />
         </div>
         {/*
           Фильтры каналов на 360px не помещались в ряд и выносили страницу за
@@ -441,7 +441,7 @@ function ContactsPageContent() {
               aria-pressed={channelFilter === filter.value}
               className={cn("shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 channelFilter === filter.value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                   : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300")}>
               {filter.label}
             </button>

@@ -29,7 +29,7 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
             type="button"
             onClick={onAdvance}
             disabled={disabled}
-            className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="rounded-lg border border-[#4a38f5]/50 bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Далее → {getRepairStatusLabel(STATUS_ORDER[Math.min(currentIdx + 1, STATUS_ORDER.length - 1)])}
           </button>
@@ -57,7 +57,7 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
                   className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300",
                     isCompleted && "border-emerald-500 bg-emerald-500 text-slate-950",
-                    isCurrent && "border-amber-500 bg-amber-500/10 text-amber-400",
+                    isCurrent && "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]",
                     isPending && "border-slate-700 bg-slate-900 text-slate-600",
                   )}
                 >

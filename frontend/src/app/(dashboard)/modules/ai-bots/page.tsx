@@ -133,7 +133,7 @@ function AiBotsContent() {
         <button
           type="button"
           onClick={openCreate}
-          className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           <Plus className="h-4 w-4" />
           Создать AI-агента
@@ -155,7 +155,7 @@ function AiBotsContent() {
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Поиск по названию, описанию или модели"
             aria-label="Поиск ботов"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-9 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-9 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
           />
         </div>
 
@@ -168,7 +168,7 @@ function AiBotsContent() {
               className={cn(
                 "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                 statusFilter === filter.key
-                  ? "bg-amber-500 text-slate-950"
+                  ? "bg-[#4a38f5] text-white"
                   : "text-slate-400 hover:text-slate-200",
               )}
             >
@@ -214,7 +214,7 @@ function AiBotsContent() {
                 <button
                   type="button"
                   onClick={openCreate}
-                  className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+                  className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
                 >
                   <Plus className="h-4 w-4" />
                   Создать AI-агента

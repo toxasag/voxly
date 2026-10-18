@@ -241,7 +241,7 @@ const PROVIDER_LABELS: Record<LlmProvider, string> = {
 };
 
 const ACCENT_CLASSES: Record<AiBot["accent"], string> = {
-  amber: "bg-amber-500/10 text-amber-400",
+  amber: "bg-[#4a38f5]/10 text-[#4a38f5]",
   sky: "bg-sky-500/10 text-sky-400",
   emerald: "bg-emerald-500/10 text-emerald-400",
   orange: "bg-orange-400/10 text-orange-400",

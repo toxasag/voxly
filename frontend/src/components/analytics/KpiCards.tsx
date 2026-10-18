@@ -59,7 +59,7 @@ export const KpiCards = memo(function KpiCards({
       value: formatKpi(revenue),
       change: revenueChange,
       icon: Banknote,
-      color: "bg-amber-500/10 text-amber-400",
+      color: "bg-[#4a38f5]/10 text-[#4a38f5]",
     },
     {
       label: "Чистая прибыль",

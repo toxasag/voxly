@@ -89,7 +89,7 @@ function messageOf(error: unknown): string | undefined {
 }
 
 const INPUT_CLASS =
-  "w-full rounded-lg border bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20";
+  "w-full rounded-lg border bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20";
 
 export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalProps) {
   const form = useForm<CreateContactPayload>({
@@ -180,7 +180,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10"><User className="h-4 w-4 text-amber-400" /></div>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10"><User className="h-4 w-4 text-amber-400" /></div>
             <div><h2 className="text-sm font-semibold text-slate-100">{initial ? "Изменить контакт" : "Новый контакт"}</h2><p className="text-xs text-slate-500">{initial ? "Обновите данные контакта" : "Добавьте контакт в CRM"}</p></div>
           </div>
           <button type="button" onClick={onClose} aria-label="Закрыть" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><X className="h-4 w-4" /></button>
@@ -289,7 +289,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             <div className="flex flex-wrap gap-1.5">
               {CHANNELS.map(({ value, icon: Icon, label }) => (
                 <button key={value} type="button" onClick={() => form.setValue("channel", value, { shouldValidate: true })}
-                  className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", channel === value ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-slate-700 bg-slate-950 text-slate-500 hover:border-slate-600 hover:text-slate-300")}>
+                  className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", channel === value ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]" : "border-slate-700 bg-slate-950 text-slate-500 hover:border-slate-600 hover:text-slate-300")}>
                   <Icon className="h-3.5 w-3.5" />{label}</button>
               ))}
             </div>
@@ -301,12 +301,12 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
               <div className="space-y-1.5">
                 <label htmlFor="contact-cf-department" className="text-xs text-slate-500">Отдел</label>
                 <input id="contact-cf-department" type="text" placeholder="Разработка" {...form.register("custom_fields.department")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20" />
               </div>
               <div className="space-y-1.5">
                 <label htmlFor="contact-cf-source" className="text-xs text-slate-500">Источник</label>
                 <input id="contact-cf-source" type="text" placeholder="Рекомендация" {...form.register("custom_fields.source")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20" />
               </div>
             </div>
           </fieldset>
@@ -314,7 +314,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
           <div className="space-y-2">
             <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><FileText className="h-3 w-3" /> Описание</label>
             <textarea id="contact-notes" rows={2} placeholder="Внутренние заметки..." {...form.register("notes")}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 resize-none focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 resize-none focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20" />
           </div>
 
           <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
@@ -322,7 +322,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             {/* Кнопка блокируется только на время отправки: `isValid` при
                 необязательных полях гасил её до первого касания формы. */}
             <button type="submit" disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors bg-amber-500 text-slate-950 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed">
+              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors bg-[#4a38f5] text-white hover:bg-[#3b2be0] disabled:opacity-50 disabled:cursor-not-allowed">
               {isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Сохраняем...</> : (initial ? "Сохранить" : "Создать контакт")}
             </button>
           </div>

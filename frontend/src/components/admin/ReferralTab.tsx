@@ -34,13 +34,13 @@ function formatAmount(amount: number, currency: string): string {
 }
 
 const REFERRAL_STATUS: Record<string, string> = {
-  pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  pending: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
   active: "bg-sky-500/10 text-sky-400 border-sky-500/30",
   paid: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
 };
 
 const PAYOUT_STATUS: Record<string, string> = {
-  pending: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  pending: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
   completed: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   failed: "bg-rose-500/10 text-rose-400 border-rose-500/30",
 };
@@ -70,7 +70,7 @@ export const ReferralTab = memo(function ReferralTab({ referrals, payouts }: Ref
       <div className="grid grid-cols-4 gap-4">
         <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-amber-500/10 p-1.5"><Users className="h-4 w-4 text-amber-400" /></div>
+            <div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><Users className="h-4 w-4 text-amber-400" /></div>
             <span className="text-xs font-medium text-slate-500">Активные партнёры</span>
           </div>
           <p className="mt-2 text-2xl font-bold text-slate-100">{totalReferrers}</p>

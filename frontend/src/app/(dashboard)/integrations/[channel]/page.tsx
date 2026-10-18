@@ -55,7 +55,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#4a38f5]/10">
             <Icon className="h-5 w-5 text-amber-400" />
           </div>
           <div>
@@ -108,7 +108,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           <button
             type="button"
             onClick={openConnect}
-            className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
           >
             <Plus className="h-4 w-4" />
             Подключить аккаунт

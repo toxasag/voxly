@@ -118,8 +118,8 @@ export function PromptTemplateEditor({
           onChange={handleChange}
           placeholder="Вы — ассистент по продажам для {{tenant.name}}. Ответьте {{contact.name}} по теме {{deal.title}}..."
           className={cn(
-            "w-full resize-y rounded-lg border bg-slate-950 px-3.5 py-3 font-mono text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-            error ? "border-rose-500 focus:border-rose-500" : "border-slate-700 focus:border-amber-500",
+            "w-full resize-y rounded-lg border bg-slate-950 px-3.5 py-3 font-mono text-sm leading-relaxed text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+            error ? "border-rose-500 focus:border-rose-500" : "border-slate-700 focus:border-[#4a38f5]",
           )}
         />
       )}
@@ -143,7 +143,7 @@ export function PromptTemplateEditor({
           <div
             className={cn(
               "h-full rounded-full transition-all",
-              budgetPercent > 80 ? "bg-rose-500" : budgetPercent > 40 ? "bg-amber-500" : "bg-emerald-500",
+              budgetPercent > 80 ? "bg-rose-500" : budgetPercent > 40 ? "bg-[#4a38f5]" : "bg-emerald-500",
             )}
             style={{ width: `${Math.max(budgetPercent, tokens > 0 ? 2 : 0)}%` }}
           />
@@ -152,7 +152,7 @@ export function PromptTemplateEditor({
 
       {/* Unknown variable warning */}
       {unknownVariables.length > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+        <div className="flex items-start gap-2 rounded-lg border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-3 py-2">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
           <p className="text-xs text-amber-400/90">
             Неизвестные переменные:{" "}
@@ -179,7 +179,7 @@ export function PromptTemplateEditor({
                 className={cn(
                   "rounded-md border px-2 py-1 font-mono text-xs transition-colors",
                   isUsed
-                    ? "border-amber-500/40 bg-amber-500/10 text-amber-400"
+                    ? "border-[#4a38f5]/40 bg-[#4a38f5]/10 text-[#4a38f5]"
                     : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
                 )}
               >

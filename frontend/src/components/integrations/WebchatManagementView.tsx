@@ -108,7 +108,7 @@ export function WebchatManagementView({
       {/* Шапка раздела */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#4a38f5]/10">
             <MessageSquareText className="h-5 w-5 text-amber-400" />
           </div>
           <div>
@@ -146,7 +146,7 @@ export function WebchatManagementView({
           <button
             type="button"
             onClick={() => setAddSiteOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
           >
             <Plus className="h-4 w-4" />
             Добавить сайт
@@ -169,7 +169,7 @@ export function WebchatManagementView({
             <button
               type="button"
               onClick={() => setAddSiteOpen(true)}
-              className="mt-4 flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
+              className="mt-4 flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
             >
               <Plus className="h-4 w-4" />
               Добавить первый сайт
@@ -238,7 +238,7 @@ export function WebchatManagementView({
                           });
                         }}
                         disabled={updateAccount.isPending}
-                        className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+                        className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200 focus:border-[#4a38f5] focus:outline-none"
                       >
                         <option value="">Не назначен (без AI)</option>
                         {agents.map((ag) => (
@@ -256,7 +256,7 @@ export function WebchatManagementView({
                   <button
                     type="button"
                     onClick={() => setCodeModalAccount(acc)}
-                    className="flex items-center gap-1.5 text-xs font-medium text-amber-400 hover:text-amber-300"
+                    className="flex items-center gap-1.5 text-xs font-medium text-amber-400 hover:text-[#3b2be0]"
                   >
                     <Code2 className="h-4 w-4" />
                     Код для сайта
@@ -301,7 +301,7 @@ export function WebchatManagementView({
                   value={newSiteLabel}
                   onChange={(e) => setNewSiteLabel(e.target.value)}
                   placeholder="Интернет-магазин"
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 />
               </div>
 
@@ -313,7 +313,7 @@ export function WebchatManagementView({
                   value={newSiteDomain}
                   onChange={(e) => setNewSiteDomain(e.target.value)}
                   placeholder="myshop.ru"
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 />
               </div>
 
@@ -324,7 +324,7 @@ export function WebchatManagementView({
                 <select
                   value={newSiteAgentId}
                   onChange={(e) => setNewSiteAgentId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 >
                   <option value="">Не назначать (без автоответов)</option>
                   {agents.map((ag) => (
@@ -346,7 +346,7 @@ export function WebchatManagementView({
                 <button
                   type="submit"
                   disabled={createAccount.isPending}
-                  className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-xs font-semibold text-white hover:bg-[#3b2be0] disabled:opacity-50"
                 >
                   {createAccount.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   Добавить
@@ -400,7 +400,7 @@ export function WebchatManagementView({
                 <button
                   type="button"
                   onClick={() => handleCopyCode(codeModalAccount.id)}
-                  className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+                  className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#3b2be0]"
                 >
                   {copiedCode ? (
                     <>

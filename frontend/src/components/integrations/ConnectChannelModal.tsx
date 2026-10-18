@@ -120,7 +120,7 @@ export function ConnectChannelModal({
       <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
               <Plug className="h-4 w-4 text-amber-400" />
             </div>
             <div>
@@ -154,7 +154,7 @@ export function ConnectChannelModal({
               {...form.register("label")}
               className={cn(
                 "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                 errors.label !== undefined ? "border-rose-500" : "border-slate-700",
               )}
             />
@@ -171,7 +171,7 @@ export function ConnectChannelModal({
               {...form.register("external_id")}
               className={cn(
                 "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                 errors.external_id !== undefined ? "border-rose-500" : "border-slate-700",
               )}
             />
@@ -197,7 +197,7 @@ export function ConnectChannelModal({
             <button
               type="submit"
               disabled={create.isPending}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {create.isPending ? (
                 <>

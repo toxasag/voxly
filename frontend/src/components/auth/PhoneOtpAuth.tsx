@@ -293,7 +293,7 @@ export function PhoneOtpAuth() {
           className={cn(
             "flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
             authStep === "phone" || authStep === "otp"
-              ? "bg-amber-500 text-slate-950"
+              ? "bg-[#4a38f5] text-white"
               : "text-slate-400 hover:text-slate-200",
           )}
         >
@@ -306,7 +306,7 @@ export function PhoneOtpAuth() {
           className={cn(
             "flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
             authStep === "email"
-              ? "bg-amber-500 text-slate-950"
+              ? "bg-[#4a38f5] text-white"
               : "text-slate-400 hover:text-slate-200",
           )}
         >
@@ -342,7 +342,7 @@ export function PhoneOtpAuth() {
                     autoFocus
                     className={cn(
                       "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                      "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                       phoneFormState.errors.phone
                         ? "border-rose-500"
                         : "border-slate-700",
@@ -375,7 +375,7 @@ export function PhoneOtpAuth() {
                         className={cn(
                           "flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium transition-colors",
                           isSelected
-                            ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                            ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                             : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600 hover:text-slate-300",
                         )}
                       >
@@ -397,7 +397,7 @@ export function PhoneOtpAuth() {
                 disabled={isSendingOtp || !phoneFormState.isValid}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-                  "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
@@ -429,7 +429,7 @@ export function PhoneOtpAuth() {
                 </button>
                 <div className="flex-1" />
                 <div className="flex items-center gap-2 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-400">
-                  <ShieldCheck className="h-3.5 w-3.5 text-amber-500" />
+                  <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
                   Код отправлен на {otp.phone} через{" "}
                   {getChannelLabel(otp.channel)}
                 </div>
@@ -462,7 +462,7 @@ export function PhoneOtpAuth() {
                   }}
                   className={cn(
                     "w-full rounded-lg border bg-slate-900 py-4 text-center text-2xl tracking-[0.5em] text-slate-100 placeholder:text-slate-600 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     otpForm.formState.errors.code
                       ? "border-rose-500"
                       : "border-slate-700",
@@ -487,7 +487,7 @@ export function PhoneOtpAuth() {
                 disabled={isVerifying || !otpForm.formState.isValid}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-                  "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
@@ -512,7 +512,7 @@ export function PhoneOtpAuth() {
                     type="button"
                     onClick={handleResendOtp}
                     disabled={isSendingOtp}
-                    className="flex items-center gap-1.5 text-amber-500 hover:text-amber-400 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 text-[#4a38f5] hover:text-[#4a38f5] transition-colors disabled:opacity-50"
                   >
                     {isSendingOtp ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -555,7 +555,7 @@ E-mail
               }
               className={cn(
                 "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                 emailForm.formState.errors.email
                   ? "border-rose-500"
                   : "border-slate-700",
@@ -588,7 +588,7 @@ E-mail
               }
               className={cn(
                 "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                 emailForm.formState.errors.password
                   ? "border-rose-500"
                   : "border-slate-700",
@@ -606,7 +606,7 @@ E-mail
             disabled={isSigningIn || !emailForm.formState.isValid}
             className={cn(
               "w-full flex items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-              "bg-amber-500 text-slate-950 hover:bg-amber-400",
+              "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
               "disabled:opacity-50 disabled:cursor-not-allowed",
             )}
           >
@@ -627,7 +627,7 @@ E-mail
 
       <p className="mt-6 text-center text-sm text-slate-400">
         Нет аккаунта?{" "}
-        <a href="/register" className="font-medium text-amber-500 hover:text-amber-400">
+        <a href="/register" className="font-medium text-[#4a38f5] hover:text-[#4a38f5]">
           Зарегистрировать компанию
         </a>
       </p>

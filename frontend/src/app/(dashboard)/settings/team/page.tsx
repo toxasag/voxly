@@ -240,7 +240,7 @@ function TeamContent() {
         <button
           type="button"
           onClick={() => setInviteOpen(true)}
-          className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           <UserPlus className="h-4 w-4" />
           Пригласить сотрудника
@@ -265,7 +265,7 @@ function TeamContent() {
 
         <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
           <div className="flex items-center gap-2">
-            <div className="rounded-lg bg-amber-500/10 p-1.5">
+            <div className="rounded-lg bg-[#4a38f5]/10 p-1.5">
               <CreditCard className="h-4 w-4 text-amber-400" />
             </div>
             <span className="text-xs font-medium text-slate-500">Следующий сотрудник</span>
@@ -307,7 +307,7 @@ function TeamContent() {
             <button
               type="button"
               onClick={() => setInviteOpen(true)}
-              className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
+              className="rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
             >
               Пригласить сотрудника
             </button>
@@ -390,7 +390,7 @@ function TeamContent() {
 
       <p className="text-xs text-slate-500">
         Стоимость мест и состав модулей —{" "}
-        <Link href="/settings/billing" className="text-amber-500 hover:text-amber-400">
+        <Link href="/settings/billing" className="text-[#4a38f5] hover:text-[#4a38f5]">
           в разделе «Тариф и оплата»
         </Link>
         .

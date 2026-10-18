@@ -134,7 +134,7 @@ export function InviteMemberModal({
       <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
               <UserPlus className="h-4 w-4 text-amber-400" />
             </div>
             <div>
@@ -163,7 +163,7 @@ export function InviteMemberModal({
         */}
         {pendingConfirm !== null ? (
           <div className="space-y-4 p-6">
-            <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="flex gap-3 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
               <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
               <div className="space-y-2 text-sm">
                 <p className="font-medium text-slate-100">
@@ -203,7 +203,7 @@ export function InviteMemberModal({
                 type="button"
                 onClick={() => void send(pendingConfirm, true)}
                 disabled={invite.isPending}
-                className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {invite.isPending ? (
                   <>
@@ -232,7 +232,7 @@ export function InviteMemberModal({
                 {...form.register("name")}
                 className={cn(
                   "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                   errors.name !== undefined ? "border-rose-500" : "border-slate-700",
                 )}
               />
@@ -252,7 +252,7 @@ export function InviteMemberModal({
                   {...form.register("email")}
                   className={cn(
                     "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     errors.email !== undefined ? "border-rose-500" : "border-slate-700",
                   )}
                 />
@@ -271,7 +271,7 @@ export function InviteMemberModal({
                     className={cn(
                       "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors",
                       role === value
-                        ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                         : "border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200",
                     )}
                   >
@@ -305,7 +305,7 @@ export function InviteMemberModal({
               <button
                 type="submit"
                 disabled={invite.isPending}
-                className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {invite.isPending ? (
                   <>

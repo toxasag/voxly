@@ -102,7 +102,7 @@ function ModuleRow({
           className={cn(
             "inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
             module.billingKind === "per_unit"
-              ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+              ? "bg-[#4a38f5]/10 text-[#4a38f5] border border-[#4a38f5]/30"
               : module.billingKind === "per_seat"
                 ? "bg-sky-500/10 text-sky-400 border border-sky-500/30"
                 : "bg-slate-800 text-slate-300 border border-slate-700",
@@ -129,7 +129,7 @@ function ModuleRow({
               setUnitPrice(val);
               checkChanged(val, basePrice, includedUnits, isAvailable);
             }}
-            className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+            className="w-20 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 focus:border-[#4a38f5] focus:outline-none"
           />
           <span className="text-xs text-slate-400">₽</span>
         </div>
@@ -147,7 +147,7 @@ function ModuleRow({
               setIncludedUnits(val);
               checkChanged(unitPrice, basePrice, val, isAvailable);
             }}
-            className="w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"
+            className="w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200 focus:border-[#4a38f5] focus:outline-none"
           />
           <span className="text-xs text-slate-400">{module.unitLabel || "ед."}</span>
         </div>
@@ -160,7 +160,7 @@ function ModuleRow({
             type="checkbox"
             checked={delayedForExisting}
             onChange={(e) => setDelayedForExisting(e.target.checked)}
-            className="rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-amber-500/20"
+            className="rounded border-slate-700 bg-slate-900 text-[#4a38f5] focus:ring-[#4a38f5]/20"
           />
           <span className="text-xs text-slate-400">Со следующего периода</span>
         </label>
@@ -179,7 +179,7 @@ function ModuleRow({
             }}
             className="peer sr-only"
           />
-          <div className="peer h-5 w-9 rounded-full bg-slate-800 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-slate-400 after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:bg-slate-950"></div>
+          <div className="peer h-5 w-9 rounded-full bg-slate-800 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-slate-400 after:transition-all after:content-[''] peer-checked:bg-[#4a38f5] peer-checked:after:translate-x-full peer-checked:after:bg-slate-950"></div>
         </label>
       </td>
 
@@ -202,7 +202,7 @@ function ModuleRow({
           className={cn(
             "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
             hasChanges
-              ? "bg-amber-500 text-slate-950 hover:bg-amber-400"
+              ? "bg-[#4a38f5] text-white hover:bg-[#3b2be0]"
               : "border border-slate-800 text-slate-500 opacity-50 cursor-not-allowed",
           )}
         >
@@ -305,7 +305,7 @@ export function AdminPricingCatalogEditor() {
                   step={50}
                   value={basePrice}
                   onChange={(e) => setBasePrice(Number(e.target.value))}
-                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 />
                 <span className="text-sm text-slate-400">₽/мес</span>
               </div>
@@ -322,7 +322,7 @@ export function AdminPricingCatalogEditor() {
                   min={1}
                   value={baseUsers}
                   onChange={(e) => setBaseUsers(Number(e.target.value))}
-                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 />
                 <span className="text-sm text-slate-400">пользователей</span>
               </div>
@@ -340,7 +340,7 @@ export function AdminPricingCatalogEditor() {
                   step={50}
                   value={extraUserPrice}
                   onChange={(e) => setExtraUserPrice(Number(e.target.value))}
-                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-amber-500 focus:outline-none"
+                  className="w-full rounded border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm font-bold text-slate-100 focus:border-[#4a38f5] focus:outline-none"
                 />
                 <span className="text-sm text-slate-400">₽/мес</span>
               </div>
@@ -446,7 +446,7 @@ export function AdminPricingCatalogEditor() {
             <button
               type="submit"
               disabled={updateBillingConfig.isPending}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-xs font-semibold text-white hover:bg-[#3b2be0] disabled:opacity-50"
             >
               {updateBillingConfig.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

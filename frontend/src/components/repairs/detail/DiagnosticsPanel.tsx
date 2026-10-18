@@ -40,7 +40,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
         </div>
 
         {status === "received" && (
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+          <div className="rounded-lg border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-4 py-3">
             <div className="flex items-start gap-2.5">
               <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
               <div>
@@ -95,7 +95,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           <span className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1.5">
             Рекомендуемые работы
           </span>
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+          <div className="rounded-lg border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-4 py-3">
             <p className="text-sm text-amber-300 leading-relaxed whitespace-pre-wrap">
               {diagnostics.recommended_action}
             </p>

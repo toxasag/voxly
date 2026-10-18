@@ -311,7 +311,7 @@ export function AvatarCropModal({
               перехватывает события указателя.
             */}
             <div
-              className="pointer-events-none absolute inset-0 rounded-full border-2 border-amber-500/80"
+              className="pointer-events-none absolute inset-0 rounded-full border-2 border-[#4a38f5]/80"
               style={{ boxShadow: "0 0 0 9999px rgba(2, 6, 23, 0.72)" }}
             />
           </div>
@@ -337,7 +337,7 @@ export function AvatarCropModal({
               disabled={isPending}
               onChange={(event) => applyZoom(Number(event.target.value))}
               aria-label="Масштаб"
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-700 accent-amber-500 disabled:opacity-40"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-700 accent-[#4a38f5] disabled:opacity-40"
             />
 
             <button
@@ -374,7 +374,7 @@ export function AvatarCropModal({
               type="button"
               onClick={() => void handleApply()}
               disabled={isPending}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isPending ? (
                 <>

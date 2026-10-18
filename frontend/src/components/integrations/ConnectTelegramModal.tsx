@@ -338,7 +338,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                 {...phoneForm.register("name")}
                 className={cn(
                   "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                   phoneForm.formState.errors.name !== undefined
                     ? "border-rose-500"
                     : "border-slate-700",
@@ -375,7 +375,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                   })}
                   className={cn(
                     "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     phoneForm.formState.errors.phone !== undefined
                       ? "border-rose-500"
                       : "border-slate-700",
@@ -391,7 +391,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
               Предупреждение до, а не после подключения: пользователь передаёт
               доступ к личному аккаунту, и знать об этом он должен заранее.
             */}
-            <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-slate-400">
+            <p className="rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-3 text-xs leading-relaxed text-slate-400">
               CRM получит доступ к переписке этого аккаунта, как обычный клиент
               Telegram. Сессия хранится в зашифрованном виде и отзывается в
               настройках Telegram в любой момент.
@@ -409,7 +409,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
               <button
                 type="submit"
                 disabled={isPending}
-                className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {sendCode.isPending ? (
                   <>
@@ -450,7 +450,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                 {...codeForm.register("code")}
                 className={cn(
                   "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-center text-lg font-semibold tracking-[0.4em] text-slate-100 placeholder:tracking-normal placeholder:text-slate-500",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                   codeForm.formState.errors.code !== undefined
                     ? "border-rose-500"
                     : "border-slate-700",
@@ -483,7 +483,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
               <button
                 type="submit"
                 disabled={isPending}
-                className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {signIn.isPending ? (
                   <>
@@ -544,7 +544,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
               <button
                 type="submit"
                 disabled={isPending}
-                className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {signIn.isPending ? (
                   <>
