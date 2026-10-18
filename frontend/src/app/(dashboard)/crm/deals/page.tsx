@@ -351,7 +351,7 @@ function DealsContent() {
   if ((pipelines.data ?? []).length === 0) return <EmptyState icon={Handshake} title="Воронки не настроены" description="Не удалось создать воронку по умолчанию. Обратитесь в поддержку, если проблема повторяется." />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <DealsToolbar
         pipelines={pipelines.data ?? []}
         pipelineId={pipelineId ?? ""}

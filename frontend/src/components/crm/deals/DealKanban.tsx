@@ -189,10 +189,9 @@ export function DealKanban({
   }, [ordered, move, pipelineId]);
 
   // Один горизонтальный ряд фиксированной ширины, как RecordBoard у Twenty:
-  // `auto-fit` + `1fr` растягивал колонки и переносил лишние на второй ряд —
-  // шесть этапов «ломались» на две линии, шапки не стояли в ряд.
+  // непрерывные свимлейны от края до края с вертикальными разделителями.
   return (
-    <div className="-mx-1 flex min-h-[60vh] items-start gap-3 overflow-x-auto px-1 pb-3">
+    <div className="-mx-4 md:-mx-5 flex min-h-[calc(100vh-170px)] items-stretch overflow-x-auto border-t border-[#e5e5e5] bg-white">
       {ordered.map((col, index) => {
         return (
           <div
@@ -202,26 +201,28 @@ export function DealKanban({
             onDragLeave={() => setOver(null)}
             onDrop={configure ? undefined : (event) => drop(event, col)}
             className={cn(
-              "relative flex shrink-0 flex-col rounded-[16px] transition-colors",
-              over === col.stageId && "bg-black/[0.02] ring-1 ring-black/[0.04] rounded-[16px]",
+              "relative flex shrink-0 flex-col border-r border-[#e5e5e5] bg-white transition-colors",
+              over === col.stageId && "bg-[#f8fafc]",
             )}
             style={{ width }}
           >
             {configure && stageOps ? (
-              <StageHeaderEditor
-                column={col}
-                index={index}
-                ops={stageOps}
-                canMoveLeft={ordered[index - 1]?.isSystem === false}
-                canMoveRight={ordered[index + 1]?.isSystem === false}
-              />
+              <div className="p-2 border-b border-[#f0f0f0]">
+                <StageHeaderEditor
+                  column={col}
+                  index={index}
+                  ops={stageOps}
+                  canMoveLeft={ordered[index - 1]?.isSystem === false}
+                  canMoveRight={ordered[index + 1]?.isSystem === false}
+                />
+              </div>
             ) : (
-              <div className="flex h-9 items-center justify-between px-1 mb-1.5">
+              <div className="flex h-10 items-center justify-between px-3 py-2 border-b border-[#f0f0f0]">
                 <div className="flex items-center gap-2 min-w-0">
                   <TagPill color={col.isWon ? "emerald" : col.isLost ? "rose" : stageTagColor(col.stageColor)}>
                     {col.stageName}
                   </TagPill>
-                  <span className="text-xs text-[#888888] font-normal tabular-nums shrink-0">
+                  <span className="text-xs text-[#666666] font-normal tabular-nums shrink-0">
                     {col.deals.length > 0 && col.budgetTotal
                       ? new Intl.NumberFormat("ru-RU", { notation: "compact", maximumFractionDigits: 1 }).format(col.budgetTotal)
                       : col.dealCount}
@@ -229,7 +230,7 @@ export function DealKanban({
                 </div>
               </div>
             )}
-            <div className="flex-1 space-y-2 p-0.5">
+            <div className="flex-1 space-y-2 p-2 overflow-y-auto">
               {col.deals.map((deal) => (
                 <DealCard
                   key={deal.id}
@@ -246,21 +247,21 @@ export function DealKanban({
                   options={cardOptions}
                 />
               ))}
-              {col.deals.length === 0 && (
+              {col.deals.length === 0 && over === col.stageId && (
                 <div className="py-8 text-center text-xs text-[#888888]">
-                  {over === col.stageId ? "Отпустите здесь" : "Нет сделок"}
+                  Отпустите здесь
                 </div>
               )}
             </div>
             {!configure && (
-              <div className="pt-1">
+              <div className="p-2 pt-0">
                 <button
                   type="button"
                   onClick={() => {
                     const evt = new CustomEvent("open-create-deal", { detail: { stageId: col.stageId } });
                     window.dispatchEvent(evt);
                   }}
-                  className="flex items-center gap-1.5 text-xs text-[#666666] hover:text-[#000000] py-1.5 px-2 rounded-[8px] hover:bg-black/[0.04] transition-colors w-full font-medium"
+                  className="flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#111111] py-1.5 px-2 rounded-[6px] hover:bg-black/[0.04] transition-colors w-full font-medium"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   <span>New</span>
