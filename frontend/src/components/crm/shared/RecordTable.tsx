@@ -762,16 +762,16 @@ export function RecordTable<T>({
             {/* Итоговая строка с агрегатами */}
             {footerCells !== undefined && (
               <div
-                className="grid border-t border-slate-800 bg-slate-900/80 text-sm"
+                className="grid border-t border-[#e5e5e5] bg-[#fafafa] text-sm"
                 style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
               >
-                {selectionEnabled && <div className="sticky left-0 z-10 bg-slate-900/80" />}
+                {selectionEnabled && <div className="sticky left-0 z-10 bg-[#fafafa]" />}
                 {visibleColumns.map((column, index) => (
                   <div
                     key={column.id}
                     className={cn(
-                      "flex items-center overflow-hidden border-r border-slate-800/70 pl-2 pr-1 text-xs text-slate-400",
-                      index === 0 && "sticky z-10 bg-slate-900/80",
+                      "flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2 pr-1 text-xs text-[#666666]",
+                      index === 0 && "sticky z-10 bg-[#fafafa]",
                       column.align === "right" && "justify-end",
                     )}
                     style={index === 0 ? { left: stickyLeft } : undefined}
