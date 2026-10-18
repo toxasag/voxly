@@ -6,9 +6,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
+  Home,
   LogOut,
   ShieldCheck,
   Plug,
+  MessageSquare,
+  Sparkles,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -19,18 +23,33 @@ import { useProfile } from "@/lib/api/use-profile";
 import { userInitials } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
+  INBOX_NAV,
+  MARKETPLACE_NAV,
   PLATFORM_NAV,
   TENANT_MENU,
   visibleChannelNav,
   visibleMainNav,
+  visibleMarketingNav,
 } from "@/lib/navigation/nav-items";
 
+const ENTITY_ICONS: Record<string, string> = {
+  "/crm/deals": "text-rose-500",
+  "/crm/contacts": "text-sky-600",
+  "/crm/companies": "text-blue-600",
+  "/crm/tasks": "text-emerald-600",
+  "/analytics": "text-purple-600",
+  "/dashboard": "text-blue-600",
+  "/inbox": "text-violet-600",
+  "/marketing/stories": "text-pink-500",
+  "/marketing/funnels": "text-amber-500",
+  "/modules/ai-bots": "text-indigo-600",
+  "/repairs": "text-cyan-600",
+  "/finance": "text-emerald-600",
+  "/marketplace": "text-blue-500",
+};
+
 /**
- * Пункт навигации.
- *
- * Вынесен в компонент, потому что тот же блок разметки нужен трём спискам —
- * разделам, каналам и платформенным пунктам. Четвёртая копия расходилась бы с
- * остальными при первой правке стилей.
+ * Пункт навигации Twenty CRM Light UI.
  */
 function SidebarLink({
   item,
@@ -43,28 +62,28 @@ function SidebarLink({
   collapsed: boolean;
   accent?: "amber" | "orange";
 }) {
-  const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
-  const activeText = accent === "amber" ? "text-amber-400" : "text-orange-400";
+  const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
+  const iconColor = ENTITY_ICONS[item.href] ?? (isActive ? (accent === "orange" ? "text-orange-500" : "text-blue-600") : "text-slate-400");
 
   return (
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
       className={cn(
-        "flex items-center rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+        "flex items-center rounded-lg px-2.5 py-2 text-sm transition-all duration-150",
         collapsed && "justify-center px-2",
         isActive
-          ? cn(accent === "amber" ? "bg-amber-500/10" : "bg-orange-400/10", activeText)
-          : "text-slate-400 hover:bg-slate-800 hover:text-slate-200",
+          ? "bg-slate-100 font-semibold text-slate-900 shadow-2xs"
+          : "font-normal text-slate-600 hover:bg-slate-50 hover:text-slate-900",
       )}
     >
-      <item.icon className={cn("h-5 w-5 shrink-0", isActive && activeText)} />
-      {!collapsed && <span className="ml-3 truncate">{item.label}</span>}
+      <item.icon className={cn("h-4 w-4 shrink-0 transition-colors", iconColor)} />
+      {!collapsed && <span className="ml-2.5 truncate">{item.label}</span>}
       {!collapsed && isActive && (
         <span
           className={cn(
             "ml-auto h-1.5 w-1.5 rounded-full",
-            accent === "amber" ? "bg-amber-500" : "bg-orange-400",
+            accent === "orange" ? "bg-orange-500" : "bg-blue-600",
           )}
         />
       )}
@@ -81,30 +100,21 @@ export function Sidebar({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
-  const { tenant, user } = useAuth();
-  const { logout } = useAuth();
+  const { tenant, user, logout } = useAuth();
   const { data: liveModules } = useTenantModules(tenant?.tenantId ?? null);
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  // Аватар и имя берутся из профиля, а не только из токена: токен не содержит
-  // avatar_url, и после смены фото или имени сайдбар показывал бы прежние
-  // значения до полной перезагрузки страницы.
   const { data: profile } = useProfile();
 
   const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", installedModules: [] };
-  // Пока первый запрос модулей не завершён, берём сессию только как временный
-  // fallback. После ответа query всегда побеждает и Sidebar не держит старый
-  // захардкоженный список.
-  // useMemo: новый Set на каждый рендер менял бы зависимости `isVisible` ниже и
-  // пересоздавал фильтры при любом изменении состояния сайдбара.
+
   const installedSlugs = useMemo(
     () => new Set((liveModules ?? []).map((module) => module.slug)),
     [liveModules],
   );
-  // Профиль приоритетнее токена: он свежее и содержит аватар. Токен остаётся
-  // источником на время первого запроса, чтобы блок не был пустым.
+
   const displayUser = {
     name: profile?.name ?? user?.name ?? "",
     email: profile?.email ?? user?.email ?? "",
@@ -112,97 +122,107 @@ export function Sidebar({
   };
   const isPlatformOwner = user?.platform_role === "platform_owner";
   const isProfileActive = pathname === "/settings/profile";
-  // null, пока сессия не восстановлена: в этот момент скрывать пункты по правам
-  // нельзя — меню мигало бы при каждой перезагрузке.
   const permissions = user?.permissions ?? null;
 
   const toggleCollapsed = onToggle;
 
   const handleLogout = useCallback(async () => {
     setIsLoggingOut(true);
-
-    // Revoke first, then navigate — otherwise the redirect can cancel the
-    // in-flight request and leave the refresh token active.
-    //
-    // `isLoggingOut` не сбрасывается в finally: сразу после этого происходит
-    // переход, и снятие флага только вернуло бы кнопке активный вид на миг.
     await logout().finally(() => {
       window.location.href = "/login";
     });
   }, [logout]);
 
-  // Списки и правило видимости лежат в `lib/navigation/nav-items`: те же разделы
-  // показывает мобильное меню `/menu`, и вторая копия правил разошлась бы с этой.
   const visibleNav = visibleMainNav(installedSlugs, permissions);
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
+  const visibleMarketing = visibleMarketingNav();
+  const visibleModules = visibleNav.filter((item) => item.moduleSlug !== undefined);
+  const coreLinks = visibleNav.filter(
+    (item) => item.href !== "/marketplace" && !item.moduleSlug && item.href !== "/dashboard",
+  );
 
   return (
     <aside
       className={cn(
-        // `hidden md:flex`, а не ветка по `useIsMobile`: `matchMedia` недоступен
-        // при SSR, и структурная зависимость от хука дала бы вспышку сайдбара на
-        // телефоне при каждой загрузке. На мобильном его навигацию берут на себя
-        // маршрут `/menu` и нижний бар.
-        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-slate-800 bg-slate-900 transition-all duration-200 ease-in-out md:flex",
+        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-slate-200 bg-[#fbfbfb] text-slate-800 transition-all duration-200 ease-in-out md:flex",
         collapsed ? "w-16" : "w-60",
       )}
     >
-      {/* Logo + Mascot */}
-      <div
-        className={cn(
-          "flex h-16 items-center border-b border-slate-800 px-4",
-          collapsed ? "justify-center" : "gap-3",
-        )}
-      >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-slate-950">
-          <span className="text-sm font-black">G</span>
-        </div>
-        {!collapsed && (
-          <div className="flex-1 overflow-hidden">
-            <span className="block text-sm font-bold tracking-tight text-slate-100 truncate">
-              GETVOXLY
-            </span>
-            <span className="block text-xs text-slate-500">Платформа для бизнеса</span>
-          </div>
-        )}
-      </div>
-
-      {/* Tenant Switcher */}
-      <div className="relative border-b border-slate-800 px-3 py-3">
-        {/*
-          Кнопка была без обработчика — стрелка ChevronsUpDown обещала меню,
-          которого не существовало. Теперь она открывает разделы компании.
-        */}
+      {/* Workspace Header & Switcher */}
+      <div className="relative border-b border-slate-200/80 px-3 py-3">
         <button
           type="button"
           onClick={() => setTenantMenuOpen((prev) => !prev)}
           aria-expanded={tenantMenuOpen}
           aria-haspopup="menu"
           className={cn(
-            "flex w-full items-center rounded-lg border bg-slate-950/50 transition-colors",
-            tenantMenuOpen ? "border-slate-700" : "border-slate-800 hover:border-slate-700",
-            collapsed ? "justify-center px-2 py-2.5" : "gap-2.5 px-3 py-2",
+            "flex w-full items-center rounded-lg border border-slate-200/80 bg-white p-2 shadow-2xs transition-colors hover:border-slate-300",
+            collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-2",
           )}
         >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-xs font-bold text-amber-400">
-            {displayTenant.tenantName.charAt(0)}
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white shadow-2xs">
+            {displayTenant.tenantName.charAt(0) || "V"}
           </div>
           {!collapsed && (
             <>
               <div className="flex-1 text-left overflow-hidden">
-                <p className="truncate text-xs font-medium text-slate-200">{displayTenant.tenantName}</p>
-                {/* Показываем поддомен, а не только план: пользователю нужно
-                    видеть, в каком именно портале он работает. */}
-                <p className="truncate text-xs text-slate-500">
+                <p className="truncate text-xs font-semibold text-slate-900">
+                  {displayTenant.tenantName || "Рабочее пространство"}
+                </p>
+                <p className="truncate text-[11px] text-slate-500">
                   {displayTenant.slug.length > 0
                     ? `${displayTenant.slug}.getvoxly.ru`
-                    : displayTenant.plan}
+                    : displayTenant.plan || "Twenty CRM"}
                 </p>
               </div>
-              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
             </>
           )}
         </button>
+
+        {!collapsed && (
+          <div className="mt-2 flex items-center justify-between rounded-lg bg-slate-100/70 p-1">
+            <Link
+              href="/dashboard"
+              title="Панель"
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
+                pathname === "/dashboard"
+                  ? "bg-white text-slate-900 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900",
+              )}
+            >
+              <Home className="h-3.5 w-3.5" />
+              <span>Главная</span>
+            </Link>
+            <Link
+              href="/inbox"
+              title="Входящие"
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
+                pathname === "/inbox"
+                  ? "bg-white text-slate-900 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900",
+              )}
+            >
+              <MessageSquare className="h-3.5 w-3.5 text-violet-600" />
+              <span>Входящие</span>
+            </Link>
+            <Link
+              href="/settings"
+              title="Настройки"
+              className={cn(
+                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
+                pathname.startsWith("/settings")
+                  ? "bg-white text-slate-900 shadow-2xs"
+                  : "text-slate-600 hover:text-slate-900",
+              )}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span>Настройки</span>
+            </Link>
+          </div>
+        )}
 
         {tenantMenuOpen && (
           <>
@@ -214,11 +234,11 @@ export function Sidebar({
             <div
               role="menu"
               className={cn(
-                "absolute z-50 mt-1 overflow-hidden rounded-lg border border-slate-700 bg-slate-800 shadow-xl",
+                "absolute z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl",
                 collapsed ? "left-full top-3 ml-2 w-56" : "left-3 right-3",
               )}
             >
-              <p className="border-b border-slate-700 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <p className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Компания
               </p>
               {TENANT_MENU.map((item) => (
@@ -227,11 +247,11 @@ export function Sidebar({
                   href={item.href}
                   role="menuitem"
                   onClick={() => setTenantMenuOpen(false)}
-                  className="flex items-start gap-2.5 px-3 py-2.5 transition-colors hover:bg-slate-700"
+                  className="flex items-start gap-2.5 px-3 py-2.5 transition-colors hover:bg-slate-50"
                 >
                   <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
                   <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-slate-200">
+                    <span className="block truncate text-xs font-medium text-slate-800">
                       {item.label}
                     </span>
                     <span className="block truncate text-xs text-slate-500">
@@ -247,7 +267,21 @@ export function Sidebar({
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-        {visibleNav.map((item) => (
+        {!collapsed && (
+          <div className="px-2.5 pb-1 pt-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Рабочее пространство
+            </span>
+          </div>
+        )}
+
+        {/* Core CRM links: Inbox, Deals, Contacts, Companies, Tasks, Analytics */}
+        <SidebarLink
+          item={INBOX_NAV}
+          pathname={pathname}
+          collapsed={collapsed}
+        />
+        {coreLinks.map((item) => (
           <SidebarLink
             key={item.href}
             item={item}
@@ -256,23 +290,80 @@ export function Sidebar({
           />
         ))}
 
-        {/*
-          Каналы связи. Отдельный блок, а не пункты вперемешку с модулями: их до
-          пяти, и в общем списке они вытеснили бы разделы CRM за пределы экрана.
-          Заголовок появляется только когда хотя бы один канал подключён —
-          пустая подпись без пунктов выглядела бы как сбой загрузки.
-        */}
+        {/* Marketing: Stories and Funnels */}
+        {visibleMarketing.length > 0 && (
+          <>
+            <div
+              className={cn(
+                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                collapsed ? "justify-center px-0" : "px-2.5",
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-pink-500" />
+              {!collapsed && (
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Маркетинг
+                </span>
+              )}
+            </div>
+
+            {visibleMarketing.map((item) => (
+              <SidebarLink
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                collapsed={collapsed}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Modules: AI Bots, Repairs, Finance, etc. */}
+        {visibleModules.length > 0 && (
+          <>
+            <div
+              className={cn(
+                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                collapsed ? "justify-center px-0" : "px-2.5",
+              )}
+            >
+              {!collapsed && (
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Модули
+                </span>
+              )}
+            </div>
+
+            {visibleModules.map((item) => (
+              <SidebarLink
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                collapsed={collapsed}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Marketplace */}
+        <SidebarLink
+          item={MARKETPLACE_NAV}
+          pathname={pathname}
+          collapsed={collapsed}
+        />
+
+        {/* Channels */}
         {visibleChannels.length > 0 && (
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-800 pt-4",
-                collapsed ? "justify-center px-0" : "px-3",
+                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
-              <Plug className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+              <Plug className="h-3.5 w-3.5 shrink-0 text-slate-400" />
               {!collapsed && (
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                   Каналы связи
                 </span>
               )}
@@ -289,17 +380,18 @@ export function Sidebar({
           </>
         )}
 
+        {/* Platform Admin */}
         {isPlatformOwner && (
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-800 pt-4",
-                collapsed ? "justify-center px-0" : "px-3",
+                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
               <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-orange-400" />
               {!collapsed && (
-                <span className="text-xs font-semibold uppercase tracking-wider text-orange-400">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-orange-500">
                   Управление платформой
                 </span>
               )}
@@ -318,16 +410,8 @@ export function Sidebar({
         )}
       </nav>
 
-      {/*
-        Блок пользователя. Отдельный пункт «Настройки» отсюда убран: он дублировал
-        меню компании сверху, где те же разделы уже собраны. Здесь остаётся только
-        личное — переход в свой профиль и выход.
-
-        Аватар и имя — ссылка на /settings/profile: это ожидаемое поведение, и
-        прежде блок выглядел интерактивным (hover менял фон), но клик ничего не
-        делал.
-      */}
-      <div className="border-t border-slate-800 p-3">
+      {/* User profile & Logout */}
+      <div className="border-t border-slate-200/80 p-2.5 bg-slate-50/50">
         <div
           className={cn(
             "flex items-center rounded-lg",
@@ -338,23 +422,23 @@ export function Sidebar({
             href="/settings/profile"
             title={collapsed ? displayUser.name : undefined}
             className={cn(
-              "flex min-w-0 flex-1 items-center rounded-lg transition-colors hover:bg-slate-800",
-              isProfileActive && "bg-amber-500/10",
-              collapsed ? "justify-center p-2" : "gap-3 p-2",
+              "flex min-w-0 flex-1 items-center rounded-lg transition-colors hover:bg-slate-100",
+              isProfileActive && "bg-slate-100",
+              collapsed ? "justify-center p-1.5" : "gap-2.5 p-1.5",
             )}
           >
             {displayUser.avatarUrl !== null && displayUser.avatarUrl !== undefined ? (
-              /* eslint-disable-next-line @next/next/no-img-element -- Base64 data-URI: next/image требует загрузчик и внешний URL */
+              /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={displayUser.avatarUrl}
                 alt=""
-                className="h-8 w-8 shrink-0 rounded-full object-cover"
+                className="h-7 w-7 shrink-0 rounded-full object-cover"
               />
             ) : (
               <div
                 className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                  isProfileActive ? "bg-amber-500/20 text-amber-300" : "bg-slate-700 text-slate-200",
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+                  isProfileActive ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-700",
                 )}
               >
                 {userInitials(displayUser.name)}
@@ -362,44 +446,33 @@ export function Sidebar({
             )}
 
             {!collapsed && (
-              <div className="min-w-0 flex-1 overflow-hidden">
-                <p
-                  className={cn(
-                    "truncate text-xs font-medium",
-                    isProfileActive ? "text-amber-400" : "text-slate-200",
-                  )}
-                >
+              <div className="min-w-0 flex-1 overflow-hidden text-left">
+                <p className="truncate text-xs font-medium text-slate-800">
                   {displayUser.name}
                 </p>
-                <p className="truncate text-xs text-slate-500">{displayUser.email}</p>
+                <p className="truncate text-[11px] text-slate-500">{displayUser.email}</p>
               </div>
             )}
           </Link>
 
-          {/*
-            Подтверждение обязательно: прежде клик по иконке немедленно завершал
-            сессию, и промах по кнопке рядом с профилем выбрасывал из системы.
-          */}
           {!collapsed && (
             <button
               type="button"
               onClick={() => setLogoutOpen(true)}
               aria-label="Выйти"
-              className="shrink-0 rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-800 hover:text-rose-400"
+              className="shrink-0 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-600"
             >
               <LogOut className="h-4 w-4" />
             </button>
           )}
         </div>
 
-        {/* В свёрнутом состоянии выход выносится отдельной строкой: иначе он не
-            поместился бы рядом с аватаром. */}
         {collapsed && (
           <button
             type="button"
             onClick={() => setLogoutOpen(true)}
             aria-label="Выйти"
-            className="mt-1 flex w-full items-center justify-center rounded-md p-2 text-slate-500 transition-colors hover:bg-slate-800 hover:text-rose-400"
+            className="mt-1 flex w-full items-center justify-center rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-600"
           >
             <LogOut className="h-4 w-4" />
           </button>
@@ -421,7 +494,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={toggleCollapsed}
-        className="absolute -right-3 top-20 flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-slate-900 text-slate-500 hover:text-slate-300 transition-colors"
+        className="absolute -right-3 top-5 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-xs hover:text-slate-800 transition-colors"
       >
         {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
       </button>
