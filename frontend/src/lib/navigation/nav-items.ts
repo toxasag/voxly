@@ -11,6 +11,9 @@ import {
   ScrollText,
   Settings,
   UserCircle,
+  MessageSquare,
+  Sparkles,
+  GitMerge,
   type LucideIcon,
 } from "lucide-react";
 
@@ -49,6 +52,20 @@ export const CORE_NAV: NavItem[] = [
   { label: "Контакты", href: "/crm/contacts", icon: Users, always: true },
   { label: "Компании", href: "/crm/companies", icon: Building2, always: true },
   { label: "Задачи", href: "/crm/tasks", icon: ListChecks, always: true },
+];
+
+/** Входящие омниканальные сообщения (Twenty / Voxly Inbox) */
+export const INBOX_NAV: NavItem = {
+  label: "Входящие",
+  href: "/inbox",
+  icon: MessageSquare,
+  always: true,
+};
+
+/** Раздел маркетинга (Сторис и Автоворонки) */
+export const MARKETING_NAV: NavItem[] = [
+  { label: "Сторис", href: "/marketing/stories", icon: Sparkles, always: true },
+  { label: "Автоворонки", href: "/marketing/funnels", icon: GitMerge, always: true },
 ];
 
 /**
@@ -186,4 +203,8 @@ export function visibleChannelNav(
   permissions: ReadonlySet<string> | null,
 ): NavItem[] {
   return CHANNEL_NAV.filter((item) => isNavItemVisible(item, installedSlugs, permissions));
+}
+
+export function visibleMarketingNav(): NavItem[] {
+  return MARKETING_NAV;
 }

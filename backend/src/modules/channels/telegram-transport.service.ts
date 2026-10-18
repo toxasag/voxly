@@ -4,7 +4,7 @@ import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { LogLevel } from "telegram/extensions/Logger.js";
 
 import { getEnv } from "../../config/env.js";
-import { query, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
+import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
 import { decryptSecret, isEncrypted } from "../../services/credentials-cipher.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
@@ -306,15 +306,16 @@ export class TelegramTransportService {
         void this.onIncoming(account, event);
       };
 
-      // `incoming: true` — только входящие: без него обработчик получал бы и
-      // собственные ответы агента, и диалог зациклился бы.
-      client.addEventHandler(handler, new NewMessage({ incoming: true }));
+      // M5.3: слушаем входящие и нативные исходящие (fromMe). Исходящие от оператора
+      // фиксируются в CRM и включают AI handoff (паузу бота на 30 мин).
+      const messageFilter = new NewMessage({});
+      client.addEventHandler(handler, messageFilter);
 
       this.connections.set(account.id, {
         accountId: account.id,
         tenantId: account.tenant_id,
         client,
-        detach: () => client?.removeEventHandler(handler, new NewMessage({ incoming: true })),
+        detach: () => client?.removeEventHandler(handler, messageFilter),
       });
 
       // Запись — в контексте арендатора: `WITH CHECK` политики не содержит
@@ -374,9 +375,36 @@ export class TelegramTransportService {
 
       // Только личные диалоги: `isPrivate` ложно для групп и каналов.
       if (event.isGroup === true || event.isChannel === true) return;
-      if (message.out === true) return;
+
+      const senderId = message.senderId?.toString();
+      const chatId = message.chatId?.toString() ?? senderId;
+
+      if (senderId === undefined || chatId === undefined) return;
 
       const text = typeof message.message === "string" ? message.message.trim() : "";
+
+      // M5.3: Зеркалирование нативных исходящих от оператора (fromMe)
+      if (message.out === true) {
+        if (text.length > 0) {
+          await runWithTenantContext(account.tenant_id, () =>
+            this.crm.processNativeOutbound({
+              tenantId: account.tenant_id,
+              channel: "telegram",
+              channelAccountId: account.id,
+              chatId,
+              text,
+              senderName: "Менеджер",
+              pauseMinutes: 30,
+            }),
+          ).catch((error) => {
+            this.log.error(
+              { error, accountId: account.id, chatId },
+              "Failed to mirror native outbound message",
+            );
+          });
+        }
+        return;
+      }
 
       // Медиа без подписи пропускаем: распознавание голоса и изображений не
       // реализовано, а ответ «не понял» на голосовое хуже молчания оператора.
@@ -387,11 +415,6 @@ export class TelegramTransportService {
         );
         return;
       }
-
-      const senderId = message.senderId?.toString();
-      const chatId = message.chatId?.toString() ?? senderId;
-
-      if (senderId === undefined || chatId === undefined) return;
 
       this.buffer.add({
         tenantId: account.tenant_id,
@@ -449,7 +472,28 @@ export class TelegramTransportService {
       );
     }
 
-    // 3. Спрашиваем агента (в контексте арендатора, как раньше).
+    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора).
+    if (dealId !== null) {
+      const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+        const row = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+           LIMIT 1`,
+          [batch.tenantId, dealId],
+        );
+        return row !== null;
+      }).catch(() => false);
+
+      if (isPaused) {
+        this.log.info(
+          { dealId, channelAccountId: batch.channelAccountId },
+          "AI bot paused due to active operator handoff",
+        );
+        return;
+      }
+    }
+
+    // 4. Спрашиваем агента (в контексте арендатора, как раньше).
     const outcome = await runWithTenantContext(batch.tenantId, () =>
       this.pipeline.prepareReply({
         tenantId: batch.tenantId,

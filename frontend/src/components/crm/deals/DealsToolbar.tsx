@@ -280,7 +280,7 @@ export function DealsToolbar(props: Props) {
         <button
           type="button"
           onClick={props.onCreateDeal}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 text-xs font-bold tracking-wide text-slate-950 transition-colors hover:bg-amber-400"
+          className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 text-xs font-medium tracking-wide text-white shadow-xs transition-colors hover:bg-blue-700"
         >
           <Plus className="h-4 w-4" />
           {/* Подпись только с md:: на мобильном она занимает треть ряда, а иконка

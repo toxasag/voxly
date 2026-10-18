@@ -228,6 +228,76 @@ export class CrmPipelineService {
     });
   }
 
+  /**
+   * M5.3: Обработка исходящего сообщения оператора из нативного мессенджера (fromMe).
+   * Сохраняет сообщение в таймлайне как sender: 'manager', direction: 'outbound'
+   * и активирует AI Handoff на 30 минут (пауза бота).
+   */
+  async processNativeOutbound(input: {
+    tenantId: string;
+    channel: string;
+    channelAccountId: string;
+    chatId: string;
+    text: string;
+    senderName?: string;
+    pauseMinutes?: number;
+  }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
+    return transaction(async (tx) => {
+      const contact = await this.findContact(tx, input.tenantId, {
+        tenantId: input.tenantId,
+        channel: input.channel,
+        channelAccountId: input.channelAccountId,
+        chatId: input.chatId,
+        text: input.text,
+        senderName: input.senderName ?? "Оператор",
+        senderTelegramChatId: input.chatId,
+      });
+
+      if (contact === null) {
+        return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      const activeDeal =
+        (await this.findActiveDeal(tx, input.tenantId, contact.id)) ??
+        (await this.findLastDeal(tx, input.tenantId, contact.id));
+
+      if (activeDeal === null) {
+        return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      const pauseMins = input.pauseMinutes ?? 30;
+      const pauseRes = await tx.queryOne<{ paused_until: string }>(
+        `UPDATE deals
+         SET ai_paused_until = now() + ($1 || ' minutes')::interval,
+             updated_at = now()
+         WHERE id = $2 AND tenant_id = $3
+         RETURNING ai_paused_until::text AS paused_until`,
+        [pauseMins.toString(), activeDeal.id, input.tenantId],
+      );
+
+      const msgRes = await tx.queryOne<{ id: string }>(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent')
+         RETURNING id`,
+        [
+          input.tenantId,
+          activeDeal.id,
+          nullIfBlank(input.channelAccountId),
+          input.senderName ?? "Оператор",
+          input.text,
+          input.channel,
+        ],
+      );
+
+      return {
+        dealId: activeDeal.id,
+        messageId: msgRes?.id ?? null,
+        pausedUntil: pauseRes?.paused_until ?? null,
+      };
+    });
+  }
+
   /** То же для уже существующего контакта — из его записи, а не из профиля. */
   private contactDisplayName(contact: ExistingContact): string {
     const full = `${contact.first_name} ${contact.last_name}`.trim();

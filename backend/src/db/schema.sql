@@ -392,6 +392,7 @@ CREATE TABLE IF NOT EXISTS deals (
   close_date DATE,
   position DOUBLE PRECISION NOT NULL DEFAULT 0,
   closed_at TIMESTAMPTZ,
+  ai_paused_until TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -1230,8 +1231,8 @@ CREATE INDEX IF NOT EXISTS idx_story_posts_tenant_status ON story_posts(tenant_i
 CREATE TABLE IF NOT EXISTS mailing_stage_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  pipeline_id UUID REFERENCES crm_pipelines(id) ON DELETE CASCADE,
-  stage_id UUID REFERENCES crm_pipeline_stages(id) ON DELETE CASCADE,
+  pipeline_id UUID REFERENCES pipelines(id) ON DELETE CASCADE,
+  stage_id UUID REFERENCES stages(id) ON DELETE CASCADE,
   channel_account_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
   channel TEXT NOT NULL DEFAULT 'telegram',
   name TEXT NOT NULL,
@@ -1314,6 +1315,7 @@ CREATE INDEX IF NOT EXISTS idx_deal_messages_failed_delivery
   ON deal_messages (tenant_id, deal_id)
   WHERE delivery_status = 'failed';
 CREATE INDEX IF NOT EXISTS idx_deals_stage_id ON deals(stage_id);
+CREATE INDEX IF NOT EXISTS idx_deals_ai_paused_until ON deals(tenant_id, ai_paused_until) WHERE ai_paused_until IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_crm_tasks_assignee_id ON crm_tasks(assignee_id);
 
 -- unique ticket number per tenant

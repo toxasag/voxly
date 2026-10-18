@@ -43,8 +43,8 @@ END $$;
 CREATE TABLE IF NOT EXISTS mailing_stage_rules (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  pipeline_id UUID REFERENCES crm_pipelines(id) ON DELETE CASCADE,
-  stage_id UUID REFERENCES crm_pipeline_stages(id) ON DELETE CASCADE,
+  pipeline_id UUID REFERENCES pipelines(id) ON DELETE CASCADE,
+  stage_id UUID REFERENCES stages(id) ON DELETE CASCADE,
   channel_account_id UUID REFERENCES channel_accounts(id) ON DELETE SET NULL,
   channel TEXT NOT NULL DEFAULT 'telegram',
   name TEXT NOT NULL,
