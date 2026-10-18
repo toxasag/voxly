@@ -60,6 +60,7 @@ export const FALLBACK_PAGE_LAYOUT_TABS: Record<
 > = {
   contact: [
     { tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
+    { tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, moduleSlug: null, requiredPermission: "contacts:write", updatedAt: "" },
     { tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
   ],

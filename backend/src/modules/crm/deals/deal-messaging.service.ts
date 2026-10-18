@@ -1,10 +1,16 @@
-import { query } from "../../../db/client.js";
+import { query, queryOne } from "../../../db/client.js";
 import { DealsService } from "./deals.service.js";
 import {
   resolveOutboundSender,
   type OutboundSendResult,
 } from "../../channels/outbound-registry.js";
 import type { CreateDealMessagePayload, DealMessageDTO } from "./deals.types.js";
+import {
+  GatewayChatProvider,
+  type ChatProvider,
+  type ChatMessage as LlmChatMessage,
+} from "../../../services/chat.service.js";
+import { KnowledgeBaseService } from "../../ai/knowledge.service.js";
 
 // ---------------------------------------------------------------------------
 // Отправка ответа менеджера в канал клиента.
@@ -47,6 +53,8 @@ export class DealMessagingService {
   constructor(
     private readonly deals: DealsService = new DealsService(),
     private readonly log: Logger | null = null,
+    private readonly chat: ChatProvider = new GatewayChatProvider(),
+    private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
   ) {}
 
   /**
@@ -316,5 +324,362 @@ export class DealMessagingService {
     }
 
     return contact.phone.length > 0 ? contact.phone : null;
+  }
+
+  /**
+   * Возвращает текущий статус автопилота AI для сделки.
+   */
+  async getAiStatus(
+    tenantId: string,
+    dealId: string,
+  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+    const row = await queryOne<{ ai_paused_until: string | null }>(
+      `SELECT ai_paused_until FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+    if (!row || !row.ai_paused_until) {
+      return { status: "enabled", pausedUntil: null };
+    }
+    const pausedUntilDate = new Date(row.ai_paused_until);
+    const now = new Date();
+    if (pausedUntilDate.getFullYear() >= 9999) {
+      return { status: "disabled", pausedUntil: null };
+    }
+    if (pausedUntilDate > now) {
+      return { status: "paused", pausedUntil: row.ai_paused_until };
+    }
+    return { status: "enabled", pausedUntil: null };
+  }
+
+  /**
+   * Переключает режим AI для сделки: включить, пауза на 1 час, выключить.
+   */
+  async setAiControl(
+    tenantId: string,
+    dealId: string,
+    action: "enable" | "pause" | "disable",
+  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+    let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND id = $2`;
+    if (action === "pause") {
+      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND id = $2`;
+    } else if (action === "disable") {
+      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND id = $2`;
+    }
+    await query(updateSql, [tenantId, dealId]);
+    return this.getAiStatus(tenantId, dealId);
+  }
+
+  /**
+   * AI Copilot: генерирует черновик ответа оператора по контексту переписки и базе знаний.
+   */
+  async generateAiDraft(tenantId: string, dealId: string): Promise<{ draft: string }> {
+    const recentMessages = await query<{
+      direction: string;
+      source: string;
+      content: string;
+      sender_name: string;
+    }>(
+      `SELECT direction, source, content, sender_name
+       FROM deal_messages
+       WHERE tenant_id = $1 AND deal_id = $2
+       ORDER BY created_at DESC LIMIT 8`,
+      [tenantId, dealId],
+    );
+
+    const reversed = [...recentMessages].reverse();
+    const lastClientMsg = [...reversed]
+      .reverse()
+      .find((m) => m.direction === "inbound" || m.source === "client");
+    const queryText = lastClientMsg?.content || "";
+
+    let knowledgeContext = "";
+    try {
+      const agent = await queryOne<{ id: string; system_prompt: string }>(
+        `SELECT id, system_prompt FROM ai_agents WHERE tenant_id = $1 AND status = 'active' ORDER BY created_at ASC LIMIT 1`,
+        [tenantId],
+      );
+      if (agent && queryText) {
+        const hits = await this.knowledge.search({
+          tenantId,
+          agentId: agent.id,
+          question: queryText,
+          limit: 3,
+        });
+        if (hits.length > 0) {
+          knowledgeContext =
+            "\n\nИнформация из базы знаний:\n" +
+            hits.map((h, i) => `${i + 1}. ${h.content}`).join("\n");
+        }
+      }
+    } catch {
+      // Игнорируем сбои поиска по базе знаний
+    }
+
+    if (!this.chat.isConfigured) {
+      return {
+        draft: "Здравствуйте! Подскажите, пожалуйста, какой вопрос вас интересует?",
+      };
+    }
+
+    const dialogueHistory = reversed
+      .map((m) => `${m.direction === "inbound" ? "Клиент" : "Менеджер"}: ${m.content}`)
+      .join("\n");
+
+    const promptMessages: LlmChatMessage[] = [
+      {
+        role: "system",
+        content: `Ты — AI-ассистент оператора CRM. Твоя задача — составить один профессиональный, лаконичный и доброжелательный черновик ответа клиенту от лица компании на русском языке. Пиши кратко (1-3 предложения), по существу, без вступительных фраз вида "Вот ответ:" и без кавычек.${knowledgeContext}`,
+      },
+      {
+        role: "user",
+        content: dialogueHistory
+          ? `История переписки:\n${dialogueHistory}\n\nНапиши следующий ответ менеджера:`
+          : "Напиши приветственное сообщение новому клиенту:",
+      },
+    ];
+
+    try {
+      const res = await this.chat.complete({
+        model: "openrouter/openai/gpt-4o-mini",
+        messages: promptMessages,
+        temperature: 0.7,
+        maxTokens: 300,
+      });
+      return { draft: res.content.trim() };
+    } catch (err) {
+      this.log?.warn({ err, dealId }, "Failed to generate AI draft");
+      return { draft: "Здравствуйте! Чем я могу вам помочь?" };
+    }
+  }
+
+  /**
+   * Возвращает хронологию сообщений для контакта по всем его сделкам.
+   */
+  async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
+    const rows = await query<any>(
+      `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
+              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.created_at
+       FROM deal_messages m
+       JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
+       WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+       ORDER BY m.created_at ASC`,
+      [tenantId, contactId],
+    );
+    return rows.map((r: any) => ({
+      id: r.id,
+      tenantId: r.tenant_id,
+      dealId: r.deal_id,
+      channelAccountId: r.channel_account_id,
+      source: r.source,
+      direction: r.direction,
+      senderName: r.sender_name,
+      content: r.content,
+      channel: r.channel,
+      attachment: r.attachment,
+      attachmentType: r.attachment_type,
+      deliveryStatus: r.delivery_status,
+      deliveryError: r.delivery_error,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * Возвращает список доступных каналов для контакта.
+   */
+  async getContactSendFromOptions(tenantId: string, contactId: string): Promise<SendFromOptionDTO[]> {
+    const contactRows = await query<{
+      telegram_chat_id: string | null;
+      telegram_username: string | null;
+      whatsapp: string | null;
+      phone: string;
+    }>(
+      `SELECT c.telegram_chat_id::text AS telegram_chat_id,
+              c.telegram_username,
+              c.whatsapp,
+              c.phone
+       FROM contacts c
+       WHERE c.tenant_id = $1 AND c.id = $2 AND c.deleted_at IS NULL`,
+      [tenantId, contactId],
+    );
+
+    const contact = contactRows[0] ?? {
+      telegram_chat_id: null,
+      telegram_username: null,
+      whatsapp: null,
+      phone: "",
+    };
+
+    const accounts = await query<{ id: string; channel: string; name: string }>(
+      `SELECT id, channel, name
+       FROM channel_accounts
+       WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
+       ORDER BY created_at ASC`,
+      [tenantId],
+    );
+
+    return accounts.map((acc, index) => {
+      let available = false;
+      let unavailableReason: string | undefined;
+
+      if (acc.channel === "telegram") {
+        if (contact.telegram_chat_id || contact.telegram_username || contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан Telegram или номер телефона";
+        }
+      } else if (acc.channel === "whatsapp") {
+        if (contact.whatsapp || contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан телефон для WhatsApp";
+        }
+      } else if (acc.channel === "rumax" || acc.channel === "max") {
+        if (contact.phone) {
+          available = true;
+        } else {
+          unavailableReason = "У контакта не указан телефон для MAX";
+        }
+      } else {
+        available = true;
+      }
+
+      return {
+        channelAccountId: acc.id,
+        channel: acc.channel,
+        label: `${acc.name || acc.channel} (${acc.channel})`,
+        available,
+        unavailableReason,
+        isDefault: index === 0,
+      };
+    });
+  }
+
+  /**
+   * Отправляет сообщение от оператора контакту (в активную сделку контакта или создаёт новую).
+   */
+  async sendContactMessage(input: {
+    tenantId: string;
+    contactId: string;
+    senderName: string;
+    userId: string;
+    payload: CreateDealMessagePayload;
+  }): Promise<DealMessageDTO> {
+    const { tenantId, contactId, senderName, userId, payload } = input;
+
+    let activeDeal = await queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND closed_at IS NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [tenantId, contactId],
+    );
+
+    if (!activeDeal) {
+      activeDeal = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+         ORDER BY updated_at DESC LIMIT 1`,
+        [tenantId, contactId],
+      );
+    }
+
+    let dealId: string;
+    if (activeDeal) {
+      dealId = activeDeal.id;
+    } else {
+      const contact = await queryOne<{ first_name: string; last_name: string | null }>(
+        `SELECT first_name, last_name FROM contacts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, contactId],
+      );
+      const name = contact ? `${contact.first_name} ${contact.last_name || ""}`.trim() : "Клиент";
+      const pipelines = await this.deals.listPipelines(tenantId);
+      const pipelineId = pipelines[0]?.id;
+      const stage = pipelineId
+        ? await queryOne<{ id: string }>(
+            `SELECT s.id FROM stages s
+             JOIN pipelines p ON p.id = s.pipeline_id
+             WHERE s.pipeline_id = $1 AND p.tenant_id = $2
+             ORDER BY s.sort_order ASC LIMIT 1`,
+            [pipelineId, tenantId],
+          )
+        : null;
+      const stageId = stage?.id;
+
+      if (!pipelineId || !stageId) {
+        throw new Error("No pipeline or stage configured for tenant");
+      }
+
+      const createdDeal = await this.deals.create(
+        tenantId,
+        userId,
+        {
+          title: `Диалог с ${name}`,
+          pipeline_id: pipelineId,
+          stage_id: stageId,
+          contact_id: contactId,
+          budget: 0,
+          currency: "RUB",
+          custom_fields: {},
+        },
+      );
+      dealId = createdDeal.id;
+    }
+
+    return this.sendManagerMessage({
+      tenantId,
+      dealId,
+      senderName,
+      payload,
+    });
+  }
+
+  /**
+   * Возвращает статус AI для контакта (по его активной сделке).
+   */
+  async getContactAiStatus(
+    tenantId: string,
+    contactId: string,
+  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+    const deal = await queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [tenantId, contactId],
+    );
+    if (!deal) return { status: "enabled", pausedUntil: null };
+    return this.getAiStatus(tenantId, deal.id);
+  }
+
+  /**
+   * Переключает режим AI для всех сделок контакта.
+   */
+  async setContactAiControl(
+    tenantId: string,
+    contactId: string,
+    action: "enable" | "pause" | "disable",
+  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+    let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+    if (action === "pause") {
+      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+    } else if (action === "disable") {
+      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
+    }
+    await query(updateSql, [tenantId, contactId]);
+    return this.getContactAiStatus(tenantId, contactId);
+  }
+
+  /**
+   * Генерирует черновик ответа для контакта.
+   */
+  async generateContactAiDraft(tenantId: string, contactId: string): Promise<{ draft: string }> {
+    const deal = await queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [tenantId, contactId],
+    );
+    if (!deal) {
+      return { draft: "Здравствуйте! Чем я могу вам помочь?" };
+    }
+    return this.generateAiDraft(tenantId, deal.id);
   }
 }

@@ -8,6 +8,8 @@ import {
   updateContactSchema,
 } from "./contacts.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
+import { DealMessagingService } from "../deals/deal-messaging.service.js";
+import { createDealMessageSchema } from "../deals/deals.types.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -23,6 +25,7 @@ const customFieldsSchema = z.object({ custom_fields: z.record(z.unknown()) });
 
 export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   const service = new ContactsService();
+  const messaging = new DealMessagingService(undefined, app.log);
 
   const canRead = app.requirePermission("contacts:read");
   const canWrite = app.requirePermission("contacts:write");
@@ -148,5 +151,57 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const { suppress } = suppressDealsSchema.parse(request.body);
     await dedupeService.setSuppressDealCreation(request.tenant_id, id, suppress);
     return reply.send({ data: { id, suppress_deal_creation: suppress } });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Чат и хронология переписки по контакту
+  // ---------------------------------------------------------------------------
+
+  app.get("/:id/messages", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const messages = await messaging.listContactMessages(request.tenant_id, id);
+    return reply.send({ data: messages, meta: { total: messages.length } });
+  });
+
+  app.post("/:id/messages", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = createDealMessageSchema.parse(request.body);
+    const message = await messaging.sendContactMessage({
+      tenantId: request.tenant_id,
+      contactId: id,
+      senderName: request.authUser.name,
+      userId: request.authUser.id,
+      payload: body,
+    });
+    return reply.status(201).send({ data: message });
+  });
+
+  app.get("/:id/send-from-options", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const options = await messaging.getContactSendFromOptions(request.tenant_id, id);
+    return reply.send({ data: options, meta: { total: options.length } });
+  });
+
+  app.get("/:id/ai-status", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const status = await messaging.getContactAiStatus(request.tenant_id, id);
+    return reply.send({ data: status });
+  });
+
+  const aiControlSchema = z.object({
+    action: z.enum(["enable", "pause", "disable"]),
+  });
+
+  app.post("/:id/ai-control", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { action } = aiControlSchema.parse(request.body);
+    const status = await messaging.setContactAiControl(request.tenant_id, id, action);
+    return reply.send({ data: status });
+  });
+
+  app.post("/:id/ai-draft", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const draft = await messaging.generateContactAiDraft(request.tenant_id, id);
+    return reply.send({ data: draft });
   });
 }
