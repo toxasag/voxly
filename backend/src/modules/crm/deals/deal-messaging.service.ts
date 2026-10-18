@@ -166,6 +166,17 @@ export class DealMessagingService {
 
     if (!deliverable) return message;
 
+    // AI Handoff: ответ менеджера ставит AI-автопилот на паузу на 1 час (ручной перехват), если он не выключен
+    await query(
+      `UPDATE deals
+       SET ai_paused_until = CASE
+         WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '9000-01-01'::timestamptz THEN ai_paused_until
+         ELSE now() + interval '1 hour'
+       END
+       WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, dealId],
+    ).catch(() => {});
+
     const result = await this.deliver(tenantId, dealId, payload);
 
     const updated = await this.deals.markMessageDelivery(
