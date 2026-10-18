@@ -4,7 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { Loader2, Plug, X } from "lucide-react";
+import { Loader2, Plug } from "lucide-react";
 
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useCreateChannelAccount } from "@/lib/api/use-channels";
@@ -14,7 +14,7 @@ import {
 } from "@/schemas/channel.schema";
 import { cn } from "@/lib/utils";
 import type { ChannelSlug } from "@/types";
-import { useOverlay } from "@/lib/utils/use-scroll-lock";
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 /**
  * Подсказка идентификатора зависит от канала: у Telegram это @username бота, у
@@ -54,15 +54,9 @@ export function ConnectChannelModal({
     defaultValues: { label: "", external_id: "" },
   });
 
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
-  useOverlay(open, { onEscape: onClose, disabled: create.isPending });
-
   useEffect(() => {
     if (open) form.reset({ label: "", external_id: "" });
   }, [open, form]);
-
 
   const submit = useCallback(
     async (values: CreateChannelAccountValues) => {
@@ -72,8 +66,6 @@ export function ConnectChannelModal({
         onClose();
       } catch (error) {
         if (error instanceof ApiClientError) {
-          // Лимит тарифа и повтор аккаунта — ожидаемые отказы, а не сбой:
-          // сообщение сервера уже объясняет, что делать.
           if (error.code === "CHANNEL_ACCOUNT_EXISTS") {
             form.setError("external_id", { message: "Этот аккаунт уже подключён" });
             return;
@@ -98,53 +90,28 @@ export function ConnectChannelModal({
     [create, channelName, onClose, form],
   );
 
-  const backdrop = useCallback(
-    (event: React.MouseEvent) => {
-      if (event.target === event.currentTarget && !create.isPending) onClose();
-    },
-    [onClose, create.isPending],
-  );
-
-  if (!open) return null;
-
   const errors = form.formState.errors;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
-      onClick={backdrop}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="connect-channel-title"
-    >
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
-              <Plug className="h-4 w-4 text-amber-400" />
-            </div>
-            <div>
-              <h2 id="connect-channel-title" className="text-sm font-semibold text-slate-100">
-                Подключить аккаунт {channelName}
-              </h2>
-              <p className="text-xs text-slate-500">Авторизация выполняется после создания</p>
-            </div>
+    <Sheet open={open} onClose={onClose} width="w-[500px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#4a38f5]/10">
+            <Plug className="h-3.5 w-3.5 text-[#4a38f5]" />
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={create.isPending}
-            aria-label="Закрыть"
-            className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div>
+            <h2 id="connect-channel-title" className="text-sm font-semibold text-[#111111]">
+              Подключить {channelName}
+            </h2>
+            <p className="text-[11px] text-[#666666]">Авторизация выполняется после создания</p>
+          </div>
         </div>
+      </SheetHeader>
 
-        <form onSubmit={form.handleSubmit((values) => void submit(values))} className="space-y-4 p-6">
-          <div className="space-y-2">
-            <label htmlFor="channel_label" className="block text-xs font-medium text-slate-400">
+      <SheetContent>
+        <form onSubmit={form.handleSubmit((values) => void submit(values))} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="channel_label" className="block text-xs font-medium text-[#666666]">
               Название подключения
             </label>
             <input
@@ -153,16 +120,16 @@ export function ConnectChannelModal({
               placeholder="Основной аккаунт"
               {...form.register("label")}
               className={cn(
-                "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                errors.label !== undefined ? "border-rose-500" : "border-slate-700",
+                "h-8 w-full rounded-[4px] border bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                errors.label !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
               )}
             />
-            {errors.label && <p className="text-xs text-rose-400">{errors.label.message}</p>}
+            {errors.label && <p className="text-xs text-rose-500">{errors.label.message}</p>}
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="channel_external_id" className="block text-xs font-medium text-slate-400">
+          <div className="space-y-1.5">
+            <label htmlFor="channel_external_id" className="block text-xs font-medium text-[#666666]">
               {hint.label}
             </label>
             <input
@@ -170,38 +137,38 @@ export function ConnectChannelModal({
               placeholder={hint.placeholder}
               {...form.register("external_id")}
               className={cn(
-                "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                errors.external_id !== undefined ? "border-rose-500" : "border-slate-700",
+                "h-8 w-full rounded-[4px] border bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                errors.external_id !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
               )}
             />
             {errors.external_id && (
-              <p className="text-xs text-rose-400">{errors.external_id.message}</p>
+              <p className="text-xs text-rose-500">{errors.external_id.message}</p>
             )}
           </div>
 
-          <p className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs leading-relaxed text-slate-500">
+          <p className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs leading-relaxed text-[#666666]">
             Подключение появится со статусом «Требуется авторизация». Обмен сообщениями
-            заработает после подключения транспорта канала — он в разработке.
+            заработает после подключения транспорта канала.
           </p>
 
-          <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+          <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
             <button
               type="button"
               onClick={onClose}
               disabled={create.isPending}
-              className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40"
             >
               Отмена
             </button>
             <button
               type="submit"
               disabled={create.isPending}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {create.isPending ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Подключаем...
                 </>
               ) : (
@@ -210,7 +177,7 @@ export function ConnectChannelModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

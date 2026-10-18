@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { AlertTriangle, Loader2, Mail, UserPlus, X } from "lucide-react";
+import { AlertTriangle, Loader2, Mail, UserPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ApiClientError } from "@/lib/api/apiClient";
 import {
@@ -34,6 +34,8 @@ interface InviteMemberModalProps {
  * Согласие всё равно проверяется на сервере (`confirm_extra_seat`): предупредить
  * в интерфейсе недостаточно, запрос можно отправить и минуя его.
  */
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+
 export function InviteMemberModal({
   open,
   onClose,
@@ -52,9 +54,6 @@ export function InviteMemberModal({
   const role = form.watch("role");
   const willCostExtra = seats.used >= seats.included;
 
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
   useOverlay(open, { onEscape: onClose });
 
   useEffect(() => {
@@ -63,7 +62,6 @@ export function InviteMemberModal({
       setPendingConfirm(null);
     }
   }, [open, form]);
-
 
   const send = useCallback(
     async (values: InviteMemberValues, confirmExtraSeat: boolean) => {
@@ -85,8 +83,6 @@ export function InviteMemberModal({
         onClose();
       } catch (error) {
         if (error instanceof ApiClientError) {
-          // Сервер требует подтверждения доплаты: показываем второй шаг вместо
-          // ошибки — пользователь ещё не отказывался, его просто не спросили.
           if (error.code === "SEAT_LIMIT_CONFIRMATION_REQUIRED") {
             setPendingConfirm(values);
             return;
@@ -115,87 +111,66 @@ export function InviteMemberModal({
     [invite, onClose, form],
   );
 
-  const backdrop = useCallback(
-    (event: React.MouseEvent) => {
-      if (event.target === event.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
   if (!open) return null;
 
   const errors = form.formState.errors;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
-      onClick={backdrop}
-    >
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
-              <UserPlus className="h-4 w-4 text-amber-400" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-100">Пригласить сотрудника</h2>
-              <p className="text-xs text-slate-500">
-                {pendingConfirm === null
-                  ? "Сотрудник задаст пароль по ссылке из письма"
-                  : "Подтвердите увеличение стоимости"}
-              </p>
-            </div>
+    <Sheet open={open} onClose={onClose} width="w-[500px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+            <UserPlus className="h-4 w-4" />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Закрыть"
-            className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">Пригласить сотрудника</h2>
+            <p className="text-xs text-[#666666]">
+              {pendingConfirm === null
+                ? "Сотрудник задаст пароль по ссылке из письма"
+                : "Подтвердите увеличение стоимости"}
+            </p>
+          </div>
         </div>
+      </SheetHeader>
 
-        {/*
-          Второй шаг: цена нового места. Показывается только после отказа
-          сервера, поэтому пользователь не видит предупреждения, пока места
-          включены в тариф.
-        */}
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         {pendingConfirm !== null ? (
-          <div className="space-y-4 p-6">
-            <div className="flex gap-3 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-              <div className="space-y-2 text-sm">
-                <p className="font-medium text-slate-100">
-                  Базовый лимит ({seats.included} пользователей) исчерпан
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex gap-3 rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[#4a38f5]" />
+                <div className="space-y-1.5 text-xs">
+                  <p className="font-semibold text-[#111111]">
+                    Базовый лимит ({seats.included} пользователей) исчерпан
+                  </p>
+                  <p className="leading-relaxed text-[#666666]">
+                    Стоимость увеличится на{" "}
+                    <span className="font-semibold text-[#111111]">
+                      +{seats.extraSeatPrice} ₽/мес
+                    </span>{" "}
+                    за нового пользователя. Продолжить?
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs text-[#666666] space-y-1">
+                <p>
+                  <span className="text-[#888888]">Сотрудник:</span> {pendingConfirm.name}
                 </p>
-                <p className="leading-relaxed text-slate-400">
-                  Стоимость увеличится на{" "}
-                  <span className="font-semibold text-amber-400">
-                    +{seats.extraSeatPrice} ₽/мес
-                  </span>{" "}
-                  за нового пользователя. Продолжить?
+                <p>
+                  <span className="text-[#888888]">E-mail:</span> {pendingConfirm.email}
+                </p>
+                <p>
+                  <span className="text-[#888888]">Роль:</span> {ROLE_LABELS[pendingConfirm.role]}
                 </p>
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs text-slate-400">
-              <p>
-                <span className="text-slate-500">Сотрудник:</span> {pendingConfirm.name}
-              </p>
-              <p className="mt-1">
-                <span className="text-slate-500">E-mail:</span> {pendingConfirm.email}
-              </p>
-              <p className="mt-1">
-                <span className="text-slate-500">Роль:</span> {ROLE_LABELS[pendingConfirm.role]}
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+            <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">
               <button
                 type="button"
                 onClick={() => setPendingConfirm(null)}
-                className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
               >
                 Назад
               </button>
@@ -203,15 +178,15 @@ export function InviteMemberModal({
                 type="button"
                 onClick={() => void send(pendingConfirm, true)}
                 disabled={invite.isPending}
-                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors cursor-pointer disabled:opacity-50"
               >
                 {invite.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Приглашаем...
+                    <span>Приглашаем...</span>
                   </>
                 ) : (
-                  `Продолжить (+${seats.extraSeatPrice} ₽/мес)`
+                  <span>Продолжить (+{seats.extraSeatPrice} ₽/мес)</span>
                 )}
               </button>
             </div>
@@ -219,110 +194,106 @@ export function InviteMemberModal({
         ) : (
           <form
             onSubmit={form.handleSubmit((values) => void send(values, false))}
-            className="space-y-4 p-6"
+            className="flex flex-col flex-1 min-h-0"
           >
-            <div className="space-y-2">
-              <label htmlFor="invite_name" className="block text-xs font-medium text-slate-400">
-                Имя и фамилия
-              </label>
-              <input
-                id="invite_name"
-                autoFocus
-                placeholder="Иван Петров"
-                {...form.register("name")}
-                className={cn(
-                  "w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500",
-                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                  errors.name !== undefined ? "border-rose-500" : "border-slate-700",
-                )}
-              />
-              {errors.name && <p className="text-xs text-rose-400">{errors.name.message}</p>}
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="invite_email" className="block text-xs font-medium text-slate-400">
-                E-mail
-              </label>
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="invite_name" className="block text-xs font-medium text-slate-700">
+                  Имя и фамилия
+                </label>
                 <input
-                  id="invite_email"
-                  type="email"
-                  placeholder="ivan@company.ru"
-                  {...form.register("email")}
+                  id="invite_name"
+                  autoFocus
+                  placeholder="Иван Петров"
+                  {...form.register("name")}
                   className={cn(
-                    "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500",
-                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                    errors.email !== undefined ? "border-rose-500" : "border-slate-700",
+                    "w-full rounded-[4px] border bg-white px-3 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                    errors.name !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
                   )}
                 />
+                {errors.name && <p className="text-xs text-rose-500">{errors.name.message}</p>}
               </div>
-              {errors.email && <p className="text-xs text-rose-400">{errors.email.message}</p>}
+
+              <div className="space-y-1.5">
+                <label htmlFor="invite_email" className="block text-xs font-medium text-slate-700">
+                  E-mail
+                </label>
+                <div className="relative">
+                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="invite_email"
+                    type="email"
+                    placeholder="ivan@company.ru"
+                    {...form.register("email")}
+                    className={cn(
+                      "w-full rounded-[4px] border bg-white py-2 pl-10 pr-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                      errors.email !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
+                    )}
+                  />
+                </div>
+                {errors.email && <p className="text-xs text-rose-500">{errors.email.message}</p>}
+              </div>
+
+              <fieldset className="space-y-2">
+                <legend className="block text-xs font-medium text-slate-700">Роль</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {assignableRoles.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => form.setValue("role", value, { shouldValidate: true })}
+                      className={cn(
+                        "rounded-[6px] border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer",
+                        role === value
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5]",
+                      )}
+                    >
+                      {ROLE_LABELS[value]}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-[#888888]">{ROLE_HINTS[role]}</p>
+              </fieldset>
+
+              {willCostExtra && (
+                <p className="flex items-start gap-2 rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs text-[#666666]">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  Базовые {seats.included} мест заняты — новый сотрудник добавит{" "}
+                  +{seats.extraSeatPrice} ₽/мес к подписке.
+                </p>
+              )}
             </div>
 
-            <fieldset className="space-y-2">
-              <legend className="block text-xs font-medium text-slate-400">Роль</legend>
-              <div className="grid grid-cols-2 gap-2">
-                {assignableRoles.map((value) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => form.setValue("role", value, { shouldValidate: true })}
-                    className={cn(
-                      "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors",
-                      role === value
-                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200",
-                    )}
-                  >
-                    {ROLE_LABELS[value]}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-slate-500">{ROLE_HINTS[role]}</p>
-            </fieldset>
-
-            {/*
-              Предупреждение до отправки, когда места уже исчерпаны: узнать о
-              доплате в момент нажатия «Пригласить» — неприятная неожиданность.
-            */}
-            {willCostExtra && (
-              <p className="flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs text-slate-400">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
-                Базовые {seats.included} мест заняты — новый сотрудник добавит{" "}
-                +{seats.extraSeatPrice} ₽/мес к подписке.
-              </p>
-            )}
-
-            <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+            <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
               >
                 Отмена
               </button>
               <button
                 type="submit"
                 disabled={invite.isPending}
-                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors cursor-pointer disabled:opacity-50"
               >
                 {invite.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Приглашаем...
+                    <span>Приглашаем...</span>
                   </>
                 ) : (
                   <>
                     <UserPlus className="h-4 w-4" />
-                    Пригласить
+                    <span>Пригласить</span>
                   </>
                 )}
               </button>
             </div>
           </form>
         )}
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

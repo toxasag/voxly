@@ -126,19 +126,19 @@ export function DisableModuleDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[0.5px] p-4"
       onClick={backdrop}
       role="dialog"
       aria-modal="true"
       aria-labelledby="disable-module-title"
     >
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="flex items-start justify-between border-b border-slate-800 px-6 py-4">
+      <div className="w-full max-w-md rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl">
+        <div className="flex items-start justify-between border-b border-[#e5e5e5] px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-500/10">
-              <AlertTriangle className="h-4 w-4 text-rose-400" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-rose-500/10">
+              <AlertTriangle className="h-3.5 w-3.5 text-rose-600" />
             </div>
-            <h2 id="disable-module-title" className="text-sm font-semibold text-slate-100">
+            <h2 id="disable-module-title" className="text-sm font-semibold text-[#111111]">
               Отключение модуля «{moduleName}»
             </h2>
           </div>
@@ -148,28 +148,28 @@ export function DisableModuleDialog({
             onClick={onClose}
             disabled={isPending}
             aria-label="Закрыть"
-            className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
+            className="rounded-[6px] p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors disabled:opacity-40"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="space-y-4 p-6">
+        <div className="space-y-3 p-4">
           {isLoading ? (
-            <p className="flex items-center gap-2 text-sm text-slate-400">
-              <Loader2 className="h-4 w-4 animate-spin" />
+            <p className="flex items-center gap-2 text-xs text-[#666666]">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Считаем, какие данные затронет отключение...
             </p>
           ) : loadError !== null ? (
-            <p className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-400">
+            <p className="rounded-[8px] border border-rose-500/20 bg-rose-500/5 p-3 text-xs text-rose-600">
               {loadError}
             </p>
           ) : (
             <>
-              <div className="flex gap-3 rounded-lg border border-rose-500/30 bg-rose-500/5 p-4">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-                <div className="space-y-2 text-xs leading-relaxed">
-                  <p className="text-sm font-medium text-slate-100">
+              <div className="flex gap-2.5 rounded-[8px] border border-rose-500/20 bg-rose-500/5 p-3">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-600" />
+                <div className="space-y-1.5 text-xs leading-relaxed">
+                  <p className="font-medium text-[#111111]">
                     {hasData
                       ? "Доступ к данным модуля будет закрыт"
                       : "Модуль будет отключён"}
@@ -177,8 +177,8 @@ export function DisableModuleDialog({
 
                   {hasData ? (
                     <>
-                      <p className="text-slate-400">Скрыто будет:</p>
-                      <ul className="space-y-0.5 text-slate-300">
+                      <p className="text-[#666666]">Скрыто будет:</p>
+                      <ul className="space-y-0.5 text-[#111111]">
                         {entries.map(([table, count]) => (
                           <li key={table}>
                             • <span className="font-semibold">{count}</span>{" "}
@@ -186,15 +186,9 @@ export function DisableModuleDialog({
                           </li>
                         ))}
                       </ul>
-                      {/*
-                        Точные условия вместо расплывчатого «данные будут
-                        удалены»: они хранятся ограниченное время и возвращаются
-                        при повторном подключении — пользователь должен понимать,
-                        что именно произойдёт и что действие обратимо.
-                      */}
-                      <p className="text-slate-400">
+                      <p className="text-[#666666]">
                         Данные хранятся{" "}
-                        <span className="font-semibold text-slate-200">
+                        <span className="font-semibold text-[#111111]">
                           {impact?.graceDays} {pluralDays(impact?.graceDays ?? 0)}
                         </span>{" "}
                         и вернутся, если подключить модуль обратно. После этого срока они
@@ -202,7 +196,7 @@ export function DisableModuleDialog({
                       </p>
                     </>
                   ) : (
-                    <p className="text-slate-400">
+                    <p className="text-[#666666]">
                       Данных по этому модулю пока нет — терять нечего.
                     </p>
                   )}
@@ -210,36 +204,34 @@ export function DisableModuleDialog({
               </div>
 
               {hasData && (
-                <p className="text-xs text-slate-500">
+                <p className="text-[11px] text-[#888888]">
                   Пробный период не начнётся заново при повторном подключении.
                 </p>
               )}
             </>
           )}
 
-          <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+          <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-3">
             <button
               type="button"
               onClick={onClose}
               disabled={isPending}
-              className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors disabled:opacity-40"
             >
               Отмена
             </button>
             <button
               type="button"
               onClick={() => void onConfirm()}
-              // Кнопка недоступна, пока не известны последствия: подтверждать
-              // вслепую то, что затрагивает данные, нельзя.
               disabled={isPending || isLoading || loadError !== null}
               className={cn(
-                "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors",
+                "flex h-8 items-center gap-1.5 rounded-[8px] px-4 text-xs font-medium text-white transition-colors",
                 "bg-rose-600 hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50",
               )}
             >
               {isPending ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Отключаем...
                 </>
               ) : (

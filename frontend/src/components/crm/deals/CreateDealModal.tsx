@@ -12,6 +12,8 @@ import { useCompanies } from "@/lib/api/use-companies";
 import { cn } from "@/lib/utils";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+
 interface CreateDealModalProps {
   open: boolean;
   onClose: () => void;
@@ -43,9 +45,6 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
   // endpoint that returns stage ids, so a deal can never target a foreign stage.
   const kanban = useKanban(pipelineId.length > 0 ? pipelineId : null);
 
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
   useOverlay(open, { onEscape: onClose });
 
   // Default the pipeline to the current board once the catalog resolves.
@@ -70,7 +69,6 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
     if (open) form.reset({ title: "", description: "", budget: 0, currency: "RUB", pipeline_id: defaultPipelineId ?? "", stage_id: "", contact_id: "", company_id: "" });
   }, [open, defaultPipelineId, form]);
 
-
   const submit = useCallback(async (values: CreateDealPayload) => {
     try {
       await onSubmit(values);
@@ -94,64 +92,169 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
   const { errors, isValid, isSubmitting } = form.formState;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="sticky top-0 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-4">
-          <div className="flex items-center gap-2.5"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10"><Handshake className="h-4 w-4 text-amber-400" /></div><div><h2 className="text-sm font-semibold text-slate-100">Новая сделка</h2><p className="text-xs text-slate-500">Добавьте сделку на стадию воронки</p></div></div>
-          <button type="button" onClick={onClose} aria-label="Закрыть" className="p-1.5 text-slate-500 hover:text-slate-300"><X className="h-4 w-4" /></button>
+    <Sheet open={open} onClose={onClose} width="w-[560px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+            <Handshake className="h-4 w-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">Новая сделка</h2>
+            <p className="text-xs text-[#666666]">Добавьте сделку на стадию воронки</p>
+          </div>
         </div>
+      </SheetHeader>
 
-        <form onSubmit={form.handleSubmit(submit)} className="space-y-4 p-6">
-          {message(errors.root) && <div role="alert" className="flex gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300"><AlertCircle className="h-4 w-4 shrink-0" />{message(errors.root)}</div>}
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
+        <form onSubmit={form.handleSubmit(submit)} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {message(errors.root) && (
+              <div role="alert" className="flex gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+                {message(errors.root)}
+              </div>
+            )}
 
-          <div className="space-y-2">
-            <label htmlFor="deal-title" className="block text-xs font-medium text-slate-400">Название сделки *</label>
-            <input id="deal-title" autoFocus placeholder="Внедрение CRM" {...form.register("title")} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none", errors.title ? "border-rose-500" : "border-slate-700")} />
-            {message(errors.title) && <p className="text-xs text-rose-400">{message(errors.title)}</p>}
+            <div className="space-y-1.5">
+              <label htmlFor="deal-title" className="block text-xs font-medium text-slate-700">
+                Название сделки *
+              </label>
+              <input
+                id="deal-title"
+                autoFocus
+                placeholder="Внедрение CRM"
+                {...form.register("title")}
+                className={cn(
+                  "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                  errors.title ? "border-rose-500" : "border-[#e5e5e5]",
+                )}
+              />
+              {message(errors.title) && <p className="text-xs text-rose-500">{message(errors.title)}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="deal-budget" className="block text-xs font-medium text-slate-700">
+                Сумма (RUB)
+              </label>
+              <div className="relative">
+                <Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="deal-budget"
+                  type="number"
+                  min={0}
+                  placeholder="450000"
+                  {...form.register("budget", { valueAsNumber: true })}
+                  className={cn(
+                    "w-full rounded-[4px] border bg-white py-2 pl-10 pr-4 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none",
+                    errors.budget ? "border-rose-500" : "border-[#e5e5e5]",
+                  )}
+                />
+              </div>
+              {message(errors.budget) && <p className="text-xs text-rose-500">{message(errors.budget)}</p>}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="deal-pipeline" className="block text-xs font-medium text-slate-700">
+                  Воронка *
+                </label>
+                <select
+                  id="deal-pipeline"
+                  {...form.register("pipeline_id")}
+                  disabled={pipelines.isLoading}
+                  className={cn(
+                    "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                    errors.pipeline_id ? "border-rose-500" : "border-[#e5e5e5]",
+                  )}
+                >
+                  <option value="" disabled>{pipelines.isLoading ? "Загрузка…" : "Выберите воронку"}</option>
+                  {pipelines.data?.map((pipeline) => (
+                    <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
+                  ))}
+                </select>
+                {message(errors.pipeline_id) && <p className="text-xs text-rose-500">{message(errors.pipeline_id)}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="deal-stage" className="block text-xs font-medium text-slate-700">
+                  Стадия *
+                </label>
+                <select
+                  id="deal-stage"
+                  {...form.register("stage_id")}
+                  disabled={pipelineId.length === 0 || kanban.isLoading}
+                  className={cn(
+                    "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:opacity-50",
+                    errors.stage_id ? "border-rose-500" : "border-[#e5e5e5]",
+                  )}
+                >
+                  <option value="" disabled>{kanban.isLoading ? "Загрузка…" : "Выберите стадию"}</option>
+                  {stages.map((stage) => (
+                    <option key={stage.stageId} value={stage.stageId}>{stage.stageName}</option>
+                  ))}
+                </select>
+                {message(errors.stage_id) && <p className="text-xs text-rose-500">{message(errors.stage_id)}</p>}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label htmlFor="deal-contact" className="block text-xs font-medium text-slate-700">
+                  Контакт
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    id="deal-contact"
+                    {...form.register("contact_id")}
+                    className="w-full rounded-[4px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  >
+                    <option value="">Без контакта</option>
+                    {contacts.data?.items.map((contact) => (
+                      <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="deal-company" className="block text-xs font-medium text-slate-700">
+                  Компания
+                </label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <select
+                    id="deal-company"
+                    {...form.register("company_id")}
+                    className="w-full rounded-[4px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  >
+                    <option value="">Без компании</option>
+                    {companies.data?.items.map((company) => (
+                      <option key={company.id} value={company.id}>{company.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="deal-budget" className="block text-xs font-medium text-slate-400">Сумма</label>
-            <div className="relative"><Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input id="deal-budget" type="number" min={0} placeholder="450000" {...form.register("budget", { valueAsNumber: true })} className={cn("w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none", errors.budget ? "border-rose-500" : "border-slate-700")} /></div>
-            {message(errors.budget) && <p className="text-xs text-rose-400">{message(errors.budget)}</p>}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label htmlFor="deal-pipeline" className="block text-xs font-medium text-slate-400">Воронка *</label>
-              <select id="deal-pipeline" {...form.register("pipeline_id")} disabled={pipelines.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none", errors.pipeline_id ? "border-rose-500" : "border-slate-700")}>
-                <option value="" disabled>{pipelines.isLoading ? "Loading…" : "Select pipeline"}</option>
-                {pipelines.data?.map((pipeline) => <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>)}
-              </select>
-              {message(errors.pipeline_id) && <p className="text-xs text-rose-400">{message(errors.pipeline_id)}</p>}
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="deal-stage" className="block text-xs font-medium text-slate-400">Стадия *</label>
-              <select id="deal-stage" {...form.register("stage_id")} disabled={pipelineId.length === 0 || kanban.isLoading} className={cn("w-full rounded-lg border bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none disabled:opacity-50", errors.stage_id ? "border-rose-500" : "border-slate-700")}>
-                <option value="" disabled>{kanban.isLoading ? "Loading…" : "Select stage"}</option>
-                {stages.map((stage) => <option key={stage.stageId} value={stage.stageId}>{stage.stageName}</option>)}
-              </select>
-              {message(errors.stage_id) && <p className="text-xs text-rose-400">{message(errors.stage_id)}</p>}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label htmlFor="deal-contact" className="block text-xs font-medium text-slate-400">Контакт</label>
-              <div className="relative"><User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-contact" {...form.register("contact_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"><option value="">Без контакта</option>{contacts.data?.items.map((contact) => <option key={contact.id} value={contact.id}>{contact.firstName} {contact.lastName}</option>)}</select></div>
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="deal-company" className="block text-xs font-medium text-slate-400">Компания</label>
-              <div className="relative"><Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><select id="deal-company" {...form.register("company_id")} className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"><option value="">Без компании</option>{companies.data?.items.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}</select></div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-3 border-t border-slate-800 pt-3">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Отмена</button>
-            <button type="submit" disabled={!isValid || isSubmitting} className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#3b2be0] disabled:opacity-50">{isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}Create Deal</button>
+          <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+            >
+              Отмена
+            </button>
+            <button
+              type="submit"
+              disabled={!isValid || isSubmitting}
+              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              <span>Создать сделку</span>
+            </button>
           </div>
         </form>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
