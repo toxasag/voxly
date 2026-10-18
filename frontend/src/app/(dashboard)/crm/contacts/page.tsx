@@ -256,7 +256,7 @@ function ContactsPageContent() {
             onStartEdit={() => setEditing({ rowId: contact.id, columnId: "name" })}
           >
             <EntityChip name={contactFullName(contact)} />
-            <span className="truncate font-medium text-slate-100">{contactFullName(contact)}</span>
+            <span className="truncate font-medium text-[#111111]">{contactFullName(contact)}</span>
           </RecordCellShell>
         ),
     },
