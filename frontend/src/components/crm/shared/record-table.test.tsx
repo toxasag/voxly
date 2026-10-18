@@ -160,6 +160,27 @@ describe("Меню колонок", () => {
     expect(screen.getByText("+79161234567")).toBeDefined();
     expect(screen.queryByText("Первый")).toBeNull();
   });
+
+  it("фильтрует список полей в меню по поисковому запросу", async () => {
+    const user = await openColumnsMenu();
+
+    const searchInput = screen.getByPlaceholderText("Поиск полей");
+    await user.type(searchInput, "Тел");
+
+    expect(screen.getByRole("button", { name: /^Телефон/ })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /^Заметка/ })).toBeNull();
+  });
+
+  it("открывает меню колонок по клику на кнопку плюс в заголовке", async () => {
+    renderTable();
+    const user = userEvent.setup();
+
+    const plusButton = screen.getByRole("button", { name: "Добавить колонку" });
+    await user.click(plusButton);
+
+    expect(screen.getByPlaceholderText("Поиск полей")).toBeDefined();
+    expect(screen.getByRole("button", { name: /^Телефон/ })).toBeDefined();
+  });
 });
 
 describe("Сохранение раскладки", () => {

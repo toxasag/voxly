@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Check, X } from "lucide-react";
+import { Check, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -18,9 +18,8 @@ import { cn } from "@/lib/utils";
 // нужен, чтобы стрелками ходить по таблице, не открывая редактор и не рискуя
 // случайной правкой.
 //
-// Геометрия из их констант: строка 32px, отступ контента 8px, границы
-// красятся прозрачным цветом вместо `border: none` — иначе строка дёргалась бы
-// на 1px при переходе между состояниями.
+// При наведении на редактируемую ячейку появляется аккуратная скруглённая
+// рамка и кнопка с иконкой карандаша Pencil справа (по Скриншоту 4 из Twenty).
 // ---------------------------------------------------------------------------
 
 export const RECORD_TABLE_ROW_HEIGHT = 32;
@@ -38,13 +37,11 @@ interface RecordCellShellProps {
   /**
    * Ячейка первой колонки (идентификатор записи).
    *
-   * У Twenty (`useOpenRecordTableCell`) клик по ней открывает запись, а не
-   * редактор — но только если значение непустое: у свежесозданной строки имя
-   * пустое, и её нужно как-то назвать. Здесь то же правило: при непустом
-   * значении клик всплывает к строке и открывает карточку, при пустом —
-   * открывает редактор.
+   * У Twenty (`useOpenRecordTableCell`) клик по ней открывает запись,
+   * а кнопка с карандашом (или клик при пустом значении) открывает редактор.
    */
   isLabelIdentifier?: boolean;
+  className?: string;
 }
 
 export function RecordCellShell({
@@ -55,47 +52,71 @@ export function RecordCellShell({
   onStartEdit,
   align = "left",
   isLabelIdentifier = false,
+  className,
 }: RecordCellShellProps) {
   // Первая колонка с непустым значением отдаёт клик строке: карточка важнее
-  // правки, а переименовать запись можно из самой карточки.
+  // правки, а переименовать запись можно через кнопку карандаша или из самой карточки.
   const opensOnClick = isLabelIdentifier && !isEmpty;
   const canEdit = editable && !opensOnClick;
 
-  // Своего tabIndex у ячейки нет намеренно.
-  //
-  // Раньше ячейка была фокусируемой и держала фокус в локальном состоянии, а
-  // таблица — свой, в позиции {row, column}. Две реализации конфликтовали:
-  // клик по ячейке забирал DOM-фокус у сетки, её обработчик клавиш перестава́л
-  // получать события, и стрелки после первого нажатия уводили фокус в body.
-  // Проверено в браузере — перенос фокуса через границу строки не работал.
-  //
-  // Теперь, как у Twenty, фокус целиком принадлежит таблице: ячейка только
-  // отображает значение и открывает редактор по клику.
   return (
     <div
       onClick={
         canEdit
           ? (event) => {
               // Клик не должен дойти до строки: иначе он одновременно открыл бы
-              // редактор ячейки и карточку записи. У Twenty та же развилка —
-              // редактируемая ячейка забирает клик себе, первая колонка отдаёт.
+              // редактор ячейки и карточку записи.
               event.stopPropagation();
               onStartEdit?.();
             }
           : undefined
       }
       className={cn(
-        "flex h-full items-center overflow-hidden whitespace-nowrap pl-2 pr-1 outline-none",
+        "group/cell relative flex h-full w-full items-center overflow-hidden whitespace-nowrap px-1 outline-none",
         align === "right" && "justify-end",
         canEdit && "cursor-text",
         opensOnClick && "cursor-pointer",
+        className,
       )}
     >
-      {isEmpty && emptyLabel !== undefined ? (
-        <span className="pl-1 text-[#999999] text-xs font-normal">Указать {emptyLabel}</span>
-      ) : (
-        <span className="flex min-w-0 items-center gap-1.5 truncate">{children}</span>
-      )}
+      <div
+        className={cn(
+          "flex h-[26px] w-full min-w-0 items-center justify-between rounded-[5px] border border-transparent px-1.5 transition-all duration-100",
+          editable && "group-hover/cell:border-[#d1d5db] group-hover/cell:bg-white group-hover/cell:shadow-2xs",
+          align === "right" && "justify-end",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-1.5 truncate",
+            align === "right" && "justify-end",
+          )}
+        >
+          {isEmpty && emptyLabel !== undefined ? (
+            <span className="text-xs font-normal text-[#999999]">Указать {emptyLabel}</span>
+          ) : (
+            children
+          )}
+        </div>
+
+        {editable && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-label="Редактировать ячейку"
+            onClick={(event) => {
+              event.stopPropagation();
+              onStartEdit?.();
+            }}
+            className={cn(
+              "ml-1.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border border-[#e5e5e5] bg-[#f9fafb] text-[#555555] opacity-0 transition-opacity duration-100 hover:bg-[#f3f4f6] hover:text-[#111111] group-hover/cell:opacity-100",
+              align === "right" && "order-last ml-2",
+            )}
+          >
+            <Pencil className="h-2.5 w-2.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -150,7 +171,7 @@ export function RecordCellEditor({ value, onCommit, onCancel, type = "text", ali
           }
         }}
         className={cn(
-          "h-6 w-full min-w-0 rounded border border-[#3b82f6] bg-white px-1.5 text-xs text-[#111111] shadow-2xs outline-none",
+          "h-[26px] w-full min-w-0 rounded-[5px] border border-[#3b82f6] bg-white px-2 text-xs text-[#111111] shadow-2xs outline-none focus:ring-1 focus:ring-[#3b82f6]",
           align === "right" && "text-right",
         )}
       />
@@ -178,7 +199,7 @@ export function RecordCellSelectEditor<T extends string>({
   }, []);
 
   return (
-    <div className="flex h-full items-center gap-1 bg-white px-1">
+    <div className="flex h-full w-full items-center bg-white px-1">
       <select
         ref={ref}
         value={value}
@@ -187,7 +208,7 @@ export function RecordCellSelectEditor<T extends string>({
         onKeyDown={(event) => {
           if (event.key === "Escape") onCancel();
         }}
-        className="h-6 w-full min-w-0 rounded border border-[#3b82f6] bg-white px-1 text-xs text-[#111111] shadow-2xs outline-none"
+        className="h-[26px] w-full min-w-0 rounded-[5px] border border-[#3b82f6] bg-white px-1.5 text-xs text-[#111111] shadow-2xs outline-none focus:ring-1 focus:ring-[#3b82f6]"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
