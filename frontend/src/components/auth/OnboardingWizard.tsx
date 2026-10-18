@@ -185,13 +185,13 @@ export function OnboardingWizard() {
                     className={cn(
                       "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors",
                       isCompleted &&
-                        "border-emerald-500 bg-emerald-500 text-slate-950",
+                        "border-emerald-600 bg-emerald-600 text-white",
                       isActive &&
                         !isCompleted &&
-                        "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]",
+                        "border-[#4a38f5] bg-[#4a38f5] text-white",
                       !isActive &&
                         !isCompleted &&
-                        "border-slate-700 bg-slate-900 text-slate-600",
+                        "border-[#e5e5e5] bg-white text-[#888888]",
                     )}
                   >
                     {isCompleted ? (
@@ -203,9 +203,9 @@ export function OnboardingWizard() {
                   <span
                     className={cn(
                       "text-xs font-medium transition-colors",
-                      isActive && "text-amber-400",
-                      isCompleted && "text-slate-300",
-                      !isActive && !isCompleted && "text-slate-600",
+                      isActive && "text-[#4a38f5] font-semibold",
+                      isCompleted && "text-[#111111]",
+                      !isActive && !isCompleted && "text-[#888888]",
                     )}
                   >
                     {step.label}
@@ -213,7 +213,7 @@ export function OnboardingWizard() {
                 </button>
                 {idx < STEPS.length - 1 && (
                   <div
-                    className={cn("mx-2 mb-5 h-0.5 flex-1", "bg-slate-800")}
+                    className={cn("mx-2 mb-5 h-0.5 flex-1", "bg-[#e5e5e5]")}
                   />
                 )}
               </div>
@@ -221,7 +221,7 @@ export function OnboardingWizard() {
           })}
         </div>
 
-        <div className="h-1 w-full rounded-full bg-slate-800">
+        <div className="h-1 w-full rounded-full bg-[#e5e5e5]">
           <div
             className="h-1 rounded-full bg-[#4a38f5] transition-all duration-500 ease-out"
             style={{ width: `${progressPercent}%` }}
@@ -230,7 +230,7 @@ export function OnboardingWizard() {
       </div>
 
       {/* Step Content */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-8">
+      <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-8 shadow-2xs">
         {/* Step 1 — Owner */}
         {currentStep === "owner" && (
           <form
@@ -238,20 +238,20 @@ export function OnboardingWizard() {
             className="space-y-6"
           >
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-slate-100">
-                Welcome! Tell us about yourself
+              <h2 className="text-base font-semibold text-[#111111]">
+                Добро пожаловать! Расскажите о себе
               </h2>
-              <p className="text-sm text-slate-400">
-                This is the account owner profile.
+              <p className="text-[13px] text-[#666666]">
+                Это профиль владельца аккаунта компании.
               </p>
             </div>
 
             <div className="space-y-2">
               <label
                 htmlFor="first_name"
-                className="block text-sm font-medium text-slate-300"
+                className="block text-[13px] font-medium text-[#111111]"
               >
-                First Name
+                Имя
               </label>
               <input
                 id="first_name"
@@ -265,15 +265,15 @@ export function OnboardingWizard() {
                   })
                 }
                 className={cn(
-                  "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                  "w-full rounded-[8px] border bg-white py-2.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                   ownerForm.formState.errors.first_name
                     ? "border-rose-500"
-                    : "border-slate-700",
+                    : "border-[#e5e5e5]",
                 )}
               />
               {ownerForm.formState.errors.first_name && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-rose-600">
                   {ownerForm.formState.errors.first_name.message}
                 </p>
               )}
@@ -282,9 +282,9 @@ export function OnboardingWizard() {
             <div className="space-y-2">
               <label
                 htmlFor="last_name"
-                className="block text-sm font-medium text-slate-300"
+                className="block text-[13px] font-medium text-[#111111]"
               >
-                Last Name
+                Фамилия
               </label>
               <input
                 id="last_name"
@@ -297,15 +297,15 @@ export function OnboardingWizard() {
                   })
                 }
                 className={cn(
-                  "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                  "w-full rounded-[8px] border bg-white py-2.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                   ownerForm.formState.errors.last_name
                     ? "border-rose-500"
-                    : "border-slate-700",
+                    : "border-[#e5e5e5]",
                 )}
               />
               {ownerForm.formState.errors.last_name && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-rose-600">
                   {ownerForm.formState.errors.last_name.message}
                 </p>
               )}
@@ -316,12 +316,12 @@ export function OnboardingWizard() {
                 type="submit"
                 disabled={!ownerForm.formState.isValid}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+                  "flex h-10 items-center gap-2 rounded-[8px] px-5 text-[13px] font-medium transition-colors",
+                  "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
-                Next
+                Далее
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
@@ -335,23 +335,23 @@ export function OnboardingWizard() {
             className="space-y-6"
           >
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-slate-100">
-                Create your workspace
+              <h2 className="text-base font-semibold text-[#111111]">
+                Настройка пространства
               </h2>
-              <p className="text-sm text-slate-400">
-                This will be your team&apos;s dedicated space.
+              <p className="text-[13px] text-[#666666]">
+                Здесь будет работать ваша команда.
               </p>
             </div>
 
             <div className="space-y-2">
               <label
                 htmlFor="company_name"
-                className="block text-sm font-medium text-slate-300"
+                className="block text-[13px] font-medium text-[#111111]"
               >
-                Company Name
+                Название компании
               </label>
               <div className="relative">
-                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888888]" />
                 <input
                   id="company_name"
                   type="text"
@@ -367,16 +367,16 @@ export function OnboardingWizard() {
                     autoSlug(e.target.value);
                   }}
                   className={cn(
-                    "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                    "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                     workspaceForm.formState.errors.company_name
                       ? "border-rose-500"
-                      : "border-slate-700",
+                      : "border-[#e5e5e5]",
                   )}
                 />
               </div>
               {workspaceForm.formState.errors.company_name && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-rose-600">
                   {workspaceForm.formState.errors.company_name.message}
                 </p>
               )}
@@ -385,12 +385,12 @@ export function OnboardingWizard() {
             <div className="space-y-2">
               <label
                 htmlFor="slug"
-                className="block text-sm font-medium text-slate-300"
+                className="block text-[13px] font-medium text-[#111111]"
               >
-                Workspace URL
+                Адрес портала
               </label>
               <div className="relative">
-                <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888888]" />
                 <input
                   id="slug"
                   type="text"
@@ -402,19 +402,19 @@ export function OnboardingWizard() {
                     })
                   }
                   className={cn(
-                    "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-24 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                    "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-24 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                     workspaceForm.formState.errors.slug
                       ? "border-rose-500"
-                      : "border-slate-700",
+                      : "border-[#e5e5e5]",
                   )}
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-[#888888]">
                   .getvoxly.ru
                 </span>
               </div>
               {workspaceForm.formState.errors.slug && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-rose-600">
                   {workspaceForm.formState.errors.slug.message}
                 </p>
               )}
@@ -424,12 +424,12 @@ export function OnboardingWizard() {
               <div className="space-y-2">
                 <label
                   htmlFor="currency"
-                  className="block text-sm font-medium text-slate-300"
+                  className="block text-[13px] font-medium text-[#111111]"
                 >
-                  Currency
+                  Валюта
                 </label>
                 <div className="relative">
-                  <Coins className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                  <Coins className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888888]" />
                   <select
                     id="currency"
                     value={workspaceForm.watch("currency")}
@@ -441,11 +441,11 @@ export function OnboardingWizard() {
                       )
                     }
                     className={cn(
-                      "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 transition-colors appearance-none",
-                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] transition-colors appearance-none",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                       workspaceForm.formState.errors.currency
                         ? "border-rose-500"
-                        : "border-slate-700",
+                        : "border-[#e5e5e5]",
                     )}
                   >
                     {CURRENCY_OPTIONS.map((opt) => (
@@ -456,7 +456,7 @@ export function OnboardingWizard() {
                   </select>
                 </div>
                 {workspaceForm.formState.errors.currency && (
-                  <p className="text-xs text-rose-400">
+                  <p className="text-xs text-rose-600">
                     {workspaceForm.formState.errors.currency.message}
                   </p>
                 )}
@@ -465,12 +465,12 @@ export function OnboardingWizard() {
               <div className="space-y-2">
                 <label
                   htmlFor="timezone"
-                  className="block text-sm font-medium text-slate-300"
+                  className="block text-[13px] font-medium text-[#111111]"
                 >
-                  Timezone
+                  Часовой пояс
                 </label>
                 <div className="relative">
-                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#888888]" />
                   <select
                     id="timezone"
                     value={workspaceForm.watch("timezone")}
@@ -480,15 +480,15 @@ export function OnboardingWizard() {
                       })
                     }
                     className={cn(
-                      "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 transition-colors appearance-none",
-                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] transition-colors appearance-none",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                       workspaceForm.formState.errors.timezone
                         ? "border-rose-500"
-                        : "border-slate-700",
+                        : "border-[#e5e5e5]",
                     )}
                   >
                     <option value="" disabled>
-                      Select timezone...
+                      Выберите часовой пояс...
                     </option>
                     {TIMEZONE_OPTIONS.map((tz) => (
                       <option key={tz} value={tz}>
@@ -498,7 +498,7 @@ export function OnboardingWizard() {
                   </select>
                 </div>
                 {workspaceForm.formState.errors.timezone && (
-                  <p className="text-xs text-rose-400">
+                  <p className="text-xs text-rose-600">
                     {workspaceForm.formState.errors.timezone.message}
                   </p>
                 )}
@@ -509,21 +509,21 @@ export function OnboardingWizard() {
               <button
                 type="button"
                 onClick={handleBack}
-                className="flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                className="flex h-10 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-4 text-[13px] font-medium text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
               >
                 <ChevronLeft className="h-4 w-4" />
-                Back
+                Назад
               </button>
               <button
                 type="submit"
                 disabled={!workspaceForm.formState.isValid}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+                  "flex h-10 items-center gap-2 rounded-[8px] px-5 text-[13px] font-medium transition-colors",
+                  "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
-                Next
+                Далее
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
@@ -537,12 +537,11 @@ export function OnboardingWizard() {
             className="space-y-6"
           >
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-slate-100">
-                What describes your business?
+              <h2 className="text-base font-semibold text-[#111111]">
+                Сфера деятельности
               </h2>
-              <p className="text-sm text-slate-400">
-                We&apos;ll pre-configure the right modules for you. You can
-                always adjust later.
+              <p className="text-[13px] text-[#666666]">
+                Выберите основное направление бизнеса. Мы сразу подключим необходимые модули.
               </p>
             </div>
 
@@ -566,10 +565,10 @@ export function OnboardingWizard() {
                       )
                     }
                     className={cn(
-                      "flex items-start gap-4 rounded-lg border p-4 text-left transition-colors",
+                      "flex items-start gap-4 rounded-[8px] border p-4 text-left transition-colors",
                       isSelected
-                        ? "border-[#4a38f5] bg-[#4a38f5]/10"
-                        : "border-slate-700 bg-slate-900 hover:border-slate-600",
+                        ? "border-[#4a38f5] bg-[#4a38f5]/5"
+                        : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
                     )}
                   >
                     <div
@@ -577,20 +576,15 @@ export function OnboardingWizard() {
                         "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
                         isSelected
                           ? "border-[#4a38f5] bg-[#4a38f5]"
-                          : "border-slate-600",
+                          : "border-[#cccccc] bg-white",
                       )}
                     >
                       {isSelected && (
-                        <Check className="h-3 w-3 text-slate-950" />
+                        <Check className="h-3 w-3 text-white" />
                       )}
                     </div>
                     <div className="space-y-1.5">
-                      <span
-                        className={cn(
-                          "text-sm font-semibold transition-colors",
-                          isSelected ? "text-amber-400" : "text-slate-200",
-                        )}
-                      >
+                      <span className="text-[13px] font-semibold text-[#111111]">
                         {config.name}
                       </span>
                       <div className="flex flex-wrap gap-1.5">
@@ -598,18 +592,18 @@ export function OnboardingWizard() {
                           <span
                             key={mod}
                             className={cn(
-                              "rounded-md px-2 py-0.5 text-xs font-medium",
+                              "rounded-[4px] px-2 py-0.5 text-xs font-medium border",
                               isSelected
-                                ? "bg-[#4a38f5]/20 text-amber-300"
-                                : "bg-slate-800 text-slate-500",
+                                ? "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/20"
+                                : "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5]",
                             )}
                           >
                             {mod === "service_center"
-                              ? "Service Center"
+                              ? "Сервисный центр"
                               : mod === "finance"
-                                ? "Finance"
+                                ? "Финансы"
                                 : mod === "ai_bots"
-                                  ? "AI Bots"
+                                  ? "ИИ-боты"
                                   : mod}
                           </span>
                         ))}
@@ -620,7 +614,7 @@ export function OnboardingWizard() {
               })}
             </div>
             {businessForm.formState.errors.domain && (
-              <p className="text-xs text-rose-400">
+              <p className="text-xs text-rose-600">
                 {businessForm.formState.errors.domain.message}
               </p>
             )}
@@ -629,21 +623,21 @@ export function OnboardingWizard() {
               <button
                 type="button"
                 onClick={handleBack}
-                className="flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                className="flex h-10 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-4 text-[13px] font-medium text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
               >
                 <ChevronLeft className="h-4 w-4" />
-                Back
+                Назад
               </button>
               <button
                 type="submit"
                 disabled={!businessForm.formState.isValid}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+                  "flex h-10 items-center gap-2 rounded-[8px] px-5 text-[13px] font-medium transition-colors",
+                  "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
-                Next
+                Далее
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
@@ -654,48 +648,48 @@ export function OnboardingWizard() {
         {currentStep === "finish" && (
           <div className="space-y-6">
             <div className="space-y-3 text-center">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10 border border-emerald-500/30">
-                <PartyPopper className="h-8 w-8 text-emerald-400" />
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50">
+                <PartyPopper className="h-7 w-7 text-emerald-600" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold text-slate-100">
-                  You&apos;re all set!
+                <h2 className="text-base font-semibold text-[#111111]">
+                  Всё готово!
                 </h2>
-                <p className="text-sm text-slate-400 mt-1">
-                  Review your setup below and jump into your workspace.
+                <p className="mt-1 text-[13px] text-[#666666]">
+                  Проверьте параметры и запустите ваше рабочее пространство.
                 </p>
               </div>
             </div>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-950/50 divide-y divide-slate-800">
+            <div className="divide-y divide-[#e5e5e5] rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]">
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">Владелец</span>
-                <span className="text-sm font-medium text-slate-200">
+                <span className="text-[13px] text-[#666666]">Владелец</span>
+                <span className="text-[13px] font-medium text-[#111111]">
                   {onboardingState.owner.first_name}{" "}
                   {onboardingState.owner.last_name}
                 </span>
               </div>
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">Компания</span>
-                <span className="text-sm font-medium text-slate-200">
+                <span className="text-[13px] text-[#666666]">Компания</span>
+                <span className="text-[13px] font-medium text-[#111111]">
                   {onboardingState.workspace.company_name}
                 </span>
               </div>
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">Адрес портала</span>
-                <span className="text-sm font-medium text-slate-200">
+                <span className="text-[13px] text-[#666666]">Адрес портала</span>
+                <span className="text-[13px] font-medium text-[#111111]">
                   {onboardingState.workspace.slug}.getvoxly.ru
                 </span>
               </div>
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">Часовой пояс</span>
-                <span className="text-sm font-medium text-slate-200">
+                <span className="text-[13px] text-[#666666]">Часовой пояс</span>
+                <span className="text-[13px] font-medium text-[#111111]">
                   {onboardingState.workspace.timezone}
                 </span>
               </div>
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">Домен</span>
-                <span className="text-sm font-medium text-slate-200">
+                <span className="text-[13px] text-[#666666]">Сфера деятельности</span>
+                <span className="text-[13px] font-medium text-[#111111]">
                   {
                     BUSINESS_DOMAIN_MODULES[onboardingState.business.domain]
                       .name
@@ -703,16 +697,22 @@ export function OnboardingWizard() {
                 </span>
               </div>
               <div className="flex justify-between px-4 py-3">
-                <span className="text-sm text-slate-400">
-                  Pre-installed modules
+                <span className="text-[13px] text-[#666666]">
+                  Подключённые модули
                 </span>
                 <div className="flex gap-1.5">
                   {onboardingState.installedModules.map((mod) => (
                     <span
                       key={mod}
-                      className="rounded-md bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-amber-400 border border-[#4a38f5]/20"
+                      className="rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-[#4a38f5]"
                     >
-                      {mod}
+                      {mod === "service_center"
+                        ? "Сервисный центр"
+                        : mod === "finance"
+                          ? "Финансы"
+                          : mod === "ai_bots"
+                            ? "ИИ-боты"
+                            : mod}
                     </span>
                   ))}
                 </div>
@@ -723,29 +723,29 @@ export function OnboardingWizard() {
               <button
                 type="button"
                 onClick={handleBack}
-                className="flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                className="flex h-10 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-4 text-[13px] font-medium text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
               >
                 <ChevronLeft className="h-4 w-4" />
-                Back
+                Назад
               </button>
               <button
                 type="button"
                 onClick={handleFinish}
                 disabled={isSaving}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-emerald-600 text-white hover:bg-emerald-500",
+                  "flex h-10 items-center gap-2 rounded-[8px] px-5 text-[13px] font-medium transition-colors",
+                  "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
                 {isSaving ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Setting up...
+                    Запускаем...
                   </>
                 ) : (
                   <>
-                    Start Using GETVOXLY
+                    Начать работу в GETVOXLY
                     <ChevronRight className="h-4 w-4" />
                   </>
                 )}
