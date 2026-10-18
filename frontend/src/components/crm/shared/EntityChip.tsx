@@ -1,16 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
 // Чип записи в духе Twenty: квадратный аватар со скруглением и инициалами
-// (или иконкой), рядом — подпись. Цвет аватара детерминирован именем: один и
-// тот же контакт/компания везде выглядит одинаково, что работает как второй
-// идентификатор при сканировании таблицы глазами.
+// (или иконкой/фавиконкой компании), рядом — подпись. Цвет аватара детерминирован
+// именем: один и тот же контакт/компания везде выглядит одинаково, что работает
+// как второй идентификатор при сканировании таблицы глазами.
 //
-// Палитра фиксирована литеральными классами (Tailwind компилирует только те
-// классы, что видит в исходниках) — 8 мягких пар из разрешённой гаммы.
+// Если передан домен (domain) компании или прямой URL (imageUrl), подтягивается
+// реальный логотип через Google Favicon API с мягким fallback на инициалы.
 // ---------------------------------------------------------------------------
 
 const CHIP_PALETTES = [
@@ -50,12 +51,30 @@ interface EntityChipProps {
   name: string;
   label?: string;
   icon?: LucideIcon;
+  imageUrl?: string;
+  /** Домен компании (например, acme.com) для авто-фавиконки в духе Twenty */
+  domain?: string;
   size?: "sm" | "md" | "table";
   singleLetter?: boolean;
   className?: string;
 }
 
-export function EntityChip({ name, label, icon: Icon, size = "md", singleLetter = false, className }: EntityChipProps) {
+export function EntityChip({
+  name,
+  label,
+  icon: Icon,
+  imageUrl,
+  domain,
+  size = "md",
+  singleLetter = false,
+  className,
+}: EntityChipProps) {
+  const [imgFailed, setImgFailed] = useState(false);
+
+  const cleanDomain = domain?.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const faviconUrl = imageUrl || (cleanDomain ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=64` : undefined);
+  const showFavicon = Boolean(faviconUrl && !imgFailed);
+
   const box =
     size === "sm"
       ? "h-3.5 w-3.5 rounded-[2px] text-[8px]"
@@ -76,12 +95,23 @@ export function EntityChip({ name, label, icon: Icon, size = "md", singleLetter 
         <span
           aria-hidden="true"
           className={cn(
-            "flex shrink-0 items-center justify-center border font-semibold",
+            "flex shrink-0 items-center justify-center border font-semibold overflow-hidden",
             box,
-            paletteFor(name),
+            showFavicon ? "border-[#e5e5e5] bg-white" : paletteFor(name),
           )}
         >
-          {Icon !== undefined ? <Icon className="h-2.5 w-2.5" /> : initials}
+          {showFavicon ? (
+            <img
+              src={faviconUrl}
+              alt=""
+              onError={() => setImgFailed(true)}
+              className="h-full w-full object-contain p-[1px] rounded-[inherit]"
+            />
+          ) : Icon !== undefined ? (
+            <Icon className="h-2.5 w-2.5" />
+          ) : (
+            initials
+          )}
         </span>
         <span className="truncate font-medium">{label !== "" ? label : "—"}</span>
       </span>
@@ -93,12 +123,19 @@ export function EntityChip({ name, label, icon: Icon, size = "md", singleLetter 
       <span
         aria-hidden="true"
         className={cn(
-          "flex shrink-0 items-center justify-center border font-semibold",
+          "flex shrink-0 items-center justify-center border font-semibold overflow-hidden",
           box,
-          paletteFor(name),
+          showFavicon ? "border-[#e5e5e5] bg-white" : paletteFor(name),
         )}
       >
-        {Icon !== undefined ? (
+        {showFavicon ? (
+          <img
+            src={faviconUrl}
+            alt=""
+            onError={() => setImgFailed(true)}
+            className="h-full w-full object-contain p-0.5 rounded-[inherit]"
+          />
+        ) : Icon !== undefined ? (
           <Icon className={size === "sm" ? "h-2.5 w-2.5" : size === "table" ? "h-3 w-3" : "h-3.5 w-3.5"} />
         ) : (
           initials

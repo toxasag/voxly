@@ -223,8 +223,13 @@ export function LoginForm() {
       className="space-y-4"
     >
       {/* E-mail */}
+<<<<<<< HEAD
       <div className="space-y-1.5">
         <label htmlFor="login_email" className="block text-xs font-medium text-[#111111]">
+=======
+      <div className="space-y-2">
+        <label htmlFor="login_email" className="block text-[13px] font-medium text-[#111111]">
+>>>>>>> master
           E-mail
         </label>
         <div className="relative">
@@ -239,7 +244,11 @@ export function LoginForm() {
             className={cn(
               "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+<<<<<<< HEAD
               errors.email !== undefined ? "border-rose-300" : "border-[#e5e5e5]",
+=======
+              errors.email !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
+>>>>>>> master
             )}
           />
         </div>
@@ -261,8 +270,13 @@ export function LoginForm() {
               onClick={() => void handleForgotPassword()}
               disabled={isSendingReset}
               className={cn(
+<<<<<<< HEAD
                 "flex w-full items-center justify-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-2",
                 "text-[13px] font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5]",
+=======
+                "flex w-full items-center justify-center gap-2 rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-4 py-2.5",
+                "text-[13px] font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10",
+>>>>>>> master
                 "disabled:cursor-not-allowed disabled:opacity-60",
               )}
             >
@@ -283,8 +297,13 @@ export function LoginForm() {
       />
 
       {/* Способ доставки одноразового кода */}
+<<<<<<< HEAD
       <fieldset className="space-y-1.5">
         <legend className="block text-xs font-medium text-[#111111]">
+=======
+      <fieldset className="space-y-2">
+        <legend className="block text-[13px] font-medium text-[#111111]">
+>>>>>>> master
           Доставка одноразового кода
         </legend>
         <div className="grid grid-cols-2 gap-2">
@@ -297,7 +316,11 @@ export function LoginForm() {
                 "flex items-center justify-center gap-2 rounded-[8px] border px-4 py-2.5 text-[13px] font-medium transition-colors",
                 channel === value
                   ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+<<<<<<< HEAD
                   : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+=======
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+>>>>>>> master
               )}
             >
               <Icon className="h-4 w-4" />
@@ -305,7 +328,11 @@ export function LoginForm() {
             </button>
           ))}
         </div>
+<<<<<<< HEAD
         <p className="text-xs text-[#888888]">
+=======
+        <p className="text-xs text-[#666666]">
+>>>>>>> master
           Код придёт в {channelLabel}. Если бот ещё не привязан, появится ссылка на подключение.
         </p>
       </fieldset>
@@ -316,7 +343,11 @@ export function LoginForm() {
           onClick={() => void handleRequestCode()}
           disabled={code.stage === "requesting"}
           className={cn(
+<<<<<<< HEAD
             "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+=======
+            "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+>>>>>>> master
             "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
@@ -341,31 +372,52 @@ export function LoginForm() {
         отключённую кнопку, и подключиться было нечем.
       */}
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
+<<<<<<< HEAD
         <div className="space-y-3 rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-4">
           <p className="text-[13px] text-[#111111]">
             {CHANNEL_LABEL[code.channel]} не привязан к вашему аккаунту. Откройте бота{" "}
             <span className="font-medium text-[#4a38f5]">@{code.botUsername}</span> и нажмите
+=======
+        <div className="space-y-3 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
+          <p className="text-[13px] text-[#111111]">
+            {CHANNEL_LABEL[code.channel]} не привязан к вашему аккаунту. Откройте бота{" "}
+            <span className="font-semibold text-[#4a38f5]">@{code.botUsername}</span> и нажмите
+>>>>>>> master
             «Start» — код придёт автоматически.
           </p>
           <a
             href={code.deepLink}
             target="_blank"
             rel="noopener noreferrer"
+<<<<<<< HEAD
             className="flex items-center justify-center gap-2 rounded-[8px] border border-sky-200 bg-sky-50 px-4 py-2 text-[13px] font-medium text-sky-700 transition-colors hover:bg-sky-100"
+=======
+            className="flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5]/10 px-4 py-2.5 text-[13px] font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/15"
+>>>>>>> master
           >
             <ExternalLink className="h-4 w-4" />
             Подключить {CHANNEL_LABEL[code.channel]} через @{code.botUsername}
           </a>
+<<<<<<< HEAD
           <p className="flex items-center gap-2 text-xs text-[#888888]">
             <Loader2 className="h-3 w-3 animate-spin" />
+=======
+          <p className="flex items-center gap-2 text-xs text-[#666666]">
+            <Loader2 className="h-3 w-3 animate-spin text-[#4a38f5]" />
+>>>>>>> master
             Ожидаем подтверждения из {CHANNEL_LABEL[code.channel]}...
           </p>
         </div>
       )}
 
       {code.stage === "sent" && (
+<<<<<<< HEAD
         <div className="space-y-1.5">
           <label htmlFor="login_code" className="block text-xs font-medium text-[#111111]">
+=======
+        <div className="space-y-2">
+          <label htmlFor="login_code" className="block text-[13px] font-medium text-[#111111]">
+>>>>>>> master
             Код подтверждения
           </label>
           <input
@@ -382,16 +434,26 @@ export function LoginForm() {
               setOtpError(null);
             }}
             className={cn(
+<<<<<<< HEAD
               "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#888888] transition-colors tabular-nums",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
               otpError !== null ? "border-rose-300" : "border-[#e5e5e5]",
+=======
+              "w-full rounded-[8px] border bg-white py-3 text-center text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+              otpError !== null ? "border-rose-500" : "border-[#e5e5e5]",
+>>>>>>> master
             )}
           />
           {otpError !== null && <p className="text-center text-xs text-rose-600">{otpError}</p>}
 
           <div className="flex justify-end">
             {code.cooldown > 0 ? (
+<<<<<<< HEAD
               <span className="text-xs text-[#888888]">
+=======
+              <span className="text-xs text-[#666666]">
+>>>>>>> master
                 Отправить повторно через {code.cooldown} с
               </span>
             ) : (
@@ -411,7 +473,11 @@ export function LoginForm() {
         type="submit"
         disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
         className={cn(
+<<<<<<< HEAD
           "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+=======
+          "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+>>>>>>> master
           "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
@@ -434,7 +500,11 @@ export function LoginForm() {
         уже знает, что забыл пароль, не должен сначала получать отказ.
       */}
       {!showRecovery && (
+<<<<<<< HEAD
         <p className="text-center text-xs text-[#666666]">
+=======
+        <p className="text-center text-[13px] text-[#666666]">
+>>>>>>> master
           <button
             type="button"
             onClick={() => void handleForgotPassword()}
@@ -446,7 +516,11 @@ export function LoginForm() {
         </p>
       )}
 
+<<<<<<< HEAD
       <p className="text-center text-xs text-[#666666]">
+=======
+      <p className="text-center text-[13px] text-[#666666]">
+>>>>>>> master
         Нет аккаунта?{" "}
         <a href="/register" className="font-medium text-[#4a38f5] hover:underline">
           Зарегистрировать компанию

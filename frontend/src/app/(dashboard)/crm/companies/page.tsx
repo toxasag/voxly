@@ -160,7 +160,11 @@ function CompaniesContent() {
             isLabelIdentifier
             onStartEdit={() => setEditing({ rowId: company.id, columnId: "name" })}
           >
+<<<<<<< HEAD
             <EntityChip name={company.name} icon={Building2} />
+=======
+            <EntityChip name={company.name} domain={company.domainName} icon={Building2} />
+>>>>>>> master
             <span className="truncate font-medium text-[#111111]">{company.name}</span>
           </RecordCellShell>
         ),

@@ -7,7 +7,7 @@ import { DealCard, type DealCardOptions } from "@/components/crm/deals/DealCard"
 import { TagPill } from "@/components/ui/tag";
 import { STAGE_COLOR_KEYS, STAGE_COLORS, stageColor, stageTagColor } from "@/components/crm/deals/stage-colors";
 import { useKanbanColumnWidth } from "@/components/crm/deals/use-kanban-column-width";
-import { useMoveDealStage, type KanbanColumnDTO, type StageColorKey } from "@/lib/api/use-deals";
+import { useCreateDeal, useMoveDealStage, type KanbanColumnDTO, type StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { useHorizontalResize } from "@/lib/utils/use-horizontal-resize";
 import { useIsMobile } from "@/lib/utils/use-is-mobile";
@@ -164,6 +164,40 @@ export function DealKanban({
   const [liveWidths, setLiveWidths] = useState<Record<string, number>>({});
   const resizeRef = useRef<{ stageId: string; startX: number; startWidth: number } | null>(null);
 
+  const createDeal = useCreateDeal();
+  const [inlineStageId, setInlineStageId] = useState<string | null>(null);
+  const [inlineTitle, setInlineTitle] = useState("");
+  const [inlineBudget, setInlineBudget] = useState("");
+
+  const handleInlineSubmit = useCallback((stageId: string) => {
+    const trimmed = inlineTitle.trim();
+    if (!trimmed) {
+      setInlineStageId(null);
+      return;
+    }
+    const numBudget = Number(inlineBudget.replace(/\D/g, "")) || 0;
+    createDeal.mutate(
+      {
+        title: trimmed,
+        budget: numBudget,
+        currency: "RUB",
+        pipeline_id: pipelineId,
+        stage_id: stageId,
+      },
+      {
+        onSuccess: (deal) => {
+          toast.success(`Сделка «${deal.title}» создана`);
+          setInlineTitle("");
+          setInlineBudget("");
+          setInlineStageId(null);
+        },
+        onError: (err) => {
+          toast.error(err.message || "Не удалось создать сделку");
+        },
+      },
+    );
+  }, [inlineTitle, inlineBudget, createDeal, pipelineId]);
+
   const startColumnResize = useCallback((event: React.PointerEvent, stageId: string, currentWidth: number) => {
     event.preventDefault();
     event.stopPropagation();
@@ -279,17 +313,78 @@ export function DealKanban({
             </div>
             {!configure && (
               <div className="p-2 pt-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const evt = new CustomEvent("open-create-deal", { detail: { stageId: col.stageId } });
-                    window.dispatchEvent(evt);
-                  }}
-                  className="flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#111111] py-1.5 px-2 rounded-[6px] hover:bg-black/[0.04] transition-colors w-full font-medium"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>New</span>
-                </button>
+                {inlineStageId === col.stageId ? (
+                  <div className="rounded-[8px] border border-[#4a38f5] bg-white p-2.5 shadow-2xs space-y-2">
+                    <input
+                      autoFocus
+                      value={inlineTitle}
+                      onChange={(e) => setInlineTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleInlineSubmit(col.stageId);
+                        } else if (e.key === "Escape") {
+                          setInlineStageId(null);
+                          setInlineTitle("");
+                          setInlineBudget("");
+                        }
+                      }}
+                      placeholder="Название сделки (Enter)..."
+                      className="w-full rounded-[4px] border border-[#e5e5e5] px-2 py-1 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={inlineBudget}
+                        onChange={(e) => setInlineBudget(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleInlineSubmit(col.stageId);
+                          } else if (e.key === "Escape") {
+                            setInlineStageId(null);
+                          }
+                        }}
+                        placeholder="Бюджет ₽"
+                        className="w-24 rounded-[4px] border border-[#e5e5e5] px-2 py-1 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                      />
+                      <div className="flex-1 flex justify-end items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInlineStageId(null);
+                            setInlineTitle("");
+                            setInlineBudget("");
+                          }}
+                          className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                          title="Отмена"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={createDeal.isPending || !inlineTitle.trim()}
+                          onClick={() => handleInlineSubmit(col.stageId)}
+                          className="rounded-[6px] bg-[#4a38f5] px-2 py-1 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 transition-colors"
+                        >
+                          {createDeal.isPending ? "..." : "Добавить"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInlineStageId(col.stageId);
+                      setInlineTitle("");
+                      setInlineBudget("");
+                    }}
+                    className="flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#111111] py-1.5 px-2 rounded-[6px] hover:bg-black/[0.04] transition-colors w-full font-medium cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Быстрая сделка</span>
+                  </button>
+                )}
               </div>
             )}
             {move.isPending && !configure && (

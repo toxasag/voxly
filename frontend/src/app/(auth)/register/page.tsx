@@ -13,7 +13,11 @@ export default function RegisterPage() {
           </p>
         </div>
 
+<<<<<<< HEAD
         <div className="rounded-2xl border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+=======
+        <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+>>>>>>> master
           <RegisterForm />
         </div>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, Loader2, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import {
@@ -13,6 +13,83 @@ import {
 } from "@/lib/api/use-notes";
 import { timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
+
+function renderInlineMarkdown(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+      return (
+        <strong key={i} className="font-semibold text-[#111111]">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+      return (
+        <code key={i} className="rounded bg-[#f5f5f5] px-1 py-0.5 font-mono text-xs text-[#111111]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+}
+
+function NoteFormattedBody({ body }: { body: string }) {
+  const lines = body.split("\n");
+  return (
+    <div className="space-y-1 text-sm leading-relaxed text-[#333333]">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (/^-\s*\[\s*\]\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^-\s*\[\s*\]\s+/, "");
+          return (
+            <div key={idx} className="flex items-start gap-2">
+              <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-[#cccccc] bg-white shadow-2xs" />
+              <span>{renderInlineMarkdown(content)}</span>
+            </div>
+          );
+        }
+        if (/^-\s*\[[xX]\]\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^-\s*\[[xX]\]\s+/, "");
+          return (
+            <div key={idx} className="flex items-start gap-2 text-[#888888]">
+              <span className="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-[#4a38f5] bg-[#4a38f5] text-white">
+                <Check className="h-2.5 w-2.5 stroke-[3]" />
+              </span>
+              <span className="line-through">{renderInlineMarkdown(content)}</span>
+            </div>
+          );
+        }
+        if (/^[-*]\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^[-*]\s+/, "");
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-1">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#666666]" />
+              <span>{renderInlineMarkdown(content)}</span>
+            </div>
+          );
+        }
+        if (/^>\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^>\s+/, "");
+          return (
+            <div key={idx} className="border-l-2 border-[#e5e5e5] pl-2.5 italic text-[#666666]">
+              {renderInlineMarkdown(content)}
+            </div>
+          );
+        }
+        if (trimmed === "") {
+          return <div key={idx} className="h-1.5" />;
+        }
+        return (
+          <div key={idx} className="break-words">
+            {renderInlineMarkdown(line)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Вкладка «Заметки» карточки записи.
@@ -175,7 +252,11 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
         </div>
       ) : notes.isError ? (
         <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-3">
+<<<<<<< HEAD
           <p className="text-sm text-rose-700">Не удалось загрузить заметки</p>
+=======
+          <p className="text-sm font-medium text-rose-800">Не удалось загрузить заметки</p>
+>>>>>>> master
           <button
             type="button"
             onClick={() => void notes.refetch()}
@@ -251,16 +332,18 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
               ) : (
                 <div>
                   {note.title !== "" && (
-                    <h4 className="mb-1 break-words text-sm font-semibold text-[#000000]">
+                    <h4 className="mb-1.5 break-words text-sm font-semibold text-[#000000]">
                       {note.title}
                     </h4>
                   )}
-                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[#333333]">
-                    {note.body}
-                  </p>
+                  <NoteFormattedBody body={note.body} />
                 </div>
               )}
+<<<<<<< HEAD
               <div className="mt-2 flex items-center gap-2 text-xs text-[#888888]">
+=======
+              <div className="mt-2.5 flex items-center gap-2 text-xs text-[#888888]">
+>>>>>>> master
                 <span>{note.createdByName ?? "Система"}</span>
                 <span>·</span>
                 <span title={new Date(note.createdAt).toLocaleString("ru-RU")}>

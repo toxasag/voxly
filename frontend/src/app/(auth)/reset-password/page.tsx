@@ -24,7 +24,11 @@ export default async function ResetPasswordPage({
           <p className="text-sm text-[#666666]">Восстановление доступа</p>
         </div>
 
+<<<<<<< HEAD
         <div className="rounded-2xl border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+=======
+        <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+>>>>>>> master
           <ResetPasswordForm token={token} />
         </div>
       </div>
