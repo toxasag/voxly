@@ -38,34 +38,34 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl"
+        className="w-full max-w-md rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-          <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+        <div className="flex items-center justify-between border-b border-[#f0f0f0] px-6 py-4">
+          <h2 className="text-sm font-semibold text-[#111111]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"
+            className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         {description && (
           <div className="px-6 py-4">
-            <p className="text-sm text-slate-400">{description}</p>
+            <p className="text-[13px] text-[#666666]">{description}</p>
           </div>
         )}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-slate-800">
+        <div className="flex items-center justify-end gap-2.5 px-6 py-4 border-t border-[#f0f0f0]">
           <button
             type="button"
             onClick={onClose}
             disabled={isPending}
-            className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-50"
+            className="rounded-[8px] px-3.5 py-1.5 text-[13px] font-medium text-[#666666] hover:text-[#111111] hover:bg-black/[0.04] transition-colors disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -74,10 +74,10 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={isPending}
             className={cn(
-              "rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+              "rounded-[8px] px-4 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               variant === "destructive"
                 ? "bg-rose-600 text-white hover:bg-rose-500"
-                : "bg-amber-500 text-slate-950 hover:bg-amber-400"
+                : "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
             )}
           >
             {isPending ? "Выполняем..." : confirmLabel}

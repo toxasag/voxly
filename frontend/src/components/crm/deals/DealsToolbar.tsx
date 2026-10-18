@@ -171,7 +171,7 @@ export function DealsToolbar(props: Props) {
         {/* Сводка «N сделок: сумма» на мобильном уходит в меню «⋯»: она отвечает на
             вопрос «сколько денег в воронке» и должна остаться доступной, но в ряду
             занимает половину ширины экрана. */}
-        <div className="hidden rounded-[8px] border border-slate-800 bg-[#fafafa] px-2.5 py-1 text-xs whitespace-nowrap md:block">
+        <div className="hidden rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs whitespace-nowrap md:block">
           <span className="font-medium text-[#111111]">{props.summaryCount}</span>
           <span className="text-[#666666]"> {dealPlural(props.summaryCount)}: </span>
           <span className="font-medium text-[#111111]">{money.format(props.summarySum)}</span>
@@ -204,9 +204,9 @@ export function DealsToolbar(props: Props) {
             <MenuSeparator />
 
             <div className="px-3.5 py-2 text-sm">
-              <span className="font-semibold text-slate-200">{props.summaryCount}</span>
-              <span className="text-slate-500"> {dealPlural(props.summaryCount)}: </span>
-              <span className="font-semibold text-amber-400">{money.format(props.summarySum)}</span>
+              <span className="font-semibold text-[#111111]">{props.summaryCount}</span>
+              <span className="text-[#666666]"> {dealPlural(props.summaryCount)}: </span>
+              <span className="font-semibold text-[#4a38f5]">{money.format(props.summarySum)}</span>
             </div>
 
             <MenuSeparator />
@@ -220,11 +220,11 @@ export function DealsToolbar(props: Props) {
               type="button"
               role="menuitem"
               onClick={(event) => { event.stopPropagation(); setAppearanceOpen((prev) => !prev); }}
-              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+              className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#111111]"
             >
-              <SlidersHorizontal className="h-4 w-4 shrink-0 text-slate-500" />
+              <SlidersHorizontal className="h-4 w-4 shrink-0 text-[#888888]" />
               <span className="flex-1 truncate">Внешний вид карточки</span>
-              <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform", appearanceOpen && "rotate-180")} />
+              <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-[#888888] transition-transform", appearanceOpen && "rotate-180")} />
             </button>
             {appearanceOpen && (
               <>
@@ -293,25 +293,25 @@ export function DealsToolbar(props: Props) {
       </div>
 
       {duplicatesOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm" onClick={() => setDuplicatesOpen(false)}>
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-              <h2 className="text-sm font-semibold text-slate-100">Возможные дубли</h2>
-              <button type="button" onClick={() => setDuplicatesOpen(false)} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300"><X className="h-4 w-4" /></button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4" onClick={() => setDuplicatesOpen(false)}>
+          <div className="w-full max-w-md rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[#f0f0f0] px-6 py-4">
+              <h2 className="text-sm font-semibold text-[#111111]">Возможные дубли</h2>
+              <button type="button" onClick={() => setDuplicatesOpen(false)} className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"><X className="h-4 w-4" /></button>
             </div>
             <div className="max-h-80 space-y-2 overflow-y-auto px-6 py-4">
               {props.duplicates.length === 0 ? (
-                <p className="py-6 text-center text-sm text-emerald-400">Дублей не найдено — все названия уникальны.</p>
+                <p className="py-6 text-center text-sm text-[#15803d]">Дублей не найдено — все названия уникальны.</p>
               ) : (
                 props.duplicates.map((group) => (
-                  <div key={group.title} className="rounded-lg border border-yellow-400/30 bg-yellow-400/5 p-3">
-                    <p className="truncate text-sm font-medium text-slate-100">{group.title}</p>
-                    <p className="mt-1 text-xs text-slate-400">{group.count} сделки на этапах: {group.stages.join(", ")}</p>
+                  <div key={group.title} className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
+                    <p className="truncate text-[13px] font-medium text-[#111111]">{group.title}</p>
+                    <p className="mt-1 text-xs text-[#666666]">{group.count} сделки на этапах: {group.stages.join(", ")}</p>
                   </div>
                 ))
               )}
             </div>
-            <p className="border-t border-slate-800 px-6 py-3 text-xs text-slate-600">Поиск сравнивает нормализованные названия сделок текущей воронки.</p>
+            <p className="border-t border-[#f0f0f0] px-6 py-3 text-xs text-[#888888]">Поиск сравнивает нормализованные названия сделок текущей воронки.</p>
           </div>
         </div>
       )}

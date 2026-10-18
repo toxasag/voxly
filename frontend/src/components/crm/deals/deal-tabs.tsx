@@ -139,15 +139,15 @@ function MessageBubble({ message }: { message: DealMessageDTO }) {
         )}
         <div className={cn(
           "rounded-xl px-3.5 py-2.5 text-sm",
-          system ? "text-center text-slate-500 italic" :
+          system ? "text-center text-[#888888] italic" :
           // Неотправленное сообщение обязано отличаться от отправленного:
           // иначе менеджер ждёт ответа на то, что до клиента не дошло.
-          failed ? "border border-rose-500/30 bg-rose-500/5 text-slate-200" :
-          outbound ? "border border-amber-500/20 bg-amber-500/10 text-slate-200" :
-          "bg-slate-800 text-slate-200"
+          failed ? "border border-rose-200 bg-rose-50 text-rose-950" :
+          outbound ? "border border-[#4a38f5]/20 bg-[#4a38f5]/5 text-[#111111]" :
+          "border border-[#e5e5e5] bg-[#fafafa] text-[#111111]"
         )}>
           <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          <p className={cn("mt-1 flex items-center gap-1.5 text-xs", failed ? "text-rose-400" : outbound ? "text-amber-400/70" : "text-slate-500")}>
+          <p className={cn("mt-1 flex items-center gap-1.5 text-xs", failed ? "text-rose-600" : outbound ? "text-[#4a38f5]/80" : "text-[#888888]")}>
             {new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.createdAt))}
             {pending && <Loader2 className="h-3 w-3 animate-spin" aria-label="Отправляется" />}
             {failed && <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />}
@@ -1235,17 +1235,17 @@ function TasksTab({ dealId }: { dealId: string }) {
           {dealTasks.map((task) => (
             <div key={task.id} className="rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-[#000000]">{task.title}</p>
+                <p className="text-sm font-medium text-[#111111]">{task.title}</p>
                 <span className={cn(
-                  "rounded-full border px-2 py-0.5 text-xs",
-                  task.status === "done" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                  task.status === "in_progress" && "border-amber-500/30 bg-amber-500/10 text-amber-400",
-                  task.status === "todo" && "border-slate-700 bg-slate-800 text-slate-400",
+                  "rounded-full border px-2 py-0.5 text-xs font-medium",
+                  task.status === "done" && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  task.status === "in_progress" && "border-amber-200 bg-amber-50 text-amber-700",
+                  task.status === "todo" && "border-slate-200 bg-slate-100 text-slate-700",
                 )}>
-                  {task.status}
+                  {task.status === "done" ? "Выполнено" : task.status === "in_progress" ? "В работе" : "К выполнению"}
                 </span>
               </div>
-              {task.dueDate && <p className="mt-1 text-xs text-slate-500">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
+              {task.dueDate && <p className="mt-1 text-xs text-[#888888]">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
             </div>
           ))}
         </div>
