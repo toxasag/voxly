@@ -31,10 +31,10 @@ export default function AdminBillingPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">
               Тарифы и биллинг
             </h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <p className="mt-1 text-sm text-[#666666]">
               Распределение арендаторов по планам и оценка выручки
             </p>
           </div>
@@ -42,7 +42,7 @@ export default function AdminBillingPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить
@@ -55,11 +55,11 @@ export default function AdminBillingPage() {
           число активных арендаторов.
         */}
         {data?.billingProvider.connected === false && (
-          <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-            <div className="text-sm text-slate-300">
-              <p className="font-medium text-sky-400">Платёжный провайдер не подключён</p>
-              <p className="mt-1 text-slate-400">
+          <div className="flex items-start gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <div className="text-sm text-[#111111]">
+              <p className="font-medium text-sky-800">Платёжный провайдер не подключён</p>
+              <p className="mt-1 text-[#666666]">
                 Суммы ниже — расчётные: прайс плана × число активных арендаторов. Фактических
                 платежей и счетов в системе пока нет.
               </p>

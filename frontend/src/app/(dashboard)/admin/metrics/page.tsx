@@ -81,7 +81,7 @@ export default function AdminMetricsPage() {
         ) : data === undefined ? null : (
           <>
             <section className="space-y-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#111111]">
                 <Users className="h-4 w-4 text-[#4a38f5]" />
                 Арендаторы и данные
               </h2>
@@ -106,7 +106,7 @@ export default function AdminMetricsPage() {
             </section>
 
             <section className="space-y-3">
-              <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-[#111111]">
                 <Database className="h-4 w-4 text-[#4a38f5]" />
                 База данных
               </h2>

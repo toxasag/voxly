@@ -174,12 +174,12 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
           ))}
         </div>
       ) : notes.isError ? (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
-          <p className="text-sm text-slate-200">Не удалось загрузить заметки</p>
+        <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-3">
+          <p className="text-sm text-rose-700">Не удалось загрузить заметки</p>
           <button
             type="button"
             onClick={() => void notes.refetch()}
-            className="mt-1.5 text-xs text-slate-300 hover:text-slate-100"
+            className="mt-1.5 text-xs text-rose-600 hover:text-rose-800"
           >
             Повторить
           </button>
@@ -260,7 +260,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                   </p>
                 </div>
               )}
-              <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+              <div className="mt-2 flex items-center gap-2 text-xs text-[#888888]">
                 <span>{note.createdByName ?? "Система"}</span>
                 <span>·</span>
                 <span title={new Date(note.createdAt).toLocaleString("ru-RU")}>
@@ -272,7 +272,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                       type="button"
                       onClick={() => startEdit(note.id, note.body, note.title)}
                       aria-label="Изменить заметку"
-                      className="rounded p-1 text-slate-600 hover:text-slate-300"
+                      className="rounded p-1 text-[#888888] hover:text-[#111111]"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
@@ -283,7 +283,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                         { onError: (error) => toast.error(error.message) },
                       )}
                       aria-label="Удалить заметку"
-                      className="rounded p-1 text-slate-600 hover:text-rose-400"
+                      className="rounded p-1 text-[#888888] hover:text-rose-600"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

@@ -537,10 +537,10 @@ export function OnboardingWizard() {
             className="space-y-6"
           >
             <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-slate-100">
+              <h2 className="text-lg font-semibold text-[#111111]">
                 What describes your business?
               </h2>
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-[#666666]">
                 We&apos;ll pre-configure the right modules for you. You can
                 always adjust later.
               </p>

@@ -101,7 +101,7 @@ function getCompanyBadgeStyle(name: string): { bg: string; text: string; initial
     { bg: "bg-emerald-600", text: "text-white" },
     { bg: "bg-amber-600", text: "text-white" },
     { bg: "bg-rose-600", text: "text-white" },
-    { bg: "bg-slate-700", text: "text-white" },
+    { bg: "bg-[#4a38f5]", text: "text-white" },
   ];
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;

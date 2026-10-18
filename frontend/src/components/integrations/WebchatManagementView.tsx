@@ -109,22 +109,22 @@ export function WebchatManagementView({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#4a38f5]/10">
-            <MessageSquareText className="h-5 w-5 text-amber-400" />
+            <MessageSquareText className="h-5 w-5 text-[#4a38f5]" />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold text-slate-100">Онлайн-чат на сайт</h1>
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+              <h1 className="text-xl font-bold text-[#111111]">Онлайн-чат на сайт</h1>
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
                 1 сайт бесплатно в тарифе
               </span>
             </div>
-            <p className="mt-1 text-sm text-slate-400">
+            <p className="mt-1 text-sm text-[#666666]">
               {summary === undefined ? (
                 "Управление сайтами и кодами виджета онлайн-чата"
               ) : (
                 <>
                   {summary.total} из {summary.quantity} сайтов подключено по тарифу
-                  <span className="text-slate-500">
+                  <span className="text-[#888888]">
                     {" "}
                     · Дополнительные сайты +500 ₽/мес за каждый
                   </span>

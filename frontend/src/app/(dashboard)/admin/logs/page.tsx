@@ -35,8 +35,8 @@ export default function AdminLogsPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">Системные логи</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">Системные логи</h1>
+            <p className="mt-1 text-sm text-[#666666]">
               Аудит действий по всем арендаторам платформы
             </p>
           </div>
@@ -44,7 +44,7 @@ export default function AdminLogsPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить
@@ -55,9 +55,9 @@ export default function AdminLogsPage() {
           Честная оговорка о содержимом: здесь аудит действий, а не поток stdout
           приложения. Логи pino пишутся в контейнер, агрегатора нет.
         */}
-        <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-          <p className="text-sm text-slate-400">
+        <div className="flex items-start gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+          <p className="text-sm text-[#666666]">
             Раздел показывает журнал действий (изменения арендаторов, установка модулей). Логи
             приложения пишутся в stdout контейнера и здесь недоступны — для них нужен внешний
             сборщик.
@@ -65,7 +65,7 @@ export default function AdminLogsPage() {
         </div>
 
         <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             type="search"
             value={action}
@@ -138,7 +138,7 @@ export default function AdminLogsPage() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between text-sm text-slate-400">
+            <div className="flex items-center justify-between text-sm text-[#666666]">
               <span>
                 {total} записей · страница {page + 1} из {pages}
               </span>
@@ -147,7 +147,7 @@ export default function AdminLogsPage() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs transition-colors hover:border-slate-600 disabled:opacity-40"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
                 >
                   Назад
                 </button>
@@ -155,7 +155,7 @@ export default function AdminLogsPage() {
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={page + 1 >= pages}
-                  className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs transition-colors hover:border-slate-600 disabled:opacity-40"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
                 >
                   Вперёд
                 </button>

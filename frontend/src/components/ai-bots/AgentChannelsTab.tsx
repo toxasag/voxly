@@ -183,17 +183,17 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
                       "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
                       isChecked
                         ? "border-[#4a38f5] bg-[#4a38f5] text-white"
-                        : "border-slate-600",
+                        : "border-[#cccccc] bg-white",
                     )}
                   >
                     {isChecked && <Check className="h-3 w-3" />}
                   </span>
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-200">
+                    <p className="truncate text-sm font-medium text-[#111111]">
                       {account.label}
                     </p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-[#666666]">
                       {CHANNEL_LABEL[account.channel] ?? account.channel} · {account.externalId}
                     </p>
                   </div>
