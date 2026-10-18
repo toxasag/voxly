@@ -406,7 +406,7 @@ export const ContactCard = memo(function ContactCard({
             <button
               type="button"
               onClick={() => onOpenCompany(contact.companyId as string)}
-              className="flex w-full items-center gap-2 rounded px-1 py-1 text-left transition-colors hover:bg-slate-800/60"
+              className="flex w-full items-center gap-2 rounded-[6px] px-1.5 py-1 text-left transition-colors hover:bg-black/[0.04]"
             >
               <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
             </button>
@@ -414,7 +414,7 @@ export const ContactCard = memo(function ContactCard({
             <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
           )
         ) : (
-          <p className="px-1 text-xs text-slate-600">Компания не указана</p>
+          <p className="px-1 text-xs text-[#888888]">Компания не указана</p>
         )}
       </RecordRelationSection>
 
@@ -426,7 +426,7 @@ export const ContactCard = memo(function ContactCard({
 
       {contact.notes !== "" && (
         <RecordRelationSection title="Описание">
-          <p className="whitespace-pre-wrap px-1 text-sm leading-relaxed text-slate-300">{contact.notes}</p>
+          <p className="whitespace-pre-wrap px-1 text-[13px] leading-relaxed text-[#111111]">{contact.notes}</p>
         </RecordRelationSection>
       )}
     </div>

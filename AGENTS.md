@@ -245,56 +245,70 @@ Usage:
 > Официальная спецификация интерфейса, дизайн-токенов, сетки и компонентов GETVOXLY.
 > Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
 
-### Color Palette & Tokens (Light Canvas)
+### Color Palette & Design Tokens (Light Canvas)
 
 | Role | Token / Value | Usage |
 |---|---|---|
 | **Canvas Background** | `#ffffff` (`--color-bg`) | Основной фон страниц, панелей, ячеек |
-| **Sidebar / Secondary** | `#fbfbfb` / `#fcfcfc` (`--color-bg-secondary`) | Сайдбар навигации, шапка, подложки |
-| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, поповеры |
-| **Border / Divider** | `#e5e5e5` (`--color-border`) | Разделители строк, границы колонок, инпутов |
-| **Text Primary** | `#000000` / `#111111` | Заголовки, значения в ячейках, основной текст |
-| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, таймстампы |
-| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), иконки в тулбарах |
-| **Primary CTA Accent** | `#4a38f5` (`--color-primary`) | Главная кнопка действия, бренд-маркер, активный таб |
+| **Sidebar / Secondary** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Сайдбар навигации, шапка, подложки, свимлейны |
+| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, поповеры, `hover:bg-black/[0.04]` |
+| **Border / Divider** | `#e5e5e5` (`--color-border`) | Разделители строк, границы карточек, колонок, инпутов |
+| **Border (hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
+| **Border (divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок и списков |
+| **Text Primary** | `#111111` / `#000000` | Заголовки, названия сделок, значения в ячейках, основной текст |
+| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, описания, таймстампы |
+| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), иконки в тулбарах, счетчики |
+| **Primary CTA Accent** | `#4a38f5` (Indigo) | Главная кнопка действия, бренд-маркер, активный таб, фокус |
+| **Primary Hover** | `#3d2ee0` | Наведение на primary-кнопки |
 | **Secondary Accent** | `#aaaaaa` (`--color-secondary`) | Второстепенные контролы, неактивные переключатели |
-| **Focus State** | `#03b2cb` | Рамка активного ввода |
+| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:ring-[#4a38f5]/20`) |
 | **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
-| Success | `emerald-600` / `#dcfce7` | Положительные статусы (closed_won, paid, ready) |
-| Danger / Destructive | `rose-600` / `#ffe4e6` | Кнопки удаления, ошибки, отказ |
-| Warning | `amber-600` / `#fef9c3` | Ожидание, несогласованно, предупреждения |
-| Info | `sky-600` / `#e0f2fe` | Информационные бейджи, ссылки |
+| Success | `emerald-600` / `#15803d` / `#dcfce7` | Положительные статусы (closed_won, paid, ready, выполнено) |
+| Danger / Destructive | `rose-600` / `#dc2626` / `#ffe4e6` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
+| Warning / Notes | `#854d0e` / `#fef08a` / `#fefce8` | Текст `#854d0e`, рамка `#fef08a`, фон `#fefce8` (чип заметки) |
+| Info / Tag | `sky-600` / `#4a38f5`/10 | Информационные бейджи, теги, ссылки |
 
 ### Typography & Spacing
-- **Шрифты:** `Inter` (текст и заголовки), `DM Mono` (числа, суммы, номера заказов).
-- **Размеры:** Display `13.3px`, H1 `13px`, Body `12px` (`text-xs`), Label `11px`, Tiny `10px`.
-- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`).
-- **Скругления:** `16px` (карточки, шторки), `8px` (кнопки), `4px` (инпуты, чипы).
+- **Шрифты:** `Inter` (UI sans-serif для текста и заголовков), `DM Mono` (моноширинный для ID, сумм, дат, валют).
+- **Размеры:** Display `13.3px`, H1 `13px`, Body `13px` / `12px` (`text-xs`), Label `11px`, Tiny `10px`.
+- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`, `h-8`).
+- **Скругления:**
+  - `16px` (`rounded-2xl` / `rounded-[16px]`): модальные окна, боковые шторки (дроверы), листы.
+  - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки.
+  - `4px` (`rounded-[4px]`): бейджи, теги, чипы заметок, чекбоксы.
+- **Анимации:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
 
 ### Component Patterns
 
 **Card:**
 ```tsx
-<div className="rounded-[16px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+<div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs hover:border-[#cccccc] transition-colors">
 ```
 
 **Primary Button:**
 ```tsx
-<Button className="bg-[#4a38f5] text-white hover:bg-[#3b2be0] transition-colors rounded-[8px] text-xs font-medium">
+<Button className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]">
   Сохранить
 </Button>
 ```
 
 **Destructive Button:**
 ```tsx
-<Button className="bg-rose-600 text-white hover:bg-rose-500 rounded-[8px] text-xs font-medium">
+<Button className="h-8 rounded-[8px] bg-rose-600 px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-rose-500">
   Удалить
 </Button>
 ```
 
 **Input:**
 ```tsx
-<Input className="border-[#e5e5e5] bg-white text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20 rounded-[4px] text-xs" />
+<Input className="h-8 rounded-[8px] border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20" />
+```
+
+**Note Chip (Twenty UX Pattern):**
+```tsx
+<div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2 text-xs text-[#854d0e] line-clamp-3">
+  {noteBody}
+</div>
 ```
 
 **Status Badge (TagPill):**
@@ -319,8 +333,8 @@ import { TagPill, type TagColor } from "@/components/ui/tag";
 ### Layout Rules
 - **Паттерн боковых шторок (Slide-Over Drawers):** Просмотр и редактирование сущностей происходят в правой боковой шторке (`Sheet.tsx`), а не в центрированных модальных окнах. Синхронизируется с URL (`?record=<id>`).
 - **Строка таблицы:** Фиксированная высота `32px`, липкие колонки чекбокса (`28px`) и первой колонки (`COLLAPSED_IDENTIFIER_WIDTH = 38px`), ресайз колонок через CSS-переменные напрямую в DOM.
-- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`).
-- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky.
+- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`), а навигация уходит в маршрут-меню и нижний бар.
+- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky к верху.
 - **Один брейкпоинт:** `md:` (768px). Структурная раскладка строится на Tailwind-префиксах, а не на `useIsMobile`.
 - **Оверлеи:** Прокрутку фона и закрытие по Escape выполняет исключительно `useOverlay` (`lib/utils/use-scroll-lock.ts`).
 

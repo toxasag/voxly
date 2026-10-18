@@ -84,7 +84,7 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
         if (!matched) form.setError("root", { type: "server", message: fields._root ?? error.message });
         return;
       }
-      form.setError("root", { type: "server", message: error instanceof Error ? error.message : "Could not create the deal" });
+      form.setError("root", { type: "server", message: error instanceof Error ? error.message : "Не удалось создать сделку" });
     }
   }, [onSubmit, form, onClose]);
 
@@ -109,14 +109,14 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
         <form onSubmit={form.handleSubmit(submit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {message(errors.root) && (
-              <div role="alert" className="flex gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+              <div role="alert" className="flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
                 {message(errors.root)}
               </div>
             )}
 
             <div className="space-y-1.5">
-              <label htmlFor="deal-title" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="deal-title" className="block text-xs font-medium text-[#666666]">
                 Название сделки *
               </label>
               <input
@@ -125,19 +125,19 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                 placeholder="Внедрение CRM"
                 {...form.register("title")}
                 className={cn(
-                  "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                  "w-full rounded-[8px] border bg-white px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors",
                   errors.title ? "border-rose-500" : "border-[#e5e5e5]",
                 )}
               />
-              {message(errors.title) && <p className="text-xs text-rose-500">{message(errors.title)}</p>}
+              {message(errors.title) && <p className="text-xs text-rose-600">{message(errors.title)}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="deal-budget" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="deal-budget" className="block text-xs font-medium text-[#666666]">
                 Сумма (RUB)
               </label>
               <div className="relative">
-                <Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
                 <input
                   id="deal-budget"
                   type="number"
@@ -145,17 +145,17 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                   placeholder="450000"
                   {...form.register("budget", { valueAsNumber: true })}
                   className={cn(
-                    "w-full rounded-[4px] border bg-white py-2 pl-10 pr-4 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none",
+                    "w-full rounded-[8px] border bg-white py-2 pl-9 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none",
                     errors.budget ? "border-rose-500" : "border-[#e5e5e5]",
                   )}
                 />
               </div>
-              {message(errors.budget) && <p className="text-xs text-rose-500">{message(errors.budget)}</p>}
+              {message(errors.budget) && <p className="text-xs text-rose-600">{message(errors.budget)}</p>}
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label htmlFor="deal-pipeline" className="block text-xs font-medium text-slate-700">
+                <label htmlFor="deal-pipeline" className="block text-xs font-medium text-[#666666]">
                   Воронка *
                 </label>
                 <select
@@ -163,7 +163,7 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                   {...form.register("pipeline_id")}
                   disabled={pipelines.isLoading}
                   className={cn(
-                    "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                    "w-full rounded-[8px] border bg-white px-3 py-2 text-[13px] text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors",
                     errors.pipeline_id ? "border-rose-500" : "border-[#e5e5e5]",
                   )}
                 >
@@ -172,10 +172,10 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                     <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
                   ))}
                 </select>
-                {message(errors.pipeline_id) && <p className="text-xs text-rose-500">{message(errors.pipeline_id)}</p>}
+                {message(errors.pipeline_id) && <p className="text-xs text-rose-600">{message(errors.pipeline_id)}</p>}
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="deal-stage" className="block text-xs font-medium text-slate-700">
+                <label htmlFor="deal-stage" className="block text-xs font-medium text-[#666666]">
                   Стадия *
                 </label>
                 <select
@@ -183,7 +183,7 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                   {...form.register("stage_id")}
                   disabled={pipelineId.length === 0 || kanban.isLoading}
                   className={cn(
-                    "w-full rounded-[4px] border bg-white px-3.5 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:opacity-50",
+                    "w-full rounded-[8px] border bg-white px-3 py-2 text-[13px] text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors disabled:opacity-50",
                     errors.stage_id ? "border-rose-500" : "border-[#e5e5e5]",
                   )}
                 >
@@ -192,21 +192,21 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                     <option key={stage.stageId} value={stage.stageId}>{stage.stageName}</option>
                   ))}
                 </select>
-                {message(errors.stage_id) && <p className="text-xs text-rose-500">{message(errors.stage_id)}</p>}
+                {message(errors.stage_id) && <p className="text-xs text-rose-600">{message(errors.stage_id)}</p>}
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label htmlFor="deal-contact" className="block text-xs font-medium text-slate-700">
+                <label htmlFor="deal-contact" className="block text-xs font-medium text-[#666666]">
                   Контакт
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
                   <select
                     id="deal-contact"
                     {...form.register("contact_id")}
-                    className="w-full rounded-[4px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-9 pr-3 text-[13px] text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors"
                   >
                     <option value="">Без контакта</option>
                     {contacts.data?.items.map((contact) => (
@@ -216,15 +216,15 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="deal-company" className="block text-xs font-medium text-slate-700">
+                <label htmlFor="deal-company" className="block text-xs font-medium text-[#666666]">
                   Компания
                 </label>
                 <div className="relative">
-                  <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
                   <select
                     id="deal-company"
                     {...form.register("company_id")}
-                    className="w-full rounded-[4px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-9 pr-3 text-[13px] text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors"
                   >
                     <option value="">Без компании</option>
                     {companies.data?.items.map((company) => (
@@ -240,16 +240,16 @@ export function CreateDealModal({ open, onClose, onSubmit, defaultPipelineId }: 
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] px-4 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
             >
               Отмена
             </button>
             <button
               type="submit"
               disabled={!isValid || isSubmitting}
-              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors cursor-pointer disabled:opacity-50"
+              className="flex h-8 items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>Создать сделку</span>
             </button>
           </div>

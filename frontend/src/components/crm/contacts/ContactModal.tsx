@@ -91,7 +91,7 @@ function messageOf(error: unknown): string | undefined {
 }
 
 const INPUT_CLASS =
-  "w-full rounded-[4px] border border-[#e5e5e5] bg-white py-2 px-3 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20";
+  "w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors";
 
 export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalProps) {
   const form = useForm<CreateContactPayload>({
@@ -179,32 +179,48 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
         <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {rootError && (
-              <div className="flex items-start gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3" role="alert">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
-                <p className="text-xs text-rose-600">{rootError}</p>
+              <div className="flex items-start gap-2.5 rounded-[8px] border border-rose-200 bg-rose-50 px-4 py-3" role="alert">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+                <p className="text-xs text-rose-700">{rootError}</p>
               </div>
             )}
 
-            {/* ФИО */}
+            {/* ФИО: обязательна только «Имя» */}
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label htmlFor="contact-last-name" className="block text-xs font-medium text-slate-700">Фамилия</label>
-                <input id="contact-last-name" type="text" placeholder="Петров" {...form.register("last_name")}
-                  className={cn(INPUT_CLASS, errors.last_name ? "border-rose-500" : "border-[#e5e5e5]")} />
-                {errors.last_name && <p className="text-xs text-rose-500">{errors.last_name.message}</p>}
+                <label htmlFor="contact-last-name" className="block text-xs font-medium text-[#666666]">Фамилия</label>
+                <input
+                  id="contact-last-name"
+                  type="text"
+                  placeholder="Петров"
+                  {...form.register("last_name")}
+                  className={cn(INPUT_CLASS, errors.last_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                />
+                {errors.last_name && <p className="text-xs text-rose-600">{errors.last_name.message}</p>}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="contact-first-name" className="block text-xs font-medium text-slate-700">Имя *</label>
-                  <input id="contact-first-name" type="text" placeholder="Иван" autoFocus {...form.register("first_name")}
-                    className={cn(INPUT_CLASS, errors.first_name ? "border-rose-500" : "border-[#e5e5e5]")} />
-                  {errors.first_name && <p className="text-xs text-rose-500">{errors.first_name.message}</p>}
+                  <label htmlFor="contact-first-name" className="block text-xs font-medium text-[#666666]">Имя *</label>
+                  <input
+                    id="contact-first-name"
+                    type="text"
+                    placeholder="Иван"
+                    autoFocus
+                    {...form.register("first_name")}
+                    className={cn(INPUT_CLASS, errors.first_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                  />
+                  {errors.first_name && <p className="text-xs text-rose-600">{errors.first_name.message}</p>}
                 </div>
                 <div className="space-y-1.5">
-                  <label htmlFor="contact-middle-name" className="block text-xs font-medium text-slate-700">Отчество</label>
-                  <input id="contact-middle-name" type="text" placeholder="Сергеевич" {...form.register("middle_name")}
-                    className={cn(INPUT_CLASS, errors.middle_name ? "border-rose-500" : "border-[#e5e5e5]")} />
-                  {errors.middle_name && <p className="text-xs text-rose-500">{errors.middle_name.message}</p>}
+                  <label htmlFor="contact-middle-name" className="block text-xs font-medium text-[#666666]">Отчество</label>
+                  <input
+                    id="contact-middle-name"
+                    type="text"
+                    placeholder="Сергеевич"
+                    {...form.register("middle_name")}
+                    className={cn(INPUT_CLASS, errors.middle_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                  />
+                  {errors.middle_name && <p className="text-xs text-rose-600">{errors.middle_name.message}</p>}
                 </div>
               </div>
             </div>
@@ -216,12 +232,17 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             />
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-email" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Mail className="h-3 w-3 text-slate-400" /> E-mail
+              <label htmlFor="contact-email" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Mail className="h-3 w-3 text-[#888888]" /> E-mail
               </label>
-              <input id="contact-email" type="text" placeholder="ivan@company.ru" {...form.register("email")}
-                className={cn(INPUT_CLASS, errors.email ? "border-rose-500" : "border-[#e5e5e5]")} />
-              {errors.email && <p className="text-xs text-rose-500">{errors.email.message}</p>}
+              <input
+                id="contact-email"
+                type="text"
+                placeholder="ivan@company.ru"
+                {...form.register("email")}
+                className={cn(INPUT_CLASS, errors.email ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.email && <p className="text-xs text-rose-600">{errors.email.message}</p>}
             </div>
 
             <SocialsInput
@@ -231,8 +252,8 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             />
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-company-id" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Building2 className="h-3 w-3 text-slate-400" /> Компания
+              <label htmlFor="contact-company-id" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Building2 className="h-3 w-3 text-[#888888]" /> Компания
               </label>
               <select
                 id="contact-company-id"
@@ -243,7 +264,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
                   const picked = companyOptions.find((company) => company.id === nextId);
                   form.setValue("company_name", picked?.name ?? "", { shouldDirty: true });
                 }}
-                className={cn(INPUT_CLASS, "border-[#e5e5e5]")}
+                className={INPUT_CLASS}
               >
                 <option value="">Без компании</option>
                 {companyOptions.map((company) => (
@@ -258,36 +279,52 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
                   className={cn(INPUT_CLASS, errors.company_name ? "border-rose-500" : "border-[#e5e5e5]")}
                 />
               )}
-              {errors.company_name && <p className="text-xs text-rose-500">{errors.company_name.message}</p>}
+              {errors.company_name && <p className="text-xs text-rose-600">{errors.company_name.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-job-title" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Briefcase className="h-3 w-3 text-slate-400" /> Должность
+              <label htmlFor="contact-job-title" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Briefcase className="h-3 w-3 text-[#888888]" /> Должность
               </label>
-              <input id="contact-job-title" type="text" placeholder="Технический директор" {...form.register("job_title")}
-                className={cn(INPUT_CLASS, errors.job_title ? "border-rose-500" : "border-[#e5e5e5]")} />
-              {errors.job_title && <p className="text-xs text-rose-500">{errors.job_title.message}</p>}
+              <input
+                id="contact-job-title"
+                type="text"
+                placeholder="Технический директор"
+                {...form.register("job_title")}
+                className={cn(INPUT_CLASS, errors.job_title ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.job_title && <p className="text-xs text-rose-600">{errors.job_title.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-linkedin" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Linkedin className="h-3 w-3 text-slate-400" /> LinkedIn
+              <label htmlFor="contact-linkedin" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Linkedin className="h-3 w-3 text-[#888888]" /> LinkedIn
               </label>
-              <input id="contact-linkedin" type="text" placeholder="https://linkedin.com/in/..." {...form.register("linkedin_link")}
-                className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-[#e5e5e5]")} />
-              {errors.linkedin_link && <p className="text-xs text-rose-500">{errors.linkedin_link.message}</p>}
+              <input
+                id="contact-linkedin"
+                type="text"
+                placeholder="https://linkedin.com/in/..."
+                {...form.register("linkedin_link")}
+                className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.linkedin_link && <p className="text-xs text-rose-600">{errors.linkedin_link.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-slate-700">Канал связи</span>
+              <span className="block text-xs font-medium text-[#666666]">Канал связи</span>
               <div className="flex flex-wrap gap-1.5">
                 {CHANNELS.map(({ value, icon: Icon, label }) => (
-                  <button key={value} type="button" onClick={() => form.setValue("channel", value, { shouldValidate: true })}
-                    className={cn("flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => form.setValue("channel", value, { shouldValidate: true })}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
                       channel === value
                         ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5]")}>
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]"
+                    )}
+                  >
                     <Icon className="h-3.5 w-3.5" />{label}
                   </button>
                 ))}
@@ -295,40 +332,67 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             </div>
 
             <fieldset className="space-y-3 rounded-[8px] border border-[#e5e5e5] p-3.5">
-              <legend className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Tag className="h-3 w-3 text-slate-400" /> Дополнительные поля
+              <legend className="flex items-center gap-1.5 text-xs font-medium text-[#666666] px-1">
+                <Tag className="h-3 w-3 text-[#888888]" /> Дополнительные поля
               </legend>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="contact-cf-department" className="text-xs text-[#666666]">Отдел</label>
-                  <input id="contact-cf-department" type="text" placeholder="Разработка" {...form.register("custom_fields.department")}
-                    className={INPUT_CLASS} />
+                  <label htmlFor="contact-cf-department" className="text-xs text-[#888888]">Отдел</label>
+                  <input
+                    id="contact-cf-department"
+                    type="text"
+                    placeholder="Разработка"
+                    {...form.register("custom_fields.department")}
+                    className={INPUT_CLASS}
+                  />
                 </div>
                 <div className="space-y-1.5">
-                  <label htmlFor="contact-cf-source" className="text-xs text-[#666666]">Источник</label>
-                  <input id="contact-cf-source" type="text" placeholder="Рекомендация" {...form.register("custom_fields.source")}
-                    className={INPUT_CLASS} />
+                  <label htmlFor="contact-cf-source" className="text-xs text-[#888888]">Источник</label>
+                  <input
+                    id="contact-cf-source"
+                    type="text"
+                    placeholder="Рекомендация"
+                    {...form.register("custom_fields.source")}
+                    className={INPUT_CLASS}
+                  />
                 </div>
               </div>
             </fieldset>
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <FileText className="h-3 w-3 text-slate-400" /> Описание
+              <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <FileText className="h-3 w-3 text-[#888888]" /> Описание
               </label>
-              <textarea id="contact-notes" rows={2} placeholder="Внутренние заметки..." {...form.register("notes")}
-                className={cn(INPUT_CLASS, "resize-none")} />
+              <textarea
+                id="contact-notes"
+                rows={2}
+                placeholder="Внутренние заметки..."
+                {...form.register("notes")}
+                className={cn(INPUT_CLASS, "resize-none")}
+              />
             </div>
           </div>
 
           <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">
-            <button type="button" onClick={onClose}
-              className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 rounded-[8px] border border-[#e5e5e5] px-4 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+            >
               Отмена
             </button>
-            <button type="submit" disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-[8px] px-5 py-2 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3b2be0] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
-              {isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Сохраняем...</> : (initial ? "Сохранить" : "Создать контакт")}
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex h-8 items-center gap-2 rounded-[8px] px-4 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3d2ee0] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Сохраняем...
+                </>
+              ) : (
+                initial ? "Сохранить" : "Создать контакт"
+              )}
             </button>
           </div>
         </form>

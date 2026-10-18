@@ -72,7 +72,7 @@ export function RecordDetailShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-end bg-slate-950/60"
+      className="fixed inset-0 z-50 flex items-start justify-end bg-black/30 backdrop-blur-[1px]"
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
       role="dialog"
       aria-modal="true"
@@ -84,22 +84,22 @@ export function RecordDetailShell({
         телефоне карточка занимает весь экран.
       */}
       <div
-        className="relative flex h-full w-full flex-col bg-slate-900 shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-slate-800"
+        className="relative flex h-full w-full flex-col bg-white shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-[#e5e5e5]"
         style={{ ["--side-panel-width" as string]: `${width}px` }}
       >
         <button
           type="button"
           aria-label="Изменить ширину панели"
           onPointerDown={startResize}
-          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/20 md:block"
+          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/10 md:block"
         />
         {/* Summary card: аватар, имя, «добавлено N назад» — их ShowPageSummaryCard. */}
-        <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3 bg-white">
           <div className="flex min-w-0 items-center gap-3">
             <EntityChip name={name} size="md" />
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-slate-100">{name}</h2>
-              <p className="truncate text-xs text-slate-500">
+              <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+              <p className="truncate text-xs text-[#888888]">
                 {subtitle !== undefined && subtitle !== "" ? `${subtitle} · ` : ""}
                 Добавлено {timeAgo(createdAt)}
               </p>

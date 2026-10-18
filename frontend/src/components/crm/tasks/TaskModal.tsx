@@ -39,9 +39,9 @@ interface TaskModalProps {
 }
 
 const PRIORITIES = [
-  { value: "high" as const, label: "Высокий", color: "border-rose-500 bg-rose-50 text-rose-700" },
-  { value: "medium" as const, label: "Средний", color: "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]" },
-  { value: "low" as const, label: "Низкий", color: "border-[#e5e5e5] bg-[#fafafa] text-[#666666]" },
+  { value: "high" as const, label: "Высокий", color: "border-rose-200 bg-rose-50 text-rose-700" },
+  { value: "medium" as const, label: "Средний", color: "border-amber-200 bg-amber-50 text-amber-700" },
+  { value: "low" as const, label: "Низкий", color: "border-slate-200 bg-slate-50 text-slate-700" },
 ];
 
 const STATUSES = [
@@ -62,7 +62,7 @@ const EMPTY: CreateTaskPayload = {
 };
 
 const INPUT_CLASS =
-  "w-full rounded-[4px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20";
+  "w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors";
 
 function message(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
@@ -169,14 +169,14 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
         <form onSubmit={form.handleSubmit(submit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             {message(errors.root) && (
-              <div role="alert" className="flex gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+              <div role="alert" className="flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
                 {message(errors.root)}
               </div>
             )}
 
             <div className="space-y-1.5">
-              <label htmlFor="task-title" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="task-title" className="block text-xs font-medium text-[#666666]">
                 Название *
               </label>
               <input
@@ -186,11 +186,11 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                 {...form.register("title")}
                 className={cn(INPUT_CLASS, errors.title ? "border-rose-500" : "border-[#e5e5e5]")}
               />
-              {message(errors.title) && <p className="text-xs text-rose-500">{message(errors.title)}</p>}
+              {message(errors.title) && <p className="text-xs text-rose-600">{message(errors.title)}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="task-description" className="block text-xs font-medium text-slate-700">
+              <label htmlFor="task-description" className="block text-xs font-medium text-[#666666]">
                 Описание
               </label>
               <textarea
@@ -204,8 +204,8 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <span className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                  <AlertCircle className="h-3 w-3 text-slate-400" />
+                <span className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <AlertCircle className="h-3 w-3 text-[#888888]" />
                   Приоритет
                 </span>
                 <div className="flex gap-1.5">
@@ -215,10 +215,10 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                       type="button"
                       onClick={() => form.setValue("priority", priority.value, { shouldValidate: true })}
                       className={cn(
-                        "flex-1 rounded-[6px] border px-2 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                        "flex-1 rounded-[8px] border px-2 py-1.5 text-xs font-medium transition-colors cursor-pointer",
                         form.watch("priority") === priority.value
                           ? priority.color
-                          : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5]",
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa]",
                       )}
                     >
                       {priority.label}
@@ -227,8 +227,8 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="task-due" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                  <Calendar className="h-3 w-3 text-slate-400" />
+                <label htmlFor="task-due" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <Calendar className="h-3 w-3 text-[#888888]" />
                   Срок
                 </label>
                 <input
@@ -237,14 +237,14 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                   {...form.register("due_date")}
                   className={cn(INPUT_CLASS, errors.due_date ? "border-rose-500" : "border-[#e5e5e5]")}
                 />
-                {message(errors.due_date) && <p className="text-xs text-rose-500">{message(errors.due_date)}</p>}
+                {message(errors.due_date) && <p className="text-xs text-rose-600">{message(errors.due_date)}</p>}
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label htmlFor="task-assignee" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                  <User className="h-3 w-3 text-slate-400" />
+                <label htmlFor="task-assignee" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                  <User className="h-3 w-3 text-[#888888]" />
                   Ответственный *
                 </label>
                 <select
@@ -257,10 +257,10 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                     <option key={user.id} value={user.id}>{user.fullName}</option>
                   ))}
                 </select>
-                {message(errors.assignee_id) && <p className="text-xs text-rose-500">{message(errors.assignee_id)}</p>}
+                {message(errors.assignee_id) && <p className="text-xs text-rose-600">{message(errors.assignee_id)}</p>}
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="task-status" className="block text-xs font-medium text-slate-700">
+                <label htmlFor="task-status" className="block text-xs font-medium text-[#666666]">
                   Статус
                 </label>
                 <select id="task-status" {...form.register("status")} className={INPUT_CLASS}>
@@ -272,8 +272,8 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
             </div>
 
             <div className="space-y-1.5">
-              <label htmlFor="task-link-type" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <Link2 className="h-3 w-3 text-slate-400" />
+              <label htmlFor="task-link-type" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Link2 className="h-3 w-3 text-[#888888]" />
                 Связанная запись
               </label>
               <div className="grid grid-cols-2 gap-4">
@@ -305,7 +305,7 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                   </select>
                 )}
               </div>
-              {message(errors.linked_entity_id) && <p className="text-xs text-rose-500">{message(errors.linked_entity_id)}</p>}
+              {message(errors.linked_entity_id) && <p className="text-xs text-rose-600">{message(errors.linked_entity_id)}</p>}
             </div>
           </div>
 
@@ -313,16 +313,16 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[8px] border border-[#e5e5e5] px-4 py-2 text-xs font-medium text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] px-4 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
             >
               Отмена
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors cursor-pointer disabled:opacity-50"
+              className="flex h-8 items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white hover:bg-[#3d2ee0] transition-colors cursor-pointer disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               <span>{initial === undefined ? "Создать задачу" : "Сохранить"}</span>
             </button>
           </div>
