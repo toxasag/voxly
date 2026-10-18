@@ -7,7 +7,6 @@ import {
   Check,
   Code2,
   Copy,
-  ExternalLink,
   Globe,
   Loader2,
   MessageSquareText,
@@ -17,7 +16,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { ChannelAccountDTO, ChannelSummaryDTO } from "@/lib/api/use-channels";
 import {
   useCreateChannelAccount,

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { X, Handshake, Banknote, User, Building2, Loader2, AlertCircle } from "lucide-react";
+import { Handshake, Banknote, User, Building2, Loader2, AlertCircle } from "lucide-react";
 import { createDealSchema, type CreateDealPayload } from "@/schemas/deal.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
 import { usePipelines, useKanban } from "@/lib/api/use-deals";

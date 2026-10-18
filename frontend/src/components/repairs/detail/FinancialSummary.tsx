@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { Banknote, Receipt, TrendingUp, TrendingDown, Wrench, Package } from "lucide-react";
+import { Banknote, Receipt, TrendingUp, Wrench, Package } from "lucide-react";
 import type { WorkItem, PartItem } from "@/lib/repairs/repairs.types";
 import { cn } from "@/lib/utils";
 
