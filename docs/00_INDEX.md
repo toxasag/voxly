@@ -25,7 +25,8 @@
 ├── 01_02_DATABASE_SCHEMA.md     ← All 27 tables, relations, JSONB fields, GIN indexes, triggers, RLS
 ├── 01_03_SECURITY_RBAC.md       ← Roles, permissions, authenticate/authorize plugins, JWT flow
 ├── 01_04_DATABASE_MIGRATIONS.md ← Раннер миграций, порядок работы, baseline, откат
-└── 01_05_UI_CONVENTIONS.md      ← Брейкпоинт 768px, структура на CSS против поведения на хуке, оверлеи
+├── 01_05_UI_CONVENTIONS.md      ← Брейкпоинт 768px, структура на CSS против поведения на хуке, оверлеи
+└── 01_06_DESIGN_SYSTEM.md       ← Спецификация дизайн-системы Twenty CRM / Table, токены, матрица аудита
 ```
 
 ## 02 — PRD & Modules (`02_PRD_AND_MODULES/`)
@@ -63,6 +64,7 @@
 04_PROJECT_STATE/
 ├── ROADMAP_TASKS.md             ← Atomic full-stack task checklist (Frontend-First)
 ├── MILESTONES.md                ← Milestone definitions, dates, completion criteria
+├── DESIGN_SYSTEM_AUDIT_TWENTY.md ← Аудит соответствия дизайн-системе Twenty CRM (Table)
 └── CHANGELOG.md                 ← Итерации изменений (Keep a Changelog)
 ```
 

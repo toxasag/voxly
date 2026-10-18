@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
+import { Sheet } from "@/components/ui/sheet";
 import { ContactCard } from "@/components/crm/contacts/ContactCard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
@@ -512,7 +514,20 @@ function ContactsPageContent() {
         </div>
       )}
 
-      <ContactModal open={createOpen} onClose={() => setCreateOpen(false)} onSubmit={handleCreate} />
+      <Sheet open={createOpen} onClose={() => setCreateOpen(false)} resizable>
+        <DrawerCreateContact
+          onBack={() => setCreateOpen(false)}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => {
+            setCreateOpen(false);
+            void query.refetch();
+          }}
+          onSuccess={() => {
+            setCreateOpen(false);
+            void query.refetch();
+          }}
+        />
+      </Sheet>
 
       {editTarget !== null && (
         <ContactModal open onClose={() => setEditTarget(null)} onSubmit={handleUpdate} initial={editInitialValues} />
