@@ -44,9 +44,9 @@ const PRIORITY_LABELS: Record<TaskPriority, string> = {
 };
 
 const PRIORITY_CLASSES: Record<TaskPriority, string> = {
-  high: "border-rose-500/30 bg-rose-500/10 text-rose-400",
-  medium: "border-amber-500/30 bg-amber-500/10 text-amber-400",
-  low: "border-slate-700 bg-slate-800 text-slate-400",
+  high: "border-rose-200 bg-rose-50 text-rose-700",
+  medium: "border-amber-200 bg-amber-50 text-amber-700",
+  low: "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
 };
 
 function formatDue(value: string | null): string {
@@ -104,8 +104,8 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
       <article
         key={task.id}
         className={cn(
-          "group flex items-start gap-2 rounded-lg border border-slate-800 bg-slate-950/40 p-3",
-          done && "opacity-60",
+          "group flex items-start gap-2.5 rounded-[8px] border border-[#e5e5e5] bg-white p-3 transition-colors hover:border-[#cccccc]",
+          done && "opacity-60 bg-[#fafafa]",
         )}
       >
         <button
@@ -116,18 +116,18 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
             { onError: (error) => toast.error(error.message) },
           )}
           aria-label={done ? "Вернуть в работу" : "Завершить задачу"}
-          className={cn("mt-0.5 shrink-0", done ? "text-emerald-400" : "text-slate-600 hover:text-emerald-400")}
+          className={cn("mt-0.5 shrink-0", done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]")}
         >
           {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
         </button>
 
         <div className="min-w-0 flex-1">
-          <p className={cn("text-sm", done ? "text-slate-500 line-through" : "text-slate-200")}>{task.title}</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span className={cn("rounded-full border px-1.5 py-0.5", PRIORITY_CLASSES[task.priority])}>
+          <p className={cn("text-[13px] font-medium leading-snug", done ? "text-[#888888] line-through" : "text-[#111111]")}>{task.title}</p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[#888888]">
+            <span className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium", PRIORITY_CLASSES[task.priority])}>
               {PRIORITY_LABELS[task.priority]}
             </span>
-            <span className={cn("inline-flex items-center gap-1", task.isOverdue && "font-medium text-rose-400")}>
+            <span className={cn("inline-flex items-center gap-1", task.isOverdue && "font-medium text-rose-600")}>
               <Calendar className="h-3 w-3" />{formatDue(task.dueDate)}
             </span>
             {assignee !== undefined && <UserAvatar user={assignee} size="sm" />}
@@ -139,7 +139,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
             type="button"
             onClick={() => remove.mutate(task.id, { onError: (error) => toast.error(error.message) })}
             aria-label="Удалить задачу"
-            className="shrink-0 rounded p-1 text-slate-600 opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
+            className="shrink-0 rounded p-1 text-[#888888] opacity-0 transition-opacity hover:text-rose-600 group-hover:opacity-100"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -152,7 +152,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
     <div className="space-y-3 p-4">
       {canWrite && (
         composing ? (
-          <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-950/60 p-2">
+          <div className="space-y-2 rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
             <input
               value={title}
               autoFocus
@@ -168,14 +168,14 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                 }
               }}
               placeholder="Что нужно сделать?"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
             <div className="flex items-center gap-2">
               <select
                 aria-label="Приоритет"
                 value={priority}
                 onChange={(event) => setPriority(event.target.value as TaskPriority)}
-                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               >
                 <option value="high">Высокий</option>
                 <option value="medium">Средний</option>
@@ -186,13 +186,13 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                 aria-label="Срок"
                 value={dueDate}
                 onChange={(event) => setDueDate(event.target.value)}
-                className="rounded border border-slate-700 bg-slate-950 px-1.5 py-1 text-xs text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               />
               <span className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => { setComposing(false); setTitle(""); }}
-                  className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                  className="rounded-[8px] px-2.5 py-1 text-xs text-[#666666] hover:text-[#111111]"
                 >
                   Отмена
                 </button>
@@ -200,7 +200,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
                   type="button"
                   onClick={submit}
                   disabled={create.isPending || title.trim() === "" || user === null}
-                  className="inline-flex items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
                 >
                   {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                   Создать
@@ -212,7 +212,7 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
           <button
             type="button"
             onClick={() => setComposing(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800"
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
           >
             <Plus className="h-3.5 w-3.5" />
             Новая задача
@@ -227,12 +227,12 @@ export function RecordTasksTab({ targetType, targetId, canWrite = true }: Record
           ))}
         </div>
       ) : tasks.isError ? (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
-          <p className="text-sm text-slate-200">Не удалось загрузить задачи</p>
+        <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+          <p className="text-sm font-medium text-rose-800">Не удалось загрузить задачи</p>
           <button
             type="button"
             onClick={() => void tasks.refetch()}
-            className="mt-1.5 text-xs text-slate-300 hover:text-slate-100"
+            className="mt-1.5 text-xs font-medium text-rose-700 hover:text-rose-900"
           >
             Повторить
           </button>

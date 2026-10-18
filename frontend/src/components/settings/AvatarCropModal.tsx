@@ -243,14 +243,14 @@ export function AvatarCropModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[0.5px] p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="crop-title"
     >
-      <div className="w-full max-w-sm rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3.5">
-          <h2 id="crop-title" className="text-sm font-semibold text-slate-100">
+      <div className="w-full max-w-sm rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
+          <h2 id="crop-title" className="text-sm font-semibold text-[#111111]">
             Выберите область фото
           </h2>
           <button
@@ -258,13 +258,13 @@ export function AvatarCropModal({
             onClick={handleCancel}
             disabled={isPending}
             aria-label="Закрыть"
-            className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
+            className="rounded-[6px] p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors disabled:opacity-40"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="p-5">
+        <div className="p-4">
           {/* Область предпросмотра с круглой рамкой */}
           <div
             className={cn(
@@ -306,26 +306,24 @@ export function AvatarCropModal({
             />
 
             {/*
-              Затемнение вне круга. Реализовано box-shadow с огромным разлётом
-              внутрь: это один элемент вместо четырёх накладок, и он не
-              перехватывает события указателя.
+              Затемнение вне круга.
             */}
             <div
-              className="pointer-events-none absolute inset-0 rounded-full border-2 border-amber-500/80"
-              style={{ boxShadow: "0 0 0 9999px rgba(2, 6, 23, 0.72)" }}
+              className="pointer-events-none absolute inset-0 rounded-full border-2 border-[#4a38f5]"
+              style={{ boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.6)" }}
             />
           </div>
 
           {/* Масштаб */}
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-3 flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => applyZoom(zoom - 0.2)}
               disabled={isPending || zoom <= MIN_ZOOM}
               aria-label="Уменьшить"
-              className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+              className="rounded-[6px] p-1 text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-30"
             >
-              <Minus className="h-4 w-4" />
+              <Minus className="h-3.5 w-3.5" />
             </button>
 
             <input
@@ -337,7 +335,7 @@ export function AvatarCropModal({
               disabled={isPending}
               onChange={(event) => applyZoom(Number(event.target.value))}
               aria-label="Масштаб"
-              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-700 accent-amber-500 disabled:opacity-40"
+              className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-[#e5e5e5] accent-[#4a38f5] disabled:opacity-40"
             />
 
             <button
@@ -345,28 +343,28 @@ export function AvatarCropModal({
               onClick={() => applyZoom(zoom + 0.2)}
               disabled={isPending || zoom >= MAX_ZOOM}
               aria-label="Увеличить"
-              className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-30"
+              className="rounded-[6px] p-1 text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-30"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
 
-          <p className="mt-2 text-center text-xs text-slate-500">
+          <p className="mt-2 text-center text-[11px] text-[#888888]">
             Перетащите фото мышью, масштаб — ползунком или колесом
           </p>
 
           {error !== null && (
-            <p className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/5 p-2.5 text-xs text-rose-400">
+            <p className="mt-2.5 rounded-[8px] border border-rose-500/20 bg-rose-500/5 p-2 text-xs text-rose-600">
               {error}
             </p>
           )}
 
-          <div className="mt-4 flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+          <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-3">
             <button
               type="button"
               onClick={handleCancel}
               disabled={isPending}
-              className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40"
+              className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors disabled:opacity-40"
             >
               Отмена
             </button>
@@ -374,16 +372,16 @@ export function AvatarCropModal({
               type="button"
               onClick={() => void handleApply()}
               disabled={isPending}
-              className="flex items-center gap-2 rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isPending ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   Сохраняем...
                 </>
               ) : (
                 <>
-                  <Check className="h-4 w-4" />
+                  <Check className="h-3.5 w-3.5" />
                   Применить
                 </>
               )}

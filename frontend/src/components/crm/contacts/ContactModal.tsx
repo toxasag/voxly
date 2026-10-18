@@ -28,6 +28,8 @@ import { useOverlay } from "@/lib/utils/use-scroll-lock";
 // строкой у контакта и в списке компаний не появлялось.
 // ---------------------------------------------------------------------------
 
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+
 interface ContactModalProps {
   open: boolean;
   onClose: () => void;
@@ -89,7 +91,7 @@ function messageOf(error: unknown): string | undefined {
 }
 
 const INPUT_CLASS =
-  "w-full rounded-lg border bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20";
+  "w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors";
 
 export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalProps) {
   const form = useForm<CreateContactPayload>({
@@ -98,8 +100,6 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
     mode: "onChange",
   });
 
-  // Каталог компаний для выбора существующей. Загружается только при открытии:
-  // список не нужен, пока форма закрыта.
   const companies = useCompanies({ limit: 100 });
 
   const handleSubmit = useCallback(
@@ -109,9 +109,6 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
         form.reset(EMPTY_VALUES);
         onClose();
       } catch (error) {
-        // The backend re-validates every payload. Its field-level `details` are
-        // mapped onto the matching inputs so the user sees the problem in place
-        // rather than as an opaque toast.
         if (error instanceof ApiClientError && error.isValidationError) {
           const fields = error.fieldErrors();
           let matched = false;
@@ -144,22 +141,11 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
     [onSubmit, form, onClose],
   );
 
-  const backdrop = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
   useOverlay(open, { onEscape: onClose });
 
   useEffect(() => {
     if (open) form.reset(initial ?? EMPTY_VALUES);
   }, [open, form, initial]);
-
 
   const phones = form.watch("phones") ?? [];
   const socials = form.watch("socials") ?? [];
@@ -176,158 +162,241 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
   const rootError = errors.root?.message;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4" onClick={backdrop}>
-      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-slate-800 bg-slate-900 shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-900 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10"><User className="h-4 w-4 text-amber-400" /></div>
-            <div><h2 className="text-sm font-semibold text-slate-100">{initial ? "Изменить контакт" : "Новый контакт"}</h2><p className="text-xs text-slate-500">{initial ? "Обновите данные контакта" : "Добавьте контакт в CRM"}</p></div>
+    <Sheet open={open} onClose={onClose} width="w-[580px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+            <User className="h-4 w-4" />
           </div>
-          <button type="button" onClick={onClose} aria-label="Закрыть" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"><X className="h-4 w-4" /></button>
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">{initial ? "Изменить контакт" : "Новый контакт"}</h2>
+            <p className="text-xs text-[#666666]">{initial ? "Обновите данные контакта" : "Добавьте контакт в CRM"}</p>
+          </div>
         </div>
+      </SheetHeader>
 
-        <form onSubmit={form.handleSubmit(handleSubmit)} className="p-6 space-y-4">
-          {rootError && (
-            <div className="flex items-start gap-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3" role="alert">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />
-              <p className="text-xs text-rose-300">{rootError}</p>
-            </div>
-          )}
-
-          {/* ФИО: обязательна только «Имя» — звёздочка стоит лишь на нём. */}
-          <div className="space-y-2">
-            <div className="space-y-2">
-              <label htmlFor="contact-last-name" className="block text-xs font-medium text-slate-400">Фамилия</label>
-              <input id="contact-last-name" type="text" placeholder="Петров" {...form.register("last_name")}
-                className={cn(INPUT_CLASS, errors.last_name ? "border-rose-500" : "border-slate-700")} />
-              {errors.last_name && <p className="text-xs text-rose-400">{errors.last_name.message}</p>}
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label htmlFor="contact-first-name" className="block text-xs font-medium text-slate-400">Имя *</label>
-                <input id="contact-first-name" type="text" placeholder="Иван" autoFocus {...form.register("first_name")}
-                  className={cn(INPUT_CLASS, errors.first_name ? "border-rose-500" : "border-slate-700")} />
-                {errors.first_name && <p className="text-xs text-rose-400">{errors.first_name.message}</p>}
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {rootError && (
+              <div className="flex items-start gap-2.5 rounded-[8px] border border-rose-200 bg-rose-50 px-4 py-3" role="alert">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+                <p className="text-xs text-rose-700">{rootError}</p>
               </div>
-              <div className="space-y-2">
-                <label htmlFor="contact-middle-name" className="block text-xs font-medium text-slate-400">Отчество</label>
-                <input id="contact-middle-name" type="text" placeholder="Сергеевич" {...form.register("middle_name")}
-                  className={cn(INPUT_CLASS, errors.middle_name ? "border-rose-500" : "border-slate-700")} />
-                {errors.middle_name && <p className="text-xs text-rose-400">{errors.middle_name.message}</p>}
-              </div>
-            </div>
-          </div>
-
-          <PhonesInput
-            value={phones}
-            onChange={(next) => form.setValue("phones", next, { shouldValidate: true, shouldDirty: true })}
-            error={messageOf(errors.phones)}
-          />
-
-          <div className="space-y-2">
-            <label htmlFor="contact-email" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><Mail className="h-3 w-3" /> E-mail</label>
-            <input id="contact-email" type="text" placeholder="ivan@company.ru" {...form.register("email")}
-              className={cn(INPUT_CLASS, errors.email ? "border-rose-500" : "border-slate-700")} />
-            {errors.email && <p className="text-xs text-rose-400">{errors.email.message}</p>}
-          </div>
-
-          <SocialsInput
-            value={socials}
-            onChange={(next) => form.setValue("socials", next, { shouldValidate: true, shouldDirty: true })}
-            error={messageOf(errors.socials)}
-          />
-
-          {/* Компания: выбор существующей или ввод названия. Название без выбора
-              создаёт компанию на бэкенде — иначе она не попадала в список. */}
-          <div className="space-y-2">
-            <label htmlFor="contact-company-id" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><Building2 className="h-3 w-3" /> Компания</label>
-            <select
-              id="contact-company-id"
-              value={companyId}
-              onChange={(event) => {
-                const nextId = event.target.value;
-                form.setValue("company_id", nextId, { shouldValidate: true, shouldDirty: true });
-                // Название синхронизируется с выбором: сервер приведёт его к
-                // названию компании, и расхождение на экране сбивало бы с толку.
-                const picked = companyOptions.find((company) => company.id === nextId);
-                form.setValue("company_name", picked?.name ?? "", { shouldDirty: true });
-              }}
-              className={cn(INPUT_CLASS, "border-slate-700")}
-            >
-              <option value="">Без компании</option>
-              {companyOptions.map((company) => (
-                <option key={company.id} value={company.id}>{company.name}</option>
-              ))}
-            </select>
-            {companyId === "" && (
-              <input
-                type="text"
-                placeholder="Или введите название новой компании"
-                {...form.register("company_name")}
-                className={cn(INPUT_CLASS, errors.company_name ? "border-rose-500" : "border-slate-700")}
-              />
             )}
-            {errors.company_name && <p className="text-xs text-rose-400">{errors.company_name.message}</p>}
-          </div>
 
-          <div className="space-y-2">
-            <label htmlFor="contact-job-title" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><Briefcase className="h-3 w-3" /> Должность</label>
-            <input id="contact-job-title" type="text" placeholder="Технический директор" {...form.register("job_title")}
-              className={cn(INPUT_CLASS, errors.job_title ? "border-rose-500" : "border-slate-700")} />
-            {errors.job_title && <p className="text-xs text-rose-400">{errors.job_title.message}</p>}
-          </div>
+            {/* ФИО: обязательна только «Имя» */}
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label htmlFor="contact-last-name" className="block text-xs font-medium text-[#666666]">Фамилия</label>
+                <input
+                  id="contact-last-name"
+                  type="text"
+                  placeholder="Петров"
+                  {...form.register("last_name")}
+                  className={cn(INPUT_CLASS, errors.last_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                />
+                {errors.last_name && <p className="text-xs text-rose-600">{errors.last_name.message}</p>}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label htmlFor="contact-first-name" className="block text-xs font-medium text-[#666666]">Имя *</label>
+                  <input
+                    id="contact-first-name"
+                    type="text"
+                    placeholder="Иван"
+                    autoFocus
+                    {...form.register("first_name")}
+                    className={cn(INPUT_CLASS, errors.first_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                  />
+                  {errors.first_name && <p className="text-xs text-rose-600">{errors.first_name.message}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="contact-middle-name" className="block text-xs font-medium text-[#666666]">Отчество</label>
+                  <input
+                    id="contact-middle-name"
+                    type="text"
+                    placeholder="Сергеевич"
+                    {...form.register("middle_name")}
+                    className={cn(INPUT_CLASS, errors.middle_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                  />
+                  {errors.middle_name && <p className="text-xs text-rose-600">{errors.middle_name.message}</p>}
+                </div>
+              </div>
+            </div>
 
-          <div className="space-y-2">
-            <label htmlFor="contact-linkedin" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><Linkedin className="h-3 w-3" /> LinkedIn</label>
-            <input id="contact-linkedin" type="text" placeholder="https://linkedin.com/in/..." {...form.register("linkedin_link")}
-              className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-slate-700")} />
-            {errors.linkedin_link && <p className="text-xs text-rose-400">{errors.linkedin_link.message}</p>}
-          </div>
+            <PhonesInput
+              value={phones}
+              onChange={(next) => form.setValue("phones", next, { shouldValidate: true, shouldDirty: true })}
+              error={messageOf(errors.phones)}
+            />
 
-          <div className="space-y-2">
-            <span className="block text-xs font-medium text-slate-400">Канал связи</span>
-            <div className="flex flex-wrap gap-1.5">
-              {CHANNELS.map(({ value, icon: Icon, label }) => (
-                <button key={value} type="button" onClick={() => form.setValue("channel", value, { shouldValidate: true })}
-                  className={cn("flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", channel === value ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-slate-700 bg-slate-950 text-slate-500 hover:border-slate-600 hover:text-slate-300")}>
-                  <Icon className="h-3.5 w-3.5" />{label}</button>
-              ))}
+            <div className="space-y-1.5">
+              <label htmlFor="contact-email" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Mail className="h-3 w-3 text-[#888888]" /> E-mail
+              </label>
+              <input
+                id="contact-email"
+                type="text"
+                placeholder="ivan@company.ru"
+                {...form.register("email")}
+                className={cn(INPUT_CLASS, errors.email ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.email && <p className="text-xs text-rose-600">{errors.email.message}</p>}
+            </div>
+
+            <SocialsInput
+              value={socials}
+              onChange={(next) => form.setValue("socials", next, { shouldValidate: true, shouldDirty: true })}
+              error={messageOf(errors.socials)}
+            />
+
+            <div className="space-y-1.5">
+              <label htmlFor="contact-company-id" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Building2 className="h-3 w-3 text-[#888888]" /> Компания
+              </label>
+              <select
+                id="contact-company-id"
+                value={companyId}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  form.setValue("company_id", nextId, { shouldValidate: true, shouldDirty: true });
+                  const picked = companyOptions.find((company) => company.id === nextId);
+                  form.setValue("company_name", picked?.name ?? "", { shouldDirty: true });
+                }}
+                className={INPUT_CLASS}
+              >
+                <option value="">Без компании</option>
+                {companyOptions.map((company) => (
+                  <option key={company.id} value={company.id}>{company.name}</option>
+                ))}
+              </select>
+              {companyId === "" && (
+                <input
+                  type="text"
+                  placeholder="Или введите название новой компании"
+                  {...form.register("company_name")}
+                  className={cn(INPUT_CLASS, errors.company_name ? "border-rose-500" : "border-[#e5e5e5]")}
+                />
+              )}
+              {errors.company_name && <p className="text-xs text-rose-600">{errors.company_name.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="contact-job-title" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Briefcase className="h-3 w-3 text-[#888888]" /> Должность
+              </label>
+              <input
+                id="contact-job-title"
+                type="text"
+                placeholder="Технический директор"
+                {...form.register("job_title")}
+                className={cn(INPUT_CLASS, errors.job_title ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.job_title && <p className="text-xs text-rose-600">{errors.job_title.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="contact-linkedin" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Linkedin className="h-3 w-3 text-[#888888]" /> LinkedIn
+              </label>
+              <input
+                id="contact-linkedin"
+                type="text"
+                placeholder="https://linkedin.com/in/..."
+                {...form.register("linkedin_link")}
+                className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-[#e5e5e5]")}
+              />
+              {errors.linkedin_link && <p className="text-xs text-rose-600">{errors.linkedin_link.message}</p>}
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="block text-xs font-medium text-[#666666]">Канал связи</span>
+              <div className="flex flex-wrap gap-1.5">
+                {CHANNELS.map(({ value, icon: Icon, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => form.setValue("channel", value, { shouldValidate: true })}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                      channel === value
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]"
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />{label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <fieldset className="space-y-3 rounded-[8px] border border-[#e5e5e5] p-3.5">
+              <legend className="flex items-center gap-1.5 text-xs font-medium text-[#666666] px-1">
+                <Tag className="h-3 w-3 text-[#888888]" /> Дополнительные поля
+              </legend>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label htmlFor="contact-cf-department" className="text-xs text-[#888888]">Отдел</label>
+                  <input
+                    id="contact-cf-department"
+                    type="text"
+                    placeholder="Разработка"
+                    {...form.register("custom_fields.department")}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="contact-cf-source" className="text-xs text-[#888888]">Источник</label>
+                  <input
+                    id="contact-cf-source"
+                    type="text"
+                    placeholder="Рекомендация"
+                    {...form.register("custom_fields.source")}
+                    className={INPUT_CLASS}
+                  />
+                </div>
+              </div>
+            </fieldset>
+
+            <div className="space-y-1.5">
+              <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <FileText className="h-3 w-3 text-[#888888]" /> Описание
+              </label>
+              <textarea
+                id="contact-notes"
+                rows={2}
+                placeholder="Внутренние заметки..."
+                {...form.register("notes")}
+                className={cn(INPUT_CLASS, "resize-none")}
+              />
             </div>
           </div>
 
-          <fieldset className="space-y-3 rounded-lg border border-slate-800 p-4">
-            <legend className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><Tag className="h-3 w-3" /> Дополнительные поля</legend>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label htmlFor="contact-cf-department" className="text-xs text-slate-500">Отдел</label>
-                <input id="contact-cf-department" type="text" placeholder="Разработка" {...form.register("custom_fields.department")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="contact-cf-source" className="text-xs text-slate-500">Источник</label>
-                <input id="contact-cf-source" type="text" placeholder="Рекомендация" {...form.register("custom_fields.source")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
-              </div>
-            </div>
-          </fieldset>
-
-          <div className="space-y-2">
-            <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-slate-400"><FileText className="h-3 w-3" /> Описание</label>
-            <textarea id="contact-notes" rows={2} placeholder="Внутренние заметки..." {...form.register("notes")}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 resize-none focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20" />
-          </div>
-
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
-            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">Отмена</button>
-            {/* Кнопка блокируется только на время отправки: `isValid` при
-                необязательных полях гасил её до первого касания формы. */}
-            <button type="submit" disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors bg-amber-500 text-slate-950 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed">
-              {isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin" /> Сохраняем...</> : (initial ? "Сохранить" : "Создать контакт")}
+          <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-8 rounded-[8px] border border-[#e5e5e5] px-4 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+            >
+              Отмена
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex h-8 items-center gap-2 rounded-[8px] px-4 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3d2ee0] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Сохраняем...
+                </>
+              ) : (
+                initial ? "Сохранить" : "Создать контакт"
+              )}
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

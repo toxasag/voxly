@@ -99,7 +99,7 @@ export function RecordDealsSection({
             onClick={() => { setComposing(true); setTitle(`Сделка — ${targetLabel}`); }}
             title="Создать сделку"
             aria-label="Создать сделку"
-            className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-amber-400"
+            className="rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-[#4a38f5]"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -124,7 +124,7 @@ export function RecordDealsSection({
                 }
               }}
               placeholder="Название сделки"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none"
             />
             <div className="mt-2 flex items-center justify-end gap-2">
               <button
@@ -138,7 +138,7 @@ export function RecordDealsSection({
                 type="button"
                 onClick={submit}
                 disabled={create.isPending || title.trim() === ""}
-                className="inline-flex items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
               >
                 {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                 Создать

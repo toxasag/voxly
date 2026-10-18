@@ -284,7 +284,7 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
                       isSelected
-                        ? "bg-amber-500/10 text-amber-400"
+                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
                         : "text-slate-300 hover:bg-slate-800 hover:text-slate-100",
                     )}
                   >
@@ -292,7 +292,7 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
                       className={cn(
                         "flex h-8 w-8 items-center justify-center rounded-md border",
                         isSelected
-                          ? "border-amber-500/30 bg-amber-500/10"
+                          ? "border-[#4a38f5]/30 bg-[#4a38f5]/10"
                           : "border-slate-700 bg-slate-950",
                       )}
                     >

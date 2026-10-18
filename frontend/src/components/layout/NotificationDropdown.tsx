@@ -133,7 +133,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
               <button
                 type="button"
                 onClick={markAllRead}
-                className="flex items-center gap-1 text-xs text-amber-500 transition-colors hover:text-amber-400"
+                className="flex items-center gap-1 text-xs text-[#4a38f5] transition-colors hover:text-[#4a38f5]"
               >
                 <CheckCheck className="h-3.5 w-3.5" />
                 Прочитать все
@@ -158,14 +158,14 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
                   onClick={() => handleNavigate(n)}
                   className={cn(
                     "flex w-full items-start gap-3 border-b border-slate-800/50 px-4 py-3 text-left transition-colors hover:bg-slate-800/50",
-                    !n.read && "bg-amber-500/5",
+                    !n.read && "bg-[#4a38f5]/5",
                   )}
                 >
                   <div
                     className={cn(
                       "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border",
                       !n.read
-                        ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                        ? "border-[#4a38f5]/30 bg-[#4a38f5]/10 text-[#4a38f5]"
                         : "border-slate-700 bg-slate-950 text-slate-500",
                     )}
                   >
@@ -174,7 +174,7 @@ export function NotificationDropdown({ className }: NotificationDropdownProps) {
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-2 text-sm font-medium text-slate-200">
                       {n.title}
-                      {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />}
+                      {!n.read && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#4a38f5]" />}
                     </p>
                     <p className="mt-0.5 line-clamp-2 text-xs text-slate-400">{n.description}</p>
                     <span className="mt-1 block text-xs text-slate-600">{n.created_at}</span>

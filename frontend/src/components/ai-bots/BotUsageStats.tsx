@@ -51,11 +51,12 @@ function formatDateTime(iso: string): string {
 }
 
 const TOOLTIP_STYLE = {
-  backgroundColor: "rgb(15, 23, 42)",
-  border: "1px solid rgb(51, 65, 85)",
+  backgroundColor: "#ffffff",
+  border: "1px solid #e5e5e5",
   borderRadius: "8px",
   fontSize: "12px",
-  color: "#e2e8f0",
+  color: "#111111",
+  boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
 } as const;
 
 const AXIS_TICK = { fill: "#94a3b8", fontSize: 11 } as const;
@@ -130,7 +131,7 @@ export const BotUsageStats = memo(function BotUsageStats({
           icon={Zap}
           label="Использовано токенов"
           value={numberFormatter.format(bot.tokens_used)}
-          accent="bg-amber-500/10 text-amber-400"
+          accent="bg-[#4a38f5]/10 text-[#4a38f5]"
           hint={
             hasLimit
               ? `${usagePercent}% от лимита ${numberFormatter.format(bot.tokens_limit)}`
@@ -197,7 +198,7 @@ export const BotUsageStats = memo(function BotUsageStats({
                 yAxisId="requests"
                 dataKey="requests"
                 name="Запросы"
-                fill="rgb(245, 158, 11)"
+                fill="#4a38f5"
                 radius={[3, 3, 0, 0]}
                 barSize={16}
               />

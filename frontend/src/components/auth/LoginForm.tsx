@@ -238,7 +238,7 @@ export function LoginForm() {
             {...form.register("email")}
             className={cn(
               "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-              "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
               errors.email !== undefined ? "border-rose-500" : "border-slate-700",
             )}
           />
@@ -261,8 +261,8 @@ export function LoginForm() {
               onClick={() => void handleForgotPassword()}
               disabled={isSendingReset}
               className={cn(
-                "flex w-full items-center justify-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5",
-                "text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20",
+                "flex w-full items-center justify-center gap-2 rounded-lg border border-[#4a38f5]/40 bg-[#4a38f5]/10 px-4 py-2.5",
+                "text-sm font-medium text-amber-400 transition-colors hover:bg-[#4a38f5]/20",
                 "disabled:cursor-not-allowed disabled:opacity-60",
               )}
             >
@@ -296,7 +296,7 @@ export function LoginForm() {
               className={cn(
                 "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium transition-colors",
                 channel === value
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                   : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600 hover:text-slate-300",
               )}
             >
@@ -317,7 +317,7 @@ export function LoginForm() {
           disabled={code.stage === "requesting"}
           className={cn(
             "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-            "bg-amber-500 text-slate-950 hover:bg-amber-400",
+            "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
@@ -341,7 +341,7 @@ export function LoginForm() {
         отключённую кнопку, и подключиться было нечем.
       */}
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
-        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+        <div className="space-y-3 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
           <p className="text-sm text-slate-300">
             {CHANNEL_LABEL[code.channel]} не привязан к вашему аккаунту. Откройте бота{" "}
             <span className="font-medium text-amber-400">@{code.botUsername}</span> и нажмите
@@ -383,7 +383,7 @@ export function LoginForm() {
             }}
             className={cn(
               "w-full rounded-lg border bg-slate-900 py-4 text-center text-2xl tracking-[0.5em] text-slate-100 placeholder:text-slate-600 transition-colors",
-              "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
               otpError !== null ? "border-rose-500" : "border-slate-700",
             )}
           />
@@ -398,7 +398,7 @@ export function LoginForm() {
               <button
                 type="button"
                 onClick={() => void handleRequestCode()}
-                className="text-xs font-medium text-amber-500 hover:text-amber-400"
+                className="text-xs font-medium text-[#4a38f5] hover:text-[#4a38f5]"
               >
                 Отправить код повторно
               </button>
@@ -412,7 +412,7 @@ export function LoginForm() {
         disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
         className={cn(
           "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-          "bg-amber-500 text-slate-950 hover:bg-amber-400",
+          "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
@@ -439,7 +439,7 @@ export function LoginForm() {
             type="button"
             onClick={() => void handleForgotPassword()}
             disabled={isSendingReset}
-            className="font-medium text-slate-400 underline-offset-2 transition-colors hover:text-amber-400 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
+            className="font-medium text-slate-400 underline-offset-2 transition-colors hover:text-[#4a38f5] hover:underline disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSendingReset ? "Отправляем ссылку..." : "Забыли пароль?"}
           </button>
@@ -448,7 +448,7 @@ export function LoginForm() {
 
       <p className="text-center text-sm text-slate-400">
         Нет аккаунта?{" "}
-        <a href="/register" className="font-medium text-amber-500 hover:text-amber-400">
+        <a href="/register" className="font-medium text-[#4a38f5] hover:text-[#4a38f5]">
           Зарегистрировать компанию
         </a>
       </p>

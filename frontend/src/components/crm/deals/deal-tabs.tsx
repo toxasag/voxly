@@ -1076,17 +1076,17 @@ function TasksTab({ dealId }: { dealId: string }) {
           {dealTasks.map((task) => (
             <div key={task.id} className="rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-[#000000]">{task.title}</p>
+                <p className="text-sm font-medium text-[#111111]">{task.title}</p>
                 <span className={cn(
-                  "rounded-full border px-2 py-0.5 text-xs",
-                  task.status === "done" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                  task.status === "in_progress" && "border-amber-500/30 bg-amber-500/10 text-amber-400",
-                  task.status === "todo" && "border-slate-700 bg-slate-800 text-slate-400",
+                  "rounded-full border px-2 py-0.5 text-xs font-medium",
+                  task.status === "done" && "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  task.status === "in_progress" && "border-amber-200 bg-amber-50 text-amber-700",
+                  task.status === "todo" && "border-slate-200 bg-slate-100 text-slate-700",
                 )}>
-                  {task.status}
+                  {task.status === "done" ? "Выполнено" : task.status === "in_progress" ? "В работе" : "К выполнению"}
                 </span>
               </div>
-              {task.dueDate && <p className="mt-1 text-xs text-slate-500">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
+              {task.dueDate && <p className="mt-1 text-xs text-[#888888]">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
             </div>
           ))}
         </div>

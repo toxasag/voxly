@@ -28,22 +28,22 @@ function formatTooltip(value: number): string {
 
 export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200 mb-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111] mb-4">
         Доходы и расходы (P&L)
       </h2>
       <ResponsiveContainer width="100%" height={320}>
         <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-          <CartesianGrid stroke="rgb(51, 65, 85)" strokeDasharray="3 3" />
+          <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
           <XAxis
             dataKey="month"
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "rgb(51, 65, 85)" }}
+            tick={{ fill: "#666666", fontSize: 12 }}
+            axisLine={{ stroke: "#e5e5e5" }}
             tickLine={false}
           />
           <YAxis
-            tick={{ fill: "#94a3b8", fontSize: 12 }}
-            axisLine={{ stroke: "rgb(51, 65, 85)" }}
+            tick={{ fill: "#666666", fontSize: 12 }}
+            axisLine={{ stroke: "#e5e5e5" }}
             tickLine={false}
             tickFormatter={(v: number) =>
               new Intl.NumberFormat("ru-RU", {
@@ -55,22 +55,24 @@ export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
           <Tooltip
             formatter={(value) => formatTooltip(Number(value))}
             contentStyle={{
-              backgroundColor: "rgb(15, 23, 42)",
-              border: "1px solid rgb(51, 65, 85)",
+              backgroundColor: "#ffffff",
+              border: "1px solid #e5e5e5",
               borderRadius: "8px",
               fontSize: "13px",
-              color: "#e2e8f0",
+              color: "#111111",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)",
             }}
-            itemStyle={{ padding: "2px 0" }}
+            itemStyle={{ padding: "2px 0", color: "#111111" }}
+            labelStyle={{ color: "#666666" }}
           />
           <Legend
-            wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }}
+            wrapperStyle={{ fontSize: "12px", paddingTop: "8px", color: "#666666" }}
             iconType="circle"
           />
           <Bar
             dataKey="revenue"
             name="Выручка"
-            fill="rgb(245, 158, 11)"
+            fill="#4a38f5"
             radius={[3, 3, 0, 0]}
             barSize={24}
           />
@@ -78,9 +80,9 @@ export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
             type="monotone"
             dataKey="expenses"
             name="Расходы"
-            stroke="rgb(244, 63, 94)"
+            stroke="rgb(225, 29, 72)"
             strokeWidth={2}
-            dot={{ fill: "rgb(244, 63, 94)", r: 4 }}
+            dot={{ fill: "rgb(225, 29, 72)", r: 4 }}
             activeDot={{ r: 6 }}
           />
         </ComposedChart>

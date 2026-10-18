@@ -94,7 +94,7 @@ export function RecordField({
               onChange={(event) => commit(event.target.value)}
               onBlur={() => onCancel?.()}
               onKeyDown={(event) => { if (event.key === "Escape") onCancel?.(); }}
-              className="h-7 w-full rounded border border-amber-500 bg-slate-950 px-1.5 text-sm text-slate-100 outline-none"
+              className="h-7 w-full rounded border border-[#4a38f5] bg-slate-950 px-1.5 text-sm text-slate-100 outline-none"
             >
               {options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
@@ -113,7 +113,7 @@ export function RecordField({
               }}
               className={cn(
                 "h-7 w-full min-w-0 rounded border bg-slate-950 px-1.5 text-sm text-slate-100 outline-none",
-                error === null ? "border-amber-500" : "border-rose-500",
+                error === null ? "border-[#4a38f5]" : "border-rose-500",
               )}
             />
           )}

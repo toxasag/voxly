@@ -71,14 +71,14 @@ export function Guard({
     if (!installed) {
       return (
         <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-          <ShieldOff className="h-8 w-8 text-amber-500" />
+          <ShieldOff className="h-8 w-8 text-[#4a38f5]" />
           <h2 className="text-lg font-semibold text-slate-100">Модуль отключён</h2>
           <p className="max-w-sm text-sm text-slate-400">
             Включите этот модуль в Маркетплейсе, чтобы открыть раздел.
           </p>
           <Link
             href="/marketplace"
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400"
+            className="inline-flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
           >
             Открыть Маркетплейс <ArrowRight className="h-4 w-4" />
           </Link>

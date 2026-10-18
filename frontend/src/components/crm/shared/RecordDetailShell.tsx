@@ -72,7 +72,7 @@ export function RecordDetailShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-end bg-slate-950/60"
+      className="fixed inset-0 z-50 flex items-start justify-end bg-black/30 backdrop-blur-[1px]"
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
       role="dialog"
       aria-modal="true"
@@ -84,22 +84,22 @@ export function RecordDetailShell({
         телефоне карточка занимает весь экран.
       */}
       <div
-        className="relative flex h-full w-full flex-col bg-slate-900 shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-slate-800"
+        className="relative flex h-full w-full flex-col bg-white shadow-2xl md:w-[var(--side-panel-width)] md:border-l md:border-[#e5e5e5]"
         style={{ ["--side-panel-width" as string]: `${width}px` }}
       >
         <button
           type="button"
           aria-label="Изменить ширину панели"
           onPointerDown={startResize}
-          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/20 md:block"
+          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/10 md:block"
         />
         {/* Summary card: аватар, имя, «добавлено N назад» — их ShowPageSummaryCard. */}
-        <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3 bg-white">
           <div className="flex min-w-0 items-center gap-3">
             <EntityChip name={name} size="md" />
             <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-slate-100">{name}</h2>
-              <p className="truncate text-xs text-slate-500">
+              <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
+              <p className="truncate text-xs text-[#888888]">
                 {subtitle !== undefined && subtitle !== "" ? `${subtitle} · ` : ""}
                 Добавлено {timeAgo(createdAt)}
               </p>
@@ -122,7 +122,7 @@ export function RecordDetailShell({
                 onClick={onDelete}
                 disabled={isDeleting}
                 aria-label="Удалить запись"
-                className="rounded-lg border border-rose-500/30 p-1.5 text-rose-400 transition-colors hover:bg-rose-500/10 disabled:opacity-50"
+                className="rounded-lg border border-rose-200 p-1.5 text-rose-600 transition-colors hover:bg-rose-50 disabled:opacity-50"
               >
                 {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               </button>
@@ -137,7 +137,7 @@ export function RecordDetailShell({
               type="button"
               onClick={onClose}
               aria-label="Закрыть панель"
-              className="flex h-11 w-11 items-center justify-center rounded-[8px] text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#000000] md:h-8 md:w-8"
+              className="flex h-11 w-11 items-center justify-center rounded-[8px] text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#111111] md:h-8 md:w-8"
             >
               <X className="h-5 w-5 md:h-4 md:w-4" />
             </button>
@@ -155,8 +155,8 @@ export function RecordDetailShell({
                 className={cn(
                   "shrink-0 border-b-2 px-2 py-2 text-xs font-medium transition-colors",
                   tab.id === active?.id
-                    ? "border-[#000000] text-[#000000]"
-                    : "border-transparent text-[#666666] hover:text-[#000000]",
+                    ? "border-[#4a38f5] text-[#4a38f5]"
+                    : "border-transparent text-[#666666] hover:text-[#111111]",
                 )}
               >
                 {tab.label}

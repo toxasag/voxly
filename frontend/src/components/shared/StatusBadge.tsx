@@ -23,36 +23,41 @@ interface StatusBadgeProps {
 
 const variantConfig: Record<
   StatusBadgeVariant,
-  { bg: string; text: string; border: string; icon: LucideIcon }
+  { bg: string; text: string; border: string; dot: string; icon: LucideIcon }
 > = {
   success: {
-    bg: "bg-emerald-500/10",
-    text: "text-emerald-400",
-    border: "border-emerald-500/30",
+    bg: "bg-emerald-50",
+    text: "text-emerald-700",
+    border: "border-emerald-200",
+    dot: "bg-emerald-600",
     icon: CheckCircle,
   },
   warning: {
-    bg: "bg-amber-500/10",
-    text: "text-amber-400",
-    border: "border-amber-500/30",
+    bg: "bg-amber-50",
+    text: "text-amber-700",
+    border: "border-amber-200",
+    dot: "bg-amber-600",
     icon: AlertTriangle,
   },
   destructive: {
-    bg: "bg-rose-500/10",
-    text: "text-rose-400",
-    border: "border-rose-500/30",
+    bg: "bg-rose-50",
+    text: "text-rose-700",
+    border: "border-rose-200",
+    dot: "bg-rose-600",
     icon: AlertCircle,
   },
   info: {
-    bg: "bg-sky-500/10",
-    text: "text-sky-400",
-    border: "border-sky-500/30",
+    bg: "bg-sky-50",
+    text: "text-sky-700",
+    border: "border-sky-200",
+    dot: "bg-sky-600",
     icon: Info,
   },
   neutral: {
-    bg: "bg-slate-500/10",
-    text: "text-slate-400",
-    border: "border-slate-500/30",
+    bg: "bg-[#fafafa]",
+    text: "text-[#666666]",
+    border: "border-[#e5e5e5]",
+    dot: "bg-[#888888]",
     icon: Circle,
   },
 };
@@ -70,7 +75,6 @@ export function StatusBadge({
   withDot = false,
 }: StatusBadgeProps) {
   const config = variantConfig[variant];
-  const Icon = config.icon;
 
   return (
     <span
@@ -84,7 +88,7 @@ export function StatusBadge({
       )}
     >
       {withDot && (
-        <span className={cn("h-1.5 w-1.5 rounded-full", config.text.replace("text-", "bg-"))} />
+        <span className={cn("h-1.5 w-1.5 rounded-full", config.dot)} />
       )}
       {children}
     </span>

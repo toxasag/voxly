@@ -112,7 +112,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
                 aria-label="Сеть"
                 value={row.kind}
                 onChange={(event) => updateAt(index, { kind: event.target.value as SocialKind })}
-                className="w-[124px] shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
+                className="w-[124px] shrink-0 rounded-lg border border-slate-700 bg-slate-950 px-2 py-2.5 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
               >
                 {SOCIAL_DEFINITIONS.map((option) => (
                   <option key={option.kind} value={option.kind}>
@@ -128,7 +128,7 @@ export function SocialsInput({ value, onChange, error, idPrefix = "social" }: So
                 onChange={(event) => updateAt(index, { value: event.target.value })}
                 placeholder={definition.placeholder}
                 className={cn(
-                  "min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                 )}
               />
 

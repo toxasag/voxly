@@ -156,7 +156,7 @@ function RepairsPageContent() {
             onClick={() => setCreateModalOpen(true)}
             className={cn(
               "flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors",
-              "bg-amber-500 text-slate-950 hover:bg-amber-400",
+              "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
             )}
           >
             <Plus className="h-4 w-4" />
@@ -177,7 +177,7 @@ function RepairsPageContent() {
           </div>
           <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
             <div className="flex items-center gap-2">
-              <div className="rounded-lg bg-amber-500/10 p-1.5">
+              <div className="rounded-lg bg-[#4a38f5]/10 p-1.5">
                 <Clock className="h-4 w-4 text-amber-400" />
               </div>
               <span className="text-xs font-medium text-slate-500">В работе</span>

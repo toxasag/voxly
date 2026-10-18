@@ -240,88 +240,119 @@ Usage:
 
 ---
 
-## 6. UI / DESIGN SYSTEM
+## 6. UI / DESIGN SYSTEM (Twenty CRM Light Canvas — MANDATORY STANDARD)
 
-### Color Palette (Tailwind tokens — dark-first)
+> ⚡ **СТРОЖАЙШИЙ СТАНДАРТ:** Проект полностью работает на **Twenty CRM Light Canvas**.
+> **КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:**
+> - Использовать тёмную тему и классы `slate-950`, `slate-900`, `slate-800` для фонов, панелей и карточек.
+> - Использовать `amber-500` / `orange-400` в качестве дефолтных акцентов или кнопок (янтарный допустим исключительно для семантических предупреждений и чипов заметок).
+> - Использовать центрированные модальные окна для сущностей CRM — только Slide-over шторки справа (`Sheet.tsx`) с URL-параметром `?record=<id>`.
+> - Использовать самодельные `<table>` — все списки сущностей CRM строятся строго на `RecordTable` со строгой высотой строки 32px, липкими заголовками и навигацией стрелками.
+> Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
 
-| Role | Token | Usage |
+### Color Palette & Design Tokens (Twenty CRM Light Canvas)
+
+| Role | Token / Value | Usage & Rules |
 |---|---|---|
-| Page background | `slate-950` | `<body>` / main layout wrapper |
-| Card / Panel / Modal background | `slate-900` | Cards, dialogs, drawers |
-| Elevated surface | `slate-800` | Hovered cards, popovers, dropdowns |
-| Border (subtle) | `slate-700` / `slate-800` | Card borders, input borders |
-| Text primary | `slate-100` | Headings, body text |
-| Text secondary / muted | `slate-400` | Descriptions, placeholders, captions |
-| Text muted (disabled) | `slate-500` | Disabled fields, tertiary info |
-| **Primary accent** | `amber-500` | Primary buttons, active tab underline, selection check |
-| **Secondary accent** | `orange-400` | Badges, highlights, hover states, notifications |
-| Success | `emerald-500` | Positive statuses (closed_won, paid, active) |
-| Danger / Destructive | `rose-500` | Delete buttons, error states, overdue |
-| Warning | `yellow-400` | Pending status, warnings |
-| Info / Link | `sky-400` | Links, info badges |
+| **Page / Canvas Background** | `#ffffff` (`--color-bg`) | Чистый белый холст страниц, рабочих областей, основных панелей |
+| **Sidebar / Secondary Background** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Навигационный сайдбар, подложки списков, свимлейны |
+| **Card / Surface** | `#ffffff` + `border-[#e5e5e5]` + `shadow-2xs` | Карточки записей, канбан-карточки, модальные поверхности |
+| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, дропдауны, поповеры, `hover:bg-black/[0.04]` |
+| **Borders & Dividers** | `#e5e5e5` (`--color-border`) | 1px solid разделители строк, границы карточек, колонок, полей ввода |
+| **Border (Hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
+| **Border (Subtle Divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок, сплиттеров и тулбаров |
+| **Text Primary (High Contrast)** | `#111111` / `#000000` | Заголовки, названия сделок/контактов, значения в ячейках, основной текст (WCAG AAA) |
+| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, описания, таймстампы |
+| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), служебные иконки в тулбарах, счетчики |
+| **Primary Brand Accent** | `#4a38f5` (Ультрамарин / Indigo) | Главная кнопка действия (CTA), бренд-маркер, активный таб, фокус |
+| **Primary Hover** | `#3d2ee0` | Наведение на primary-кнопки |
+| **Secondary Accent / Monochrome** | `#111111` / `#888888` | Второстепенные контролы, нейтральные тулбары, иконки |
+| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:border-[#4a38f5] focus:ring-1 focus:ring-[#4a38f5]/20`) |
+| **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
+| **Success** | `emerald-700` (`#15803d`) / `bg-emerald-50` / `border-emerald-200` | Положительные статусы (closed_won, paid, ready, выполнено) |
+| **Danger / Destructive** | `rose-600` / `rose-700` / `bg-rose-50` / `border-rose-200` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
+| **Warning / Note Chip** | `#854d0e` / `bg-[#fefce8]` / `border-[#fef08a]` | Чип заметки (Twenty UX), предупреждения |
+| **Info / Tag** | `sky-700` / `bg-sky-50` / `border-sky-200` | Информационные бейджи, теги, ссылки |
+
+### Typography & Spacing
+- **Шрифты:**
+  - `Inter` (13px, regular/medium/semibold) — основной UI-текст и заголовки.
+  - `DM Mono` с `tabular-nums` — числовые данные, ID записей, даты, суммы и валюты.
+- **Размеры:** Display `13.3px`, H1 `13px`, Body `13px` / `12px` (`text-xs`), Label `11px`, Tiny `10px`.
+- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`, `h-8`).
+- **Скругления:**
+  - `16px` (`rounded-2xl` / `rounded-[16px]`): боковые шторки (`Sheet`), контейнеры создания, диалоги.
+  - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки действия.
+  - `4px` (`rounded-[4px]`): бейджи, теги, чипы заметок, чекбоксы.
+- **Анимации:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
 
 ### Component Patterns
 
 **Card:**
 ```tsx
-<div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+<div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs hover:border-[#cccccc] transition-colors">
 ```
 
 **Primary Button:**
 ```tsx
-<Button className="bg-amber-500 text-slate-950 hover:bg-amber-400">
-  Save
+<Button className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]">
+  Сохранить
 </Button>
 ```
 
-**Destructive Button (variant="destructive" from shadcn, overridden):**
+**Destructive Button:**
 ```tsx
-<Button className="bg-rose-600 text-white hover:bg-rose-500">
-  Delete
+<Button className="h-8 rounded-[8px] border border-rose-200 bg-rose-50 px-3 text-[13px] font-medium text-rose-600 shadow-xs transition-colors hover:bg-rose-100">
+  Удалить
 </Button>
 ```
 
 **Input:**
 ```tsx
-<Input className="border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:ring-amber-500/20" />
+<Input className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
 ```
 
-**Status Badge:**
+**Note Chip (Twenty UX Pattern):**
 ```tsx
-const statusVariants: Record<string, string> = {
-  active:       'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  pending:      'bg-yellow-400/10 text-yellow-400 border-yellow-400/30',
-  closed_won:   'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  closed_lost:  'bg-rose-500/10 text-rose-400 border-rose-500/30',
-  overdue:      'bg-rose-500/10 text-rose-400 border-rose-500/30',
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn(
-      'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium',
-      statusVariants[status] ?? 'bg-slate-800 text-slate-300 border-slate-700'
-    )}>
-      {status}
-    </span>
-  );
-}
+<div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] p-2 text-xs text-[#854d0e] line-clamp-3">
+  {noteBody}
+</div>
 ```
 
-**Table row (hover state):**
+**Status Badge (TagPill / StatusBadge):**
 ```tsx
-<tr className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+import { TagPill, type TagColor } from "@/components/ui/tag";
+import { StatusBadge } from "@/components/shared/StatusBadge";
+
+<TagPill color="emerald">Активен</TagPill>
+<TagPill color="amber">В обработке</TagPill>
+<TagPill color="rose">Отменён</TagPill>
+
+<StatusBadge variant="success">Выполнено</StatusBadge>
+<StatusBadge variant="warning">Ожидает</StatusBadge>
+<StatusBadge variant="destructive">Отклонено</StatusBadge>
+```
+
+**Table (RecordTable — единственная таблица записей CRM):**
+```tsx
+<RecordTable
+  rows={items}
+  columns={columns}
+  getRowId={(item) => item.id}
+  tableId="module_table"
+  onRowClick={(item) => openRecord(item.id)}
+/>
 ```
 
 ### Layout Rules
-- Max content width: `max-w-7xl` with `mx-auto` centering.
-- Sidebar: fixed width `w-60` (collapsible to `w-16` on toggle), `bg-slate-900 border-r border-slate-800`. **На мобильном (< 768px) сайдбара нет вовсе** — он скрывается классом `hidden md:flex`, а навигация уходит в маршрут-меню и нижний бар.
-- Header: `h-14` or `h-16`, `bg-slate-900 border-b border-slate-800`, sticky to top.
-- Grid gaps: `gap-4` or `gap-6` between cards.
-- Один брейкпоинт на портал — `md:` (768px). **Структурная раскладка строится на Tailwind-префиксах, а не на хуке `useIsMobile`:** `matchMedia` недоступен при SSR, поэтому любая структурная зависимость от хука даёт вспышку десктопной раскладки на телефоне.
-- **Прокрутку фона и закрытие по Escape делает только `useOverlay`** (`lib/utils/use-scroll-lock.ts`). Прямые обращения к `document.body.style.overflow` и собственные слушатели `keydown` в компонентах запрещены: 18 независимых реализаций уже дали два дефекта — прокрутка возвращалась при закрытии верхнего из нескольких оверлеев, а Escape закрывал их все разом.
+- **Паттерн боковых шторок (Slide-Over Drawers):** Просмотр и редактирование сущностей происходят в правой боковой шторке (`Sheet.tsx`), а не в центрированных модальных окнах. Синхронизируется с URL (`?record=<id>`).
+- **Строка таблицы:** Фиксированная высота `32px`, липкие колонки чекбокса (`28px`) и первой колонки (`COLLAPSED_IDENTIFIER_WIDTH = 38px`), ресайз колонок через CSS-переменные напрямую в DOM.
+- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`), а навигация уходит в маршрут-меню и нижний бар.
+- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky к верху.
+- **Один брейкпоинт:** `md:` (768px). Структурная раскладка строится на Tailwind-префиксах, а не на `useIsMobile`.
+- **Оверлеи:** Прокрутку фона и закрытие по Escape выполняет исключительно `useOverlay` (`lib/utils/use-scroll-lock.ts`).
 
-Полные правила вёрстки — `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
+Полные правила вёрстки — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
 
 ---
 
@@ -371,14 +402,14 @@ export function CreateContactForm({ onSuccess }: { onSuccess: () => void }) {
             <FormItem>
               <FormLabel>First Name</FormLabel>
               <FormControl>
-                <Input {...field} className="border-slate-700 bg-slate-900" />
+                <Input {...field} className="border-[#e5e5e5] bg-white text-[#111111] focus:border-[#4a38f5]" />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
         {/* ...remaining fields */}
-        <Button type="submit" disabled={mutation.isPending} className="bg-amber-500 text-slate-950 hover:bg-amber-400">
+        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3d2ee0]">
           {mutation.isPending ? 'Saving...' : 'Create Contact'}
         </Button>
       </form>
@@ -601,7 +632,7 @@ export const frontendModuleRegistry: Record<string, FrontendModule> = { ... };
 1. Does this query include `WHERE tenant_id = ...`?
 2. Is there any `any` or `@ts-ignore`? → Remove it.
 3. Is the module guard (`<Guard>`) in place for module-specific UI?
-4. Are colors from the defined palette (`slate-950/900/800`, `amber-500`, `orange-400`)?
+4. Are colors strictly from Twenty CRM Light Canvas (Canvas `#ffffff`, Border `#e5e5e5`, Accent `#4a38f5`, Text `#111111` / `#666666`, zero dark slate or default amber)?
 5. Is the Zod schema in `schemas/`, not inline?
 6. Does the form have loading/error/empty states handled?
 7. Is the import path using `@/` and properly grouped?

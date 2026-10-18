@@ -18,6 +18,7 @@ export type DealCardFieldId =
   | "contact"
   | "budget"
   | "description"
+  | "latestNote"
   | "owner"
   | "closeDate"
   | "stage"
@@ -38,6 +39,7 @@ export const DEAL_CARD_FIELDS: readonly DealCardFieldSpec[] = [
   { id: "contact", label: "Контакт", defaultVisible: true },
   { id: "budget", label: "Бюджет", defaultVisible: true },
   { id: "description", label: "Описание", defaultVisible: true },
+  { id: "latestNote", label: "Заметка", defaultVisible: true },
   { id: "owner", label: "Ответственный", defaultVisible: true },
   { id: "closeDate", label: "Дата закрытия", defaultVisible: false },
   { id: "stage", label: "Этап", defaultVisible: false },
@@ -89,6 +91,8 @@ export function hasDealFieldValue(deal: DealDTO, field: DealCardFieldId): boolea
       return deal.budget > 0;
     case "description":
       return deal.description !== "";
+    case "latestNote":
+      return typeof deal.latestNote === "string" && deal.latestNote.trim().length > 0;
     case "owner":
       return deal.ownerName !== null && deal.ownerName !== "";
     case "closeDate":

@@ -37,7 +37,8 @@ const DEAL_COLUMNS_WITH_LABELS = `
   co.name AS company_name,
   ct.first_name AS contact_first_name,
   ct.last_name AS contact_last_name,
-  ow.name AS owner_name
+  ow.name AS owner_name,
+  ln.body AS latest_note_body
 `;
 
 /**
@@ -57,6 +58,13 @@ const DEAL_LABEL_JOINS = `
     ON ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
   LEFT JOIN users ow
     ON ow.id = d.owner_id AND ow.tenant_id = d.tenant_id AND ow.deleted_at IS NULL
+  LEFT JOIN LATERAL (
+    SELECT n.body
+    FROM notes n
+    WHERE n.deal_id = d.id AND n.tenant_id = d.tenant_id AND n.deleted_at IS NULL
+    ORDER BY n.created_at DESC
+    LIMIT 1
+  ) ln ON true
 `;
 
 const MESSAGE_COLUMNS = `

@@ -188,7 +188,7 @@ export function OnboardingWizard() {
                         "border-emerald-500 bg-emerald-500 text-slate-950",
                       isActive &&
                         !isCompleted &&
-                        "border-amber-500 bg-amber-500/10 text-amber-400",
+                        "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]",
                       !isActive &&
                         !isCompleted &&
                         "border-slate-700 bg-slate-900 text-slate-600",
@@ -223,7 +223,7 @@ export function OnboardingWizard() {
 
         <div className="h-1 w-full rounded-full bg-slate-800">
           <div
-            className="h-1 rounded-full bg-amber-500 transition-all duration-500 ease-out"
+            className="h-1 rounded-full bg-[#4a38f5] transition-all duration-500 ease-out"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -266,7 +266,7 @@ export function OnboardingWizard() {
                 }
                 className={cn(
                   "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                   ownerForm.formState.errors.first_name
                     ? "border-rose-500"
                     : "border-slate-700",
@@ -298,7 +298,7 @@ export function OnboardingWizard() {
                 }
                 className={cn(
                   "w-full rounded-lg border bg-slate-900 py-3 px-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                   ownerForm.formState.errors.last_name
                     ? "border-rose-500"
                     : "border-slate-700",
@@ -317,7 +317,7 @@ export function OnboardingWizard() {
                 disabled={!ownerForm.formState.isValid}
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
@@ -368,7 +368,7 @@ export function OnboardingWizard() {
                   }}
                   className={cn(
                     "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     workspaceForm.formState.errors.company_name
                       ? "border-rose-500"
                       : "border-slate-700",
@@ -403,7 +403,7 @@ export function OnboardingWizard() {
                   }
                   className={cn(
                     "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-24 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     workspaceForm.formState.errors.slug
                       ? "border-rose-500"
                       : "border-slate-700",
@@ -442,7 +442,7 @@ export function OnboardingWizard() {
                     }
                     className={cn(
                       "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 transition-colors appearance-none",
-                      "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                       workspaceForm.formState.errors.currency
                         ? "border-rose-500"
                         : "border-slate-700",
@@ -481,7 +481,7 @@ export function OnboardingWizard() {
                     }
                     className={cn(
                       "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 transition-colors appearance-none",
-                      "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                       workspaceForm.formState.errors.timezone
                         ? "border-rose-500"
                         : "border-slate-700",
@@ -519,7 +519,7 @@ export function OnboardingWizard() {
                 disabled={!workspaceForm.formState.isValid}
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
@@ -568,7 +568,7 @@ export function OnboardingWizard() {
                     className={cn(
                       "flex items-start gap-4 rounded-lg border p-4 text-left transition-colors",
                       isSelected
-                        ? "border-amber-500 bg-amber-500/10"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10"
                         : "border-slate-700 bg-slate-900 hover:border-slate-600",
                     )}
                   >
@@ -576,7 +576,7 @@ export function OnboardingWizard() {
                       className={cn(
                         "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
                         isSelected
-                          ? "border-amber-500 bg-amber-500"
+                          ? "border-[#4a38f5] bg-[#4a38f5]"
                           : "border-slate-600",
                       )}
                     >
@@ -600,7 +600,7 @@ export function OnboardingWizard() {
                             className={cn(
                               "rounded-md px-2 py-0.5 text-xs font-medium",
                               isSelected
-                                ? "bg-amber-500/20 text-amber-300"
+                                ? "bg-[#4a38f5]/20 text-amber-300"
                                 : "bg-slate-800 text-slate-500",
                             )}
                           >
@@ -639,7 +639,7 @@ export function OnboardingWizard() {
                 disabled={!businessForm.formState.isValid}
                 className={cn(
                   "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                  "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                  "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
               >
@@ -710,7 +710,7 @@ export function OnboardingWizard() {
                   {onboardingState.installedModules.map((mod) => (
                     <span
                       key={mod}
-                      className="rounded-md bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400 border border-amber-500/20"
+                      className="rounded-md bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-amber-400 border border-[#4a38f5]/20"
                     >
                       {mod}
                     </span>

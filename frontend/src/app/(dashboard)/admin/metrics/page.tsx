@@ -82,7 +82,7 @@ export default function AdminMetricsPage() {
           <>
             <section className="space-y-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
-                <Users className="h-4 w-4 text-amber-500" />
+                <Users className="h-4 w-4 text-[#4a38f5]" />
                 Арендаторы и данные
               </h2>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -107,7 +107,7 @@ export default function AdminMetricsPage() {
 
             <section className="space-y-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
-                <Database className="h-4 w-4 text-amber-500" />
+                <Database className="h-4 w-4 text-[#4a38f5]" />
                 База данных
               </h2>
               <div className="grid gap-4 sm:grid-cols-3">
@@ -119,7 +119,7 @@ export default function AdminMetricsPage() {
 
             <section className="space-y-3">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-300">
-                <Activity className="h-4 w-4 text-amber-500" />
+                <Activity className="h-4 w-4 text-[#4a38f5]" />
                 Очередь задач
               </h2>
               {/*

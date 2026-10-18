@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect } from "react";
 import {
-  X,
   Building2,
   Calendar,
   Users,
@@ -14,12 +13,11 @@ import {
   Receipt,
   BellRing,
   Save,
-  type LucideIcon,
 } from "lucide-react";
 import type { PlatformTenant, SubscriptionPlan } from "@/lib/admin/admin.types";
 import { getPlanLabel, getPlanColors, getStatusLabel, getStatusColors } from "@/lib/admin/admin.types";
 import { cn } from "@/lib/utils";
-import { useOverlay } from "@/lib/utils/use-scroll-lock";
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 interface TenantManageModalProps {
   open: boolean;
@@ -62,11 +60,6 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
   const [trialEndsAt, setTrialEndsAt] = useState("");
   const [subEndsAt, setSubEndsAt] = useState("");
 
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
-  useOverlay(open, { onEscape: onClose });
-
   useEffect(() => {
     if (tenant) {
       setPlan(tenant.plan);
@@ -98,10 +91,6 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
     onClose();
   }, [tenant, plan, modules, deepseekTotal, openaiTotal, trialEndsAt, subEndsAt, onSave, onClose]);
 
-  const handleBackdrop = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
-  }, [onClose]);
-
 
   if (!open || !tenant) return null;
 
@@ -111,50 +100,47 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
   const openaiPct = openaiTotal > 0 ? Math.round((openaiUsed / openaiTotal) * 100) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto" onClick={handleBackdrop}>
-      <div className="w-full max-w-2xl rounded-xl border border-slate-800 bg-slate-900 shadow-2xl my-8">
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/10">
-              <Building2 className="h-4 w-4 text-rose-400" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-100">{tenant.company_name}</h2>
-              <p className="text-xs text-slate-500">{tenant.slug}.getvoxly.ru</p>
-            </div>
+    <Sheet open={open} onClose={onClose} width="w-[580px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#4a38f5]/10">
+            <Building2 className="h-3.5 w-3.5 text-[#4a38f5]" />
           </div>
-          <button type="button" onClick={onClose} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors">
-            <X className="h-4 w-4" />
-          </button>
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">{tenant.company_name}</h2>
+            <p className="text-[11px] text-[#666666]">{tenant.slug}.getvoxly.ru</p>
+          </div>
         </div>
+      </SheetHeader>
 
-        <div className="p-6 space-y-6">
+      <SheetContent>
+        <div className="space-y-5">
           {/* Owner Info */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3.5 grid grid-cols-2 gap-2.5 text-xs">
             <div>
-              <span className="text-xs text-slate-500">Владелец</span>
-              <p className="font-medium text-slate-200">{tenant.owner_name}</p>
+              <span className="text-[11px] text-[#888888]">Владелец</span>
+              <p className="font-medium text-[#111111]">{tenant.owner_name || "—"}</p>
             </div>
             <div>
-              <span className="text-xs text-slate-500">E-mail</span>
-              <p className="font-medium text-slate-200">{tenant.owner_email}</p>
+              <span className="text-[11px] text-[#888888]">E-mail</span>
+              <p className="font-medium text-[#111111]">{tenant.owner_email || "—"}</p>
             </div>
             <div>
-              <span className="text-xs text-slate-500">Статус</span>
-              <span className={cn("ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", getStatusColors(tenant.status))}>
+              <span className="text-[11px] text-[#888888]">Статус</span>
+              <span className={cn("ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium", getStatusColors(tenant.status))}>
                 {getStatusLabel(tenant.status)}
               </span>
             </div>
             <div>
-              <span className="text-xs text-slate-500">Регистрация</span>
-              <p className="font-medium text-slate-200">{formatDate(tenant.registered_at)}</p>
+              <span className="text-[11px] text-[#888888]">Регистрация</span>
+              <p className="font-medium text-[#111111]">{formatDate(tenant.registered_at)}</p>
             </div>
           </div>
 
           {/* Plan */}
           <fieldset className="space-y-2">
-            <legend className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-              <Calendar className="h-3 w-3" /> Subscription Plan
+            <legend className="text-xs font-medium text-[#666666] flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Тарифный план
             </legend>
             <div className="grid grid-cols-4 gap-2">
               {PLANS.map((p) => (
@@ -163,33 +149,33 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   type="button"
                   onClick={() => setPlan(p.value)}
                   className={cn(
-                    "rounded-lg border px-3 py-2.5 text-xs font-medium transition-colors",
+                    "rounded-[8px] border px-2.5 py-2 text-xs font-medium transition-colors text-center",
                     plan === p.value
-                      ? "border-amber-500 bg-amber-500/10 text-amber-400"
-                      : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                      ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
                   )}
                 >
                   {p.label}
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 pt-1">
               <div>
-                <label className="block text-xs text-slate-500 mb-1">Пробный период до (необязательно)</label>
+                <label className="block text-[11px] text-[#888888] mb-1">Пробный период до</label>
                 <input
                   type="datetime-local"
                   value={trialEndsAt ? trialEndsAt.slice(0, 16) : ""}
                   onChange={(e) => setTrialEndsAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-500 mb-1">Подписка до</label>
+                <label className="block text-[11px] text-[#888888] mb-1">Подписка до</label>
                 <input
                   type="datetime-local"
                   value={subEndsAt ? subEndsAt.slice(0, 16) : ""}
                   onChange={(e) => setSubEndsAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
               </div>
             </div>
@@ -197,8 +183,8 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
 
           {/* Modules */}
           <fieldset className="space-y-2">
-            <legend className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-              <Users className="h-3 w-3" /> Installed Modules
+            <legend className="text-xs font-medium text-[#666666] flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5" /> Установленные модули
             </legend>
             <div className="grid grid-cols-3 gap-2">
               {ALL_MODULES.map((mod) => {
@@ -209,15 +195,15 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                     type="button"
                     onClick={() => toggleModule(mod.slug)}
                     className={cn(
-                      "flex items-center gap-2 rounded-lg border px-4 py-3 text-xs font-medium transition-colors",
+                      "flex items-center gap-2 rounded-[8px] border px-3 py-2.5 text-xs font-medium transition-colors",
                       isOn
-                        ? "border-amber-500 bg-amber-500/10 text-amber-400"
-                        : "border-slate-700 text-slate-500 hover:border-slate-600",
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa]",
                     )}
                   >
                     <mod.icon className="h-4 w-4" />
                     <span className="flex-1 text-left">{mod.name}</span>
-                    {isOn ? <ToggleRight className="h-4 w-4 text-amber-400" /> : <ToggleLeft className="h-4 w-4 text-slate-600" />}
+                    {isOn ? <ToggleRight className="h-4 w-4 text-[#4a38f5]" /> : <ToggleLeft className="h-4 w-4 text-[#888888]" />}
                   </button>
                 );
               })}
@@ -226,19 +212,19 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
 
           {/* AI Balance */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-              <Zap className="h-3 w-3" /> AI Token Balance
+            <legend className="text-xs font-medium text-[#666666] flex items-center gap-1.5">
+              <Zap className="h-3.5 w-3.5" /> Баланс токенов ИИ
             </legend>
 
             {/* DeepSeek */}
-            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-400">DeepSeek</span>
-                <span className="text-xs text-slate-500">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-[#111111]">DeepSeek</span>
+                <span className="text-[#888888]">
                   {formatTokens(deepseekUsed)} / {formatTokens(deepseekTotal)} used
                 </span>
               </div>
-              <div className="flex h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+              <div className="flex h-1.5 w-full rounded-full bg-[#e5e5e5] overflow-hidden">
                 <div className="h-full bg-violet-500 transition-all" style={{ width: `${Math.min(deepseekPct, 100)}%` }} />
               </div>
               <div className="flex items-center gap-2">
@@ -247,21 +233,21 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   min={0}
                   value={deepseekTotal}
                   onChange={(e) => setDeepseekTotal(Number(e.target.value))}
-                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="h-7 w-36 rounded-[4px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
-                <span className="text-xs text-slate-500">total tokens</span>
+                <span className="text-[11px] text-[#888888]">лимит токенов</span>
               </div>
             </div>
 
             {/* OpenAI */}
-            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-400">OpenAI</span>
-                <span className="text-xs text-slate-500">
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-[#111111]">OpenAI</span>
+                <span className="text-[#888888]">
                   {formatTokens(openaiUsed)} / {formatTokens(openaiTotal)} used
                 </span>
               </div>
-              <div className="flex h-2 w-full rounded-full bg-slate-800 overflow-hidden">
+              <div className="flex h-1.5 w-full rounded-full bg-[#e5e5e5] overflow-hidden">
                 <div className="h-full bg-emerald-500 transition-all" style={{ width: `${Math.min(openaiPct, 100)}%` }} />
               </div>
               <div className="flex items-center gap-2">
@@ -270,41 +256,41 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
                   min={0}
                   value={openaiTotal}
                   onChange={(e) => setOpenaiTotal(Number(e.target.value))}
-                  className="w-40 rounded-lg border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-slate-100 focus:border-amber-500 focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="h-7 w-36 rounded-[4px] border border-[#e5e5e5] bg-white px-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
-                <span className="text-xs text-slate-500">total tokens</span>
+                <span className="text-[11px] text-[#888888]">лимит токенов</span>
               </div>
             </div>
           </fieldset>
 
           {/* Revenue Summary */}
-          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 flex items-center justify-between">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Banknote className="h-4 w-4 text-slate-500" />
-              <span className="text-xs text-slate-500">Всего выручки</span>
+              <Banknote className="h-4 w-4 text-[#888888]" />
+              <span className="text-xs text-[#666666]">Всего выручки</span>
             </div>
-            <span className="text-sm font-bold text-amber-400">
+            <span className="text-xs font-bold text-amber-600">
               {new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(tenant.total_revenue)}
             </span>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
-            <button type="button" onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors">
-              Cancel
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#e5e5e5]">
+            <button type="button" onClick={onClose} className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors">
+              Отмена
             </button>
             <button
               type="button"
               onClick={handleSave}
               disabled={isSubmitting}
-              className="flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold bg-amber-500 text-slate-950 hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white hover:bg-[#3b2be0] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Save className="h-4 w-4" />
-              {isSubmitting ? "Saving..." : "Save Changes"}
+              <Save className="h-3.5 w-3.5" />
+              {isSubmitting ? "Сохранение..." : "Сохранить"}
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

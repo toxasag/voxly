@@ -197,8 +197,8 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!vectorisationAvailable || isBusy}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
-                  "hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50",
+                  "flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
+                  "hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50",
                 )}
               >
                 {uploadFile.isPending ? (
@@ -228,14 +228,14 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Название документа, например «Регламент сервисного центра»"
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
             />
             <textarea
               value={text}
               onChange={(event) => setText(event.target.value)}
               rows={8}
               placeholder="Вставьте текст: регламент, прайс, ответы на частые вопросы..."
-              className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+              className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
             />
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-500">{text.length} символов</span>
@@ -251,7 +251,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                   type="button"
                   onClick={handleAddText}
                   disabled={addText.isPending}
-                  className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   Добавить в базу знаний

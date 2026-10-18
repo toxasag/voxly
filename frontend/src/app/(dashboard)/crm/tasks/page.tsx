@@ -136,20 +136,20 @@ function TasksContent() {
     const assignee = usersById.get(task.assigneeId);
 
     return (
-      <div key={task.id} className={cn("group rounded-lg border border-slate-800 bg-slate-900 p-3", done && "opacity-60")}>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => change(task)} aria-label={done ? "Вернуть в работу" : "Завершить"} className={done ? "text-emerald-400" : "text-slate-600 hover:text-emerald-400"}>{done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}</button>
+      <div key={task.id} className={cn("group rounded-[8px] border border-[#e5e5e5] bg-white p-3 hover:border-[#cccccc] transition-colors shadow-2xs", done && "opacity-60 bg-[#fafafa]")}>
+        <div className="flex gap-2.5">
+          <button type="button" onClick={() => change(task)} aria-label={done ? "Вернуть в работу" : "Завершить"} className={done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]"}>{done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}</button>
           <div className="min-w-0 flex-1">
-            <p className={cn("text-sm", done ? "text-slate-500 line-through" : "text-slate-200")}>{task.title}</p>
-            <p className="mt-1 text-xs text-slate-500">Срок {formatDue(task.dueDate)} · {PRIORITY_LABELS[task.priority] ?? task.priority}</p>
+            <p className={cn("text-[13px] font-medium leading-snug", done ? "text-[#888888] line-through" : "text-[#111111]")}>{task.title}</p>
+            <p className="mt-1 text-xs text-[#888888]">Срок {formatDue(task.dueDate)} · {PRIORITY_LABELS[task.priority] ?? task.priority}</p>
             <div className="mt-1.5"><UserAvatar user={assignee} size="sm" /></div>
           </div>
           <Guard requiredPermission="tasks:write">
             {/* На мобильном кнопки видны всегда: `opacity-0 group-hover` рассчитан
                 на курсор, которого на телефоне нет. */}
             <span className="flex shrink-0 flex-col gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-              <button type="button" onClick={() => openTaskRecord(task.id)} aria-label="Изменить задачу" className="rounded p-1 text-slate-600 hover:text-slate-300"><Pencil className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => setDeleteTarget(task)} aria-label="Удалить задачу" className="rounded p-1 text-slate-600 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => openTaskRecord(task.id)} aria-label="Изменить задачу" className="rounded p-1 text-[#888888] hover:text-[#111111]"><Pencil className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => setDeleteTarget(task)} aria-label="Удалить задачу" className="rounded p-1 text-[#888888] hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
             </span>
           </Guard>
         </div>
@@ -186,13 +186,13 @@ function TasksContent() {
               type="button"
               onClick={(event) => { event.stopPropagation(); change(task); }}
               aria-label={done ? "Вернуть в работу" : "Завершить"}
-              className={cn("shrink-0", done ? "text-emerald-400" : "text-slate-600 hover:text-emerald-400")}
+              className={cn("shrink-0", done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]")}
             >
               {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
             </button>
             <div className="min-w-0">
-              <p className={cn("truncate text-sm font-medium", done ? "text-slate-500 line-through" : "text-slate-200")}>{task.title}</p>
-              {task.description !== "" && <p className="truncate text-xs text-slate-500">{task.description}</p>}
+              <p className={cn("truncate text-sm font-medium", done ? "text-[#888888] line-through" : "text-[#111111]")}>{task.title}</p>
+              {task.description !== "" && <p className="truncate text-xs text-[#888888]">{task.description}</p>}
             </div>
           </div>
         );
@@ -206,10 +206,10 @@ function TasksContent() {
       sortValue: (task) => PRIORITY_ORDER[task.priority] ?? 0,
       render: (task) => (
         <span className={cn(
-          "rounded-full border px-2 py-0.5 text-xs",
-          task.priority === "high" ? "border-rose-500/20 bg-rose-500/10 text-rose-400"
-            : task.priority === "medium" ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
-            : "border-slate-700 bg-slate-800 text-slate-400",
+          "rounded-full border px-2 py-0.5 text-xs font-medium",
+          task.priority === "high" ? "border-rose-200 bg-rose-50 text-rose-700"
+            : task.priority === "medium" ? "border-amber-200 bg-amber-50 text-amber-700"
+            : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
         )}>
           {PRIORITY_LABELS[task.priority] ?? task.priority}
         </span>
@@ -223,7 +223,7 @@ function TasksContent() {
       // Пустой срок сортируется в конец: задача без даты не «самая срочная».
       sortValue: (task) => task.dueDate ?? "9999-12-31",
       render: (task) => (
-        <span className={cn("text-xs", task.isOverdue ? "font-medium text-rose-400" : "text-slate-400")}>
+        <span className={cn("text-xs", task.isOverdue ? "font-medium text-rose-600" : "text-[#666666]")}>
           {formatDue(task.dueDate)}
         </span>
       ),
@@ -243,7 +243,7 @@ function TasksContent() {
       hideable: true,
       sortValue: (task) => task.linkedEntityType ?? "",
       render: (task) => (
-        <span className="text-xs text-slate-500">
+        <span className="text-xs text-[#888888]">
           {task.linkedEntityType === null ? "—" : LINK_LABELS[task.linkedEntityType] ?? task.linkedEntityType}
         </span>
       ),
@@ -257,8 +257,8 @@ function TasksContent() {
         <Guard requiredPermission="tasks:write">
           {/* Как в канбане: на мобильном кнопки видны без наведения. */}
           <span className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-            <button type="button" onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }} aria-label="Изменить задачу" className="rounded p-1 text-slate-600 hover:text-slate-300"><Pencil className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }} aria-label="Удалить задачу" className="rounded p-1 text-slate-600 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }} aria-label="Изменить задачу" className="rounded p-1 text-[#888888] hover:text-[#111111]"><Pencil className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }} aria-label="Удалить задачу" className="rounded p-1 text-[#888888] hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
           </span>
         </Guard>
       ),
@@ -267,9 +267,9 @@ function TasksContent() {
 
   if (query.isLoading) return <SkeletonTable rows={7} columns={6} />;
   if (query.isError) return (
-    <div role="alert" className="flex gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-      <AlertCircle className="h-5 w-5 text-rose-400" />
-      <div><p className="text-sm text-slate-200">Не удалось загрузить задачи</p><p className="text-sm text-slate-400">{query.error.message}</p><button type="button" onClick={() => void query.refetch()} className="mt-3 flex gap-1 text-xs text-slate-300"><RefreshCw className="h-3.5 w-3.5" />Повторить</button></div>
+    <div role="alert" className="flex gap-3 rounded-xl border border-rose-200 bg-rose-50 p-6">
+      <AlertCircle className="h-5 w-5 text-rose-600" />
+      <div><p className="text-sm font-medium text-rose-950">Не удалось загрузить задачи</p><p className="text-sm text-rose-700">{query.error.message}</p><button type="button" onClick={() => void query.refetch()} className="mt-3 flex gap-1 text-xs text-rose-800 hover:text-rose-950 font-medium"><RefreshCw className="h-3.5 w-3.5" />Повторить</button></div>
     </div>
   );
 
@@ -282,9 +282,9 @@ function TasksContent() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-xl font-bold text-slate-100">Задачи</h1><p className="mt-1 text-sm text-slate-400">Открытых: {tasks.filter((task) => task.status !== "done").length} · всего в этом виде: {tasks.length}</p></div>
+        <div><h1 className="text-xl font-bold text-[#111111]">Задачи</h1><p className="mt-1 text-sm text-[#666666]">Открытых: {tasks.filter((task) => task.status !== "done").length} · всего в этом виде: {tasks.length}</p></div>
         <Guard requiredPermission="tasks:write">
-          <button type="button" onClick={() => setModalOpen(true)} disabled={!user} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-blue-700 disabled:opacity-50"><Plus className="h-4 w-4" />Добавить задачу</button>
+          <button type="button" onClick={() => setModalOpen(true)} disabled={!user} className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"><Plus className="h-4 w-4" />Добавить задачу</button>
         </Guard>
       </div>
 
@@ -298,12 +298,45 @@ function TasksContent() {
         */}
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
           {FILTERS.map(({ value, label, Icon }) => (
-            <button key={value} type="button" onClick={() => setFilter(value)} className={cn("flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs", filter === value ? "border-amber-500 bg-amber-500/10 text-amber-400" : "border-slate-700 text-slate-500")}><Icon className="h-3 w-3" />{label}</button>
+            <button
+              key={value}
+              type="button"
+              onClick={() => setFilter(value)}
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs transition-colors",
+                filter === value
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:border-[#cccccc]"
+              )}
+            >
+              <Icon className="h-3 w-3" />
+              {label}
+            </button>
           ))}
         </div>
-        <div className="ml-auto flex rounded-lg border border-slate-700 p-0.5">
-          <button type="button" onClick={() => setView("table")} aria-label="Таблица" className={cn("rounded-md p-1.5", view === "table" ? "bg-amber-500 text-slate-950" : "text-slate-500")}><List className="h-4 w-4" /></button>
-          <button type="button" onClick={() => setView("kanban")} aria-label="Канбан" className={cn("rounded-md p-1.5", view === "kanban" ? "bg-amber-500 text-slate-950" : "text-slate-500")}><LayoutGrid className="h-4 w-4" /></button>
+        <div className="ml-auto flex rounded-lg border border-[#e5e5e5] bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => setView("table")}
+            aria-label="Таблица"
+            className={cn(
+              "rounded-md p-1.5 transition-colors",
+              view === "table" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
+            )}
+          >
+            <List className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("kanban")}
+            aria-label="Канбан"
+            className={cn(
+              "rounded-md p-1.5 transition-colors",
+              view === "kanban" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
+            )}
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
@@ -320,8 +353,8 @@ function TasksContent() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {(["todo", "in_progress", "done"] as TaskStatus[]).map((status) => (
-            <div key={status} className="rounded-xl border border-slate-800 bg-slate-900/50 p-3">
-              <div className="mb-3 flex justify-between px-1"><span className="text-xs font-semibold uppercase text-slate-400">{STATUS_LABELS[status]}</span><span className="text-xs text-slate-600">{groups[status].length}</span></div>
+            <div key={status} className="rounded-xl border border-[#e5e5e5] bg-[#fbfbfb] p-3">
+              <div className="mb-3 flex justify-between px-1"><span className="text-xs font-semibold uppercase tracking-wider text-[#666666]">{STATUS_LABELS[status]}</span><span className="text-xs font-mono text-[#888888]">{groups[status].length}</span></div>
               <div className="space-y-2">{groups[status].map((task) => renderCard(task))}</div>
             </div>
           ))}

@@ -176,14 +176,14 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Название запчасти..."
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
           />
           <input
             type="text"
             value={newArticle}
             onChange={(e) => setNewArticle(e.target.value)}
             placeholder="Артикул..."
-            className="w-[110px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm font-mono text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="w-[110px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm font-mono text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
           />
           <input
             type="number"
@@ -191,7 +191,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newQty}
             onChange={(e) => setNewQty(e.target.value)}
             placeholder="1"
-            className="w-[60px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-center text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[60px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-center text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <input
             type="number"
@@ -199,7 +199,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newRetail}
             onChange={(e) => setNewRetail(e.target.value)}
             placeholder="Розница"
-            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <input
             type="number"
@@ -207,7 +207,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newCostPrice}
             onChange={(e) => setNewCostPrice(e.target.value)}
             placeholder="Закупка"
-            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <button
             type="button"
@@ -216,7 +216,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             className={cn(
               "shrink-0 rounded-lg p-2 transition-colors",
               canAdd
-                ? "bg-amber-500 text-slate-950 hover:bg-amber-400"
+                ? "bg-[#4a38f5] text-white hover:bg-[#3b2be0]"
                 : "bg-slate-800 text-slate-600 cursor-not-allowed",
             )}
           >

@@ -263,9 +263,9 @@ export const CompanyCard = memo(function CompanyCard({
           чипу можно перейти в запись. */}
       <RecordRelationSection title="Контакты" count={contacts.data?.total ?? company.contactsCount}>
         {contacts.isLoading ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-[#888888]" />
         ) : (contacts.data?.items.length ?? 0) === 0 ? (
-          <p className="px-1 text-xs text-slate-600">Контактов нет</p>
+          <p className="px-1 text-xs text-[#888888]">Контактов нет</p>
         ) : (
           <div className="space-y-1">
             {contacts.data?.items.map((contact) => (
@@ -274,14 +274,14 @@ export const CompanyCard = memo(function CompanyCard({
                 type="button"
                 onClick={() => onOpenContact?.(contact.id)}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded px-1 py-1 text-left transition-colors",
-                  onOpenContact !== undefined && "hover:bg-slate-800/60",
+                  "flex w-full items-center gap-2 rounded-[6px] px-1.5 py-1 text-left transition-colors",
+                  onOpenContact !== undefined && "hover:bg-black/[0.04]",
                 )}
               >
                 <EntityChip name={contactFullName(contact)} size="sm" />
-                <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{contactFullName(contact)}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-[#111111]">{contactFullName(contact)}</span>
                 {contact.jobTitle !== "" && (
-                  <span className="shrink-0 truncate text-xs text-slate-500">{contact.jobTitle}</span>
+                  <span className="shrink-0 truncate text-xs text-[#888888]">{contact.jobTitle}</span>
                 )}
               </button>
             ))}
@@ -299,18 +299,18 @@ export const CompanyCard = memo(function CompanyCard({
       {(stats?.dealsBudgetTotal ?? company.dealsBudgetTotal) > 0 && (
         <RecordRelationSection title="Сумма сделок">
           <span className="inline-flex items-center gap-1.5 px-1 text-xs">
-            <Handshake className="h-3.5 w-3.5 text-slate-500" />
-            <span className="font-medium text-amber-400 tabular-nums">
+            <Handshake className="h-3.5 w-3.5 text-[#888888]" />
+            <span className="font-medium text-[#4a38f5] tabular-nums">
               {formatMoney(stats?.dealsBudgetTotal ?? company.dealsBudgetTotal)}
             </span>
-            {statsLoading && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
+            {statsLoading && <Loader2 className="h-3 w-3 animate-spin text-[#888888]" />}
           </span>
         </RecordRelationSection>
       )}
 
       {company.notes !== "" && (
         <RecordRelationSection title="Описание">
-          <p className="whitespace-pre-wrap px-1 text-sm leading-relaxed text-slate-300">{company.notes}</p>
+          <p className="whitespace-pre-wrap px-1 text-[13px] leading-relaxed text-[#111111]">{company.notes}</p>
         </RecordRelationSection>
       )}
     </div>

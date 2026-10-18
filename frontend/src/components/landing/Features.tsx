@@ -74,7 +74,7 @@ export function Features() {
                 key={f.title}
                 className="rounded-xl border border-slate-800 bg-slate-900 p-6 transition-colors duration-200 hover:border-slate-700"
               >
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
+                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-[#4a38f5]/10">
                   <Icon className="h-5 w-5 text-amber-400" />
                 </div>
                 <h3 className="text-lg font-semibold text-slate-100">
