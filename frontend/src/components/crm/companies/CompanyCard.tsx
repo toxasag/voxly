@@ -143,7 +143,7 @@ export const CompanyCard = memo(function CompanyCard({
           kind="number"
           value={company.annualRevenue === null ? "" : String(company.annualRevenue)}
           display={company.annualRevenue !== null
-            ? <span className="font-medium text-amber-400 tabular-nums">{formatMoney(company.annualRevenue)}</span>
+            ? <span className="font-medium text-[#111111] tabular-nums">{formatMoney(company.annualRevenue)}</span>
             : undefined}
           validate={(value) => {
             if (value.trim() === "") return null;
