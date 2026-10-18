@@ -17,4 +17,7 @@ coverage/
 # DB credentials, а база имеет одноразовое имя getvoxly_audit_<timestamp>.
 backend/.audit/
 
+.vite/
+bin/
+
 .DS_Store
