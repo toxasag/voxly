@@ -77,6 +77,7 @@ describe("Поля карточки сделки", () => {
     expect(hasDealFieldValue(empty, "budget")).toBe(false);
     expect(hasDealFieldValue(empty, "description")).toBe(false);
     expect(hasDealFieldValue(empty, "closeDate")).toBe(false);
+    expect(hasDealFieldValue(empty, "latestNote")).toBe(false);
   });
 
   it("заполненные значения показываются", () => {
@@ -87,9 +88,10 @@ describe("Поля карточки сделки", () => {
       description: "Две машины",
       ownerName: "Менеджер",
       closeDate: "2026-10-01T00:00:00.000Z",
+      latestNote: "Договорились о встрече",
     });
 
-    for (const field of ["company", "contact", "budget", "description", "owner", "closeDate"] as const) {
+    for (const field of ["company", "contact", "budget", "description", "owner", "closeDate", "latestNote"] as const) {
       expect(hasDealFieldValue(filled, field)).toBe(true);
     }
   });

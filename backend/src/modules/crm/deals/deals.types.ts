@@ -128,6 +128,7 @@ export interface DealRow {
   contact_first_name?: string | null;
   contact_last_name?: string | null;
   owner_name?: string | null;
+  latest_note_body?: string | null;
 }
 
 export interface DealDTO {
@@ -152,6 +153,7 @@ export interface DealDTO {
   companyName: string | null;
   contactName: string | null;
   ownerName: string | null;
+  latestNote: string | null;
 }
 
 function toIso(value: Date | string): string {
@@ -196,6 +198,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     companyName: row.company_name ?? null,
     contactName: joinName(row.contact_first_name, row.contact_last_name),
     ownerName: row.owner_name ?? null,
+    latestNote: row.latest_note_body ?? null,
   };
 }
 

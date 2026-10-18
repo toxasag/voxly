@@ -173,6 +173,14 @@ export const DealCard = memo(function DealCard({
           <p className="line-clamp-2 text-xs text-[#888888] pt-0.5">{deal.description}</p>
         )}
 
+        {show("latestNote") && Boolean(deal.latestNote) && (
+          <div className="rounded-[6px] border border-[#fef08a] bg-[#fefce8] p-2 text-[11px] text-[#854d0e]">
+            <div className="line-clamp-3 whitespace-pre-wrap break-words font-normal leading-relaxed">
+              {deal.latestNote}
+            </div>
+          </div>
+        )}
+
         {show("currency") && (
           <div className="text-xs text-[#888888]">Валюта: {deal.currency}</div>
         )}
