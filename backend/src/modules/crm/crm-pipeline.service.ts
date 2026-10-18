@@ -46,6 +46,7 @@ interface ExistingContact {
   id: string;
   first_name: string;
   last_name: string;
+  telegram_chat_id?: string | number | null;
 }
 
 export interface CrmPipelineResult {
@@ -101,6 +102,26 @@ export class CrmPipelineService {
       let contactId: string;
       if (contact !== null) {
         contactId = contact.id;
+
+        // Обогащение существующего контакта (enrichment):
+        // 1. Привязываем telegram_chat_id, если его ещё не было
+        if (input.senderTelegramChatId && !contact.telegram_chat_id) {
+          await tx.query(
+            `UPDATE contacts SET telegram_chat_id = $1 WHERE id = $2 AND telegram_chat_id IS NULL`,
+            [Number(input.senderTelegramChatId), contact.id],
+          );
+        }
+
+        // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
+        const newName = contactNameFrom(input);
+        if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+          await tx.query(
+            `UPDATE contacts SET first_name = $1, last_name = $2 WHERE id = $3`,
+            [newName.first_name, newName.last_name, contact.id],
+          );
+          contact.first_name = newName.first_name;
+          contact.last_name = newName.last_name;
+        }
       } else {
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
         // ещё нет, а строка-заглушка создавала бы фиктивную организацию.
@@ -311,11 +332,29 @@ export class CrmPipelineService {
   ): Promise<ExistingContact | null> {
     if (input.senderTelegramChatId !== undefined && input.senderTelegramChatId.length > 0) {
       const byChatId = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name FROM contacts
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
          WHERE tenant_id = $1 AND telegram_chat_id = $2 AND deleted_at IS NULL LIMIT 1`,
         [tenantId, Number(input.senderTelegramChatId)],
       );
       if (byChatId !== null) return byChatId;
+    }
+
+    // Дедупликация по telegram_username и соцсетям
+    if (input.profile?.username !== undefined && input.profile.username.length > 0) {
+      const clean = input.profile.username.replace(/^@/, "").trim();
+      const byUsername = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (
+             telegram_username ILIKE $2
+             OR socials @> $3::jsonb
+             OR socials @> $4::jsonb
+           )
+         LIMIT 1`,
+        [tenantId, clean, JSON.stringify([{ value: `@${clean}` }]), JSON.stringify([{ value: clean }])],
+      );
+      if (byUsername !== null) return byUsername;
     }
 
     if (input.senderPhone !== undefined && input.senderPhone.length > 0) {
@@ -342,7 +381,7 @@ export class CrmPipelineService {
     phone: string,
   ): Promise<ExistingContact | null> {
     return tx.queryOne<ExistingContact>(
-      `SELECT id, first_name, last_name FROM contacts
+      `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
        WHERE tenant_id = $1
          AND deleted_at IS NULL
          AND (phone = $2 OR additional_phones @> $3::jsonb)
