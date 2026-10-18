@@ -98,7 +98,7 @@ export function SheetHeader({
       <div className="flex-1 min-w-0">{children}</div>
       <div className="flex items-center gap-1 shrink-0 ml-3">
         {onDelete !== undefined && (
-          <button type="button" onClick={onDelete} disabled={isDeleting} aria-label="Удалить запись" className="rounded-[6px] p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50">
+          <button type="button" onClick={onDelete} disabled={isDeleting} aria-label="Удалить запись" title="Удалить запись" className="rounded-[6px] p-1.5 text-rose-500 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2m-1 0v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6h10z" /></svg>
           </button>
         )}
@@ -106,8 +106,9 @@ export function SheetHeader({
           <button
             type="button"
             onClick={onToggleMaximize}
-            aria-label={isMaximized ? "Свернуть" : "Развернуть на весь экран"}
-            className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+            aria-label={isMaximized ? "Свернуть" : "Развернуть"}
+            title="Развернуть"
+            className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {isMaximized ? (
@@ -129,7 +130,7 @@ export function SheetHeader({
           </button>
         )}
         {onClose && (
-          <button type="button" onClick={onClose} aria-label="Закрыть" className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Закрыть" title="Закрыть" className="rounded-[6px] p-1.5 text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"><X className="h-4 w-4" /></button>
         )}
       </div>
     </div>

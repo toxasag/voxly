@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Columns3, Eye, EyeOff, GripVertical, Plus } from "lucide-react";
+import { Check, Columns3, Eye, EyeOff, GripVertical, Plus, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   RECORD_TABLE_CHECKBOX_WIDTH,
@@ -139,6 +139,8 @@ export function RecordTable<T>({
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState(false);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnsMenuAnchor, setColumnsMenuAnchor] = useState<"toolbar" | "headerPlus">("toolbar");
+  const [columnSearch, setColumnSearch] = useState("");
 
   /**
    * Мобильный режим меняет не геометрию, а состав обработчиков, поэтому здесь
@@ -214,6 +216,12 @@ export function RecordTable<T>({
     () => new Set(hiddenColumns.map((column) => column.id)),
     [hiddenColumns],
   );
+
+  const filteredMenuColumns = useMemo(() => {
+    const q = columnSearch.trim().toLowerCase();
+    if (!q) return menuColumns;
+    return menuColumns.filter((col) => col.header.toLowerCase().includes(q));
+  }, [menuColumns, columnSearch]);
 
   /**
    * Переменные ширины со схлопнутой первой колонкой.
@@ -481,13 +489,17 @@ export function RecordTable<T>({
       {selectionEnabled && selectedIds !== undefined && selectedIds.size > 0 && bulkBar}
 
       <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white">
-        {/* Управление колонками: у Twenty это кнопка «+» в правой части шапки. */}
+        {/* Управление колонками: у Twenty это кнопка «+» в правой части шапки и кнопка «Колонки». */}
         {tableId !== undefined && layoutLoaded && (
           <div className="relative flex items-center justify-end border-b border-[#e5e5e5] bg-white px-2 py-1">
             <button
               type="button"
-              onClick={() => setColumnsMenuOpen((open) => !open)}
-              aria-expanded={columnsMenuOpen}
+              title="Управление колонками"
+              onClick={() => {
+                setColumnsMenuAnchor("toolbar");
+                setColumnsMenuOpen((open) => !open);
+              }}
+              aria-expanded={columnsMenuOpen && columnsMenuAnchor === "toolbar"}
               className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
             >
               <Columns3 className="h-3.5 w-3.5" />
@@ -499,57 +511,100 @@ export function RecordTable<T>({
               )}
             </button>
 
-            {columnsMenuOpen && (
+            {columnsMenuOpen && columnsMenuAnchor === "toolbar" && (
               <>
-                {/* Подложка закрывает меню по клику вне: без неё меню оставалось бы
-                    открытым при работе с таблицей. */}
+                {/* Подложка закрывает меню по клику вне */}
                 <button
                   type="button"
                   aria-label="Закрыть меню колонок"
-                  onClick={() => setColumnsMenuOpen(false)}
+                  onClick={() => {
+                    setColumnsMenuOpen(false);
+                    setColumnSearch("");
+                  }}
                   className="fixed inset-0 z-30 cursor-default"
                 />
-                {/*
-                  На мобильном меню разворачивается на всю ширину: `w-56` с
-                  `absolute right-2` на 360px экране прижимает его к краю, и часть
-                  подписей уезжает за границу.
-                */}
                 <div
                   className={cn(
-                    "absolute top-full z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl",
+                    "absolute top-full z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
                     isMobile ? "left-0 right-0 w-full" : "right-2 w-56",
                   )}
                 >
-                  <div className="max-h-64 overflow-y-auto py-1">
-                    {menuColumns.map((column) => {
-                      const isHidden = hiddenIds.has(column.id);
-                      const canHide =
-                        column.id !== identifierColumnId && column.hideable !== false;
-
-                      return (
-                        <button
-                          key={column.id}
-                          type="button"
-                          disabled={!canHide}
-                          onClick={() => toggleColumn(column.id)}
-                          className={cn(
-                            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors",
-                            canHide ? "text-[#111111] hover:bg-[#f5f5f5]" : "cursor-default text-[#888888]",
-                          )}
-                        >
-                          {isHidden ? <EyeOff className="h-3.5 w-3.5 text-[#888888]" /> : <Eye className="h-3.5 w-3.5 text-[#888888]" />}
-                          <span className="truncate">{column.header}</span>
-                          {!canHide && <span className="ml-auto text-xs text-[#888888]">всегда</span>}
-                        </button>
-                      );
-                    })}
+                  {/* Поиск полей (Twenty CRM style) */}
+                  <div className="border-b border-[#f0f0f0] p-2 bg-white">
+                    <div className="relative flex items-center">
+                      <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
+                      <input
+                        type="text"
+                        value={columnSearch}
+                        onChange={(e) => setColumnSearch(e.target.value)}
+                        placeholder="Поиск полей"
+                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
+                        autoFocus
+                      />
+                    </div>
                   </div>
+
+                  {/* Список полей */}
+                  <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
+                    {filteredMenuColumns.length === 0 ? (
+                      <div className="px-3 py-3 text-center text-xs text-[#888888]">
+                        Поля не найдены
+                      </div>
+                    ) : (
+                      filteredMenuColumns.map((column) => {
+                        const isHidden = hiddenIds.has(column.id);
+                        const canHide =
+                          column.id !== identifierColumnId && column.hideable !== false;
+                        const IconComponent = column.icon;
+
+                        return (
+                          <button
+                            key={column.id}
+                            type="button"
+                            disabled={!canHide}
+                            onClick={() => toggleColumn(column.id)}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
+                              canHide
+                                ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
+                                : "cursor-default text-[#888888]",
+                              !isHidden && canHide && "font-medium text-[#111111]",
+                            )}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              {IconComponent ? (
+                                <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
+                              ) : (
+                                <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
+                              )}
+                              <span className="truncate">{column.header}</span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5 pl-2">
+                              {!canHide ? (
+                                <span className="text-[11px] text-[#888888]">всегда</span>
+                              ) : !isHidden ? (
+                                <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Нижняя кнопка сброса раскладки */}
                   <button
                     type="button"
-                    onClick={() => { resetLayout(); setColumnsMenuOpen(false); }}
-                    className="w-full border-t border-[#e5e5e5] px-3 py-1.5 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+                    title="Сбросить раскладку к значениям по умолчанию"
+                    onClick={() => {
+                      resetLayout();
+                      setColumnsMenuOpen(false);
+                      setColumnSearch("");
+                    }}
+                    className="flex w-full items-center gap-2 border-t border-[#f0f0f0] bg-white px-3 py-2 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
                   >
-                    Сбросить раскладку
+                    <Settings className="h-3.5 w-3.5 text-[#888888]" />
+                    <span>Сбросить раскладку</span>
                   </button>
                 </div>
               </>
@@ -688,8 +743,123 @@ export function RecordTable<T>({
                   )}
                 </div>
               ))}
-              <div className="border-r border-[#e5e5e5] flex items-center justify-center text-[#888888]">
-                <Plus className="h-3.5 w-3.5 opacity-60" />
+              <div className="relative border-r border-[#e5e5e5] flex items-center justify-center text-[#888888]">
+                {tableId !== undefined && layoutLoaded ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setColumnsMenuAnchor("headerPlus");
+                      setColumnsMenuOpen((open) => !open);
+                    }}
+                    aria-label="Добавить колонку"
+                    title="Добавить колонку"
+                    className="flex h-full w-full items-center justify-center text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <Plus className="h-3.5 w-3.5 opacity-60" />
+                )}
+
+                {columnsMenuOpen && columnsMenuAnchor === "headerPlus" && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Закрыть меню колонок"
+                      onClick={() => {
+                        setColumnsMenuOpen(false);
+                        setColumnSearch("");
+                      }}
+                      className="fixed inset-0 z-30 cursor-default"
+                    />
+                    <div
+                      className={cn(
+                        "absolute top-full right-0 z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
+                        isMobile ? "left-0 right-0 w-full" : "w-64",
+                      )}
+                    >
+                      {/* Поиск полей */}
+                      <div className="border-b border-[#f0f0f0] p-2 bg-white">
+                        <div className="relative flex items-center">
+                          <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
+                          <input
+                            type="text"
+                            value={columnSearch}
+                            onChange={(e) => setColumnSearch(e.target.value)}
+                            placeholder="Поиск полей"
+                            className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+
+                      {/* Список полей */}
+                      <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
+                        {filteredMenuColumns.length === 0 ? (
+                          <div className="px-3 py-3 text-center text-xs text-[#888888]">
+                            Поля не найдены
+                          </div>
+                        ) : (
+                          filteredMenuColumns.map((column) => {
+                            const isHidden = hiddenIds.has(column.id);
+                            const canHide =
+                              column.id !== identifierColumnId && column.hideable !== false;
+                            const IconComponent = column.icon;
+
+                            return (
+                              <button
+                                key={column.id}
+                                type="button"
+                                disabled={!canHide}
+                                onClick={() => toggleColumn(column.id)}
+                                className={cn(
+                                  "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
+                                  canHide
+                                    ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
+                                    : "cursor-default text-[#888888]",
+                                  !isHidden && canHide && "font-medium text-[#111111]",
+                                )}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  {IconComponent ? (
+                                    <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
+                                  ) : (
+                                    <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
+                                  )}
+                                  <span className="truncate">{column.header}</span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1.5 pl-2">
+                                  {!canHide ? (
+                                    <span className="text-[11px] text-[#888888]">всегда</span>
+                                  ) : !isHidden ? (
+                                    <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
+                                  ) : null}
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Нижний бар меню */}
+                      <div className="border-t border-[#f0f0f0] p-1 bg-white">
+                        <button
+                          type="button"
+                          title="Настроить поля (Сбросить раскладку к значениям по умолчанию)"
+                          onClick={() => {
+                            resetLayout();
+                            setColumnsMenuOpen(false);
+                            setColumnSearch("");
+                          }}
+                          className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+                        >
+                          <Settings className="h-3.5 w-3.5 text-[#888888]" />
+                          <span>Настроить поля (Сбросить раскладку)</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 

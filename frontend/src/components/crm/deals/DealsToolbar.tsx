@@ -154,6 +154,7 @@ export function DealsToolbar(props: Props) {
         {props.search !== "" ? (
           <button
             type="button"
+            title="Очистить поиск"
             onClick={() => props.onSearchChange("")}
             aria-label="Очистить поиск"
             className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#888888] hover:text-[#000000]"
@@ -178,7 +179,7 @@ export function DealsToolbar(props: Props) {
 
         <DropdownMenu
           trigger={
-            <button type="button" aria-label="Дополнительные действия" className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#000000]">
+            <button type="button" title="Дополнительные действия" aria-label="Дополнительные действия" className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#000000]">
               ⋯
             </button>
           }
@@ -265,6 +266,7 @@ export function DealsToolbar(props: Props) {
             перетаскивании и inline-правке названий в узких колонках доски. */}
         <button
           type="button"
+          title={props.configureMode ? "Завершить настройку этапов" : "Настроить этапы воронки"}
           onClick={props.onConfigureToggle}
           className={cn(
             "hidden h-8 items-center gap-1.5 rounded-[8px] border px-3 text-xs font-medium tracking-normal transition-colors md:flex",
@@ -279,6 +281,7 @@ export function DealsToolbar(props: Props) {
 
         <button
           type="button"
+          title="Создать новую сделку"
           onClick={props.onCreateDeal}
           className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-none transition-colors hover:bg-[#3b2be0]"
         >
