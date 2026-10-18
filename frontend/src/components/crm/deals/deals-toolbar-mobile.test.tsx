@@ -113,7 +113,7 @@ describe("Что уходит из ряда", () => {
     const rowSummary = screen
       .getAllByText(/сделок:/)
       .map((node) => node.parentElement)
-      .find((node) => node?.className.includes("border-slate-800"));
+      .find((node) => node?.className.includes("border-[#e5e5e5]"));
 
     expect(rowSummary?.className).toContain("hidden");
     expect(rowSummary?.className).toContain("md:block");
