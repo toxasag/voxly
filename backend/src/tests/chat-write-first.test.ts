@@ -85,7 +85,10 @@ describe("Write-First Chat and Send-From Options", () => {
       };
       vi.spyOn(dealsService, "createMessage").mockResolvedValue(createdMessage);
 
-      // 2. mock resolveRoute: row without prior channel_account_id
+      // 2. mock AI handoff query
+      mockQuery.mockResolvedValueOnce([]);
+
+      // 3. mock resolveRoute: row without prior channel_account_id
       mockQuery.mockResolvedValueOnce([
         {
           channel_account_id: null,
@@ -96,7 +99,7 @@ describe("Write-First Chat and Send-From Options", () => {
         },
       ]);
 
-      // 3. mock fallback query for channel_accounts
+      // 4. mock fallback query for channel_accounts
       mockQuery.mockResolvedValueOnce([{ id: "acc-tg-fallback" }]);
 
       // 4. mock markMessageDelivery

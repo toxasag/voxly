@@ -103,7 +103,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
   if (token === null) {
     return (
       <div className="space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 border border-rose-200">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50">
           <ShieldAlert className="h-6 w-6 text-rose-600" />
         </div>
         <p className="text-[13px] text-[#666666]">
@@ -111,7 +111,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          className="inline-flex h-10 items-center justify-center rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
         >
           Перейти к входу
         </a>
@@ -121,8 +121,8 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[#888888]">
-        <Loader2 className="h-4 w-4 animate-spin" />
+      <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-[#666666]">
+        <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
         Проверяем приглашение...
       </div>
     );
@@ -131,7 +131,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
   if (done) {
     return (
       <div className="space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 border border-emerald-200">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50">
           <CheckCircle2 className="h-6 w-6 text-emerald-600" />
         </div>
         <p className="text-[13px] text-[#666666]">
@@ -139,7 +139,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
         >
           Войти
           <ArrowRight className="h-4 w-4" />
@@ -151,7 +151,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
   if (preview === null) {
     return (
       <div className="space-y-4 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 border border-rose-200">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50">
           <ShieldAlert className="h-6 w-6 text-rose-600" />
         </div>
         <p className="text-[13px] text-[#666666]">
@@ -159,7 +159,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+          className="inline-flex h-10 items-center justify-center rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
         >
           Перейти к входу
         </a>
@@ -173,12 +173,12 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
     <form onSubmit={form.handleSubmit((values) => void handleSubmit(values))} className="space-y-4">
       <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5]/10">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-[#4a38f5]/10">
             <Building2 className="h-4 w-4 text-[#4a38f5]" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-[13px] font-semibold text-[#111111]">{preview.companyName}</p>
-            <p className="text-xs text-[#888888]">
+            <p className="text-xs text-[#666666]">
               {preview.email} · {preview.roleLabel}
             </p>
           </div>
@@ -205,8 +205,8 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         {...form.register("password_confirm")}
       />
 
-      <div className="space-y-1.5">
-        <label htmlFor="invite_phone" className="block text-xs font-medium text-[#111111]">
+      <div className="space-y-2">
+        <label htmlFor="invite_phone" className="block text-[13px] font-medium text-[#111111]">
           Телефон
         </label>
         <div className="relative">
@@ -224,14 +224,14 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
             className={cn(
               "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] font-mono tabular-nums transition-colors",
               "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
-              errors.phone !== undefined ? "border-rose-300" : "border-[#e5e5e5]",
+              errors.phone !== undefined ? "border-rose-500" : "border-[#e5e5e5]",
             )}
           />
         </div>
         {errors.phone ? (
           <p className="text-xs text-rose-600">{errors.phone.message}</p>
         ) : (
-          <p className="text-xs text-[#888888]">На него придёт код подтверждения при входе</p>
+          <p className="text-xs text-[#666666]">На него придёт код подтверждения при входе</p>
         )}
       </div>
 
@@ -239,7 +239,7 @@ export function AcceptInviteForm({ token }: { token: string | null }) {
         type="submit"
         disabled={isSubmitting}
         className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+          "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
           "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}

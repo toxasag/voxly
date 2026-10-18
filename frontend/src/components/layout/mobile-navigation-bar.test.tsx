@@ -101,8 +101,8 @@ describe("MobileNavigationBar", () => {
     currentPath = "/menu";
     render(<MobileNavigationBar />, { wrapper });
 
-    expect(screen.getByRole("link", { name: "Меню" }).className).toContain("text-amber-400");
-    expect(screen.getByRole("link", { name: "Панель" }).className).not.toContain("text-amber-400");
+    expect(screen.getByRole("link", { name: "Меню" }).className).toContain("text-[#4a38f5]");
+    expect(screen.getByRole("link", { name: "Панель" }).className).not.toContain("text-[#4a38f5]");
   });
 
   it("считает вложенный маршрут активным", () => {
@@ -111,7 +111,7 @@ describe("MobileNavigationBar", () => {
 
     // «Панель» не должна подсвечиваться на чужом маршруте: иначе активный раздел
     // в баре не соответствует открытому экрану.
-    expect(screen.getByRole("link", { name: "Панель" }).className).not.toContain("text-amber-400");
+    expect(screen.getByRole("link", { name: "Панель" }).className).not.toContain("text-[#4a38f5]");
   });
 
   it("прячется, когда открыт оверлей", async () => {
