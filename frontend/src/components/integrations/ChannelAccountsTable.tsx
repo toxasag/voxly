@@ -140,14 +140,14 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
 
   if (isError) {
     return (
-      <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
+      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm text-rose-700">
           Не удалось загрузить подключения: {error?.message ?? "неизвестная ошибка"}
         </p>
         <button
           type="button"
           onClick={onRetry}
-          className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="mt-3 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5]"
         >
           Повторить
         </button>
@@ -157,7 +157,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
 
   if (accounts.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900">
+      <div className="rounded-xl border border-[#e5e5e5] bg-white">
         <EmptyState
           icon={Plug}
           title={`Нет подключённых аккаунтов ${channelName}`}
@@ -186,43 +186,43 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
 
   return (
     <>
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+      <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-2xs">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-slate-800">
-              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
+            <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
                 Название
               </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
                 Идентификатор
               </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
                 Статус
               </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-slate-500">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase text-[#666666]">
                 Привязан
               </th>
-              <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-slate-500">
+              <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase text-[#666666]">
                 Действия
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-[#f0f0f0]">
             {accounts.map((account) => (
-              <tr key={account.id} className="transition-colors hover:bg-slate-800/50">
+              <tr key={account.id} className="transition-colors hover:bg-[#f5f5f5]">
                 <td className="px-4 py-3">
-                  <p className="text-sm font-medium text-slate-200">{account.label}</p>
+                  <p className="text-sm font-medium text-[#111111]">{account.label}</p>
                   {account.statusMessage.length > 0 && (
-                    <p className="mt-0.5 text-xs text-rose-400">{account.statusMessage}</p>
+                    <p className="mt-0.5 text-xs text-rose-600">{account.statusMessage}</p>
                   )}
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-400">{account.externalId}</td>
+                <td className="px-4 py-3 font-mono text-xs text-[#666666]">{account.externalId}</td>
                 <td className="px-4 py-3">
                   <StatusBadge variant={STATUS_VARIANTS[account.status]} size="sm">
                     {CHANNEL_STATUS_LABELS[account.status]}
                   </StatusBadge>
                 </td>
-                <td className="px-4 py-3 text-sm text-slate-400">
+                <td className="px-4 py-3 text-sm text-[#666666]">
                   {/* Дата привязки, а не создания: до авторизации канал не
                       работает, и «привязан» относится именно к ней. */}
                   {account.connectedAt !== null ? formatDate(account.connectedAt) : "—"}
@@ -236,7 +236,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                         disabled={busyId === account.id}
                         title="Проверить сессию"
                         aria-label={`Проверить сессию ${account.label}`}
-                        className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
                       >
                         {busyId === account.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -255,7 +255,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                             ? `Включить ${account.label}`
                             : `Отключить ${account.label}`
                         }
-                        className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 disabled:opacity-40"
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
                       >
                         {busyId === account.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
@@ -268,7 +268,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                       type="button"
                       onClick={() => setRemoveTarget(account)}
                       aria-label={`Удалить ${account.label}`}
-                      className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-rose-400"
+                      className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

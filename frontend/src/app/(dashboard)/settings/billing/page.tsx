@@ -119,14 +119,17 @@ function BillingContent() {
 
   if (billing.isError || billing.data === undefined) {
     return (
-      <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
-          Не удалось загрузить данные подписки: {billing.error?.message ?? "неизвестная ошибка"}
+      <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm font-semibold text-rose-900">
+          Не удалось загрузить данные подписки
+        </p>
+        <p className="mt-1 text-sm text-rose-700">
+          {billing.error?.message ?? "неизвестная ошибка"}
         </p>
         <button
           type="button"
           onClick={() => void billing.refetch()}
-          className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa]"
         >
           Повторить
         </button>
@@ -141,8 +144,8 @@ function BillingContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Тариф и оплата</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-xl font-bold text-[#111111]">Тариф и оплата</h1>
+        <p className="mt-1 text-[13px] text-[#666666]">
           Абонентская плата за модули и каналы, отдельно — баланс ИИ
         </p>
       </div>
@@ -154,16 +157,16 @@ function BillingContent() {
         1500 ₽» списывают ещё и за токены.
       */}
       <div className="flex items-center gap-2">
-        <Receipt className="h-4 w-4 text-slate-500" />
-        <h2 className="text-sm font-semibold text-slate-200">Абонентская плата</h2>
+        <Receipt className="h-4 w-4 text-[#4a38f5]" />
+        <h2 className="text-sm font-semibold text-[#111111]">Абонентская плата</h2>
       </div>
 
       {/* Текущий тариф и остаток пробного периода */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-xs uppercase tracking-wider text-slate-500">Текущий тариф</p>
+              <p className="text-xs uppercase tracking-wider text-[#666666]">Текущий тариф</p>
               {info !== undefined && (
                 <StatusBadge
                   variant={
@@ -181,22 +184,22 @@ function BillingContent() {
                 </StatusBadge>
               )}
             </div>
-            <p className="mt-1.5 text-2xl font-bold text-slate-100">
+            <p className="mt-1.5 text-2xl font-bold text-[#111111]">
               {info === undefined ? "—" : (PLAN_LABELS[info.plan] ?? info.plan)}
             </p>
 
             {info !== undefined && info.trialActive && (
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-emerald-400">
+              <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-emerald-700">
                 <Gift className="h-4 w-4" />
                 Пробный период: осталось {info.trialDaysLeft} {pluralDays(info.trialDaysLeft)}
                 {info.trialEndsAt !== null && (
-                  <span className="text-slate-500">· до {formatDate(info.trialEndsAt)}</span>
+                  <span className="text-[#666666]">· до {formatDate(info.trialEndsAt)}</span>
                 )}
               </p>
             )}
 
             {info !== undefined && !info.trialActive && info.status === "trial" && (
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-amber-400">
+              <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-amber-700">
                 <CalendarClock className="h-4 w-4" />
                 Пробный период завершён
               </p>
@@ -204,14 +207,14 @@ function BillingContent() {
           </div>
 
           <div className="text-right">
-            <p className="text-xs uppercase tracking-wider text-slate-500">К оплате в месяц</p>
-            <p className="mt-1.5 text-3xl font-bold text-slate-100">
+            <p className="text-xs uppercase tracking-wider text-[#666666]">К оплате в месяц</p>
+            <p className="mt-1.5 text-3xl font-bold text-[#111111] tabular-nums font-mono">
               {formatRub(summary.monthlyTotal)}
             </p>
             {hasTrials && summary.monthlyAfterTrials !== summary.monthlyTotal && (
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-[#666666]">
                 после пробных периодов —{" "}
-                <span className="font-medium text-slate-300">
+                <span className="font-semibold text-[#111111] tabular-nums font-mono">
                   {formatRub(summary.monthlyAfterTrials)}/мес
                 </span>
               </p>
@@ -221,10 +224,10 @@ function BillingContent() {
       </div>
 
       {/* Детализация счёта */}
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
-        <div className="flex items-center justify-between border-b border-slate-800 px-5 py-3">
-          <span className="text-sm font-semibold text-slate-200">Детализация за месяц</span>
-          <span className="flex items-center gap-1.5 text-xs text-slate-500">
+      <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-3">
+          <span className="text-sm font-semibold text-[#111111]">Детализация за месяц</span>
+          <span className="flex items-center gap-1.5 text-xs text-[#666666]">
             <Users className="h-3.5 w-3.5" />
             {summary.usersCount} польз.
           </span>
@@ -238,7 +241,7 @@ function BillingContent() {
             action={
               <Link
                 href="/marketplace"
-                className="rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
+                className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-medium text-white shadow-2xs hover:bg-[#3d2ee0]"
               >
                 Открыть маркетплейс
               </Link>
@@ -247,20 +250,20 @@ function BillingContent() {
         ) : (
           <>
             <table className="w-full">
-              <tbody className="divide-y divide-slate-800">
+              <tbody className="divide-y divide-[#f0f0f0]">
                 {summary.items.map((item) => (
-                  <tr key={item.slug} className="transition-colors hover:bg-slate-800/50">
+                  <tr key={item.slug} className="transition-colors hover:bg-[#fafafa]">
                     <td className="px-5 py-3.5">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-slate-200">{item.name}</span>
+                        <span className="text-sm font-medium text-[#111111]">{item.name}</span>
                         {item.trialActive && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                             <Gift className="h-3 w-3" />
                             бесплатно ещё {trialDaysLeft(item.trialEndsAt)} дн.
                           </span>
                         )}
                       </div>
-                      <p className="mt-0.5 text-xs text-slate-500">
+                      <p className="mt-0.5 text-xs text-[#666666]">
                         {itemDetail(
                           item.slug,
                           item.quantity,
@@ -272,42 +275,42 @@ function BillingContent() {
                     <td className="px-5 py-3.5 text-right">
                       <span
                         className={cn(
-                          "text-sm font-semibold",
-                          item.monthlyTotal === 0 ? "text-emerald-400" : "text-slate-100",
+                          "text-sm font-semibold tabular-nums font-mono",
+                          item.monthlyTotal === 0 ? "text-emerald-700" : "text-[#111111]",
                         )}
                       >
                         {item.monthlyTotal === 0 ? "0 ₽" : `${formatRub(item.monthlyTotal)}`}
                       </span>
-                      <span className="text-xs text-slate-500">/мес</span>
+                      <span className="text-xs text-[#666666]">/мес</span>
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-slate-700 bg-slate-950/50">
+                <tr className="border-t-2 border-[#e5e5e5] bg-[#fafafa]">
                   <td className="px-5 py-4">
-                    <span className="text-sm font-bold uppercase tracking-wide text-slate-200">
+                    <span className="text-sm font-bold uppercase tracking-wide text-[#111111]">
                       Итого к оплате
                     </span>
                   </td>
                   <td className="px-5 py-4 text-right">
-                    <span className="text-lg font-bold text-amber-400">
+                    <span className="text-lg font-bold text-[#111111] tabular-nums font-mono">
                       {formatRub(summary.monthlyTotal)}
                     </span>
-                    <span className="text-xs text-slate-500">/мес</span>
+                    <span className="text-xs text-[#666666]">/мес</span>
                   </td>
                 </tr>
               </tfoot>
             </table>
 
-            <div className="border-t border-slate-800 px-5 py-3">
-              <p className="text-xs text-slate-500">
+            <div className="border-t border-[#e5e5e5] px-5 py-3">
+              <p className="text-xs text-[#666666]">
                 Число пользователей влияет на стоимость базовой CRM —{" "}
-                <Link href="/settings/team" className="text-[#4a38f5] hover:text-[#4a38f5]">
+                <Link href="/settings/team" className="text-[#4a38f5] font-medium hover:underline">
                   управление сотрудниками
                 </Link>
                 . Состав модулей —{" "}
-                <Link href="/marketplace" className="text-[#4a38f5] hover:text-[#4a38f5]">
+                <Link href="/marketplace" className="text-[#4a38f5] font-medium hover:underline">
                   маркетплейс
                 </Link>
                 .
@@ -318,17 +321,17 @@ function BillingContent() {
       </div>
 
       {/* Баланс ИИ — второй, отдельный вид платежа */}
-      <div className="flex items-center gap-2 border-t border-slate-800 pt-6">
-        <Sparkles className="h-4 w-4 text-amber-400" />
-        <h2 className="text-sm font-semibold text-slate-200">Баланс ИИ (токены)</h2>
+      <div className="flex items-center gap-2 border-t border-[#e5e5e5] pt-6">
+        <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+        <h2 className="text-sm font-semibold text-[#111111]">Баланс ИИ (токены)</h2>
       </div>
 
       <AiBalanceCard />
 
       {/* Способы оплаты */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-        <h2 className="text-sm font-semibold text-slate-200">Способы оплаты</h2>
-        <p className="mt-1 text-xs text-slate-500">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+        <h2 className="text-sm font-semibold text-[#111111]">Способы оплаты</h2>
+        <p className="mt-1 text-xs text-[#666666]">
           Выберите, как оплачивать подписку после пробного периода
         </p>
 
@@ -338,10 +341,10 @@ function BillingContent() {
           работающую оплату: пользователь должен понимать, что списание пока
           невозможно, и как поступить.
         */}
-        <div className="mt-4 flex gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 p-4">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-          <div className="text-xs leading-relaxed text-slate-400">
-            <p className="font-medium text-sky-400">Автоматическое списание пока недоступно</p>
+        <div className="mt-4 flex gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+          <div className="text-xs leading-relaxed text-sky-900">
+            <p className="font-medium text-sky-800">Автоматическое списание пока недоступно</p>
             <p className="mt-1">
               Платёжный провайдер в процессе подключения. Оставьте заявку — менеджер выставит счёт
               и активирует подписку вручную. Доступ к данным при этом не ограничивается.
@@ -356,14 +359,14 @@ function BillingContent() {
               setNotice("card");
               toast.info("Привязка карты станет доступна после подключения платёжного провайдера");
             }}
-            className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-left transition-colors hover:border-slate-600"
+            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
           >
-            <div className="rounded-lg bg-[#4a38f5]/10 p-2">
-              <CreditCard className="h-4 w-4 text-amber-400" />
+            <div className="rounded-[8px] bg-indigo-50 p-2">
+              <CreditCard className="h-4 w-4 text-[#4a38f5]" />
             </div>
             <div>
-              <p className="text-sm font-medium text-slate-200">Привязать карту</p>
-              <p className="mt-0.5 text-xs text-slate-500">
+              <p className="text-sm font-medium text-[#111111]">Привязать карту</p>
+              <p className="mt-0.5 text-xs text-[#666666]">
                 Автопродление подписки каждый месяц
               </p>
             </div>
@@ -375,25 +378,25 @@ function BillingContent() {
               setNotice("invoice");
               toast.info("Запрос отправлен: менеджер свяжется для выставления счёта");
             }}
-            className="flex items-start gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4 text-left transition-colors hover:border-slate-600"
+            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
           >
-            <div className="rounded-lg bg-sky-500/10 p-2">
-              <Building2 className="h-4 w-4 text-sky-400" />
+            <div className="rounded-[8px] bg-sky-50 p-2">
+              <Building2 className="h-4 w-4 text-sky-600" />
             </div>
             <div>
-              <p className="text-sm font-medium text-slate-200">Счёт для юрлица или ИП</p>
-              <p className="mt-0.5 text-xs text-slate-500">Оплата по счёту с указанием ИНН</p>
+              <p className="text-sm font-medium text-[#111111]">Счёт для юрлица или ИП</p>
+              <p className="mt-0.5 text-xs text-[#666666]">Оплата по счёту с указанием ИНН</p>
             </div>
           </button>
         </div>
 
         {notice !== null && (
-          <div className="mt-4 flex gap-3 rounded-lg border border-slate-700 bg-slate-950 p-4">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-            <div className="text-xs leading-relaxed text-slate-400">
+          <div className="mt-4 flex gap-3 rounded-[8px] border border-amber-200 bg-amber-50 p-4">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="text-xs leading-relaxed text-amber-900">
               {notice === "card" ? (
                 <>
-                  <p className="font-medium text-slate-200">Привязка карты</p>
+                  <p className="font-medium text-[#111111]">Привязка карты</p>
                   <p className="mt-1">
                     Как только эквайринг будет подключён, здесь появится форма привязки карты и
                     автопродление. Пока подписка активируется вручную.
@@ -401,12 +404,12 @@ function BillingContent() {
                 </>
               ) : (
                 <>
-                  <p className="font-medium text-slate-200">Счёт для юрлица или ИП</p>
+                  <p className="font-medium text-[#111111]">Счёт для юрлица или ИП</p>
                   <p className="mt-1">
                     Напишите на{" "}
                     <a
                       href="mailto:admin@getvoxly.ru"
-                      className="text-[#4a38f5] hover:text-[#4a38f5]"
+                      className="text-[#4a38f5] font-medium hover:underline"
                     >
                       admin@getvoxly.ru
                     </a>{" "}
@@ -420,8 +423,8 @@ function BillingContent() {
         )}
       </div>
 
-      <p className="flex items-center gap-1.5 text-xs text-slate-500">
-        <Receipt className="h-3.5 w-3.5" />
+      <p className="flex items-center gap-1.5 text-xs text-[#666666]">
+        <Receipt className="h-3.5 w-3.5 text-[#888888]" />
         Счёта вашим клиентам выставляются в модуле «Финансы» — этот раздел о подписке на платформу.
       </p>
     </div>

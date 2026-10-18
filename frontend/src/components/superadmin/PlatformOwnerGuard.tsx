@@ -22,8 +22,8 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
-        <div className="flex items-center gap-3 text-slate-400">
+      <div className="flex min-h-screen items-center justify-center bg-[#fbfbfb]">
+        <div className="flex items-center gap-3 text-[#666666]">
           <Loader2 className="h-5 w-5 animate-spin text-[#4a38f5]" />
           <span className="text-sm">Проверка прав доступа…</span>
         </div>
@@ -33,16 +33,16 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
 
   if (!isAuthenticated || user === null) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center max-w-md">
+      <div className="flex min-h-screen items-center justify-center bg-[#fbfbfb] px-6">
+        <div className="rounded-xl border border-[#e5e5e5] bg-white p-8 text-center max-w-md shadow-2xs">
           <ShieldAlert className="mx-auto h-10 w-10 text-[#4a38f5]" />
-          <h1 className="mt-4 text-lg font-semibold text-slate-100">Требуется вход</h1>
-          <p className="mt-2 text-sm text-slate-400">
+          <h1 className="mt-4 text-lg font-semibold text-[#111111]">Требуется вход</h1>
+          <p className="mt-2 text-sm text-[#666666]">
             Платформенная панель доступна только после авторизации.
           </p>
           <Link
             href="/login"
-            className="mt-6 inline-flex items-center rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-all duration-200 hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50 active:scale-[0.97]"
+            className="mt-6 inline-flex items-center rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50 active:scale-[0.97]"
           >
             Войти
           </Link>
@@ -53,17 +53,17 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
 
   if (user.platform_role !== "platform_owner") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
-        <div className="rounded-xl border border-rose-500/30 bg-slate-900 p-8 text-center max-w-md">
-          <ShieldAlert className="mx-auto h-10 w-10 text-rose-500" />
-          <h1 className="mt-4 text-lg font-semibold text-slate-100">Доступ запрещён</h1>
-          <p className="mt-2 text-sm text-slate-400">
+      <div className="flex min-h-screen items-center justify-center bg-[#fbfbfb] px-6">
+        <div className="rounded-xl border border-rose-200 bg-white p-8 text-center max-w-md shadow-2xs">
+          <ShieldAlert className="mx-auto h-10 w-10 text-rose-600" />
+          <h1 className="mt-4 text-lg font-semibold text-[#111111]">Доступ запрещён</h1>
+          <p className="mt-2 text-sm text-[#666666]">
             Панель платформы доступна только владельцу GETVOXLY. Ваша роль не включает
             платформенные права.
           </p>
           <Link
             href="/dashboard"
-            className="mt-6 inline-flex items-center rounded-lg border border-slate-700 bg-slate-800 px-5 py-2.5 text-sm font-medium text-slate-100 transition-all duration-200 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-slate-400/30 active:scale-[0.97]"
+            className="mt-6 inline-flex items-center rounded-lg border border-[#e5e5e5] bg-white px-5 py-2.5 text-sm font-medium text-[#111111] transition-all duration-200 hover:bg-[#fafafa] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/20 active:scale-[0.97]"
           >
             Вернуться в CRM
           </Link>

@@ -17,13 +17,13 @@ const money = new Intl.NumberFormat("ru-RU", {
 });
 
 const statusClass: Record<RepairStatus, string> = {
-  intake: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-  diagnostics: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30",
-  approval: "bg-orange-400/10 text-orange-400 border-orange-400/30",
-  in_progress: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
-  ready: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  issued: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  rejected: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  intake: "bg-sky-50 text-sky-700 border-sky-200",
+  diagnostics: "bg-amber-50 text-amber-700 border-amber-200",
+  approval: "bg-orange-50 text-orange-700 border-orange-200",
+  in_progress: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  ready: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  issued: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  rejected: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 interface RecordRepairsTabProps {
@@ -55,15 +55,15 @@ export function RecordRepairsTab({ customerId }: RecordRepairsTabProps) {
   }
 
   return (
-    <ul className="divide-y divide-slate-800 px-2 py-2">
+    <ul className="divide-y divide-[#f0f0f0] px-2 py-2">
       {items.map((order) => (
         <li key={order.id}>
           <Link
             href={`/repairs/${order.id}`}
-            className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-slate-800/60"
+            className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-left hover:bg-[#f5f5f5]"
           >
             <EntityChip name={order.ticketNumber} icon={Wrench} size="sm" />
-            <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#111111]">
               {order.equipment.brand} {order.equipment.model}
             </span>
             <span
@@ -74,7 +74,7 @@ export function RecordRepairsTab({ customerId }: RecordRepairsTabProps) {
             >
               {getRepairStatusLabel(order.status)}
             </span>
-            <span className="shrink-0 text-xs tabular-nums text-amber-400">
+            <span className="shrink-0 text-xs tabular-nums text-[#666666]">
               {money.format(order.estimatedCost)}
             </span>
           </Link>

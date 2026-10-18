@@ -256,7 +256,7 @@ function ContactsPageContent() {
             onStartEdit={() => setEditing({ rowId: contact.id, columnId: "name" })}
           >
             <EntityChip name={contactFullName(contact)} />
-            <span className="truncate font-medium text-slate-100">{contactFullName(contact)}</span>
+            <span className="truncate font-medium text-[#111111]">{contactFullName(contact)}</span>
           </RecordCellShell>
         ),
     },
@@ -279,7 +279,7 @@ function ContactsPageContent() {
             emptyLabel="должность"
             onStartEdit={() => setEditing({ rowId: contact.id, columnId: "jobTitle" })}
           >
-            <span className="truncate text-slate-300">{contact.jobTitle}</span>
+            <span className="truncate text-[#666666]">{contact.jobTitle}</span>
           </RecordCellShell>
         ),
     },
@@ -297,13 +297,13 @@ function ContactsPageContent() {
           <RecordCellShell isEmpty={primary === undefined} emptyLabel="телефон">
             {primary !== undefined && (
               <>
-                <span className="truncate text-slate-300">
+                <span className="truncate text-[#111111]">
                   {formatPhone(primary.number, primary.countryCode)}
                 </span>
                 {rest.length > 0 && (
                   <span
                     title={rest.map((phone) => formatPhone(phone.number, phone.countryCode)).join(", ")}
-                    className="shrink-0 rounded bg-slate-800 px-1.5 text-xs text-slate-400"
+                    className="shrink-0 rounded-[4px] border border-[#e5e5e5] bg-[#f5f5f5] px-1.5 text-xs text-[#666666]"
                   >
                     +{rest.length}
                   </span>
@@ -321,7 +321,7 @@ function ContactsPageContent() {
       sortValue: (contact) => contact.email ?? "",
       render: (contact) => (
         <RecordCellShell isEmpty={contact.email === null || contact.email === ""} emptyLabel="e-mail">
-          <span className="truncate text-slate-400">{contact.email}</span>
+          <span className="truncate text-[#666666]">{contact.email}</span>
         </RecordCellShell>
       ),
     },
@@ -375,7 +375,7 @@ function ContactsPageContent() {
       sortValue: (contact) => contact.dealsCount,
       render: (contact) => (
         <RecordCellShell align="right">
-          <span className={contact.dealsCount > 0 ? "tabular-nums text-slate-200" : "tabular-nums text-slate-600"}>
+          <span className={contact.dealsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#aaaaaa]"}>
             {contact.dealsCount}
           </span>
         </RecordCellShell>
@@ -391,7 +391,7 @@ function ContactsPageContent() {
         <RecordCellShell align="right">
           <span
             title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(contact.createdAt))}
-            className="text-slate-500"
+            className="text-[#888888]"
           >
             {timeAgo(contact.createdAt)}
           </span>
@@ -452,15 +452,15 @@ function ContactsPageContent() {
       {query.isLoading ? (
         <SkeletonTable rows={6} columns={5} />
       ) : query.isError ? (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6" role="alert">
+        <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6" role="alert">
           <div className="flex items-start gap-3">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
             <div className="flex-1">
-              <h3 className="text-sm font-semibold text-slate-200">Не удалось загрузить контакты</h3>
-              <p className="mt-1 text-sm text-slate-400">{query.error.message}</p>
+              <h3 className="text-sm font-semibold text-rose-900">Не удалось загрузить контакты</h3>
+              <p className="mt-1 text-sm text-rose-700">{query.error.message}</p>
               <button type="button" onClick={() => void query.refetch()}
-                className="mt-3 flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800">
-                <RefreshCw className="h-3.5 w-3.5" />Повторить
+                className="mt-3 flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa]">
+                <RefreshCw className="h-3.5 w-3.5 text-[#666666]" />Повторить
               </button>
             </div>
           </div>

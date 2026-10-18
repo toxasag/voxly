@@ -179,9 +179,9 @@ function PersonalSection({
   const isBusy = update.isPending || isProcessing;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200">Личные данные</h2>
-      <p className="mt-1 text-xs text-slate-500">Как вас видят коллеги в системе</p>
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111]">Личные данные</h2>
+      <p className="mt-1 text-xs text-[#666666]">Как вас видят коллеги в системе</p>
 
       <div className="mt-5 flex flex-col gap-6 sm:flex-row">
         {/* Аватар */}
@@ -192,10 +192,10 @@ function PersonalSection({
               <img
                 src={avatarUrl}
                 alt="Ваше фото"
-                className="h-24 w-24 rounded-full border border-slate-700 object-cover"
+                className="h-24 w-24 rounded-full border border-[#e5e5e5] object-cover"
               />
             ) : (
-              <div className="flex h-24 w-24 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-2xl font-semibold text-slate-300">
+              <div className="flex h-24 w-24 items-center justify-center rounded-full border border-[#e5e5e5] bg-[#f0f0f0] text-2xl font-semibold text-[#111111]">
                 {userInitials(name)}
               </div>
             )}
@@ -205,7 +205,7 @@ function PersonalSection({
               onClick={() => fileInput.current?.click()}
               disabled={isBusy}
               aria-label="Загрузить фото"
-              className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-[#4a38f5] text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-60"
+              className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-[#4a38f5] text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-60"
             >
               {isProcessing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -224,12 +224,12 @@ function PersonalSection({
           />
 
           <div className="text-center">
-            <p className="text-xs text-slate-500">JPEG, PNG или WebP</p>
+            <p className="text-xs text-[#888888]">JPEG, PNG или WebP</p>
             {avatarUrl !== null && (
               <button
                 type="button"
                 onClick={() => setRemoveAvatarOpen(true)}
-                className="mt-1 text-xs text-slate-500 transition-colors hover:text-rose-400"
+                className="mt-1 text-xs text-[#666666] transition-colors hover:text-rose-600"
               >
                 Удалить фото
               </button>
@@ -243,22 +243,22 @@ function PersonalSection({
           className="flex-1 space-y-4"
         >
           <div className="space-y-2">
-            <label htmlFor="profile_name" className="block text-xs font-medium text-slate-400">
+            <label htmlFor="profile_name" className="block text-xs font-medium text-[#666666]">
               Имя и фамилия
             </label>
             <div className="relative">
-              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
               <input
                 id="profile_name"
                 {...form.register("name")}
                 className={cn(
-                  "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500",
-                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                  errors.name !== undefined ? "border-rose-500" : "border-slate-700",
+                  "w-full rounded-[8px] border bg-white py-2 pl-10 pr-3.5 text-[13px] text-[#111111] placeholder:text-[#888888] shadow-2xs",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                  errors.name !== undefined ? "border-rose-300" : "border-[#e5e5e5]",
                 )}
               />
             </div>
-            {errors.name && <p className="text-xs text-rose-400">{errors.name.message}</p>}
+            {errors.name && <p className="text-xs text-rose-600">{errors.name.message}</p>}
           </div>
 
           {/*
@@ -268,30 +268,30 @@ function PersonalSection({
             видел свой логин, а подпись объясняет, почему его нельзя изменить.
           */}
           <div className="space-y-2">
-            <label htmlFor="profile_email" className="block text-xs font-medium text-slate-400">
+            <label htmlFor="profile_email" className="block text-xs font-medium text-[#666666]">
               E-mail
             </label>
             <div className="relative">
-              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-600" />
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
               <input
                 id="profile_email"
                 value={email}
                 readOnly
                 disabled
-                className="w-full cursor-not-allowed rounded-lg border border-slate-800 bg-slate-900 py-2.5 pl-10 pr-3.5 text-sm text-slate-500"
+                className="w-full cursor-not-allowed rounded-[8px] border border-[#e5e5e5] bg-[#f5f5f5] py-2 pl-10 pr-3.5 text-[13px] text-[#888888]"
               />
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[#888888]">
               Служит логином. Для смены обратитесь к администратору компании.
             </p>
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="profile_phone" className="block text-xs font-medium text-slate-400">
+            <label htmlFor="profile_phone" className="block text-xs font-medium text-[#666666]">
               Телефон
             </label>
             <div className="relative">
-              <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <Phone className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
               <input
                 id="profile_phone"
                 type="tel"
@@ -304,27 +304,27 @@ function PersonalSection({
                   })
                 }
                 className={cn(
-                  "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500",
-                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-                  errors.phone !== undefined ? "border-rose-500" : "border-slate-700",
+                  "w-full rounded-[8px] border bg-white py-2 pl-10 pr-3.5 text-[13px] text-[#111111] placeholder:text-[#888888] shadow-2xs",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                  errors.phone !== undefined ? "border-rose-300" : "border-[#e5e5e5]",
                 )}
               />
             </div>
             {errors.phone ? (
-              <p className="text-xs text-rose-400">{errors.phone.message}</p>
+              <p className="text-xs text-rose-600">{errors.phone.message}</p>
             ) : (
-              <p className="text-xs text-slate-500">На него приходит код подтверждения при входе</p>
+              <p className="text-xs text-[#888888]">На него приходит код подтверждения при входе</p>
             )}
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-slate-800 pt-4">
-            <span className="text-xs text-slate-500">
-              Роль: <span className="text-slate-300">{role}</span>
+          <div className="flex items-center justify-between gap-3 border-t border-[#e5e5e5] pt-4">
+            <span className="text-xs text-[#666666]">
+              Роль: <span className="font-medium text-[#111111]">{role}</span>
             </span>
             <button
               type="submit"
               disabled={isBusy || !form.formState.isDirty}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {update.isPending ? (
                 <>
@@ -424,14 +424,14 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
   const errors = form.formState.errors;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200">Безопасность</h2>
-      <p className="mt-1 text-xs text-slate-500">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111]">Безопасность</h2>
+      <p className="mt-1 text-xs text-[#666666]">
         После смены пароля сессии на других устройствах будут завершены
       </p>
 
       {!hasPassword ? (
-        <p className="mt-4 rounded-lg border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
+        <p className="mt-4 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 text-xs text-[#666666]">
           Пароль ещё не задан. Откройте ссылку из приглашения, чтобы задать его.
         </p>
       ) : (
@@ -470,7 +470,7 @@ function PasswordSection({ hasPassword }: { hasPassword: boolean }) {
           <button
             type="submit"
             disabled={changePassword.isPending}
-            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {changePassword.isPending ? (
               <>
@@ -519,26 +519,26 @@ function ChannelRow({
   const active = flow !== null && flow.channel === binding.channel;
 
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950 p-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div
             className={cn(
-              "flex h-9 w-9 items-center justify-center rounded-lg",
-              binding.linked ? "bg-emerald-500/10" : "bg-slate-800",
+              "flex h-9 w-9 items-center justify-center rounded-[8px]",
+              binding.linked ? "bg-emerald-50 text-emerald-700" : "bg-[#f5f5f5] text-[#888888]",
             )}
           >
-            <Icon className={cn("h-4 w-4", binding.linked ? "text-emerald-400" : "text-slate-500")} />
+            <Icon className="h-4 w-4" />
           </div>
 
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-slate-200">{label}</span>
+              <span className="text-sm font-medium text-[#111111]">{label}</span>
               <StatusBadge variant={binding.linked ? "success" : "neutral"} size="sm">
                 {binding.linked ? "Привязан" : "Не привязан"}
               </StatusBadge>
             </div>
-            <p className="mt-0.5 text-xs text-slate-500">
+            <p className="mt-0.5 text-xs text-[#666666]">
               {binding.linked
                 ? `ID: ${binding.externalId ?? "—"}`
                 : binding.available
@@ -558,7 +558,7 @@ function ChannelRow({
                 ? undefined
                 : "Нельзя отвязать единственный канал: в него приходит код при входе"
             }
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-400 transition-colors hover:border-rose-500/40 hover:text-rose-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] shadow-2xs transition-colors hover:border-rose-300 hover:text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Unlink className="h-3.5 w-3.5" />
             Отвязать
@@ -569,7 +569,7 @@ function ChannelRow({
               type="button"
               onClick={onLink}
               disabled={isBusy || !binding.available}
-              className="flex items-center gap-1.5 rounded-lg bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-400 transition-colors hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-[8px] border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 shadow-2xs transition-colors hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {isBusy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -584,28 +584,28 @@ function ChannelRow({
 
       {/* Шаг привязки: открыть бота, затем ввести код. */}
       {active && flow !== null && (
-        <div className="mt-4 space-y-3 border-t border-slate-800 pt-4">
+        <div className="mt-4 space-y-3 border-t border-[#e5e5e5] pt-4">
           {flow.deepLink !== null && (
             <a
               href={flow.deepLink}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 rounded-lg bg-sky-500/10 px-4 py-2.5 text-sm font-medium text-sky-400 transition-colors hover:bg-sky-500/20"
+              className="flex items-center justify-center gap-2 rounded-[8px] border border-sky-200 bg-sky-50 px-4 py-2.5 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 shadow-2xs"
             >
               <ExternalLink className="h-4 w-4" />
               Открыть @{flow.botUsername} и нажать «Start»
             </a>
           )}
 
-          <p className="flex items-center gap-2 text-xs text-slate-500">
+          <p className="flex items-center gap-2 text-xs text-[#666666]">
             {flow.delivered ? (
               <>
-                <Check className="h-3.5 w-3.5 text-emerald-400" />
+                <Check className="h-3.5 w-3.5 text-emerald-600" />
                 Код отправлен в {label} — введите его ниже
               </>
             ) : (
               <>
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2 className="h-3 w-3 animate-spin text-[#888888]" />
                 Ожидаем подтверждения из {label}...
               </>
             )}
@@ -619,13 +619,13 @@ function ChannelRow({
               placeholder="------"
               value={code}
               onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
-              className="w-32 rounded-lg border border-slate-700 bg-slate-900 py-2 text-center text-lg tracking-[0.3em] text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+              className="w-32 rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 text-center text-lg tracking-[0.3em] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 shadow-2xs"
             />
             <button
               type="button"
               onClick={() => onVerify(code)}
               disabled={isBusy || code.length !== 6}
-              className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-4 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-xs font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
               Подтвердить
@@ -636,7 +636,7 @@ function ChannelRow({
                 setCode("");
                 onCancel();
               }}
-              className="rounded-lg px-3 py-2 text-xs text-slate-500 transition-colors hover:text-slate-300"
+              className="rounded-[8px] px-3 py-2 text-xs text-[#666666] transition-colors hover:text-[#111111] hover:bg-[#fafafa]"
             >
               Отмена
             </button>
@@ -751,9 +751,9 @@ function ChannelsSection({ channels }: { channels: ChannelBindingDTO[] }) {
   const isBusy = link.isPending || verify.isPending || unlink.isPending;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-      <h2 className="text-sm font-semibold text-slate-200">Каналы для входа</h2>
-      <p className="mt-1 text-xs text-slate-500">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+      <h2 className="text-sm font-semibold text-[#111111]">Каналы для входа</h2>
+      <p className="mt-1 text-xs text-[#666666]">
         В привязанный канал приходит код подтверждения при входе
       </p>
 
@@ -800,23 +800,22 @@ export default function ProfilePage() {
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-72 w-full" />
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-8 w-48 rounded-[8px]" />
+        <Skeleton className="h-72 w-full rounded-[8px]" />
+        <Skeleton className="h-64 w-full rounded-[8px]" />
       </div>
     );
   }
 
   if (isError || data === undefined) {
     return (
-      <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
-          Не удалось загрузить профиль: {error?.message ?? "неизвестная ошибка"}
-        </p>
+      <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm font-semibold text-rose-900">Не удалось загрузить профиль</p>
+        <p className="mt-1 text-sm text-rose-700">{error?.message ?? "неизвестная ошибка"}</p>
         <button
           type="button"
           onClick={() => void refetch()}
-          className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa]"
         >
           Повторить
         </button>
@@ -827,8 +826,8 @@ export default function ProfilePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Мой профиль</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-xl font-bold text-[#111111]">Мой профиль</h1>
+        <p className="mt-1 text-[13px] text-[#666666]">
           Личные данные, пароль и каналы для входа
         </p>
       </div>

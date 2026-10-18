@@ -45,8 +45,8 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
 
   if (mismatched) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
-        <div className="flex items-center gap-3 text-sm text-slate-400">
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="flex items-center gap-3 text-sm text-[#666666]">
           <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
           Переходим на портал вашей компании...
         </div>

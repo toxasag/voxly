@@ -15,10 +15,10 @@ import { SkeletonTable } from "@/components/shared/Skeleton";
 import { cn } from "@/lib/utils";
 
 const STATUS_STYLES: Record<string, string> = {
-  active: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  trial: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30",
-  past_due: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  suspended: "bg-slate-800 text-slate-400 border-slate-700",
+  active: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  trial: "bg-amber-50 text-amber-700 border-amber-200",
+  past_due: "bg-rose-50 text-rose-700 border-rose-200",
+  suspended: "bg-[#fafafa] text-[#666666] border-[#e5e5e5]",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -106,10 +106,10 @@ function MarkupEditor({ tenant }: { tenant: AdminTenantDTO }) {
         }}
         disabled={isSaving}
         aria-label={`Наценка на токены для ${tenant.name}, %`}
-        className="w-16 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/30 disabled:opacity-50"
+        className="w-16 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-right text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:opacity-50"
       />
-      <span className="text-xs text-slate-500">%</span>
-      {isSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
+      <span className="text-xs text-[#666666]">%</span>
+      {isSaving && <Loader2 className="h-3 w-3 animate-spin text-[#888888]" />}
     </div>
   );
 }
@@ -161,14 +161,14 @@ function TenantsTable() {
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
+      <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm font-medium text-rose-700">
           Не удалось загрузить список компаний: {error?.message}
         </p>
         <button
           type="button"
           onClick={() => void refetch()}
-          className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="mt-3 rounded-[8px] border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
         >
           Повторить
         </button>
@@ -189,10 +189,10 @@ function TenantsTable() {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+    <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+          <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-left text-xs uppercase tracking-wider text-[#666666]">
             <th className="px-4 py-3 font-medium">Компания</th>
             <th className="px-4 py-3 font-medium">План</th>
             <th className="px-4 py-3 font-medium">Статус</th>
@@ -208,13 +208,13 @@ function TenantsTable() {
           {tenants.map((tenant) => (
             <tr
               key={tenant.id}
-              className="border-b border-slate-800 transition-colors last:border-0 hover:bg-slate-800/50"
+              className="border-b border-[#e5e5e5] transition-colors last:border-0 hover:bg-[#fafafa]"
             >
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-100">{tenant.name}</p>
-                <p className="text-xs text-slate-500">{formatDate(tenant.created_at)}</p>
+                <p className="font-medium text-[#111111]">{tenant.name}</p>
+                <p className="text-xs text-[#888888]">{formatDate(tenant.created_at)}</p>
               </td>
-              <td className="px-4 py-3 capitalize text-slate-300">{tenant.plan}</td>
+              <td className="px-4 py-3 capitalize text-[#666666]">{tenant.plan}</td>
               <td className="px-4 py-3">
                 <span
                   className={cn(
@@ -225,14 +225,14 @@ function TenantsTable() {
                   {STATUS_LABEL[tenant.status] ?? tenant.status}
                 </span>
               </td>
-              <td className="px-4 py-3 text-slate-300">
+              <td className="px-4 py-3 text-[#666666]">
                 {formatDate(tenant.subscription_expires_at)}
               </td>
-              <td className="px-4 py-3 text-slate-300">{tenant.users_count}</td>
-              <td className="px-4 py-3 text-slate-300">{tenant.modules_count}</td>
+              <td className="px-4 py-3 text-[#666666]">{tenant.users_count}</td>
+              <td className="px-4 py-3 text-[#666666]">{tenant.modules_count}</td>
               <td className="px-4 py-3">
-                <p className="text-slate-100">{formatRubles(tenant.ai_balance_kopecks)}</p>
-                <p className="text-xs text-slate-500">
+                <p className="font-medium text-[#111111]">{formatRubles(tenant.ai_balance_kopecks)}</p>
+                <p className="text-xs text-[#888888]">
                   расход за месяц {formatRubles(tenant.ai_spent_month_kopecks)}
                 </p>
               </td>
@@ -245,7 +245,7 @@ function TenantsTable() {
                     type="button"
                     onClick={() => void handleRenew(tenant)}
                     disabled={pendingId === tenant.id}
-                    className="rounded-md bg-slate-800 px-2.5 py-1.5 text-xs text-slate-200 transition-colors hover:bg-slate-700 disabled:opacity-50"
+                    className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50"
                   >
                     +30 дней
                   </button>
@@ -254,10 +254,10 @@ function TenantsTable() {
                     onClick={() => void handleToggleStatus(tenant)}
                     disabled={pendingId === tenant.id}
                     className={cn(
-                      "rounded-md px-2.5 py-1.5 text-xs transition-colors disabled:opacity-50",
+                      "rounded-[8px] px-2.5 py-1.5 text-xs transition-colors disabled:opacity-50 font-medium",
                       tenant.status === "suspended"
-                        ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-                        : "bg-rose-600/90 text-white hover:bg-rose-500",
+                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        : "border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100",
                     )}
                   >
                     {pendingId === tenant.id ? (
@@ -286,8 +286,8 @@ export default function AdminTenantsPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">Все компании</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">Все компании</h1>
+            <p className="mt-1 text-sm text-[#666666]">
               Арендаторы платформы: план, статус подписки и лимиты
             </p>
           </div>
@@ -295,7 +295,7 @@ export default function AdminTenantsPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить

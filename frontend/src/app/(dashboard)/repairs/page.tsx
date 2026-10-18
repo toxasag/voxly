@@ -146,8 +146,8 @@ function RepairsPageContent() {
         {/* Page Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-slate-100">Сервисный центр</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-[15px] font-semibold text-[#111111]">Сервисный центр</h1>
+            <p className="mt-1 text-xs text-[#666666]">
               Приёмка оборудования в ремонт, диагностика и контроль
             </p>
           </div>
@@ -155,8 +155,8 @@ function RepairsPageContent() {
             type="button"
             onClick={() => setCreateModalOpen(true)}
             className={cn(
-              "flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors",
-              "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+              "flex items-center gap-2 rounded-[8px] px-3.5 py-2 text-[13px] font-medium transition-colors shadow-2xs",
+              "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             )}
           >
             <Plus className="h-4 w-4" />
@@ -166,32 +166,32 @@ function RepairsPageContent() {
 
         {/* Stats Bar */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-lg bg-sky-500/10 p-1.5">
-                <Wrench className="h-4 w-4 text-sky-400" />
+              <div className="rounded-[6px] border border-sky-200 bg-sky-50 p-1.5">
+                <Wrench className="h-4 w-4 text-sky-700" />
               </div>
-              <span className="text-xs font-medium text-slate-500">Всего наряд-заказов</span>
+              <span className="text-xs font-medium text-[#666666]">Всего наряд-заказов</span>
             </div>
-            <p className="mt-2 text-2xl font-bold text-slate-100">{statsTotal}</p>
+            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsTotal}</p>
           </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-lg bg-[#4a38f5]/10 p-1.5">
-                <Clock className="h-4 w-4 text-amber-400" />
+              <div className="rounded-[6px] border border-amber-200 bg-amber-50 p-1.5">
+                <Clock className="h-4 w-4 text-amber-700" />
               </div>
-              <span className="text-xs font-medium text-slate-500">В работе</span>
+              <span className="text-xs font-medium text-[#666666]">В работе</span>
             </div>
-            <p className="mt-2 text-2xl font-bold text-slate-100">{statsInProgress}</p>
+            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsInProgress}</p>
           </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 shadow-2xs">
             <div className="flex items-center gap-2">
-              <div className="rounded-lg bg-emerald-500/10 p-1.5">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <div className="rounded-[6px] border border-emerald-200 bg-emerald-50 p-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-700" />
               </div>
-              <span className="text-xs font-medium text-slate-500">Готовы к выдаче</span>
+              <span className="text-xs font-medium text-[#666666]">Готовы к выдаче</span>
             </div>
-            <p className="mt-2 text-2xl font-bold text-slate-100">{statsReady}</p>
+            <p className="mt-2 text-xl font-semibold font-mono tabular-nums text-[#111111]">{statsReady}</p>
           </div>
         </div>
 

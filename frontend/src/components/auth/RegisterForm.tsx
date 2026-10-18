@@ -242,9 +242,9 @@ export function RegisterForm() {
 
   const inputClass = (hasError: boolean): string =>
     cn(
-      "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-      hasError ? "border-rose-500" : "border-slate-700",
+      "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+      hasError ? "border-rose-300" : "border-[#e5e5e5]",
     );
 
   return (
@@ -253,15 +253,15 @@ export function RegisterForm() {
         e.preventDefault();
         void handleSubmit();
       }}
-      className="space-y-5"
+      className="space-y-4"
     >
       {/* Адрес портала */}
-      <div className="space-y-2">
-        <label htmlFor="slug" className="block text-sm font-medium text-slate-300">
+      <div className="space-y-1.5">
+        <label htmlFor="slug" className="block text-xs font-medium text-[#111111]">
           Адрес портала
         </label>
         <div className="relative">
-          <Globe className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Globe className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             id="slug"
             type="text"
@@ -273,38 +273,38 @@ export function RegisterForm() {
             onChange={handleSlugChange}
             className={cn(
               inputClass(errors.slug !== undefined || slugStatus.kind === "taken"),
-              "pr-32",
+              "pr-32 font-mono tabular-nums",
             )}
           />
-          <span className="pointer-events-none absolute right-10 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+          <span className="pointer-events-none absolute right-10 top-1/2 -translate-y-1/2 text-[13px] text-[#888888]">
             .getvoxly.ru
           </span>
           <span className="absolute right-3 top-1/2 -translate-y-1/2">
             {slugStatus.kind === "checking" && (
-              <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+              <Loader2 className="h-4 w-4 animate-spin text-[#888888]" />
             )}
-            {slugStatus.kind === "available" && <Check className="h-4 w-4 text-emerald-400" />}
-            {slugStatus.kind === "taken" && <X className="h-4 w-4 text-rose-400" />}
+            {slugStatus.kind === "available" && <Check className="h-4 w-4 text-emerald-600" />}
+            {slugStatus.kind === "taken" && <X className="h-4 w-4 text-rose-600" />}
           </span>
         </div>
         {errors.slug ? (
-          <p className="text-xs text-rose-400">{errors.slug.message}</p>
+          <p className="text-xs text-rose-600">{errors.slug.message}</p>
         ) : slugStatus.kind === "taken" ? (
-          <p className="text-xs text-rose-400">{slugStatus.message}</p>
+          <p className="text-xs text-rose-600">{slugStatus.message}</p>
         ) : slugStatus.kind === "available" ? (
-          <p className="text-xs text-emerald-400">Адрес свободен: {slugValue}.getvoxly.ru</p>
+          <p className="text-xs text-emerald-600">Адрес свободен: {slugValue}.getvoxly.ru</p>
         ) : (
-          <p className="text-xs text-slate-500">Латиница, цифры и дефис</p>
+          <p className="text-xs text-[#888888]">Латиница, цифры и дефис</p>
         )}
       </div>
 
       {/* E-mail */}
-      <div className="space-y-2">
-        <label htmlFor="email" className="block text-sm font-medium text-slate-300">
+      <div className="space-y-1.5">
+        <label htmlFor="email" className="block text-xs font-medium text-[#111111]">
           E-mail
         </label>
         <div className="relative">
-          <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             id="email"
             type="email"
@@ -314,7 +314,7 @@ export function RegisterForm() {
             className={inputClass(errors.email !== undefined)}
           />
         </div>
-        {errors.email && <p className="text-xs text-rose-400">{errors.email.message}</p>}
+        {errors.email && <p className="text-xs text-rose-600">{errors.email.message}</p>}
       </div>
 
       {/* Пароль */}
@@ -339,12 +339,12 @@ export function RegisterForm() {
       />
 
       {/* Телефон */}
-      <div className="space-y-2">
-        <label htmlFor="reg_phone" className="block text-sm font-medium text-slate-300">
+      <div className="space-y-1.5">
+        <label htmlFor="reg_phone" className="block text-xs font-medium text-[#111111]">
           Телефон
         </label>
         <div className="relative">
-          <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             id="reg_phone"
             type="tel"
@@ -352,15 +352,15 @@ export function RegisterForm() {
             placeholder="+7 999 999 99 99"
             value={form.watch("phone")}
             onChange={handlePhoneChange}
-            className={inputClass(errors.phone !== undefined)}
+            className={cn(inputClass(errors.phone !== undefined), "font-mono tabular-nums")}
           />
         </div>
-        {errors.phone && <p className="text-xs text-rose-400">{errors.phone.message}</p>}
+        {errors.phone && <p className="text-xs text-rose-600">{errors.phone.message}</p>}
       </div>
 
       {/* Способ доставки кода */}
-      <fieldset className="space-y-2">
-        <legend className="block text-sm font-medium text-slate-300">
+      <fieldset className="space-y-1.5">
+        <legend className="block text-xs font-medium text-[#111111]">
           Способ доставки кода
         </legend>
         <div className="grid grid-cols-2 gap-2">
@@ -370,10 +370,10 @@ export function RegisterForm() {
               type="button"
               onClick={() => form.setValue("channel", value, { shouldValidate: true })}
               className={cn(
-                "flex items-center justify-center gap-2 rounded-lg border px-4 py-3 text-sm font-medium transition-colors",
+                "flex items-center justify-center gap-2 rounded-[8px] border px-4 py-2.5 text-[13px] font-medium transition-colors",
                 channel === value
                   ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                  : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600 hover:text-slate-300",
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
               )}
             >
               <Icon className="h-4 w-4" />
@@ -381,7 +381,7 @@ export function RegisterForm() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-[#888888]">
           Код придёт в {CHANNEL_LABEL[channel]}. Если бот ещё не привязан, появится ссылка на
           подключение.
         </p>
@@ -394,8 +394,8 @@ export function RegisterForm() {
           onClick={() => void handleRequestCode()}
           disabled={code.stage === "requesting"}
           className={cn(
-            "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-            "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+            "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+            "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
@@ -415,21 +415,21 @@ export function RegisterForm() {
 
       {/* Привязка бота: код придёт после нажатия Start */}
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
-        <div className="space-y-3 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">
-          <p className="text-sm text-slate-300">
-            Откройте бота <span className="font-medium text-amber-400">@{code.botUsername}</span> и
+        <div className="space-y-3 rounded-[8px] border border-[#e5e5e5] bg-[#fbfbfb] p-4">
+          <p className="text-[13px] text-[#111111]">
+            Откройте бота <span className="font-medium text-[#4a38f5]">@{code.botUsername}</span> и
             нажмите «Start» — код придёт автоматически.
           </p>
           <a
             href={code.deepLink}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-lg bg-sky-500/10 px-4 py-2.5 text-sm font-medium text-sky-400 transition-colors hover:bg-sky-500/20"
+            className="flex items-center justify-center gap-2 rounded-[8px] border border-sky-200 bg-sky-50 px-4 py-2 text-[13px] font-medium text-sky-700 transition-colors hover:bg-sky-100"
           >
             <ExternalLink className="h-4 w-4" />
             Подключить {CHANNEL_LABEL[code.channel]} через @{code.botUsername}
           </a>
-          <p className="flex items-center gap-2 text-xs text-slate-500">
+          <p className="flex items-center gap-2 text-xs text-[#888888]">
             <Loader2 className="h-3 w-3 animate-spin" />
             Ожидаем подтверждения из {CHANNEL_LABEL[code.channel]}...
           </p>
@@ -438,8 +438,8 @@ export function RegisterForm() {
 
       {/* Код подтверждения */}
       {code.stage === "sent" && (
-        <div className="space-y-2">
-          <label htmlFor="reg_code" className="block text-sm font-medium text-slate-300">
+        <div className="space-y-1.5">
+          <label htmlFor="reg_code" className="block text-xs font-medium text-[#111111]">
             Код подтверждения
           </label>
           <input
@@ -456,25 +456,25 @@ export function RegisterForm() {
               setOtpError(null);
             }}
             className={cn(
-              "w-full rounded-lg border bg-slate-900 py-4 text-center text-2xl tracking-[0.5em] text-slate-100 placeholder:text-slate-600 transition-colors",
-              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
-              otpError !== null ? "border-rose-500" : "border-slate-700",
+              "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#888888] transition-colors tabular-nums",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+              otpError !== null ? "border-rose-300" : "border-[#e5e5e5]",
             )}
           />
           {otpError !== null && (
-            <p className="text-center text-xs text-rose-400">{otpError}</p>
+            <p className="text-center text-xs text-rose-600">{otpError}</p>
           )}
 
           <div className="flex justify-end">
             {code.cooldown > 0 ? (
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-[#888888]">
                 Отправить повторно через {code.cooldown} с
               </span>
             ) : (
               <button
                 type="button"
                 onClick={() => void handleRequestCode()}
-                className="text-xs font-medium text-[#4a38f5] hover:text-[#4a38f5]"
+                className="text-xs font-medium text-[#4a38f5] hover:underline"
               >
                 Отправить код повторно
               </button>
@@ -488,8 +488,8 @@ export function RegisterForm() {
         type="submit"
         disabled={isSubmitting || code.stage !== "sent" || otp.length !== 6}
         className={cn(
-          "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-          "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
+          "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+          "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
@@ -506,9 +506,9 @@ export function RegisterForm() {
         )}
       </button>
 
-      <p className="text-center text-sm text-slate-400">
+      <p className="text-center text-xs text-[#666666]">
         Уже есть аккаунт?{" "}
-        <a href="/login" className="font-medium text-[#4a38f5] hover:text-[#4a38f5]">
+        <a href="/login" className="font-medium text-[#4a38f5] hover:underline">
           Войти
         </a>
       </p>

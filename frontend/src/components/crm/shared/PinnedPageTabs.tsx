@@ -43,7 +43,7 @@ export function PinnedPageTabs({
         className={cn(
           "min-h-0 overflow-y-auto",
           restActive && "hidden md:block",
-          "md:w-[320px] md:shrink-0 md:border-r md:border-slate-800",
+          "md:w-[320px] md:shrink-0 md:border-r md:border-[#e5e5e5]",
         )}
       >
         {pinned.content}

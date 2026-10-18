@@ -75,15 +75,15 @@ export default function AdminLogsPage() {
             }}
             placeholder="Фильтр по действию, например module.install"
             aria-label="Фильтр по действию"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
         </div>
 
         {isLoading ? (
           <SkeletonTable rows={8} columns={5} />
         ) : isError ? (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-            <p className="text-sm text-rose-400">Не удалось загрузить логи: {error?.message}</p>
+          <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+            <p className="text-sm font-medium text-rose-700">Не удалось загрузить логи: {error?.message}</p>
           </div>
         ) : data === undefined || data.items.length === 0 ? (
           <EmptyState
@@ -97,10 +97,10 @@ export default function AdminLogsPage() {
           />
         ) : (
           <>
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+            <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-left text-xs uppercase tracking-wider text-[#666666]">
                     <th className="px-4 py-3 font-medium">Время</th>
                     <th className="px-4 py-3 font-medium">Компания</th>
                     <th className="px-4 py-3 font-medium">Пользователь</th>
@@ -112,22 +112,22 @@ export default function AdminLogsPage() {
                   {data.items.map((log) => (
                     <tr
                       key={log.id}
-                      className="border-b border-slate-800 transition-colors last:border-0 hover:bg-slate-800/50"
+                      className="border-b border-[#e5e5e5] transition-colors last:border-0 hover:bg-[#fafafa]"
                     >
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-400">
+                      <td className="whitespace-nowrap px-4 py-3 text-[#666666]">
                         {formatDateTime(log.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-slate-200">{log.tenantName ?? "—"}</td>
-                      <td className="px-4 py-3 text-slate-400">{log.actorEmail ?? "система"}</td>
+                      <td className="px-4 py-3 font-medium text-[#111111]">{log.tenantName ?? "—"}</td>
+                      <td className="px-4 py-3 text-[#666666]">{log.actorEmail ?? "система"}</td>
                       <td className="px-4 py-3">
-                        <span className="rounded-md bg-slate-800 px-2 py-0.5 font-mono text-xs text-orange-400">
+                        <span className="rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 font-mono text-xs text-[#111111]">
                           {log.action}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-slate-400">
+                      <td className="px-4 py-3 text-[#666666]">
                         {log.entityType}
                         {log.entityId !== null && (
-                          <span className="ml-1 font-mono text-xs text-slate-500">
+                          <span className="ml-1 font-mono text-xs text-[#888888]">
                             {log.entityId.slice(0, 12)}
                           </span>
                         )}

@@ -137,7 +137,7 @@ export function WebchatManagementView({
         {limitReached ? (
           <Link
             href="/marketplace"
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800"
+            className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-4 py-2.5 text-sm font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
           >
             <ShoppingBag className="h-4 w-4" />
             Увеличить количество сайтов
@@ -146,7 +146,7 @@ export function WebchatManagementView({
           <button
             type="button"
             onClick={() => setAddSiteOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0]"
           >
             <Plus className="h-4 w-4" />
             Добавить сайт
@@ -157,8 +157,8 @@ export function WebchatManagementView({
       {/* Список подключенных сайтов */}
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="h-48 animate-pulse rounded-xl border border-slate-800 bg-slate-900" />
-          <div className="h-48 animate-pulse rounded-xl border border-slate-800 bg-slate-900" />
+          <div className="h-48 animate-pulse rounded-xl border border-[#e5e5e5] bg-[#fafafa]" />
+          <div className="h-48 animate-pulse rounded-xl border border-[#e5e5e5] bg-[#fafafa]" />
         </div>
       ) : accounts.length === 0 ? (
         <EmptyState
@@ -180,28 +180,28 @@ export function WebchatManagementView({
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           {accounts.map((acc) => {
             const creds = (acc.credentials ?? {}) as Record<string, unknown>;
-            const accent = typeof creds.accentColor === "string" ? creds.accentColor : "#F59E0B";
+            const accent = typeof creds.accentColor === "string" ? creds.accentColor : "#4a38f5";
 
             return (
               <div
                 key={acc.id}
-                className="flex flex-col justify-between rounded-xl border border-slate-800 bg-slate-900 p-5 shadow-sm transition-all hover:border-slate-700"
+                className="flex flex-col justify-between rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs transition-all hover:border-[#cccccc]"
               >
                 <div>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div
-                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-950 font-bold"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white font-bold"
                         style={{ backgroundColor: accent }}
                       >
                         <Globe className="h-5 w-5" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-slate-100">{acc.label}</h3>
-                        <p className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <h3 className="font-semibold text-[#111111]">{acc.label}</h3>
+                        <p className="flex items-center gap-1.5 text-xs text-[#666666]">
                           <span>{acc.externalId}</span>
                           <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                          <span className="text-emerald-400">Активен</span>
+                          <span className="text-emerald-700 font-medium">Активен</span>
                         </p>
                       </div>
                     </div>
@@ -213,7 +213,7 @@ export function WebchatManagementView({
                           deleteAccount.mutate({ id: acc.id });
                         }
                       }}
-                      className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-rose-400"
+                      className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
                       title="Удалить сайт"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -221,10 +221,10 @@ export function WebchatManagementView({
                   </div>
 
                   {/* Привязанный AI-агент */}
-                  <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950 p-3">
+                  <div className="mt-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-xs text-slate-400">
-                        <Bot className="h-4 w-4 text-amber-400" />
+                      <div className="flex items-center gap-2 text-xs text-[#666666]">
+                        <Bot className="h-4 w-4 text-[#4a38f5]" />
                         <span>AI-ассистент:</span>
                       </div>
 
@@ -238,7 +238,7 @@ export function WebchatManagementView({
                           });
                         }}
                         disabled={updateAccount.isPending}
-                        className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs text-slate-200 focus:border-[#4a38f5] focus:outline-none"
+                        className="rounded border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                       >
                         <option value="">Не назначен (без AI)</option>
                         {agents.map((ag) => (
@@ -252,11 +252,11 @@ export function WebchatManagementView({
                 </div>
 
                 {/* Действия карточки */}
-                <div className="mt-5 flex items-center justify-between border-t border-slate-800/80 pt-4">
+                <div className="mt-5 flex items-center justify-between border-t border-[#e5e5e5] pt-4">
                   <button
                     type="button"
                     onClick={() => setCodeModalAccount(acc)}
-                    className="flex items-center gap-1.5 text-xs font-medium text-amber-400 hover:text-[#3b2be0]"
+                    className="flex items-center gap-1.5 text-xs font-medium text-[#4a38f5] hover:text-[#3b2be0]"
                   >
                     <Code2 className="h-4 w-4" />
                     Код для сайта
@@ -265,9 +265,9 @@ export function WebchatManagementView({
                   <button
                     type="button"
                     onClick={() => setEditingAppearanceId(acc.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-1.5 text-xs font-medium text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-800"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
                   >
-                    <Palette className="h-3.5 w-3.5 text-amber-400" />
+                    <Palette className="h-3.5 w-3.5 text-[#4a38f5]" />
                     Настроить виджет
                   </button>
                 </div>
@@ -279,14 +279,14 @@ export function WebchatManagementView({
 
       {/* Модалка: "+ Добавить сайт" */}
       {addSiteOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h2 className="text-base font-bold text-slate-100">Добавить сайт</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e5e5e5]">
+              <h2 className="text-base font-bold text-[#111111]">Добавить сайт</h2>
               <button
                 type="button"
                 onClick={() => setAddSiteOpen(false)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                className="rounded-lg p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -294,37 +294,37 @@ export function WebchatManagementView({
 
             <form onSubmit={handleCreateSite} className="mt-4 space-y-4">
               <div>
-                <label className="text-xs font-medium text-slate-400">Название сайта</label>
+                <label className="text-xs font-medium text-[#666666]">Название сайта</label>
                 <input
                   type="text"
                   required
                   value={newSiteLabel}
                   onChange={(e) => setNewSiteLabel(e.target.value)}
                   placeholder="Интернет-магазин"
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-400">Домен / адрес сайта</label>
+                <label className="text-xs font-medium text-[#666666]">Домен / адрес сайта</label>
                 <input
                   type="text"
                   required
                   value={newSiteDomain}
                   onChange={(e) => setNewSiteDomain(e.target.value)}
                   placeholder="myshop.ru"
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-400">
+                <label className="text-xs font-medium text-[#666666]">
                   AI-ассистент для сайта (необязательно)
                 </label>
                 <select
                   value={newSiteAgentId}
                   onChange={(e) => setNewSiteAgentId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-[#4a38f5] focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                 >
                   <option value="">Не назначать (без автоответов)</option>
                   {agents.map((ag) => (
@@ -339,7 +339,7 @@ export function WebchatManagementView({
                 <button
                   type="button"
                   onClick={() => setAddSiteOpen(false)}
-                  className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                  className="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
                 >
                   Отмена
                 </button>
@@ -359,41 +359,41 @@ export function WebchatManagementView({
 
       {/* Модалка: "Код для сайта" */}
       {codeModalAccount && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[#e5e5e5] bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#e5e5e5]">
               <div className="flex items-center gap-2">
-                <Code2 className="h-5 w-5 text-amber-400" />
-                <h2 className="text-base font-bold text-slate-100">
+                <Code2 className="h-5 w-5 text-[#4a38f5]" />
+                <h2 className="text-base font-bold text-[#111111]">
                   Код виджета для «{codeModalAccount.label}»
                 </h2>
               </div>
               <button
                 type="button"
                 onClick={() => setCodeModalAccount(null)}
-                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                className="rounded-lg p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             <div className="mt-4 space-y-3">
-              <p className="text-xs text-slate-400 leading-relaxed">
+              <p className="text-xs text-[#666666] leading-relaxed">
                 Вставьте этот код на страницы вашего сайта перед закрывающим тегом{" "}
-                <code className="rounded bg-slate-800 px-1.5 py-0.5 text-amber-400 font-mono">
+                <code className="rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[#111111] font-mono">
                   &lt;/body&gt;
                 </code>
                 . Виджет загружается асинхронно и не замедляет сайт.
               </p>
 
-              <div className="relative rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-200">
+              <div className="relative rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3 font-mono text-xs text-[#111111]">
                 <pre className="overflow-x-auto whitespace-pre-wrap">
                   {`<!-- GetVoxly WebChat Widget -->\n<script\n  src="https://api.getvoxly.ru/widget.js"\n  data-account-id="${codeModalAccount.id}"\n  defer\n></script>`}
                 </pre>
               </div>
 
               <div className="flex items-center justify-between pt-2">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-[#888888]">
                   ID подключения: {codeModalAccount.id}
                 </span>
 

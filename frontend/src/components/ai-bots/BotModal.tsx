@@ -218,7 +218,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <span
                       className={cn(
                         "block truncate text-xs font-semibold",
-                        selectedModel === model.id ? "text-[#4a38f5]" : "text-slate-900",
+                        selectedModel === model.id ? "text-[#4a38f5]" : "text-[#111111]",
                       )}
                     >
                       {model.label}
@@ -264,7 +264,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                       <span
                         className={cn(
                           "text-xs font-semibold",
-                          selectedMode === mode ? "text-[#4a38f5]" : "text-slate-900",
+                          selectedMode === mode ? "text-[#4a38f5]" : "text-[#111111]",
                         )}
                       >
                         {getBotModeLabel(mode)}
@@ -318,7 +318,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               <div className="space-y-1.5">
                 <label htmlFor="bot-temperature" className="block text-xs font-medium text-slate-700">
                   Температура
-                  <span className="ml-1.5 font-mono text-slate-900">{temperature.toFixed(1)}</span>
+                  <span className="ml-1.5 font-mono text-[#111111]">{temperature.toFixed(1)}</span>
                 </label>
                 <input
                   id="bot-temperature"
@@ -385,7 +385,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                 }
                 className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5]"
               />
-              <span className="text-xs text-slate-800">
+              <span className="text-xs text-[#111111]">
                 Активировать сразу
                 <span className="ml-1.5 text-slate-500">
                   боты на паузе сохраняют настройки, но не работают

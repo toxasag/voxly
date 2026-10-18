@@ -21,7 +21,7 @@ const CHIP_PALETTES = [
   "bg-purple-100 text-purple-800 border-purple-200",
   "bg-orange-100 text-orange-800 border-orange-200",
   "bg-cyan-100 text-cyan-800 border-cyan-200",
-  "bg-slate-100 text-slate-800 border-slate-200",
+  "bg-zinc-100 text-zinc-800 border-zinc-200",
 ] as const;
 
 export function paletteFor(name: string): string {

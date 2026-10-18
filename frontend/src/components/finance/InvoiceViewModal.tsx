@@ -226,7 +226,7 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
                     {formatCost(invoice.vat_amount, invoice.currency)}
                   </span>
                 </div>
-                <div className="flex justify-between border-t-2 border-slate-800 pt-2">
+                <div className="flex justify-between border-t-2 border-[#111111] pt-2">
                   <span className="text-base font-bold">Итого к оплате</span>
                   <span className="text-base font-bold font-mono text-[#4a38f5]">
                     {formatCost(invoice.total, invoice.currency)}

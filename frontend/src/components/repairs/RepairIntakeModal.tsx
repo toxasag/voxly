@@ -176,7 +176,7 @@ export function RepairIntakeModal({
                           form.setValue("customer_id", c.id, { shouldValidate: true });
                           setCustomerSearch("");
                         }}
-                        className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-slate-800 hover:bg-slate-50 transition-colors cursor-pointer"
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                       >
                         <span className="font-medium text-[#111111]">{c.name}</span>
                         <span className="text-xs text-slate-500">{c.phone}</span>

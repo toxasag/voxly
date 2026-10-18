@@ -21,15 +21,15 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
   const hasReachedEnd = current === "issued" || current === "rejected";
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Статус</span>
+        <span className="text-xs font-medium text-[#666666] uppercase tracking-wider">Статус</span>
         {!hasReachedEnd && (
           <button
             type="button"
             onClick={onAdvance}
             disabled={disabled}
-            className="rounded-lg border border-[#4a38f5]/50 bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             Далее → {getRepairStatusLabel(STATUS_ORDER[Math.min(currentIdx + 1, STATUS_ORDER.length - 1)])}
           </button>
@@ -56,9 +56,9 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
                 <div
                   className={cn(
                     "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300",
-                    isCompleted && "border-emerald-500 bg-emerald-500 text-slate-950",
+                    isCompleted && "border-emerald-600 bg-emerald-600 text-white",
                     isCurrent && "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]",
-                    isPending && "border-slate-700 bg-slate-900 text-slate-600",
+                    isPending && "border-[#e5e5e5] bg-[#fafafa] text-[#888888]",
                   )}
                 >
                   {isCompleted ? <Check className="h-5 w-5" /> : <Circle className="h-5 w-5" />}
@@ -66,9 +66,9 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
                 <span
                   className={cn(
                     "mt-1.5 text-xs font-medium text-center leading-tight whitespace-nowrap",
-                    isCompleted && "text-emerald-400",
-                    isCurrent && "text-amber-400",
-                    isPending && "text-slate-600",
+                    isCompleted && "text-emerald-700",
+                    isCurrent && "text-[#4a38f5]",
+                    isPending && "text-[#888888]",
                   )}
                 >
                   {getRepairStatusLabel(step)}
@@ -83,7 +83,7 @@ export const RepairStatusStepper = memo(function RepairStatusStepper({
                   <div
                     className={cn(
                       "h-0.5 rounded-full transition-all duration-500",
-                      idx < currentIdx ? "bg-emerald-500" : "bg-slate-800",
+                      idx < currentIdx ? "bg-emerald-600" : "bg-[#e5e5e5]",
                     )}
                   />
                 </div>
