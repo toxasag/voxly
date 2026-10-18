@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Building2, Handshake, Trash2, User } from "lucide-react";
+import { Banknote, Building2, Calendar, Clock, Flag, Handshake, Plus, Target, Trash2, User, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 import type { DealDTO, KanbanColumnDTO } from "@/lib/api/use-deals";
 import { useDeleteDeal, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
@@ -75,6 +75,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "title",
       header: "Сделка",
+      icon: Target,
       width: 260,
       sortValue: (deal) => deal.title,
       render: (deal) =>
@@ -99,13 +100,14 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
             onStartEdit={() => setEditing({ rowId: deal.id, columnId: "title" })}
           >
             <EntityChip name={deal.title} />
-            <span className="truncate font-medium text-slate-100">{deal.title}</span>
+            <span className="truncate font-medium text-[#111111]">{deal.title}</span>
           </RecordCellShell>
         ),
     },
     {
       id: "stage",
       header: "Этап",
+      icon: Flag,
       width: 170,
       sortValue: (deal) => stageById.get(deal.stageId)?.sortOrder ?? 999,
       render: (deal) => {
@@ -138,6 +140,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "budget",
       header: "Сумма",
+      icon: Banknote,
       width: 140,
       align: "right",
       sortValue: (deal) => deal.budget,
@@ -160,13 +163,14 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
           />
         ) : (
           <RecordCellShell align="right" editable onStartEdit={() => setEditing({ rowId: deal.id, columnId: "budget" })}>
-            <span className="font-medium tabular-nums text-[#111111]">{money.format(deal.budget)}</span>
+            <span className="font-normal tabular-nums text-[#111111]">{money.format(deal.budget)}</span>
           </RecordCellShell>
         ),
     },
     {
       id: "company",
       header: "Компания",
+      icon: Building2,
       width: 190,
       sortValue: (deal) => deal.companyName ?? "",
       render: (deal) => (
@@ -180,6 +184,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "contact",
       header: "Контактное лицо",
+      icon: User,
       width: 190,
       sortValue: (deal) => deal.contactName ?? "",
       render: (deal) => (
@@ -193,6 +198,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "owner",
       header: "Ответственный",
+      icon: UserCheck,
       width: 180,
       sortValue: (deal) => deal.ownerName ?? "",
       render: (deal) => {
@@ -210,6 +216,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "closeDate",
       header: "Дата закрытия",
+      icon: Calendar,
       width: 140,
       sortValue: (deal) => deal.closeDate ?? "",
       render: (deal) =>
@@ -228,7 +235,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
             onStartEdit={() => setEditing({ rowId: deal.id, columnId: "closeDate" })}
           >
             {deal.closeDate !== null && (
-              <span className="text-slate-300">
+              <span className="text-[#333333]">
                 {new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", year: "2-digit" }).format(new Date(deal.closeDate))}
               </span>
             )}
@@ -238,6 +245,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
     {
       id: "created",
       header: "Создана",
+      icon: Clock,
       width: 120,
       align: "right",
       sortValue: (deal) => deal.createdAt,
@@ -245,7 +253,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         <RecordCellShell align="right">
           <span
             title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(deal.createdAt))}
-            className="text-slate-500"
+            className="text-[#888888]"
           >
             {timeAgo(deal.createdAt)}
           </span>
@@ -298,7 +306,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         onRowClick={onOpenDeal === undefined || editing !== null ? undefined : (deal) => onOpenDeal(deal.id)}
         tableId="deals"
         onCellEdit={(deal, columnId) => setEditing({ rowId: deal.id, columnId })}
-        selectable={bulkEnabled}
+        selectable={true}
         selectedIds={selected}
         onSelectionChange={setSelected}
         footerCells={{
@@ -331,6 +339,18 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
           </div>
         }
       />
+
+      {/* Кнопка создания сделки под таблицей (как в Twenty) */}
+      <button
+        type="button"
+        onClick={() => {
+          window.dispatchEvent(new CustomEvent("open-create-deal"));
+        }}
+        className="flex w-full items-center gap-1.5 border border-t-0 border-[#e5e5e5] rounded-b-xl bg-white px-3 py-2 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add New
+      </button>
 
       <ConfirmDialog
         open={deleteConfirmOpen}

@@ -92,7 +92,7 @@ export function RecordCellShell({
       )}
     >
       {isEmpty && emptyLabel !== undefined ? (
-        <span className="pl-1 text-slate-600">Указать {emptyLabel}</span>
+        <span className="pl-1 text-[#999999] text-xs font-normal">Указать {emptyLabel}</span>
       ) : (
         <span className="flex min-w-0 items-center gap-1.5 truncate">{children}</span>
       )}
