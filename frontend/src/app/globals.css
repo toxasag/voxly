@@ -64,7 +64,9 @@ html {
 
   /* Borders: clean Twenty 1px border */
   & .border-slate-800,
+  & .border-slate-800\/70,
   & .border-slate-700,
+  & .border-slate-700\/70,
   & .border-slate-600,
   & .border-slate-200,
   & .border-slate-100 {

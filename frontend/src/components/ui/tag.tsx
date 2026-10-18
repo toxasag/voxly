@@ -12,14 +12,14 @@ import { cn } from "@/lib/utils";
 export type TagColor = "amber" | "emerald" | "sky" | "rose" | "violet" | "orange" | "cyan" | "slate";
 
 const TAG_COLORS: Record<TagColor, string> = {
-  amber:   "border-amber-500/25   bg-amber-500/10   text-amber-300",
-  emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
-  sky:     "border-sky-500/25     bg-sky-500/10     text-sky-300",
-  rose:    "border-rose-500/25    bg-rose-500/10    text-rose-300",
-  violet:  "border-violet-500/25  bg-violet-500/10  text-violet-300",
-  orange:  "border-orange-400/25  bg-orange-400/10  text-orange-300",
-  cyan:    "border-cyan-500/25    bg-cyan-500/10    text-cyan-300",
-  slate:   "border-slate-600/40   bg-slate-700/30   text-slate-300",
+  amber:   "border-amber-200/80   bg-amber-50   text-amber-800",
+  emerald: "border-emerald-200/80 bg-emerald-50 text-emerald-800",
+  sky:     "border-sky-200/80     bg-sky-50     text-sky-800",
+  rose:    "border-rose-200/80    bg-rose-50    text-rose-800",
+  violet:  "border-purple-200/80  bg-purple-50  text-purple-800",
+  orange:  "border-orange-200/80  bg-orange-50  text-orange-800",
+  cyan:    "border-cyan-200/80    bg-cyan-50    text-cyan-800",
+  slate:   "border-slate-200      bg-slate-100  text-slate-700",
 };
 
 interface TagPillProps {

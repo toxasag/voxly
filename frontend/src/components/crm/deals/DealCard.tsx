@@ -6,7 +6,7 @@ import { Banknote, ArrowLeft, ArrowRight, Building2, CalendarClock, Flag, User }
 import type { DealDTO, StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { UserAvatar } from "@/components/shared/UserAvatar";
-import { EntityChip } from "@/components/crm/shared/EntityChip";
+import { EntityChip, paletteFor } from "@/components/crm/shared/EntityChip";
 import { stageColor } from "@/components/crm/deals/stage-colors";
 import {
   defaultDealCardFields,
@@ -69,7 +69,7 @@ export const DealCard = memo(function DealCard({
   }, [deal.id, onOpen, router]);
 
   const accent = stageColor(stageColorKey);
-  const leftBorderClass = isWon ? "border-l-emerald-500" : isLost ? "border-l-rose-500" : accent.cardBorder;
+  const leftBorderClass = isWon ? "border-l-2 border-l-emerald-500" : isLost ? "border-l-2 border-l-rose-500" : accent.cardBorder ? "border-l-2" : "";
 
   // Поле показывается, только когда включено и когда у сделки есть значение:
   // пустая строка «Описание:» занимала бы место, ничего не сообщая.
@@ -86,71 +86,102 @@ export const DealCard = memo(function DealCard({
       onDragStart={isMobile ? undefined : drag}
       onClick={handleClick}
       className={cn(
-        "group cursor-pointer rounded-lg border border-slate-800 border-l-[3px] bg-slate-900 transition-all hover:border-slate-700 hover:bg-slate-800/50",
+        "group cursor-pointer rounded-lg border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-2xs p-3 space-y-2",
         leftBorderClass,
-        "p-3.5",
       )}
     >
-      <div className="space-y-2.5">
-        <h3 className="line-clamp-2 text-sm font-semibold text-slate-100">{deal.title}</h3>
-        {/* Компания и контактное лицо чипами, как на карточке Opportunity в Twenty. */}
-        {((show("company") && deal.companyName !== null) ||
-          (show("contact") && deal.contactName !== null)) && (
-          <div className="flex flex-wrap gap-1.5">
-            {show("company") && deal.companyName !== null && (
-              <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" className="text-slate-300" />
-            )}
-            {show("contact") && deal.contactName !== null && (
-              <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" className="text-slate-400" />
-            )}
-          </div>
-        )}
+      {/* Заголовок с монограммой как в Twenty */}
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-semibold border",
+            paletteFor(deal.title),
+          )}
+          aria-hidden="true"
+        >
+          {deal.title.trim().charAt(0).toUpperCase()}
+        </span>
+        <h3 className="line-clamp-2 flex-1 text-[13px] font-medium text-[#000000] leading-snug">
+          {deal.title}
+        </h3>
+      </div>
+
+      {/* Метаданные сделки аккуратным списком как в Twenty */}
+      <div className="space-y-1.5 text-xs">
         {show("budget") && (
-          <div className="flex gap-1.5">
-            <Banknote className="h-3.5 w-3.5 text-slate-500" />
-            <span className="text-sm font-semibold text-amber-400">
+          <div className="flex items-center gap-2 text-[#333333]">
+            <Banknote className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span className="font-medium text-[#111111] tabular-nums">
               {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
             </span>
           </div>
         )}
-        {show("description") && (
-          <p className="line-clamp-2 text-xs text-slate-500">{deal.description}</p>
-        )}
-        {show("closeDate") && deal.closeDate !== null && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            <CalendarClock className="h-3.5 w-3.5 text-slate-500" />
-            {new Date(deal.closeDate).toLocaleDateString("ru-RU")}
-          </div>
-        )}
+
         {show("stage") && (
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            <Flag className="h-3.5 w-3.5 text-slate-500" />
-            {stageName}
+          <div className="flex items-center gap-2 text-[#666666]">
+            <Flag className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span className="truncate">{stageName}</span>
           </div>
         )}
+
+        {show("closeDate") && deal.closeDate !== null && (
+          <div className="flex items-center gap-2 text-[#666666]">
+            <CalendarClock className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span>{new Date(deal.closeDate).toLocaleDateString("ru-RU")}</span>
+          </div>
+        )}
+
+        {/* Компания и контактное лицо */}
+        {((show("company") && deal.companyName !== null) ||
+          (show("contact") && deal.contactName !== null)) && (
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {show("company") && deal.companyName !== null && (
+              <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+            )}
+            {show("contact") && deal.contactName !== null && (
+              <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
+            )}
+          </div>
+        )}
+
+        {show("description") && (
+          <p className="line-clamp-2 text-xs text-[#888888] pt-0.5">{deal.description}</p>
+        )}
+
         {show("currency") && (
-          <div className="text-xs text-slate-500">Валюта: {deal.currency}</div>
+          <div className="text-xs text-[#888888]">Валюта: {deal.currency}</div>
         )}
         {show("createdAt") && (
-          <div className="text-xs text-slate-500">Создана: {new Date(deal.createdAt).toLocaleDateString("ru-RU")}</div>
+          <div className="text-xs text-[#888888]">Создана: {new Date(deal.createdAt).toLocaleDateString("ru-RU")}</div>
         )}
         {show("updatedAt") && (
-          <div className="text-xs text-slate-500">Обновлена: {new Date(deal.updatedAt).toLocaleDateString("ru-RU")}</div>
+          <div className="text-xs text-[#888888]">Обновлена: {new Date(deal.updatedAt).toLocaleDateString("ru-RU")}</div>
         )}
         {show("closedAt") && deal.closedAt !== null && (
-          <div className="text-xs text-slate-500">Закрыта: {new Date(deal.closedAt).toLocaleDateString("ru-RU")}</div>
+          <div className="text-xs text-[#888888]">Закрыта: {new Date(deal.closedAt).toLocaleDateString("ru-RU")}</div>
         )}
-        {show("owner") && <UserAvatar user={manager} fallbackLabel="Unassigned" size="sm" />}
-        {/*
-          На мобильном стрелки видны всегда: `opacity-0 group-hover` рассчитан на
-          курсор, которого на телефоне нет, и без этого канбан остался бы вообще без
-          способа перенести сделку — перетаскивание там отключено.
-        */}
-        <div className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-          <button type="button" disabled={!canMoveLeft} onClick={(event) => { event.stopPropagation(); onMove(deal.id, -1); }} className="flex h-9 w-9 items-center justify-center rounded bg-slate-800 text-slate-400 disabled:opacity-30 md:h-auto md:w-auto md:p-1"><ArrowLeft className="h-4 w-4 md:h-3 md:w-3" /></button>
-          <span className="flex-1 truncate text-center text-xs text-slate-500">{stageName}</span>
-          <button type="button" disabled={!canMoveRight} onClick={(event) => { event.stopPropagation(); onMove(deal.id, 1); }} className="flex h-9 w-9 items-center justify-center rounded bg-slate-800 text-slate-400 disabled:opacity-30 md:h-auto md:w-auto md:p-1"><ArrowRight className="h-4 w-4 md:h-3 md:w-3" /></button>
-        </div>
+        {show("owner") && <UserAvatar user={manager} fallbackLabel="Не назначен" size="sm" />}
+      </div>
+
+      {/* Мобильные стрелки перемещения */}
+      <div className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 pt-1">
+        <button
+          type="button"
+          disabled={!canMoveLeft}
+          onClick={(event) => { event.stopPropagation(); onMove(deal.id, -1); }}
+          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+        >
+          <ArrowLeft className="h-4 w-4 md:h-3 md:w-3" />
+        </button>
+        <span className="flex-1 truncate text-center text-xs text-[#888888]">{stageName}</span>
+        <button
+          type="button"
+          disabled={!canMoveRight}
+          onClick={(event) => { event.stopPropagation(); onMove(deal.id, 1); }}
+          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+        >
+          <ArrowRight className="h-4 w-4 md:h-3 md:w-3" />
+        </button>
       </div>
     </div>
   );

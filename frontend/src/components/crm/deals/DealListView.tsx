@@ -160,7 +160,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
           />
         ) : (
           <RecordCellShell align="right" editable onStartEdit={() => setEditing({ rowId: deal.id, columnId: "budget" })}>
-            <span className="font-medium tabular-nums text-amber-400">{money.format(deal.budget)}</span>
+            <span className="font-medium tabular-nums text-[#111111]">{money.format(deal.budget)}</span>
           </RecordCellShell>
         ),
     },
@@ -303,7 +303,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
         onSelectionChange={setSelected}
         footerCells={{
           title: `${totals.count} записей`,
-          budget: <span className="font-semibold text-amber-400 tabular-nums">{money.format(totals.sum)}</span>,
+          budget: <span className="font-semibold text-[#111111] tabular-nums">{money.format(totals.sum)}</span>,
         }}
         emptyState={<TableEmptyState icon={Handshake} title="Сделок нет" description="Под текущий фильтр не попала ни одна сделка" />}
         bulkBar={

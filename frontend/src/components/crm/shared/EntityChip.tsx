@@ -14,17 +14,17 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 
 const CHIP_PALETTES = [
-  "bg-amber-500/15 text-amber-300 border-amber-500/25",
-  "bg-emerald-500/15 text-emerald-300 border-emerald-500/25",
-  "bg-sky-500/15 text-sky-300 border-sky-500/25",
-  "bg-rose-500/15 text-rose-300 border-rose-500/25",
-  "bg-violet-500/15 text-violet-300 border-violet-500/25",
-  "bg-orange-500/15 text-orange-300 border-orange-500/25",
-  "bg-cyan-500/15 text-cyan-300 border-cyan-500/25",
-  "bg-slate-600/30 text-slate-300 border-slate-500/30",
+  "bg-amber-100 text-amber-800 border-amber-200",
+  "bg-emerald-100 text-emerald-800 border-emerald-200",
+  "bg-sky-100 text-sky-800 border-sky-200",
+  "bg-rose-100 text-rose-800 border-rose-200",
+  "bg-purple-100 text-purple-800 border-purple-200",
+  "bg-orange-100 text-orange-800 border-orange-200",
+  "bg-cyan-100 text-cyan-800 border-cyan-200",
+  "bg-slate-100 text-slate-800 border-slate-200",
 ] as const;
 
-function paletteFor(name: string): string {
+export function paletteFor(name: string): string {
   let hash = 0;
   for (let index = 0; index < name.length; index++) {
     hash = (hash * 31 + name.charCodeAt(index)) | 0;

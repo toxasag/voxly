@@ -112,13 +112,13 @@ export function DealsToolbar(props: Props) {
         <select
           value={props.pipelineId}
           onChange={(event) => props.onPipelineChange(event.target.value)}
-          className="h-9 appearance-none rounded-lg border border-slate-700 bg-slate-900 pl-3 pr-8 text-sm font-semibold text-slate-100 focus:border-amber-500 focus:outline-none"
+          className="h-8 appearance-none rounded-md border border-[#e5e5e5] bg-white pl-2.5 pr-7 text-[13px] font-medium text-[#000000] hover:bg-[#fafafa] focus:border-[#888888] focus:outline-none cursor-pointer"
         >
           {props.pipelines.map((pipeline) => (
             <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
           ))}
         </select>
-        <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
       </div>
 
       <div className="flex overflow-hidden rounded-md border border-[#e5e5e5] bg-[#ffffff]">
@@ -149,36 +149,36 @@ export function DealsToolbar(props: Props) {
           value={props.search}
           onChange={(event) => props.onSearchChange(event.target.value)}
           placeholder="Поиск и фильтр"
-          className="h-9 w-full rounded-lg border border-slate-700 bg-slate-900 pl-3 pr-14 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+          className="h-8 w-full rounded-md border border-[#e5e5e5] bg-white pl-3 pr-12 text-[13px] text-[#000000] placeholder:text-[#888888] focus:border-[#888888] focus:outline-none"
         />
         {props.search !== "" ? (
           <button
             type="button"
             onClick={() => props.onSearchChange("")}
             aria-label="Очистить поиск"
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-500 hover:text-slate-300"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[#888888] hover:text-[#000000]"
           >
             <X className="h-3.5 w-3.5" />
           </button>
         ) : (
-          <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-500">⌘K</kbd>
+          <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded bg-[#f4f4f5] border border-[#e5e5e5] px-1 py-0.5 text-[10px] text-[#888888]">⌘K</kbd>
         )}
       </div>
 
       {/* Правая группа */}
-      <div className="ml-auto flex flex-wrap items-center gap-3">
+      <div className="ml-auto flex flex-wrap items-center gap-2.5">
         {/* Сводка «N сделок: сумма» на мобильном уходит в меню «⋯»: она отвечает на
             вопрос «сколько денег в воронке» и должна остаться доступной, но в ряду
             занимает половину ширины экрана. */}
-        <div className="hidden rounded-lg border border-slate-800 bg-slate-900 px-3 py-1.5 text-sm whitespace-nowrap md:block">
-          <span className="font-semibold text-slate-200">{props.summaryCount}</span>
-          <span className="text-slate-500"> {dealPlural(props.summaryCount)}: </span>
-          <span className="font-semibold text-amber-400">{money.format(props.summarySum)}</span>
+        <div className="hidden rounded-md border border-slate-800 bg-[#fafafa] px-2.5 py-1 text-xs whitespace-nowrap md:block">
+          <span className="font-medium text-[#111111]">{props.summaryCount}</span>
+          <span className="text-[#666666]"> {dealPlural(props.summaryCount)}: </span>
+          <span className="font-medium text-[#111111]">{money.format(props.summarySum)}</span>
         </div>
 
         <DropdownMenu
           trigger={
-            <button type="button" aria-label="Дополнительные действия" className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200">
+            <button type="button" aria-label="Дополнительные действия" className="flex h-8 w-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#000000]">
               ⋯
             </button>
           }
