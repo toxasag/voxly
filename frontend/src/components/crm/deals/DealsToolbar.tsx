@@ -121,22 +121,22 @@ export function DealsToolbar(props: Props) {
         <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
       </div>
 
-      <div className="flex overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+      <div className="flex overflow-hidden rounded-md border border-[#e5e5e5] bg-[#ffffff]">
         <button
           type="button"
           title="Канбан"
           onClick={() => props.onViewChange("kanban")}
-          className={cn("flex h-9 w-10 items-center justify-center transition-colors", props.view === "kanban" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
+          className={cn("flex h-8 w-9 items-center justify-center transition-colors", props.view === "kanban" ? "bg-black/[0.07] text-[#000000]" : "text-[#666666] hover:bg-black/[0.03] hover:text-[#000000]")}
         >
-          <Columns3 className="h-4 w-4" />
+          <Columns3 className="h-3.5 w-3.5" />
         </button>
         <button
           type="button"
           title="Список"
           onClick={() => props.onViewChange("table")}
-          className={cn("flex h-9 w-10 items-center justify-center border-l border-slate-700 transition-colors", props.view === "table" ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200")}
+          className={cn("flex h-8 w-9 items-center justify-center border-l border-[#e5e5e5] transition-colors", props.view === "table" ? "bg-black/[0.07] text-[#000000]" : "text-[#666666] hover:bg-black/[0.03] hover:text-[#000000]")}
         >
-          <ListIcon className="h-4 w-4" />
+          <ListIcon className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -267,10 +267,10 @@ export function DealsToolbar(props: Props) {
           type="button"
           onClick={props.onConfigureToggle}
           className={cn(
-            "hidden h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold tracking-wide transition-colors md:flex",
+            "hidden h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium tracking-normal transition-colors md:flex",
             props.configureMode
-              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-              : "border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-slate-100",
+              ? "border-emerald-500/50 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+              : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#f7f7f7]",
           )}
         >
           {props.configureMode && <Check className="h-3.5 w-3.5" />}
@@ -280,9 +280,9 @@ export function DealsToolbar(props: Props) {
         <button
           type="button"
           onClick={props.onCreateDeal}
-          className="flex h-9 items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 text-xs font-medium tracking-wide text-white shadow-xs transition-colors hover:bg-blue-700"
+          className="flex h-8 items-center gap-1.5 rounded-md bg-[#111111] px-3 text-xs font-medium text-white shadow-none transition-colors hover:bg-[#222222]"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
           {/* Подпись только с md:: на мобильном она занимает треть ряда, а иконка
               «плюс» узнаваема сама. */}
           <span className="hidden md:inline">НОВАЯ СДЕЛКА</span>

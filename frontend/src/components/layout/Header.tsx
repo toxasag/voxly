@@ -26,14 +26,6 @@ interface QuickAction {
   moduleSlug?: ModuleSlug;
 }
 
-/**
- * Маршруты соответствуют существующим страницам.
- *
- * Прежде здесь стояли `/deals/new`, `/modules/service-center/new` и
- * `/modules/ai-bots/new` — ни одного такого маршрута в приложении нет, все три
- * пункта вели на 404. Приёмка открывается параметром `?create=1`, который уже
- * читает страница ремонтов.
- */
 const QUICK_ACTIONS: QuickAction[] = [
   { label: "Новая сделка", icon: Handshake, href: "/crm/deals" },
   {
@@ -71,74 +63,53 @@ export function Header() {
 
   return (
     <>
-      {/*
-        `px-4` вместо `px-6` и `gap-2` вместо `gap-4` на мобильном: на 360px
-        каждые сэкономленные 4px отступа достаются кнопкам, которые иначе уезжают
-        за край экрана.
-      */}
-      <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-slate-800 bg-slate-900 px-4 md:gap-4 md:px-6">
-        {/*
-          Search / Command Palette Trigger.
-
-          `min-w-0` обязателен: без него flex-элемент не сжимается ниже размера
-          своего содержимого («Поиск сделок, контактов, наряд-заказов…» плюс ⌘K —
-          около 374px), и на 360px экране правая группа кнопок уезжала за край.
-          `max-w-md` тут не помогал — он ограничивает сверху, а не снизу.
-
-          Само поле скрыто на мобильном: его роль там играет кнопка «Поиск» в
-          нижнем баре, а полоса с ⌘K занимала бы всю ширину шапки, вытесняя
-          «Создать» и уведомления. Клавиатурного сокращения на телефоне нет.
-        */}
-        <div className="relative hidden min-w-0 flex-1 max-w-md md:block">
+      <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 md:gap-3 md:px-5">
+        {/* Search / Command Palette Trigger */}
+        <div className="relative hidden min-w-0 flex-1 max-w-sm md:block">
           <button
             type="button"
             onClick={() => setCommandOpen(true)}
-            className="flex w-full items-center gap-2 rounded-lg border border-slate-700 bg-slate-950 py-2 pl-3 pr-4 text-left text-sm text-slate-500 transition-colors hover:border-slate-600 hover:text-slate-400 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+            className="flex h-7 w-full items-center gap-2 rounded-lg border border-[#e5e5e5] bg-[#fafafa] px-2.5 text-left text-[12px] text-[#888888] transition-colors hover:border-[#cccccc] hover:text-[#444444]"
           >
-            <Search className="h-4 w-4 shrink-0" />
+            <Search className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">Поиск сделок, контактов, наряд-заказов...</span>
-            <kbd className="shrink-0 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-500">
+            <kbd className="shrink-0 rounded bg-black/[0.05] px-1 py-0.2 text-[10px] text-[#888888]">
               ⌘K
             </kbd>
           </button>
         </div>
 
-        {/* Логотип на мобильном — вместо поля поиска: без него шапка пуста слева. */}
+        {/* Mobile brand text */}
         <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-slate-950">
-            <span className="text-xs font-black">G</span>
-          </div>
-          <span className="truncate text-sm font-semibold text-slate-100">
+          <span className="truncate text-[13px] font-semibold text-[#111111]">
             {displayTenant.tenantName}
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
-          {/* Quick Create */}
+        <div className="flex shrink-0 items-center gap-1.5 ml-auto">
+          {/* Quick Create Button */}
           <div className="relative" ref={quickActionRef}>
             <button
               type="button"
               onClick={() => setQuickActionOpen((prev) => !prev)}
               className={cn(
-                "flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                quickActionOpen
-                  ? "bg-amber-500 text-slate-950"
-                  : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
+                "flex h-7 items-center gap-1 rounded-lg border border-[#e5e5e5] px-2.5 text-[12px] font-medium text-[#111111] shadow-2xs transition-colors",
+                quickActionOpen ? "bg-[#f4f4f5]" : "bg-white hover:bg-[#f7f7f7]",
               )}
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3.5 w-3.5 text-[#666666]" />
               <span className="hidden sm:inline">Создать</span>
             </button>
             {quickActionOpen && (
-              <div className="absolute right-0 top-full mt-2 w-56 rounded-xl border border-slate-800 bg-slate-900 p-1.5 shadow-xl">
+              <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl border border-[#e5e5e5] bg-white p-1 shadow-lg">
                 {visibleActions.map((action) => (
                   <a
                     key={action.href}
                     href={action.href}
                     onClick={() => setQuickActionOpen(false)}
-                    className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+                    className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] text-[#333333] transition-colors hover:bg-black/[0.04] hover:text-[#000000]"
                   >
-                    <action.icon className="h-4 w-4 text-slate-400" />
+                    <action.icon className="h-4 w-4 text-[#666666]" />
                     {action.label}
                   </a>
                 ))}
@@ -153,11 +124,11 @@ export function Header() {
           <button
             type="button"
             onClick={toggleTheme}
-            className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#111111]"
             title={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
             aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
           >
-            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
         </div>
       </header>

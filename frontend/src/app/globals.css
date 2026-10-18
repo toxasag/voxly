@@ -1,106 +1,118 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Тема оформления.
-
-   Проект написан в тёмной палитре напрямую (`bg-slate-900`, `text-slate-100`)
-   и не содержит ни одного варианта `dark:`. Поэтому тема переключается не
-   классами утилит, а переопределением CSS-переменных: Tailwind 4 компилирует
-   `bg-slate-900` в `var(--color-slate-900)`, и подмена переменной меняет смысл
-   всех существующих классов без правки разметки. Альтернатива — добавить
-   `dark:`-вариант к каждому из сотен вхождений — потребовала бы переписать
-   почти каждый компонент.
-
-   Светлая тема — по умолчанию (`<html class="light">` в layout.tsx). Тёмная
-   остаётся доступной через переключатель в шапке.
+   Twenty CRM Light Design System
+   Auto-extracted & aligned with By Stage (https://prarp.twenty.com)
+   - Canvas: #ffffff
+   - Sidebar: #fbfbfb
+   - Headings & Text: #000000
+   - Secondary Text: #666666
+   - Muted / Placeholders: #888888
+   - Borders: #e5e5e5
+   - Base typography: Inter, compact 13px
    --------------------------------------------------------------------------- */
 
-/* ---------------------------------------------------------------------------
-   Акцент Twenty CRM: фирменный синий (#2563eb / #1d4ed8 / #1e40af).
-   --------------------------------------------------------------------------- */
 :root {
-  --color-amber-500: #2563eb;
-  --color-amber-400: #1d4ed8;
-  --color-amber-600: #1e40af;
-}
-
-.bg-amber-500 {
-  color: #ffffff !important;
-}
-
-/* ---------------------------------------------------------------------------
-   Светлая тема.
-
-   Шкала slate инвертируется: чем «темнее» токен в разметке, тем светлее его
-   фактическое значение. Значения заданы в hex, а не oklch, чтобы палитра
-   совпадала с требованиями дизайна буквально.
-   --------------------------------------------------------------------------- */
-html.light {
-  /* Фон страницы — slate-50, карточки и сайдбар — чистый белый. */
-  --color-slate-950: #f8fafc;
-  --color-slate-900: #ffffff;
-  /* Приподнятые поверхности: hover строк, поповеры, дропдауны. */
-  --color-slate-800: #f1f5f9;
-  /* Границы инпутов. */
-  --color-slate-700: #e2e8f0;
-  --color-slate-600: #cbd5e1;
-  /* Приглушённый текст: placeholder, третичные подписи. */
-  --color-slate-500: #64748b;
-  /* Вторичный текст: описания, подписи. */
-  --color-slate-400: #475569;
-  --color-slate-300: #334155;
-  --color-slate-200: #1e293b;
-  /* Основной текст: заголовки и тело. */
-  --color-slate-100: #0f172a;
-
+  --color-primary: #888888;
+  --color-secondary: #aaaaaa;
+  --color-bg: #ffffff;
+  --color-bg-secondary: #fcfcfc;
+  --color-text: #000000;
+  --color-text-secondary: #666666;
+  --color-border: #e5e5e5;
   color-scheme: light;
 }
 
-/* Границы карточек.
-
-   `slate-800` в разметке служит и фоном приподнятой поверхности, и цветом
-   границы. В светлой теме одно значение не может быть и тем, и другим: как фон
-   нужен почти белый (#f1f5f9), а как граница он был бы невидим. Поэтому для
-   границ значение переопределяется отдельно. */
-html.light .border-slate-800,
-html.light .border-slate-700 {
-  border-color: #e2e8f0;
-}
-
-/* Тонкая тень вместо контраста фона: на светлом фоне карточка с почти белой
-   границей теряет края. */
-html.light aside {
-  background-color: #fbfbfb;
-  border-right-color: #e2e8f0;
-  box-shadow: 1px 0 2px 0 rgb(15 23 42 / 0.03);
-}
-
-html.light header {
+html,
+body {
   background-color: #ffffff;
-  border-bottom-color: #e2e8f0;
-  box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.04);
-}
-
-html.light body {
-  background-color: #f8fafc;
-  color: #0f172a;
-}
-
-/* Полупрозрачные наложения рассчитаны на тёмный фон и на светлом дают грязный
-   серый. Приводим к нейтральному светлому. */
-html.light .bg-slate-800\/50 {
-  background-color: #f8fafc;
-}
-
-html.light .bg-slate-950\/80 {
-  /* Оверлей модальных окон: на светлой теме затемнение, а не осветление. */
-  background-color: rgb(15 23 42 / 0.45);
-}
-
-html {
+  color: #000000;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
 }
 
-html.dark {
-  color-scheme: dark;
+/* Light theme overrides for Tailwind palette */
+html.light,
+html {
+  /* Surfaces and Cards */
+  & .bg-slate-950,
+  & .bg-slate-900 {
+    background-color: #ffffff !important;
+  }
+
+  & .bg-slate-800 {
+    background-color: #fafafa !important;
+  }
+
+  & .bg-slate-800\/50 {
+    background-color: #fafafa !important;
+  }
+
+  & .bg-slate-100 {
+    background-color: #f4f4f5 !important;
+  }
+
+  & .bg-slate-50 {
+    background-color: #fcfcfc !important;
+  }
+
+  /* Borders: clean Twenty 1px border */
+  & .border-slate-800,
+  & .border-slate-700,
+  & .border-slate-600,
+  & .border-slate-200,
+  & .border-slate-100 {
+    border-color: #e5e5e5 !important;
+  }
+
+  /* Primary text (both legacy dark tokens and standard light tokens) */
+  & .text-slate-100,
+  & .text-slate-200,
+  & .text-slate-800,
+  & .text-slate-900 {
+    color: #000000 !important;
+  }
+
+  /* Secondary / muted text */
+  & .text-slate-300,
+  & .text-slate-400,
+  & .text-slate-600,
+  & .text-slate-700 {
+    color: #666666 !important;
+  }
+
+  /* Subtle placeholders & hints */
+  & .text-slate-500 {
+    color: #888888 !important;
+  }
+
+  /* Shell structures */
+  & aside {
+    background-color: #fbfbfb !important;
+    border-right: 1px solid #e5e5e5 !important;
+  }
+
+  & header {
+    background-color: #ffffff !important;
+    border-bottom: 1px solid #e5e5e5 !important;
+  }
+
+  /* Inputs, selects, and textareas */
+  & input,
+  & select,
+  & textarea {
+    background-color: #ffffff !important;
+    border-color: #e5e5e5 !important;
+    color: #000000 !important;
+  }
+
+  & input::placeholder,
+  & textarea::placeholder {
+    color: #888888 !important;
+  }
+
+  /* Modal backdrops */
+  & .bg-slate-950\/80 {
+    background-color: rgb(0 0 0 / 0.4) !important;
+  }
 }
