@@ -142,21 +142,21 @@ export const BotUsageStats = memo(function BotUsageStats({
           icon={Activity}
           label="Запросы (14 дн)"
           value={numberFormatter.format(totals.requests)}
-          accent="bg-sky-500/10 text-sky-400"
+          accent="bg-sky-500/10 text-sky-700"
           hint={`${numberFormatter.format(bot.requests_count)} за всё время`}
         />
         <KpiTile
           icon={Gauge}
           label="Ср. задержка"
           value={totals.avgLatency === 0 ? "—" : `${numberFormatter.format(totals.avgLatency)} ms`}
-          accent="bg-emerald-500/10 text-emerald-400"
+          accent="bg-emerald-500/10 text-emerald-700"
           hint={model.label}
         />
         <KpiTile
           icon={Coins}
           label="Затраты на сегодня"
           value={rubFormatter.format(bot.cost_rub)}
-          accent="bg-orange-400/10 text-orange-400"
+          accent="bg-[#4a38f5]/10 text-[#4a38f5]"
           hint={`${model.price_in_per_1k} ₽ вход / ${model.price_out_per_1k} ₽ выход за 1 тыс.`}
         />
       </div>

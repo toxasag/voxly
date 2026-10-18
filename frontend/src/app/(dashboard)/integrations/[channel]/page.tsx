@@ -56,7 +56,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#4a38f5]/10">
-            <Icon className="h-5 w-5 text-amber-400" />
+            <Icon className="h-5 w-5 text-[#4a38f5]" />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">

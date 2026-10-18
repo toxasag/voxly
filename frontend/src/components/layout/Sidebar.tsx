@@ -58,17 +58,15 @@ function SidebarLink({
   item,
   pathname,
   collapsed,
-  accent = "amber",
 }: {
   item: { label: string; href: string; icon: LucideIcon };
   pathname: string;
   collapsed: boolean;
-  accent?: "amber" | "orange";
 }) {
   const isActive =
     pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
   const iconColor =
-    ENTITY_ICONS[item.href] ?? (isActive ? (accent === "orange" ? "text-orange-500" : "text-[#111111]") : "text-[#888888]");
+    ENTITY_ICONS[item.href] ?? (isActive ? "text-[#111111]" : "text-[#888888]");
 
   return (
     <Link
@@ -344,9 +342,9 @@ export function Sidebar({
                 collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
-              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#4a38f5]" />
               {!collapsed && (
-                <span className="text-[11px] font-medium uppercase tracking-wider text-orange-600">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[#4a38f5]">
                   Управление платформой
                 </span>
               )}
@@ -358,7 +356,6 @@ export function Sidebar({
                 item={item}
                 pathname={pathname}
                 collapsed={collapsed}
-                accent="orange"
               />
             ))}
           </>

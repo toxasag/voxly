@@ -343,7 +343,7 @@ function CompaniesContent() {
           footerCells={{
             name: `${total} записей`,
             budget: (
-              <span className="font-semibold text-amber-400 tabular-nums">
+              <span className="font-semibold text-[#111111] tabular-nums">
                 {money.format(items.reduce((sum, company) => sum + company.dealsBudgetTotal, 0))}
               </span>
             ),
