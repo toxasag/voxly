@@ -474,7 +474,7 @@ className="flex items-center gap-1 font-medium text-rose-600"
 
                       {/* Текст ошибки доставки под сообщением */}
                       {message.deliveryStatus === "failed" && message.deliveryError && (
-<div className="mt-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+                        <div className="mt-1.5 rounded-[8px] border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
                           {message.deliveryError}
                         </div>
                       )}
@@ -619,7 +619,7 @@ className="flex h-7 w-7 items-center justify-center rounded text-sm hover:bg-[#f
             onKeyDown={handleKeyDown}
             placeholder="Написать сообщение клиенту (Enter для отправки, Shift+Enter для переноса)..."
             rows={2}
-className="w-full resize-none rounded-[12px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            className="w-full resize-none rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
 
           <button
@@ -627,7 +627,7 @@ className="w-full resize-none rounded-[12px] border border-[#e5e5e5] bg-white px
             onClick={handleSend}
             disabled={sendMessageMutation.isPending || !input.trim()}
             title="Отправить сообщение (Enter)"
-className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#4a38f5] text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-[#4a38f5] text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {sendMessageMutation.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
