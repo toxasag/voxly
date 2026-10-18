@@ -1,7 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { AlertCircle, Banknote, Bot, Building2, CalendarClock, Handshake, ListChecks, Loader2, MessageCircle, Paperclip, Send, UserCircle2 } from "lucide-react";
+import {
+  AlertCircle,
+  Banknote,
+  Bot,
+  Building2,
+  Calendar,
+  CalendarClock,
+  CheckCircle2,
+  ChevronUp,
+  DollarSign,
+  Handshake,
+  ListChecks,
+  Loader2,
+  MessageCircle,
+  Paperclip,
+  Pencil,
+  Send,
+  User,
+  UserCircle2,
+} from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -61,24 +80,23 @@ export interface DealTabsContext {
  * — при разной длине значений колонка визуально ломалась, и связанные поля
  * (компания, контакт, владелец) не читались как список.
  */
-function FieldRow({ icon: Icon, label, children }: { icon: typeof Building2; label: string; children: React.ReactNode }) {
+function FieldRow({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex items-start gap-2 px-4 py-2">
-      <span className="flex h-6 w-[100px] shrink-0 items-center gap-1.5 text-xs text-[#666666]">
-        <Icon className="h-4 w-4 shrink-0 text-[#888888]" />
+    <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
+      <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
         <span className="truncate">{label}</span>
       </span>
-      <span className="min-w-0 flex-1 pt-0.5 text-[13px] text-[#000000]">{children}</span>
+      <span className="min-w-0 flex-1 text-[13px] text-[#111111]">{children}</span>
     </div>
-  );
-}
-
-function FieldsCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="overflow-hidden rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xs">
-      <h3 className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#666666]">{title}</h3>
-      <div className="divide-y divide-[#e5e5e5]">{children}</div>
-    </section>
   );
 }
 
@@ -275,6 +293,10 @@ function HomeTab({
   pipelines?: PipelineDTO[];
   stagesById?: Map<string, DealStageInfo>;
 }) {
+  const [dealOpen, setDealOpen] = useState(true);
+  const [relationsOpen, setRelationsOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(true);
+
   // Владелец и создатель — разные поля (миграция 0018): сделку может завести
   // AI-агент, а вести живой менеджер, поэтому owner_id читается отдельно.
   const owner = deal.ownerId !== null ? usersById.get(deal.ownerId) : undefined;
@@ -289,74 +311,190 @@ function HomeTab({
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
 
   return (
-    <div className="space-y-5 px-5 py-4">
+    <div className="py-2 text-[#111111]">
       {deal.description !== "" && (
-        <p className="whitespace-pre-wrap rounded-[16px] border border-[#e5e5e5] bg-white px-4 py-3 text-[13px] text-[#333333] shadow-2xs">{deal.description}</p>
+        <div className="px-4 pb-3">
+          <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] text-[#333333]">{deal.description}</p>
+        </div>
       )}
 
-      <FieldsCard title="Сделка">
-        <FieldRow icon={Banknote} label="Сумма">
-          <span className="font-semibold text-[#000000] tabular-nums">
-            {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
-          </span>
-        </FieldRow>
-        <FieldRow icon={ListChecks} label="Этап">
-          {stage === undefined ? (
-            <span className="text-slate-600">—</span>
-          ) : (
-            <TagPill color={stage.isWon ? "emerald" : stage.isLost ? "rose" : stageTagColor(stage.colorKey)}>
-              {stage.name}
-            </TagPill>
-          )}
-        </FieldRow>
-        <FieldRow icon={CalendarClock} label="Дата закрытия">
-          {deal.closeDate !== null ? dateOnly(deal.closeDate) : <span className="text-slate-600">—</span>}
-        </FieldRow>
-        <FieldRow icon={Handshake} label="Воронка">
-          {pipelineName ?? <span className="text-slate-600">—</span>}
-        </FieldRow>
-      </FieldsCard>
+      {/* Section: Fields */}
+      <div className="px-4 pt-1 pb-1 text-xs font-semibold text-[#111111]">Fields</div>
 
-      <FieldsCard title="Связи">
-        <FieldRow icon={Building2} label="Компания">
-          {deal.companyName !== null && deal.companyName !== "" ? (
-            <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-          ) : (
-            <span className="text-slate-600">—</span>
-          )}
-        </FieldRow>
-        <FieldRow icon={UserCircle2} label="Контактное лицо">
+      {/* Accordion Group 1: Deal */}
+      <div className="mt-1">
+        <button
+          type="button"
+          onClick={() => setDealOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
+        >
+          <span>Deal</span>
+          <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !dealOpen && "rotate-180")} />
+        </button>
+        {dealOpen && (
+          <div className="space-y-0.5 py-0.5">
+            <FieldRow icon={DollarSign} label="Amount">
+              <span className="font-normal text-[#111111] tabular-nums">
+                {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
+              </span>
+            </FieldRow>
+            <FieldRow icon={CheckCircle2} label="Stage">
+              {stage === undefined ? (
+                <span className="text-[#888888]">—</span>
+              ) : (
+                <TagPill color={stage.isWon ? "emerald" : stage.isLost ? "rose" : stageTagColor(stage.colorKey)}>
+                  {stage.name}
+                </TagPill>
+              )}
+            </FieldRow>
+            <FieldRow icon={Calendar} label="Close date">
+              {deal.closeDate !== null ? (
+                <span className="text-[#111111]">{dateOnly(deal.closeDate)}</span>
+              ) : (
+                <span className="text-[#888888]">—</span>
+              )}
+            </FieldRow>
+            {pipelineName && (
+              <FieldRow icon={Handshake} label="Pipeline">
+                <span className="text-[#111111]">{pipelineName}</span>
+              </FieldRow>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Accordion Group 2: Relations */}
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setRelationsOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
+        >
+          <span>Relations</span>
+          <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !relationsOpen && "rotate-180")} />
+        </button>
+        {relationsOpen && (
+          <div className="space-y-0.5 py-0.5">
+            <FieldRow icon={Building2} label="Company">
+              {deal.companyName !== null && deal.companyName !== "" ? (
+                <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+              ) : (
+                <span className="text-[#888888]">—</span>
+              )}
+            </FieldRow>
+            <FieldRow icon={User} label="Point of Contact">
+              {deal.contactName !== null && deal.contactName !== "" ? (
+                <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+              ) : (
+                <span className="text-[#888888]">—</span>
+              )}
+            </FieldRow>
+            <FieldRow icon={UserCircle2} label="Owner">
+              {owner !== undefined ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
+                  <UserAvatar user={owner} fallbackLabel="?" size="sm" />
+                  <span>{owner.fullName}</span>
+                </span>
+              ) : deal.ownerName !== null && deal.ownerName !== "" ? (
+                <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
+              ) : (
+                <span className="text-[#888888]">—</span>
+              )}
+            </FieldRow>
+          </div>
+        )}
+      </div>
+
+      {/* Accordion Group 3: System */}
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setSystemOpen((prev) => !prev)}
+          className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
+        >
+          <span>System</span>
+          <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !systemOpen && "rotate-180")} />
+        </button>
+        {systemOpen && (
+          <div className="space-y-0.5 py-0.5">
+            <FieldRow icon={Calendar} label="Creation date">
+              <span title={fullDate(deal.createdAt)} className="text-[#111111]">{timeAgo(deal.createdAt)}</span>
+            </FieldRow>
+            <FieldRow icon={Bot} label="Created by">
+              <span className="inline-flex items-center gap-1.5 text-[#111111]">
+                <Bot className="h-3 w-3 text-[#888888]" />
+                <span>{creator !== undefined ? creator.fullName : "System"}</span>
+              </span>
+            </FieldRow>
+          </div>
+        )}
+      </div>
+
+      {/* Separate Relation Cards with Pencil Edit Icon (matches Twenty Screenshot 2) */}
+      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-[#111111]">Point of Contact</span>
+          <button
+            type="button"
+            aria-label="Редактировать контактное лицо"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div>
           {deal.contactName !== null && deal.contactName !== "" ? (
             <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
           ) : (
-            <span className="text-slate-600">—</span>
+            <span className="text-xs text-[#888888]">—</span>
           )}
-        </FieldRow>
-        <FieldRow icon={UserCircle2} label="Владелец">
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-[#111111]">Company</span>
+          <button
+            type="button"
+            aria-label="Редактировать компанию"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div>
+          {deal.companyName !== null && deal.companyName !== "" ? (
+            <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+          ) : (
+            <span className="text-xs text-[#888888]">—</span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-[#f0f0f0] pt-3 px-4 pb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-[#111111]">Owner</span>
+          <button
+            type="button"
+            aria-label="Редактировать ответственного"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div>
           {owner !== undefined ? (
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
               <UserAvatar user={owner} fallbackLabel="?" size="sm" />
-              {owner.fullName}
+              <span>{owner.fullName}</span>
             </span>
           ) : deal.ownerName !== null && deal.ownerName !== "" ? (
-            deal.ownerName
+            <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
           ) : (
-            <span className="text-slate-600">—</span>
+            <span className="text-xs text-[#888888]">—</span>
           )}
-        </FieldRow>
-      </FieldsCard>
-
-      <FieldsCard title="Система">
-        <FieldRow icon={CalendarClock} label="Создана">
-          <span title={fullDate(deal.createdAt)}>{timeAgo(deal.createdAt)}</span>
-        </FieldRow>
-        <FieldRow icon={UserCircle2} label="Создал">
-          {creator !== undefined ? creator.fullName : <span className="text-slate-600">Система</span>}
-        </FieldRow>
-        <FieldRow icon={CalendarClock} label="Обновлена">
-          <span title={fullDate(deal.updatedAt)}>{timeAgo(deal.updatedAt)}</span>
-        </FieldRow>
-      </FieldsCard>
+        </div>
+      </div>
     </div>
   );
 }

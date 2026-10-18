@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, GripVertical, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { DealCard, type DealCardOptions } from "@/components/crm/deals/DealCard";
@@ -160,13 +160,36 @@ export function DealKanban({
   const move = useMoveDealStage();
   const ordered = [...columns].sort((a, b) => a.sortOrder - b.sortOrder);
   const [newStageName, setNewStageName] = useState("");
-  const { width: storedWidth, setWidth: commitWidth } = useKanbanColumnWidth();
-  const { width, startResize } = useHorizontalResize({
-    value: storedWidth,
-    min: 200,
-    max: 480,
-    onCommit: commitWidth,
-  });
+  const { width: defaultWidth, columnWidths, setColumnWidth } = useKanbanColumnWidth();
+  const [liveWidths, setLiveWidths] = useState<Record<string, number>>({});
+  const resizeRef = useRef<{ stageId: string; startX: number; startWidth: number } | null>(null);
+
+  const startColumnResize = useCallback((event: React.PointerEvent, stageId: string, currentWidth: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeRef.current = { stageId, startX: event.clientX, startWidth: currentWidth };
+
+    const onMove = (moveEvent: PointerEvent): void => {
+      const state = resizeRef.current;
+      if (!state) return;
+      const next = Math.min(480, Math.max(200, Math.round(state.startWidth + (moveEvent.clientX - state.startX))));
+      setLiveWidths((prev) => ({ ...prev, [state.stageId]: next }));
+    };
+
+    const onUp = (upEvent: PointerEvent): void => {
+      const state = resizeRef.current;
+      resizeRef.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      if (!state) return;
+      const finalWidth = Math.min(480, Math.max(200, Math.round(state.startWidth + (upEvent.clientX - state.startX))));
+      setColumnWidth(state.stageId, finalWidth);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, [setColumnWidth]);
+
   const isMobile = useIsMobile();
 
   const doMove = useCallback((id: string, direction: -1 | 1) => {
@@ -193,6 +216,7 @@ export function DealKanban({
   return (
     <div className="-mx-4 md:-mx-5 flex min-h-[calc(100vh-170px)] items-stretch overflow-x-auto border-t border-[#e5e5e5] bg-white">
       {ordered.map((col, index) => {
+        const colWidth = liveWidths[col.stageId] ?? columnWidths[col.stageId] ?? defaultWidth;
         return (
           <div
             key={col.stageId}
@@ -204,7 +228,7 @@ export function DealKanban({
               "relative flex shrink-0 flex-col border-r border-[#e5e5e5] bg-white transition-colors",
               over === col.stageId && "bg-[#f8fafc]",
             )}
-            style={{ width }}
+            style={{ width: colWidth }}
           >
             {configure && stageOps ? (
               <div className="p-2 border-b border-[#f0f0f0]">
@@ -275,8 +299,8 @@ export function DealKanban({
               <button
                 type="button"
                 aria-label="Изменить ширину колонки"
-                onPointerDown={startResize}
-                className="absolute inset-y-0 right-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/20 md:block"
+                onPointerDown={(event) => startColumnResize(event, col.stageId, colWidth)}
+                className="absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize hover:bg-[#3b82f6]/40 transition-colors md:block"
               />
             )}
           </div>
@@ -286,7 +310,7 @@ export function DealKanban({
       {configure && stageOps && (
         <div
           className="flex shrink-0 flex-col justify-center rounded-xl border border-dashed border-[#e5e5e5] bg-white p-3"
-          style={{ width }}
+          style={{ width: defaultWidth }}
         >
           {newStageName === "" ? (
             <button
