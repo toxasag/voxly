@@ -74,16 +74,16 @@ function SectionCard({ section }: { section: SettingsLink }) {
   return (
     <Link
       href={section.href}
-      className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-900 p-5 transition-colors hover:border-slate-700 hover:bg-slate-800/50"
+      className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800">
-        <section.icon className="h-5 w-5 text-slate-400" />
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-[#f5f5f5]">
+        <section.icon className="h-5 w-5 text-[#4a38f5]" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-slate-100">{section.label}</p>
-        <p className="mt-0.5 text-xs text-slate-500">{section.description}</p>
+        <p className="text-sm font-semibold text-[#111111]">{section.label}</p>
+        <p className="mt-0.5 text-xs text-[#666666]">{section.description}</p>
       </div>
-      <ChevronRight className="h-4 w-4 shrink-0 text-slate-600" />
+      <ChevronRight className="h-4 w-4 shrink-0 text-[#888888]" />
     </Link>
   );
 }
@@ -94,8 +94,8 @@ export default function SettingsIndexPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-slate-100">Настройки</h1>
-        <p className="mt-1 text-sm text-slate-400">
+        <h1 className="text-xl font-bold text-[#111111]">Настройки</h1>
+        <p className="mt-1 text-[13px] text-[#666666]">
           {info === undefined
             ? "Управление рабочим пространством"
             : `${info.name} · ${info.slug}.getvoxly.ru`}
@@ -103,15 +103,15 @@ export default function SettingsIndexPage() {
       </div>
 
       {info !== undefined && info.trialActive && (
-        <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-5 py-4">
-          <Gift className="h-4 w-4 shrink-0 text-emerald-400" />
-          <p className="text-sm text-slate-300">
+        <div className="flex items-center gap-2.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-5 py-4">
+          <Gift className="h-4 w-4 shrink-0 text-emerald-600" />
+          <p className="text-sm text-emerald-900">
             Пробный период: осталось{" "}
-            <span className="font-semibold text-emerald-400">
+            <span className="font-semibold text-emerald-700">
               {info.trialDaysLeft} {pluralDays(info.trialDaysLeft)}
             </span>
             .{" "}
-            <Link href="/settings/billing" className="text-[#4a38f5] hover:text-[#4a38f5]">
+            <Link href="/settings/billing" className="text-[#4a38f5] font-medium hover:underline">
               Посмотреть тариф
             </Link>
           </p>

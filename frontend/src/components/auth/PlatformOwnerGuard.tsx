@@ -27,10 +27,10 @@ export function PlatformOwnerGuard({ children }: { children: React.ReactNode }) 
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/10">
-          <ShieldOff className="h-6 w-6 text-rose-400" />
+          <ShieldOff className="h-6 w-6 text-rose-600" />
         </div>
-        <h3 className="text-lg font-semibold text-slate-100">Доступ закрыт</h3>
-        <p className="max-w-sm text-sm text-slate-400">
+        <h3 className="text-lg font-semibold text-[#111111]">Доступ закрыт</h3>
+        <p className="max-w-sm text-sm text-[#666666]">
           Раздел доступен только владельцу платформы. Если вам нужен доступ, обратитесь к
           администратору GETVOXLY.
         </p>

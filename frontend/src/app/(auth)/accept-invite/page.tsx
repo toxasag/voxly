@@ -23,7 +23,11 @@ export default async function AcceptInvitePage({
           <p className="text-sm text-[#666666]">Приглашение в рабочее пространство</p>
         </div>
 
+<<<<<<< HEAD
         <div className="rounded-[16px] border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+=======
+        <div className="rounded-2xl border border-[#e5e5e5] bg-white p-8 shadow-2xs">
+>>>>>>> master
           <AcceptInviteForm token={token} />
         </div>
       </div>

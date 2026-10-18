@@ -31,10 +31,10 @@ export default function AdminBillingPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">
               Тарифы и биллинг
             </h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <p className="mt-1 text-sm text-[#666666]">
               Распределение арендаторов по планам и оценка выручки
             </p>
           </div>
@@ -42,7 +42,7 @@ export default function AdminBillingPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить
@@ -55,11 +55,11 @@ export default function AdminBillingPage() {
           число активных арендаторов.
         */}
         {data?.billingProvider.connected === false && (
-          <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-            <div className="text-sm text-slate-300">
-              <p className="font-medium text-sky-400">Платёжный провайдер не подключён</p>
-              <p className="mt-1 text-slate-400">
+          <div className="flex items-start gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <div className="text-sm text-[#111111]">
+              <p className="font-medium text-sky-800">Платёжный провайдер не подключён</p>
+              <p className="mt-1 text-[#666666]">
                 Суммы ниже — расчётные: прайс плана × число активных арендаторов. Фактических
                 платежей и счетов в системе пока нет.
               </p>
@@ -86,16 +86,16 @@ export default function AdminBillingPage() {
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-xs uppercase tracking-wider text-slate-500">Всего компаний</p>
-                <p className="mt-2 text-3xl font-bold text-slate-100">{data.totals.tenants}</p>
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+                <p className="text-xs uppercase tracking-wider text-[#666666]">Всего компаний</p>
+                <p className="mt-2 text-3xl font-bold text-[#111111]">{data.totals.tenants}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-xs uppercase tracking-wider text-slate-500">Активных</p>
-                <p className="mt-2 text-3xl font-bold text-emerald-400">{data.totals.active}</p>
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+                <p className="text-xs uppercase tracking-wider text-[#666666]">Активных</p>
+                <p className="mt-2 text-3xl font-bold text-emerald-600">{data.totals.active}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-                <p className="text-xs uppercase tracking-wider text-slate-500">
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+                <p className="text-xs uppercase tracking-wider text-[#666666]">
                   MRR (расчётный)
                 </p>
                 <p className="mt-2 text-3xl font-bold text-[#4a38f5]">
@@ -104,10 +104,10 @@ export default function AdminBillingPage() {
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+            <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-left text-xs uppercase tracking-wider text-[#666666]">
                     <th className="px-4 py-3 font-medium">План</th>
                     <th className="px-4 py-3 font-medium">Цена / мес</th>
                     <th className="px-4 py-3 font-medium">Компаний</th>
@@ -123,18 +123,18 @@ export default function AdminBillingPage() {
                   {data.plans.map((plan) => (
                     <tr
                       key={plan.plan}
-                      className="border-b border-slate-800 transition-colors last:border-0 hover:bg-slate-800/50"
+                      className="border-b border-[#e5e5e5] transition-colors last:border-0 hover:bg-[#fafafa]"
                     >
-                      <td className="px-4 py-3 font-medium text-slate-100">
+                      <td className="px-4 py-3 font-medium text-[#111111]">
                         {PLAN_LABEL[plan.plan] ?? plan.plan}
                       </td>
-                      <td className="px-4 py-3 text-slate-300">{formatMoney(plan.priceMonthly)}</td>
-                      <td className="px-4 py-3 text-slate-300">{plan.tenants}</td>
-                      <td className="px-4 py-3 text-emerald-400">{plan.active}</td>
-                      <td className="px-4 py-3 text-yellow-400">{plan.trial}</td>
-                      <td className="px-4 py-3 text-rose-400">{plan.pastDue}</td>
-                      <td className="px-4 py-3 text-slate-400">{plan.suspended}</td>
-                      <td className="px-4 py-3 text-slate-300">
+                      <td className="px-4 py-3 text-[#666666]">{formatMoney(plan.priceMonthly)}</td>
+                      <td className="px-4 py-3 text-[#666666]">{plan.tenants}</td>
+                      <td className="px-4 py-3 font-medium text-emerald-600">{plan.active}</td>
+                      <td className="px-4 py-3 font-medium text-amber-700">{plan.trial}</td>
+                      <td className="px-4 py-3 font-medium text-rose-600">{plan.pastDue}</td>
+                      <td className="px-4 py-3 text-[#888888]">{plan.suspended}</td>
+                      <td className="px-4 py-3 text-[#666666]">
                         {plan.aiTokensBalance.toLocaleString("ru-RU")}
                       </td>
                       <td className="px-4 py-3 font-medium text-[#4a38f5]">

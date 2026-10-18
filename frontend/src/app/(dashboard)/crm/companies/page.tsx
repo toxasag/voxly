@@ -186,7 +186,7 @@ function CompaniesContent() {
             emptyLabel="домен"
             onStartEdit={() => setEditing({ rowId: company.id, columnId: "domain" })}
           >
-            <span className="truncate text-sky-400">{company.domainName}</span>
+            <span className="truncate text-[#4a38f5]">{company.domainName}</span>
           </RecordCellShell>
         ),
     },
@@ -196,7 +196,7 @@ function CompaniesContent() {
       width: 240,
       render: (company) => (
         <RecordCellShell isEmpty={company.phone === "" && company.email === ""} emptyLabel="контакты">
-          <span className="truncate text-slate-400">
+          <span className="truncate text-[#666666]">
             {[company.phone, company.email].filter((value) => value !== "").join(" · ")}
           </span>
         </RecordCellShell>
@@ -209,7 +209,7 @@ function CompaniesContent() {
       sortValue: (company) => company.requisites.inn,
       render: (company) => (
         <RecordCellShell isEmpty={company.requisites.inn === ""} emptyLabel="ИНН">
-          <span className="truncate font-mono text-xs text-slate-400">{company.requisites.inn}</span>
+          <span className="truncate font-mono text-xs text-[#666666]">{company.requisites.inn}</span>
         </RecordCellShell>
       ),
     },
@@ -234,7 +234,7 @@ function CompaniesContent() {
       sortValue: (company) => company.contactsCount,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.contactsCount > 0 ? "tabular-nums text-slate-200" : "tabular-nums text-slate-600"}>
+          <span className={company.contactsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
             {company.contactsCount}
           </span>
         </RecordCellShell>
@@ -248,7 +248,7 @@ function CompaniesContent() {
       sortValue: (company) => company.dealsCount,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.dealsCount > 0 ? "tabular-nums text-slate-200" : "tabular-nums text-slate-600"}>
+          <span className={company.dealsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
             {company.dealsCount}
           </span>
         </RecordCellShell>
@@ -262,7 +262,7 @@ function CompaniesContent() {
       sortValue: (company) => company.dealsBudgetTotal,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.dealsBudgetTotal > 0 ? "font-medium tabular-nums text-amber-400" : "tabular-nums text-slate-600"}>
+          <span className={company.dealsBudgetTotal > 0 ? "font-medium tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
             {money.format(company.dealsBudgetTotal)}
           </span>
         </RecordCellShell>
@@ -278,7 +278,7 @@ function CompaniesContent() {
         <RecordCellShell align="right">
           <span
             title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(company.createdAt))}
-            className="text-slate-500"
+            className="text-[#888888]"
           >
             {timeAgo(company.createdAt)}
           </span>
@@ -322,12 +322,12 @@ function CompaniesContent() {
       {query.isLoading ? (
         <SkeletonTable rows={6} columns={5} />
       ) : query.isError ? (
-        <div role="alert" className="flex gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-          <AlertCircle className="h-5 w-5 text-rose-400" />
+        <div role="alert" className="flex gap-3 rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+          <AlertCircle className="h-5 w-5 text-rose-600" />
           <div>
-            <p className="text-sm font-semibold text-slate-200">Не удалось загрузить компании</p>
-            <p className="mt-1 text-sm text-slate-400">{query.error.message}</p>
-            <button type="button" onClick={() => void query.refetch()} className="mt-3 flex gap-1 text-xs text-slate-300">
+            <p className="text-sm font-semibold text-rose-700">Не удалось загрузить компании</p>
+            <p className="mt-1 text-sm text-[#666666]">{query.error.message}</p>
+            <button type="button" onClick={() => void query.refetch()} className="mt-3 flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-800">
               <RefreshCw className="h-3.5 w-3.5" />Повторить
             </button>
           </div>

@@ -286,31 +286,47 @@ export function PhoneOtpAuth() {
   return (
     <div className="w-full max-w-md mx-auto">
       {/* Tabs */}
+<<<<<<< HEAD
       <div className="mb-6 flex rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-1">
+=======
+      <div className="flex rounded-[8px] bg-[#fafafa] border border-[#e5e5e5] p-1 mb-6">
+>>>>>>> master
         <button
           type="button"
           onClick={() => setAuthStep("phone")}
           className={cn(
+<<<<<<< HEAD
             "flex flex-1 items-center justify-center gap-2 rounded-[6px] px-3 py-2 text-[13px] font-medium transition-colors",
             authStep === "phone" || authStep === "otp"
               ? "bg-[#4a38f5] text-white"
+=======
+            "flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
+            authStep === "phone" || authStep === "otp"
+              ? "bg-white text-[#111111] shadow-2xs border border-[#e5e5e5]"
+>>>>>>> master
               : "text-[#666666] hover:text-[#111111]",
           )}
         >
-          <Smartphone className="h-4 w-4" />
+          <Smartphone className="h-4 w-4 text-[#4a38f5]" />
           Вход по телефону
         </button>
         <button
           type="button"
           onClick={() => setAuthStep("email")}
           className={cn(
+<<<<<<< HEAD
             "flex flex-1 items-center justify-center gap-2 rounded-[6px] px-3 py-2 text-[13px] font-medium transition-colors",
             authStep === "email"
               ? "bg-[#4a38f5] text-white"
+=======
+            "flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
+            authStep === "email"
+              ? "bg-white text-[#111111] shadow-2xs border border-[#e5e5e5]"
+>>>>>>> master
               : "text-[#666666] hover:text-[#111111]",
           )}
         >
-          <Mail className="h-4 w-4" />
+          <Mail className="h-4 w-4 text-[#4a38f5]" />
           Email
         </button>
       </div>
@@ -323,10 +339,14 @@ export function PhoneOtpAuth() {
         >
           {authStep === "phone" && (
             <>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label
                   htmlFor="phone"
+<<<<<<< HEAD
                   className="block text-[13px] font-medium text-[#111111]"
+=======
+                  className="block text-xs font-medium text-[#111111]"
+>>>>>>> master
                 >
                   Номер телефона
                 </label>
@@ -341,10 +361,17 @@ export function PhoneOtpAuth() {
                     autoComplete="tel"
                     autoFocus
                     className={cn(
+<<<<<<< HEAD
                       "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
                       "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                       phoneFormState.errors.phone
                         ? "border-rose-500"
+=======
+                      "w-full rounded-[8px] border bg-white py-2.5 pl-10 pr-4 text-[13px] text-[#111111] placeholder:text-[#888888] font-mono tabular-nums transition-colors",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                      phoneFormState.errors.phone
+                        ? "border-rose-300"
+>>>>>>> master
                         : "border-[#e5e5e5]",
                     )}
                   />
@@ -356,8 +383,13 @@ export function PhoneOtpAuth() {
                 )}
               </div>
 
+<<<<<<< HEAD
               <fieldset className="space-y-2">
                 <legend className="block text-[13px] font-medium text-[#111111]">
+=======
+              <fieldset className="space-y-1.5">
+                <legend className="block text-xs font-medium text-[#111111]">
+>>>>>>> master
                   Способ доставки кода
                 </legend>
                 <div className="grid grid-cols-2 gap-2">
@@ -376,7 +408,11 @@ export function PhoneOtpAuth() {
                           "flex items-center gap-2 rounded-[8px] border px-4 py-2.5 text-[13px] font-medium transition-colors",
                           isSelected
                             ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+<<<<<<< HEAD
                             : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+=======
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+>>>>>>> master
                         )}
                       >
                         <Icon className="h-4 w-4" />
@@ -396,7 +432,11 @@ export function PhoneOtpAuth() {
                 type="submit"
                 disabled={isSendingOtp || !phoneFormState.isValid}
                 className={cn(
+<<<<<<< HEAD
                   "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+=======
+                  "w-full flex items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+>>>>>>> master
                   "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
                 )}
@@ -422,24 +462,40 @@ export function PhoneOtpAuth() {
                 <button
                   type="button"
                   onClick={handleBackToPhone}
+<<<<<<< HEAD
                   className="flex items-center gap-1 text-[13px] text-[#666666] transition-colors hover:text-[#111111]"
+=======
+                  className="flex items-center gap-1 text-[13px] text-[#666666] hover:text-[#111111] transition-colors"
+>>>>>>> master
                 >
                   <ArrowLeft className="h-4 w-4" />
                   Назад
                 </button>
                 <div className="flex-1" />
+<<<<<<< HEAD
                 <div className="flex items-center gap-2 rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] px-3 py-1.5 text-xs text-[#666666]">
+=======
+                <div className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3 py-1 text-xs text-[#666666]">
+>>>>>>> master
                   <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
                   Код отправлен на {otp.phone} через{" "}
                   {getChannelLabel(otp.channel)}
                 </div>
               </div>
 
+<<<<<<< HEAD
               <div className="space-y-2 text-center">
                 <h2 className="text-base font-semibold text-[#111111]">
                   Введите код подтверждения
                 </h2>
                 <p className="text-[13px] text-[#666666]">
+=======
+              <div className="text-center space-y-2">
+                <h2 className="text-lg font-semibold text-[#111111]">
+                  Введите код подтверждения
+                </h2>
+                <p className="text-xs text-[#666666]">
+>>>>>>> master
                   Мы отправили 6-значный код{" "}
                   {otp.channel === "sms" ? "по SMS" : `в ${getChannelLabel(otp.channel)}`}
                 </p>
@@ -461,16 +517,27 @@ export function PhoneOtpAuth() {
                     otpForm.setValue("code", val, { shouldValidate: true });
                   }}
                   className={cn(
+<<<<<<< HEAD
                     "w-full rounded-[8px] border bg-white py-3 text-center text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#cccccc] transition-colors",
                     "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                     otpForm.formState.errors.code
                       ? "border-rose-500"
+=======
+                    "w-full rounded-[8px] border bg-white py-3 text-center font-mono text-2xl tracking-[0.5em] text-[#111111] placeholder:text-[#888888] transition-colors tabular-nums",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                    otpForm.formState.errors.code
+                      ? "border-rose-300"
+>>>>>>> master
                       : "border-[#e5e5e5]",
                   )}
                   placeholder="------"
                 />
                 {otpForm.formState.errors.code && (
+<<<<<<< HEAD
                   <p className="text-center text-xs text-rose-600">
+=======
+                  <p className="text-xs text-rose-600 text-center">
+>>>>>>> master
                     {otpForm.formState.errors.code.message}
                   </p>
                 )}
@@ -537,7 +604,11 @@ export function PhoneOtpAuth() {
           <div className="space-y-2">
             <label
               htmlFor="email"
+<<<<<<< HEAD
               className="block text-[13px] font-medium text-[#111111]"
+=======
+              className="block text-xs font-medium text-[#111111]"
+>>>>>>> master
             >
               E-mail
             </label>
@@ -554,10 +625,17 @@ export function PhoneOtpAuth() {
                 })
               }
               className={cn(
+<<<<<<< HEAD
                 "w-full rounded-[8px] border bg-white py-2.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
                 "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                 emailForm.formState.errors.email
                   ? "border-rose-500"
+=======
+                "w-full rounded-[8px] border bg-white py-2.5 px-3.5 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                emailForm.formState.errors.email
+                  ? "border-rose-300"
+>>>>>>> master
                   : "border-[#e5e5e5]",
               )}
             />
@@ -568,10 +646,14 @@ export function PhoneOtpAuth() {
             )}
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label
               htmlFor="password"
+<<<<<<< HEAD
               className="block text-[13px] font-medium text-[#111111]"
+=======
+              className="block text-xs font-medium text-[#111111]"
+>>>>>>> master
             >
               Пароль
             </label>
@@ -587,10 +669,17 @@ export function PhoneOtpAuth() {
                 })
               }
               className={cn(
+<<<<<<< HEAD
                 "w-full rounded-[8px] border bg-white py-2.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
                 "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                 emailForm.formState.errors.password
                   ? "border-rose-500"
+=======
+                "w-full rounded-[8px] border bg-white py-2.5 px-3.5 text-[13px] text-[#111111] placeholder:text-[#888888] transition-colors",
+                "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                emailForm.formState.errors.password
+                  ? "border-rose-300"
+>>>>>>> master
                   : "border-[#e5e5e5]",
               )}
             />
@@ -605,7 +694,11 @@ export function PhoneOtpAuth() {
             type="submit"
             disabled={isSigningIn || !emailForm.formState.isValid}
             className={cn(
+<<<<<<< HEAD
               "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+=======
+              "w-full flex items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+>>>>>>> master
               "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
               "disabled:opacity-50 disabled:cursor-not-allowed",
             )}

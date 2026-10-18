@@ -67,44 +67,44 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
   const canAdd = newDesc.trim() && newMaster && newCost && !isNaN(parseFloat(newCost)) && parseFloat(newCost) >= 0;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900">
-      <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
-        <Wrench className="h-4 w-4 text-slate-500" />
-        <span className="text-sm font-semibold text-slate-200">Выполненные работы</span>
-        <span className="ml-auto text-xs text-slate-600">{items.length} позиций</span>
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+      <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-4 py-3 bg-[#fafafa]">
+        <Wrench className="h-4 w-4 text-[#666666]" />
+        <span className="text-sm font-semibold text-[#111111]">Выполненные работы</span>
+        <span className="ml-auto text-xs text-[#888888]">{items.length} позиций</span>
       </div>
 
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-slate-800">
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                 Описание
               </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[140px]">
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[140px]">
                 Мастер
               </th>
-              <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-[100px]">
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[100px]">
                 Стоимость
               </th>
               <th className="px-4 py-2.5 w-[48px]" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-[#f0f0f0]">
             {items.map((item) => (
-              <tr key={item.id} className="transition-colors hover:bg-slate-800/30">
+              <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
                 <td className="px-4 py-3">
-                  <p className="text-sm text-slate-300">{item.description}</p>
+                  <p className="text-[13px] text-[#111111]">{item.description}</p>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-1.5">
-                    <User className="h-3 w-3 text-slate-500" />
-                    <span className="text-xs text-slate-400">{item.master_name}</span>
+                    <User className="h-3 w-3 text-[#888888]" />
+                    <span className="text-xs text-[#666666]">{item.master_name}</span>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <span className="text-sm font-semibold text-slate-200">
+                  <span className="text-[13px] font-semibold text-[#111111] font-mono">
                     {formatCost(item.cost)}
                   </span>
                 </td>
@@ -112,7 +112,7 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
                   <button
                     type="button"
                     onClick={() => handleDelete(item.id)}
-                    className="rounded p-1 text-slate-600 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                    className="rounded p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -122,7 +122,7 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
             {items.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-10 text-center">
-                  <p className="text-sm text-slate-600">Работы пока не добавлены.</p>
+                  <p className="text-sm text-[#888888]">Работы пока не добавлены.</p>
                 </td>
               </tr>
             )}
@@ -131,7 +131,7 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
       </div>
 
       {/* Add Row */}
-      <div className="border-t border-slate-800 px-4 py-3">
+      <div className="border-t border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
         <div className="flex items-center gap-3">
           <input
             type="text"
@@ -139,12 +139,12 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
             onChange={(e) => setNewDesc(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Описание работы..."
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="flex-1 rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
           <select
             value={newMaster}
             onChange={(e) => setNewMaster(e.target.value)}
-            className="w-[140px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 appearance-none focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="w-[140px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] appearance-none focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           >
             <option value="" disabled>
               Мастер...
@@ -162,17 +162,17 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
             onChange={(e) => setNewCost(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="0"
-            className="w-[100px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 text-right focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[100px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] text-right focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <button
             type="button"
             onClick={handleAdd}
             disabled={!canAdd}
             className={cn(
-              "shrink-0 rounded-lg p-2 transition-colors",
+              "shrink-0 rounded-[8px] p-2 transition-colors",
               canAdd
-                ? "bg-[#4a38f5] text-white hover:bg-[#3b2be0]"
-                : "bg-slate-800 text-slate-600 cursor-not-allowed",
+                ? "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
+                : "bg-[#f0f0f0] text-[#888888] cursor-not-allowed",
             )}
           >
             <Plus className="h-4 w-4" />
@@ -182,9 +182,9 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
 
       {/* Total */}
       {items.length > 0 && (
-        <div className="border-t border-slate-800 px-4 py-3 flex items-center justify-end">
-          <span className="text-xs text-slate-500 mr-2">Итого по работам:</span>
-          <span className="text-sm font-bold text-amber-400">{formatCost(totalWork)}</span>
+        <div className="border-t border-[#e5e5e5] bg-[#fafafa] px-4 py-3 flex items-center justify-end">
+          <span className="text-xs text-[#666666] mr-2">Итого по работам:</span>
+          <span className="text-sm font-bold text-[#111111] font-mono">{formatCost(totalWork)}</span>
         </div>
       )}
     </div>

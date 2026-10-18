@@ -35,8 +35,8 @@ export default function AdminLogsPage() {
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">Системные логи</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111111]">Системные логи</h1>
+            <p className="mt-1 text-sm text-[#666666]">
               Аудит действий по всем арендаторам платформы
             </p>
           </div>
@@ -44,7 +44,7 @@ export default function AdminLogsPage() {
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition-colors hover:border-slate-600 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-4 w-4", isFetching && "animate-spin")} />
             Обновить
@@ -55,9 +55,9 @@ export default function AdminLogsPage() {
           Честная оговорка о содержимом: здесь аудит действий, а не поток stdout
           приложения. Логи pino пишутся в контейнер, агрегатора нет.
         */}
-        <div className="flex items-start gap-3 rounded-xl border border-sky-500/30 bg-sky-500/5 p-4">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-400" />
-          <p className="text-sm text-slate-400">
+        <div className="flex items-start gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+          <p className="text-sm text-[#666666]">
             Раздел показывает журнал действий (изменения арендаторов, установка модулей). Логи
             приложения пишутся в stdout контейнера и здесь недоступны — для них нужен внешний
             сборщик.
@@ -65,7 +65,7 @@ export default function AdminLogsPage() {
         </div>
 
         <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             type="search"
             value={action}
@@ -75,15 +75,15 @@ export default function AdminLogsPage() {
             }}
             placeholder="Фильтр по действию, например module.install"
             aria-label="Фильтр по действию"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
         </div>
 
         {isLoading ? (
           <SkeletonTable rows={8} columns={5} />
         ) : isError ? (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-            <p className="text-sm text-rose-400">Не удалось загрузить логи: {error?.message}</p>
+          <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+            <p className="text-sm font-medium text-rose-700">Не удалось загрузить логи: {error?.message}</p>
           </div>
         ) : data === undefined || data.items.length === 0 ? (
           <EmptyState
@@ -97,10 +97,10 @@ export default function AdminLogsPage() {
           />
         ) : (
           <>
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+            <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-800 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-left text-xs uppercase tracking-wider text-[#666666]">
                     <th className="px-4 py-3 font-medium">Время</th>
                     <th className="px-4 py-3 font-medium">Компания</th>
                     <th className="px-4 py-3 font-medium">Пользователь</th>
@@ -112,22 +112,22 @@ export default function AdminLogsPage() {
                   {data.items.map((log) => (
                     <tr
                       key={log.id}
-                      className="border-b border-slate-800 transition-colors last:border-0 hover:bg-slate-800/50"
+                      className="border-b border-[#e5e5e5] transition-colors last:border-0 hover:bg-[#fafafa]"
                     >
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-400">
+                      <td className="whitespace-nowrap px-4 py-3 text-[#666666]">
                         {formatDateTime(log.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-slate-200">{log.tenantName ?? "—"}</td>
-                      <td className="px-4 py-3 text-slate-400">{log.actorEmail ?? "система"}</td>
+                      <td className="px-4 py-3 font-medium text-[#111111]">{log.tenantName ?? "—"}</td>
+                      <td className="px-4 py-3 text-[#666666]">{log.actorEmail ?? "система"}</td>
                       <td className="px-4 py-3">
-                        <span className="rounded-md bg-slate-800 px-2 py-0.5 font-mono text-xs text-orange-400">
+                        <span className="rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 font-mono text-xs text-[#111111]">
                           {log.action}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-slate-400">
+                      <td className="px-4 py-3 text-[#666666]">
                         {log.entityType}
                         {log.entityId !== null && (
-                          <span className="ml-1 font-mono text-xs text-slate-500">
+                          <span className="ml-1 font-mono text-xs text-[#888888]">
                             {log.entityId.slice(0, 12)}
                           </span>
                         )}
@@ -138,7 +138,7 @@ export default function AdminLogsPage() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between text-sm text-slate-400">
+            <div className="flex items-center justify-between text-sm text-[#666666]">
               <span>
                 {total} записей · страница {page + 1} из {pages}
               </span>
@@ -147,7 +147,7 @@ export default function AdminLogsPage() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(0, p - 1))}
                   disabled={page === 0}
-                  className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs transition-colors hover:border-slate-600 disabled:opacity-40"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
                 >
                   Назад
                 </button>
@@ -155,7 +155,7 @@ export default function AdminLogsPage() {
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={page + 1 >= pages}
-                  className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs transition-colors hover:border-slate-600 disabled:opacity-40"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-40"
                 >
                   Вперёд
                 </button>

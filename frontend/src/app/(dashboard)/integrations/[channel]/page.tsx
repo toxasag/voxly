@@ -60,22 +60,22 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold text-slate-100">{entry.label}</h1>
+              <h1 className="text-xl font-bold text-[#111111]">{entry.label}</h1>
 
               {summary?.trialActive === true ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                   <Gift className="h-3 w-3" />
                   Бесплатно ещё {daysLeft} дн.
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                   <CheckCircle2 className="h-3 w-3" />
                   Активен
                 </span>
               )}
             </div>
 
-            <p className="mt-1 text-sm text-slate-400">
+            <p className="mt-1 text-[13px] text-[#666666]">
               {summary === undefined ? (
                 "Подключённые аккаунты канала"
               ) : (
@@ -83,7 +83,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
                   {summary.total} из {summary.quantity}{" "}
                   {pluralAccounts(summary.quantity)} по тарифу
                   {summary.connectedCount > 0 && (
-                    <span className="text-slate-500"> · {summary.connectedCount} в сети</span>
+                    <span className="text-[#888888]"> · {summary.connectedCount} в сети</span>
                   )}
                 </>
               )}
@@ -99,16 +99,16 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
         {limitReached ? (
           <Link
             href="/marketplace"
-            className="flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800"
+            className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-[13px] font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa]"
           >
-            <ShoppingBag className="h-4 w-4" />
+            <ShoppingBag className="h-4 w-4 text-[#666666]" />
             Увеличить количество
           </Link>
         ) : (
           <button
             type="button"
             onClick={openConnect}
-            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+            className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
           >
             <Plus className="h-4 w-4" />
             Подключить аккаунт

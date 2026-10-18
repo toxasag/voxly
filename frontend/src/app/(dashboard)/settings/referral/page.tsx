@@ -21,39 +21,64 @@ export default function ReferralSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div><h1 className="text-xl font-bold text-slate-100">Партнёрская программа</h1><p className="mt-1 text-sm text-slate-400">Приглашайте партнёров и получайте вознаграждение</p></div>
+      <div>
+        <h1 className="text-xl font-bold text-[#111111]">Партнёрская программа</h1>
+        <p className="mt-1 text-[13px] text-[#666666]">Приглашайте партнёров и получайте вознаграждение</p>
+      </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-sky-500/10 p-1.5"><Users className="h-4 w-4 text-sky-400" /></div><span className="text-xs font-medium text-slate-500">Приглашено</span></div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{stats.total_invited}</p>
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <div className="rounded-[6px] bg-sky-50 p-1.5"><Users className="h-4 w-4 text-sky-600" /></div>
+            <span className="text-xs font-medium text-[#666666]">Приглашено</span>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-[#111111] tabular-nums font-mono">{stats.total_invited}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><Gift className="h-4 w-4 text-amber-400" /></div><span className="text-xs font-medium text-slate-500">Всего начислено</span></div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{formatAmt(stats.total_earned)}</p>
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <div className="rounded-[6px] bg-indigo-50 p-1.5"><Gift className="h-4 w-4 text-[#4a38f5]" /></div>
+            <span className="text-xs font-medium text-[#666666]">Всего начислено</span>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-[#111111] tabular-nums font-mono">{formatAmt(stats.total_earned)}</p>
         </div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-          <div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-500/10 p-1.5"><Banknote className="h-4 w-4 text-emerald-400" /></div><span className="text-xs font-medium text-slate-500">Доступно к выплате</span></div>
-          <p className="mt-2 text-2xl font-bold text-slate-100">{formatAmt(stats.available_payout)}</p>
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <div className="rounded-[6px] bg-emerald-50 p-1.5"><Banknote className="h-4 w-4 text-emerald-700" /></div>
+            <span className="text-xs font-medium text-[#666666]">Доступно к выплате</span>
+          </div>
+          <p className="mt-2 text-2xl font-bold text-[#111111] tabular-nums font-mono">{formatAmt(stats.available_payout)}</p>
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-        <div className="flex items-center gap-2 mb-2"><Link2 className="h-4 w-4 text-amber-400" /><span className="text-sm font-medium text-slate-300">Ваша партнёрская ссылка</span></div>
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
+        <div className="flex items-center gap-2 mb-2"><Link2 className="h-4 w-4 text-[#4a38f5]" /><span className="text-sm font-medium text-[#111111]">Ваша партнёрская ссылка</span></div>
         <div className="flex items-center gap-2">
-          <code className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-amber-400 font-mono truncate">{stats.referral_link}</code>
-          <button type="button" onClick={handleCopy} className={cn("flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-sm font-medium transition-colors", copied ? "bg-emerald-600 text-white" : "bg-[#4a38f5] text-white hover:bg-[#3b2be0]")}>
+          <code className="flex-1 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-2 text-sm text-[#111111] font-mono truncate">{stats.referral_link}</code>
+          <button type="button" onClick={handleCopy} className={cn("flex items-center gap-1.5 rounded-[8px] px-4 py-2 text-[13px] font-medium shadow-2xs transition-colors", copied ? "bg-emerald-600 text-white" : "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]")}>
             {copied ? <><Check className="h-4 w-4" />Скопировано</> : <><Copy className="h-4 w-4" />Копировать</>}
           </button>
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-        <div className="border-b border-slate-800 px-4 py-3"><span className="text-sm font-semibold text-slate-200">История выплат</span></div>
-        <table className="w-full"><thead><tr className="border-b border-slate-800"><th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Сумма</th><th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Способ</th><th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase">Статус</th><th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase w-[100px]">Дата</th></tr></thead>
-          <tbody className="divide-y divide-slate-800">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white overflow-hidden shadow-2xs">
+        <div className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-3"><span className="text-sm font-semibold text-[#111111]">История выплат</span></div>
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-[#666666] uppercase">Сумма</th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-[#666666] uppercase">Способ</th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-[#666666] uppercase">Статус</th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-[#666666] uppercase w-[100px]">Дата</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#f0f0f0]">
             {MOCK_REFERRAL_PAYOUTS.map(p => (
-              <tr key={p.id}><td className="px-4 py-3"><span className="text-sm font-semibold text-slate-200">{formatAmt(p.amount)}</span></td><td className="px-4 py-3"><span className="text-xs text-slate-400">{p.method}</span></td><td className="px-4 py-3"><span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", p.status === "completed" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30")}>{p.status}</span></td><td className="px-4 py-3"><span className="text-xs text-slate-500">{formatDate(p.created_at)}</span></td></tr>
+              <tr key={p.id} className="hover:bg-[#fafafa]">
+                <td className="px-4 py-3"><span className="text-sm font-semibold text-[#111111] tabular-nums font-mono">{formatAmt(p.amount)}</span></td>
+                <td className="px-4 py-3"><span className="text-xs text-[#666666]">{p.method}</span></td>
+                <td className="px-4 py-3"><span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", p.status === "completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-indigo-50 text-[#4a38f5] border-indigo-200")}>{p.status}</span></td>
+                <td className="px-4 py-3"><span className="text-xs text-[#888888]">{formatDate(p.created_at)}</span></td>
+              </tr>
             ))}
           </tbody>
         </table>

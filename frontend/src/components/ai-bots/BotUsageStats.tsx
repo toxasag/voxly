@@ -59,8 +59,8 @@ const TOOLTIP_STYLE = {
   boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
 } as const;
 
-const AXIS_TICK = { fill: "#94a3b8", fontSize: 11 } as const;
-const AXIS_LINE = { stroke: "rgb(51, 65, 85)" } as const;
+const AXIS_TICK = { fill: "#666666", fontSize: 11 } as const;
+const AXIS_LINE = { stroke: "#e5e5e5" } as const;
 
 interface KpiTileProps {
   icon: typeof Zap;
@@ -72,15 +72,15 @@ interface KpiTileProps {
 
 const KpiTile = memo(function KpiTile({ icon: Icon, label, value, accent, hint }: KpiTileProps) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
+    <div className="rounded-xl border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs">
       <div className="flex items-center gap-2">
         <div className={cn("rounded-lg p-1.5", accent)}>
           <Icon className="h-4 w-4" />
         </div>
-        <span className="text-xs font-medium text-slate-500">{label}</span>
+        <span className="text-xs font-medium text-[#666666]">{label}</span>
       </div>
-      <p className="mt-2 text-2xl font-bold text-slate-100">{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-slate-600">{hint}</p>}
+      <p className="mt-2 text-2xl font-bold text-[#111111]">{value}</p>
+      {hint && <p className="mt-0.5 text-xs text-[#888888]">{hint}</p>}
     </div>
   );
 });
@@ -162,14 +162,14 @@ export const BotUsageStats = memo(function BotUsageStats({
       </div>
 
       {/* Requests + tokens */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-        <h3 className="mb-4 text-sm font-semibold text-slate-200">Запросы и токены по дням</h3>
+      <div className="rounded-xl border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+        <h3 className="mb-4 text-sm font-semibold text-[#111111]">Запросы и токены по дням</h3>
         {chartData.length === 0 ? (
           <EmptyState icon={Activity} title="Нет данных об использовании" />
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <ComposedChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-              <CartesianGrid stroke="rgb(51, 65, 85)" strokeDasharray="3 3" />
+              <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
               <YAxis
                 yAxisId="requests"
@@ -207,7 +207,7 @@ export const BotUsageStats = memo(function BotUsageStats({
                 type="monotone"
                 dataKey="tokens"
                 name="Токены"
-                stroke="rgb(56, 189, 248)"
+                stroke="#0284c7"
                 strokeWidth={2}
                 dot={false}
               />
@@ -217,8 +217,8 @@ export const BotUsageStats = memo(function BotUsageStats({
       </div>
 
       {/* Latency */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-        <h3 className="mb-4 text-sm font-semibold text-slate-200">Средняя задержка (мс)</h3>
+      <div className="rounded-xl border border-[#e5e5e5] bg-white p-6 shadow-2xs">
+        <h3 className="mb-4 text-sm font-semibold text-[#111111]">Средняя задержка (мс)</h3>
         {chartData.length === 0 ? (
           <EmptyState icon={Gauge} title="Нет данных о задержке" />
         ) : (
@@ -226,11 +226,11 @@ export const BotUsageStats = memo(function BotUsageStats({
             <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
               <defs>
                 <linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="rgb(52, 211, 153)" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="rgb(52, 211, 153)" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="rgb(51, 65, 85)" strokeDasharray="3 3" />
+              <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
               <XAxis dataKey="label" tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} />
               <YAxis tick={AXIS_TICK} axisLine={AXIS_LINE} tickLine={false} width={48} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -238,7 +238,7 @@ export const BotUsageStats = memo(function BotUsageStats({
                 type="monotone"
                 dataKey="latency"
                 name="Задержка"
-                stroke="rgb(52, 211, 153)"
+                stroke="#10b981"
                 strokeWidth={2}
                 fill="url(#latencyFill)"
               />
@@ -248,11 +248,11 @@ export const BotUsageStats = memo(function BotUsageStats({
       </div>
 
       {/* Recent calls */}
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
-        <div className="border-b border-slate-800 px-4 py-3">
-          <h3 className="text-sm font-semibold text-slate-200">
+      <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-2xs">
+        <div className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
+          <h3 className="text-sm font-semibold text-[#111111]">
             Последние вызовы
-            <span className="ml-1.5 text-xs font-normal text-slate-600">
+            <span className="ml-1.5 text-xs font-normal text-[#888888]">
               из ai_logs
             </span>
           </h3>
@@ -267,47 +267,47 @@ export const BotUsageStats = memo(function BotUsageStats({
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Когда
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Пользователь
                 </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Токенов вход
                 </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Токенов выход
                 </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Задержка
                 </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Стоимость
                 </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-[#666666]">
                   Статус
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
+            <tbody className="divide-y divide-[#f0f0f0]">
               {logs.map((log) => (
-                <tr key={log.id} className="transition-colors hover:bg-slate-800/50">
-                  <td className="px-4 py-3 text-xs text-slate-400">
+                <tr key={log.id} className="transition-colors hover:bg-[#f5f5f5]">
+                  <td className="px-4 py-3 text-xs text-[#666666]">
                     {formatDateTime(log.created_at)}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-300">{log.user_name}</td>
-                  <td className="px-4 py-3 text-right text-xs text-slate-400">
+                  <td className="px-4 py-3 text-xs font-medium text-[#111111]">{log.user_name}</td>
+                  <td className="px-4 py-3 text-right text-xs text-[#666666]">
                     {numberFormatter.format(log.tokens_in)}
                   </td>
-                  <td className="px-4 py-3 text-right text-xs text-slate-400">
+                  <td className="px-4 py-3 text-right text-xs text-[#666666]">
                     {numberFormatter.format(log.tokens_out)}
                   </td>
-                  <td className="px-4 py-3 text-right text-xs text-slate-400">
+                  <td className="px-4 py-3 text-right text-xs text-[#666666]">
                     {numberFormatter.format(log.latency_ms)} мс
                   </td>
-                  <td className="px-4 py-3 text-right text-xs font-medium text-amber-400">
+                  <td className="px-4 py-3 text-right text-xs font-medium text-[#111111]">
                     {rubFormatter.format(log.cost_rub)}
                   </td>
                   <td className="px-4 py-3">

@@ -58,7 +58,7 @@ export function DropdownMenu({ trigger, children, align = "right", panelClassNam
             role="menu"
             onClick={(event) => event.stopPropagation()}
             className={cn(
-              "absolute top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 py-1.5 shadow-2xl",
+              "absolute top-full z-50 mt-2 w-64 overflow-hidden rounded-xl border border-[#e5e5e5] bg-white py-1.5 shadow-2xl",
               align === "right" ? "right-0" : "left-0",
               panelClassName,
             )}
@@ -96,13 +96,13 @@ export function MenuItem({ icon: Icon, label, hint, onSelect, danger = false, ac
       onClick={() => { onSelect(); close(); }}
       className={cn(
         "flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm transition-colors",
-        danger ? "text-rose-400 hover:bg-rose-500/10" : "text-slate-300 hover:bg-slate-800 hover:text-slate-100",
+        danger ? "text-rose-600 hover:bg-rose-50" : "text-[#111111] hover:bg-[#f5f5f5] hover:text-[#111111]",
       )}
     >
-      {Icon && <Icon className={cn("h-4 w-4 shrink-0", danger ? "text-rose-400" : "text-slate-500")} />}
+      {Icon && <Icon className={cn("h-4 w-4 shrink-0", danger ? "text-rose-600" : "text-[#666666]")} />}
       <span className="flex-1 truncate">{label}</span>
-      {hint && <span className="text-xs text-slate-600">{hint}</span>}
-      {activeArrow && <span className="text-xs text-amber-400">↓</span>}
+      {hint && <span className="text-xs text-[#888888]">{hint}</span>}
+      {activeArrow && <span className="text-xs text-[#4a38f5]">↓</span>}
     </button>
   );
 }
@@ -121,14 +121,14 @@ export function MenuCheckboxItem({ icon: Icon, label, checked, onToggle }: MenuC
       role="menuitemcheckbox"
       aria-checked={checked}
       onClick={onToggle}
-      className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-slate-300 transition-colors hover:bg-slate-800 hover:text-slate-100"
+      className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm text-[#111111] transition-colors hover:bg-[#f5f5f5]"
     >
-      {Icon && <Icon className="h-4 w-4 shrink-0 text-slate-500" />}
+      {Icon && <Icon className="h-4 w-4 shrink-0 text-[#666666]" />}
       <span className="flex-1 truncate">{label}</span>
       <span
         className={cn(
           "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-xs font-bold",
-          checked ? "border-emerald-500 bg-emerald-500/20 text-emerald-400" : "border-slate-700 text-transparent",
+          checked ? "border-[#4a38f5] bg-[#4a38f5] text-white" : "border-[#e5e5e5] text-transparent",
         )}
       >
         ✓
@@ -139,12 +139,12 @@ export function MenuCheckboxItem({ icon: Icon, label, checked, onToggle }: MenuC
 
 export function MenuLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="px-3.5 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+    <p className="px-3.5 pb-1 pt-2 text-xs font-semibold uppercase tracking-wider text-[#888888]">
       {children}
     </p>
   );
 }
 
 export function MenuSeparator() {
-  return <div className="my-1.5 border-t border-slate-800" />;
+  return <div className="my-1.5 border-t border-[#f0f0f0]" />;
 }

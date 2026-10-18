@@ -55,7 +55,7 @@ function BarLink({
       href={item.href}
       className={cn(
         "flex flex-1 flex-col items-center justify-center gap-1 text-xs font-medium transition-colors",
-        active ? "text-amber-400" : "text-slate-400",
+        active ? "text-[#4a38f5]" : "text-[#666666] hover:text-[#111111]",
       )}
     >
       <item.icon className="h-5 w-5" />
@@ -79,7 +79,7 @@ export function MobileNavigationBar() {
       <nav
         aria-label="Основная навигация"
         className={cn(
-          "fixed bottom-0 left-0 right-0 z-30 h-16 items-stretch border-t border-slate-800 bg-slate-900 md:hidden",
+          "fixed bottom-0 left-0 right-0 z-30 h-16 items-stretch border-t border-[#e5e5e5] bg-white md:hidden",
           // Скрытие под оверлеем и скрытие на десктопе — одно свойство `display`,
           // поэтому это не два независимых класса, а выбор одного из двух: `flex`
           // против `hidden`. Порядок в CSS решал бы за нас случайно.
@@ -100,7 +100,7 @@ export function MobileNavigationBar() {
         <button
           type="button"
           onClick={() => setCommandOpen(true)}
-          className="flex flex-1 flex-col items-center justify-center gap-1 text-xs font-medium text-slate-400 transition-colors"
+          className="flex flex-1 flex-col items-center justify-center gap-1 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
         >
           <Search className="h-5 w-5" />
           Поиск

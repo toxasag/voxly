@@ -69,7 +69,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             onClick={() => setVisible((previous) => !previous)}
             aria-label={visible ? "Скрыть пароль" : "Показать пароль"}
             aria-pressed={visible}
-            className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-[#888888] transition-colors hover:text-[#111111] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4a38f5]/40"
+            className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-[#888888] transition-colors hover:text-[#111111] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#4a38f5]"
           >
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>

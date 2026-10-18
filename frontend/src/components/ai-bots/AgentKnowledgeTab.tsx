@@ -166,11 +166,11 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-6 py-4">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+        <div className="flex items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
           <div>
-            <h3 className="text-sm font-semibold text-slate-100">База знаний</h3>
-            <p className="text-xs text-slate-500">
+            <h3 className="text-sm font-semibold text-[#111111]">База знаний</h3>
+            <p className="text-xs text-[#666666]">
               Документы, по которым агент отвечает. Загруженный текст разбивается на фрагменты и
               переводится в векторы для поиска по смыслу.
             </p>
@@ -183,8 +183,8 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 onClick={() => setTextOpen((open) => !open)}
                 disabled={!vectorisationAvailable || isBusy}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors",
-                  "hover:border-slate-600 hover:text-slate-100",
+                  "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] transition-colors",
+                  "hover:bg-[#f5f5f5]",
                   "disabled:cursor-not-allowed disabled:opacity-50",
                 )}
               >
@@ -197,8 +197,8 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!vectorisationAvailable || isBusy}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
-                  "hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50",
+                  "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors",
+                  "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
                 )}
               >
                 {uploadFile.isPending ? (
@@ -222,28 +222,28 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
 
         {/* Форма ввода текстом */}
         {textOpen && canEdit && (
-          <div className="space-y-3 border-b border-slate-800 bg-slate-950/40 px-6 py-4">
+          <div className="space-y-3 border-b border-[#e5e5e5] bg-[#fafafa] px-6 py-4">
             <input
               type="text"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Название документа, например «Регламент сервисного центра»"
-              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
             <textarea
               value={text}
               onChange={(event) => setText(event.target.value)}
               rows={8}
               placeholder="Вставьте текст: регламент, прайс, ответы на частые вопросы..."
-              className="w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+              className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-500">{text.length} символов</span>
+              <span className="text-xs text-[#666666]">{text.length} символов</span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setTextOpen(false)}
-                  className="rounded-lg px-3 py-2 text-xs font-medium text-slate-400 transition-colors hover:text-slate-200"
+                  className="rounded-[8px] px-3 py-2 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
                 >
                   Отмена
                 </button>
@@ -251,7 +251,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                   type="button"
                   onClick={handleAddText}
                   disabled={addText.isPending}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   Добавить в базу знаний
@@ -272,7 +272,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
           )}
 
           {error !== null && !isLoading && (
-            <p className="text-sm text-rose-400">
+            <p className="text-sm text-rose-500">
               Не удалось загрузить документы: {error.message}
             </p>
           )}
@@ -290,15 +290,15 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
               {documents.map((document) => (
                 <div
                   key={document.id}
-                  className="flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3 transition-colors hover:bg-slate-800/50"
+                  className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
                 >
-                  <FileText className="h-4 w-4 shrink-0 text-slate-500" />
+                  <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-200">
+                    <p className="truncate text-sm font-medium text-[#111111]">
                       {document.filename}
                     </p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-[#666666]">
                       {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
                       {formatDate(document.createdAt)}
                       {document.agentId === null && " · общий для всех агентов"}

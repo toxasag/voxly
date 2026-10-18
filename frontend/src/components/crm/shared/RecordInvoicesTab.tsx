@@ -16,11 +16,11 @@ const money = new Intl.NumberFormat("ru-RU", {
 });
 
 const statusClass: Record<InvoiceStatus, string> = {
-  draft: "bg-slate-800 text-slate-300 border-slate-700",
-  sent: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-  paid: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  overdue: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  cancelled: "bg-slate-800 text-slate-500 border-slate-700",
+  draft: "bg-[#f5f5f5] text-[#666666] border-[#e5e5e5]",
+  sent: "bg-sky-50 text-sky-700 border-sky-200",
+  paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  overdue: "bg-rose-50 text-rose-700 border-rose-200",
+  cancelled: "bg-[#f5f5f5] text-[#888888] border-[#e5e5e5]",
 };
 
 const statusLabel: Record<InvoiceStatus, string> = {
@@ -60,15 +60,15 @@ export function RecordInvoicesTab({ companyId }: RecordInvoicesTabProps) {
   }
 
   return (
-    <ul className="divide-y divide-slate-800 px-2 py-2">
+    <ul className="divide-y divide-[#f0f0f0] px-2 py-2">
       {items.map((invoice) => (
         <li key={invoice.id}>
           <Link
             href={`/finance?invoice=${invoice.id}`}
-            className="flex w-full items-center gap-2 rounded px-3 py-2 text-left hover:bg-slate-800/60"
+            className="flex w-full items-center gap-2 rounded-[8px] px-3 py-2 text-left hover:bg-[#f5f5f5]"
           >
             <EntityChip name={invoice.invoiceNumber} icon={Receipt} size="sm" />
-            <span className="min-w-0 flex-1 truncate text-sm text-slate-200">
+            <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#111111]">
               {invoice.invoiceNumber}
             </span>
             <span
@@ -79,7 +79,7 @@ export function RecordInvoicesTab({ companyId }: RecordInvoicesTabProps) {
             >
               {statusLabel[invoice.status]}
             </span>
-            <span className="shrink-0 text-xs tabular-nums text-amber-400">
+            <span className="shrink-0 text-xs tabular-nums text-[#666666]">
               {money.format(invoice.total)}
             </span>
           </Link>

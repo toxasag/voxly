@@ -72,13 +72,13 @@ export function Guard({
       return (
         <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
           <ShieldOff className="h-8 w-8 text-[#4a38f5]" />
-          <h2 className="text-lg font-semibold text-slate-100">Модуль отключён</h2>
-          <p className="max-w-sm text-sm text-slate-400">
+          <h2 className="text-lg font-semibold text-[#111111]">Модуль отключён</h2>
+          <p className="max-w-sm text-sm text-[#666666]">
             Включите этот модуль в Маркетплейсе, чтобы открыть раздел.
           </p>
           <Link
             href="/marketplace"
-            className="inline-flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white hover:bg-[#3b2be0]"
+            className="inline-flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-[#3d2ee0]"
           >
             Открыть Маркетплейс <ArrowRight className="h-4 w-4" />
           </Link>

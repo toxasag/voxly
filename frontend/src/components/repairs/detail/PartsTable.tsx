@@ -75,39 +75,39 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
     parseFloat(newCostPrice) >= 0;
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900">
-      <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
-        <Package className="h-4 w-4 text-slate-500" />
-        <span className="text-sm font-semibold text-slate-200">Использованные запчасти</span>
-        <span className="ml-auto text-xs text-slate-600">{items.length} позиций</span>
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+      <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-4 py-3 bg-[#fafafa]">
+        <Package className="h-4 w-4 text-[#666666]" />
+        <span className="text-sm font-semibold text-[#111111]">Использованные запчасти</span>
+        <span className="ml-auto text-xs text-[#888888]">{items.length} позиций</span>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="border-b border-slate-800">
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <tr className="border-b border-[#e5e5e5] bg-[#fafafa]">
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider">
                 Запчасть
               </th>
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider w-[120px]">
+              <th className="px-4 py-2.5 text-left text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[120px]">
                 Артикул
               </th>
-              <th className="px-4 py-2.5 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider w-[70px]">
+              <th className="px-4 py-2.5 text-center text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[70px]">
                 Кол-во
               </th>
-              <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-[105px]">
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[105px]">
                 Розница
               </th>
-              <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-[105px]">
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[105px]">
                 Закупка
               </th>
-              <th className="px-4 py-2.5 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider w-[80px]">
+              <th className="px-4 py-2.5 text-right text-[11px] font-semibold text-[#666666] uppercase tracking-wider w-[80px]">
                 Наценка
               </th>
               <th className="px-4 py-2.5 w-[48px]" />
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800">
+          <tbody className="divide-y divide-[#f0f0f0]">
             {items.map((item) => {
               const margin = item.retail_price - item.cost_price;
               const marginPct = item.cost_price > 0
@@ -115,32 +115,32 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
                 : 0;
 
               return (
-                <tr key={item.id} className="transition-colors hover:bg-slate-800/30">
+                <tr key={item.id} className="transition-colors hover:bg-[#f5f5f5]">
                   <td className="px-4 py-3">
-                    <p className="text-sm text-slate-300">{item.name}</p>
+                    <p className="text-[13px] text-[#111111]">{item.name}</p>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs font-mono text-slate-500">{item.article}</span>
+                    <span className="text-xs font-mono text-[#666666]">{item.article}</span>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className="text-sm text-slate-300">{item.quantity}</span>
+                    <span className="text-[13px] text-[#111111]">{item.quantity}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-sm font-semibold text-slate-200">
+                    <span className="text-[13px] font-semibold text-[#111111] font-mono">
                       {formatCost(item.retail_price)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="text-sm text-slate-400">
+                    <span className="text-[13px] text-[#666666] font-mono">
                       {formatCost(item.cost_price)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div>
-                      <span className="text-sm font-semibold text-emerald-400">
+                      <span className="text-[13px] font-semibold text-emerald-700 font-mono">
                         {formatCost(margin)}
                       </span>
-                      <span className="block text-xs text-emerald-500/70">
+                      <span className="block text-xs text-emerald-700/80">
                         {marginPct}%
                       </span>
                     </div>
@@ -149,7 +149,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
                     <button
                       type="button"
                       onClick={() => handleDelete(item.id)}
-                      className="rounded p-1 text-slate-600 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                      className="rounded p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -160,7 +160,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             {items.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-10 text-center">
-                  <p className="text-sm text-slate-600">Запчасти пока не добавлены.</p>
+                  <p className="text-sm text-[#888888]">Запчасти пока не добавлены.</p>
                 </td>
               </tr>
             )}
@@ -169,21 +169,21 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
       </div>
 
       {/* Add Row */}
-      <div className="border-t border-slate-800 px-4 py-3">
+      <div className="border-t border-[#e5e5e5] bg-[#fafafa] px-4 py-3">
         <div className="flex items-center gap-2">
           <input
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Название запчасти..."
-            className="flex-1 rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="flex-1 rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
           <input
             type="text"
             value={newArticle}
             onChange={(e) => setNewArticle(e.target.value)}
             placeholder="Артикул..."
-            className="w-[110px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm font-mono text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="w-[110px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
           />
           <input
             type="number"
@@ -191,7 +191,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newQty}
             onChange={(e) => setNewQty(e.target.value)}
             placeholder="1"
-            className="w-[60px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-center text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[60px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-center text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <input
             type="number"
@@ -199,7 +199,7 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newRetail}
             onChange={(e) => setNewRetail(e.target.value)}
             placeholder="Розница"
-            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-right text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <input
             type="number"
@@ -207,17 +207,17 @@ export function PartsTable({ items, onChange }: PartsTableProps) {
             value={newCostPrice}
             onChange={(e) => setNewCostPrice(e.target.value)}
             placeholder="Закупка"
-            className="w-[95px] rounded-lg border border-slate-700 bg-slate-950 py-2 px-3 text-sm text-right text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="w-[95px] rounded-[8px] border border-[#e5e5e5] bg-white py-1.5 px-3 text-[13px] text-right text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           />
           <button
             type="button"
             onClick={handleAdd}
             disabled={!canAdd}
             className={cn(
-              "shrink-0 rounded-lg p-2 transition-colors",
+              "shrink-0 rounded-[8px] p-2 transition-colors",
               canAdd
-                ? "bg-[#4a38f5] text-white hover:bg-[#3b2be0]"
-                : "bg-slate-800 text-slate-600 cursor-not-allowed",
+                ? "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
+                : "bg-[#f0f0f0] text-[#888888] cursor-not-allowed",
             )}
           >
             <Plus className="h-4 w-4" />

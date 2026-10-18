@@ -225,14 +225,14 @@ export default function MarketingStoriesPage() {
             </div>
 
             <div className="w-[240px] h-[430px] bg-black rounded-[32px] p-2.5 shadow-md border-2 border-[#e5e5e5] relative flex flex-col overflow-hidden">
-              <div className="w-full h-full rounded-[22px] bg-gradient-to-br from-indigo-950 to-slate-900 p-3.5 flex flex-col justify-between text-white relative overflow-hidden">
+              <div className="w-full h-full rounded-[22px] bg-gradient-to-br from-[#4a38f5] to-[#1e1b4b] p-3.5 flex flex-col justify-between text-white relative overflow-hidden">
                 <div className="flex items-center gap-2 z-10">
                   <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white shadow-xs">
                     GV
                   </div>
                   <div className="text-xs">
                     <p className="font-medium text-[11px] leading-tight">GETVOXLY</p>
-                    <p className="text-[9px] text-slate-400">Только что</p>
+                    <p className="text-[9px] text-white/70">Только что</p>
                   </div>
                 </div>
 

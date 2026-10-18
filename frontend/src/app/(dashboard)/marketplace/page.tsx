@@ -204,20 +204,20 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-xl border p-5 transition-all",
+        "flex flex-col rounded-[8px] border p-5 shadow-2xs transition-all",
         module.installed
-          ? "border-[#4a38f5]/40 bg-slate-900"
-          : "border-slate-800 bg-slate-900 hover:border-slate-700",
+          ? "border-indigo-200 bg-white"
+          : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
       )}
     >
       <div className="mb-3 flex items-start justify-between">
         <div
           className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-xl",
-            module.installed ? "bg-[#4a38f5]/10" : "bg-slate-800",
+            "flex h-10 w-10 items-center justify-center rounded-[8px]",
+            module.installed ? "bg-indigo-50 text-[#4a38f5]" : "bg-[#f5f5f5] text-[#888888]",
           )}
         >
-          <Icon className={cn("h-5 w-5", module.installed ? "text-amber-400" : "text-slate-500")} />
+          <Icon className={cn("h-5 w-5", module.installed ? "text-[#4a38f5]" : "text-[#888888]")} />
         </div>
 
         {/*
@@ -228,7 +228,7 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
           выглядел бы как поломка, а его отсутствие сразу объясняет правило.
         */}
         {module.isBaseModule ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-amber-400">
+          <span className="inline-flex items-center gap-1.5 rounded-[4px] border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-[#4a38f5]">
             <Lock className="h-3 w-3" />
             Базовый тариф
           </span>
@@ -240,11 +240,11 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
           aria-label={module.installed ? `Отключить ${module.name}` : `Подключить ${module.name}`}
           className={cn(
             "transition-colors disabled:opacity-50",
-            module.installed ? "text-amber-400" : "text-slate-600 hover:text-slate-400",
+            module.installed ? "text-[#4a38f5]" : "text-[#888888] hover:text-[#666666]",
           )}
         >
           {toggle.isPending ? (
-            <Loader2 className="h-6 w-6 animate-spin" />
+            <Loader2 className="h-6 w-6 animate-spin text-[#4a38f5]" />
           ) : module.installed ? (
             <ToggleRight className="h-6 w-6" />
           ) : (
@@ -255,18 +255,18 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       </div>
 
       <div className="mb-1 flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold text-slate-100">{module.name}</h3>
+        <h3 className="text-sm font-semibold text-[#111111]">{module.name}</h3>
 
         {/* Бейдж пробного периода. Для подключённого модуля показываем остаток,
             иначе пользователь не знает, сколько ещё бесплатно. */}
         {module.trialActive ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             <Gift className="h-3 w-3" />
             Бесплатно ещё {daysLeft} дн.
           </span>
         ) : (
           !module.installed && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-400">
+            <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
               <Gift className="h-3 w-3" />
               {module.trialDays} дней бесплатно
             </span>
@@ -274,14 +274,14 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         )}
       </div>
 
-      <p className="mb-3 text-xs leading-relaxed text-slate-500">{module.description}</p>
+      <p className="mb-3 text-xs leading-relaxed text-[#666666]">{module.description}</p>
 
       <div className="mb-3">
-        <p className="text-sm font-bold text-slate-100">{priceCaption(module)}</p>
+        <p className="text-sm font-bold text-[#111111] tabular-nums font-mono">{priceCaption(module)}</p>
         {module.isMulti && (
-          <p className="mt-0.5 text-xs text-slate-500">
+          <p className="mt-0.5 text-xs text-[#666666]">
             {quantity} × {formatRub(module.unitPrice)} ={" "}
-            <span className="font-semibold text-slate-300">
+            <span className="font-semibold text-[#111111] tabular-nums font-mono">
               {formatRub(module.unitPrice * quantity)}/мес
             </span>
           </p>
@@ -296,12 +296,12 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
             onClick={() => void changeQuantity(quantity - 1)}
             disabled={isBusy || quantity <= 1}
             aria-label="Уменьшить количество"
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:text-[#111111] disabled:opacity-40"
           >
             <Minus className="h-3.5 w-3.5" />
           </button>
 
-          <span className="min-w-[92px] text-center text-xs text-slate-300">
+          <span className="min-w-[92px] text-center text-xs font-medium text-[#111111] tabular-nums">
             {quantity} {pluralUnit(quantity, module.unitLabel)}
           </span>
 
@@ -310,13 +310,13 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
             onClick={() => void changeQuantity(quantity + 1)}
             disabled={isBusy || quantity >= 100}
             aria-label="Увеличить количество"
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200 disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#e5e5e5] bg-white text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:text-[#111111] disabled:opacity-40"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
 
           {updateQuantity.isPending && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-500" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#888888]" />
           )}
         </div>
       )}
@@ -324,8 +324,8 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       <div className="mt-auto space-y-1">
         {module.features.map((feature) => (
           <div key={feature} className="flex items-center gap-1.5">
-            <Check className="h-3 w-3 shrink-0 text-emerald-500" />
-            <span className="text-xs text-slate-400">{feature}</span>
+            <Check className="h-3 w-3 shrink-0 text-emerald-600" />
+            <span className="text-xs text-[#666666]">{feature}</span>
           </div>
         ))}
       </div>
@@ -338,9 +338,9 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       {module.billingKind === "per_seat" && (
         <Link
           href="/settings/team"
-          className="mt-4 flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:bg-slate-800"
+          className="mt-4 flex items-center justify-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa]"
         >
-          <Users className="h-3.5 w-3.5" />
+          <Users className="h-3.5 w-3.5 text-[#666666]" />
           Управление пользователями
         </Link>
       )}
@@ -360,27 +360,27 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
 function BillingBar() {
   const { data, isLoading } = useMarketplaceBilling();
 
-  if (isLoading) return <Skeleton className="h-20 w-full" />;
+  if (isLoading) return <Skeleton className="h-20 w-full rounded-[8px]" />;
   if (data === undefined || data.items.length === 0) return null;
 
   const hasTrials = data.items.some((item) => item.trialActive);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-slate-500">
+          <p className="text-xs uppercase tracking-wider text-[#666666]">
             К оплате в месяц
           </p>
-          <p className="mt-1 text-2xl font-bold text-slate-100">
+          <p className="mt-1 text-2xl font-bold text-[#111111] tabular-nums font-mono">
             {formatRub(data.monthlyTotal)}
           </p>
           {/* Показываем сумму после пробных периодов: иначе счёт вырос бы
               неожиданно, когда они закончатся. */}
           {hasTrials && data.monthlyAfterTrials !== data.monthlyTotal && (
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-[#666666]">
               после окончания пробных периодов —{" "}
-              <span className="font-medium text-slate-300">
+              <span className="font-semibold text-[#111111] tabular-nums font-mono">
                 {formatRub(data.monthlyAfterTrials)}/мес
               </span>
             </p>
@@ -389,10 +389,10 @@ function BillingBar() {
 
         <div className="flex flex-wrap items-end gap-4">
           <div className="text-right">
-            <p className="text-xs text-slate-500">Пользователей в портале</p>
+            <p className="text-xs text-[#666666]">Пользователей в портале</p>
             <Link
               href="/settings/team"
-              className="text-sm font-semibold text-slate-200 underline-offset-2 hover:text-[#4a38f5] hover:underline"
+              className="text-sm font-semibold text-[#111111] tabular-nums underline-offset-2 hover:text-[#4a38f5] hover:underline"
             >
               {data.usersCount}
             </Link>
@@ -400,7 +400,7 @@ function BillingBar() {
 
           <Link
             href="/settings/billing"
-            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+            className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2.5 text-sm font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
           >
             <CreditCard className="h-4 w-4" />
             Оплатить и управлять подпиской
@@ -429,8 +429,8 @@ export default function MarketplacePage() {
     <Guard requiredPermission="tenant:admin">
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">Маркетплейс модулей</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-xl font-bold text-[#111111]">Маркетплейс модулей</h1>
+          <p className="mt-1 text-[13px] text-[#666666]">
             Подключайте модули и каналы. Каждый новый модуль — 14 дней бесплатно.
           </p>
         </div>
@@ -444,10 +444,10 @@ export default function MarketplacePage() {
               type="button"
               onClick={() => setCategory(cat)}
               className={cn(
-                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors shadow-2xs",
                 category === cat
-                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                  : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
+                  ? "border-[#4a38f5] bg-indigo-50 text-[#4a38f5]"
+                  : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111] hover:bg-[#fafafa]",
               )}
             >
               {cat === "all" ? "Все" : CATEGORY_LABELS[cat] ?? cat}
@@ -458,18 +458,21 @@ export default function MarketplacePage() {
         {isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }, (_, i) => (
-              <Skeleton key={i} className="h-64 w-full" />
+              <Skeleton key={i} className="h-64 w-full rounded-[8px]" />
             ))}
           </div>
         ) : isError ? (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-            <p className="text-sm text-rose-400">
-              Не удалось загрузить каталог: {error?.message}
+          <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+            <p className="text-sm font-semibold text-rose-900">
+              Не удалось загрузить каталог
+            </p>
+            <p className="mt-1 text-sm text-rose-700">
+              {error?.message}
             </p>
             <button
               type="button"
               onClick={() => void refetch()}
-              className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+              className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa]"
             >
               Повторить
             </button>

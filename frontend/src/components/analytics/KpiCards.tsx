@@ -66,21 +66,21 @@ export const KpiCards = memo(function KpiCards({
       value: formatKpi(netProfit),
       change: profitChange,
       icon: DollarSign,
-      color: "bg-emerald-500/10 text-emerald-400",
+      color: "bg-emerald-50 text-emerald-700",
     },
     {
       label: "Закрыто ремонтов",
       value: formatNumber(closedRepairs),
       change: repairsChange,
       icon: Wrench,
-      color: "bg-sky-500/10 text-sky-400",
+      color: "bg-sky-50 text-sky-700",
     },
     {
       label: "Средний чек",
       value: formatKpi(avgTicket),
       change: ticketChange,
       icon: ShoppingCart,
-      color: "bg-violet-500/10 text-violet-400",
+      color: "bg-violet-50 text-violet-700",
     },
   ];
 
@@ -94,10 +94,10 @@ export const KpiCards = memo(function KpiCards({
         return (
           <div
             key={card.label}
-            className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4 transition-colors hover:border-slate-700"
+            className="rounded-xl border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs transition-colors hover:border-[#cccccc]"
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+              <span className="text-xs font-medium text-[#666666] uppercase tracking-wider">
                 {card.label}
               </span>
               <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg", card.color)}>
@@ -105,25 +105,25 @@ export const KpiCards = memo(function KpiCards({
               </div>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-slate-100">{card.value}</span>
+              <span className="text-2xl font-bold text-[#111111]">{card.value}</span>
             </div>
             <div className="mt-1.5 flex items-center gap-1">
               <ChangeIcon
                 className={cn(
                   "h-3.5 w-3.5",
-                  isPositive ? "text-emerald-400" : "text-rose-400",
+                  isPositive ? "text-emerald-700" : "text-rose-600",
                 )}
               />
               <span
                 className={cn(
                   "text-xs font-medium",
-                  isPositive ? "text-emerald-400" : "text-rose-400",
+                  isPositive ? "text-emerald-700" : "text-rose-600",
                 )}
               >
                 {isPositive ? "+" : ""}
                 {card.change}%
               </span>
-              <span className="text-xs text-slate-600">к прошлому месяцу</span>
+              <span className="text-xs text-[#888888]">к прошлому месяцу</span>
             </div>
           </div>
         );

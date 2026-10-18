@@ -62,14 +62,14 @@ export function AiBalanceCard() {
 
   if (balance.isError || balance.data === undefined) {
     return (
-      <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-        <p className="text-sm text-rose-400">
+      <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-6">
+        <p className="text-sm text-rose-700">
           Не удалось загрузить баланс ИИ: {balance.error?.message ?? "неизвестная ошибка"}
         </p>
         <button
           type="button"
           onClick={() => void balance.refetch()}
-          className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+          className="mt-3 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5]"
         >
           Повторить
         </button>
@@ -81,24 +81,24 @@ export function AiBalanceCard() {
   const isLow = data.balanceKopecks < 50_000; // меньше 500 ₽
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+    <div className="rounded-xl border border-[#e5e5e5] bg-white p-6 shadow-2xs">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-amber-400" />
-            <p className="text-xs uppercase tracking-wider text-slate-500">Баланс ИИ</p>
+            <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+            <p className="text-xs uppercase tracking-wider text-[#666666]">Баланс ИИ</p>
           </div>
 
           <p
             className={cn(
               "mt-1.5 text-3xl font-bold",
-              isLow ? "text-amber-400" : "text-slate-100",
+              isLow ? "text-[#854d0e]" : "text-[#111111]",
             )}
           >
             {formatKopecks(data.balanceKopecks)}
           </p>
 
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-[#888888]">
             {/*
               Остаток в токенах — оценка по недорогой модели, а не гарантия:
               цена 1k токенов различается между моделями в десятки раз.
@@ -107,21 +107,21 @@ export function AiBalanceCard() {
           </p>
 
           {isLow && (
-            <p className="mt-2 text-xs text-amber-400">
+            <p className="mt-2 text-xs font-medium text-[#854d0e]">
               Баланс заканчивается — агенты перестанут отвечать при нулевом остатке.
             </p>
           )}
         </div>
 
         <div className="text-right">
-          <p className="flex items-center justify-end gap-1.5 text-xs uppercase tracking-wider text-slate-500">
+          <p className="flex items-center justify-end gap-1.5 text-xs uppercase tracking-wider text-[#666666]">
             <TrendingDown className="h-3.5 w-3.5" />
             Расход за месяц
           </p>
-          <p className="mt-1.5 text-2xl font-bold text-slate-100">
+          <p className="mt-1.5 text-2xl font-bold text-[#111111]">
             {formatKopecks(data.spentThisMonthKopecks)}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-[#888888]">
             {numberFormatter.format(data.requestsThisMonth)} запросов · всего{" "}
             {formatKopecks(data.spentTotalKopecks)}
           </p>
@@ -129,21 +129,21 @@ export function AiBalanceCard() {
       </div>
 
       {!canCreditManually ? (
-        <p className="mt-5 text-sm text-slate-400">
+        <p className="mt-5 text-sm text-[#666666]">
           Онлайн-оплата пока не подключена. Для пополнения обратитесь к администратору платформы.
         </p>
       ) : !formOpen ? (
         <button
           type="button"
           onClick={() => setFormOpen(true)}
-          className="mt-5 flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+          className="mt-5 flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0]"
         >
           <Wallet className="h-4 w-4" />
           Начислить вручную (администратор)
         </button>
       ) : (
-        <div className="mt-5 border-t border-slate-800 pt-5">
-          <p className="text-xs font-medium text-slate-400">Сумма пополнения</p>
+        <div className="mt-5 border-t border-[#e5e5e5] pt-5">
+          <p className="text-xs font-medium text-[#666666]">Сумма пополнения</p>
 
           <div className="mt-2.5 flex flex-wrap gap-2">
             {TOPUP_PRESETS.map((amount) => (
@@ -156,7 +156,7 @@ export function AiBalanceCard() {
                   "rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
                   selected === amount
                     ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                    : "border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200",
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                 )}
               >
                 {numberFormatter.format(amount)} ₽
@@ -169,7 +169,7 @@ export function AiBalanceCard() {
             напрямую и попадает в журнал как ручная операция. Говорим об этом
             прямо: кнопка «Оплатить картой», ведущая в никуда, была бы хуже.
           */}
-          <p className="mt-3 rounded-lg border border-slate-800 bg-slate-950 p-3 text-xs leading-relaxed text-slate-500">
+          <p className="mt-3 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs leading-relaxed text-[#666666]">
             Онлайн-оплата пока не подключена: сумма зачисляется на баланс сразу, счёт
             выставляется вручную. Операция попадает в журнал пополнений.
           </p>
@@ -179,7 +179,7 @@ export function AiBalanceCard() {
               type="button"
               onClick={() => setFormOpen(false)}
               disabled={topup.isPending}
-              className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200 disabled:opacity-40"
+              className="rounded-lg px-4 py-2.5 text-sm font-medium text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-40"
             >
               Отмена
             </button>
@@ -187,7 +187,7 @@ export function AiBalanceCard() {
               type="button"
               onClick={() => void handleTopup()}
               disabled={topup.isPending}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {topup.isPending ? (
                 <>

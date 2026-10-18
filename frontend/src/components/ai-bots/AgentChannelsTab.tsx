@@ -49,7 +49,7 @@ const STATUS_CLASS: Record<string, string> = {
   pending: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30",
   connected: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   error: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  disabled: "bg-slate-800 text-slate-400 border-slate-700",
+  disabled: "bg-[#f5f5f5] text-[#888888] border-[#e5e5e5]",
 };
 
 export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
@@ -105,11 +105,11 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
   }, [save, selected]);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-800 px-6 py-4">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+      <div className="flex items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
         <div>
-          <h3 className="text-sm font-semibold text-slate-100">Подключенные каналы</h3>
-          <p className="text-xs text-slate-500">
+          <h3 className="text-sm font-semibold text-[#111111]">Подключенные каналы</h3>
+          <p className="text-xs text-[#666666]">
             Аккаунты, в которых агент будет отвечать. Обмен сообщениями заработает после
             подключения транспорта — сейчас привязка только сохраняется.
           </p>
@@ -121,8 +121,8 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
             onClick={handleSave}
             disabled={!isDirty || save.isPending}
             className={cn(
-              "flex shrink-0 items-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors",
-              "hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50",
+              "flex shrink-0 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors",
+              "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
             )}
           >
             {save.isPending ? (
@@ -145,7 +145,7 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
         )}
 
         {error !== null && !isLoading && (
-          <p className="text-sm text-rose-400">Не удалось загрузить каналы: {error.message}</p>
+          <p className="text-sm text-rose-500">Не удалось загрузить каналы: {error.message}</p>
         )}
 
         {!isLoading && error === null && accounts.length === 0 && (
@@ -168,10 +168,10 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
                   onClick={() => canEdit && toggle(account.channelAccountId)}
                   disabled={!canEdit}
                   className={cn(
-                    "flex w-full items-center gap-4 rounded-lg border px-4 py-3 text-left transition-colors",
+                    "flex w-full items-center gap-4 rounded-[8px] border px-4 py-3 text-left transition-colors",
                     isChecked
-                      ? "border-[#4a38f5] bg-[#4a38f5]/10"
-                      : "border-slate-800 bg-slate-950/40 hover:bg-slate-800/50",
+                      ? "border-[#4a38f5] bg-[#4a38f5]/5"
+                      : "border-[#e5e5e5] bg-white hover:bg-[#f5f5f5]",
                     !canEdit && "cursor-default",
                   )}
                 >
@@ -183,17 +183,17 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
                       "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
                       isChecked
                         ? "border-[#4a38f5] bg-[#4a38f5] text-white"
-                        : "border-slate-600",
+                        : "border-[#cccccc] bg-white",
                     )}
                   >
                     {isChecked && <Check className="h-3 w-3" />}
                   </span>
 
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-200">
+                    <p className="truncate text-sm font-medium text-[#111111]">
                       {account.label}
                     </p>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-[#666666]">
                       {CHANNEL_LABEL[account.channel] ?? account.channel} · {account.externalId}
                     </p>
                   </div>

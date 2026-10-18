@@ -447,9 +447,15 @@ export function DealKanban({
 
 export function DealKanbanError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-      <AlertCircle className="h-5 w-5 text-rose-400" />
-      <div><p className="text-sm font-semibold text-slate-200">Не удалось загрузить воронку</p><p className="mt-1 text-sm text-slate-400">{message}</p><button type="button" onClick={onRetry} className="mt-3 text-xs text-slate-300">Повторить</button></div>
+    <div className="flex gap-3 rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+      <AlertCircle className="h-5 w-5 text-rose-600" />
+      <div>
+        <p className="text-sm font-semibold text-rose-700">Не удалось загрузить воронку</p>
+        <p className="mt-1 text-sm text-[#666666]">{message}</p>
+        <button type="button" onClick={onRetry} className="mt-3 text-xs font-medium text-rose-600 hover:text-rose-800">
+          Повторить
+        </button>
+      </div>
     </div>
   );
 }

@@ -69,7 +69,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
   if (token === null) {
     return (
       <div className="space-y-4 text-center">
+<<<<<<< HEAD
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-200 bg-rose-50">
+=======
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-50 border border-rose-200">
+>>>>>>> master
           <ShieldAlert className="h-6 w-6 text-rose-600" />
         </div>
         <p className="text-[13px] text-[#666666]">
@@ -77,7 +81,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
+<<<<<<< HEAD
           className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#3d2ee0]"
+=======
+          className="inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+>>>>>>> master
         >
           Вернуться к входу
         </a>
@@ -88,7 +96,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
   if (done) {
     return (
       <div className="space-y-4 text-center">
+<<<<<<< HEAD
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50">
+=======
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 border border-emerald-200">
+>>>>>>> master
           <CheckCircle2 className="h-6 w-6 text-emerald-600" />
         </div>
         <p className="text-[13px] text-[#666666]">
@@ -96,7 +108,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
+<<<<<<< HEAD
           className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#3d2ee0]"
+=======
+          className="inline-flex items-center justify-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+>>>>>>> master
         >
           Войти
           <ArrowRight className="h-4 w-4" />
@@ -110,7 +126,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
   return (
     <form
       onSubmit={form.handleSubmit((values) => void handleSubmit(values))}
-      className="space-y-5"
+      className="space-y-4"
     >
       <PasswordField
         id="reset_password"
@@ -136,7 +152,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         type="submit"
         disabled={isSubmitting}
         className={cn(
+<<<<<<< HEAD
           "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors",
+=======
+          "flex w-full items-center justify-center gap-2 rounded-[8px] py-2.5 text-[13px] font-medium transition-colors shadow-2xs",
+>>>>>>> master
           "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
@@ -154,7 +174,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         )}
       </button>
 
+<<<<<<< HEAD
       <p className="text-center text-[13px] text-[#666666]">
+=======
+      <p className="text-center text-xs text-[#666666]">
+>>>>>>> master
         Вспомнили пароль?{" "}
         <a href="/login" className="font-medium text-[#4a38f5] hover:underline">
           Войти

@@ -287,15 +287,15 @@ export default function FinancePage() {
 function invoicesLoading(isLoading: boolean, invoices: Invoice[]) {
   if (isLoading) {
     return Array.from({ length: 5 }).map((_, i) => (
-      <tr key={i}><td colSpan={5} className="px-4 py-3"><div className="h-4 w-full bg-slate-800 rounded animate-pulse" /></td></tr>
+      <tr key={i}><td colSpan={5} className="px-4 py-3"><div className="h-4 w-full bg-[#f0f0f0] rounded animate-pulse" /></td></tr>
     ));
   }
   if (invoices.length === 0) {
     return (
       <tr><td colSpan={5} className="px-4 py-16 text-center">
         <div className="flex flex-col items-center gap-2">
-          <Receipt className="h-8 w-8 text-slate-700" />
-          <p className="text-sm text-slate-600">Нет счетов</p>
+          <Receipt className="h-8 w-8 text-[#cccccc]" />
+          <p className="text-sm text-[#888888]">Нет счетов</p>
         </div>
       </td></tr>
     );

@@ -283,14 +283,18 @@ export function CrmChatView({
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
+<<<<<<< HEAD
+      <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-4 py-2.5">
+=======
       <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fbfbfb] px-4 py-2.5">
+>>>>>>> master
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
               {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
                 <>
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-600" />
                 </>
               ) : aiStatus?.isPaused ? (
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
@@ -300,13 +304,21 @@ export function CrmChatView({
             </span>
             <span className="text-xs font-medium text-[#111111]">
               {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+<<<<<<< HEAD
+                <span className="text-emerald-700 font-semibold">AI Автопилот активен</span>
+=======
                 <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
+>>>>>>> master
               ) : aiStatus?.isPaused ? (
                 <span className="text-amber-700">
                   AI на паузе {aiStatus.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
                 </span>
               ) : (
+<<<<<<< HEAD
+                <span className="text-[#666666]">AI Автопилот выключен</span>
+=======
                 <span className="text-[#888888]">AI Автопилот выключен</span>
+>>>>>>> master
               )}
             </span>
           </div>
@@ -321,7 +333,11 @@ export function CrmChatView({
                 onClick={() => handleAiAction("pause")}
                 disabled={aiControlMutation.isPending}
                 title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
+<<<<<<< HEAD
+                className="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-[#fafafa] px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+=======
                 className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+>>>>>>> master
               >
                 <Pause className="h-3 w-3 text-amber-600" />
                 <span>Пауза на 1 ч</span>
@@ -331,7 +347,11 @@ export function CrmChatView({
                 onClick={() => handleAiAction("disable")}
                 disabled={aiControlMutation.isPending}
                 title="Полностью отключить автоответчик по этой сделке/контакту"
+<<<<<<< HEAD
+                className="inline-flex items-center rounded-md border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+=======
                 className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+>>>>>>> master
               >
                 <PowerOff className="h-3.5 w-3.5" />
               </button>
@@ -342,7 +362,11 @@ export function CrmChatView({
               onClick={() => handleAiAction("enable")}
               disabled={aiControlMutation.isPending}
               title="Включить AI-автопилот"
+<<<<<<< HEAD
+              className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+=======
               className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+>>>>>>> master
             >
               <Play className="h-3 w-3 fill-current" />
               <span>Включить AI</span>
@@ -359,7 +383,11 @@ export function CrmChatView({
         {messagesQuery.isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
+<<<<<<< HEAD
+              <Skeleton key={i} className="h-16 w-full rounded-xl bg-[#f0f0f0]" />
+=======
               <Skeleton key={i} className="h-16 w-full rounded-[16px] bg-[#f5f5f5]" />
+>>>>>>> master
             ))}
           </div>
         ) : messages.length === 0 ? (
@@ -378,7 +406,11 @@ export function CrmChatView({
           groupedMessages.map((group) => (
             <div key={group.dateLabel} className="space-y-3">
               {/* Разделитель даты */}
+<<<<<<< HEAD
+              <div className="flex items-center justify-center my-3">
+=======
               <div className="my-3 flex items-center justify-center">
+>>>>>>> master
                 <span className="rounded-full border border-[#e5e5e5] bg-[#fafafa] px-3 py-0.5 text-[11px] font-medium text-[#666666] shadow-2xs">
                   {group.dateLabel}
                 </span>
@@ -392,8 +424,13 @@ export function CrmChatView({
 
                 if (isSystem) {
                   return (
+<<<<<<< HEAD
+                    <div key={message.id} className="flex justify-center my-1.5">
+                      <div className="max-w-md rounded-full bg-[#f5f5f5] border border-[#e5e5e5] px-3 py-1 text-center text-xs text-[#666666]">
+=======
                     <div key={message.id} className="my-1.5 flex justify-center">
                       <div className="max-w-md rounded-full border border-[#e5e5e5] bg-[#f5f5f5] px-3 py-1 text-center text-xs text-[#666666]">
+>>>>>>> master
                         {message.content}
                       </div>
                     </div>
@@ -410,10 +447,17 @@ export function CrmChatView({
                   >
                     <div
                       className={cn(
+<<<<<<< HEAD
+                        "relative max-w-[85%] rounded-2xl px-4 py-2.5 text-[13px] shadow-2xs md:max-w-[75%]",
+                        isClient && "rounded-tl-xs border border-[#e5e5e5] bg-[#f5f5f5] text-[#111111]",
+                        isOutbound && !isAi && "rounded-tr-xs border border-[#4a38f5]/20 bg-[#4a38f5]/5 text-[#111111]",
+                        isAi && "rounded-tr-xs border border-emerald-200 bg-emerald-50/60 text-[#111111]"
+=======
                         "relative max-w-[85%] rounded-[16px] px-4 py-2.5 text-sm shadow-2xs md:max-w-[75%]",
                         isClient && "rounded-tl-xs border border-[#e5e5e5] bg-[#f8f9fa] text-[#111111]",
                         isOutbound && !isAi && "rounded-tr-xs border border-[#4a38f5]/20 bg-[#4a38f5]/5 text-[#111111]",
                         isAi && "rounded-tr-xs border border-emerald-200 bg-emerald-50/80 text-[#111111]",
+>>>>>>> master
                       )}
                     >
                       {/* Шапка пузыря: отправитель и бейджи */}
@@ -428,18 +472,26 @@ export function CrmChatView({
                             {message.senderName || "Оператор"}
                           </span>
                         ) : (
+<<<<<<< HEAD
+                          <span className="font-medium text-[#111111]">
+=======
                           <span className="font-medium text-[#666666]">
+>>>>>>> master
                             {message.senderName || "Клиент"}
                           </span>
                         )}
 
+<<<<<<< HEAD
+                        <span className="rounded bg-black/[0.05] px-1.5 py-0.2 text-[10px] uppercase tracking-wide text-[#666666]">
+=======
                         <span className="rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.2 text-[10px] uppercase tracking-wide text-[#888888]">
+>>>>>>> master
                           {message.channel}
                         </span>
                       </div>
 
                       {/* Текст сообщения */}
-                      <div className="whitespace-pre-wrap break-words leading-relaxed">
+                      <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
                         {message.content}
                       </div>
 
@@ -462,7 +514,11 @@ export function CrmChatView({
                             {message.deliveryStatus === "failed" && (
                               <span
                                 title={`Ошибка доставки: ${message.deliveryError || "неизвестная ошибка"}`}
+<<<<<<< HEAD
+                                className="flex items-center gap-1 text-rose-600 font-medium"
+=======
                                 className="flex items-center gap-1 font-medium text-rose-600"
+>>>>>>> master
                               >
                                 <AlertCircle className="h-3 w-3" />
                                 <span>Сбой</span>
@@ -474,7 +530,11 @@ export function CrmChatView({
 
                       {/* Текст ошибки доставки под сообщением */}
                       {message.deliveryStatus === "failed" && message.deliveryError && (
+<<<<<<< HEAD
+                        <div className="mt-1.5 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+=======
                         <div className="mt-1.5 rounded-[6px] border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] text-rose-700">
+>>>>>>> master
                           {message.deliveryError}
                         </div>
                       )}
@@ -488,7 +548,11 @@ export function CrmChatView({
       </div>
 
       {/* Панель составления ответа (Composer) */}
+<<<<<<< HEAD
+      <div className="shrink-0 border-t border-[#e5e5e5] bg-white p-3">
+=======
       <div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
+>>>>>>> master
         {/* Выбор «Пишем от:» и кнопка «AI Copilot» */}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           {/* Селектор канала отправки */}
@@ -498,7 +562,11 @@ export function CrmChatView({
               <select
                 value={selectedChannelAccountId}
                 onChange={(e) => setSelectedChannelAccountId(e.target.value)}
+<<<<<<< HEAD
+                className="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] outline-none transition-colors focus:border-[#4a38f5]"
+=======
                 className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] outline-none transition-colors focus:border-[#4a38f5]"
+>>>>>>> master
               >
                 {sendFromOptions.map((opt) => (
                   <option
@@ -522,7 +590,11 @@ export function CrmChatView({
             onClick={handleGenerateAiDraft}
             disabled={aiDraftMutation.isPending}
             title="Сгенерировать черновик ответа на основе базы знаний компании и контекста переписки"
+<<<<<<< HEAD
+            className="inline-flex items-center gap-1.5 rounded-md border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/20 disabled:opacity-50"
+=======
             className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/25 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10 disabled:opacity-50"
+>>>>>>> master
           >
             {aiDraftMutation.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -540,7 +612,11 @@ export function CrmChatView({
               type="button"
               onClick={() => insertFormatting("**", "**")}
               title="Жирный шрифт"
+<<<<<<< HEAD
+              className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               <span className="px-0.5 text-xs font-bold">B</span>
             </button>
@@ -548,7 +624,11 @@ export function CrmChatView({
               type="button"
               onClick={() => insertFormatting("> ")}
               title="Цитата"
+<<<<<<< HEAD
+              className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               <Quote className="h-3.5 w-3.5" />
             </button>
@@ -556,7 +636,11 @@ export function CrmChatView({
               type="button"
               onClick={() => insertFormatting("`", "`")}
               title="Код"
+<<<<<<< HEAD
+              className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               <Code className="h-3.5 w-3.5" />
             </button>
@@ -564,7 +648,11 @@ export function CrmChatView({
               type="button"
               onClick={() => insertFormatting("[", "](https://)")}
               title="Ссылка"
+<<<<<<< HEAD
+              className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               <Link2 className="h-3.5 w-3.5" />
             </button>
@@ -572,7 +660,11 @@ export function CrmChatView({
               type="button"
               onClick={() => insertFormatting("||", "||")}
               title="Спойлер (скрытый текст)"
+<<<<<<< HEAD
+              className="rounded p-1 text-[11px] font-mono hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 font-mono text-[11px] hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               ||
             </button>
@@ -584,19 +676,31 @@ export function CrmChatView({
               type="button"
               onClick={() => setShowEmojiPicker((v) => !v)}
               title="Быстрые эмодзи"
+<<<<<<< HEAD
+              className="rounded p-1 text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111]"
+=======
               className="rounded p-1 text-[#666666] hover:bg-[#e5e5e5]/60 hover:text-[#111111]"
+>>>>>>> master
             >
               <Smile className="h-4 w-4" />
             </button>
 
             {showEmojiPicker && (
+<<<<<<< HEAD
+              <div className="absolute bottom-full right-0 mb-2 z-30 flex flex-wrap gap-1 rounded-xl border border-[#e5e5e5] bg-white p-2 shadow-xl w-48">
+=======
               <div className="absolute bottom-full right-0 z-30 mb-2 flex w-48 flex-wrap gap-1 rounded-[16px] border border-[#e5e5e5] bg-white p-2 shadow-xl">
+>>>>>>> master
                 {POPULAR_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     type="button"
                     onClick={() => insertEmoji(emoji)}
+<<<<<<< HEAD
+                    className="flex h-7 w-7 items-center justify-center rounded hover:bg-[#f5f5f5] text-sm"
+=======
                     className="flex h-7 w-7 items-center justify-center rounded text-sm hover:bg-[#f5f5f5]"
+>>>>>>> master
                   >
                     {emoji}
                   </button>
@@ -619,7 +723,11 @@ export function CrmChatView({
             onKeyDown={handleKeyDown}
             placeholder="Написать сообщение клиенту (Enter для отправки, Shift+Enter для переноса)..."
             rows={2}
+<<<<<<< HEAD
+            className="w-full resize-none rounded-xl border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+=======
             className="w-full resize-none rounded-[12px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+>>>>>>> master
           />
 
           <button
@@ -627,7 +735,11 @@ export function CrmChatView({
             onClick={handleSend}
             disabled={sendMessageMutation.isPending || !input.trim()}
             title="Отправить сообщение (Enter)"
+<<<<<<< HEAD
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#4a38f5] text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-40 disabled:cursor-not-allowed"
+=======
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#4a38f5] text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-40"
+>>>>>>> master
           >
             {sendMessageMutation.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />

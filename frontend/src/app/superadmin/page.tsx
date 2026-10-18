@@ -58,10 +58,10 @@ function formatUptime(seconds: number): string {
 // ---------------------------------------------------------------------------
 
 const statusVariants: Record<string, string> = {
-  active: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  trial: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30",
-  past_due: "bg-orange-400/10 text-orange-400 border-orange-400/30",
-  suspended: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  active: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  trial: "bg-amber-50 text-amber-700 border-amber-200",
+  past_due: "bg-orange-50 text-orange-700 border-orange-200",
+  suspended: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -76,7 +76,7 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={cn(
         "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-        statusVariants[status] ?? "bg-slate-800 text-slate-300 border-slate-700",
+        statusVariants[status] ?? "bg-[#fafafa] text-[#666666] border-[#e5e5e5]",
       )}
     >
       {STATUS_LABELS[status] ?? status}
@@ -107,15 +107,15 @@ function MetricCard({
   hint?: string;
 }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 transition-colors duration-200 hover:border-slate-700">
+    <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs hover:border-[#cccccc] transition-colors">
       <div className="flex items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#4a38f5]/10">
-          <Icon className="h-4 w-4 text-amber-400" />
+          <Icon className="h-4 w-4 text-[#4a38f5]" />
         </div>
-        <span className="text-sm text-slate-400">{label}</span>
+        <span className="text-sm text-[#666666]">{label}</span>
       </div>
-      <p className="mt-3 text-2xl font-bold text-slate-100">{value}</p>
-      {hint !== undefined && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+      <p className="mt-3 text-2xl font-bold text-[#111111]">{value}</p>
+      {hint !== undefined && <p className="mt-1 text-xs text-[#888888]">{hint}</p>}
     </div>
   );
 }
@@ -142,7 +142,7 @@ function TenantsTable() {
     return (
       <div className="space-y-2">
         {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="h-16 w-full animate-pulse rounded-lg bg-slate-900" />
+          <div key={i} className="h-16 w-full animate-pulse rounded-lg bg-[#f0f0f0]" />
         ))}
       </div>
     );
@@ -150,8 +150,8 @@ function TenantsTable() {
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6 text-center">
-        <p className="text-sm text-rose-400">
+      <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-6 text-center">
+        <p className="text-sm text-rose-700">
           Не удалось загрузить тенанты: {error?.message ?? "ошибка сети"}
         </p>
       </div>
@@ -160,18 +160,18 @@ function TenantsTable() {
 
   if (tenants === undefined || tenants.length === 0) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-10 text-center">
-        <Building2 className="mx-auto h-10 w-10 text-slate-600" />
-        <p className="mt-3 text-sm text-slate-400">Тенантов пока нет</p>
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-10 text-center shadow-2xs">
+        <Building2 className="mx-auto h-10 w-10 text-[#888888]" />
+        <p className="mt-3 text-sm text-[#666666]">Тенантов пока нет</p>
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-800">
+    <div className="overflow-x-auto rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
       <table className="w-full min-w-[900px] text-left text-sm">
         <thead>
-          <tr className="border-b border-slate-800 bg-slate-900 text-xs uppercase tracking-wide text-slate-500">
+          <tr className="border-b border-[#e5e5e5] bg-[#fafafa] text-xs uppercase tracking-wide text-[#666666]">
             <th className="px-4 py-3 font-medium">Компания</th>
             <th className="px-4 py-3 font-medium">Тариф</th>
             <th className="px-4 py-3 font-medium">Статус</th>
@@ -186,11 +186,11 @@ function TenantsTable() {
           {tenants.map((t) => (
             <tr
               key={t.id}
-              className="border-b border-slate-800 transition-colors duration-200 hover:bg-slate-800/50"
+              className="border-b border-[#e5e5e5] transition-colors duration-200 hover:bg-[#fafafa]"
             >
               <td className="px-4 py-3">
-                <p className="font-medium text-slate-100">{t.name}</p>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="font-medium text-[#111111]">{t.name}</p>
+                <p className="mt-0.5 text-xs text-[#888888]">
                   зарегистрирован {formatDate(t.created_at)}
                 </p>
               </td>
@@ -202,7 +202,7 @@ function TenantsTable() {
                     const plan = PLAN_OPTIONS.find((p) => p.value === e.target.value)?.value;
                     if (plan !== undefined) patch(t.id, { plan });
                   }}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-[#4a38f5]/20 disabled:opacity-50"
+                  className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 disabled:opacity-50"
                 >
                   {PLAN_OPTIONS.map((p) => (
                     <option key={p.value} value={p.value}>
@@ -214,7 +214,7 @@ function TenantsTable() {
               <td className="px-4 py-3">
                 <StatusBadge status={t.status} />
               </td>
-              <td className="px-4 py-3 text-slate-300">
+              <td className="px-4 py-3 text-[#666666]">
                 <div className="flex flex-col">
                   <span>{formatDate(t.subscription_expires_at)}</span>
                   <button
@@ -228,15 +228,15 @@ function TenantsTable() {
                         ),
                       })
                     }
-                    className="mt-0.5 inline-flex w-fit items-center gap-1 text-xs text-amber-400 transition-colors hover:text-[#3b2be0] disabled:opacity-50"
+                    className="mt-0.5 inline-flex w-fit items-center gap-1 text-xs text-[#4a38f5] transition-colors hover:text-[#3d2ee0] disabled:opacity-50 font-medium"
                   >
                     <Clock className="h-3 w-3" />+30 дней
                   </button>
                 </div>
               </td>
-              <td className="px-4 py-3 text-slate-300">{t.users_count}</td>
-              <td className="px-4 py-3 text-slate-300">{t.modules_count}</td>
-              <td className="px-4 py-3 text-slate-300">
+              <td className="px-4 py-3 text-[#666666]">{t.users_count}</td>
+              <td className="px-4 py-3 text-[#666666]">{t.modules_count}</td>
+              <td className="px-4 py-3 text-[#666666]">
                 {t.ai_tokens_balance.toLocaleString("ru-RU")}
               </td>
               <td className="px-4 py-3">
@@ -245,7 +245,7 @@ function TenantsTable() {
                     type="button"
                     disabled={updateTenant.isPending}
                     onClick={() => patch(t.id, { status: "active" })}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-medium text-emerald-400 transition-all duration-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 transition-all duration-200 hover:bg-emerald-100 disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     Включить
@@ -255,7 +255,7 @@ function TenantsTable() {
                     type="button"
                     disabled={updateTenant.isPending}
                     onClick={() => patch(t.id, { status: "suspended" })}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-400 transition-all duration-200 hover:bg-rose-500/20 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-[8px] border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-600 transition-all duration-200 hover:bg-rose-100 disabled:opacity-50"
                   >
                     <Ban className="h-3.5 w-3.5" />
                     Приостановить
@@ -281,7 +281,7 @@ function MetricsSection() {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className="h-28 w-full animate-pulse rounded-xl bg-slate-900" />
+          <div key={i} className="h-28 w-full animate-pulse rounded-xl bg-[#f0f0f0]" />
         ))}
       </div>
     );
@@ -321,13 +321,13 @@ function MetricsSection() {
             : "BullMQ появится в M6.x — очередь ещё не в стеке"
         }
       />
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-5 sm:col-span-2">
-        <p className="text-xs uppercase tracking-wide text-slate-500">Сводка</p>
-        <p className="mt-2 text-sm text-slate-300">
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs sm:col-span-2">
+        <p className="text-xs uppercase tracking-wide text-[#888888]">Сводка</p>
+        <p className="mt-2 text-sm text-[#111111]">
           Платформа обслуживает {c.tenants_total} тенант(ов) и {c.users_total} пользователей.
           Данные обновляются автоматически каждые 30 секунд.
         </p>
-        <p className="mt-1 text-xs text-slate-500">
+        <p className="mt-1 text-xs text-[#888888]">
           Снимок: {new Date(metrics.generated_at).toLocaleString("ru-RU")}
         </p>
       </div>
@@ -342,15 +342,15 @@ function MetricsSection() {
 export default function SuperadminPage() {
   return (
     <PlatformOwnerGuard>
-      <div className="flex min-h-screen flex-col bg-slate-950">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-slate-800 bg-slate-900 px-6">
+      <div className="flex min-h-screen flex-col bg-white">
+        <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-[#e5e5e5] bg-white px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#4a38f5] text-white">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
-              <span className="text-sm font-bold tracking-tight text-slate-100">GETVOXLY</span>
-              <span className="ml-2 rounded bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-semibold text-amber-400">
+              <span className="text-sm font-bold tracking-tight text-[#111111]">GETVOXLY</span>
+              <span className="ml-2 rounded-[4px] border border-[#4a38f5]/20 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-semibold text-[#4a38f5]">
                 SUPERADMIN
               </span>
             </div>
@@ -358,23 +358,23 @@ export default function SuperadminPage() {
           <div className="flex-1" />
           <Link
             href="/dashboard"
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
           >
             <ChevronLeft className="h-4 w-4" />
             В CRM
           </Link>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 space-y-8 p-6">
+        <main className="mx-auto w-full max-w-7xl flex-1 space-y-8 p-6 bg-white">
           <section>
-            <h1 className="text-xl font-bold text-slate-100">Платформенная панель</h1>
-            <p className="mt-1 text-sm text-slate-400">
+            <h1 className="text-xl font-bold text-[#111111]">Платформенная панель</h1>
+            <p className="mt-1 text-sm text-[#666666]">
               Тенанты, тарифы, лимиты и системные метрики GETVOXLY
             </p>
           </section>
 
           <section aria-label="Системные метрики">
-            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-400">
+            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[#666666]">
               <RefreshCw className="h-4 w-4" />
               Мониторинг
             </h2>
@@ -382,7 +382,7 @@ export default function SuperadminPage() {
           </section>
 
           <section aria-label="Тенанты">
-            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-400">
+            <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[#666666]">
               <Building2 className="h-4 w-4" />
               Тенанты и подписки
             </h2>

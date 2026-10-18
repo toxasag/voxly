@@ -61,12 +61,12 @@ export const BotCard = memo(function BotCard({
   const handleConfigure = useCallback(() => onConfigure(bot), [bot, onConfigure]);
 
   return (
-    <div className="flex flex-col rounded-xl border border-slate-800 bg-slate-900 p-5 transition-colors hover:border-slate-700">
+    <div className="flex flex-col rounded-[8px] border border-[#e5e5e5] bg-white p-5 shadow-2xs transition-colors hover:border-[#cccccc]">
       {/* Header: avatar, name, status */}
       <div className="flex items-start gap-3">
         <div
           className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px]",
             getAccentClasses(bot.accent),
           )}
         >
@@ -75,12 +75,12 @@ export const BotCard = memo(function BotCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold text-slate-100">{bot.name}</h3>
+            <h3 className="truncate text-sm font-semibold text-[#111111]">{bot.name}</h3>
             <StatusBadge variant={isActive ? "success" : "neutral"} size="sm" withDot>
               {isActive ? "Активен" : "На паузе"}
             </StatusBadge>
           </div>
-          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{bot.description}</p>
+          <p className="mt-1 line-clamp-2 text-xs text-[#666666]">{bot.description}</p>
         </div>
 
         {/* Active toggle */}
@@ -91,13 +91,13 @@ export const BotCard = memo(function BotCard({
           aria-label={isActive ? `Поставить на паузу: ${bot.name}` : `Активировать: ${bot.name}`}
           onClick={handleToggle}
           className={cn(
-            "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/40",
-            isActive ? "bg-[#4a38f5]" : "bg-slate-700",
+            "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/40",
+            isActive ? "bg-[#4a38f5]" : "bg-[#e5e5e5]",
           )}
         >
           <span
             className={cn(
-              "absolute top-0.5 h-4 w-4 rounded-full bg-slate-950 transition-transform",
+              "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-xs transition-transform",
               isActive ? "translate-x-[18px]" : "translate-x-0.5",
             )}
           />
@@ -106,13 +106,13 @@ export const BotCard = memo(function BotCard({
 
       {/* Meta badges */}
       <div className="mt-4 flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex items-center rounded-md border border-slate-700 bg-slate-950/60 px-2 py-0.5 font-mono text-xs text-slate-400">
+        <span className="inline-flex items-center rounded-md border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 font-mono text-xs text-[#666666]">
           {model.label}
         </span>
-        <span className="inline-flex items-center rounded-md border border-orange-400/30 bg-orange-400/10 px-2 py-0.5 text-xs font-medium text-orange-400">
+        <span className="inline-flex items-center rounded-md border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-2 py-0.5 text-xs font-medium text-[#4a38f5]">
           {getBotModeLabel(bot.mode)}
         </span>
-        <span className="inline-flex items-center gap-1 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-1 text-xs text-[#888888]">
           <Clock className="h-3 w-3" />
           {formatRelative(bot.last_used_at)}
         </span>
@@ -128,15 +128,15 @@ export const BotCard = memo(function BotCard({
       */}
       <div className="mt-4">
         <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-1 text-xs text-slate-500">
-            <Zap className="h-3 w-3 text-amber-400" />
+          <span className="inline-flex items-center gap-1 text-xs text-[#666666]">
+            <Zap className="h-3 w-3 text-[#4a38f5]" />
             {formatCompact(bot.tokens_used)} токенов израсходовано
           </span>
-          {hasLimit && <span className="text-xs text-slate-500">{usagePercent}%</span>}
+          {hasLimit && <span className="text-xs text-[#888888]">{usagePercent}%</span>}
         </div>
 
         {hasLimit && (
-          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[#f0f0f0]">
             <div
               className={cn(
                 "h-full rounded-full transition-all",
@@ -153,22 +153,22 @@ export const BotCard = memo(function BotCard({
       </div>
 
       {/* Stats row */}
-      <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-800 pt-4">
+      <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[#f0f0f0] pt-4">
         <div>
-          <p className="text-xs uppercase tracking-wider text-slate-600">Запросы</p>
-          <p className="mt-0.5 text-sm font-semibold text-slate-200">
+          <p className="text-xs uppercase tracking-wider text-[#888888]">Запросы</p>
+          <p className="mt-0.5 text-sm font-semibold text-[#111111]">
             {new Intl.NumberFormat("ru-RU").format(bot.requests_count)}
           </p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wider text-slate-600">Ср. задержка</p>
-          <p className="mt-0.5 text-sm font-semibold text-slate-200">
+          <p className="text-xs uppercase tracking-wider text-[#888888]">Ср. задержка</p>
+          <p className="mt-0.5 text-sm font-semibold text-[#111111]">
             {bot.avg_latency_ms === 0 ? "—" : `${bot.avg_latency_ms} ms`}
           </p>
         </div>
         <div>
-          <p className="text-xs uppercase tracking-wider text-slate-600">Стоимость</p>
-          <p className="mt-0.5 text-sm font-semibold text-amber-400">
+          <p className="text-xs uppercase tracking-wider text-[#888888]">Стоимость</p>
+          <p className="mt-0.5 text-sm font-semibold text-[#111111] font-mono">
             {new Intl.NumberFormat("ru-RU", {
               style: "currency",
               currency: "RUB",
@@ -182,7 +182,7 @@ export const BotCard = memo(function BotCard({
       <div className="mt-4 flex items-center gap-2">
         <Link
           href={`/modules/ai-bots/${bot.id}`}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0]"
         >
           <MessageSquare className="h-3.5 w-3.5" />
           Чат
@@ -190,7 +190,7 @@ export const BotCard = memo(function BotCard({
         <button
           type="button"
           onClick={handleConfigure}
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
+          className="flex items-center justify-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] transition-colors hover:bg-[#f5f5f5]"
         >
           <Settings2 className="h-3.5 w-3.5" />
           Настроить

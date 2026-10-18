@@ -112,8 +112,8 @@ function AiBotsContent() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-100">AI-агенты</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-xl font-bold text-[#111111]">AI-агенты</h1>
+          <p className="mt-1 text-[13px] text-[#666666]">
             {bots.length === 0 ? (
               "Ассистенты для автоответов и квалификации лидов"
             ) : (
@@ -133,7 +133,7 @@ function AiBotsContent() {
         <button
           type="button"
           onClick={openCreate}
-          className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+          className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
         >
           <Plus className="h-4 w-4" />
           Создать AI-агента
@@ -148,28 +148,28 @@ function AiBotsContent() {
       {bots.length > 0 && (
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#888888]" />
           <input
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Поиск по названию, описанию или модели"
             aria-label="Поиск ботов"
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 py-2.5 pl-9 pr-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+            className="w-full rounded-[8px] border border-[#e5e5e5] bg-white py-2 pl-9 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 shadow-2xs"
           />
         </div>
 
-        <div className="flex w-fit items-center gap-1 rounded-lg border border-slate-800 bg-slate-900 p-1">
+        <div className="flex w-fit items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-2xs">
           {STATUS_FILTERS.map((filter) => (
             <button
               key={filter.key}
               type="button"
               onClick={() => setStatusFilter(filter.key)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-[6px] px-3 py-1.5 text-xs font-medium transition-colors",
                 statusFilter === filter.key
-                  ? "bg-[#4a38f5] text-white"
-                  : "text-slate-400 hover:text-slate-200",
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-[#fafafa]",
               )}
             >
               {filter.label}
@@ -183,24 +183,27 @@ function AiBotsContent() {
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 3 }, (_, index) => (
-            <Skeleton key={index} className="h-52 w-full rounded-xl" />
+            <Skeleton key={index} className="h-52 w-full rounded-[8px]" />
           ))}
         </div>
       ) : isError ? (
-        <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-          <p className="text-sm text-rose-400">
-            Не удалось загрузить агентов: {error?.message ?? "неизвестная ошибка"}
+        <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+          <p className="text-sm font-semibold text-rose-900">
+            Не удалось загрузить агентов
+          </p>
+          <p className="mt-1 text-sm text-rose-700">
+            {error?.message ?? "неизвестная ошибка"}
           </p>
           <button
             type="button"
             onClick={() => void refetch()}
-            className="mt-3 rounded-lg bg-slate-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-700"
+            className="mt-3 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa]"
           >
             Повторить
           </button>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
           <EmptyState
             icon={bots.length === 0 ? Bot : Search}
             title={bots.length === 0 ? "У вас пока нет AI-агентов" : "Ничего не найдено по фильтру"}
@@ -214,7 +217,7 @@ function AiBotsContent() {
                 <button
                   type="button"
                   onClick={openCreate}
-                  className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
+                  className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-3.5 py-2 text-[13px] font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
                 >
                   <Plus className="h-4 w-4" />
                   Создать AI-агента
@@ -237,12 +240,12 @@ function AiBotsContent() {
       )}
 
       {/* Provider notice */}
-      <div className="flex items-start gap-2.5 rounded-xl border border-slate-800 bg-slate-900 px-5 py-4">
-        <Zap className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-        <p className="text-xs leading-relaxed text-slate-500">
+      <div className="flex items-start gap-2.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-5 py-4">
+        <Zap className="mt-0.5 h-4 w-4 shrink-0 text-[#4a38f5]" />
+        <p className="text-xs leading-relaxed text-[#666666]">
           Агенты и промпты хранятся на сервере; ключи провайдеров никогда не передаются в
           браузер. Расход списывается с баланса ИИ в разделе{" "}
-          <span className="font-mono text-slate-400">Настройки → Биллинг</span>. Обмен
+          <span className="font-mono text-[#111111]">Настройки → Биллинг</span>. Обмен
           сообщениями с клиентами подключается вместе с транспортом каналов.
         </p>
       </div>
@@ -263,7 +266,7 @@ export default function AiBotsPage() {
       requiredPermission="ai_bots:read"
       requiredModule="ai_bots"
       fallback={
-        <div className="rounded-xl border border-slate-800 bg-slate-900">
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
           <EmptyState
             icon={Bot}
             title="Нет доступа к AI-ботам"

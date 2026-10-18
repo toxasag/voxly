@@ -180,10 +180,10 @@ export const ContactCard = memo(function ContactCard({
 
           return (
             <span key={`${social.kind}-${social.value}`} className="flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 text-xs text-slate-500">{socialLabel(social.kind)}</span>
+              <span className="shrink-0 text-xs text-[#888888]">{socialLabel(social.kind)}</span>
               {href !== null
                 ? <RecordFieldLink href={href} label={social.value} />
-                : <span className="truncate text-slate-200">{social.value}</span>}
+                : <span className="truncate text-[#111111]">{social.value}</span>}
             </span>
           );
         })}
@@ -246,7 +246,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => setEditing(null)}
-                  className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111]"
                 >
                   Отмена
                 </button>
@@ -339,7 +339,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => setEditing(null)}
-                  className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111]"
                 >
                   Отмена
                 </button>
