@@ -79,7 +79,7 @@ function StageHeaderEditor({
   }
 
   return (
-    <div className="flex h-auto flex-col justify-center gap-2 border border-[#e5e5e5] bg-white rounded-lg p-2.5 mb-2">
+    <div className="flex h-auto flex-col justify-center gap-2 border border-[#e5e5e5] bg-white rounded-[8px] p-2.5 mb-2">
       <div className="flex items-center gap-1.5">
         <input
           value={name}
@@ -89,7 +89,7 @@ function StageHeaderEditor({
             if (event.key === "Escape") setName(column.stageName);
           }}
           onBlur={() => { if (dirty) ops.onUpdateStage(column.stageId, { name: name.trim() }); }}
-          className="min-w-0 flex-1 rounded border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#000000] focus:border-[#888888] focus:outline-none"
+          className="min-w-0 flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#000000] focus:border-[#888888] focus:outline-none"
         />
         {/* Границы движения — соседи-системные этапы: влево нельзя встать перед
             входом в воронку, вправо — за «успех» и «провал». */}
@@ -202,8 +202,8 @@ export function DealKanban({
             onDragLeave={() => setOver(null)}
             onDrop={configure ? undefined : (event) => drop(event, col)}
             className={cn(
-              "relative flex shrink-0 flex-col rounded-xl transition-colors",
-              over === col.stageId && "bg-black/[0.02] ring-1 ring-black/10 rounded-xl",
+              "relative flex shrink-0 flex-col rounded-[16px] transition-colors",
+              over === col.stageId && "bg-black/[0.02] ring-1 ring-black/[0.04] rounded-[16px]",
             )}
             style={{ width }}
           >
@@ -260,7 +260,7 @@ export function DealKanban({
                     const evt = new CustomEvent("open-create-deal", { detail: { stageId: col.stageId } });
                     window.dispatchEvent(evt);
                   }}
-                  className="flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#000000] py-1.5 px-2 rounded-md hover:bg-black/[0.04] transition-colors w-full"
+                  className="flex items-center gap-1.5 text-xs text-[#666666] hover:text-[#000000] py-1.5 px-2 rounded-[8px] hover:bg-black/[0.04] transition-colors w-full font-medium"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   <span>New</span>

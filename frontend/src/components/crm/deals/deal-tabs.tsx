@@ -64,20 +64,20 @@ export interface DealTabsContext {
 function FieldRow({ icon: Icon, label, children }: { icon: typeof Building2; label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2 px-4 py-2">
-      <span className="flex h-6 w-[90px] shrink-0 items-center gap-1.5 text-xs text-slate-400">
-        <Icon className="h-4 w-4 shrink-0" />
+      <span className="flex h-6 w-[100px] shrink-0 items-center gap-1.5 text-xs text-[#666666]">
+        <Icon className="h-4 w-4 shrink-0 text-[#888888]" />
         <span className="truncate">{label}</span>
       </span>
-      <span className="min-w-0 flex-1 pt-0.5 text-sm text-slate-200">{children}</span>
+      <span className="min-w-0 flex-1 pt-0.5 text-[13px] text-[#000000]">{children}</span>
     </div>
   );
 }
 
 function FieldsCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60">
-      <h3 className="border-b border-slate-800 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</h3>
-      <div className="divide-y divide-slate-800/70">{children}</div>
+    <section className="overflow-hidden rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xs">
+      <h3 className="border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#666666]">{title}</h3>
+      <div className="divide-y divide-[#e5e5e5]">{children}</div>
     </section>
   );
 }
@@ -173,19 +173,19 @@ function ChatTab({ dealId }: { dealId: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
         <div className="flex items-center gap-2">
-          <MessageCircle className="h-4 w-4 text-slate-500" />
-          <span className="text-sm font-semibold text-slate-200">Хронология и чат</span>
+          <MessageCircle className="h-4 w-4 text-[#888888]" />
+          <span className="text-sm font-semibold text-[#000000]">Хронология и чат</span>
         </div>
         <div className="flex items-center gap-2">
-          <Bot className={cn("h-4 w-4", autopilot ? "text-emerald-400" : "text-slate-500")} />
+          <Bot className={cn("h-4 w-4", autopilot ? "text-emerald-500" : "text-[#888888]")} />
           <button
             type="button"
             onClick={() => setAutopilot((v) => !v)}
             className={cn(
-              "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 focus:ring-offset-slate-900",
-              autopilot ? "bg-emerald-500" : "bg-slate-700"
+              "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5] focus:ring-offset-2",
+              autopilot ? "bg-emerald-500" : "bg-slate-300"
             )}
             role="switch"
             aria-checked={autopilot}
@@ -197,7 +197,7 @@ function ChatTab({ dealId }: { dealId: string }) {
               )}
             />
           </button>
-          <span className="text-xs text-slate-400">{autopilot ? "Автопилот включён" : "Автопилот выключен"}</span>
+          <span className="text-xs text-[#666666]">{autopilot ? "Автопилот включён" : "Автопилот выключен"}</span>
         </div>
       </div>
 
@@ -222,9 +222,9 @@ function ChatTab({ dealId }: { dealId: string }) {
 
       {error && <div className="mx-4 mb-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-400">{error}</div>}
 
-      <div className="border-t border-slate-800 p-4">
+      <div className="border-t border-[#e5e5e5] p-4">
         <div className="flex gap-2">
-          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200">
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#000000]">
             <option value="telegram">Telegram</option>
             <option value="whatsapp">WhatsApp</option>
             <option value="email">Email</option>
@@ -236,10 +236,10 @@ function ChatTab({ dealId }: { dealId: string }) {
               onKeyDown={handleKey}
               placeholder="Написать сообщение..."
               rows={1}
-              className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:ring-amber-500/20"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
           </div>
-          <button type="button" onClick={handleSend} disabled={send.isPending || !input.trim()} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50">
+          <button type="button" onClick={handleSend} disabled={send.isPending || !input.trim()} className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-medium text-white hover:bg-[#3b2be0] disabled:opacity-50">
             {send.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />}
             <Send className="h-4 w-4" />
           </button>
@@ -291,12 +291,12 @@ function HomeTab({
   return (
     <div className="space-y-5 px-5 py-4">
       {deal.description !== "" && (
-        <p className="whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">{deal.description}</p>
+        <p className="whitespace-pre-wrap rounded-[16px] border border-[#e5e5e5] bg-white px-4 py-3 text-[13px] text-[#333333] shadow-2xs">{deal.description}</p>
       )}
 
       <FieldsCard title="Сделка">
         <FieldRow icon={Banknote} label="Сумма">
-          <span className="font-semibold text-amber-400 tabular-nums">
+          <span className="font-semibold text-[#000000] tabular-nums">
             {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
           </span>
         </FieldRow>
@@ -377,9 +377,9 @@ function TasksTab({ dealId }: { dealId: string }) {
       ) : (
         <div className="space-y-2">
           {dealTasks.map((task) => (
-            <div key={task.id} className="rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div key={task.id} className="rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-slate-200">{task.title}</p>
+                <p className="text-sm font-medium text-[#000000]">{task.title}</p>
                 <span className={cn(
                   "rounded-full border px-2 py-0.5 text-xs",
                   task.status === "done" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",

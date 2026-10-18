@@ -32,7 +32,7 @@ interface TabsListProps {
 
 export function TabsList({ children, className }: TabsListProps) {
   return (
-    <div className={cn("flex items-center gap-1 border-b border-slate-800", className)}>
+    <div className={cn("flex items-center gap-1 border-b border-[#e5e5e5]", className)}>
       {children}
     </div>
   );
@@ -55,12 +55,12 @@ export function TabsTrigger({ value, children, className }: TabsTriggerProps) {
       type="button"
       onClick={() => context.setActiveTab(value)}
       className={cn(
-        "relative px-4 py-2.5 text-sm font-medium transition-colors",
-        isActive ? "text-amber-400" : "text-slate-400 hover:text-slate-200",
+        "relative px-4 py-2.5 text-xs font-medium transition-colors",
+        isActive ? "text-[#000000]" : "text-[#666666] hover:text-[#000000]",
         className,
       )}
     >
-      {isActive && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500" />}
+      {isActive && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#000000]" />}
       {children}
     </button>
   );

@@ -80,7 +80,7 @@ export const DealCard = memo(function DealCard({
       draggable={!isMobile}
       onDragStart={isMobile ? undefined : drag}
       onClick={handleClick}
-      className="group cursor-pointer rounded-lg border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-2xs p-3 space-y-2"
+      className="group cursor-pointer rounded-[16px] border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-[rgba(0,0,0,0.004)_-4px_4px_4px_0px,rgba(0,0,0,0.039)_0px_2px_4px_0px] p-3 space-y-2 active:opacity-30"
     >
       {/* Заголовок с монограммой как в Twenty */}
       <div className="flex items-center gap-2">
@@ -170,7 +170,7 @@ export const DealCard = memo(function DealCard({
           type="button"
           disabled={!canMoveLeft}
           onClick={(event) => { event.stopPropagation(); onMove(deal.id, -1); }}
-          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+          className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowLeft className="h-4 w-4 md:h-3 md:w-3" />
         </button>
@@ -179,7 +179,7 @@ export const DealCard = memo(function DealCard({
           type="button"
           disabled={!canMoveRight}
           onClick={(event) => { event.stopPropagation(); onMove(deal.id, 1); }}
-          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+          className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowRight className="h-4 w-4 md:h-3 md:w-3" />
         </button>
