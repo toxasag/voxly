@@ -252,11 +252,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
         </div>
       ) : notes.isError ? (
         <div className="rounded-[8px] border border-rose-200 bg-rose-50 p-3">
-<<<<<<< HEAD
-          <p className="text-sm text-rose-700">Не удалось загрузить заметки</p>
-=======
-          <p className="text-sm font-medium text-rose-800">Не удалось загрузить заметки</p>
->>>>>>> master
+          <p className="text-sm font-medium text-rose-700">Не удалось загрузить заметки</p>
           <button
             type="button"
             onClick={() => void notes.refetch()}
@@ -339,11 +335,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                   <NoteFormattedBody body={note.body} />
                 </div>
               )}
-<<<<<<< HEAD
-              <div className="mt-2 flex items-center gap-2 text-xs text-[#888888]">
-=======
               <div className="mt-2.5 flex items-center gap-2 text-xs text-[#888888]">
->>>>>>> master
                 <span>{note.createdByName ?? "Система"}</span>
                 <span>·</span>
                 <span title={new Date(note.createdAt).toLocaleString("ru-RU")}>

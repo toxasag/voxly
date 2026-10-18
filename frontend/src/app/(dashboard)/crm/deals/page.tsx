@@ -343,9 +343,14 @@ function DealsContent() {
 
   if (pipelines.isLoading) return <SkeletonTable rows={4} columns={3} />;
   if (pipelines.isError) return (
-    <div role="alert" className="flex gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 p-6">
-      <Handshake className="h-5 w-5 text-rose-400" />
-      <div><p className="text-sm text-slate-200">Не удалось загрузить воронки</p><button type="button" onClick={() => void pipelines.refetch()} className="mt-2 text-xs text-slate-300">Повторить</button></div>
+    <div role="alert" className="flex gap-3 rounded-[8px] border border-rose-200 bg-rose-50 p-6">
+      <Handshake className="h-5 w-5 text-rose-600" />
+      <div>
+        <p className="text-sm font-semibold text-rose-700">Не удалось загрузить воронки</p>
+        <button type="button" onClick={() => void pipelines.refetch()} className="mt-2 text-xs font-medium text-rose-600 hover:text-rose-800">
+          Повторить
+        </button>
+      </div>
     </div>
   );
   if ((pipelines.data ?? []).length === 0) return <EmptyState icon={Handshake} title="Воронки не настроены" description="Не удалось создать воронку по умолчанию. Обратитесь в поддержку, если проблема повторяется." />;
