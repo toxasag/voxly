@@ -81,6 +81,8 @@ export interface DealTabsContext {
   usersById: Map<string, TenantUserDTO>;
   pipelines?: PipelineDTO[];
   stagesById?: Map<string, DealStageInfo>;
+  onRequestCreateCompany?: () => void;
+  onRequestCreateContact?: () => void;
 }
 
 /**
@@ -211,6 +213,7 @@ function ChatTab({ dealId }: { dealId: string }) {
           <Bot className={cn("h-4 w-4", autopilot ? "text-emerald-500" : "text-[#888888]")} />
           <button
             type="button"
+            title={autopilot ? "Отключить автопилот" : "Включить автопилот"}
             onClick={() => setAutopilot((v) => !v)}
             className={cn(
               "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5] focus:ring-offset-2",
@@ -253,7 +256,7 @@ function ChatTab({ dealId }: { dealId: string }) {
 
       <div className="border-t border-[#e5e5e5] p-4">
         <div className="flex gap-2">
-          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#000000]">
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} title="Канал связи" className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#000000]">
             <option value="telegram">Telegram</option>
             <option value="whatsapp">WhatsApp</option>
             <option value="email">Email</option>
@@ -268,7 +271,7 @@ function ChatTab({ dealId }: { dealId: string }) {
               className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
           </div>
-          <button type="button" onClick={handleSend} disabled={send.isPending || !input.trim()} className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-medium text-white hover:bg-[#3b2be0] disabled:opacity-50">
+          <button type="button" onClick={handleSend} disabled={send.isPending || !input.trim()} title="Отправить сообщение" className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-medium text-white hover:bg-[#3b2be0] disabled:opacity-50">
             {send.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />}
             <Send className="h-4 w-4" />
           </button>
@@ -298,11 +301,15 @@ function HomeTab({
   usersById,
   pipelines,
   stagesById,
+  onRequestCreateCompany,
+  onRequestCreateContact,
 }: {
   deal: DealDTO;
   usersById: Map<string, TenantUserDTO>;
   pipelines?: PipelineDTO[];
   stagesById?: Map<string, DealStageInfo>;
+  onRequestCreateCompany?: () => void;
+  onRequestCreateContact?: () => void;
 }) {
   const [dealOpen, setDealOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(true);
@@ -367,6 +374,18 @@ function HomeTab({
 
   const dateOnly = (iso: string): string =>
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
+
+  const fullDate = (iso: string): string => {
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) return "—";
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(parsed);
+  };
 
   const stagesList = useMemo(() => {
     if (kanban.data && kanban.data.length > 0) {
@@ -517,9 +536,14 @@ function HomeTab({
         <div className="border-t border-[#f0f0f0] pt-1 mt-1">
           <button
             type="button"
+            title="Добавить новую компанию"
             onClick={() => {
               setActivePicker(null);
-              setIsCompanyModalOpen(true);
+              if (onRequestCreateCompany) {
+                onRequestCreateCompany();
+              } else {
+                setIsCompanyModalOpen(true);
+              }
             }}
             className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
           >
@@ -612,9 +636,14 @@ function HomeTab({
         <div className="border-t border-[#f0f0f0] pt-1 mt-1">
           <button
             type="button"
+            title="Добавить новый контакт"
             onClick={() => {
               setActivePicker(null);
-              setIsContactModalOpen(true);
+              if (onRequestCreateContact) {
+                onRequestCreateContact();
+              } else {
+                setIsContactModalOpen(true);
+              }
             }}
             className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
           >
@@ -714,6 +743,7 @@ function HomeTab({
       <div className="mt-1">
         <button
           type="button"
+          title="Свернуть / развернуть секцию «Сделка»"
           onClick={() => setDealOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
@@ -753,6 +783,7 @@ function HomeTab({
               ) : (
                 <button
                   type="button"
+                  title="Нажмите для редактирования суммы"
                   onClick={() => {
                     setIsEditingBudget(true);
                     setBudgetVal(String(deal.budget));
@@ -772,6 +803,7 @@ function HomeTab({
               <div className="relative inline-block">
                 <button
                   type="button"
+                  title="Нажмите для выбора этапа"
                   onClick={() => openPicker("stage", "row")}
                   className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
                 >
@@ -805,6 +837,7 @@ function HomeTab({
                             <button
                               key={st.stageId}
                               type="button"
+                              title={`Выбрать этап «${st.stageName}»`}
                               onClick={() => {
                                 if (st.stageId !== deal.stageId) {
                                   moveStage.mutate(
@@ -864,6 +897,7 @@ function HomeTab({
                   {deal.closeDate && (
                     <button
                       type="button"
+                      title="Очистить дату закрытия"
                       onClick={() => {
                         updateDeal.mutate(
                           { id: deal.id, pipelineId: deal.pipelineId, payload: { close_date: "" } },
@@ -884,6 +918,7 @@ function HomeTab({
               ) : (
                 <button
                   type="button"
+                  title="Нажмите для редактирования даты закрытия"
                   onClick={() => setIsEditingCloseDate(true)}
                   className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                 >
@@ -900,7 +935,7 @@ function HomeTab({
             {/* Воронка */}
             {pipelineName && (
               <FieldRow icon={Handshake} label="Воронка">
-                <span className="text-[#111111]">{pipelineName}</span>
+                <span title={`Воронка: ${pipelineName}`} className="text-[#111111]">{pipelineName}</span>
               </FieldRow>
             )}
           </div>
@@ -911,6 +946,7 @@ function HomeTab({
       <div className="mt-2">
         <button
           type="button"
+          title="Свернуть / развернуть секцию «Связи»"
           onClick={() => setRelationsOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
@@ -926,6 +962,7 @@ function HomeTab({
                   <div className="inline-flex items-center gap-1">
                     <button
                       type="button"
+                      title={`Компания: ${deal.companyName}`}
                       onClick={() => openPicker("company", "row")}
                       className="cursor-pointer hover:opacity-85 transition-opacity"
                     >
@@ -934,6 +971,7 @@ function HomeTab({
                     <button
                       type="button"
                       onClick={() => openPicker("company", "row")}
+                      title="Редактировать компанию"
                       aria-label="Редактировать компанию"
                       className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
                     >
@@ -943,6 +981,7 @@ function HomeTab({
                 ) : (
                   <button
                     type="button"
+                    title="Выбрать компанию"
                     onClick={() => openPicker("company", "row")}
                     className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
                   >
@@ -960,6 +999,7 @@ function HomeTab({
                   <div className="inline-flex items-center gap-1">
                     <button
                       type="button"
+                      title={`Контакт: ${deal.contactName}`}
                       onClick={() => openPicker("contact", "row")}
                       className="cursor-pointer hover:opacity-85 transition-opacity"
                     >
@@ -968,6 +1008,7 @@ function HomeTab({
                     <button
                       type="button"
                       onClick={() => openPicker("contact", "row")}
+                      title="Редактировать контактное лицо"
                       aria-label="Редактировать контактное лицо"
                       className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
                     >
@@ -977,6 +1018,7 @@ function HomeTab({
                 ) : (
                   <button
                     type="button"
+                    title="Выбрать контактное лицо"
                     onClick={() => openPicker("contact", "row")}
                     className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
                   >
@@ -994,6 +1036,7 @@ function HomeTab({
                   <div className="inline-flex items-center gap-1">
                     <button
                       type="button"
+                      title={`Ответственный: ${owner?.fullName ?? deal.ownerName}`}
                       onClick={() => openPicker("owner", "row")}
                       className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center gap-1.5 text-xs text-[#111111]"
                     >
@@ -1009,7 +1052,8 @@ function HomeTab({
                     <button
                       type="button"
                       onClick={() => openPicker("owner", "row")}
-                      aria-label="Редактировать владельца"
+                      title="Редактировать ответственного"
+                      aria-label="Редактировать ответственного"
                       className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
                     >
                       <Pencil className="h-3 w-3" />
@@ -1018,6 +1062,7 @@ function HomeTab({
                 ) : (
                   <button
                     type="button"
+                    title="Выбрать ответственного"
                     onClick={() => openPicker("owner", "row")}
                     className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
                   >
@@ -1035,6 +1080,7 @@ function HomeTab({
       <div className="mt-2">
         <button
           type="button"
+          title="Свернуть / развернуть секцию «Система»"
           onClick={() => setSystemOpen((prev) => !prev)}
           className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
         >
@@ -1044,12 +1090,12 @@ function HomeTab({
         {systemOpen && (
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
-              <span className="text-[#111111]">
+              <span title={fullDate(deal.createdAt)} className="text-[#111111]">
                 {timeAgo(deal.createdAt)}
               </span>
             </FieldRow>
             <FieldRow icon={Bot} label="Создано">
-              <span className="inline-flex items-center gap-1.5 text-[#111111]">
+              <span title={`Создано: ${creator !== undefined ? creator.fullName : "System"}`} className="inline-flex items-center gap-1.5 text-[#111111]">
                 <Bot className="h-3 w-3 text-[#888888]" />
                 <span>{creator !== undefined ? creator.fullName : "System"}</span>
               </span>
@@ -1064,6 +1110,7 @@ function HomeTab({
           <span className="text-xs font-medium text-[#111111]">Контактное лицо</span>
           <button
             type="button"
+            title="Редактировать контактное лицо"
             aria-label="Редактировать контактное лицо"
             onClick={() => openPicker("contact", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1074,6 +1121,7 @@ function HomeTab({
         <div className="relative">
           <button
             type="button"
+            title={deal.contactName !== null && deal.contactName !== "" ? `Контакт: ${deal.contactName}` : "Выбрать контактное лицо"}
             onClick={() => openPicker("contact", "card")}
             className="text-left cursor-pointer hover:opacity-85 transition-opacity"
           >
@@ -1092,6 +1140,7 @@ function HomeTab({
           <span className="text-xs font-medium text-[#111111]">Компания</span>
           <button
             type="button"
+            title="Редактировать компанию"
             aria-label="Редактировать компанию"
             onClick={() => openPicker("company", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1102,6 +1151,7 @@ function HomeTab({
         <div className="relative">
           <button
             type="button"
+            title={deal.companyName !== null && deal.companyName !== "" ? `Компания: ${deal.companyName}` : "Выбрать компанию"}
             onClick={() => openPicker("company", "card")}
             className="text-left cursor-pointer hover:opacity-85 transition-opacity"
           >
@@ -1120,6 +1170,7 @@ function HomeTab({
           <span className="text-xs font-medium text-[#111111]">Владелец</span>
           <button
             type="button"
+            title="Редактировать ответственного"
             aria-label="Редактировать ответственного"
             onClick={() => openPicker("owner", "card")}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1130,6 +1181,7 @@ function HomeTab({
         <div className="relative">
           <button
             type="button"
+            title={owner !== undefined ? `Ответственный: ${owner.fullName}` : deal.ownerName ? `Ответственный: ${deal.ownerName}` : "Выбрать ответственного"}
             onClick={() => openPicker("owner", "card")}
             className="text-left cursor-pointer hover:opacity-85 transition-opacity"
           >
@@ -1230,6 +1282,8 @@ export function dealTabContents(
         usersById={context.usersById}
         pipelines={context.pipelines}
         stagesById={context.stagesById}
+        onRequestCreateCompany={context.onRequestCreateCompany}
+        onRequestCreateContact={context.onRequestCreateContact}
       />
     ),
     chat: (

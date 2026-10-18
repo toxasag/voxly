@@ -253,7 +253,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
             >
               {getSingleInitial(deal.title)}
             </span>
-            <span className="truncate font-medium text-[13px] text-[#111111]">{deal.title}</span>
+            <span title={`Сделка: ${deal.title}`} className="truncate font-medium text-[13px] text-[#111111]">{deal.title}</span>
           </RecordCellShell>
         ),
     },
@@ -283,7 +283,7 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
           />
         ) : (
           <RecordCellShell align="left" editable onStartEdit={() => setEditing({ rowId: deal.id, columnId: "budget" })}>
-            <span className="font-normal tabular-nums text-[13px] text-[#111111]">
+            <span title={`Сумма: ${formatBudgetTwenty(deal.budget, deal.currency)}`} className="font-normal tabular-nums text-[13px] text-[#111111]">
               {formatBudgetTwenty(deal.budget, deal.currency)}
             </span>
           </RecordCellShell>
@@ -298,7 +298,10 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
       sortValue: (deal) => deal.createdAt,
       render: (deal) => (
         <RecordCellShell align="left">
-          <span className="flex items-center gap-1.5 text-[13px] text-[#111111]">
+          <span
+            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(deal.createdAt))}
+            className="flex items-center gap-1.5 text-[13px] text-[#111111]"
+          >
             <Bot className="h-3.5 w-3.5 shrink-0 text-[#666666]" />
             <span>
               {deal.createdBy === "system" || !deal.createdBy
@@ -331,7 +334,10 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
             onStartEdit={() => setEditing({ rowId: deal.id, columnId: "closeDate" })}
           >
             {deal.closeDate !== null ? (
-              <span className="text-[13px] text-[#111111]">
+              <span
+                title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(deal.closeDate))}
+                className="text-[13px] text-[#111111]"
+              >
                 {formatDateTwenty(deal.closeDate)}
               </span>
             ) : (

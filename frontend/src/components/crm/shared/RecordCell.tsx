@@ -103,6 +103,7 @@ export function RecordCellShell({
           <button
             type="button"
             tabIndex={-1}
+            title="Редактировать ячейку"
             aria-label="Редактировать ячейку"
             onClick={(event) => {
               event.stopPropagation();

@@ -494,6 +494,7 @@ export function RecordTable<T>({
           <div className="relative flex items-center justify-end border-b border-[#e5e5e5] bg-white px-2 py-1">
             <button
               type="button"
+              title="Управление колонками"
               onClick={() => {
                 setColumnsMenuAnchor("toolbar");
                 setColumnsMenuOpen((open) => !open);
@@ -594,6 +595,7 @@ export function RecordTable<T>({
                   {/* Нижняя кнопка сброса раскладки */}
                   <button
                     type="button"
+                    title="Сбросить раскладку к значениям по умолчанию"
                     onClick={() => {
                       resetLayout();
                       setColumnsMenuOpen(false);
@@ -843,6 +845,7 @@ export function RecordTable<T>({
                       <div className="border-t border-[#f0f0f0] p-1 bg-white">
                         <button
                           type="button"
+                          title="Настроить поля (Сбросить раскладку к значениям по умолчанию)"
                           onClick={() => {
                             resetLayout();
                             setColumnsMenuOpen(false);
