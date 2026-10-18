@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Loader2, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
+import { Check, CheckSquare, List, Loader2, NotebookPen, Pencil, Plus, Quote, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import {
@@ -213,23 +213,63 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
               placeholder="Текст заметки..."
               className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => { setComposing(false); setDraft(""); setTitleDraft(""); }}
-                className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
-              >
-                Отмена
-              </button>
-              <button
-                type="button"
-                onClick={submit}
-                disabled={create.isPending || draft.trim() === ""}
-                className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
-              >
-                {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                Сохранить
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#f0f0f0]">
+              <div className="flex items-center gap-1 text-[#666666]">
+                <button
+                  type="button"
+                  onClick={() => setDraft((prev) => (prev ? `${prev}\n- [ ] ` : "- [ ] "))}
+                  title="Добавить чек-лист"
+                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                >
+                  <CheckSquare className="h-3.5 w-3.5" />
+                  <span>Чек-лист</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft((prev) => (prev ? `${prev}\n- ` : "- "))}
+                  title="Добавить маркированный список"
+                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                >
+                  <List className="h-3.5 w-3.5" />
+                  <span>Список</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft((prev) => (prev ? `${prev}\n> ` : "> "))}
+                  title="Цитата"
+                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                >
+                  <Quote className="h-3.5 w-3.5" />
+                  <span>Цитата</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraft((prev) => (prev ? `${prev} **важно**` : "**важно**"))}
+                  title="Жирный шрифт"
+                  className="rounded-[4px] px-1.5 py-0.5 text-xs font-bold text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                >
+                  B
+                </button>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setComposing(false); setDraft(""); setTitleDraft(""); }}
+                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={submit}
+                  disabled={create.isPending || draft.trim() === ""}
+                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
+                >
+                  {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                  Сохранить
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -306,23 +346,63 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                     }}
                     className="w-full resize-y rounded-[8px] border border-[#4a38f5] bg-white px-2.5 py-1.5 text-sm text-[#000000] focus:outline-none"
                   />
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
-                    >
-                      Отмена
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => saveEdit(note.id, note.body, note.title)}
-                      disabled={update.isPending}
-                      className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
-                    >
-                      {update.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                      Сохранить
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#f0f0f0]">
+                    <div className="flex items-center gap-1 text-[#666666]">
+                      <button
+                        type="button"
+                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n- [ ] ` : "- [ ] "))}
+                        title="Добавить чек-лист"
+                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                      >
+                        <CheckSquare className="h-3.5 w-3.5" />
+                        <span>Чек-лист</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n- ` : "- "))}
+                        title="Добавить маркированный список"
+                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                      >
+                        <List className="h-3.5 w-3.5" />
+                        <span>Список</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n> ` : "> "))}
+                        title="Цитата"
+                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                      >
+                        <Quote className="h-3.5 w-3.5" />
+                        <span>Цитата</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditDraft((prev) => (prev ? `${prev} **важно**` : "**важно**"))}
+                        title="Жирный шрифт"
+                        className="rounded-[4px] px-1.5 py-0.5 text-xs font-bold text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+                      >
+                        B
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
+                      >
+                        Отмена
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveEdit(note.id, note.body, note.title)}
+                        disabled={update.isPending}
+                        className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
+                      >
+                        {update.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Сохранить
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
