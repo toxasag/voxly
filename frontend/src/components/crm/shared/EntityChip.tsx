@@ -51,7 +51,30 @@ interface EntityChipProps {
 }
 
 export function EntityChip({ name, label, icon: Icon, size = "md", className }: EntityChipProps) {
-  const box = size === "sm" ? "h-5 w-5 rounded text-xs" : "h-6 w-6 rounded-md text-xs";
+  const box = size === "sm" ? "h-3.5 w-3.5 rounded-[2px] text-[8px]" : "h-6 w-6 rounded-md text-xs";
+
+  if (size === "sm" && label !== undefined) {
+    return (
+      <span
+        className={cn(
+          "inline-flex min-w-0 max-w-full items-center gap-1 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] text-[#333333]",
+          className,
+        )}
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "flex shrink-0 items-center justify-center border font-bold",
+            box,
+            paletteFor(name),
+          )}
+        >
+          {Icon !== undefined ? <Icon className="h-2.5 w-2.5" /> : chipInitials(name)}
+        </span>
+        <span className="truncate font-medium">{label !== "" ? label : "—"}</span>
+      </span>
+    );
+  }
 
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-2", className)}>

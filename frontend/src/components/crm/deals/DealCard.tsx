@@ -2,10 +2,12 @@
 
 import { memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Banknote, ArrowLeft, ArrowRight, Building2, CalendarClock, Flag, User } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Calendar, Flag, User } from "lucide-react";
 import type { DealDTO, StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
-import { EntityChip, paletteFor } from "@/components/crm/shared/EntityChip";
+import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
+import { TagPill } from "@/components/ui/tag";
+import { stageTagColor } from "@/components/crm/deals/stage-colors";
 import {
   defaultDealCardFields,
   hasDealFieldValue,
@@ -80,20 +82,20 @@ export const DealCard = memo(function DealCard({
       draggable={!isMobile}
       onDragStart={isMobile ? undefined : drag}
       onClick={handleClick}
-      className="group cursor-pointer rounded-[16px] border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-[rgba(0,0,0,0.004)_-4px_4px_4px_0px,rgba(0,0,0,0.039)_0px_2px_4px_0px] p-3 space-y-2 active:opacity-30"
+      className="group cursor-pointer rounded-[8px] border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-3 space-y-2 active:opacity-30"
     >
       {/* Заголовок с монограммой как в Twenty */}
       <div className="flex items-center gap-2">
         <span
           className={cn(
-            "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-semibold border",
+            "flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[4px] text-[10px] font-semibold border",
             paletteFor(deal.title),
           )}
           aria-hidden="true"
         >
           {deal.title.trim().charAt(0).toUpperCase()}
         </span>
-        <h3 className="line-clamp-2 flex-1 text-[13px] font-medium text-[#000000] leading-snug">
+        <h3 className="line-clamp-2 flex-1 text-[13px] font-medium text-[#111111] leading-snug">
           {deal.title}
         </h3>
       </div>
@@ -102,9 +104,11 @@ export const DealCard = memo(function DealCard({
       <div className="space-y-1.5 text-xs">
         {show("budget") && (
           <div className="flex items-center gap-2 text-[#333333]">
-            <Banknote className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="font-medium text-[#111111] tabular-nums">
-              {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
+            <span className="flex h-3.5 w-3.5 items-center justify-center text-[11px] font-medium text-[#888888] shrink-0">
+              {deal.currency === "RUB" ? "₽" : deal.currency === "EUR" ? "€" : "$"}
+            </span>
+            <span className="font-normal text-[#111111] tabular-nums">
+              {new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(deal.budget)} {deal.currency === "RUB" ? "₽" : deal.currency}
             </span>
           </div>
         )}
@@ -112,16 +116,33 @@ export const DealCard = memo(function DealCard({
         {show("owner") && (
           <div className="flex items-center gap-2 text-[#666666]">
             <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="truncate text-[#333333]">
-              {manager?.fullName ?? deal.ownerName ?? "System"}
+            <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] text-[#333333]">
+              <span
+                className={cn(
+                  "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[2px] text-[8px] font-bold border",
+                  paletteFor(manager?.fullName ?? deal.ownerName ?? "System"),
+                )}
+                aria-hidden="true"
+              >
+                {manager?.fullName ? chipInitials(manager.fullName) : deal.ownerName ? chipInitials(deal.ownerName) : "S"}
+              </span>
+              <span className="truncate">{manager?.fullName ?? deal.ownerName ?? "System"}</span>
             </span>
           </div>
         )}
 
         {show("closeDate") && deal.closeDate !== null && (
           <div className="flex items-center gap-2 text-[#666666]">
-            <CalendarClock className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="text-[#333333]">{new Date(deal.closeDate).toLocaleDateString("ru-RU")}</span>
+            <Calendar className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span className="text-[#333333]">
+              {new Date(deal.closeDate).toLocaleDateString("ru-RU", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
           </div>
         )}
 
@@ -142,7 +163,9 @@ export const DealCard = memo(function DealCard({
         {show("stage") && (
           <div className="flex items-center gap-2 text-[#666666]">
             <Flag className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="truncate text-[#333333]">{stageName}</span>
+            <TagPill color={stageColorKey ? stageTagColor(stageColorKey) : "slate"}>
+              {stageName}
+            </TagPill>
           </div>
         )}
 

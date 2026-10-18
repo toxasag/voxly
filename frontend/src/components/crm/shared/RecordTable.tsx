@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Columns3, Eye, EyeOff, GripVertical } from "lucide-react";
+import { Columns3, Eye, EyeOff, GripVertical, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   RECORD_TABLE_CHECKBOX_WIDTH,
@@ -480,20 +480,20 @@ export function RecordTable<T>({
     <div className="space-y-3">
       {selectionEnabled && selectedIds !== undefined && selectedIds.size > 0 && bulkBar}
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+      <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white">
         {/* Управление колонками: у Twenty это кнопка «+» в правой части шапки. */}
         {tableId !== undefined && layoutLoaded && (
-          <div className="relative flex items-center justify-end border-b border-slate-800 px-2 py-1.5">
+          <div className="relative flex items-center justify-end border-b border-[#e5e5e5] bg-white px-2 py-1">
             <button
               type="button"
               onClick={() => setColumnsMenuOpen((open) => !open)}
               aria-expanded={columnsMenuOpen}
-              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+              className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
             >
               <Columns3 className="h-3.5 w-3.5" />
               Колонки
               {hiddenColumns.length > 0 && (
-                <span className="rounded bg-slate-800 px-1 text-xs text-slate-400">
+                <span className="rounded bg-[#f0f0f0] px-1 text-xs text-[#666666]">
                   скрыто {hiddenColumns.length}
                 </span>
               )}
@@ -516,7 +516,7 @@ export function RecordTable<T>({
                 */}
                 <div
                   className={cn(
-                    "absolute top-full z-40 mt-1 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 shadow-xl",
+                    "absolute top-full z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl",
                     isMobile ? "left-0 right-0 w-full" : "right-2 w-56",
                   )}
                 >
@@ -534,12 +534,12 @@ export function RecordTable<T>({
                           onClick={() => toggleColumn(column.id)}
                           className={cn(
                             "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors",
-                            canHide ? "text-slate-300 hover:bg-slate-800" : "cursor-default text-slate-600",
+                            canHide ? "text-[#111111] hover:bg-[#f5f5f5]" : "cursor-default text-[#888888]",
                           )}
                         >
-                          {isHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                          {isHidden ? <EyeOff className="h-3.5 w-3.5 text-[#888888]" /> : <Eye className="h-3.5 w-3.5 text-[#888888]" />}
                           <span className="truncate">{column.header}</span>
-                          {!canHide && <span className="ml-auto text-xs text-slate-600">всегда</span>}
+                          {!canHide && <span className="ml-auto text-xs text-[#888888]">всегда</span>}
                         </button>
                       );
                     })}
@@ -547,7 +547,7 @@ export function RecordTable<T>({
                   <button
                     type="button"
                     onClick={() => { resetLayout(); setColumnsMenuOpen(false); }}
-                    className="w-full border-t border-slate-800 px-3 py-1.5 text-left text-xs text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                    className="w-full border-t border-[#e5e5e5] px-3 py-1.5 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
                   >
                     Сбросить раскладку
                   </button>
@@ -580,17 +580,17 @@ export function RecordTable<T>({
           >
             {/* Заголовок */}
             <div
-              className="grid border-b border-slate-800 bg-slate-900 text-sm"
+              className="grid border-b border-[#e5e5e5] bg-white text-xs font-medium uppercase normal-case text-[#666666]"
               style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
             >
               {selectionEnabled && (
-                <div className="sticky left-0 z-20 flex items-center justify-center bg-slate-900">
+                <div className="sticky left-0 z-20 flex items-center justify-center bg-white border-r border-[#e5e5e5]">
                   <input
                     type="checkbox"
                     checked={allSelected}
                     onChange={toggleAll}
                     aria-label="Выбрать все"
-                    className="h-3.5 w-3.5 accent-amber-500"
+                    className="h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111]"
                   />
                 </div>
               )}
@@ -621,17 +621,17 @@ export function RecordTable<T>({
                   }}
                   onDragEnd={() => { setDragColumnId(null); setDropColumnId(null); }}
                   className={cn(
-                    "group relative flex items-center overflow-hidden border-r border-transparent pl-2 pr-1 text-xs font-medium uppercase tracking-wide text-slate-500",
-                    index === 0 && "sticky z-20 bg-slate-900 shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
+                    "group relative flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs font-medium text-[#666666] bg-white transition-colors",
+                    index === 0 && "sticky z-20 bg-white border-r border-[#e5e5e5]",
                     column.align === "right" && "justify-end",
                     dragColumnId === column.id && "opacity-40",
-                    dropColumnId === column.id && "shadow-[inset_2px_0_0_theme(colors.amber.500)]",
+                    dropColumnId === column.id && "shadow-[inset_2px_0_0_#3b82f6]",
                     columnDragEnabled && index > 0 && "cursor-grab active:cursor-grabbing",
                   )}
                   style={index === 0 ? { left: stickyLeft } : undefined}
                 >
                   {columnDragEnabled && index > 0 && (
-                    <GripVertical className="mr-1 h-3 w-3 shrink-0 text-slate-700 opacity-0 transition-opacity group-hover:opacity-100" />
+                    <GripVertical className="mr-1 h-3 w-3 shrink-0 text-[#cccccc] opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
 
                   {column.sortValue !== undefined ? (
@@ -645,8 +645,8 @@ export function RecordTable<T>({
                         }
                       }}
                       className={cn(
-                        "flex min-w-0 items-center gap-1 truncate transition-colors hover:text-slate-300",
-                        sortColumn === column.id && "text-slate-200",
+                        "flex min-w-0 items-center gap-1 truncate transition-colors hover:text-[#111111]",
+                        sortColumn === column.id && "text-[#111111] font-semibold",
                       )}
                     >
                       {/*
@@ -656,19 +656,19 @@ export function RecordTable<T>({
                         что таблица отсортирована.
                       */}
                       {column.icon && !(index === 0 && identifierCollapsed) && (
-                        <column.icon className="mr-1 h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                        <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />
                       )}
                       {!(index === 0 && identifierCollapsed) && (
                         <span className="truncate">{column.header}</span>
                       )}
-                      <span className={cn("text-xs", sortColumn === column.id ? "text-amber-400" : "opacity-0 group-hover:opacity-40")}>
+                      <span className={cn("text-xs", sortColumn === column.id ? "text-[#111111]" : "opacity-0 group-hover:opacity-40")}>
                         {sortColumn === column.id && sortAsc ? "▲" : "▼"}
                       </span>
                     </button>
                   ) : (
                     !(index === 0 && identifierCollapsed) && (
                       <span className="flex items-center gap-1 truncate">
-                        {column.icon && <column.icon className="mr-1 h-3.5 w-3.5 shrink-0 text-[#888888]" />}
+                        {column.icon && <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />}
                         <span className="truncate">{column.header}</span>
                       </span>
                     )
@@ -676,20 +676,21 @@ export function RecordTable<T>({
 
                   {/*
                     Хват ресайза у правой границы — только на десктопе: полоса
-                    4px пальцем не берётся, зато перехватывает начало
-                    горизонтального скролла таблицы.
+                    с запасом для захвата курсором и подсветкой при наведении.
                   */}
                   {!isMobile && (
                     <span
                       role="separator"
                       aria-orientation="vertical"
                       onMouseDown={(event) => startResize(event, column)}
-                      className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-amber-500/40"
+                      className="absolute -right-1 top-0 h-full w-2 cursor-col-resize z-20 hover:bg-[#3b82f6]/40 transition-colors"
                     />
                   )}
                 </div>
               ))}
-              <div className="border-r border-transparent" />
+              <div className="border-r border-[#e5e5e5] flex items-center justify-center text-[#888888]">
+                <Plus className="h-3.5 w-3.5 opacity-60" />
+              </div>
             </div>
 
             {/* Строки */}
@@ -703,20 +704,12 @@ export function RecordTable<T>({
                   key={id}
                   onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                   className={cn(
-                    // Фон строки задан сплошным цветом, а залипающие ячейки берут
-                    // его через bg-inherit: sticky-ячейка лежит поверх строки
-                    // отдельным слоем, и полупрозрачный фон складывался бы дважды —
-                    // первая колонка выглядела бы чёрной полосой поверх подсветки.
-                    // `text-sm` явно: без него ячейки наследовали базовый 16px от
-                    // body, а заголовок колонок набран `text-xs` — на четырёх
-                    // страницах CRM это читалось как «шрифт в карточках крупный»
-                    // и «вёрстка косая».
-                    "group grid border-b border-slate-800/70 text-sm text-slate-300",
+                    "group grid border-b border-[#e5e5e5] text-sm text-[#111111] transition-colors",
                     isSelected
-                      ? "bg-slate-800 shadow-[inset_2px_0_0_theme(colors.amber.500)]"
+                      ? "bg-[#f0f9ff] shadow-[inset_2px_0_0_#3b82f6]"
                       : isRowFocused
-                        ? "bg-slate-800/70"
-                        : "bg-slate-900 hover:bg-slate-800",
+                        ? "bg-[#fafafa]"
+                        : "bg-white hover:bg-[#fafafa]",
                     onRowClick !== undefined && "cursor-pointer",
                   )}
                   style={{ gridTemplateColumns: gridTemplate, minHeight: `${RECORD_TABLE_ROW_HEIGHT}px` }}
@@ -724,7 +717,7 @@ export function RecordTable<T>({
                   {selectionEnabled && (
                     <div
                       onClick={(event) => event.stopPropagation()}
-                      className="sticky left-0 z-10 flex items-center justify-center bg-inherit"
+                      className="sticky left-0 z-10 flex items-center justify-center bg-inherit border-r border-[#e5e5e5]"
                     >
                       <input
                         type="checkbox"
@@ -732,7 +725,7 @@ export function RecordTable<T>({
                         onChange={() => toggleOne(id)}
                         aria-label="Выбрать строку"
                         className={cn(
-                          "h-3.5 w-3.5 accent-amber-500 transition-opacity",
+                          "h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] transition-opacity",
                           isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                         )}
                       />
@@ -751,9 +744,9 @@ export function RecordTable<T>({
                           setFocusedRow(rowIndex);
                         }}
                         className={cn(
-                          "min-w-0 overflow-hidden border-r border-transparent",
-                          columnIndex === 0 && "sticky z-10 bg-inherit shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
-                          isCellFocused && "ring-1 ring-inset ring-amber-500/70",
+                          "min-w-0 overflow-hidden border-r border-[#e5e5e5] flex items-center relative",
+                          columnIndex === 0 && "sticky z-10 bg-inherit border-r border-[#e5e5e5]",
+                          isCellFocused && "ring-1 ring-[#3b82f6] rounded-[3px] -m-px bg-white z-20",
                         )}
                         style={columnIndex === 0 ? { left: stickyLeft } : undefined}
                       >
@@ -769,15 +762,15 @@ export function RecordTable<T>({
             {/* Итоговая строка с агрегатами */}
             {footerCells !== undefined && (
               <div
-                className="grid border-t border-[#e5e5e5] bg-[#fafafa] text-sm"
+                className="grid border-t border-[#e5e5e5] bg-[#fafafa] text-sm font-normal text-[#666666]"
                 style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
               >
-                {selectionEnabled && <div className="sticky left-0 z-10 bg-[#fafafa]" />}
+                {selectionEnabled && <div className="sticky left-0 z-10 bg-[#fafafa] border-r border-[#e5e5e5]" />}
                 {visibleColumns.map((column, index) => (
                   <div
                     key={column.id}
                     className={cn(
-                      "flex items-center overflow-hidden border-r border-transparent pl-2 pr-1 text-xs text-[#666666]",
+                      "flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs text-[#666666]",
                       index === 0 && "sticky z-10 bg-[#fafafa]",
                       column.align === "right" && "justify-end",
                     )}

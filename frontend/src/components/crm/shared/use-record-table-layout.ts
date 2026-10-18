@@ -43,6 +43,8 @@ export interface ColumnLayout {
   viewMode?: RecordViewMode;
   /** Ширина колонки канбана, px. Как `size` у Twenty RecordBoard. */
   kanbanColumnWidth?: number;
+  /** Индивидуальные ширины колонок канбана по этапам (stageId -> width). */
+  kanbanColumnWidths?: Record<string, number>;
 }
 
 /** Имя CSS-переменной ширины колонки. */
@@ -76,7 +78,7 @@ export function readLegacyRecordTableLayout(tableId: string | undefined): Column
 
     const candidate = parsed as Partial<ColumnLayout>;
 
-    const { widths, order, hidden, viewMode, kanbanColumnWidth } = candidate;
+    const { widths, order, hidden, viewMode, kanbanColumnWidth, kanbanColumnWidths } = candidate;
 
     if (typeof widths !== "object" || widths === null || Array.isArray(widths)) return null;
     if (!Array.isArray(order) || !Array.isArray(hidden)) return null;
@@ -90,12 +92,18 @@ export function readLegacyRecordTableLayout(tableId: string | undefined): Column
         ? kanbanColumnWidth
         : undefined;
 
+    const validKanbanWidths =
+      typeof kanbanColumnWidths === "object" && kanbanColumnWidths !== null && !Array.isArray(kanbanColumnWidths)
+        ? (kanbanColumnWidths as Record<string, number>)
+        : undefined;
+
     return {
       widths,
       order,
       hidden,
       ...(validViewMode === undefined ? {} : { viewMode: validViewMode }),
       ...(validKanbanWidth === undefined ? {} : { kanbanColumnWidth: validKanbanWidth }),
+      ...(validKanbanWidths === undefined ? {} : { kanbanColumnWidths: validKanbanWidths }),
     };
   } catch {
     // Битый JSON или запрещённый localStorage (приватный режим) не должны ронять

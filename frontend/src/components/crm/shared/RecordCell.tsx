@@ -132,7 +132,7 @@ export function RecordCellEditor({ value, onCommit, onCancel, type = "text", ali
   }, [draft, value, onCommit, onCancel]);
 
   return (
-    <div className="flex h-full items-center gap-1 bg-slate-950 px-1">
+    <div className="flex h-full items-center gap-1 bg-white px-1">
       <input
         ref={ref}
         value={draft}
@@ -150,7 +150,7 @@ export function RecordCellEditor({ value, onCommit, onCancel, type = "text", ali
           }
         }}
         className={cn(
-          "h-6 w-full min-w-0 rounded border border-amber-500 bg-slate-950 px-1.5 text-sm text-slate-100 outline-none",
+          "h-6 w-full min-w-0 rounded border border-[#3b82f6] bg-white px-1.5 text-xs text-[#111111] shadow-2xs outline-none",
           align === "right" && "text-right",
         )}
       />
@@ -178,7 +178,7 @@ export function RecordCellSelectEditor<T extends string>({
   }, []);
 
   return (
-    <div className="flex h-full items-center gap-1 bg-slate-950 px-1">
+    <div className="flex h-full items-center gap-1 bg-white px-1">
       <select
         ref={ref}
         value={value}
@@ -187,7 +187,7 @@ export function RecordCellSelectEditor<T extends string>({
         onKeyDown={(event) => {
           if (event.key === "Escape") onCancel();
         }}
-        className="h-6 w-full min-w-0 rounded border border-amber-500 bg-slate-950 px-1 text-sm text-slate-100 outline-none"
+        className="h-6 w-full min-w-0 rounded border border-[#3b82f6] bg-white px-1 text-xs text-[#111111] shadow-2xs outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
