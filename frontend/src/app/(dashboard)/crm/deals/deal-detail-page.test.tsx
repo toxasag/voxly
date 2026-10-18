@@ -173,7 +173,7 @@ describe("Страница сделки по прямой ссылке", () => {
     await userEvent.click(screen.getByRole("button", { name: "Чат" }));
 
     // Тот же чат, что в дровере: отдельной реализации на странице больше нет.
-    await waitFor(() => expect(screen.getByPlaceholderText("Написать сообщение...")).toBeDefined());
+    await waitFor(() => expect(screen.getByPlaceholderText(/Написать сообщение/)).toBeDefined());
   });
 
   it("показывает сумму и контактное лицо на «Главной»", async () => {

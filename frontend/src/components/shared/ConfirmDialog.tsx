@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
@@ -45,27 +44,27 @@ export function ConfirmDialog({
         className="w-full max-w-md rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-[#f0f0f0] px-6 py-4">
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
           <h2 className="text-sm font-semibold text-[#111111]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+            className="rounded-[6px] p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         {description && (
-          <div className="px-6 py-4">
-            <p className="text-[13px] text-[#666666]">{description}</p>
+          <div className="px-4 py-3">
+            <p className="text-xs text-[#666666]">{description}</p>
           </div>
         )}
-        <div className="flex items-center justify-end gap-2.5 px-6 py-4 border-t border-[#f0f0f0]">
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-[#e5e5e5]">
           <button
             type="button"
             onClick={onClose}
             disabled={isPending}
-            className="rounded-[8px] px-3.5 py-1.5 text-[13px] font-medium text-[#666666] hover:text-[#111111] hover:bg-black/[0.04] transition-colors disabled:opacity-50"
+            className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -74,10 +73,10 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={isPending}
             className={cn(
-              "rounded-[8px] px-4 py-1.5 text-[13px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+              "h-8 rounded-[8px] px-4 text-xs font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               variant === "destructive"
-                ? "bg-rose-600 text-white hover:bg-rose-500"
-                : "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
+                ? "bg-rose-600 hover:bg-rose-500"
+                : "bg-[#4a38f5] hover:bg-[#3b2be0]"
             )}
           >
             {isPending ? "Выполняем..." : confirmLabel}

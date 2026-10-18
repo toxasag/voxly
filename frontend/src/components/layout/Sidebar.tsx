@@ -44,7 +44,7 @@ const ENTITY_ICONS: Record<string, string> = {
   "/dashboard": "text-neutral-600",
   "/inbox": "text-violet-600",
   "/marketing/stories": "text-pink-500",
-  "/marketing/funnels": "text-amber-500",
+  "/marketing/funnels": "text-[#4a38f5]",
   "/modules/ai-bots": "text-indigo-600",
   "/repairs": "text-cyan-600",
   "/finance": "text-emerald-600",

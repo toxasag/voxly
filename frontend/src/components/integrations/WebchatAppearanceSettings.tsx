@@ -144,7 +144,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             type="button"
             onClick={handleSave}
             disabled={updateAccount.isPending}
-            className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
           >
             {updateAccount.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -207,7 +207,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
                   placeholder="#F59E0B"
-                  className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs font-mono text-slate-200 focus:border-amber-500 focus:outline-none"
+                  className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs font-mono text-slate-200 focus:border-[#4a38f5] focus:outline-none"
                 />
               </div>
             </div>
@@ -225,7 +225,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 className={cn(
                   "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
                   theme === "dark"
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                    ? "border-[#4a38f5]/50 bg-[#4a38f5]/10 text-amber-300"
                     : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200",
                 )}
               >
@@ -238,7 +238,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 className={cn(
                   "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
                   theme === "light"
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                    ? "border-[#4a38f5]/50 bg-[#4a38f5]/10 text-amber-300"
                     : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200",
                 )}
               >
@@ -251,7 +251,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 className={cn(
                   "flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-medium transition-colors",
                   theme === "auto"
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                    ? "border-[#4a38f5]/50 bg-[#4a38f5]/10 text-amber-300"
                     : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200",
                 )}
               >
@@ -274,7 +274,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Онлайн-консультант"
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none"
               />
             </div>
 
@@ -287,7 +287,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 onChange={(e) => setGreeting(e.target.value)}
                 rows={3}
                 placeholder="Здравствуйте! Чем я могу вам помочь?"
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none"
               />
               <p className="mt-1 text-xs text-slate-500">
                 Показывается посетителю при первом открытии окна чата.
@@ -301,7 +301,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 value={placeholder}
                 onChange={(e) => setPlaceholder(e.target.value)}
                 placeholder="Напишите сообщение..."
-                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none"
               />
             </div>
           </div>
@@ -318,7 +318,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 className={cn(
                   "rounded-lg border p-3 text-left transition-colors",
                   position === "bottom-right"
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                    ? "border-[#4a38f5]/50 bg-[#4a38f5]/10 text-amber-300"
                     : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200",
                 )}
               >
@@ -332,7 +332,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 className={cn(
                   "rounded-lg border p-3 text-left transition-colors",
                   position === "bottom-left"
-                    ? "border-amber-500/50 bg-amber-500/10 text-amber-300"
+                    ? "border-[#4a38f5]/50 bg-[#4a38f5]/10 text-amber-300"
                     : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700 hover:text-slate-200",
                 )}
               >
@@ -360,7 +360,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   onChange={(e) => setShowTelegramBanner(e.target.checked)}
                   className="peer sr-only"
                 />
-                <div className="peer h-6 w-11 rounded-full bg-slate-800 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-slate-400 after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:bg-slate-950"></div>
+                <div className="peer h-6 w-11 rounded-full bg-slate-800 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-slate-400 after:transition-all after:content-[''] peer-checked:bg-[#4a38f5] peer-checked:after:translate-x-full peer-checked:after:bg-slate-950"></div>
               </label>
             </div>
 
@@ -374,7 +374,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   value={telegramBot}
                   onChange={(e) => setTelegramBot(e.target.value)}
                   placeholder="@company_ai_bot"
-                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-[#4a38f5] focus:outline-none"
                 />
               </div>
             )}
@@ -388,7 +388,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
               <div className="flex items-center gap-2">
                 <div className="flex gap-1.5">
                   <div className="h-3 w-3 rounded-full bg-rose-500/80"></div>
-                  <div className="h-3 w-3 rounded-full bg-amber-500/80"></div>
+                  <div className="h-3 w-3 rounded-full bg-[#4a38f5]/80"></div>
                   <div className="h-3 w-3 rounded-full bg-emerald-500/80"></div>
                 </div>
                 <div className="ml-2 flex items-center gap-1 rounded bg-slate-900 px-3 py-1 text-xs text-slate-400">

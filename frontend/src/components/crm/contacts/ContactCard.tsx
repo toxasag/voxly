@@ -20,6 +20,7 @@ import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordRepairsTab } from "@/components/crm/shared/RecordRepairsTab";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
+import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
@@ -252,7 +253,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => commit({ phones: phoneDraft })}
-                  className="rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
                 >
                   Сохранить
                 </button>
@@ -345,7 +346,7 @@ export const ContactCard = memo(function ContactCard({
                 <button
                   type="button"
                   onClick={() => commit({ socials: socialDraft })}
-                  className="rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-amber-400"
+                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
                 >
                   Сохранить
                 </button>
@@ -435,6 +436,15 @@ export const ContactCard = memo(function ContactCard({
     objectType: "contact",
     contents: {
       home: homeTab,
+      chat: (
+        <div className="h-full min-h-[450px]">
+          <CrmChatView
+            entityType="contact"
+            entityId={contact.id}
+            entityName={contactFullName(contact)}
+          />
+        </div>
+      ),
       repairs: <RecordRepairsTab customerId={contact.id} />,
       tasks: <RecordTasksTab targetType="contact" targetId={contact.id} />,
       notes: <RecordNotesTab targetType="contact" targetId={contact.id} />,

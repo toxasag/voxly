@@ -24,7 +24,7 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950">
         <div className="flex items-center gap-3 text-slate-400">
-          <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+          <Loader2 className="h-5 w-5 animate-spin text-[#4a38f5]" />
           <span className="text-sm">Проверка прав доступа…</span>
         </div>
       </div>
@@ -35,14 +35,14 @@ export function PlatformOwnerGuard({ children }: PlatformOwnerGuardProps) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center max-w-md">
-          <ShieldAlert className="mx-auto h-10 w-10 text-amber-500" />
+          <ShieldAlert className="mx-auto h-10 w-10 text-[#4a38f5]" />
           <h1 className="mt-4 text-lg font-semibold text-slate-100">Требуется вход</h1>
           <p className="mt-2 text-sm text-slate-400">
             Платформенная панель доступна только после авторизации.
           </p>
           <Link
             href="/login"
-            className="mt-6 inline-flex items-center rounded-lg bg-amber-500 px-5 py-2.5 text-sm font-semibold text-slate-950 transition-all duration-200 hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-[0.97]"
+            className="mt-6 inline-flex items-center rounded-lg bg-[#4a38f5] px-5 py-2.5 text-sm font-semibold text-slate-950 transition-all duration-200 hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50 active:scale-[0.97]"
           >
             Войти
           </Link>

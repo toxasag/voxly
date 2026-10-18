@@ -17,6 +17,9 @@ import type { TransactionDTO, InvoiceDTO, PnlDTO } from "@/lib/api/use-invoices"
 import { useAccounts, useTransactions, useInvoices, usePnl, useCreateTransaction, useTransfer, useCreateInvoice } from "@/lib/api/use-invoices";
 import type { CreateTransactionPayload } from "@/schemas/finance.schema";
 import type { PrefilledInvoicePayload } from "@/components/finance/InvoiceCreateModal";
+import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
+import { RecordCellShell } from "@/components/crm/shared/RecordCell";
+import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
 type FinanceTab = "transactions" | "invoices" | "pnl";
@@ -144,6 +147,79 @@ function FinancePageContent() {
     await createInvoiceMutation.mutateAsync(payload);
   }, [createInvoiceMutation]);
 
+  const invoiceColumns = useMemo<RecordColumn<Invoice>[]>(
+    () => [
+      {
+        id: "invoice_number",
+        header: "Счёт №",
+        width: 140,
+        sortValue: (inv) => inv.invoice_number,
+        render: (inv) => (
+          <RecordCellShell isLabelIdentifier>
+            <span className="font-mono text-xs font-medium text-[#111111]">{inv.invoice_number}</span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "company_name",
+        header: "Компания",
+        width: 220,
+        sortValue: (inv) => inv.company_name,
+        render: (inv) => (
+          <RecordCellShell>
+            <span className="truncate text-xs text-[#111111]">{inv.company_name}</span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "total",
+        header: "Сумма",
+        width: 140,
+        align: "right",
+        sortValue: (inv) => inv.total,
+        render: (inv) => (
+          <RecordCellShell align="right">
+            <span className="font-mono text-xs font-medium text-[#111111]">
+              {new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(inv.total)}
+            </span>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "status",
+        header: "Статус",
+        width: 120,
+        sortValue: (inv) => inv.status,
+        render: (inv) => {
+          const color: TagColor =
+            inv.status === "paid"
+              ? "emerald"
+              : inv.status === "overdue"
+                ? "rose"
+                : inv.status === "sent"
+                  ? "sky"
+                  : "slate";
+          return (
+            <RecordCellShell>
+              <TagPill color={color}>{INVOICE_STATUS_TEXT[inv.status] ?? inv.status}</TagPill>
+            </RecordCellShell>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "",
+        width: 48,
+        render: () => (
+          <RecordCellShell>
+            <span className="text-xs text-[#888888]">→</span>
+          </RecordCellShell>
+        ),
+      },
+    ],
+    [],
+  );
+
   return (
     <Guard requiredPermission="finance:read" requiredModule="finance">
       <div className="space-y-5">
@@ -153,7 +229,7 @@ function FinancePageContent() {
             <button type="button" onClick={() => setTransferOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-400 hover:bg-sky-500/20 transition-colors"><ArrowRightLeft className="h-3.5 w-3.5" />Перевод</button>
             <button type="button" onClick={() => setInvoiceCreateOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"><Receipt className="h-3.5 w-3.5" />Новый счёт</button>
             <button type="button" onClick={() => setTxModalOpen(true)}
-              className={cn("flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors bg-amber-500 text-slate-950 hover:bg-amber-400")}><Plus className="h-4 w-4" />Операция</button>
+              className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3b2be0]")}><Plus className="h-4 w-4" />Операция</button>
           </div>
         </div>
 
@@ -161,35 +237,32 @@ function FinancePageContent() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-500/10 p-1.5"><TrendingUp className="h-4 w-4 text-emerald-400" /></div><span className="text-xs font-medium text-slate-500">Доходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-slate-100">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyIncome)}</p></div>
           <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-rose-500/10 p-1.5"><TrendingDown className="h-4 w-4 text-rose-400" /></div><span className="text-xs font-medium text-slate-500">Расходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-slate-100">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyExpense)}</p></div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-amber-500/10 p-1.5"><DollarSign className="h-4 w-4 text-amber-400" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div><p className={cn("mt-2 text-2xl font-bold", monthlyPnL >= 0 ? "text-emerald-400" : "text-rose-400")}>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyPnL)}</p></div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div><p className={cn("mt-2 text-2xl font-bold", monthlyPnL >= 0 ? "text-emerald-400" : "text-rose-400")}>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyPnL)}</p></div>
         </div>
 
         <BalanceCards accounts={accounts} />
 
         {/* Tab Switcher */}
         <div className="flex items-center gap-1 rounded-lg bg-slate-900 border border-slate-800 p-1 w-fit">
-          {TABS.map(t => { const Icon = t.icon; return (<button key={t.key} type="button" onClick={() => setTab(t.key)} className={cn("flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors", tab === t.key ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-slate-200")}><Icon className="h-4 w-4" />{t.label}</button>); })}
+          {TABS.map(t => { const Icon = t.icon; return (<button key={t.key} type="button" onClick={() => setTab(t.key)} className={cn("flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer", tab === t.key ? "bg-[#4a38f5] text-white" : "text-slate-400 hover:text-slate-200")}><Icon className="h-3.5 w-3.5" />{t.label}</button>); })}
         </div>
 
         {/* Tab Content */}
         {tab === "transactions" && <TransactionsTable transactions={transactions} searchQuery={searchParams.get("search") ?? ""} onSearchChange={() => {}} filterType={"all"} onFilterTypeChange={() => {}} isLoading={txLoading} isError={txError} error={txError ? new Error("Failed to load transactions") : null} />}
         {tab === "invoices" && (
-          <div className="rounded-xl border border-slate-800 bg-slate-900 overflow-hidden">
-            <table className="w-full"><thead><tr className="border-b border-slate-800"><th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Счёт №</th><th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase">Компания</th><th className="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase w-[120px]">Сумма</th><th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase w-[90px]">Статус</th><th className="px-4 py-3 w-[48px]"></th></tr></thead>
-              <tbody className="divide-y divide-slate-800">
-                {invoicesLoading(invLoading, invoices)}
-                {invoices.map(inv => (
-                  <tr key={inv.id} onClick={() => setInvoiceViewTarget(inv)} className="cursor-pointer hover:bg-slate-800/50 transition-colors">
-                    <td className="px-4 py-3.5"><span className="text-sm font-mono font-semibold text-slate-200">{inv.invoice_number}</span></td>
-                    <td className="px-4 py-3.5"><span className="text-sm text-slate-300">{inv.company_name}</span></td>
-                    <td className="px-4 py-3.5 text-right"><span className="text-sm font-bold text-slate-200">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(inv.total)}</span></td>
-                    <td className="px-4 py-3.5"><span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", inv.status === "paid" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : inv.status === "overdue" ? "bg-rose-500/10 text-rose-400 border-rose-500/30" : inv.status === "sent" ? "bg-sky-500/10 text-sky-400 border-sky-500/30" : "bg-slate-500/10 text-slate-400 border-slate-500/30")}>{inv.status}</span></td>
-                    <td className="px-4 py-3.5"><span className="text-xs text-slate-600">→</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RecordTable
+            rows={invoices}
+            columns={invoiceColumns}
+            getRowId={(inv) => inv.id}
+            tableId="finance_invoices"
+            onRowClick={(inv) => setInvoiceViewTarget(inv)}
+            emptyState={
+              <div className="flex flex-col items-center gap-2 py-16 text-center">
+                <Receipt className="h-8 w-8 text-[#888888]" />
+                <p className="text-xs text-[#666666]">Нет счетов</p>
+              </div>
+            }
+          />
         )}
         {tab === "pnl" && <ProfitLossView transactions={transactions} />}
 

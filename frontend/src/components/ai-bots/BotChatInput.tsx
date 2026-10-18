@@ -79,7 +79,7 @@ export const BotChatInput = memo(function BotChatInput({
       <div
         className={cn(
           "flex items-end gap-2 rounded-lg border bg-slate-950 px-3 py-2.5 transition-colors",
-          error ? "border-rose-500" : "border-slate-700 focus-within:border-amber-500",
+          error ? "border-rose-500" : "border-slate-700 focus-within:border-[#4a38f5]",
         )}
       >
         <textarea
@@ -113,7 +113,7 @@ export const BotChatInput = memo(function BotChatInput({
             type="submit"
             disabled={!canSend}
             aria-label="Отправить сообщение"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-slate-950 transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5] text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {disabled ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </button>

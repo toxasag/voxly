@@ -106,7 +106,7 @@ function MarkupEditor({ tenant }: { tenant: AdminTenantDTO }) {
         }}
         disabled={isSaving}
         aria-label={`Наценка на токены для ${tenant.name}, %`}
-        className="w-16 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-xs text-slate-100 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/30 disabled:opacity-50"
+        className="w-16 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-right text-xs text-slate-100 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/30 disabled:opacity-50"
       />
       <span className="text-xs text-slate-500">%</span>
       {isSaving && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}

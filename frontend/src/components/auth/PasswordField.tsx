@@ -51,7 +51,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             aria-describedby={error !== undefined ? errorId : undefined}
             className={cn(
               "w-full rounded-lg border bg-slate-900 py-3 pl-10 pr-11 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-              "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
+              "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
               error !== undefined ? "border-rose-500" : "border-slate-700",
               className,
             )}
@@ -69,7 +69,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             onClick={() => setVisible((previous) => !previous)}
             aria-label={visible ? "Скрыть пароль" : "Показать пароль"}
             aria-pressed={visible}
-            className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition-colors hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
+            className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition-colors hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#4a38f5]/40"
           >
             {visible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>

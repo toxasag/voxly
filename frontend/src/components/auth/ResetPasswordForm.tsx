@@ -77,7 +77,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           Вернуться к входу
         </a>
@@ -96,7 +96,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         </p>
         <a
           href="/login"
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
         >
           Войти
           <ArrowRight className="h-4 w-4" />
@@ -137,7 +137,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         disabled={isSubmitting}
         className={cn(
           "flex w-full items-center justify-center gap-2 rounded-lg py-3 text-sm font-semibold transition-colors",
-          "bg-amber-500 text-slate-950 hover:bg-amber-400",
+          "bg-[#4a38f5] text-white hover:bg-[#3b2be0]",
           "disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
@@ -156,7 +156,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
 
       <p className="text-center text-sm text-slate-400">
         Вспомнили пароль?{" "}
-        <a href="/login" className="font-medium text-amber-500 hover:text-amber-400">
+        <a href="/login" className="font-medium text-[#4a38f5] hover:text-[#4a38f5]">
           Войти
         </a>
       </p>

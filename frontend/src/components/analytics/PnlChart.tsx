@@ -55,11 +55,12 @@ export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
           <Tooltip
             formatter={(value) => formatTooltip(Number(value))}
             contentStyle={{
-              backgroundColor: "rgb(15, 23, 42)",
-              border: "1px solid rgb(51, 65, 85)",
+              backgroundColor: "#ffffff",
+              border: "1px solid #e5e5e5",
               borderRadius: "8px",
               fontSize: "13px",
-              color: "#e2e8f0",
+              color: "#111111",
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
             }}
             itemStyle={{ padding: "2px 0" }}
           />
@@ -70,7 +71,7 @@ export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
           <Bar
             dataKey="revenue"
             name="Выручка"
-            fill="rgb(245, 158, 11)"
+            fill="#4a38f5"
             radius={[3, 3, 0, 0]}
             barSize={24}
           />

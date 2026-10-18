@@ -206,7 +206,7 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       className={cn(
         "flex flex-col rounded-xl border p-5 transition-all",
         module.installed
-          ? "border-amber-500/40 bg-slate-900"
+          ? "border-[#4a38f5]/40 bg-slate-900"
           : "border-slate-800 bg-slate-900 hover:border-slate-700",
       )}
     >
@@ -214,7 +214,7 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         <div
           className={cn(
             "flex h-10 w-10 items-center justify-center rounded-xl",
-            module.installed ? "bg-amber-500/10" : "bg-slate-800",
+            module.installed ? "bg-[#4a38f5]/10" : "bg-slate-800",
           )}
         >
           <Icon className={cn("h-5 w-5", module.installed ? "text-amber-400" : "text-slate-500")} />
@@ -228,7 +228,7 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
           выглядел бы как поломка, а его отсутствие сразу объясняет правило.
         */}
         {module.isBaseModule ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-amber-400">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-amber-400">
             <Lock className="h-3 w-3" />
             Базовый тариф
           </span>
@@ -392,7 +392,7 @@ function BillingBar() {
             <p className="text-xs text-slate-500">Пользователей в портале</p>
             <Link
               href="/settings/team"
-              className="text-sm font-semibold text-slate-200 underline-offset-2 hover:text-amber-400 hover:underline"
+              className="text-sm font-semibold text-slate-200 underline-offset-2 hover:text-[#4a38f5] hover:underline"
             >
               {data.usersCount}
             </Link>
@@ -400,7 +400,7 @@ function BillingBar() {
 
           <Link
             href="/settings/billing"
-            className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-amber-400"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#3b2be0]"
           >
             <CreditCard className="h-4 w-4" />
             Оплатить и управлять подпиской
@@ -446,7 +446,7 @@ export default function MarketplacePage() {
               className={cn(
                 "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 category === cat
-                  ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                   : "border-slate-700 text-slate-500 hover:border-slate-600 hover:text-slate-300",
               )}
             >

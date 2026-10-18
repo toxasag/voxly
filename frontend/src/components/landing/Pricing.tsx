@@ -73,10 +73,10 @@ export function Pricing() {
           {plans.map((plan) => (
             <div
               key={plan.name}
-              className={"relative rounded-xl border p-6 transition-colors duration-200 hover:border-slate-700 " + (plan.highlight ? "border-amber-500/50 bg-slate-900" : "border-slate-800 bg-slate-900")}
+              className={"relative rounded-xl border p-6 transition-colors duration-200 hover:border-slate-700 " + (plan.highlight ? "border-[#4a38f5]/50 bg-slate-900" : "border-slate-800 bg-slate-900")}
             >
               {plan.highlight && (
-                <span className="absolute -top-3 left-6 rounded-full bg-amber-500 px-3 py-0.5 text-xs font-semibold text-slate-950">
+                <span className="absolute -top-3 left-6 rounded-full bg-[#4a38f5] px-3 py-0.5 text-xs font-semibold text-slate-950">
                   Популярный
                 </span>
               )}
@@ -99,7 +99,7 @@ export function Pricing() {
                 href="/login"
                 className={"mt-8 flex w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-[0.97] " +
                   (plan.highlight
-                    ? "bg-amber-500 text-slate-950 hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                    ? "bg-[#4a38f5] text-white hover:bg-[#3b2be0] focus-visible:ring-2 focus-visible:ring-[#4a38f5]/50"
                     : "border border-slate-700 bg-slate-800 text-slate-100 hover:border-slate-600 hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-slate-400/30")}
               >
                 {plan.price === "0" ? "Начать" : "Подключить"}

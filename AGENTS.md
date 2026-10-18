@@ -240,36 +240,43 @@ Usage:
 
 ---
 
-## 6. UI / DESIGN SYSTEM (Twenty CRM Light Standard)
+## 6. UI / DESIGN SYSTEM (Twenty CRM / Table Reference)
 
-### Color Palette & Design Tokens
+> Официальная спецификация интерфейса, дизайн-токенов, сетки и компонентов GETVOXLY.
+> Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
 
-| Role | Token / Hex | Usage |
+### Color Palette & Design Tokens (Light Canvas)
+
+| Role | Token / Value | Usage |
 |---|---|---|
-| Page background / Canvas | `#ffffff` | `<body>`, главный фон дашборда, белые карточки |
-| Secondary surface / Column | `#fbfbfb` / `#fafafa` | Колонки канбана, серые панели, hover `bg-black/[0.04]` |
-| Border (subtle) | `#e5e5e5` | Рамки карточек, разделители таблиц, инпуты |
-| Border (hover) | `#cccccc` | Рамка карточки или инпута при наведении |
-| Border (divider) | `#f0f0f0` | Внутренние тонкие разделители шапок и списков |
-| Text primary | `#111111` / `#000000` | Заголовки, названия сделок и контактов, основной текст |
-| Text secondary | `#666666` | Описания, мета-информация, подписи |
-| Text muted | `#888888` | Плейсхолдеры, иконки в покое, счетчики |
-| **Primary accent** | `#4a38f5` (Indigo) | Кнопки действий, активные вкладки, фокус, чекбоксы |
-| **Primary hover** | `#3d2ee0` | Наведение на primary-кнопки |
-| Success | `#15803d` / `emerald-600` | Положительные статусы (closed_won, выполнено) |
-| Danger / Destructive | `#dc2626` / `rose-600` | Удаление, ошибки, closed_lost, просрочено |
-| Warning / Notes | `#854d0e` / `#fef08a` | Текст `#854d0e`, рамка `#fef08a`, фон `#fefce8` (чип заметки) |
-| Info / Tag | `#4a38f5`/10 | Теги, пилюли категорий, бейджи каналов |
+| **Canvas Background** | `#ffffff` (`--color-bg`) | Основной фон страниц, панелей, ячеек |
+| **Sidebar / Secondary** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Сайдбар навигации, шапка, подложки, свимлейны |
+| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, поповеры, `hover:bg-black/[0.04]` |
+| **Border / Divider** | `#e5e5e5` (`--color-border`) | Разделители строк, границы карточек, колонок, инпутов |
+| **Border (hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
+| **Border (divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок и списков |
+| **Text Primary** | `#111111` / `#000000` | Заголовки, названия сделок, значения в ячейках, основной текст |
+| **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, описания, таймстампы |
+| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), иконки в тулбарах, счетчики |
+| **Primary CTA Accent** | `#4a38f5` (Indigo) | Главная кнопка действия, бренд-маркер, активный таб, фокус |
+| **Primary Hover** | `#3d2ee0` | Наведение на primary-кнопки |
+| **Secondary Accent** | `#aaaaaa` (`--color-secondary`) | Второстепенные контролы, неактивные переключатели |
+| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:ring-[#4a38f5]/20`) |
+| **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
+| Success | `emerald-600` / `#15803d` / `#dcfce7` | Положительные статусы (closed_won, paid, ready, выполнено) |
+| Danger / Destructive | `rose-600` / `#dc2626` / `#ffe4e6` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
+| Warning / Notes | `#854d0e` / `#fef08a` / `#fefce8` | Текст `#854d0e`, рамка `#fef08a`, фон `#fefce8` (чип заметки) |
+| Info / Tag | `sky-600` / `#4a38f5`/10 | Информационные бейджи, теги, ссылки |
 
-### Typography & Metrics
-- **Fonts:** `Inter` (sans-serif) для UI; `DM Mono` для числовых идентификаторов, дат, сумм и валют.
-- **Base size:** 13px (`text-[13px]`) для строк таблиц, полей ввода и карточек; 12px (`text-xs`) для метаданных.
-- **Row height:** 32px (`h-8`) — эталонная компактная высота строки таблицы и инпутов в Twenty CRM.
-- **Border radii:**
-  - `16px` (`rounded-2xl` / `rounded-[16px]`): модальные окна, дроверы, листы.
+### Typography & Spacing
+- **Шрифты:** `Inter` (UI sans-serif для текста и заголовков), `DM Mono` (моноширинный для ID, сумм, дат, валют).
+- **Размеры:** Display `13.3px`, H1 `13px`, Body `13px` / `12px` (`text-xs`), Label `11px`, Tiny `10px`.
+- **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`, `h-8`).
+- **Скругления:**
+  - `16px` (`rounded-2xl` / `rounded-[16px]`): модальные окна, боковые шторки (дроверы), листы.
   - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки.
   - `4px` (`rounded-[4px]`): бейджи, теги, чипы заметок, чекбоксы.
-- **Animations:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
+- **Анимации:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
 
 ### Component Patterns
 
@@ -281,14 +288,14 @@ Usage:
 **Primary Button:**
 ```tsx
 <Button className="h-8 rounded-[8px] bg-[#4a38f5] px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0]">
-  Save
+  Сохранить
 </Button>
 ```
 
 **Destructive Button:**
 ```tsx
 <Button className="h-8 rounded-[8px] bg-rose-600 px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-rose-500">
-  Delete
+  Удалить
 </Button>
 ```
 
@@ -304,42 +311,34 @@ Usage:
 </div>
 ```
 
-**Status Badge:**
+**Status Badge (TagPill):**
 ```tsx
-const statusVariants: Record<string, string> = {
-  active:       'bg-emerald-50 text-emerald-700 border-emerald-200',
-  pending:      'bg-amber-50 text-amber-700 border-amber-200',
-  closed_won:   'bg-emerald-50 text-emerald-700 border-emerald-200',
-  closed_lost:  'bg-rose-50 text-rose-700 border-rose-200',
-  overdue:      'bg-rose-50 text-rose-700 border-rose-200',
-};
+import { TagPill, type TagColor } from "@/components/ui/tag";
 
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span className={cn(
-      'inline-flex items-center rounded-[4px] border px-2 py-0.5 text-xs font-medium',
-      statusVariants[status] ?? 'bg-slate-100 text-slate-700 border-slate-200'
-    )}>
-      {status}
-    </span>
-  );
-}
+<TagPill color="emerald">Активен</TagPill>
+<TagPill color="amber">В обработке</TagPill>
+<TagPill color="rose">Отменён</TagPill>
 ```
 
-**Table row (hover state & 32px height):**
+**Table (RecordTable):**
 ```tsx
-<tr className="h-8 border-b border-[#e5e5e5] hover:bg-black/[0.02] transition-colors text-[13px]">
+<RecordTable
+  rows={items}
+  columns={columns}
+  getRowId={(item) => item.id}
+  tableId="module_table"
+/>
 ```
 
 ### Layout Rules
-- Max content width: `max-w-7xl` with `mx-auto` centering.
-- Sidebar: fixed width `w-60` (collapsible to `w-16` on toggle), `bg-white border-r border-[#e5e5e5]`. **На мобильном (< 768px) сайдбара нет вовсе** — он скрывается классом `hidden md:flex`, а навигация уходит в маршрут-меню и нижний бар.
-- Header: `h-14` or `h-16`, `bg-white border-b border-[#e5e5e5]`, sticky to top.
-- Grid gaps: `gap-4` or `gap-6` between cards.
-- Один брейкпоинт на портал — `md:` (768px). **Структурная раскладка строится на Tailwind-префиксах, а не на хуке `useIsMobile`:** `matchMedia` недоступен при SSR, поэтому любая структурная зависимость от хука даёт вспышку десктопной раскладки на телефоне.
-- **Прокрутку фона и закрытие по Escape делает только `useOverlay`** (`lib/utils/use-scroll-lock.ts`). Прямые обращения к `document.body.style.overflow` и собственные слушатели `keydown` в компонентах запрещены: 18 независимых реализаций уже дали два дефекта — прокрутка возвращалась при закрытии верхнего из нескольких оверлеев, а Escape закрывал их все разом.
+- **Паттерн боковых шторок (Slide-Over Drawers):** Просмотр и редактирование сущностей происходят в правой боковой шторке (`Sheet.tsx`), а не в центрированных модальных окнах. Синхронизируется с URL (`?record=<id>`).
+- **Строка таблицы:** Фиксированная высота `32px`, липкие колонки чекбокса (`28px`) и первой колонки (`COLLAPSED_IDENTIFIER_WIDTH = 38px`), ресайз колонок через CSS-переменные напрямую в DOM.
+- **Сайдбар:** фиксированная ширина `w-60` (складывается до `w-16`), `bg-[#fbfbfb] border-r border-[#e5e5e5]`. На мобильном (< 768px) скрывается (`hidden md:flex`), а навигация уходит в маршрут-меню и нижний бар.
+- **Шапка:** `h-14`, `bg-white border-b border-[#e5e5e5]`, sticky к верху.
+- **Один брейкпоинт:** `md:` (768px). Структурная раскладка строится на Tailwind-префиксах, а не на `useIsMobile`.
+- **Оверлеи:** Прокрутку фона и закрытие по Escape выполняет исключительно `useOverlay` (`lib/utils/use-scroll-lock.ts`).
 
-Полные правила вёрстки — `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
+Полные правила вёрстки — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `docs/01_ARCHITECTURE/01_05_UI_CONVENTIONS.md`.
 
 ---
 
@@ -396,7 +395,7 @@ export function CreateContactForm({ onSuccess }: { onSuccess: () => void }) {
           )}
         />
         {/* ...remaining fields */}
-        <Button type="submit" disabled={mutation.isPending} className="bg-amber-500 text-slate-950 hover:bg-amber-400">
+        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3b2be0]">
           {mutation.isPending ? 'Saving...' : 'Create Contact'}
         </Button>
       </form>

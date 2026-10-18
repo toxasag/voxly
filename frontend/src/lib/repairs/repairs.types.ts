@@ -120,8 +120,8 @@ const STATUS_LABELS: Record<RepairStatus, string> = {
 const STATUS_COLORS: Record<RepairStatus, string> = {
   intake: "bg-slate-500/10 text-slate-400 border-slate-500/30",
   diagnostics: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-  approval: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  in_progress: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  approval: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
+  in_progress: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
   ready: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   issued: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   rejected: "bg-rose-500/10 text-rose-400 border-rose-500/30",

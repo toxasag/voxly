@@ -237,7 +237,7 @@ export default function RepairDetailPage() {
                 const Icon = t.icon;
                 return (
                   <button key={t.key} type="button" onClick={() => setTab(t.key)}
-                    className={cn("flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors", tab === t.key ? "bg-amber-500 text-slate-950" : "text-slate-400 hover:text-slate-200")}>
+                    className={cn("flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors", tab === t.key ? "bg-[#4a38f5] text-white" : "text-slate-400 hover:text-slate-200")}>
                     <Icon className="h-3.5 w-3.5" />{t.label}</button>
                 );
               })}

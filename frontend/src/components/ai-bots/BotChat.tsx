@@ -160,7 +160,7 @@ export function BotChat({ bot }: BotChatProps) {
           <MessageSquare className="h-4 w-4 text-slate-500" />
           <span className="text-sm font-semibold text-slate-200">Чат</span>
           {isStreaming && (
-            <span className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-400">
+            <span className="flex items-center gap-1.5 rounded-full border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-2 py-0.5 text-xs font-medium text-amber-400">
               <span className="flex gap-0.5">
                 <span className="h-1 w-1 animate-bounce rounded-full bg-amber-400 [animation-delay:0ms]" />
                 <span className="h-1 w-1 animate-bounce rounded-full bg-amber-400 [animation-delay:120ms]" />

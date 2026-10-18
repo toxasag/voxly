@@ -295,23 +295,23 @@ export function DealsToolbar(props: Props) {
       {duplicatesOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4" onClick={() => setDuplicatesOpen(false)}>
           <div className="w-full max-w-md rounded-[16px] border border-[#e5e5e5] bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-[#f0f0f0] px-6 py-4">
+            <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
               <h2 className="text-sm font-semibold text-[#111111]">Возможные дубли</h2>
-              <button type="button" onClick={() => setDuplicatesOpen(false)} className="rounded-[6px] p-1.5 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"><X className="h-4 w-4" /></button>
+              <button type="button" onClick={() => setDuplicatesOpen(false)} className="rounded-[6px] p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"><X className="h-4 w-4" /></button>
             </div>
-            <div className="max-h-80 space-y-2 overflow-y-auto px-6 py-4">
+            <div className="max-h-80 space-y-2 overflow-y-auto px-4 py-3">
               {props.duplicates.length === 0 ? (
-                <p className="py-6 text-center text-sm text-[#15803d]">Дублей не найдено — все названия уникальны.</p>
+                <p className="py-6 text-center text-xs text-[#15803d]">Дублей не найдено — все названия уникальны.</p>
               ) : (
                 props.duplicates.map((group) => (
-                  <div key={group.title} className="rounded-[8px] border border-amber-200 bg-amber-50 p-3">
-                    <p className="truncate text-[13px] font-medium text-[#111111]">{group.title}</p>
-                    <p className="mt-1 text-xs text-[#666666]">{group.count} сделки на этапах: {group.stages.join(", ")}</p>
+                  <div key={group.title} className="rounded-[8px] border border-amber-200 bg-amber-50 p-2.5">
+                    <p className="truncate text-xs font-medium text-[#111111]">{group.title}</p>
+                    <p className="mt-1 text-[11px] text-[#666666]">{group.count} сделки на этапах: {group.stages.join(", ")}</p>
                   </div>
                 ))
               )}
             </div>
-            <p className="border-t border-[#f0f0f0] px-6 py-3 text-xs text-[#888888]">Поиск сравнивает нормализованные названия сделок текущей воронки.</p>
+            <p className="border-t border-[#e5e5e5] px-4 py-2.5 text-[11px] text-[#888888]">Поиск сравнивает нормализованные названия сделок текущей воронки.</p>
           </div>
         </div>
       )}

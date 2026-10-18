@@ -222,4 +222,36 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const options = await messaging.getSendFromOptions(request.tenant_id, id);
     return reply.send({ data: options, meta: { total: options.length } });
   });
+
+  /**
+   * Статус автопилота AI для сделки.
+   */
+  app.get("/:id/ai-status", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const status = await messaging.getAiStatus(request.tenant_id, id);
+    return reply.send({ data: status });
+  });
+
+  const aiControlSchema = z.object({
+    action: z.enum(["enable", "pause", "disable"]),
+  });
+
+  /**
+   * Управление режимом автопилота AI (включение, пауза на 1 час, выключение).
+   */
+  app.post("/:id/ai-control", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { action } = aiControlSchema.parse(request.body);
+    const status = await messaging.setAiControl(request.tenant_id, id, action);
+    return reply.send({ data: status });
+  });
+
+  /**
+   * AI Copilot: генерация черновика ответа оператора по контексту диалога и базе знаний.
+   */
+  app.post("/:id/ai-draft", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const draft = await messaging.generateAiDraft(request.tenant_id, id);
+    return reply.send({ data: draft });
+  });
 }

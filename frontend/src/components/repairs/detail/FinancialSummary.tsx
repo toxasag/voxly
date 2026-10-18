@@ -89,7 +89,7 @@ export const FinancialSummary = memo(function FinancialSummary({
           <div className="h-px bg-slate-800" />
 
           {/* Total for Client */}
-          <div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3.5">
+          <div className="flex items-center justify-between rounded-lg border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-4 py-3.5">
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-amber-400" />
               <span className="text-sm font-semibold text-amber-400">Итого к оплате (клиент)</span>

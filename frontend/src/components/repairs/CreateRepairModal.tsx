@@ -4,16 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  X,
   Wrench,
   User,
   Camera,
-  Image,
+  Image as ImageIcon,
   Loader2,
   Package,
-  ListChecks,
   Banknote,
   FileText,
+  X,
 } from "lucide-react";
 import {
   createRepairSchema,
@@ -24,8 +23,8 @@ import {
   MOCK_EQUIPMENT_TYPES,
   MOCK_MASTERS,
 } from "@/lib/repairs/mock-repairs";
+import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { useOverlay } from "@/lib/utils/use-scroll-lock";
 
 interface CreateRepairModalProps {
   open: boolean;
@@ -88,18 +87,6 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
     });
   }, []);
 
-  const handleBackdropClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
-
-  // Единый стек оверлеев. Закрывает два дефекта разом: прямая правка
-  // `body.style.overflow` возвращала прокрутку фону при закрытии верхнего из
-  // нескольких оверлеев, а собственный слушатель Escape закрывал их все сразу.
-  useOverlay(open, { onEscape: onClose });
-
   useEffect(() => {
     if (open) {
       form.reset();
@@ -110,334 +97,300 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-
   if (!open) return null;
 
   const { errors, isValid } = form.formState;
-  const budgetValue = form.watch("estimated_cost");
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-950/80 backdrop-blur-sm p-4 overflow-y-auto"
-      onClick={handleBackdropClick}
-    >
-      <div className="w-full max-w-2xl rounded-xl border border-slate-800 bg-slate-900 shadow-2xl my-8">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/10">
-              <Wrench className="h-4 w-4 text-sky-400" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-100">Приёмка оборудования</h2>
-              <p className="text-xs text-slate-500">Оформление нового наряд-заказа</p>
-            </div>
+    <Sheet open={open} onClose={onClose} width="w-[620px]" resizable>
+      <SheetHeader onClose={onClose}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
+            <Wrench className="h-4 w-4 text-[#4a38f5]" />
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-300 transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">Приёмка оборудования</h2>
+            <p className="text-xs text-[#666666]">Оформление нового наряд-заказа</p>
+          </div>
         </div>
+      </SheetHeader>
 
-        {/* Form */}
-        <form onSubmit={form.handleSubmit(handleSubmit)} className="p-6 space-y-5">
-          {/* Customer */}
-          <div className="space-y-2">
-            <label className="block text-xs font-medium text-slate-400">
-              Клиент
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-              <select
-                value={form.watch("customer_id")}
-                onChange={(e) =>
-                  form.setValue("customer_id", e.target.value, { shouldValidate: true })
-                }
-                className={cn(
-                  "w-full rounded-lg border bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-slate-100 appearance-none transition-colors",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                  errors.customer_id ? "border-rose-500" : "border-slate-700",
-                )}
-              >
-                <option value="" disabled>
-                  Выберите клиента...
-                </option>
-                {MOCK_CUSTOMERS_FOR_REPAIR.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} — {c.phone}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {errors.customer_id && (
-              <p className="text-xs text-rose-400">{errors.customer_id.message}</p>
-            )}
-          </div>
-
-          {/* Equipment Parameters */}
-          <fieldset className="space-y-4">
-            <legend className="flex items-center gap-2 text-xs font-medium text-slate-400 mb-2">
-              <Package className="h-3.5 w-3.5 text-slate-500" />
-              Параметры оборудования
-            </legend>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="block text-xs text-slate-500">Тип</label>
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            {/* Customer */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-slate-700">
+                Клиент *
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <select
-                  value={form.watch("equipment_type")}
+                  value={form.watch("customer_id")}
                   onChange={(e) =>
-                    form.setValue("equipment_type", e.target.value, { shouldValidate: true })
+                    form.setValue("customer_id", e.target.value, { shouldValidate: true })
                   }
                   className={cn(
-                    "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 appearance-none transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                    errors.equipment_type ? "border-rose-500" : "border-slate-700",
+                    "w-full rounded-lg border border-[#e5e5e5] bg-white py-2.5 pl-10 pr-4 text-sm text-[#111111] appearance-none transition-colors",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                    errors.customer_id && "border-rose-500",
                   )}
                 >
                   <option value="" disabled>
-                    Выберите тип...
+                    Выберите клиента...
                   </option>
-                  {MOCK_EQUIPMENT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
+                  {MOCK_CUSTOMERS_FOR_REPAIR.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} — {c.phone}
                     </option>
                   ))}
                 </select>
-                {errors.equipment_type && (
-                  <p className="text-xs text-rose-400">{errors.equipment_type.message}</p>
-                )}
               </div>
-              <div className="space-y-1.5">
-                <label className="block text-xs text-slate-500">Бренд</label>
-                <input
-                  type="text"
-                  placeholder="Samsung, Apple, Sony..."
-                  value={form.watch("equipment_brand")}
-                  onChange={(e) =>
-                    form.setValue("equipment_brand", e.target.value, { shouldValidate: true })
-                  }
-                  className={cn(
-                    "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                    errors.equipment_brand ? "border-rose-500" : "border-slate-700",
+              {errors.customer_id && (
+                <p className="text-xs text-rose-500">{errors.customer_id.message}</p>
+              )}
+            </div>
+
+            {/* Equipment Parameters */}
+            <fieldset className="space-y-3 rounded-lg border border-[#e5e5e5] p-4 bg-slate-50/50">
+              <legend className="flex items-center gap-2 text-xs font-medium text-slate-700 px-1">
+                <Package className="h-3.5 w-3.5 text-slate-400" />
+                Параметры оборудования
+              </legend>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-xs text-slate-600">Тип *</label>
+                  <select
+                    value={form.watch("equipment_type")}
+                    onChange={(e) =>
+                      form.setValue("equipment_type", e.target.value, { shouldValidate: true })
+                    }
+                    className={cn(
+                      "w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] appearance-none transition-colors",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      errors.equipment_type && "border-rose-500",
+                    )}
+                  >
+                    <option value="" disabled>
+                      Выберите тип...
+                    </option>
+                    {MOCK_EQUIPMENT_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                  {errors.equipment_type && (
+                    <p className="text-xs text-rose-500">{errors.equipment_type.message}</p>
                   )}
-                />
-                {errors.equipment_brand && (
-                  <p className="text-xs text-rose-400">{errors.equipment_brand.message}</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs text-slate-600">Бренд *</label>
+                  <input
+                    type="text"
+                    placeholder="Samsung"
+                    value={form.watch("equipment_brand")}
+                    onChange={(e) =>
+                      form.setValue("equipment_brand", e.target.value, { shouldValidate: true })
+                    }
+                    className={cn(
+                      "w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 transition-colors",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      errors.equipment_brand && "border-rose-500",
+                    )}
+                  />
+                  {errors.equipment_brand && (
+                    <p className="text-xs text-rose-500">{errors.equipment_brand.message}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-xs text-slate-600">Модель *</label>
+                  <input
+                    type="text"
+                    placeholder="Galaxy S24 Ultra"
+                    value={form.watch("equipment_model")}
+                    onChange={(e) =>
+                      form.setValue("equipment_model", e.target.value, { shouldValidate: true })
+                    }
+                    className={cn(
+                      "w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 transition-colors",
+                      "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                      errors.equipment_model && "border-rose-500",
+                    )}
+                  />
+                  {errors.equipment_model && (
+                    <p className="text-xs text-rose-500">{errors.equipment_model.message}</p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs text-slate-600">Серийный номер</label>
+                  <input
+                    type="text"
+                    placeholder="R58N90L2AX..."
+                    value={form.watch("equipment_serial")}
+                    onChange={(e) =>
+                      form.setValue("equipment_serial", e.target.value, { shouldValidate: true })
+                    }
+                    className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 transition-colors focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              </div>
+            </fieldset>
+
+            {/* Defect Description */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-slate-700">
+                Описание неисправности *
+              </label>
+              <textarea
+                rows={3}
+                placeholder="Подробно опишите симптомы неисправности со слов клиента..."
+                value={form.watch("defect_description")}
+                onChange={(e) =>
+                  form.setValue("defect_description", e.target.value, { shouldValidate: true })
+                }
+                className={cn(
+                  "w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 resize-none transition-colors",
+                  "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                  errors.defect_description && "border-rose-500",
                 )}
+              />
+              {errors.defect_description && (
+                <p className="text-xs text-rose-500">{errors.defect_description.message}</p>
+              )}
+            </div>
+
+            {/* Photos */}
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                <Camera className="h-3.5 w-3.5 text-slate-400" />
+                Фото фиксации дефектов
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {photoPreviews.map((preview, index) => (
+                  <div key={preview} className="relative group">
+                    <img
+                      src={preview}
+                      alt="Превью"
+                      className="h-16 w-16 rounded-lg object-cover border border-[#e5e5e5]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePhoto(index)}
+                      className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-[#e5e5e5] bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <ImageIcon className="h-5 w-5 text-slate-400" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={handlePhotosAdd}
+                />
               </div>
             </div>
 
+            {/* Budget & Master */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="block text-xs text-slate-500">Модель</label>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                  <Banknote className="h-3.5 w-3.5 text-slate-400" />
+                  Предв. бюджет (RUB)
+                </label>
                 <input
-                  type="text"
-                  placeholder="Galaxy S24 Ultra"
-                  value={form.watch("equipment_model")}
+                  type="number"
+                  min={0}
+                  value={form.watch("estimated_cost") === 0 ? "" : form.watch("estimated_cost")}
                   onChange={(e) =>
-                    form.setValue("equipment_model", e.target.value, { shouldValidate: true })
+                    form.setValue(
+                      "estimated_cost",
+                      e.target.value === "" ? 0 : Number(e.target.value),
+                      { shouldValidate: true },
+                    )
                   }
-                  className={cn(
-                    "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                    errors.equipment_model ? "border-rose-500" : "border-slate-700",
-                  )}
+                  className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 transition-colors focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20 [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
-                {errors.equipment_model && (
-                  <p className="text-xs text-rose-400">{errors.equipment_model.message}</p>
-                )}
               </div>
+
               <div className="space-y-1.5">
-                <label className="block text-xs text-slate-500">Серийный номер</label>
-                <input
-                  type="text"
-                  placeholder="R58N90L2AX"
-                  value={form.watch("equipment_serial")}
+                <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                  <User className="h-3.5 w-3.5 text-slate-400" />
+                  Мастер *
+                </label>
+                <select
+                  value={form.watch("master_id")}
                   onChange={(e) =>
-                    form.setValue("equipment_serial", e.target.value, { shouldValidate: true })
+                    form.setValue("master_id", e.target.value, { shouldValidate: true })
                   }
                   className={cn(
-                    "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                    "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                    errors.equipment_serial ? "border-rose-500" : "border-slate-700",
+                    "w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] appearance-none transition-colors",
+                    "focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                    errors.master_id && "border-rose-500",
                   )}
-                />
-                {errors.equipment_serial && (
-                  <p className="text-xs text-rose-400">{errors.equipment_serial.message}</p>
+                >
+                  <option value="" disabled>
+                    Выберите мастера...
+                  </option>
+                  {MOCK_MASTERS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                {errors.master_id && (
+                  <p className="text-xs text-rose-500">{errors.master_id.message}</p>
                 )}
               </div>
             </div>
-          </fieldset>
 
-          {/* Defect Description */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-400">
-              <ListChecks className="h-3.5 w-3.5 text-slate-500" />
-              Описание неисправности
-            </label>
-            <textarea
-              rows={3}
-              placeholder="Подробно опишите неисправность..."
-              value={form.watch("defect_description")}
-              onChange={(e) =>
-                form.setValue("defect_description", e.target.value, { shouldValidate: true })
-              }
-              className={cn(
-                "w-full rounded-lg border bg-slate-950 py-2.5 px-3.5 text-sm text-slate-100 placeholder:text-slate-500 resize-none transition-colors",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                errors.defect_description ? "border-rose-500" : "border-slate-700",
-              )}
-            />
-            {errors.defect_description && (
-              <p className="text-xs text-rose-400">{errors.defect_description.message}</p>
-            )}
-            <p className="text-xs text-slate-600">
-              {form.watch("defect_description").length}/2000
-            </p>
-          </div>
-
-          {/* Photos */}
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-400">
-              <Camera className="h-3.5 w-3.5 text-slate-500" />
-              Фото неисправности
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {photoPreviews.map((url, idx) => (
-                <div key={url} className="relative group">
-                  <img
-                    src={url}
-                    alt={`Фото неисправности ${idx + 1}`}
-                    className="h-20 w-20 object-cover rounded-lg border border-slate-700"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePhoto(idx)}
-                    className="absolute -top-1.5 -right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-slate-700 bg-slate-950 hover:border-slate-600 hover:bg-slate-800/50 transition-colors"
-              >
-                <Image className="h-5 w-5 text-slate-600" />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={handlePhotosAdd}
-              />
-            </div>
-          </div>
-
-          {/* Cost + Master */}
-          <div className="grid grid-cols-2 gap-3">
+            {/* Notes */}
             <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                <Banknote className="h-3 w-3" />
-                Предварительная стоимость (RUB)
+              <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                <FileText className="h-3 w-3 text-slate-400" />
+                Внутренние примечания (необязательно)
               </label>
-              <input
-                type="number"
-                min={0}
-                placeholder="0"
-                value={budgetValue === 0 ? "" : budgetValue}
+              <textarea
+                rows={2}
+                placeholder="Дополнительные примечания для мастера..."
+                value={form.watch("notes") ?? ""}
                 onChange={(e) =>
-                  form.setValue(
-                    "estimated_cost",
-                    e.target.value === "" ? 0 : Number(e.target.value),
-                    { shouldValidate: true },
-                  )
+                  form.setValue("notes", e.target.value, { shouldValidate: true })
                 }
-                className={cn(
-                  "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 transition-colors",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                  "[-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
-                  errors.estimated_cost ? "border-rose-500" : "border-slate-700",
-                )}
+                className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 px-3 text-sm text-[#111111] placeholder:text-slate-400 resize-none transition-colors focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
               />
-              {errors.estimated_cost && (
-                <p className="text-xs text-rose-400">{errors.estimated_cost.message}</p>
-              )}
             </div>
-            <div className="space-y-1.5">
-              <label className="block text-xs text-slate-500">Назначенный мастер</label>
-              <select
-                value={form.watch("master_id")}
-                onChange={(e) =>
-                  form.setValue("master_id", e.target.value, { shouldValidate: true })
-                }
-                className={cn(
-                  "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 appearance-none transition-colors",
-                  "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                  errors.master_id ? "border-rose-500" : "border-slate-700",
-                )}
-              >
-                <option value="" disabled>
-                  Выберите мастера...
-                </option>
-                {MOCK_MASTERS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-              {errors.master_id && (
-                <p className="text-xs text-rose-400">{errors.master_id.message}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-1.5 text-xs text-slate-500">
-              <FileText className="h-3 w-3" />
-              Внутренние примечания (необязательно)
-            </label>
-            <textarea
-              rows={2}
-              placeholder="Дополнительные примечания для мастера..."
-              value={form.watch("notes") ?? ""}
-              onChange={(e) =>
-                form.setValue("notes", e.target.value, { shouldValidate: true })
-              }
-              className={cn(
-                "w-full rounded-lg border bg-slate-950 py-2 px-3 text-sm text-slate-100 placeholder:text-slate-500 resize-none transition-colors",
-                "focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20",
-                "border-slate-700",
-              )}
-            />
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+          <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+              className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
             >
               Отмена
             </button>
             <button
               type="submit"
               disabled={!isValid}
-              className={cn(
-                "flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors",
-                "bg-sky-600 text-white hover:bg-sky-500",
-                "disabled:opacity-50 disabled:cursor-not-allowed",
-              )}
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {form.formState.isSubmitting ? (
                 <>
@@ -450,7 +403,7 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -18,7 +18,7 @@ export function PlatformOwnerGuard({ children }: { children: React.ReactNode }) 
   if (isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
+        <Loader2 className="h-5 w-5 animate-spin text-[#4a38f5]" />
       </div>
     );
   }
