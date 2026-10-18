@@ -121,7 +121,7 @@ export function useCreateDeal(): UseMutationResult<DealDTO, ApiClientError, Crea
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (payload) => (await apiClient.post<DealDTO>(BASE, payload)).data,
-    onSuccess: (deal) => {
+    onSuccess: () => {
       // A new deal lands on the Kanban board and in list views; invalidate the
       // whole family so every cached pipeline/list picks it up.
       void queryClient.invalidateQueries({ queryKey: dealKeys.all });

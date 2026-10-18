@@ -54,7 +54,7 @@ export function useChatStream({
           setLastEventTime(json.serverTime);
         }
       }
-    } catch (e) {
+    } catch {
       // ignore delta poll failure
     }
   }, [dealId, apiBaseUrl, onMessage]);

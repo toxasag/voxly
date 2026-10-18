@@ -11,11 +11,9 @@ import {
 import {
   AlertCircle,
   Bot,
-  Check,
   CheckCheck,
   Clock,
   Code,
-  CornerDownLeft,
   Link2,
   Loader2,
   MessageCircle,
@@ -28,7 +26,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn, timeAgo } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import {

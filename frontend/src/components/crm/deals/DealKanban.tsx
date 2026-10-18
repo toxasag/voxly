@@ -1,15 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, GripVertical, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertCircle, Check, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { DealCard, type DealCardOptions } from "@/components/crm/deals/DealCard";
 import { TagPill } from "@/components/ui/tag";
-import { STAGE_COLOR_KEYS, STAGE_COLORS, stageColor, stageTagColor } from "@/components/crm/deals/stage-colors";
+import { STAGE_COLOR_KEYS, STAGE_COLORS, stageTagColor } from "@/components/crm/deals/stage-colors";
 import { useKanbanColumnWidth } from "@/components/crm/deals/use-kanban-column-width";
 import { useCreateDeal, useMoveDealStage, type KanbanColumnDTO, type StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
-import { useHorizontalResize } from "@/lib/utils/use-horizontal-resize";
 import { useIsMobile } from "@/lib/utils/use-is-mobile";
 import { cn } from "@/lib/utils";
 

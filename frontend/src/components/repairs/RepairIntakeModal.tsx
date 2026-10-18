@@ -339,6 +339,7 @@ export function RepairIntakeModal({
               <div className="flex flex-wrap gap-2">
                 {photoPreviews.map((url, i) => (
                   <div key={url} className="relative group">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={url}
                       alt="Фото дефекта"

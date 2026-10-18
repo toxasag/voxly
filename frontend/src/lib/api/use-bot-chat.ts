@@ -23,7 +23,8 @@ import { estimateTokens } from "@/lib/ai-bots/ai-bots.types";
 // ---------------------------------------------------------------------------
 
 /** Пустая история: переписка появится вместе с реальным чатом. */
-function getBotChatHistory(_botId: string): BotChatMessage[] {
+function getBotChatHistory(botId?: string): BotChatMessage[] {
+  void botId;
   return [];
 }
 

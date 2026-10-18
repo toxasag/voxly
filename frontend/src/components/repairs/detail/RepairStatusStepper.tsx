@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback } from "react";
+import { memo } from "react";
 import { Check, Circle } from "lucide-react";
 import type { RepairStatus } from "@/lib/repairs/repairs.types";
 import { STATUS_ORDER, getRepairStatusLabel } from "@/lib/repairs/repairs.types";

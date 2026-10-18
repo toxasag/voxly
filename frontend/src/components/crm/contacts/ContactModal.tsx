@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  X, User, Phone, Mail, MessageCircle, Hash, Building2, Loader2, FileText, Tag, AlertCircle,
+  User, Phone, Mail, MessageCircle, Hash, Building2, Loader2, FileText, Tag, AlertCircle,
   Linkedin, Briefcase,
 } from "lucide-react";
 import { createContactSchema, type CreateContactPayload } from "@/schemas/contact.schema";
