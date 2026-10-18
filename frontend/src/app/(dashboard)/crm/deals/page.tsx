@@ -37,6 +37,7 @@ import {
 } from "@/lib/api/use-deals";
 import { useTenantUsers, indexTenantUsers } from "@/lib/api/use-tenant-users";
 import { useRecordParam } from "@/lib/utils/use-record-param";
+import { cn } from "@/lib/utils";
 import type { CreateDealPayload } from "@/schemas/deal.schema";
 
 const APPEARANCE_KEY = "getvoxly.dealcard";
@@ -78,6 +79,8 @@ function DealsContent() {
    * списком, каждый раз возвращался в канбан.
    */
   const { viewMode: view, setViewMode: setView } = useDealsViewMode();
+  type DealPresetView = "all" | "active" | "high_value" | "won";
+  const [presetView, setPresetView] = useState<DealPresetView>("all");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<DealSortKey>("created");
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -165,38 +168,64 @@ function DealsContent() {
     return map;
   }, [columns]);
 
-  /** Плоский список сделок воронки, отфильтрованный поиском по названию и описанию. */
+  /** Счётчики по срезам (Saved Views) */
+  const presetCounts = useMemo(() => {
+    const all = columns.flatMap((column) => column.deals);
+    const activeStageIds = new Set(columns.filter((c) => !c.isWon && !c.isLost).map((c) => c.stageId));
+    const wonStageIds = new Set(columns.filter((c) => c.isWon).map((c) => c.stageId));
+    return {
+      all: all.length,
+      active: all.filter((d) => activeStageIds.has(d.stageId)).length,
+      high_value: all.filter((d) => d.budget >= 100000).length,
+      won: all.filter((d) => wonStageIds.has(d.stageId)).length,
+    };
+  }, [columns]);
+
+  /** Плоский список сделок воронки с учётом активного среза и поиска. */
   const filteredDeals = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const all = columns.flatMap((column) => column.deals);
+    let all = columns.flatMap((column) => column.deals);
+    if (presetView === "active") {
+      const activeStageIds = new Set(columns.filter((c) => !c.isWon && !c.isLost).map((c) => c.stageId));
+      all = all.filter((d) => activeStageIds.has(d.stageId));
+    } else if (presetView === "high_value") {
+      all = all.filter((d) => d.budget >= 100000);
+    } else if (presetView === "won") {
+      const wonStageIds = new Set(columns.filter((c) => c.isWon).map((c) => c.stageId));
+      all = all.filter((d) => wonStageIds.has(d.stageId));
+    }
+
     if (query === "") return all;
     return all.filter(
       (deal) =>
         deal.title.toLowerCase().includes(query) ||
         deal.description.toLowerCase().includes(query),
     );
-  }, [columns, search]);
+  }, [columns, presetView, search]);
 
   /**
-   * Колонки канбана с тем же поиском, что и список.
-   *
-   * Канбан рендерил `kanban.data` напрямую, поэтому поиск на него не влиял:
-   * пользователь вводил запрос и не видел реакции. На телефоне это заметнее —
-   * канбан режим по умолчанию.
-   *
-   * Счётчики и суммы колонок пересчитываются по отфильтрованному составу, иначе
-   * шапка колонки обещала бы больше карточек, чем в ней видно.
+   * Колонки канбана с учётом активного среза и поиска.
    */
   const filteredColumns = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (query === "") return columns;
 
     return columns.map((column) => {
-      const deals = column.deals.filter(
-        (deal) =>
-          deal.title.toLowerCase().includes(query) ||
-          deal.description.toLowerCase().includes(query),
-      );
+      let deals = column.deals;
+      if (presetView === "active" && (column.isWon || column.isLost)) {
+        deals = [];
+      } else if (presetView === "high_value") {
+        deals = deals.filter((d) => d.budget >= 100000);
+      } else if (presetView === "won" && !column.isWon) {
+        deals = [];
+      }
+
+      if (query !== "") {
+        deals = deals.filter(
+          (deal) =>
+            deal.title.toLowerCase().includes(query) ||
+            deal.description.toLowerCase().includes(query),
+        );
+      }
 
       return {
         ...column,
@@ -205,7 +234,7 @@ function DealsContent() {
         budgetTotal: deals.reduce((total, deal) => total + deal.budget, 0),
       };
     });
-  }, [columns, search]);
+  }, [columns, presetView, search]);
 
   const sortedDeals = useMemo(() => {
     const deals = [...filteredDeals];
@@ -382,6 +411,44 @@ function DealsContent() {
         duplicates={duplicates}
         onCreateDeal={() => setCreateOpen(true)}
       />
+
+      {/* Сохранённые срезы (Saved Views) в стиле Twenty CRM */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
+        <span className="text-[#888888] text-[11px] font-medium mr-1 uppercase tracking-wider">Срез:</span>
+        {(
+          [
+            { id: "all", label: "Все сделки", count: presetCounts.all },
+            { id: "active", label: "В работе", count: presetCounts.active },
+            { id: "high_value", label: "Крупные (> 100к)", count: presetCounts.high_value },
+            { id: "won", label: "Успешные", count: presetCounts.won },
+          ] as const
+        ).map((tab) => {
+          const active = presetView === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setPresetView(tab.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                active
+                  ? "bg-white border border-[#e5e5e5] text-[#111111] shadow-2xs"
+                  : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
+              )}
+            >
+              <span>{tab.label}</span>
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.2 text-[10px] tabular-nums font-mono",
+                  active ? "bg-[#f5f5f5] text-[#111111]" : "text-[#888888]",
+                )}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
 
       {configureMode && (
         <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
