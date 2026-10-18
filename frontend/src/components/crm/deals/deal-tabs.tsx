@@ -29,7 +29,7 @@ import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
-import { useDealTimeline, useKanban, useMoveDealStage, useSendDealMessage, useUpdateDeal } from "@/lib/api/use-deals";
+import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useTasks } from "@/lib/api/use-tasks";
 import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
@@ -39,6 +39,7 @@ import { Sheet } from "@/components/ui/sheet";
 import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
+import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealMessageDTO, DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
@@ -112,170 +113,10 @@ function FieldRow({
   );
 }
 
-function MessageBubble({ message }: { message: DealMessageDTO }) {
-  const system = message.source === "system";
-  const outbound = message.direction === "outbound";
-  const failed = message.deliveryStatus === "failed";
-  const pending = message.deliveryStatus === "pending";
-
+function ChatTab({ dealId, dealTitle }: { dealId: string; dealTitle?: string }) {
   return (
-    <div className={cn("flex gap-3", outbound && !system && "flex-row-reverse", system && "justify-center")}>
-      <div className={cn("max-w-[75%]", system && "max-w-full")}>
-        {!system && (
-          <div className={cn("mb-1 flex gap-2", outbound && "justify-end")}>
-            <span className="text-xs text-slate-300">{message.senderName}</span>
-            <span className={cn(
-              "rounded px-1.5 py-0.5 text-xs",
-              message.source === "manager" && "text-amber-400 bg-amber-500/10",
-              message.source === "client" && "text-sky-400 bg-sky-500/10",
-              message.source === "human" && "text-sky-400 bg-sky-500/10",
-              message.source === "ai" && "text-violet-400 bg-violet-500/10",
-              message.source === "ai_bot" && "text-violet-400 bg-violet-500/10",
-              message.source === "system" && "text-slate-400 bg-slate-800",
-            )}>
-              {message.source}
-            </span>
-          </div>
-        )}
-        <div className={cn(
-          "rounded-xl px-3.5 py-2.5 text-sm",
-          system ? "text-center text-slate-500 italic" :
-          // Неотправленное сообщение обязано отличаться от отправленного:
-          // иначе менеджер ждёт ответа на то, что до клиента не дошло.
-          failed ? "border border-rose-500/30 bg-rose-500/5 text-slate-200" :
-          outbound ? "border border-amber-500/20 bg-amber-500/10 text-slate-200" :
-          "bg-slate-800 text-slate-200"
-        )}>
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
-          <p className={cn("mt-1 flex items-center gap-1.5 text-xs", failed ? "text-rose-400" : outbound ? "text-amber-400/70" : "text-slate-500")}>
-            {new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(message.createdAt))}
-            {pending && <Loader2 className="h-3 w-3 animate-spin" aria-label="Отправляется" />}
-            {failed && <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />}
-            {failed && <span>Не доставлено</span>}
-          </p>
-          {/* Причина у самой строки, а не тостом: тост исчезнет, а сообщение останется. */}
-          {failed && message.deliveryError !== null && (
-            <p className="mt-1 text-xs text-rose-400/80">{message.deliveryError}</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ChatTab({ dealId }: { dealId: string }) {
-  // `live`: опрос идёт, пока открыта именно эта вкладка. `TabsContent` не
-  // рендерит неактивные вкладки, поэтому компонент размонтируется при уходе с
-  // чата и опрос прекращается сам — отдельного флага «вкладка активна» не нужно.
-  const timeline = useDealTimeline(dealId, true);
-  const send = useSendDealMessage();
-  const [input, setInput] = useState("");
-  const [channel, setChannel] = useState("telegram");
-  const [error, setError] = useState<string | null>(null);
-  const [autopilot, setAutopilot] = useState(true);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [timeline.data]);
-
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || send.isPending) return;
-    try {
-      setError(null);
-      await send.mutateAsync({
-        dealId,
-        payload: { content: text, channel, source: "manager", direction: "outbound" },
-      });
-      setInput("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not send message");
-    }
-  }, [input, channel, send, dealId]);
-
-  const handleKey = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
-  }, [handleSend]);
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3">
-        <div className="flex items-center gap-2">
-          <MessageCircle className="h-4 w-4 text-[#888888]" />
-          <span className="text-sm font-semibold text-[#000000]">Хронология и чат</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Bot className={cn("h-4 w-4", autopilot ? "text-emerald-500" : "text-[#888888]")} />
-          <button
-            type="button"
-            title={autopilot ? "Отключить автопилот" : "Включить автопилот"}
-            onClick={() => setAutopilot((v) => !v)}
-            className={cn(
-              "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5] focus:ring-offset-2",
-              autopilot ? "bg-emerald-500" : "bg-slate-300"
-            )}
-            role="switch"
-            aria-checked={autopilot}
-          >
-            <span
-              className={cn(
-                "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out",
-                autopilot ? "translate-x-4" : "translate-x-0"
-              )}
-            />
-          </button>
-          <span className="text-xs text-[#666666]">{autopilot ? "Автопилот включён" : "Автопилот выключен"}</span>
-        </div>
-      </div>
-
-      <div ref={ref} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        {timeline.isLoading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
-            ))}
-          </div>
-        ) : timeline.isError ? (
-          <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-4">
-            <p className="text-sm text-slate-200">Не удалось загрузить хронологию</p>
-            <button type="button" onClick={() => void timeline.refetch()} className="mt-2 text-xs text-slate-300">Повторить</button>
-          </div>
-        ) : timeline.data && timeline.data.length === 0 ? (
-          <EmptyState icon={MessageCircle} title="Сообщений пока нет" description="Начните переписку с клиентом" />
-        ) : (
-          timeline.data?.map((m) => <MessageBubble key={m.id} message={m} />)
-        )}
-      </div>
-
-      {error && <div className="mx-4 mb-2 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-400">{error}</div>}
-
-      <div className="border-t border-[#e5e5e5] p-4">
-        <div className="flex gap-2">
-          <select value={channel} onChange={(e) => setChannel(e.target.value)} title="Канал связи" className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#000000]">
-            <option value="telegram">Telegram</option>
-            <option value="whatsapp">WhatsApp</option>
-            <option value="email">Email</option>
-          </select>
-          <div className="relative flex-1">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKey}
-              placeholder="Написать сообщение..."
-              rows={1}
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-            />
-          </div>
-          <button type="button" onClick={handleSend} disabled={send.isPending || !input.trim()} title="Отправить сообщение" className="rounded-[8px] bg-[#4a38f5] px-4 py-2 text-sm font-medium text-white hover:bg-[#3b2be0] disabled:opacity-50">
-            {send.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin inline" />}
-            <Send className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+    <div className="h-full min-h-[450px]">
+      <CrmChatView entityType="deal" entityId={dealId} entityName={dealTitle} />
     </div>
   );
 }
@@ -1294,7 +1135,7 @@ export function dealTabContents(
         requiredPermission="deals:write"
         fallback={<div className="p-5 text-sm text-slate-500">Нет доступа к переписке</div>}
       >
-        <ChatTab dealId={deal.id} />
+        <ChatTab dealId={deal.id} dealTitle={deal.title} />
       </Guard>
     ),
     tasks: <TasksTab dealId={deal.id} />,

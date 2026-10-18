@@ -20,6 +20,7 @@ import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordRepairsTab } from "@/components/crm/shared/RecordRepairsTab";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
+import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
@@ -435,6 +436,15 @@ export const ContactCard = memo(function ContactCard({
     objectType: "contact",
     contents: {
       home: homeTab,
+      chat: (
+        <div className="h-full min-h-[450px]">
+          <CrmChatView
+            entityType="contact"
+            entityId={contact.id}
+            entityName={contactFullName(contact)}
+          />
+        </div>
+      ),
       repairs: <RecordRepairsTab customerId={contact.id} />,
       tasks: <RecordTasksTab targetType="contact" targetId={contact.id} />,
       notes: <RecordNotesTab targetType="contact" targetId={contact.id} />,

@@ -52,6 +52,7 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
   requiredPermission: string | null;
 }> = [
   { objectType: "contact", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
+  { objectType: "contact", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "contacts:write" },
   { objectType: "contact", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "contact", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "company", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
