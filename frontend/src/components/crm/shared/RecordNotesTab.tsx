@@ -103,7 +103,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
     <div className="space-y-3 p-4">
       {canWrite && (
         composing ? (
-          <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-950/60 p-2">
+          <div className="space-y-2 rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
             <input
               value={titleDraft}
               autoFocus
@@ -115,7 +115,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                 }
               }}
               placeholder="Заголовок (необязательно)"
-              className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm font-medium text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm font-medium text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
             <textarea
               value={draft}
@@ -134,13 +134,13 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                 }
               }}
               placeholder="Текст заметки..."
-              className="w-full resize-y rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+              className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
             />
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => { setComposing(false); setDraft(""); setTitleDraft(""); }}
-                className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
               >
                 Отмена
               </button>
@@ -148,7 +148,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                 type="button"
                 onClick={submit}
                 disabled={create.isPending || draft.trim() === ""}
-                className="inline-flex items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
               >
                 {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                 Сохранить
@@ -159,7 +159,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
           <button
             type="button"
             onClick={() => setComposing(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800"
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
           >
             <Plus className="h-3.5 w-3.5" />
             Новая заметка
@@ -193,7 +193,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
       ) : (
         <div className="space-y-2">
           {notes.data.items.map((note) => (
-            <article key={note.id} className="group rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+            <article key={note.id} className="group rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
               {editingId === note.id ? (
                 <div className="space-y-2">
                   <input
@@ -211,7 +211,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                       }
                     }}
                     placeholder="Заголовок (необязательно)"
-                    className="w-full rounded border border-amber-500 bg-slate-950 px-2 py-1.5 text-sm font-medium text-slate-100 placeholder:text-slate-500 focus:outline-none"
+                    className="w-full rounded-[8px] border border-[#4a38f5] bg-white px-2.5 py-1.5 text-sm font-medium text-[#000000] placeholder:text-[#888888] focus:outline-none"
                   />
                   <textarea
                     value={editDraft}
@@ -227,13 +227,13 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                         setEditingId(null);
                       }
                     }}
-                    className="w-full resize-y rounded border border-amber-500 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 focus:outline-none"
+                    className="w-full resize-y rounded-[8px] border border-[#4a38f5] bg-white px-2.5 py-1.5 text-sm text-[#000000] focus:outline-none"
                   />
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={() => setEditingId(null)}
-                      className="rounded px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                      className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
                     >
                       Отмена
                     </button>
@@ -241,7 +241,7 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                       type="button"
                       onClick={() => saveEdit(note.id, note.body, note.title)}
                       disabled={update.isPending}
-                      className="inline-flex items-center gap-1.5 rounded bg-amber-500 px-2.5 py-1 text-xs font-semibold text-slate-950 transition-colors hover:bg-amber-400 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
                     >
                       {update.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
                       Сохранить
@@ -251,11 +251,11 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
               ) : (
                 <div>
                   {note.title !== "" && (
-                    <h4 className="mb-1 break-words text-sm font-semibold text-slate-100">
+                    <h4 className="mb-1 break-words text-sm font-semibold text-[#000000]">
                       {note.title}
                     </h4>
                   )}
-                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-200">
+                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-[#333333]">
                     {note.body}
                   </p>
                 </div>

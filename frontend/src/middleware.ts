@@ -21,6 +21,8 @@ const PROTECTED_PREFIXES = [
   "/crm",
   "/repairs",
   "/finance",
+  "/inbox",
+  "/marketing",
   // Каналы связи. Без этого префикса страница открывалась бы без сессии: гейт
   // `<Guard>` живёт в браузере и не заменяет проверку до рендера.
   "/integrations",
@@ -140,6 +142,13 @@ export function middleware(request: NextRequest) {
     // Preserved so the user lands where they intended after signing in.
     loginUrl.searchParams.set("redirect", pathname);
     return withTenantHeader(NextResponse.redirect(loginUrl), slug);
+  }
+
+  // On a tenant portal subdomain ({slug}.getvoxly.ru), root `/` redirects
+  // to the main CRM deals board if signed in, or to /login if not.
+  if (pathname === "/" && slug !== null) {
+    const target = hasSession ? "/crm/deals" : "/login";
+    return withTenantHeader(NextResponse.redirect(new URL(target, request.url)), slug);
   }
 
   // Superadmin lives on the platform host only: reaching it through a tenant

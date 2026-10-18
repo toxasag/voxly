@@ -12,26 +12,31 @@ import crmRoutes from "./modules/crm/crm.routes.js";
 import repairsRoutes from "./modules/repairs/repairs.routes.js";
 import financeRoutes from "./modules/finance/finance.routes.js";
 import invoiceRoutes from "./modules/finance/invoices.routes.js";
+import billingRoutes from "./modules/finance/billing/billing.routes.js";
+import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
+import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import adminTenantRoutes from "./modules/admin/admin-tenants.routes.js";
 import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
-import { onDealWon } from "./modules/crm/deals/deals.service.js";
-import { DealLearningService } from "./modules/ai/deal-learning.service.js";
+import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
+import { SalesLearnService } from "./modules/ai/sales-learn.service.js";
+import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import fastify from "fastify";
 
-/** Пути webhook-ов ботов — исключения из общего лимита, сверяются точно. */
+/** Пути webhook-ов ботов и платёжных шлюзов — исключения из общего лимита, сверяются точно. */
 const WEBHOOK_PATHS: ReadonlySet<string> = new Set([
   "/auth/telegram/webhook",
   "/auth/max/webhook",
+  "/api/v1/billing/robokassa/result",
 ]);
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -142,6 +147,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(repairsRoutes, { prefix: "/api/v1/repairs" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
+  await app.register(billingRoutes, { prefix: "/api/v1/billing" });
+  await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
@@ -155,6 +162,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
 
+  // Внутренний чат CRM в реальном времени (SSE стрим и дельта-поллинг)
+  await app.register(chatStreamRoutes, { prefix: "/api/v1" });
+
   // AI-агенты и баланс ИИ.
   await app.register(aiRoutes, { prefix: "/api/v1/ai" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
@@ -164,8 +174,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
 
   // Автоматический сбор опыта в базу знаний AI при успешном закрытии сделок
-  const dealLearningService = new DealLearningService();
-  onDealWon((payload) => void dealLearningService.harvestWonDeal(payload));
+  const salesLearnService = new SalesLearnService();
+  onDealWon((payload) => void salesLearnService.harvestWonDeal(payload));
+
+  // Автоворонки по этапам сделок
+  const stageRulesService = new StageRulesService();
+  onDealStageChanged((payload) => void stageRulesService.fireStageRules(payload));
 
   app.get("/health", async (_request, reply) => {
     const dbReachable = await checkConnection();

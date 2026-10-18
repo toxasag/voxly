@@ -95,6 +95,12 @@ function DealsContent() {
     if (searchParams.get("create") === "1") setCreateOpen(true);
   }, [searchParams]);
 
+  useEffect(() => {
+    const handler = () => setCreateOpen(true);
+    window.addEventListener("open-create-deal", handler);
+    return () => window.removeEventListener("open-create-deal", handler);
+  }, []);
+
   // Опции внешнего вида карточки читаются после монтирования: localStorage
   // недоступен при SSR, а чтение в инициализаторе сломало бы гидратацию.
   useEffect(() => {
@@ -345,7 +351,7 @@ function DealsContent() {
   if ((pipelines.data ?? []).length === 0) return <EmptyState icon={Handshake} title="Воронки не настроены" description="Не удалось создать воронку по умолчанию. Обратитесь в поддержку, если проблема повторяется." />;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <DealsToolbar
         pipelines={pipelines.data ?? []}
         pipelineId={pipelineId ?? ""}
@@ -373,7 +379,7 @@ function DealsContent() {
       />
 
       {configureMode && (
-        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-2.5 text-xs text-emerald-400">
+        <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
           Режим редактирования: переименуйте этап (Enter — сохранить), смените цвет, переставьте стрелками или удалите пустой этап; последний блок добавляет новый.
         </p>
       )}

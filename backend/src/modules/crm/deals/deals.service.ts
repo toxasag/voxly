@@ -67,9 +67,12 @@ const MESSAGE_COLUMNS = `
 export type DealWonHandler = (payload: { tenantId: string; dealId: string }) => void | Promise<void>;
 const dealWonHandlers: DealWonHandler[] = [];
 
+export type DealStageChangedHandler = (payload: { tenantId: string; dealId: string; stageId: string }) => void | Promise<void>;
+const dealStageChangedHandlers: DealStageChangedHandler[] = [];
+
 /**
  * Регистрация слушателя успешного закрытия сделки.
- * Позволяет внешним модулям (например, AI DealLearningService) обучаться на
+ * Позволяет внешним модулям (например, AI SalesLearnService) обучаться на
  * выигранных сделках без жесткой циклической связи с CRM-ядром.
  */
 export function onDealWon(handler: DealWonHandler): () => void {
@@ -77,6 +80,17 @@ export function onDealWon(handler: DealWonHandler): () => void {
   return () => {
     const idx = dealWonHandlers.indexOf(handler);
     if (idx !== -1) dealWonHandlers.splice(idx, 1);
+  };
+}
+
+/**
+ * Регистрация слушателя перехода сделки на этап (для автоворонок StageRules).
+ */
+export function onDealStageChanged(handler: DealStageChangedHandler): () => void {
+  dealStageChangedHandlers.push(handler);
+  return () => {
+    const idx = dealStageChangedHandlers.indexOf(handler);
+    if (idx !== -1) dealStageChangedHandlers.splice(idx, 1);
   };
 }
 
@@ -529,6 +543,10 @@ export class DealsService {
            VALUES ($1, $2, $3, $4, $5)`,
           [tenantId, id, deal.stage_id, stageId, changedBy],
         );
+
+        for (const handler of dealStageChangedHandlers) {
+          Promise.resolve(handler({ tenantId, dealId: id, stageId })).catch(() => undefined);
+        }
 
         if (stage.is_won) {
           for (const handler of dealWonHandlers) {

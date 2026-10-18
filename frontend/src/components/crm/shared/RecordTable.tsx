@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Columns3, Eye, EyeOff, GripVertical } from "lucide-react";
+import { Check, Columns3, Eye, EyeOff, GripVertical, Plus, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   RECORD_TABLE_CHECKBOX_WIDTH,
@@ -75,6 +75,7 @@ const COLLAPSED_IDENTIFIER_WIDTH = 38;
 export interface RecordColumn<T> {
   id: string;
   header: string;
+  icon?: React.ComponentType<{ className?: string }>;
   /** Начальная ширина в px; ниже RECORD_TABLE_COLUMN_MIN_WIDTH не опускается. */
   width?: number;
   align?: "left" | "right";
@@ -138,6 +139,8 @@ export function RecordTable<T>({
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState(false);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [columnsMenuAnchor, setColumnsMenuAnchor] = useState<"toolbar" | "headerPlus">("toolbar");
+  const [columnSearch, setColumnSearch] = useState("");
 
   /**
    * Мобильный режим меняет не геометрию, а состав обработчиков, поэтому здесь
@@ -213,6 +216,12 @@ export function RecordTable<T>({
     () => new Set(hiddenColumns.map((column) => column.id)),
     [hiddenColumns],
   );
+
+  const filteredMenuColumns = useMemo(() => {
+    const q = columnSearch.trim().toLowerCase();
+    if (!q) return menuColumns;
+    return menuColumns.filter((col) => col.header.toLowerCase().includes(q));
+  }, [menuColumns, columnSearch]);
 
   /**
    * Переменные ширины со схлопнутой первой колонкой.
@@ -479,76 +488,123 @@ export function RecordTable<T>({
     <div className="space-y-3">
       {selectionEnabled && selectedIds !== undefined && selectedIds.size > 0 && bulkBar}
 
-      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
-        {/* Управление колонками: у Twenty это кнопка «+» в правой части шапки. */}
+      <div className="overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white">
+        {/* Управление колонками: у Twenty это кнопка «+» в правой части шапки и кнопка «Колонки». */}
         {tableId !== undefined && layoutLoaded && (
-          <div className="relative flex items-center justify-end border-b border-slate-800 px-2 py-1.5">
+          <div className="relative flex items-center justify-end border-b border-[#e5e5e5] bg-white px-2 py-1">
             <button
               type="button"
-              onClick={() => setColumnsMenuOpen((open) => !open)}
-              aria-expanded={columnsMenuOpen}
-              className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+              title="Управление колонками"
+              onClick={() => {
+                setColumnsMenuAnchor("toolbar");
+                setColumnsMenuOpen((open) => !open);
+              }}
+              aria-expanded={columnsMenuOpen && columnsMenuAnchor === "toolbar"}
+              className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
             >
               <Columns3 className="h-3.5 w-3.5" />
               Колонки
               {hiddenColumns.length > 0 && (
-                <span className="rounded bg-slate-800 px-1 text-xs text-slate-400">
+                <span className="rounded bg-[#f0f0f0] px-1 text-xs text-[#666666]">
                   скрыто {hiddenColumns.length}
                 </span>
               )}
             </button>
 
-            {columnsMenuOpen && (
+            {columnsMenuOpen && columnsMenuAnchor === "toolbar" && (
               <>
-                {/* Подложка закрывает меню по клику вне: без неё меню оставалось бы
-                    открытым при работе с таблицей. */}
+                {/* Подложка закрывает меню по клику вне */}
                 <button
                   type="button"
                   aria-label="Закрыть меню колонок"
-                  onClick={() => setColumnsMenuOpen(false)}
+                  onClick={() => {
+                    setColumnsMenuOpen(false);
+                    setColumnSearch("");
+                  }}
                   className="fixed inset-0 z-30 cursor-default"
                 />
-                {/*
-                  На мобильном меню разворачивается на всю ширину: `w-56` с
-                  `absolute right-2` на 360px экране прижимает его к краю, и часть
-                  подписей уезжает за границу.
-                */}
                 <div
                   className={cn(
-                    "absolute top-full z-40 mt-1 overflow-hidden rounded-lg border border-slate-700 bg-slate-900 shadow-xl",
+                    "absolute top-full z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
                     isMobile ? "left-0 right-0 w-full" : "right-2 w-56",
                   )}
                 >
-                  <div className="max-h-64 overflow-y-auto py-1">
-                    {menuColumns.map((column) => {
-                      const isHidden = hiddenIds.has(column.id);
-                      const canHide =
-                        column.id !== identifierColumnId && column.hideable !== false;
-
-                      return (
-                        <button
-                          key={column.id}
-                          type="button"
-                          disabled={!canHide}
-                          onClick={() => toggleColumn(column.id)}
-                          className={cn(
-                            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors",
-                            canHide ? "text-slate-300 hover:bg-slate-800" : "cursor-default text-slate-600",
-                          )}
-                        >
-                          {isHidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                          <span className="truncate">{column.header}</span>
-                          {!canHide && <span className="ml-auto text-xs text-slate-600">всегда</span>}
-                        </button>
-                      );
-                    })}
+                  {/* Поиск полей (Twenty CRM style) */}
+                  <div className="border-b border-[#f0f0f0] p-2 bg-white">
+                    <div className="relative flex items-center">
+                      <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
+                      <input
+                        type="text"
+                        value={columnSearch}
+                        onChange={(e) => setColumnSearch(e.target.value)}
+                        placeholder="Поиск полей"
+                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
+                        autoFocus
+                      />
+                    </div>
                   </div>
+
+                  {/* Список полей */}
+                  <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
+                    {filteredMenuColumns.length === 0 ? (
+                      <div className="px-3 py-3 text-center text-xs text-[#888888]">
+                        Поля не найдены
+                      </div>
+                    ) : (
+                      filteredMenuColumns.map((column) => {
+                        const isHidden = hiddenIds.has(column.id);
+                        const canHide =
+                          column.id !== identifierColumnId && column.hideable !== false;
+                        const IconComponent = column.icon;
+
+                        return (
+                          <button
+                            key={column.id}
+                            type="button"
+                            disabled={!canHide}
+                            onClick={() => toggleColumn(column.id)}
+                            className={cn(
+                              "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
+                              canHide
+                                ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
+                                : "cursor-default text-[#888888]",
+                              !isHidden && canHide && "font-medium text-[#111111]",
+                            )}
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              {IconComponent ? (
+                                <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
+                              ) : (
+                                <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
+                              )}
+                              <span className="truncate">{column.header}</span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5 pl-2">
+                              {!canHide ? (
+                                <span className="text-[11px] text-[#888888]">всегда</span>
+                              ) : !isHidden ? (
+                                <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Нижняя кнопка сброса раскладки */}
                   <button
                     type="button"
-                    onClick={() => { resetLayout(); setColumnsMenuOpen(false); }}
-                    className="w-full border-t border-slate-800 px-3 py-1.5 text-left text-xs text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+                    title="Сбросить раскладку к значениям по умолчанию"
+                    onClick={() => {
+                      resetLayout();
+                      setColumnsMenuOpen(false);
+                      setColumnSearch("");
+                    }}
+                    className="flex w-full items-center gap-2 border-t border-[#f0f0f0] bg-white px-3 py-2 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
                   >
-                    Сбросить раскладку
+                    <Settings className="h-3.5 w-3.5 text-[#888888]" />
+                    <span>Сбросить раскладку</span>
                   </button>
                 </div>
               </>
@@ -579,17 +635,17 @@ export function RecordTable<T>({
           >
             {/* Заголовок */}
             <div
-              className="grid border-b border-slate-800 bg-slate-900 text-sm"
+              className="grid border-b border-[#e5e5e5] bg-white text-xs font-medium uppercase normal-case text-[#666666]"
               style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
             >
               {selectionEnabled && (
-                <div className="sticky left-0 z-20 flex items-center justify-center bg-slate-900">
+                <div className="sticky left-0 z-20 flex items-center justify-center bg-white border-r border-[#e5e5e5]">
                   <input
                     type="checkbox"
                     checked={allSelected}
                     onChange={toggleAll}
                     aria-label="Выбрать все"
-                    className="h-3.5 w-3.5 accent-amber-500"
+                    className="h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111]"
                   />
                 </div>
               )}
@@ -620,17 +676,17 @@ export function RecordTable<T>({
                   }}
                   onDragEnd={() => { setDragColumnId(null); setDropColumnId(null); }}
                   className={cn(
-                    "group relative flex items-center overflow-hidden border-r border-slate-800 pl-2 pr-1 text-xs font-medium uppercase tracking-wide text-slate-500",
-                    index === 0 && "sticky z-20 bg-slate-900 shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
+                    "group relative flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs font-medium text-[#666666] bg-white transition-colors",
+                    index === 0 && "sticky z-20 bg-white border-r border-[#e5e5e5]",
                     column.align === "right" && "justify-end",
                     dragColumnId === column.id && "opacity-40",
-                    dropColumnId === column.id && "shadow-[inset_2px_0_0_theme(colors.amber.500)]",
+                    dropColumnId === column.id && "shadow-[inset_2px_0_0_#3b82f6]",
                     columnDragEnabled && index > 0 && "cursor-grab active:cursor-grabbing",
                   )}
                   style={index === 0 ? { left: stickyLeft } : undefined}
                 >
                   {columnDragEnabled && index > 0 && (
-                    <GripVertical className="mr-1 h-3 w-3 shrink-0 text-slate-700 opacity-0 transition-opacity group-hover:opacity-100" />
+                    <GripVertical className="mr-1 h-3 w-3 shrink-0 text-[#cccccc] opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
 
                   {column.sortValue !== undefined ? (
@@ -644,8 +700,8 @@ export function RecordTable<T>({
                         }
                       }}
                       className={cn(
-                        "flex min-w-0 items-center gap-1 truncate transition-colors hover:text-slate-300",
-                        sortColumn === column.id && "text-slate-200",
+                        "flex min-w-0 items-center gap-1 truncate transition-colors hover:text-[#111111]",
+                        sortColumn === column.id && "text-[#111111] font-semibold",
                       )}
                     >
                       {/*
@@ -654,35 +710,157 @@ export function RecordTable<T>({
                         вёрстки. Индикатор сортировки остаётся — он показывает,
                         что таблица отсортирована.
                       */}
+                      {column.icon && !(index === 0 && identifierCollapsed) && (
+                        <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                      )}
                       {!(index === 0 && identifierCollapsed) && (
                         <span className="truncate">{column.header}</span>
                       )}
-                      <span className={cn("text-xs", sortColumn === column.id ? "text-amber-400" : "opacity-0 group-hover:opacity-40")}>
+                      <span className={cn("text-xs", sortColumn === column.id ? "text-[#111111]" : "opacity-0 group-hover:opacity-40")}>
                         {sortColumn === column.id && sortAsc ? "▲" : "▼"}
                       </span>
                     </button>
                   ) : (
                     !(index === 0 && identifierCollapsed) && (
-                      <span className="truncate">{column.header}</span>
+                      <span className="flex items-center gap-1 truncate">
+                        {column.icon && <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />}
+                        <span className="truncate">{column.header}</span>
+                      </span>
                     )
                   )}
 
                   {/*
                     Хват ресайза у правой границы — только на десктопе: полоса
-                    4px пальцем не берётся, зато перехватывает начало
-                    горизонтального скролла таблицы.
+                    с запасом для захвата курсором и подсветкой при наведении.
                   */}
                   {!isMobile && (
                     <span
                       role="separator"
                       aria-orientation="vertical"
                       onMouseDown={(event) => startResize(event, column)}
-                      className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-amber-500/40"
+                      className="absolute -right-1 top-0 h-full w-2 cursor-col-resize z-20 hover:bg-[#3b82f6]/40 transition-colors"
                     />
                   )}
                 </div>
               ))}
-              <div className="border-r border-transparent" />
+              <div className="relative border-r border-[#e5e5e5] flex items-center justify-center text-[#888888]">
+                {tableId !== undefined && layoutLoaded ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setColumnsMenuAnchor("headerPlus");
+                      setColumnsMenuOpen((open) => !open);
+                    }}
+                    aria-label="Добавить колонку"
+                    title="Добавить колонку"
+                    className="flex h-full w-full items-center justify-center text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <Plus className="h-3.5 w-3.5 opacity-60" />
+                )}
+
+                {columnsMenuOpen && columnsMenuAnchor === "headerPlus" && (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Закрыть меню колонок"
+                      onClick={() => {
+                        setColumnsMenuOpen(false);
+                        setColumnSearch("");
+                      }}
+                      className="fixed inset-0 z-30 cursor-default"
+                    />
+                    <div
+                      className={cn(
+                        "absolute top-full right-0 z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
+                        isMobile ? "left-0 right-0 w-full" : "w-64",
+                      )}
+                    >
+                      {/* Поиск полей */}
+                      <div className="border-b border-[#f0f0f0] p-2 bg-white">
+                        <div className="relative flex items-center">
+                          <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
+                          <input
+                            type="text"
+                            value={columnSearch}
+                            onChange={(e) => setColumnSearch(e.target.value)}
+                            placeholder="Поиск полей"
+                            className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+
+                      {/* Список полей */}
+                      <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
+                        {filteredMenuColumns.length === 0 ? (
+                          <div className="px-3 py-3 text-center text-xs text-[#888888]">
+                            Поля не найдены
+                          </div>
+                        ) : (
+                          filteredMenuColumns.map((column) => {
+                            const isHidden = hiddenIds.has(column.id);
+                            const canHide =
+                              column.id !== identifierColumnId && column.hideable !== false;
+                            const IconComponent = column.icon;
+
+                            return (
+                              <button
+                                key={column.id}
+                                type="button"
+                                disabled={!canHide}
+                                onClick={() => toggleColumn(column.id)}
+                                className={cn(
+                                  "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
+                                  canHide
+                                    ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
+                                    : "cursor-default text-[#888888]",
+                                  !isHidden && canHide && "font-medium text-[#111111]",
+                                )}
+                              >
+                                <div className="flex min-w-0 items-center gap-2">
+                                  {IconComponent ? (
+                                    <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
+                                  ) : (
+                                    <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
+                                  )}
+                                  <span className="truncate">{column.header}</span>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1.5 pl-2">
+                                  {!canHide ? (
+                                    <span className="text-[11px] text-[#888888]">всегда</span>
+                                  ) : !isHidden ? (
+                                    <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
+                                  ) : null}
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Нижний бар меню */}
+                      <div className="border-t border-[#f0f0f0] p-1 bg-white">
+                        <button
+                          type="button"
+                          title="Настроить поля (Сбросить раскладку к значениям по умолчанию)"
+                          onClick={() => {
+                            resetLayout();
+                            setColumnsMenuOpen(false);
+                            setColumnSearch("");
+                          }}
+                          className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+                        >
+                          <Settings className="h-3.5 w-3.5 text-[#888888]" />
+                          <span>Настроить поля (Сбросить раскладку)</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Строки */}
@@ -696,20 +874,12 @@ export function RecordTable<T>({
                   key={id}
                   onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                   className={cn(
-                    // Фон строки задан сплошным цветом, а залипающие ячейки берут
-                    // его через bg-inherit: sticky-ячейка лежит поверх строки
-                    // отдельным слоем, и полупрозрачный фон складывался бы дважды —
-                    // первая колонка выглядела бы чёрной полосой поверх подсветки.
-                    // `text-sm` явно: без него ячейки наследовали базовый 16px от
-                    // body, а заголовок колонок набран `text-xs` — на четырёх
-                    // страницах CRM это читалось как «шрифт в карточках крупный»
-                    // и «вёрстка косая».
-                    "group grid border-b border-slate-800/70 text-sm text-slate-300",
+                    "group grid border-b border-[#e5e5e5] text-sm text-[#111111] transition-colors",
                     isSelected
-                      ? "bg-slate-800 shadow-[inset_2px_0_0_theme(colors.amber.500)]"
+                      ? "bg-[#f0f9ff] shadow-[inset_2px_0_0_#3b82f6]"
                       : isRowFocused
-                        ? "bg-slate-800/70"
-                        : "bg-slate-900 hover:bg-slate-800",
+                        ? "bg-[#fafafa]"
+                        : "bg-white hover:bg-[#fafafa]",
                     onRowClick !== undefined && "cursor-pointer",
                   )}
                   style={{ gridTemplateColumns: gridTemplate, minHeight: `${RECORD_TABLE_ROW_HEIGHT}px` }}
@@ -717,7 +887,7 @@ export function RecordTable<T>({
                   {selectionEnabled && (
                     <div
                       onClick={(event) => event.stopPropagation()}
-                      className="sticky left-0 z-10 flex items-center justify-center bg-inherit"
+                      className="sticky left-0 z-10 flex items-center justify-center bg-inherit border-r border-[#e5e5e5]"
                     >
                       <input
                         type="checkbox"
@@ -725,7 +895,7 @@ export function RecordTable<T>({
                         onChange={() => toggleOne(id)}
                         aria-label="Выбрать строку"
                         className={cn(
-                          "h-3.5 w-3.5 accent-amber-500 transition-opacity",
+                          "h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] transition-opacity",
                           isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                         )}
                       />
@@ -744,9 +914,9 @@ export function RecordTable<T>({
                           setFocusedRow(rowIndex);
                         }}
                         className={cn(
-                          "min-w-0 overflow-hidden border-r border-slate-800/70",
-                          columnIndex === 0 && "sticky z-10 bg-inherit shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
-                          isCellFocused && "ring-1 ring-inset ring-amber-500/70",
+                          "min-w-0 overflow-hidden border-r border-[#e5e5e5] flex items-center relative",
+                          columnIndex === 0 && "sticky z-10 bg-inherit border-r border-[#e5e5e5]",
+                          isCellFocused && "ring-1 ring-[#3b82f6] rounded-[3px] -m-px bg-white z-20",
                         )}
                         style={columnIndex === 0 ? { left: stickyLeft } : undefined}
                       >
@@ -762,16 +932,16 @@ export function RecordTable<T>({
             {/* Итоговая строка с агрегатами */}
             {footerCells !== undefined && (
               <div
-                className="grid border-t border-slate-800 bg-slate-900/80 text-sm"
+                className="grid border-t border-[#e5e5e5] bg-[#fafafa] text-sm font-normal text-[#666666]"
                 style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
               >
-                {selectionEnabled && <div className="sticky left-0 z-10 bg-slate-900/80" />}
+                {selectionEnabled && <div className="sticky left-0 z-10 bg-[#fafafa] border-r border-[#e5e5e5]" />}
                 {visibleColumns.map((column, index) => (
                   <div
                     key={column.id}
                     className={cn(
-                      "flex items-center overflow-hidden border-r border-slate-800/70 pl-2 pr-1 text-xs text-slate-400",
-                      index === 0 && "sticky z-10 bg-slate-900/80",
+                      "flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs text-[#666666]",
+                      index === 0 && "sticky z-10 bg-[#fafafa]",
                       column.align === "right" && "justify-end",
                     )}
                     style={index === 0 ? { left: stickyLeft } : undefined}

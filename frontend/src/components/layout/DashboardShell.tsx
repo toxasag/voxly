@@ -43,7 +43,7 @@ export function DashboardShell({
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-slate-950">
+    <div className="flex min-h-screen bg-white">
       <Sidebar collapsed={collapsed} onToggle={toggleCollapsed} />
       {/*
         Контент занимает всю ширину правее сайдбара: pl-* повторяет текущую
@@ -67,7 +67,7 @@ export function DashboardShell({
           и не долистывалась. `px-4` вместо `px-6`: на 360px каждый лишний пиксель
           отступа сужает и без того тесную колонку.
         */}
-        <main className="w-full min-w-0 flex-1 px-4 pb-20 pt-4 md:px-6 md:py-6">{children}</main>
+        <main className="w-full min-w-0 flex-1 px-4 pb-20 pt-3 md:px-5 md:py-4 bg-white">{children}</main>
       </div>
 
       {/* Нижний бар: только на мобильном, где нет сайдбара. */}

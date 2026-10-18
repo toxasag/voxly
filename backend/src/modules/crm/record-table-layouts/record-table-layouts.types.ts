@@ -42,6 +42,10 @@ export const recordTableLayoutSchema = z
      * поля остаются годными. Границы как у Twenty RecordBoard (~200–480).
      */
     kanbanColumnWidth: z.number().int().min(200).max(480).optional(),
+    /**
+     * Индивидуальные ширины колонок канбана по этапам (stageId -> width).
+     */
+    kanbanColumnWidths: z.record(z.string().max(64), z.number().int().min(160).max(800)).optional(),
   })
   .strict();
 

@@ -26,11 +26,11 @@ export function UserAvatar({ user, fallbackLabel = "Не назначен", size
         // eslint-disable-next-line @next/next/no-img-element -- avatars are arbitrary external URLs, not build-time assets
         <img src={user.avatarUrl} alt="" className={cn("shrink-0 rounded-full object-cover", SIZES[size])} />
       ) : (
-        <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-slate-700 font-semibold text-slate-200", SIZES[size])} aria-hidden="true">
+        <span className={cn("flex shrink-0 items-center justify-center rounded-full bg-[#f0f0f0] border border-[#e5e5e5] font-medium text-[#111111]", SIZES[size])} aria-hidden="true">
           {user ? userInitials(user.fullName) : "?"}
         </span>
       )}
-      <span className="truncate text-xs text-slate-400">{label}</span>
+      <span className="truncate text-xs text-[#666666]">{label}</span>
     </span>
   );
 }

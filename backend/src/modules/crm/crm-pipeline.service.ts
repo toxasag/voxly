@@ -123,40 +123,48 @@ export class CrmPipelineService {
       if (activeDeal !== null) {
         dealId = activeDeal.id;
       } else {
-        let pipelineId = await this.getFirstPipelineId(tx, input.tenantId);
+        const isSuppressed = await this.shouldSuppressDeal(tx, input.tenantId, contactId);
+        const lastDeal = isSuppressed ? await this.findLastDeal(tx, input.tenantId, contactId) : null;
 
-        if (pipelineId === null) {
-          pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
+        if (isSuppressed && lastDeal !== null) {
+          dealId = lastDeal.id;
+          isNewDeal = false;
+        } else {
+          let pipelineId = await this.getFirstPipelineId(tx, input.tenantId);
+
+          if (pipelineId === null) {
+            pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
+          }
+
+          const stage = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages WHERE pipeline_id = $1 ORDER BY sort_order ASC LIMIT 1`,
+            [pipelineId],
+          );
+
+          if (stage === null) {
+            throw new NotFoundError("No stage found for pipeline");
+          }
+
+          const createdBy = await this.findFallbackUserId(tx, input.tenantId);
+
+          const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
+            title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
+            description: input.text.slice(0, 500),
+            budget: 0,
+            currency: "RUB",
+            pipeline_id: pipelineId,
+            stage_id: stage.id,
+            // Связь обязательна, а не для полноты карточки: `findActiveDeal`
+            // ищет открытую сделку по `contact_id`, поэтому сделка без него
+            // не находится, и каждое следующее сообщение клиента создавало
+            // новую — канал плодил дубли.
+            contact_id: contactId,
+            custom_fields: {},
+          });
+
+          dealId = deal.id;
+          isNewDeal = true;
         }
-
-        const stage = await tx.queryOne<{ id: string }>(
-          `SELECT id FROM stages WHERE pipeline_id = $1 ORDER BY sort_order ASC LIMIT 1`,
-          [pipelineId],
-        );
-
-        if (stage === null) {
-          throw new NotFoundError("No stage found for pipeline");
-        }
-
-        const createdBy = await this.findFallbackUserId(tx, input.tenantId);
-
-        const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
-          title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
-          description: input.text.slice(0, 500),
-          budget: 0,
-          currency: "RUB",
-          pipeline_id: pipelineId,
-          stage_id: stage.id,
-          // Связь обязательна, а не для полноты карточки: `findActiveDeal`
-          // ищет открытую сделку по `contact_id`, поэтому сделка без него
-          // не находится, и каждое следующее сообщение клиента создавало
-          // новую — канал плодил дубли.
-          contact_id: contactId,
-          custom_fields: {},
-        });
-
-        dealId = deal.id;
-        isNewDeal = true;
       }
 
       await tx.query(
@@ -217,6 +225,76 @@ export class CrmPipelineService {
       content: input.content,
       channel: input.channel,
       channel_account_id: input.channelAccountId,
+    });
+  }
+
+  /**
+   * M5.3: Обработка исходящего сообщения оператора из нативного мессенджера (fromMe).
+   * Сохраняет сообщение в таймлайне как sender: 'manager', direction: 'outbound'
+   * и активирует AI Handoff на 30 минут (пауза бота).
+   */
+  async processNativeOutbound(input: {
+    tenantId: string;
+    channel: string;
+    channelAccountId: string;
+    chatId: string;
+    text: string;
+    senderName?: string;
+    pauseMinutes?: number;
+  }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
+    return transaction(async (tx) => {
+      const contact = await this.findContact(tx, input.tenantId, {
+        tenantId: input.tenantId,
+        channel: input.channel,
+        channelAccountId: input.channelAccountId,
+        chatId: input.chatId,
+        text: input.text,
+        senderName: input.senderName ?? "Оператор",
+        senderTelegramChatId: input.chatId,
+      });
+
+      if (contact === null) {
+        return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      const activeDeal =
+        (await this.findActiveDeal(tx, input.tenantId, contact.id)) ??
+        (await this.findLastDeal(tx, input.tenantId, contact.id));
+
+      if (activeDeal === null) {
+        return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      const pauseMins = input.pauseMinutes ?? 30;
+      const pauseRes = await tx.queryOne<{ paused_until: string }>(
+        `UPDATE deals
+         SET ai_paused_until = now() + ($1 || ' minutes')::interval,
+             updated_at = now()
+         WHERE id = $2 AND tenant_id = $3
+         RETURNING ai_paused_until::text AS paused_until`,
+        [pauseMins.toString(), activeDeal.id, input.tenantId],
+      );
+
+      const msgRes = await tx.queryOne<{ id: string }>(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent')
+         RETURNING id`,
+        [
+          input.tenantId,
+          activeDeal.id,
+          nullIfBlank(input.channelAccountId),
+          input.senderName ?? "Оператор",
+          input.text,
+          input.channel,
+        ],
+      );
+
+      return {
+        dealId: activeDeal.id,
+        messageId: msgRes?.id ?? null,
+        pausedUntil: pauseRes?.paused_until ?? null,
+      };
     });
   }
 
@@ -287,6 +365,41 @@ export class CrmPipelineService {
          AND s.is_won = false
          AND s.is_lost = false
        ORDER BY d.created_at DESC
+       LIMIT 1`,
+      [tenantId, contactId],
+    );
+    return row;
+  }
+
+  /**
+   * Проверяет, включено ли подавление создания сделок для контакта.
+   */
+  private async shouldSuppressDeal(
+    tx: TransactionClient,
+    tenantId: string,
+    contactId: string,
+  ): Promise<boolean> {
+    const row = await tx.queryOne<{ suppress_deal_creation: boolean }>(
+      `SELECT suppress_deal_creation FROM contacts
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, contactId],
+    );
+    return row?.suppress_deal_creation ?? false;
+  }
+
+  /**
+   * Ищет последнюю сделку контакта (включая завершённые), чтобы привязать сообщение
+   * без создания новой сделки-спама при активном suppress_deal_creation.
+   */
+  private async findLastDeal(
+    tx: TransactionClient,
+    tenantId: string,
+    contactId: string,
+  ): Promise<{ id: string } | null> {
+    const row = await tx.queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+       ORDER BY created_at DESC
        LIMIT 1`,
       [tenantId, contactId],
     );
