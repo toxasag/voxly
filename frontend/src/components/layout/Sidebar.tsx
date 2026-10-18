@@ -6,13 +6,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsUpDown,
-  Home,
+  LayoutDashboard,
   LogOut,
   ShieldCheck,
   Plug,
   MessageSquare,
-  Sparkles,
-  Settings,
+  Handshake,
+  Users,
+  Building2,
+  ListChecks,
+  BarChart3,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -23,13 +26,13 @@ import { useProfile } from "@/lib/api/use-profile";
 import { userInitials } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import {
-  INBOX_NAV,
   MARKETPLACE_NAV,
   PLATFORM_NAV,
   TENANT_MENU,
   visibleChannelNav,
   visibleMainNav,
   visibleMarketingNav,
+  type NavItem,
 } from "@/lib/navigation/nav-items";
 
 const ENTITY_ICONS: Record<string, string> = {
@@ -38,7 +41,7 @@ const ENTITY_ICONS: Record<string, string> = {
   "/crm/companies": "text-blue-600",
   "/crm/tasks": "text-emerald-600",
   "/analytics": "text-purple-600",
-  "/dashboard": "text-blue-600",
+  "/dashboard": "text-neutral-600",
   "/inbox": "text-violet-600",
   "/marketing/stories": "text-pink-500",
   "/marketing/funnels": "text-amber-500",
@@ -62,31 +65,25 @@ function SidebarLink({
   collapsed: boolean;
   accent?: "amber" | "orange";
 }) {
-  const isActive = pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
-  const iconColor = ENTITY_ICONS[item.href] ?? (isActive ? (accent === "orange" ? "text-orange-500" : "text-blue-600") : "text-slate-400");
+  const isActive =
+    pathname === item.href || (item.href !== "/dashboard" && pathname.startsWith(item.href + "/"));
+  const iconColor =
+    ENTITY_ICONS[item.href] ?? (isActive ? (accent === "orange" ? "text-orange-500" : "text-[#111111]") : "text-[#888888]");
 
   return (
     <Link
       href={item.href}
       title={collapsed ? item.label : undefined}
       className={cn(
-        "flex items-center rounded-lg px-2.5 py-2 text-sm transition-all duration-150",
-        collapsed && "justify-center px-2",
+        "flex items-center rounded-lg px-2.5 py-1.5 text-[13px] transition-colors duration-100",
+        collapsed && "justify-center px-1.5",
         isActive
-          ? "bg-slate-100 font-semibold text-slate-900 shadow-2xs"
-          : "font-normal text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+          ? "bg-black/[0.06] font-medium text-[#000000]"
+          : "font-normal text-[#333333] hover:bg-black/[0.03] hover:text-[#000000]",
       )}
     >
       <item.icon className={cn("h-4 w-4 shrink-0 transition-colors", iconColor)} />
       {!collapsed && <span className="ml-2.5 truncate">{item.label}</span>}
-      {!collapsed && isActive && (
-        <span
-          className={cn(
-            "ml-auto h-1.5 w-1.5 rounded-full",
-            accent === "orange" ? "bg-orange-500" : "bg-blue-600",
-          )}
-        />
-      )}
     </Link>
   );
 }
@@ -137,92 +134,56 @@ export function Sidebar({
   const visibleChannels = visibleChannelNav(installedSlugs, permissions);
   const visibleMarketing = visibleMarketingNav();
   const visibleModules = visibleNav.filter((item) => item.moduleSlug !== undefined);
-  const coreLinks = visibleNav.filter(
-    (item) => item.href !== "/marketplace" && !item.moduleSlug && item.href !== "/dashboard",
-  );
+
+  // Core Twenty workspace items
+  const workspaceItems: NavItem[] = [
+    { label: "Главная", href: "/dashboard", icon: LayoutDashboard, always: true },
+    { label: "Входящие", href: "/inbox", icon: MessageSquare, always: true },
+    { label: "Сделки", href: "/crm/deals", icon: Handshake, always: true },
+    { label: "Контакты", href: "/crm/contacts", icon: Users, always: true },
+    { label: "Компании", href: "/crm/companies", icon: Building2, always: true },
+    { label: "Задачи", href: "/crm/tasks", icon: ListChecks, always: true },
+    { label: "Аналитика", href: "/analytics", icon: BarChart3, always: true },
+  ];
 
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-slate-200 bg-[#fbfbfb] text-slate-800 transition-all duration-200 ease-in-out md:flex",
+        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] text-[#111111] transition-all duration-200 ease-in-out md:flex",
         collapsed ? "w-16" : "w-60",
       )}
     >
       {/* Workspace Header & Switcher */}
-      <div className="relative border-b border-slate-200/80 px-3 py-3">
+      <div className="relative border-b border-[#e5e5e5] px-2.5 py-2.5">
         <button
           type="button"
           onClick={() => setTenantMenuOpen((prev) => !prev)}
           aria-expanded={tenantMenuOpen}
           aria-haspopup="menu"
           className={cn(
-            "flex w-full items-center rounded-lg border border-slate-200/80 bg-white p-2 shadow-2xs transition-colors hover:border-slate-300",
-            collapsed ? "justify-center p-2" : "gap-2.5 px-3 py-2",
+            "flex w-full items-center rounded-lg p-1.5 transition-colors hover:bg-black/[0.04]",
+            collapsed ? "justify-center" : "gap-2.5",
           )}
         >
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-blue-600 text-xs font-bold text-white shadow-2xs">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-black/[0.07] text-xs font-semibold text-[#111111]">
             {displayTenant.tenantName.charAt(0) || "V"}
           </div>
           {!collapsed && (
             <>
               <div className="flex-1 text-left overflow-hidden">
-                <p className="truncate text-xs font-semibold text-slate-900">
+                <p className="truncate text-[13px] font-medium text-[#000000]">
                   {displayTenant.tenantName || "Рабочее пространство"}
                 </p>
-                <p className="truncate text-[11px] text-slate-500">
+                <p className="truncate text-[11px] text-[#888888]">
                   {displayTenant.slug.length > 0
                     ? `${displayTenant.slug}.getvoxly.ru`
                     : displayTenant.plan || "Twenty CRM"}
                 </p>
               </div>
-              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
             </>
           )}
         </button>
-
-        {!collapsed && (
-          <div className="mt-2 flex items-center justify-between rounded-lg bg-slate-100/70 p-1">
-            <Link
-              href="/dashboard"
-              title="Панель"
-              className={cn(
-                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
-                pathname === "/dashboard"
-                  ? "bg-white text-slate-900 shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900",
-              )}
-            >
-              <Home className="h-3.5 w-3.5" />
-              <span>Главная</span>
-            </Link>
-            <Link
-              href="/inbox"
-              title="Входящие"
-              className={cn(
-                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
-                pathname === "/inbox"
-                  ? "bg-white text-slate-900 shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900",
-              )}
-            >
-              <MessageSquare className="h-3.5 w-3.5 text-violet-600" />
-              <span>Входящие</span>
-            </Link>
-            <Link
-              href="/settings"
-              title="Настройки"
-              className={cn(
-                "flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-colors",
-                pathname.startsWith("/settings")
-                  ? "bg-white text-slate-900 shadow-2xs"
-                  : "text-slate-600 hover:text-slate-900",
-              )}
-            >
-              <Settings className="h-3.5 w-3.5" />
-              <span>Настройки</span>
-            </Link>
-          </div>
-        )}
 
         {tenantMenuOpen && (
           <>
@@ -234,11 +195,11 @@ export function Sidebar({
             <div
               role="menu"
               className={cn(
-                "absolute z-50 mt-1 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl",
-                collapsed ? "left-full top-3 ml-2 w-56" : "left-3 right-3",
+                "absolute z-50 mt-1 overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-lg",
+                collapsed ? "left-full top-2 ml-2 w-56" : "left-2.5 right-2.5",
               )}
             >
-              <p className="border-b border-slate-100 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <p className="border-b border-[#f0f0f0] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
                 Компания
               </p>
               {TENANT_MENU.map((item) => (
@@ -247,14 +208,14 @@ export function Sidebar({
                   href={item.href}
                   role="menuitem"
                   onClick={() => setTenantMenuOpen(false)}
-                  className="flex items-start gap-2.5 px-3 py-2.5 transition-colors hover:bg-slate-50"
+                  className="flex items-start gap-2.5 px-3 py-2 text-[13px] transition-colors hover:bg-black/[0.03]"
                 >
-                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-[#666666]" />
                   <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-slate-800">
+                    <span className="block truncate font-medium text-[#111111]">
                       {item.label}
                     </span>
-                    <span className="block truncate text-xs text-slate-500">
+                    <span className="block truncate text-[11px] text-[#888888]">
                       {item.description}
                     </span>
                   </span>
@@ -266,22 +227,17 @@ export function Sidebar({
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
         {!collapsed && (
-          <div className="px-2.5 pb-1 pt-1">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          <div className="px-2.5 pb-1 pt-1.5">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-[#888888]">
               Рабочее пространство
             </span>
           </div>
         )}
 
-        {/* Core CRM links: Inbox, Deals, Contacts, Companies, Tasks, Analytics */}
-        <SidebarLink
-          item={INBOX_NAV}
-          pathname={pathname}
-          collapsed={collapsed}
-        />
-        {coreLinks.map((item) => (
+        {/* Core CRM links: Home, Inbox, Deals, Contacts, Companies, Tasks, Analytics */}
+        {workspaceItems.map((item) => (
           <SidebarLink
             key={item.href}
             item={item}
@@ -295,13 +251,12 @@ export function Sidebar({
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                "mt-3 mb-1 flex items-center gap-2 border-t border-[#f0f0f0] pt-2.5",
                 collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-pink-500" />
               {!collapsed && (
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[#888888]">
                   Маркетинг
                 </span>
               )}
@@ -323,12 +278,12 @@ export function Sidebar({
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                "mt-3 mb-1 flex items-center gap-2 border-t border-[#f0f0f0] pt-2.5",
                 collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
               {!collapsed && (
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[#888888]">
                   Модули
                 </span>
               )}
@@ -357,13 +312,13 @@ export function Sidebar({
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                "mt-3 mb-1 flex items-center gap-2 border-t border-[#f0f0f0] pt-2.5",
                 collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
-              <Plug className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <Plug className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
               {!collapsed && (
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-[#888888]">
                   Каналы связи
                 </span>
               )}
@@ -385,13 +340,13 @@ export function Sidebar({
           <>
             <div
               className={cn(
-                "mt-4 mb-1 flex items-center gap-2 border-t border-slate-200/80 pt-3",
+                "mt-3 mb-1 flex items-center gap-2 border-t border-[#f0f0f0] pt-2.5",
                 collapsed ? "justify-center px-0" : "px-2.5",
               )}
             >
-              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-orange-400" />
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-orange-500" />
               {!collapsed && (
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-orange-500">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-orange-600">
                   Управление платформой
                 </span>
               )}
@@ -411,7 +366,7 @@ export function Sidebar({
       </nav>
 
       {/* User profile & Logout */}
-      <div className="border-t border-slate-200/80 p-2.5 bg-slate-50/50">
+      <div className="border-t border-[#e5e5e5] p-2 bg-[#fafafa]">
         <div
           className={cn(
             "flex items-center rounded-lg",
@@ -422,8 +377,8 @@ export function Sidebar({
             href="/settings/profile"
             title={collapsed ? displayUser.name : undefined}
             className={cn(
-              "flex min-w-0 flex-1 items-center rounded-lg transition-colors hover:bg-slate-100",
-              isProfileActive && "bg-slate-100",
+              "flex min-w-0 flex-1 items-center rounded-lg transition-colors hover:bg-black/[0.04]",
+              isProfileActive && "bg-black/[0.05]",
               collapsed ? "justify-center p-1.5" : "gap-2.5 p-1.5",
             )}
           >
@@ -432,13 +387,13 @@ export function Sidebar({
               <img
                 src={displayUser.avatarUrl}
                 alt=""
-                className="h-7 w-7 shrink-0 rounded-full object-cover"
+                className="h-6 w-6 shrink-0 rounded-full object-cover"
               />
             ) : (
               <div
                 className={cn(
-                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-                  isProfileActive ? "bg-blue-100 text-blue-700" : "bg-slate-200 text-slate-700",
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+                  isProfileActive ? "bg-black text-white" : "bg-black/[0.08] text-[#111111]",
                 )}
               >
                 {userInitials(displayUser.name)}
@@ -447,10 +402,10 @@ export function Sidebar({
 
             {!collapsed && (
               <div className="min-w-0 flex-1 overflow-hidden text-left">
-                <p className="truncate text-xs font-medium text-slate-800">
+                <p className="truncate text-[12px] font-medium text-[#111111]">
                   {displayUser.name}
                 </p>
-                <p className="truncate text-[11px] text-slate-500">{displayUser.email}</p>
+                <p className="truncate text-[11px] text-[#888888]">{displayUser.email}</p>
               </div>
             )}
           </Link>
@@ -460,7 +415,7 @@ export function Sidebar({
               type="button"
               onClick={() => setLogoutOpen(true)}
               aria-label="Выйти"
-              className="shrink-0 rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-600"
+              className="shrink-0 rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -472,7 +427,7 @@ export function Sidebar({
             type="button"
             onClick={() => setLogoutOpen(true)}
             aria-label="Выйти"
-            className="mt-1 flex w-full items-center justify-center rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-rose-600"
+            className="mt-1 flex w-full items-center justify-center rounded-md p-1.5 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-rose-600"
           >
             <LogOut className="h-4 w-4" />
           </button>
@@ -494,7 +449,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={toggleCollapsed}
-        className="absolute -right-3 top-5 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-xs hover:text-slate-800 transition-colors"
+        className="absolute -right-3 top-3.5 flex h-6 w-6 items-center justify-center rounded-full border border-[#e5e5e5] bg-white text-[#888888] shadow-xs hover:text-[#000000] transition-colors"
       >
         {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronLeft className="h-3 w-3" />}
       </button>
