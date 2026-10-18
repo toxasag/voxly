@@ -112,7 +112,7 @@ export function DealsToolbar(props: Props) {
         <select
           value={props.pipelineId}
           onChange={(event) => props.onPipelineChange(event.target.value)}
-          className="h-8 appearance-none rounded-md border border-[#e5e5e5] bg-white pl-2.5 pr-7 text-[13px] font-medium text-[#000000] hover:bg-[#fafafa] focus:border-[#888888] focus:outline-none cursor-pointer"
+          className="h-8 appearance-none rounded-[8px] border border-[#e5e5e5] bg-white pl-2.5 pr-7 text-[13px] font-medium text-[#000000] hover:bg-[#fafafa] focus:border-[#888888] focus:outline-none cursor-pointer"
         >
           {props.pipelines.map((pipeline) => (
             <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
@@ -121,7 +121,7 @@ export function DealsToolbar(props: Props) {
         <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
       </div>
 
-      <div className="flex overflow-hidden rounded-md border border-[#e5e5e5] bg-[#ffffff]">
+      <div className="flex overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-[#ffffff]">
         <button
           type="button"
           title="Канбан"
@@ -149,7 +149,7 @@ export function DealsToolbar(props: Props) {
           value={props.search}
           onChange={(event) => props.onSearchChange(event.target.value)}
           placeholder="Поиск и фильтр"
-          className="h-8 w-full rounded-md border border-[#e5e5e5] bg-white pl-3 pr-12 text-[13px] text-[#000000] placeholder:text-[#888888] focus:border-[#888888] focus:outline-none"
+          className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-3 pr-12 text-[13px] text-[#000000] placeholder:text-[#888888] focus:border-[#888888] focus:outline-none"
         />
         {props.search !== "" ? (
           <button
@@ -170,7 +170,7 @@ export function DealsToolbar(props: Props) {
         {/* Сводка «N сделок: сумма» на мобильном уходит в меню «⋯»: она отвечает на
             вопрос «сколько денег в воронке» и должна остаться доступной, но в ряду
             занимает половину ширины экрана. */}
-        <div className="hidden rounded-md border border-slate-800 bg-[#fafafa] px-2.5 py-1 text-xs whitespace-nowrap md:block">
+        <div className="hidden rounded-[8px] border border-slate-800 bg-[#fafafa] px-2.5 py-1 text-xs whitespace-nowrap md:block">
           <span className="font-medium text-[#111111]">{props.summaryCount}</span>
           <span className="text-[#666666]"> {dealPlural(props.summaryCount)}: </span>
           <span className="font-medium text-[#111111]">{money.format(props.summarySum)}</span>
@@ -178,7 +178,7 @@ export function DealsToolbar(props: Props) {
 
         <DropdownMenu
           trigger={
-            <button type="button" aria-label="Дополнительные действия" className="flex h-8 w-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#000000]">
+            <button type="button" aria-label="Дополнительные действия" className="flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#000000]">
               ⋯
             </button>
           }
@@ -267,7 +267,7 @@ export function DealsToolbar(props: Props) {
           type="button"
           onClick={props.onConfigureToggle}
           className={cn(
-            "hidden h-8 items-center gap-1.5 rounded-md border px-3 text-xs font-medium tracking-normal transition-colors md:flex",
+            "hidden h-8 items-center gap-1.5 rounded-[8px] border px-3 text-xs font-medium tracking-normal transition-colors md:flex",
             props.configureMode
               ? "border-emerald-500/50 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
               : "border-[#e5e5e5] bg-white text-[#111111] hover:bg-[#f7f7f7]",
@@ -280,7 +280,7 @@ export function DealsToolbar(props: Props) {
         <button
           type="button"
           onClick={props.onCreateDeal}
-          className="flex h-8 items-center gap-1.5 rounded-md bg-[#111111] px-3 text-xs font-medium text-white shadow-none transition-colors hover:bg-[#222222]"
+          className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 text-xs font-medium text-white shadow-none transition-colors hover:bg-[#3b2be0]"
         >
           <Plus className="h-3.5 w-3.5" />
           {/* Подпись только с md:: на мобильном она занимает треть ряда, а иконка

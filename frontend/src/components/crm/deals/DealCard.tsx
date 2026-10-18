@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import { Banknote, ArrowLeft, ArrowRight, Building2, CalendarClock, Flag, User } from "lucide-react";
 import type { DealDTO, StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
-import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip, paletteFor } from "@/components/crm/shared/EntityChip";
-import { stageColor } from "@/components/crm/deals/stage-colors";
 import {
   defaultDealCardFields,
   hasDealFieldValue,
@@ -68,9 +66,6 @@ export const DealCard = memo(function DealCard({
     }
   }, [deal.id, onOpen, router]);
 
-  const accent = stageColor(stageColorKey);
-  const leftBorderClass = isWon ? "border-l-2 border-l-emerald-500" : isLost ? "border-l-2 border-l-rose-500" : accent.cardBorder ? "border-l-2" : "";
-
   // Поле показывается, только когда включено и когда у сделки есть значение:
   // пустая строка «Описание:» занимала бы место, ничего не сообщая.
   const show = (field: keyof DealCardOptions): boolean =>
@@ -85,10 +80,7 @@ export const DealCard = memo(function DealCard({
       draggable={!isMobile}
       onDragStart={isMobile ? undefined : drag}
       onClick={handleClick}
-      className={cn(
-        "group cursor-pointer rounded-lg border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-2xs p-3 space-y-2",
-        leftBorderClass,
-      )}
+      className="group cursor-pointer rounded-[16px] border border-[#e5e5e5] bg-white transition-all hover:border-[#cccccc] hover:shadow-[rgba(0,0,0,0.004)_-4px_4px_4px_0px,rgba(0,0,0,0.039)_0px_2px_4px_0px] p-3 space-y-2 active:opacity-30"
     >
       {/* Заголовок с монограммой как в Twenty */}
       <div className="flex items-center gap-2">
@@ -117,30 +109,40 @@ export const DealCard = memo(function DealCard({
           </div>
         )}
 
-        {show("stage") && (
+        {show("owner") && (
           <div className="flex items-center gap-2 text-[#666666]">
-            <Flag className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="truncate">{stageName}</span>
+            <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span className="truncate text-[#333333]">
+              {manager?.fullName ?? deal.ownerName ?? "System"}
+            </span>
           </div>
         )}
 
         {show("closeDate") && deal.closeDate !== null && (
           <div className="flex items-center gap-2 text-[#666666]">
             <CalendarClock className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span>{new Date(deal.closeDate).toLocaleDateString("ru-RU")}</span>
+            <span className="text-[#333333]">{new Date(deal.closeDate).toLocaleDateString("ru-RU")}</span>
           </div>
         )}
 
-        {/* Компания и контактное лицо */}
-        {((show("company") && deal.companyName !== null) ||
-          (show("contact") && deal.contactName !== null)) && (
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
-            {show("company") && deal.companyName !== null && (
-              <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-            )}
-            {show("contact") && deal.contactName !== null && (
-              <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
-            )}
+        {show("company") && deal.companyName !== null && (
+          <div className="flex items-center gap-2 text-[#666666]">
+            <Building2 className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+          </div>
+        )}
+
+        {show("contact") && deal.contactName !== null && (
+          <div className="flex items-center gap-2 text-[#666666]">
+            <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
+          </div>
+        )}
+
+        {show("stage") && (
+          <div className="flex items-center gap-2 text-[#666666]">
+            <Flag className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+            <span className="truncate text-[#333333]">{stageName}</span>
           </div>
         )}
 
@@ -160,16 +162,15 @@ export const DealCard = memo(function DealCard({
         {show("closedAt") && deal.closedAt !== null && (
           <div className="text-xs text-[#888888]">Закрыта: {new Date(deal.closedAt).toLocaleDateString("ru-RU")}</div>
         )}
-        {show("owner") && <UserAvatar user={manager} fallbackLabel="Не назначен" size="sm" />}
       </div>
 
       {/* Мобильные стрелки перемещения */}
-      <div className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 pt-1">
+      <div className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:h-0 md:overflow-hidden md:p-0 md:group-hover:h-auto md:group-hover:overflow-visible md:group-hover:pt-1 md:group-hover:opacity-100">
         <button
           type="button"
           disabled={!canMoveLeft}
           onClick={(event) => { event.stopPropagation(); onMove(deal.id, -1); }}
-          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+          className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowLeft className="h-4 w-4 md:h-3 md:w-3" />
         </button>
@@ -178,7 +179,7 @@ export const DealCard = memo(function DealCard({
           type="button"
           disabled={!canMoveRight}
           onClick={(event) => { event.stopPropagation(); onMove(deal.id, 1); }}
-          className="flex h-9 w-9 items-center justify-center rounded border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
+          className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowRight className="h-4 w-4 md:h-3 md:w-3" />
         </button>

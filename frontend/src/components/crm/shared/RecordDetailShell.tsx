@@ -91,10 +91,10 @@ export function RecordDetailShell({
           type="button"
           aria-label="Изменить ширину панели"
           onPointerDown={startResize}
-          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-amber-500/40 md:block"
+          className="absolute inset-y-0 left-0 z-10 hidden w-1.5 cursor-col-resize hover:bg-black/20 md:block"
         />
         {/* Summary card: аватар, имя, «добавлено N назад» — их ShowPageSummaryCard. */}
-        <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <EntityChip name={name} size="md" />
             <div className="min-w-0">
@@ -111,7 +111,7 @@ export function RecordDetailShell({
               <button
                 type="button"
                 onClick={onEdit}
-                className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                className="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
               >
                 Все поля
               </button>
@@ -137,7 +137,7 @@ export function RecordDetailShell({
               type="button"
               onClick={onClose}
               aria-label="Закрыть панель"
-              className="flex h-11 w-11 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-300 md:h-8 md:w-8"
+              className="flex h-11 w-11 items-center justify-center rounded-[8px] text-[#666666] transition-colors hover:bg-black/[0.04] hover:text-[#000000] md:h-8 md:w-8"
             >
               <X className="h-5 w-5 md:h-4 md:w-4" />
             </button>
@@ -146,7 +146,7 @@ export function RecordDetailShell({
 
         {/* Полоса вкладок: высота 40px — их TabListHeight. */}
         {tabs.length > 1 && (
-          <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-slate-800 px-2">
+          <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e5e5] px-2">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -155,8 +155,8 @@ export function RecordDetailShell({
                 className={cn(
                   "shrink-0 border-b-2 px-2 py-2 text-xs font-medium transition-colors",
                   tab.id === active?.id
-                    ? "border-amber-500 text-slate-100"
-                    : "border-transparent text-slate-500 hover:text-slate-300",
+                    ? "border-[#000000] text-[#000000]"
+                    : "border-transparent text-[#666666] hover:text-[#000000]",
                 )}
               >
                 {tab.label}

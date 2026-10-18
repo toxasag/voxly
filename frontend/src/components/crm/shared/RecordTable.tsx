@@ -75,6 +75,7 @@ const COLLAPSED_IDENTIFIER_WIDTH = 38;
 export interface RecordColumn<T> {
   id: string;
   header: string;
+  icon?: React.ComponentType<{ className?: string }>;
   /** Начальная ширина в px; ниже RECORD_TABLE_COLUMN_MIN_WIDTH не опускается. */
   width?: number;
   align?: "left" | "right";
@@ -620,7 +621,7 @@ export function RecordTable<T>({
                   }}
                   onDragEnd={() => { setDragColumnId(null); setDropColumnId(null); }}
                   className={cn(
-                    "group relative flex items-center overflow-hidden border-r border-slate-800 pl-2 pr-1 text-xs font-medium uppercase tracking-wide text-slate-500",
+                    "group relative flex items-center overflow-hidden border-r border-transparent pl-2 pr-1 text-xs font-medium uppercase tracking-wide text-slate-500",
                     index === 0 && "sticky z-20 bg-slate-900 shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
                     column.align === "right" && "justify-end",
                     dragColumnId === column.id && "opacity-40",
@@ -654,6 +655,9 @@ export function RecordTable<T>({
                         вёрстки. Индикатор сортировки остаётся — он показывает,
                         что таблица отсортирована.
                       */}
+                      {column.icon && !(index === 0 && identifierCollapsed) && (
+                        <column.icon className="mr-1 h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                      )}
                       {!(index === 0 && identifierCollapsed) && (
                         <span className="truncate">{column.header}</span>
                       )}
@@ -663,7 +667,10 @@ export function RecordTable<T>({
                     </button>
                   ) : (
                     !(index === 0 && identifierCollapsed) && (
-                      <span className="truncate">{column.header}</span>
+                      <span className="flex items-center gap-1 truncate">
+                        {column.icon && <column.icon className="mr-1 h-3.5 w-3.5 shrink-0 text-[#888888]" />}
+                        <span className="truncate">{column.header}</span>
+                      </span>
                     )
                   )}
 
@@ -744,7 +751,7 @@ export function RecordTable<T>({
                           setFocusedRow(rowIndex);
                         }}
                         className={cn(
-                          "min-w-0 overflow-hidden border-r border-slate-800/70",
+                          "min-w-0 overflow-hidden border-r border-transparent",
                           columnIndex === 0 && "sticky z-10 bg-inherit shadow-[inset_-1px_0_0_rgba(15,23,42,0.6)]",
                           isCellFocused && "ring-1 ring-inset ring-amber-500/70",
                         )}
@@ -770,7 +777,7 @@ export function RecordTable<T>({
                   <div
                     key={column.id}
                     className={cn(
-                      "flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2 pr-1 text-xs text-[#666666]",
+                      "flex items-center overflow-hidden border-r border-transparent pl-2 pr-1 text-xs text-[#666666]",
                       index === 0 && "sticky z-10 bg-[#fafafa]",
                       column.align === "right" && "justify-end",
                     )}
