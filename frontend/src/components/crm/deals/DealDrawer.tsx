@@ -161,7 +161,6 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
                     setTitleVal(dealTitle);
                   }}
                   className="truncate text-sm font-semibold text-[#111111] cursor-pointer hover:underline"
-                  title="Нажмите для редактирования названия"
                 >
                   {dealTitle}
                 </h2>
@@ -172,7 +171,7 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
                     setTitleVal(dealTitle);
                   }}
                   className="text-[#999999] opacity-0 group-hover/title:opacity-100 hover:text-[#111111] transition-opacity cursor-pointer"
-                  title="Редактировать название"
+                  aria-label="Редактировать название"
                 >
                   <Pencil className="h-3 w-3" />
                 </button>

@@ -11,6 +11,7 @@ import {
   Check,
   CheckCircle2,
   ChevronUp,
+  CircleSlash,
   DollarSign,
   Handshake,
   ListChecks,
@@ -18,7 +19,7 @@ import {
   MessageCircle,
   Paperclip,
   Pencil,
-  Search,
+  Plus,
   Send,
   User,
   UserCircle2,
@@ -30,10 +31,14 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useDealTimeline, useKanban, useMoveDealStage, useSendDealMessage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useTasks } from "@/lib/api/use-tasks";
-import { useCompanies } from "@/lib/api/use-companies";
-import { contactFullName, useContacts } from "@/lib/api/use-contacts";
+import { useCompanies, useCreateCompany } from "@/lib/api/use-companies";
+import { contactFullName, useContacts, useCreateContact } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
-import { EntityChip } from "@/components/crm/shared/EntityChip";
+import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
+import { CompanyModal } from "@/components/crm/companies/CompanyModal";
+import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import type { CreateCompanyPayload } from "@/schemas/company.schema";
+import type { CreateContactPayload } from "@/schemas/contact.schema";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import type { DealMessageDTO, DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -321,14 +326,44 @@ function HomeTab({
   const kanban = useKanban(deal.pipelineId);
   const companiesQuery = useCompanies({ limit: 100 });
   const contactsQuery = useContacts({ limit: 100 });
+  const createCompany = useCreateCompany();
+  const createContact = useCreateContact();
+
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState(false);
+
+  const handleCreateCompany = useCallback(
+    async (payload: CreateCompanyPayload) => {
+      const newComp = await createCompany.mutateAsync(payload);
+      updateDeal.mutate(
+        { id: deal.id, pipelineId: deal.pipelineId, payload: { company_id: newComp.id } },
+        {
+          onSuccess: () => toast.success("Компания создана и привязана"),
+          onError: (err) => toast.error(err.message || "Ошибка привязки компании"),
+        },
+      );
+    },
+    [createCompany, updateDeal, deal.id, deal.pipelineId],
+  );
+
+  const handleCreateContact = useCallback(
+    async (payload: CreateContactPayload) => {
+      const newContact = await createContact.mutateAsync(payload);
+      updateDeal.mutate(
+        { id: deal.id, pipelineId: deal.pipelineId, payload: { contact_id: newContact.id } },
+        {
+          onSuccess: () => toast.success("Контакт создан и привязан"),
+          onError: (err) => toast.error(err.message || "Ошибка привязки контакта"),
+        },
+      );
+    },
+    [createContact, updateDeal, deal.id, deal.pipelineId],
+  );
 
   const owner = deal.ownerId !== null ? usersById.get(deal.ownerId) : undefined;
   const creator = usersById.get(deal.createdBy);
   const pipelineName = pipelines?.find((pipeline) => pipeline.id === deal.pipelineId)?.name;
   const stage = stagesById?.get(deal.stageId);
-
-  const fullDate = (iso: string): string =>
-    new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
 
   const dateOnly = (iso: string): string =>
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
@@ -406,14 +441,13 @@ function HomeTab({
     <>
       <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
       <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
-        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
-          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+        <div className="px-2 py-1.5 border-b border-[#f0f0f0] mb-1">
           <input
             type="text"
-            placeholder="Поиск компании..."
+            placeholder="Поиск"
             value={pickerSearch}
             onChange={(e) => setPickerSearch(e.target.value)}
-            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            className="w-full text-xs text-[#111111] placeholder:text-[#888888] bg-transparent outline-none py-0.5"
             autoFocus
           />
         </div>
@@ -431,12 +465,15 @@ function HomeTab({
               setActivePicker(null);
             }}
             className={cn(
-              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
-              deal.companyId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+              deal.companyId === null && "bg-[#f5f5f5] font-medium",
             )}
           >
-            <span>— Без компании</span>
-            {deal.companyId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+            <div className="flex items-center gap-2 truncate">
+              <CircleSlash className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              <span>Нет Компания</span>
+            </div>
+            {deal.companyId === null && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
           </button>
           {filteredCompanies.map((comp) => {
             const isSelected = comp.id === deal.companyId;
@@ -457,17 +494,38 @@ function HomeTab({
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
                 <div className="flex items-center gap-2 truncate">
-                  <EntityChip name={comp.name} label={comp.name} icon={Building2} size="sm" />
+                  <span
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border font-bold text-[9px]",
+                      paletteFor(comp.name),
+                    )}
+                  >
+                    {chipInitials(comp.name)}
+                  </span>
+                  <span className="truncate">{comp.name}</span>
                 </div>
                 {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
               </button>
             );
           })}
+        </div>
+        <div className="border-t border-[#f0f0f0] pt-1 mt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setActivePicker(null);
+              setIsCompanyModalOpen(true);
+            }}
+            className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>Добавить новый</span>
+          </button>
         </div>
       </div>
     </>
@@ -477,14 +535,13 @@ function HomeTab({
     <>
       <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
       <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
-        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
-          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+        <div className="px-2 py-1.5 border-b border-[#f0f0f0] mb-1">
           <input
             type="text"
-            placeholder="Поиск контакта..."
+            placeholder="Поиск"
             value={pickerSearch}
             onChange={(e) => setPickerSearch(e.target.value)}
-            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            className="w-full text-xs text-[#111111] placeholder:text-[#888888] bg-transparent outline-none py-0.5"
             autoFocus
           />
         </div>
@@ -502,12 +559,15 @@ function HomeTab({
               setActivePicker(null);
             }}
             className={cn(
-              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
-              deal.contactId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+              deal.contactId === null && "bg-[#f5f5f5] font-medium",
             )}
           >
-            <span>— Без контакта</span>
-            {deal.contactId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+            <div className="flex items-center gap-2 truncate">
+              <CircleSlash className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              <span>Нет Контактное лицо</span>
+            </div>
+            {deal.contactId === null && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
           </button>
           {filteredContacts.map((contact) => {
             const isSelected = contact.id === deal.contactId;
@@ -529,17 +589,38 @@ function HomeTab({
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
                 <div className="flex items-center gap-2 truncate">
-                  <EntityChip name={name} label={name} size="sm" />
+                  <span
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border font-bold text-[9px]",
+                      paletteFor(name),
+                    )}
+                  >
+                    {chipInitials(name)}
+                  </span>
+                  <span className="truncate">{name}</span>
                 </div>
                 {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
               </button>
             );
           })}
+        </div>
+        <div className="border-t border-[#f0f0f0] pt-1 mt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setActivePicker(null);
+              setIsContactModalOpen(true);
+            }}
+            className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>Добавить новый</span>
+          </button>
         </div>
       </div>
     </>
@@ -549,14 +630,13 @@ function HomeTab({
     <>
       <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
       <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
-        <div className="flex items-center gap-1.5 border-b border-[#f0f0f0] px-2 py-1.5 mb-1">
-          <Search className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+        <div className="px-2 py-1.5 border-b border-[#f0f0f0] mb-1">
           <input
             type="text"
-            placeholder="Поиск сотрудника..."
+            placeholder="Поиск"
             value={pickerSearch}
             onChange={(e) => setPickerSearch(e.target.value)}
-            className="w-full text-xs text-[#111111] placeholder:text-[#999999] bg-transparent outline-none"
+            className="w-full text-xs text-[#111111] placeholder:text-[#888888] bg-transparent outline-none py-0.5"
             autoFocus
           />
         </div>
@@ -574,12 +654,15 @@ function HomeTab({
               setActivePicker(null);
             }}
             className={cn(
-              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#888888] hover:bg-[#f5f5f5] transition-colors",
-              deal.ownerId === null && "bg-[#f5f5f5] text-[#111111] font-medium",
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+              deal.ownerId === null && "bg-[#f5f5f5] font-medium",
             )}
           >
-            <span>— Без владельца</span>
-            {deal.ownerId === null && <Check className="h-3.5 w-3.5 text-[#111111]" />}
+            <div className="flex items-center gap-2 truncate">
+              <CircleSlash className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              <span>Нет Владелец</span>
+            </div>
+            {deal.ownerId === null && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
           </button>
           {filteredUsers.map((user) => {
             const isSelected = user.id === deal.ownerId;
@@ -600,7 +683,7 @@ function HomeTab({
                   setActivePicker(null);
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors",
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
                   isSelected && "bg-[#f5f5f5] font-medium",
                 )}
               >
@@ -675,7 +758,6 @@ function HomeTab({
                     setBudgetVal(String(deal.budget));
                   }}
                   className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left font-normal text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                  title="Нажмите для редактирования суммы"
                 >
                   <span className="tabular-nums">
                     {new Intl.NumberFormat("ru-RU", { style: "currency", currency: deal.currency, maximumFractionDigits: 0 }).format(deal.budget)}
@@ -692,10 +774,9 @@ function HomeTab({
                   type="button"
                   onClick={() => openPicker("stage", "row")}
                   className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
-                  title="Нажмите для выбора этапа"
                 >
                   {stage === undefined ? (
-                    <span className="text-[#888888]">—</span>
+                    <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
                   ) : (
                     <TagPill color={stage.isWon ? "emerald" : stage.isLost ? "rose" : stageTagColor(stage.colorKey)}>
                       {stage.name}
@@ -794,7 +875,7 @@ function HomeTab({
                         setIsEditingCloseDate(false);
                       }}
                       className="text-[11px] text-[#888888] hover:text-rose-600 transition-colors"
-                      title="Очистить"
+                      aria-label="Очистить дату"
                     >
                       ✕
                     </button>
@@ -805,11 +886,12 @@ function HomeTab({
                   type="button"
                   onClick={() => setIsEditingCloseDate(true)}
                   className="group/btn inline-flex items-center gap-1.5 rounded-[4px] px-1 py-0.5 -mx-1 text-left hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                  title="Нажмите для редактирования даты"
                 >
-                  <span className={deal.closeDate !== null ? "text-[#111111]" : "text-[#888888]"}>
-                    {deal.closeDate !== null ? dateOnly(deal.closeDate) : "—"}
-                  </span>
+                  {deal.closeDate !== null ? (
+                    <span className="text-[#111111]">{dateOnly(deal.closeDate)}</span>
+                  ) : (
+                    <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                  )}
                   <Pencil className="h-3 w-3 text-[#999999] opacity-0 group-hover/btn:opacity-100 transition-opacity" />
                 </button>
               )}
@@ -840,18 +922,33 @@ function HomeTab({
             {/* Компания */}
             <FieldRow icon={Building2} label="Компания">
               <div className="relative inline-block">
-                <button
-                  type="button"
-                  onClick={() => openPicker("company", "row")}
-                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
-                  title="Нажмите для выбора компании"
-                >
-                  {deal.companyName !== null && deal.companyName !== "" ? (
-                    <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-                  ) : (
-                    <span className="text-[#888888] hover:text-[#111111]">—</span>
-                  )}
-                </button>
+                {deal.companyName !== null && deal.companyName !== "" ? (
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openPicker("company", "row")}
+                      className="cursor-pointer hover:opacity-85 transition-opacity"
+                    >
+                      <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPicker("company", "row")}
+                      aria-label="Редактировать компанию"
+                      className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openPicker("company", "row")}
+                    className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                  >
+                    -
+                  </button>
+                )}
                 {activePicker === "company" && pickerAnchor === "row" && renderCompanyPicker()}
               </div>
             </FieldRow>
@@ -859,18 +956,33 @@ function HomeTab({
             {/* Контактное лицо */}
             <FieldRow icon={User} label="Контактное лицо">
               <div className="relative inline-block">
-                <button
-                  type="button"
-                  onClick={() => openPicker("contact", "row")}
-                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
-                  title="Нажмите для выбора контакта"
-                >
-                  {deal.contactName !== null && deal.contactName !== "" ? (
-                    <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
-                  ) : (
-                    <span className="text-[#888888] hover:text-[#111111]">—</span>
-                  )}
-                </button>
+                {deal.contactName !== null && deal.contactName !== "" ? (
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openPicker("contact", "row")}
+                      className="cursor-pointer hover:opacity-85 transition-opacity"
+                    >
+                      <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPicker("contact", "row")}
+                      aria-label="Редактировать контактное лицо"
+                      className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openPicker("contact", "row")}
+                    className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                  >
+                    -
+                  </button>
+                )}
                 {activePicker === "contact" && pickerAnchor === "row" && renderContactPicker()}
               </div>
             </FieldRow>
@@ -878,23 +990,40 @@ function HomeTab({
             {/* Владелец */}
             <FieldRow icon={UserCircle2} label="Владелец">
               <div className="relative inline-block">
-                <button
-                  type="button"
-                  onClick={() => openPicker("owner", "row")}
-                  className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
-                  title="Нажмите для выбора владельца"
-                >
-                  {owner !== undefined ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-                      <UserAvatar user={owner} fallbackLabel="?" size="sm" />
-                      <span>{owner.fullName}</span>
-                    </span>
-                  ) : deal.ownerName !== null && deal.ownerName !== "" ? (
-                    <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
-                  ) : (
-                    <span className="text-[#888888] hover:text-[#111111]">—</span>
-                  )}
-                </button>
+                {owner !== undefined || (deal.ownerName !== null && deal.ownerName !== "") ? (
+                  <div className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openPicker("owner", "row")}
+                      className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center gap-1.5 text-xs text-[#111111]"
+                    >
+                      {owner !== undefined ? (
+                        <>
+                          <UserAvatar user={owner} fallbackLabel="?" size="sm" />
+                          <span>{owner.fullName}</span>
+                        </>
+                      ) : (
+                        <EntityChip name={deal.ownerName!} label={deal.ownerName!} size="sm" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPicker("owner", "row")}
+                      aria-label="Редактировать владельца"
+                      className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openPicker("owner", "row")}
+                    className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                  >
+                    -
+                  </button>
+                )}
                 {activePicker === "owner" && pickerAnchor === "row" && renderOwnerPicker()}
               </div>
             </FieldRow>
@@ -915,7 +1044,7 @@ function HomeTab({
         {systemOpen && (
           <div className="space-y-0.5 py-0.5">
             <FieldRow icon={Calendar} label="Дата создания">
-              <span title={fullDate(deal.createdAt)} className="text-[#111111]">
+              <span className="text-[#111111]">
                 {timeAgo(deal.createdAt)}
               </span>
             </FieldRow>
@@ -937,7 +1066,7 @@ function HomeTab({
             type="button"
             aria-label="Редактировать контактное лицо"
             onClick={() => openPicker("contact", "card")}
-            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -951,7 +1080,7 @@ function HomeTab({
             {deal.contactName !== null && deal.contactName !== "" ? (
               <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
             ) : (
-              <span className="text-xs text-[#888888]">—</span>
+              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
             )}
           </button>
           {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
@@ -965,7 +1094,7 @@ function HomeTab({
             type="button"
             aria-label="Редактировать компанию"
             onClick={() => openPicker("company", "card")}
-            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -979,7 +1108,7 @@ function HomeTab({
             {deal.companyName !== null && deal.companyName !== "" ? (
               <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
             ) : (
-              <span className="text-xs text-[#888888]">—</span>
+              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
             )}
           </button>
           {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
@@ -993,7 +1122,7 @@ function HomeTab({
             type="button"
             aria-label="Редактировать ответственного"
             onClick={() => openPicker("owner", "card")}
-            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
@@ -1012,12 +1141,23 @@ function HomeTab({
             ) : deal.ownerName !== null && deal.ownerName !== "" ? (
               <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
             ) : (
-              <span className="text-xs text-[#888888]">—</span>
+              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
             )}
           </button>
           {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
         </div>
       </div>
+
+      <CompanyModal
+        open={isCompanyModalOpen}
+        onClose={() => setIsCompanyModalOpen(false)}
+        onSubmit={handleCreateCompany}
+      />
+      <ContactModal
+        open={isContactModalOpen}
+        onClose={() => setIsContactModalOpen(false)}
+        onSubmit={handleCreateContact}
+      />
     </div>
   );
 }
