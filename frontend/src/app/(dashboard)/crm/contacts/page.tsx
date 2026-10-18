@@ -497,14 +497,14 @@ function ContactsPageContent() {
             onCellEdit={(contact, columnId) => setEditing({ rowId: contact.id, columnId })}
             pagination={
               totalPages > 1 ? (
-                <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3">
+                <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-3">
                   <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}
-                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800 disabled:opacity-40">
+                    className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40">
                     Назад
                   </button>
-                  <span className="text-xs text-slate-500">Страница {page} из {totalPages}</span>
+                  <span className="text-xs text-[#888888]">Страница {page} из {totalPages}</span>
                   <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
-                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800 disabled:opacity-40">
+                    className="rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-40">
                     Вперёд
                   </button>
                 </div>

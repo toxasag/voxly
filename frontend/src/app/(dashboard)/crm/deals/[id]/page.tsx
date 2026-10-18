@@ -79,12 +79,12 @@ function DealDetailContent() {
 
   return (
     <div className="-m-6 flex h-[calc(100vh-4rem)] flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-slate-800 bg-slate-900 px-6 py-3">
-        <Link href="/crm/deals" className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800">
+      <div className="flex shrink-0 items-center gap-3 border-b border-[#e5e5e5] bg-white px-6 py-3">
+        <Link href="/crm/deals" className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-sm text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]">
           <ChevronLeft className="h-4 w-4" />
           Назад к воронке
         </Link>
-        <h1 className="min-w-0 truncate text-sm font-semibold text-slate-100">{currentDeal.title}</h1>
+        <h1 className="min-w-0 truncate text-sm font-semibold text-[#111111]">{currentDeal.title}</h1>
       </div>
 
       <PinnedPageTabs

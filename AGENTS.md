@@ -240,41 +240,49 @@ Usage:
 
 ---
 
-## 6. UI / DESIGN SYSTEM (Twenty CRM / Table Reference)
+## 6. UI / DESIGN SYSTEM (Twenty CRM Light Canvas — MANDATORY STANDARD)
 
-> Официальная спецификация интерфейса, дизайн-токенов, сетки и компонентов GETVOXLY.
+> ⚡ **СТРОЖАЙШИЙ СТАНДАРТ:** Проект полностью работает на **Twenty CRM Light Canvas**.
+> **КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:**
+> - Использовать тёмную тему и классы `slate-950`, `slate-900`, `slate-800` для фонов, панелей и карточек.
+> - Использовать `amber-500` / `orange-400` в качестве дефолтных акцентов или кнопок (янтарный допустим исключительно для семантических предупреждений и чипов заметок).
+> - Использовать центрированные модальные окна для сущностей CRM — только Slide-over шторки справа (`Sheet.tsx`) с URL-параметром `?record=<id>`.
+> - Использовать самодельные `<table>` — все списки сущностей CRM строятся строго на `RecordTable` со строгой высотой строки 32px, липкими заголовками и навигацией стрелками.
 > Полная документация — `docs/01_ARCHITECTURE/01_06_DESIGN_SYSTEM.md` и `01_05_UI_CONVENTIONS.md`.
 
-### Color Palette & Design Tokens (Light Canvas)
+### Color Palette & Design Tokens (Twenty CRM Light Canvas)
 
-| Role | Token / Value | Usage |
+| Role | Token / Value | Usage & Rules |
 |---|---|---|
-| **Canvas Background** | `#ffffff` (`--color-bg`) | Основной фон страниц, панелей, ячеек |
-| **Sidebar / Secondary** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Сайдбар навигации, шапка, подложки, свимлейны |
-| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, поповеры, `hover:bg-black/[0.04]` |
-| **Border / Divider** | `#e5e5e5` (`--color-border`) | Разделители строк, границы карточек, колонок, инпутов |
-| **Border (hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
-| **Border (divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок и списков |
-| **Text Primary** | `#111111` / `#000000` | Заголовки, названия сделок, значения в ячейках, основной текст |
+| **Page / Canvas Background** | `#ffffff` (`--color-bg`) | Чистый белый холст страниц, рабочих областей, основных панелей |
+| **Sidebar / Secondary Background** | `#fbfbfb` / `#fafafa` (`--color-bg-secondary`) | Навигационный сайдбар, подложки списков, свимлейны |
+| **Card / Surface** | `#ffffff` + `border-[#e5e5e5]` + `shadow-2xs` | Карточки записей, канбан-карточки, модальные поверхности |
+| **Elevated Surface (Hover)** | `#fafafa` / `#f5f5f5` | Подсветка строк при наведении, дропдауны, поповеры, `hover:bg-black/[0.04]` |
+| **Borders & Dividers** | `#e5e5e5` (`--color-border`) | 1px solid разделители строк, границы карточек, колонок, полей ввода |
+| **Border (Hover)** | `#cccccc` | Рамка карточки или инпута при наведении |
+| **Border (Subtle Divider)** | `#f0f0f0` | Внутренние тонкие разделители шапок, сплиттеров и тулбаров |
+| **Text Primary (High Contrast)** | `#111111` / `#000000` | Заголовки, названия сделок/контактов, значения в ячейках, основной текст (WCAG AAA) |
 | **Text Secondary** | `#666666` | Вторичные подписи, лейблы колонок, описания, таймстампы |
-| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), иконки в тулбарах, счетчики |
-| **Primary CTA Accent** | `#4a38f5` (Indigo) | Главная кнопка действия, бренд-маркер, активный таб, фокус |
+| **Text Muted / Icons** | `#888888` | Плейсхолдеры («Указать …»), служебные иконки в тулбарах, счетчики |
+| **Primary Brand Accent** | `#4a38f5` (Ультрамарин / Indigo) | Главная кнопка действия (CTA), бренд-маркер, активный таб, фокус |
 | **Primary Hover** | `#3d2ee0` | Наведение на primary-кнопки |
-| **Secondary Accent** | `#aaaaaa` (`--color-secondary`) | Второстепенные контролы, неактивные переключатели |
-| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:ring-[#4a38f5]/20`) |
+| **Secondary Accent / Monochrome** | `#111111` / `#888888` | Второстепенные контролы, нейтральные тулбары, иконки |
+| **Focus State** | `#4a38f5` / `#03b2cb` | Рамка активного ввода (`focus:border-[#4a38f5] focus:ring-1 focus:ring-[#4a38f5]/20`) |
 | **Selection / DnD Highlight** | `#3b82f6` | Маркер перетаскивания колонок, активные чекбоксы |
-| Success | `emerald-600` / `#15803d` / `#dcfce7` | Положительные статусы (closed_won, paid, ready, выполнено) |
-| Danger / Destructive | `rose-600` / `#dc2626` / `#ffe4e6` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
-| Warning / Notes | `#854d0e` / `#fef08a` / `#fefce8` | Текст `#854d0e`, рамка `#fef08a`, фон `#fefce8` (чип заметки) |
-| Info / Tag | `sky-600` / `#4a38f5`/10 | Информационные бейджи, теги, ссылки |
+| **Success** | `emerald-700` (`#15803d`) / `bg-emerald-50` / `border-emerald-200` | Положительные статусы (closed_won, paid, ready, выполнено) |
+| **Danger / Destructive** | `rose-600` / `rose-700` / `bg-rose-50` / `border-rose-200` | Кнопки удаления, ошибки, отказ, closed_lost, просрочено |
+| **Warning / Note Chip** | `#854d0e` / `bg-[#fefce8]` / `border-[#fef08a]` | Чип заметки (Twenty UX), предупреждения |
+| **Info / Tag** | `sky-700` / `bg-sky-50` / `border-sky-200` | Информационные бейджи, теги, ссылки |
 
 ### Typography & Spacing
-- **Шрифты:** `Inter` (UI sans-serif для текста и заголовков), `DM Mono` (моноширинный для ID, сумм, дат, валют).
+- **Шрифты:**
+  - `Inter` (13px, regular/medium/semibold) — основной UI-текст и заголовки.
+  - `DM Mono` с `tabular-nums` — числовые данные, ID записей, даты, суммы и валюты.
 - **Размеры:** Display `13.3px`, H1 `13px`, Body `13px` / `12px` (`text-xs`), Label `11px`, Tiny `10px`.
 - **Строка таблицы записей:** строго `32px` (`RECORD_TABLE_ROW_HEIGHT = 32`, `h-8`).
 - **Скругления:**
-  - `16px` (`rounded-2xl` / `rounded-[16px]`): модальные окна, боковые шторки (дроверы), листы.
-  - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки.
+  - `16px` (`rounded-2xl` / `rounded-[16px]`): боковые шторки (`Sheet`), контейнеры создания, диалоги.
+  - `8px` (`rounded-[8px]` / `rounded-lg`): карточки записей, канбан, поля ввода, кнопки действия.
   - `4px` (`rounded-[4px]`): бейджи, теги, чипы заметок, чекбоксы.
 - **Анимации:** быстрые `75ms` (hover), стандартные `150ms` (дропдауны, табы), оверлеи `300ms` (slide-over sheet).
 
@@ -294,14 +302,14 @@ Usage:
 
 **Destructive Button:**
 ```tsx
-<Button className="h-8 rounded-[8px] bg-rose-600 px-3 text-[13px] font-medium text-white shadow-xs transition-colors hover:bg-rose-500">
+<Button className="h-8 rounded-[8px] border border-rose-200 bg-rose-50 px-3 text-[13px] font-medium text-rose-600 shadow-xs transition-colors hover:bg-rose-100">
   Удалить
 </Button>
 ```
 
 **Input:**
 ```tsx
-<Input className="h-8 rounded-[8px] border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20" />
+<Input className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20" />
 ```
 
 **Note Chip (Twenty UX Pattern):**
@@ -311,22 +319,28 @@ Usage:
 </div>
 ```
 
-**Status Badge (TagPill):**
+**Status Badge (TagPill / StatusBadge):**
 ```tsx
 import { TagPill, type TagColor } from "@/components/ui/tag";
+import { StatusBadge } from "@/components/shared/StatusBadge";
 
 <TagPill color="emerald">Активен</TagPill>
 <TagPill color="amber">В обработке</TagPill>
 <TagPill color="rose">Отменён</TagPill>
+
+<StatusBadge variant="success">Выполнено</StatusBadge>
+<StatusBadge variant="warning">Ожидает</StatusBadge>
+<StatusBadge variant="destructive">Отклонено</StatusBadge>
 ```
 
-**Table (RecordTable):**
+**Table (RecordTable — единственная таблица записей CRM):**
 ```tsx
 <RecordTable
   rows={items}
   columns={columns}
   getRowId={(item) => item.id}
   tableId="module_table"
+  onRowClick={(item) => openRecord(item.id)}
 />
 ```
 
@@ -388,14 +402,14 @@ export function CreateContactForm({ onSuccess }: { onSuccess: () => void }) {
             <FormItem>
               <FormLabel>First Name</FormLabel>
               <FormControl>
-                <Input {...field} className="border-slate-700 bg-slate-900" />
+                <Input {...field} className="border-[#e5e5e5] bg-white text-[#111111] focus:border-[#4a38f5]" />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
         {/* ...remaining fields */}
-        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3b2be0]">
+        <Button type="submit" disabled={mutation.isPending} className="bg-[#4a38f5] text-white hover:bg-[#3d2ee0]">
           {mutation.isPending ? 'Saving...' : 'Create Contact'}
         </Button>
       </form>
@@ -618,7 +632,7 @@ export const frontendModuleRegistry: Record<string, FrontendModule> = { ... };
 1. Does this query include `WHERE tenant_id = ...`?
 2. Is there any `any` or `@ts-ignore`? → Remove it.
 3. Is the module guard (`<Guard>`) in place for module-specific UI?
-4. Are colors from the defined palette (`slate-950/900/800`, `amber-500`, `orange-400`)?
+4. Are colors strictly from Twenty CRM Light Canvas (Canvas `#ffffff`, Border `#e5e5e5`, Accent `#4a38f5`, Text `#111111` / `#666666`, zero dark slate or default amber)?
 5. Is the Zod schema in `schemas/`, not inline?
 6. Does the form have loading/error/empty states handled?
 7. Is the import path using `@/` and properly grouped?

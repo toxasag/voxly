@@ -224,27 +224,27 @@ function FinancePageContent() {
     <Guard requiredPermission="finance:read" requiredModule="finance">
       <div className="space-y-5">
         <div className="flex items-center justify-between">
-          <div><h1 className="text-xl font-bold text-slate-100">Финансы</h1><p className="mt-1 text-sm text-slate-400">Счета, операции, выставленные счета и прибыль</p></div>
+          <div><h1 className="text-xl font-bold text-[#111111]">Финансы</h1><p className="mt-1 text-sm text-[#666666]">Счета, операции, выставленные счета и прибыль</p></div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setTransferOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs font-medium text-sky-400 hover:bg-sky-500/20 transition-colors"><ArrowRightLeft className="h-3.5 w-3.5" />Перевод</button>
-            <button type="button" onClick={() => setInvoiceCreateOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-400 hover:bg-emerald-500/20 transition-colors"><Receipt className="h-3.5 w-3.5" />Новый счёт</button>
+            <button type="button" onClick={() => setTransferOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-medium text-sky-700 hover:bg-sky-100 transition-colors"><ArrowRightLeft className="h-3.5 w-3.5" />Перевод</button>
+            <button type="button" onClick={() => setInvoiceCreateOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors"><Receipt className="h-3.5 w-3.5" />Новый счёт</button>
             <button type="button" onClick={() => setTxModalOpen(true)}
-              className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3b2be0]")}><Plus className="h-4 w-4" />Операция</button>
+              className={cn("flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-medium transition-colors bg-[#4a38f5] text-white hover:bg-[#3d2ee0]")}><Plus className="h-4 w-4" />Операция</button>
           </div>
         </div>
 
         {/* KPI Cards */}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-500/10 p-1.5"><TrendingUp className="h-4 w-4 text-emerald-400" /></div><span className="text-xs font-medium text-slate-500">Доходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-slate-100">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyIncome)}</p></div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-rose-500/10 p-1.5"><TrendingDown className="h-4 w-4 text-rose-400" /></div><span className="text-xs font-medium text-slate-500">Расходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-slate-100">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyExpense)}</p></div>
-          <div className="rounded-xl border border-slate-800 bg-slate-900 px-5 py-4"><div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-slate-500">Чистая прибыль</span></div><p className={cn("mt-2 text-2xl font-bold", monthlyPnL >= 0 ? "text-emerald-400" : "text-rose-400")}>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyPnL)}</p></div>
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs"><div className="flex items-center gap-2"><div className="rounded-lg bg-emerald-50 p-1.5"><TrendingUp className="h-4 w-4 text-emerald-600" /></div><span className="text-xs font-medium text-[#666666]">Доходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-[#111111]">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyIncome)}</p></div>
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs"><div className="flex items-center gap-2"><div className="rounded-lg bg-rose-50 p-1.5"><TrendingDown className="h-4 w-4 text-rose-600" /></div><span className="text-xs font-medium text-[#666666]">Расходы за месяц</span></div><p className="mt-2 text-2xl font-bold text-[#111111]">{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyExpense)}</p></div>
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white px-5 py-4 shadow-2xs"><div className="flex items-center gap-2"><div className="rounded-lg bg-[#4a38f5]/10 p-1.5"><DollarSign className="h-4 w-4 text-[#4a38f5]" /></div><span className="text-xs font-medium text-[#666666]">Чистая прибыль</span></div><p className={cn("mt-2 text-2xl font-bold", monthlyPnL >= 0 ? "text-emerald-600" : "text-rose-600")}>{new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(monthlyPnL)}</p></div>
         </div>
 
         <BalanceCards accounts={accounts} />
 
         {/* Tab Switcher */}
-        <div className="flex items-center gap-1 rounded-lg bg-slate-900 border border-slate-800 p-1 w-fit">
-          {TABS.map(t => { const Icon = t.icon; return (<button key={t.key} type="button" onClick={() => setTab(t.key)} className={cn("flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer", tab === t.key ? "bg-[#4a38f5] text-white" : "text-slate-400 hover:text-slate-200")}><Icon className="h-3.5 w-3.5" />{t.label}</button>); })}
+        <div className="flex items-center gap-1 rounded-lg bg-white border border-[#e5e5e5] p-1 w-fit">
+          {TABS.map(t => { const Icon = t.icon; return (<button key={t.key} type="button" onClick={() => setTab(t.key)} className={cn("flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer", tab === t.key ? "bg-[#4a38f5] text-white" : "text-[#666666] hover:text-[#111111]")}><Icon className="h-3.5 w-3.5" />{t.label}</button>); })}
         </div>
 
         {/* Tab Content */}
