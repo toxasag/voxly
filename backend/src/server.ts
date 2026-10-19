@@ -5,6 +5,8 @@ import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
 import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js";
+import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
+import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 
 /**
@@ -91,10 +93,16 @@ async function main(): Promise<void> {
 
   const { HOST: host, PORT: port } = env;
 
+  // Инициализация обработчиков фоновых очередей (M7.2).
+  initBackgroundWorker();
+
   // Периодическая очистка просроченных строк аутентификации (M0.8.12).
   // Ставится здесь, а не в buildApp: `buildApp` используется и тестами, где
   // фоновый таймер только мешал бы.
   const stopMaintenance = scheduleAuthMaintenance(app.log);
+
+  // Периодическая проверка напоминаний по задачам (Twenty CRM Parity).
+  const stopReminders = scheduleTaskReminders(app.log);
 
   // Транспорт входящих сообщений Telegram (M7.5.16).
   //
@@ -115,6 +123,8 @@ async function main(): Promise<void> {
       // Первым делом: прогон очистки или ответ агента, начавшийся во время
       // остановки, обращался бы к уже закрытому пулу.
       stopMaintenance();
+      stopReminders();
+      await shutdownWorker();
       stopTransport();
       await app.close();
       await closePool();

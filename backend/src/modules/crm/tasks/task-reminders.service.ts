@@ -1,4 +1,4 @@
-import { query } from "../../../db/client.js";
+import { query, runWithPlatformScope, runWithTenantContext } from "../../../db/client.js";
 
 export interface DueReminderTask {
   id: string;
@@ -87,4 +87,66 @@ export class TaskRemindersService {
     // В реальной интеграции отправляет в Telegram bot / SSE / Webhook
     return { notifiedCount: dueTasks.length };
   }
+}
+
+export interface TaskRemindersLogger {
+  info: (obj: object, message: string) => void;
+  error: (obj: object, message: string) => void;
+}
+
+/**
+ * Планировщик периодической проверки напоминаний по задачам (Twenty CRM Parity).
+ * Запускается в фоне основного процесса, не блокирует event loop.
+ */
+export function scheduleTaskReminders(
+  log: TaskRemindersLogger,
+  intervalMs = 15 * 60 * 1000,
+): () => void {
+  let stopped = false;
+  let interval: NodeJS.Timeout | null = null;
+  const remindersService = new TaskRemindersService();
+
+  const tick = async (): Promise<void> => {
+    if (stopped) return;
+    try {
+      const tenants = await runWithPlatformScope(async () => {
+        const rows = await query<{ tenant_id: string }>(
+          `SELECT DISTINCT tenant_id FROM crm_tasks
+           WHERE status <> 'done'
+             AND deleted_at IS NULL
+             AND due_date IS NOT NULL
+             AND due_date <= (now() + interval '2 hours')`,
+        );
+        return rows.map((r) => r.tenant_id);
+      });
+
+      let totalNotified = 0;
+      for (const tId of tenants) {
+        if (stopped) break;
+        const result = await runWithTenantContext(tId, () =>
+          remindersService.checkAndDispatchReminders(tId),
+        );
+        totalNotified += result.notifiedCount;
+      }
+
+      if (totalNotified > 0) {
+        log.info({ totalNotified, tenantsCount: tenants.length }, "Task reminders dispatched");
+      }
+    } catch (error) {
+      log.error({ error }, "Task reminders check failed");
+    }
+  };
+
+  const initial = setTimeout(() => {
+    void tick();
+    interval = setInterval(() => void tick(), intervalMs);
+    interval.unref();
+  }, 30_000);
+  initial.unref();
+
+  return () => {
+    stopped = true;
+    clearTimeout(initial);
+    if (interval !== null) clearInterval(interval);
+  };
 }
