@@ -1,5 +1,6 @@
 import { queueManager, type QueueJob } from "./infrastructure/queue.js";
 import { chargeAiUsage, type ChargeAiUsageParams } from "./modules/ai/ai-usage-queue.js";
+import { TaskRemindersService } from "./modules/crm/tasks/task-reminders.service.js";
 
 // ---------------------------------------------------------------------------
 // Background Worker (M7.2): обработчики задач очередей.
@@ -19,6 +20,12 @@ export function initBackgroundWorker(): void {
   // 3. Очередь broadcasts
   queueManager.registerHandler<{ storyId: string; channel: string }>("broadcasts", async (_job) => {
     // Отправка рассылок с контролем rate limit
+  });
+
+  // 4. Очередь task-reminders (Twenty CRM Parity)
+  const remindersService = new TaskRemindersService();
+  queueManager.registerHandler<{ tenantId: string }>("task-reminders", async (job: QueueJob<{ tenantId: string }>) => {
+    await remindersService.checkAndDispatchReminders(job.data.tenantId);
   });
 }
 

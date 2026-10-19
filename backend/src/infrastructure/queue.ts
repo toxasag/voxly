@@ -7,7 +7,7 @@
 // через надёжный in-memory worker с экспоненциальным backoff (до 5 попыток).
 // ---------------------------------------------------------------------------
 
-export type QueueName = "ai-usage" | "timeline-sync" | "broadcasts";
+export type QueueName = "ai-usage" | "timeline-sync" | "broadcasts" | "task-reminders";
 
 export interface QueueJob<T = unknown> {
   id: string;
