@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Plus, ListChecks, LayoutGrid, List, Calendar, AlarmClock, Check, Circle,
-  AlertCircle, RefreshCw, Pencil, Trash2,
+  Plus, ListChecks, LayoutGrid, List, Check, Circle,
+  AlertCircle, RefreshCw, Pencil, Trash2, Search, X, Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -32,14 +32,22 @@ import { cn } from "@/lib/utils";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 
 type View = "table" | "kanban" | "calendar";
-type Filter = "all" | "today" | "overdue" | "my";
+type TaskPresetView = "all" | "todo" | "in_progress" | "my" | "overdue" | "high_priority" | "done";
 
-const FILTERS = [
-  { value: "all", label: "Все", Icon: ListChecks },
-  { value: "today", label: "Сегодня", Icon: Calendar },
-  { value: "overdue", label: "Просрочено", Icon: AlarmClock },
-  { value: "my", label: "Мои задачи", Icon: ListChecks },
-] as const;
+interface PresetTab {
+  id: TaskPresetView;
+  label: string;
+}
+
+const PRESET_TABS: PresetTab[] = [
+  { id: "all", label: "Все задачи" },
+  { id: "todo", label: "К выполнению" },
+  { id: "in_progress", label: "В работе" },
+  { id: "my", label: "Мои задачи" },
+  { id: "overdue", label: "Просроченные" },
+  { id: "high_priority", label: "Высокий приоритет" },
+  { id: "done", label: "Выполненные" },
+];
 
 /** Display-only labels; the stored priority/status values stay untouched. */
 const PRIORITY_LABELS: Record<string, string> = { high: "Высокий", medium: "Средний", low: "Низкий" };
@@ -72,10 +80,13 @@ function toTaskFormValues(task: TaskDTO): CreateTaskPayload {
 function TasksContent() {
   const { user } = useAuth();
   const [view, setView] = useState<View>("table");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [presetView, setPresetView] = useState<TaskPresetView>("all");
+  const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TaskDTO | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TaskDTO | null>(null);
+  const [quickTitle, setQuickTitle] = useState("");
+  const [quickStatus, setQuickStatus] = useState<TaskStatus | null>(null);
 
   /**
    * У задачи нет отдельной страницы: карточка выражается параметром `?record=`,
@@ -89,7 +100,7 @@ function TasksContent() {
   } = useRecordParam();
   const taskRecord = useTask(taskRecordId);
 
-  const query = useTasks({ filter: filter === "all" ? undefined : filter });
+  const query = useTasks({ limit: 200 });
   const tenantUsers = useTenantUsers();
   const toggle = useToggleTaskStatus();
   const create = useCreateTask();
@@ -98,6 +109,78 @@ function TasksContent() {
 
   const tasks = query.data?.items ?? [];
   const usersById = useMemo(() => indexTenantUsers(tenantUsers.data), [tenantUsers.data]);
+
+  const presetCounts = useMemo(() => {
+    return {
+      all: tasks.length,
+      todo: tasks.filter((t) => t.status === "todo").length,
+      in_progress: tasks.filter((t) => t.status === "in_progress").length,
+      my: tasks.filter((t) => t.assigneeId === user?.id && t.status !== "done").length,
+      overdue: tasks.filter((t) => t.isOverdue && t.status !== "done").length,
+      high_priority: tasks.filter((t) => t.priority === "high" && t.status !== "done").length,
+      done: tasks.filter((t) => t.status === "done").length,
+    };
+  }, [tasks, user?.id]);
+
+  const filteredTasks = useMemo(() => {
+    let result = tasks;
+    switch (presetView) {
+      case "todo":
+        result = result.filter((t) => t.status === "todo");
+        break;
+      case "in_progress":
+        result = result.filter((t) => t.status === "in_progress");
+        break;
+      case "my":
+        result = result.filter((t) => t.assigneeId === user?.id && t.status !== "done");
+        break;
+      case "overdue":
+        result = result.filter((t) => t.isOverdue && t.status !== "done");
+        break;
+      case "high_priority":
+        result = result.filter((t) => t.priority === "high" && t.status !== "done");
+        break;
+      case "done":
+        result = result.filter((t) => t.status === "done");
+        break;
+      case "all":
+      default:
+        break;
+    }
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q),
+      );
+    }
+
+    return result;
+  }, [tasks, presetView, user?.id, search]);
+
+  const handleQuickCreate = useCallback(async (status: TaskStatus) => {
+    const trimmed = quickTitle.trim();
+    if (!trimmed) {
+      setQuickStatus(null);
+      return;
+    }
+    try {
+      await create.mutateAsync({
+        title: trimmed,
+        status,
+        priority: "medium",
+        due_date: "",
+        assignee_id: user?.id ?? "",
+      });
+      toast.success("Задача создана");
+      setQuickTitle("");
+      setQuickStatus(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось создать задачу");
+    }
+  }, [create, quickTitle, user?.id]);
 
   const change = useCallback((task: TaskDTO) => {
     toggle.mutate({ id: task.id, status: task.status === "done" ? "todo" : "done" }, { onError: (error) => toast.error(error.message) });
@@ -275,109 +358,240 @@ function TasksContent() {
   );
 
   const groups: Record<TaskStatus, TaskDTO[]> = {
-    todo: tasks.filter((task) => task.status === "todo"),
-    in_progress: tasks.filter((task) => task.status === "in_progress"),
-    done: tasks.filter((task) => task.status === "done"),
+    todo: filteredTasks.filter((task) => task.status === "todo"),
+    in_progress: filteredTasks.filter((task) => task.status === "in_progress"),
+    done: filteredTasks.filter((task) => task.status === "done"),
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-xl font-bold text-[#111111]">Задачи</h1><p className="mt-1 text-sm text-[#666666]">Открытых: {tasks.filter((task) => task.status !== "done").length} · всего в этом виде: {tasks.length}</p></div>
+    <div className="space-y-3.5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-[#111111]">Задачи</h1>
+          <p className="mt-1 text-sm text-[#666666]">
+            Открытых: {tasks.filter((task) => task.status !== "done").length} · в текущем виде: {filteredTasks.length}
+          </p>
+        </div>
         <Guard requiredPermission="tasks:write">
-          <button type="button" onClick={() => setModalOpen(true)} disabled={!user} className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"><Plus className="h-4 w-4" />Добавить задачу</button>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            disabled={!user}
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-3.5 py-2 text-sm font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            Добавить задачу
+          </button>
         </Guard>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        {/*
-          Четыре фильтра с иконками требуют около 370px и на 360px выносили
-          страницу за край: ряд не переносился и не прокручивался. Найдено
-          браузерной проверкой — рендер-тесты геометрию не считают.
-          `-mx-4 px-4` возвращает прокрутке край экрана, иначе последняя кнопка
-          прижималась бы к отступу контента.
-        */}
-        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
-          {FILTERS.map(({ value, label, Icon }) => (
+      {/* Тулбар поиска и переключения вида */}
+      <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск по названию или описанию..."
+            className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-7 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 transition-colors"
+          />
+          {search && (
             <button
-              key={value}
               type="button"
-              onClick={() => setFilter(value)}
+              onClick={() => setSearch("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#111111]"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Переключатель Таблица / Канбан / Календарь */}
+          <div className="flex rounded-[8px] border border-[#e5e5e5] bg-white p-0.5 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              aria-label="Таблица"
               className={cn(
-                "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs transition-colors",
-                filter === value
-                  ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
-                  : "border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111] hover:border-[#cccccc]"
+                "rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer",
+                view === "table"
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-black/[0.04]",
               )}
             >
-              <Icon className="h-3 w-3" />
-              {label}
+              <List className="h-3.5 w-3.5" />
+              <span>Таблица</span>
             </button>
-          ))}
-        </div>
-        <div className="ml-auto flex rounded-lg border border-[#e5e5e5] bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => setView("table")}
-            aria-label="Таблица"
-            className={cn(
-              "rounded-md p-1.5 transition-colors",
-              view === "table" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
-            )}
-          >
-            <List className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("kanban")}
-            aria-label="Канбан"
-            className={cn(
-              "rounded-md p-1.5 transition-colors",
-              view === "kanban" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
-            )}
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("calendar")}
-            aria-label="Календарь"
-            className={cn(
-              "rounded-md p-1.5 transition-colors",
-              view === "calendar" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
-            )}
-          >
-            <Calendar className="h-4 w-4" />
-          </button>
+            <button
+              type="button"
+              onClick={() => setView("kanban")}
+              aria-label="Канбан"
+              className={cn(
+                "rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer",
+                view === "kanban"
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-black/[0.04]",
+              )}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              <span>Канбан</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("calendar")}
+              aria-label="Календарь"
+              className={cn(
+                "rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer",
+                view === "calendar"
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-black/[0.04]",
+              )}
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              <span>Календарь</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {tasks.length === 0 ? (
-        <EmptyState icon={ListChecks} title="Нет задач" description={filter === "all" ? "Задачи ещё не создавались." : "Попробуйте другой фильтр."} />
+      {/* Панель сохранённых срезов (Saved Views) в стиле Twenty CRM */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs">
+        <span className="text-[#888888] text-[11px] font-medium mr-1 uppercase tracking-wider shrink-0">Срез:</span>
+        {PRESET_TABS.map((tab) => {
+          const active = presetView === tab.id;
+          const count = presetCounts[tab.id];
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setPresetView(tab.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                active
+                  ? "bg-white border border-[#e5e5e5] text-[#111111] shadow-2xs"
+                  : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
+              )}
+            >
+              <span>{tab.label}</span>
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.2 text-[10px] tabular-nums font-mono",
+                  active ? "bg-[#f5f5f5] text-[#111111]" : "text-[#888888]",
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {filteredTasks.length === 0 ? (
+        <EmptyState
+          icon={ListChecks}
+          title="Нет задач"
+          description={
+            search.trim()
+              ? "По запросу ничего не найдено. Попробуйте изменить поиск."
+              : presetView === "all"
+                ? "Задачи ещё не создавались."
+                : "В этом срезе пока нет задач."
+          }
+        />
       ) : view === "table" ? (
         <SyncedRecordTable
-          rows={tasks}
+          rows={filteredTasks}
           columns={taskColumns}
           getRowId={(task) => task.id}
           tableId="tasks"
           onRowClick={(task) => openTaskRecord(task.id)}
         />
-      ) : view === "kanban" ? (
+      ) : view === "calendar" ? (
+        <TasksCalendarView
+          tasks={filteredTasks}
+          usersById={usersById}
+          onTaskClick={(task) => openTaskRecord(task.id)}
+          onToggleStatus={(task) => change(task)}
+        />
+      ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {(["todo", "in_progress", "done"] as TaskStatus[]).map((status) => (
-            <div key={status} className="rounded-xl border border-[#e5e5e5] bg-[#fbfbfb] p-3">
-              <div className="mb-3 flex justify-between px-1"><span className="text-xs font-semibold uppercase tracking-wider text-[#666666]">{STATUS_LABELS[status]}</span><span className="text-xs font-mono text-[#888888]">{groups[status].length}</span></div>
-              <div className="space-y-2">{groups[status].map((task) => renderCard(task))}</div>
+            <div key={status} className="flex flex-col rounded-xl border border-[#e5e5e5] bg-[#fbfbfb] p-3">
+              <div className="mb-3 flex items-center justify-between px-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#666666]">{STATUS_LABELS[status]}</span>
+                <span className="rounded-full bg-white border border-[#e5e5e5] px-2 py-0.5 text-[11px] font-mono text-[#888888] tabular-nums">{groups[status].length}</span>
+              </div>
+              <div className="space-y-2 flex-1">
+                {groups[status].map((task) => renderCard(task))}
+                {groups[status].length === 0 && (
+                  <div className="rounded-[8px] border border-dashed border-[#e5e5e5] p-4 text-center text-xs text-[#888888]">
+                    Нет задач в этой колонке
+                  </div>
+                )}
+              </div>
+
+              {/* Инлайн-создание задачи в стиле Twenty CRM */}
+              {quickStatus === status ? (
+                <div className="mt-2 rounded-[8px] border border-[#4a38f5] bg-white p-2 shadow-2xs">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={quickTitle}
+                    onChange={(e) => setQuickTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleQuickCreate(status);
+                      }
+                      if (e.key === "Escape") {
+                        setQuickStatus(null);
+                        setQuickTitle("");
+                      }
+                    }}
+                    placeholder="Название задачи, Enter..."
+                    className="w-full text-[13px] text-[#111111] placeholder:text-[#888888] focus:outline-none"
+                  />
+                  <div className="mt-2 flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuickStatus(null);
+                        setQuickTitle("");
+                      }}
+                      className="rounded px-2 py-0.5 text-[11px] text-[#666666] hover:bg-[#f5f5f5]"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!quickTitle.trim() || create.isPending}
+                      onClick={() => handleQuickCreate(status)}
+                      className="rounded bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
+                    >
+                      {create.isPending ? "Создание..." : "Добавить"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <Guard requiredPermission="tasks:write">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickStatus(status);
+                      setQuickTitle("");
+                    }}
+                    className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-dashed border-[#e5e5e5] py-1.5 text-xs font-medium text-[#666666] transition-colors hover:border-[#cccccc] hover:bg-white hover:text-[#111111] cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Добавить задачу
+                  </button>
+                </Guard>
+              )}
             </div>
           ))}
         </div>
-      ) : (
-        <TasksCalendarView
-          tasks={tasks}
-          usersById={usersById}
-          onTaskClick={(task) => openTaskRecord(task.id)}
-          onToggleStatus={change}
-        />
       )}
 
       <TaskModal

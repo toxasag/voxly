@@ -286,6 +286,22 @@ export function useMergeContacts(): UseMutationResult<
   });
 }
 
+export function useFindDuplicateContacts(
+  phone: string | null | undefined,
+  excludeId?: string,
+): UseQueryResult<ContactDTO[], ApiClientError> {
+  return useQuery<ContactDTO[], ApiClientError>({
+    queryKey: ["contacts", "duplicates", phone, excludeId] as const,
+    queryFn: async () => {
+      if (!phone) return [];
+      const res = await apiClient.get<ContactDTO[]>(
+        `${BASE_PATH}/duplicates?phone=${encodeURIComponent(phone)}${excludeId ? `&exclude_id=${excludeId}` : ""}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(phone && phone.trim().length >= 4),
+  });
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
