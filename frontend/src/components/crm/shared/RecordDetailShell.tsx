@@ -36,6 +36,7 @@ interface RecordDetailShellProps {
   /** Имя записи — заголовок и источник цвета аватара. */
   name: string;
   subtitle?: string;
+  imageUrl?: string;
   /** Домен для авто-фавиконки компании в духе Twenty */
   domain?: string;
   createdAt: string;
@@ -52,6 +53,7 @@ interface RecordDetailShellProps {
 export function RecordDetailShell({
   name,
   subtitle,
+  imageUrl,
   domain,
   createdAt,
   tabs,
@@ -99,7 +101,7 @@ export function RecordDetailShell({
         {/* Summary card: аватар, имя, «добавлено N назад» — их ShowPageSummaryCard. */}
         <div className="flex items-start justify-between gap-3 border-b border-[#e5e5e5] px-4 py-3 bg-white">
           <div className="flex min-w-0 items-center gap-3">
-            <EntityChip name={name} domain={domain} size="md" />
+            <EntityChip name={name} domain={domain} imageUrl={imageUrl} size="md" />
             <div className="min-w-0">
               <h2 className="truncate text-base font-semibold text-[#111111]">{name}</h2>
               <p className="truncate text-xs text-[#888888]">

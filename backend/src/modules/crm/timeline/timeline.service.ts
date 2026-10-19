@@ -141,6 +141,7 @@ export class TimelineService {
             'direction', m.direction,
             'channel', m.channel,
             'content', m.content,
+            'text', m.content,
             'deliveryStatus', m.delivery_status
           ) AS event_data
         FROM deal_messages m
@@ -162,6 +163,7 @@ export class TimelineService {
           u.name AS author_name,
           jsonb_build_object(
             'dealId', h.deal_id,
+            'dealTitle', d.title,
             'fromStageId', h.from_stage_id,
             'fromStageName', fs.name,
             'fromStageColor', fs.color,
@@ -170,6 +172,7 @@ export class TimelineService {
             'toStageColor', ts.color
           ) AS event_data
         FROM deal_stage_history h
+        LEFT JOIN deals d ON d.id = h.deal_id AND d.tenant_id = h.tenant_id
         LEFT JOIN users u ON u.id = h.changed_by AND u.tenant_id = h.tenant_id
         LEFT JOIN deal_stages fs ON fs.id = h.from_stage_id AND fs.tenant_id = h.tenant_id
         LEFT JOIN deal_stages ts ON ts.id = h.to_stage_id AND ts.tenant_id = h.tenant_id

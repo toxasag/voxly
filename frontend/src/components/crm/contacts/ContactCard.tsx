@@ -478,11 +478,17 @@ export const ContactCard = memo(function ContactCard({
     },
   });
 
+  const avatarUrl =
+    typeof contact.customFields?.avatar_url === "string"
+      ? (contact.customFields.avatar_url as string)
+      : undefined;
+
   return (
     <>
       <RecordDetailShell
         name={contactFullName(contact)}
         subtitle={contact.jobTitle}
+        imageUrl={avatarUrl}
         createdAt={contact.createdAt}
         tabs={tabs}
         onClose={onClose}

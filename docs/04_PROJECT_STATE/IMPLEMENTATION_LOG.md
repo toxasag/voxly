@@ -1,5 +1,18 @@
 # Журнал выполнения
 
+## 2026-10-19 / 2026-10-20 — реализация дорожной карты Twenty CRM Gap Audit и боевой деплой
+
+- verified: миграция `0035_junction_targets_and_timeline.sql` создала junction-таблицы `note_targets` и `task_targets` со строгой RLS-политикой `tenant_isolation`, перенесла существующие связи и засеяла вкладку `timeline` («Активность», position 20) для всех тенантов в `page_layout_tabs`. Применена в базе данных `getvoxly-db-1`.
+- verified: бэкенд-сервис `TimelineService` (`timeline.service.ts`) и эндпоинт `GET /api/v1/crm/records/:type/:id/timeline` агрегируют в единый хронологический поток сообщения из мессенджеров (`deal_messages`), заметки (`notes`), задачи (`crm_tasks`) и смену стадий (`deal_stage_history`) с пагинацией и правами доступа.
+- verified: компонент `RecordTimelineTab.tsx` отображает единый поток активности в стиле Twenty CRM Light Canvas с фильтрами по типам событий, поддержкой `NoteFormattedBody` для заметок (чеклисты, заголовки, списки) и выводом названия сделки при аудите смены стадий.
+- verified: календарный вид задач `TasksCalendarView.tsx` на странице `/crm/tasks` со срезами задач, быстрыми чекбоксами и дедлайнами. Сервис `task-reminders.service.ts` выполняет автоматическую проверку приближающихся дедлайнов.
+- verified: структурированный Markdown-редактор заметок `StructuredNoteEditor.tsx` с интерактивными чекбоксами в режиме чтения `NoteFormattedBody`.
+- verified: модуль слияния дубликатов контактов `ContactMergeModal.tsx` на базе `Sheet`, кнопка слияния в `ContactCard.tsx`.
+- verified: приём оплаты по счетам `InvoicePaymentModal.tsx` (`POST /api/v1/invoices/:id/pay`) и печатный заказ-наряд `RepairWorkOrderModal.tsx` с суммами прописью и вёрсткой А4.
+- verified: авто-обогащение фавиконок сайтов через Google Favicon API и отображение аватаров контактов из мессенджеров через `customFields.avatar_url` в `RecordDetailShell.tsx` и `EntityChip.tsx`.
+- verified: типизация `npm run typecheck` чиста в `backend` и `frontend`. Написан юнит-тест `use-timeline.test.tsx`.
+- verified production: деплой на VPS 150.241.98.135 с пересборкой образов `getvoxly-backend:latest` и `getvoxly-frontend:latest` (Next.js 15, 34 маршрута). Все контейнеры `healthy`, внешние проверки `https://api.getvoxly.ru/health` и `https://getvoxly.ru/login` отдают HTTP 200, статические JS-файлы отдаются корректно.
+
 ## 2026-09-21 — устранение пробелов плана
 
 - verified: перед изменениями сохранены 15+ исходных файлов и SHA-256 manifest в `~/.claude/backups/getvoxly/20260921-130930`; это локальный rollback, не backup production DB.
