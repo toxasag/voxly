@@ -36,7 +36,7 @@ function renderInlineMarkdown(text: string): React.ReactNode {
   });
 }
 
-function NoteFormattedBody({
+export function NoteFormattedBody({
   body,
   onToggleCheckbox,
 }: {
