@@ -2,11 +2,12 @@
 
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  Briefcase, Building2, CalendarClock, Linkedin, Mail, MessageCircle,
+  Briefcase, Building2, CalendarClock, GitMerge, Linkedin, Mail, MessageCircle,
   Phone, Radio, Star, Tag, UserCircle2, UserRound,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact } from "@/lib/api/use-contacts";
+import { ContactMergeModal } from "@/components/crm/contacts/ContactMergeModal";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { TagPill } from "@/components/ui/tag";
 import {
@@ -101,6 +102,7 @@ export const ContactCard = memo(function ContactCard({
 }: ContactCardProps) {
   const update = useUpdateContact();
   const [editing, setEditing] = useState<string | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   /**
    * Черновики составных полей.
@@ -452,16 +454,40 @@ export const ContactCard = memo(function ContactCard({
   });
 
   return (
-    <RecordDetailShell
-      name={contactFullName(contact)}
-      subtitle={contact.jobTitle}
-      createdAt={contact.createdAt}
-      tabs={tabs}
-      onClose={onClose}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      isDeleting={isDeleting}
-      ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
-    />
+    <>
+      <RecordDetailShell
+        name={contactFullName(contact)}
+        subtitle={contact.jobTitle}
+        createdAt={contact.createdAt}
+        tabs={tabs}
+        onClose={onClose}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        isDeleting={isDeleting}
+        headerActions={
+          <button
+            type="button"
+            onClick={() => setMergeOpen(true)}
+            aria-label="Объединить контакт"
+            title="Объединить с дубликатом"
+            className="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+          >
+            <GitMerge className="h-3.5 w-3.5 text-[#666666]" />
+            <span className="hidden sm:inline">Слияние</span>
+          </button>
+        }
+        ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
+      />
+      {mergeOpen && (
+        <ContactMergeModal
+          open={mergeOpen}
+          onClose={() => setMergeOpen(false)}
+          primaryContact={contact}
+          onMerged={() => {
+            setMergeOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 });
