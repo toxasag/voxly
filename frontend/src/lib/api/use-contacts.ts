@@ -88,6 +88,20 @@ export interface DeleteContactResult {
   warning: string | null;
 }
 
+export interface MergeContactsPayload {
+  primary_id: string;
+  loser_ids: string[];
+}
+
+export interface MergeContactsResult {
+  primaryContactId: string;
+  mergedContactIds: string[];
+  dealsRetargeted: number;
+  tasksRetargeted: number;
+  phonesAdded: number;
+  socialsAdded: number;
+}
+
 const BASE_PATH = "/api/v1/crm/contacts";
 
 export const DEFAULT_PAGE_SIZE = 25;
@@ -238,6 +252,36 @@ export function useDeleteContact(): UseMutationResult<
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: contactKeys.detail(result.id) });
       void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
+/**
+ * Ручное слияние контактов.
+ *
+ * Переносит сделки, задачи, телефоны и соцсети дубликатов в основной контакт,
+ * а дубликаты архивирует / soft-deletes.
+ */
+export function useMergeContacts(): UseMutationResult<
+  MergeContactsResult,
+  ApiClientError,
+  MergeContactsPayload
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<MergeContactsResult, ApiClientError, MergeContactsPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<MergeContactsResult>(`${BASE_PATH}/merge`, payload);
+      return res.data;
+    },
+    onSuccess: (result) => {
+      for (const id of result.mergedContactIds) {
+        queryClient.removeQueries({ queryKey: contactKeys.detail(id) });
+      }
+      void queryClient.invalidateQueries({ queryKey: contactKeys.detail(result.primaryContactId) });
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm", "deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["crm", "tasks"] });
     },
   });
 }

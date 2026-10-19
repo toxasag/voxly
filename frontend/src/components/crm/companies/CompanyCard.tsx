@@ -330,6 +330,7 @@ export const CompanyCard = memo(function CompanyCard({
     <RecordDetailShell
       name={company.name}
       subtitle={company.domainName}
+      domain={company.domainName}
       createdAt={company.createdAt}
       tabs={tabs}
       onClose={onClose}
