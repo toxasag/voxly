@@ -42,18 +42,32 @@ export class NotesService {
     const countRow = await queryOne<{ total: string }>(
       `SELECT COUNT(*)::text AS total
        FROM notes n
-       WHERE n.tenant_id = $1 AND n.${column} = $2 AND n.deleted_at IS NULL`,
-      [tenantId, options.targetId],
+       WHERE n.tenant_id = $1 AND n.deleted_at IS NULL
+         AND (
+           n.${column} = $2
+           OR EXISTS (
+             SELECT 1 FROM note_targets nt
+             WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $3 AND nt.target_id = $2
+           )
+         )`,
+      [tenantId, options.targetId, options.targetType],
     );
 
     const rows = await query<NoteRow>(
       `SELECT ${NOTE_COLUMNS}
        FROM notes n
        ${NOTE_JOINS}
-       WHERE n.tenant_id = $1 AND n.${column} = $2 AND n.deleted_at IS NULL
+       WHERE n.tenant_id = $1 AND n.deleted_at IS NULL
+         AND (
+           n.${column} = $2
+           OR EXISTS (
+             SELECT 1 FROM note_targets nt
+             WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $3 AND nt.target_id = $2
+           )
+         )
        ORDER BY n.created_at DESC
-       LIMIT $3 OFFSET $4`,
-      [tenantId, options.targetId, options.limit, options.offset],
+       LIMIT $4 OFFSET $5`,
+      [tenantId, options.targetId, options.targetType, options.limit, options.offset],
     );
 
     return { items: rows.map(toNoteDTO), total: Number(countRow?.total ?? 0) };
@@ -104,6 +118,14 @@ export class NotesService {
        RETURNING id, tenant_id, title, body, contact_id, company_id, deal_id,
                  created_by, created_at, updated_at`,
       [tenantId, payload.title ?? "", payload.body, payload.target_id, createdBy ?? null],
+    );
+
+    // Зеркалируем связь в junction-таблицу note_targets (Twenty CRM parity)
+    await query(
+      `INSERT INTO note_targets (tenant_id, note_id, target_type, target_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (note_id, target_type, target_id) DO NOTHING`,
+      [tenantId, row.id, payload.target_type, payload.target_id],
     );
 
     // Перечитываем ради имени автора: RETURNING не умеет отдать значение JOIN-а,

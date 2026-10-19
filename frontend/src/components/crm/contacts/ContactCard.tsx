@@ -18,6 +18,7 @@ import {
 } from "@/components/crm/shared/RecordField";
 import { RecordDetailShell } from "@/components/crm/shared/RecordDetailShell";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
+import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordRepairsTab } from "@/components/crm/shared/RecordRepairsTab";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
@@ -448,6 +449,7 @@ export const ContactCard = memo(function ContactCard({
         </div>
       ),
       repairs: <RecordRepairsTab customerId={contact.id} />,
+      timeline: <RecordTimelineTab recordType="contact" recordId={contact.id} />,
       tasks: <RecordTasksTab targetType="contact" targetId={contact.id} />,
       notes: <RecordNotesTab targetType="contact" targetId={contact.id} />,
     },

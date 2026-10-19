@@ -461,6 +461,26 @@ CREATE TABLE IF NOT EXISTS notes (
   )
 );
 
+CREATE TABLE IF NOT EXISTS note_targets (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('contact', 'company', 'deal')),
+  target_id UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_note_target UNIQUE (note_id, target_type, target_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_targets (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  task_id UUID NOT NULL REFERENCES crm_tasks(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK (target_type IN ('contact', 'company', 'deal')),
+  target_id UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_task_target UNIQUE (task_id, target_type, target_id)
+);
+
 CREATE TABLE IF NOT EXISTS record_table_layouts (
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

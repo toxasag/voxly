@@ -233,3 +233,36 @@ export function useDeleteTask(): UseMutationResult<null, ApiClientError, string>
     },
   });
 }
+
+export function useDueTasks(hoursAhead = 24): UseQueryResult<TaskDTO[], ApiClientError> {
+  return useQuery<TaskDTO[], ApiClientError>({
+    queryKey: ["tasks", "due", hoursAhead],
+    queryFn: async () => {
+      const response = await apiClient.get<TaskDTO[]>(`${BASE}/reminders/due`, {
+        query: { hours_ahead: hoursAhead },
+      });
+      return response.data;
+    },
+  });
+}
+
+export function useCheckTaskReminders(): UseMutationResult<
+  { checked: number; sent: number },
+  ApiClientError,
+  { hoursAhead?: number } | void
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) => {
+      const response = await apiClient.post<{ checked: number; sent: number }>(
+        `${BASE}/reminders/check`,
+        payload ?? {},
+      );
+      return response.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+    },
+  });
+}

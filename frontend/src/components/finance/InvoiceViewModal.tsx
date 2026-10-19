@@ -1,11 +1,12 @@
 "use client";
 
-import { memo, useCallback, useRef } from "react";
-import { Printer, MessageCircle, FileText } from "lucide-react";
+import { memo, useCallback, useRef, useState } from "react";
+import { Printer, MessageCircle, FileText, CheckCircle2 } from "lucide-react";
 import type { Invoice } from "@/lib/finance/invoices.types";
 import { getInvoiceStatusLabel, getInvoiceStatusColors } from "@/lib/finance/invoices.types";
 import { amountToWords } from "@/lib/finance/amount-to-words";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+import { InvoicePaymentModal } from "@/components/finance/InvoicePaymentModal";
 import { cn } from "@/lib/utils";
 
 interface InvoiceViewModalProps {
@@ -34,6 +35,7 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
   onClose,
 }: InvoiceViewModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
+  const [payModalOpen, setPayModalOpen] = useState(false);
 
   const handlePrint = useCallback(() => {
     if (!printRef.current) return;
@@ -59,7 +61,8 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
   const totalInWords = amountToWords(rubles, kopecks);
 
   return (
-    <Sheet open={open} onClose={onClose} width="w-[720px]" resizable>
+    <>
+      <Sheet open={open} onClose={onClose} width="w-[720px]" resizable>
       <SheetHeader onClose={onClose}>
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
@@ -87,6 +90,16 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
               <span className="text-xs text-slate-500">автор: {invoice.created_by}</span>
             </div>
             <div className="flex items-center gap-2">
+              {invoice.status !== "paid" && invoice.status !== "cancelled" && (
+                <button
+                  type="button"
+                  onClick={() => setPayModalOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Принять оплату
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => handleSend("Telegram")}
@@ -257,5 +270,12 @@ export const InvoiceViewModal = memo(function InvoiceViewModal({
         </div>
       </SheetContent>
     </Sheet>
+    <InvoicePaymentModal
+      open={payModalOpen}
+      invoice={invoice}
+      onClose={() => setPayModalOpen(false)}
+      onSuccess={onClose}
+    />
+  </>
   );
 });

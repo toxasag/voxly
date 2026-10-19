@@ -7,6 +7,7 @@ import { tasksRoutes } from "./tasks/tasks.routes.js";
 import { notesRoutes } from "./notes/notes.routes.js";
 import { recordTableLayoutsRoutes } from "./record-table-layouts/record-table-layouts.routes.js";
 import { pageLayoutTabsRoutes } from "./page-layout-tabs/page-layout-tabs.routes.js";
+import { timelineRoutes } from "./timeline/timeline.routes.js";
 
 /**
  * Core CRM route group, mounted at /api/v1/crm by app.ts.
@@ -28,4 +29,5 @@ export default async function crmRoutes(app: FastifyInstance): Promise<void> {
   await app.register(notesRoutes, { prefix: "/notes" });
   await app.register(recordTableLayoutsRoutes, { prefix: "/table-layouts" });
   await app.register(pageLayoutTabsRoutes, { prefix: "/page-layouts" });
+  await app.register(timelineRoutes, { prefix: "/records" });
 }

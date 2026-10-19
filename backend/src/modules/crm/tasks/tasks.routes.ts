@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { TasksService } from "./tasks.service.js";
+import { TaskRemindersService } from "./task-reminders.service.js";
 import {
   createTaskSchema,
   linkedEntityTypeSchema,
@@ -57,6 +58,23 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
       data: items,
       meta: { limit: params.limit, offset: params.offset, total, filter: params.filter ?? null },
     });
+  });
+
+  const remindersService = new TaskRemindersService();
+
+  app.get("/reminders/due", { onRequest: canRead }, async (request, reply) => {
+    const hours = z.coerce.number().positive().max(168).default(24).parse((request.query as { hours?: unknown }).hours);
+    const tasks = await remindersService.getDueTasks(
+      request.tenant_id,
+      request.authUser.id,
+      hours,
+    );
+    return reply.send({ data: tasks, meta: { total: tasks.length } });
+  });
+
+  app.post("/reminders/check", { onRequest: canWrite }, async (request, reply) => {
+    const result = await remindersService.checkAndDispatchReminders(request.tenant_id);
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
