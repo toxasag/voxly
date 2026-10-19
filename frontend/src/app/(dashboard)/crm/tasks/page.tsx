@@ -11,7 +11,7 @@ import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { TaskModal } from "@/components/crm/tasks/TaskModal";
-import { TaskCalendarView } from "@/components/crm/tasks/TaskCalendarView";
+import { TasksCalendarView } from "@/components/crm/tasks/TasksCalendarView";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
@@ -509,8 +509,9 @@ function TasksContent() {
           onRowClick={(task) => openTaskRecord(task.id)}
         />
       ) : view === "calendar" ? (
-        <TaskCalendarView
+        <TasksCalendarView
           tasks={filteredTasks}
+          usersById={usersById}
           onTaskClick={(task) => openTaskRecord(task.id)}
           onToggleStatus={(task) => change(task)}
         />

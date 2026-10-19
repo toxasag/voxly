@@ -88,6 +88,20 @@ export interface DeleteContactResult {
   warning: string | null;
 }
 
+export interface MergeContactsPayload {
+  primary_id: string;
+  loser_ids: string[];
+}
+
+export interface MergeContactsResult {
+  primaryContactId: string;
+  mergedContactIds: string[];
+  dealsRetargeted: number;
+  tasksRetargeted: number;
+  phonesAdded: number;
+  socialsAdded: number;
+}
+
 const BASE_PATH = "/api/v1/crm/contacts";
 
 export const DEFAULT_PAGE_SIZE = 25;
@@ -242,20 +256,12 @@ export function useDeleteContact(): UseMutationResult<
   });
 }
 
-export interface MergeContactsPayload {
-  primary_id: string;
-  loser_ids: string[];
-}
-
-export interface MergeContactsResult {
-  primaryContactId: string;
-  mergedContactIds: string[];
-  dealsRetargeted: number;
-  tasksRetargeted: number;
-  phonesAdded: number;
-  socialsAdded: number;
-}
-
+/**
+ * Ручное слияние контактов.
+ *
+ * Переносит сделки, задачи, телефоны и соцсети дубликатов в основной контакт,
+ * а дубликаты архивирует / soft-deletes.
+ */
 export function useMergeContacts(): UseMutationResult<
   MergeContactsResult,
   ApiClientError,
@@ -269,11 +275,13 @@ export function useMergeContacts(): UseMutationResult<
       return res.data;
     },
     onSuccess: (result) => {
-      queryClient.removeQueries({ queryKey: contactKeys.detail(result.primaryContactId) });
-      for (const loserId of result.mergedContactIds) {
-        queryClient.removeQueries({ queryKey: contactKeys.detail(loserId) });
+      for (const id of result.mergedContactIds) {
+        queryClient.removeQueries({ queryKey: contactKeys.detail(id) });
       }
+      void queryClient.invalidateQueries({ queryKey: contactKeys.detail(result.primaryContactId) });
       void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm", "deals"] });
+      void queryClient.invalidateQueries({ queryKey: ["crm", "tasks"] });
     },
   });
 }
@@ -294,7 +302,6 @@ export function useFindDuplicateContacts(
     enabled: Boolean(phone && phone.trim().length >= 4),
   });
 }
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

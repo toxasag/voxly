@@ -2,8 +2,8 @@
 
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  Briefcase, Building2, CalendarClock, Linkedin, Mail, MessageCircle,
-  Phone, Radio, Star, Tag, UserCircle2, UserRound, GitMerge, AlertTriangle,
+  Briefcase, Building2, CalendarClock, GitMerge, Linkedin, Mail, MessageCircle,
+  Phone, Radio, Star, Tag, UserCircle2, UserRound, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
@@ -18,6 +18,7 @@ import {
 } from "@/components/crm/shared/RecordField";
 import { RecordDetailShell } from "@/components/crm/shared/RecordDetailShell";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
+import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordRepairsTab } from "@/components/crm/shared/RecordRepairsTab";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
@@ -102,10 +103,10 @@ export const ContactCard = memo(function ContactCard({
 }: ContactCardProps) {
   const update = useUpdateContact();
   const [editing, setEditing] = useState<string | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   const duplicatesQuery = useFindDuplicateContacts(contact.phone, contact.id);
   const duplicates = duplicatesQuery.data ?? [];
-  const [mergeModalOpen, setMergeModalOpen] = useState(false);
   const [targetDuplicate, setTargetDuplicate] = useState<ContactDTO | null>(null);
 
   /**
@@ -208,7 +209,7 @@ export const ContactCard = memo(function ContactCard({
             type="button"
             onClick={() => {
               setTargetDuplicate(duplicates[0]);
-              setMergeModalOpen(true);
+              setMergeOpen(true);
             }}
             className="rounded-[6px] bg-[#854d0e] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#713f12] transition-colors cursor-pointer"
           >
@@ -471,6 +472,7 @@ export const ContactCard = memo(function ContactCard({
         </div>
       ),
       repairs: <RecordRepairsTab customerId={contact.id} />,
+      timeline: <RecordTimelineTab recordType="contact" recordId={contact.id} />,
       tasks: <RecordTasksTab targetType="contact" targetId={contact.id} />,
       notes: <RecordNotesTab targetType="contact" targetId={contact.id} />,
     },
@@ -493,7 +495,7 @@ export const ContactCard = memo(function ContactCard({
               type="button"
               onClick={() => {
                 setTargetDuplicate(duplicates[0]);
-                setMergeModalOpen(true);
+                setMergeOpen(true);
               }}
               title={`Объединить дубликаты (${duplicates.length})`}
               className="flex items-center gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2 py-1 text-xs font-medium text-[#854d0e] hover:bg-[#fef9c3] transition-colors cursor-pointer"
@@ -501,25 +503,42 @@ export const ContactCard = memo(function ContactCard({
               <GitMerge className="h-3.5 w-3.5" />
               <span>Слияние ({duplicates.length})</span>
             </button>
-          ) : undefined
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setTargetDuplicate(null);
+                setMergeOpen(true);
+              }}
+              aria-label="Объединить контакт"
+              title="Объединить с дубликатом"
+              className="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+            >
+              <GitMerge className="h-3.5 w-3.5 text-[#666666]" />
+              <span className="hidden sm:inline">Слияние</span>
+            </button>
+          )
         }
         ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
       />
 
-      <ContactMergeModal
-        open={mergeModalOpen}
-        currentContact={contact}
-        duplicateContact={targetDuplicate}
-        onClose={() => {
-          setMergeModalOpen(false);
-          setTargetDuplicate(null);
-        }}
-        onMerged={(primaryId) => {
-          if (primaryId !== contact.id) {
-            onClose();
-          }
-        }}
-      />
+      {mergeOpen && (
+        <ContactMergeModal
+          open={mergeOpen}
+          onClose={() => {
+            setMergeOpen(false);
+            setTargetDuplicate(null);
+          }}
+          primaryContact={contact}
+          secondaryContact={targetDuplicate}
+          onMerged={(result) => {
+            setMergeOpen(false);
+            if (result.primaryContactId !== contact.id) {
+              onClose();
+            }
+          }}
+        />
+      )}
     </>
   );
 });

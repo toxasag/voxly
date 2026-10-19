@@ -17,6 +17,7 @@ import {
 } from "@/components/crm/shared/RecordField";
 import { RecordDetailShell } from "@/components/crm/shared/RecordDetailShell";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
+import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordInvoicesTab } from "@/components/crm/shared/RecordInvoicesTab";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
@@ -320,6 +321,7 @@ export const CompanyCard = memo(function CompanyCard({
     objectType: "company",
     contents: {
       home: homeTab,
+      timeline: <RecordTimelineTab recordType="company" recordId={company.id} />,
       invoices: <RecordInvoicesTab companyId={company.id} />,
       tasks: <RecordTasksTab targetType="company" targetId={company.id} />,
       notes: <RecordNotesTab targetType="company" targetId={company.id} />,
@@ -330,6 +332,7 @@ export const CompanyCard = memo(function CompanyCard({
     <RecordDetailShell
       name={company.name}
       subtitle={company.domainName}
+      domain={company.domainName}
       createdAt={company.createdAt}
       tabs={tabs}
       onClose={onClose}

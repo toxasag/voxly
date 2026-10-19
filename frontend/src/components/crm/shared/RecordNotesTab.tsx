@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CheckSquare, List, Loader2, NotebookPen, Pencil, Plus, Quote, Trash2 } from "lucide-react";
+import { Check, NotebookPen, Pencil, Plus, Trash2 } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/use-notes";
 import { timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
+import { StructuredNoteEditor } from "@/components/crm/shared/StructuredNoteEditor";
 
 function renderInlineMarkdown(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
@@ -35,32 +36,90 @@ function renderInlineMarkdown(text: string): React.ReactNode {
   });
 }
 
-function NoteFormattedBody({ body }: { body: string }) {
+function NoteFormattedBody({
+  body,
+  onToggleCheckbox,
+}: {
+  body: string;
+  onToggleCheckbox?: (lineIndex: number) => void;
+}) {
   const lines = body.split("\n");
   return (
     <div className="space-y-1 text-sm leading-relaxed text-[#333333]">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
+
+        // Checkbox unchecked
         if (/^-\s*\[\s*\]\s+/.test(trimmed)) {
           const content = trimmed.replace(/^-\s*\[\s*\]\s+/, "");
           return (
             <div key={idx} className="flex items-start gap-2">
-              <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-[#cccccc] bg-white shadow-2xs" />
+              {onToggleCheckbox ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleCheckbox(idx)}
+                  aria-label="Отметить выполненным"
+                  className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-[#cccccc] bg-white shadow-2xs hover:border-[#4a38f5] transition-colors cursor-pointer"
+                />
+              ) : (
+                <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-[#cccccc] bg-white shadow-2xs" />
+              )}
               <span>{renderInlineMarkdown(content)}</span>
             </div>
           );
         }
+
+        // Checkbox checked
         if (/^-\s*\[[xX]\]\s+/.test(trimmed)) {
           const content = trimmed.replace(/^-\s*\[[xX]\]\s+/, "");
           return (
             <div key={idx} className="flex items-start gap-2 text-[#888888]">
-              <span className="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-[#4a38f5] bg-[#4a38f5] text-white">
-                <Check className="h-2.5 w-2.5 stroke-[3]" />
-              </span>
+              {onToggleCheckbox ? (
+                <button
+                  type="button"
+                  onClick={() => onToggleCheckbox(idx)}
+                  aria-label="Снять отметку"
+                  className="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-[#4a38f5] bg-[#4a38f5] text-white cursor-pointer hover:bg-[#3b2be0] transition-colors"
+                >
+                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                </button>
+              ) : (
+                <span className="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-[#4a38f5] bg-[#4a38f5] text-white">
+                  <Check className="h-2.5 w-2.5 stroke-[3]" />
+                </span>
+              )}
               <span className="line-through">{renderInlineMarkdown(content)}</span>
             </div>
           );
         }
+
+        // Headers
+        if (/^###\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^###\s+/, "");
+          return (
+            <h4 key={idx} className="font-semibold text-[13px] text-[#111111] mt-2 mb-0.5">
+              {renderInlineMarkdown(content)}
+            </h4>
+          );
+        }
+        if (/^##\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^##\s+/, "");
+          return (
+            <h3 key={idx} className="font-semibold text-sm text-[#111111] mt-2.5 mb-1">
+              {renderInlineMarkdown(content)}
+            </h3>
+          );
+        }
+        if (/^#\s+/.test(trimmed)) {
+          const content = trimmed.replace(/^#\s+/, "");
+          return (
+            <h2 key={idx} className="font-bold text-base text-[#111111] mt-3 mb-1">
+              {renderInlineMarkdown(content)}
+            </h2>
+          );
+        }
+
+        // Bullet lists
         if (/^[-*]\s+/.test(trimmed)) {
           const content = trimmed.replace(/^[-*]\s+/, "");
           return (
@@ -70,6 +129,8 @@ function NoteFormattedBody({ body }: { body: string }) {
             </div>
           );
         }
+
+        // Blockquotes
         if (/^>\s+/.test(trimmed)) {
           const content = trimmed.replace(/^>\s+/, "");
           return (
@@ -78,9 +139,11 @@ function NoteFormattedBody({ body }: { body: string }) {
             </div>
           );
         }
+
         if (trimmed === "") {
           return <div key={idx} className="h-1.5" />;
         }
+
         return (
           <div key={idx} className="break-words">
             {renderInlineMarkdown(line)}
@@ -176,102 +239,50 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
     );
   };
 
+  const handleToggleCheckbox = (note: { id: string; body: string; title: string }, lineIndex: number): void => {
+    if (!canWrite) return;
+    const lines = note.body.split("\n");
+    if (lineIndex < 0 || lineIndex >= lines.length) return;
+
+    const line = lines[lineIndex];
+    let nextLine = line;
+    if (/^-\s*\[\s*\]\s+/.test(line)) {
+      nextLine = line.replace(/^-\s*\[\s*\]\s+/, "- [x] ");
+    } else if (/^-\s*\[[xX]\]\s+/.test(line)) {
+      nextLine = line.replace(/^-\s*\[[xX]\]\s+/, "- [ ] ");
+    } else {
+      return;
+    }
+
+    lines[lineIndex] = nextLine;
+    const nextBody = lines.join("\n");
+
+    update.mutate(
+      { id: note.id, payload: { body: nextBody, title: note.title } },
+      {
+        onError: (err) => toast.error(err.message),
+      },
+    );
+  };
+
   return (
     <div className="space-y-3 p-4">
       {canWrite && (
         composing ? (
-          <div className="space-y-2 rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
-            <input
-              value={titleDraft}
-              autoFocus
-              onChange={(event) => setTitleDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setComposing(false);
-                }
-              }}
-              placeholder="Заголовок (необязательно)"
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm font-medium text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-            />
-            <textarea
-              value={draft}
-              rows={3}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                // Ctrl/Cmd+Enter отправляет, Escape закрывает: обычный Enter
-                // должен переносить строку — заметки многострочные.
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  submit();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setComposing(false);
-                }
-              }}
-              placeholder="Текст заметки..."
-              className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#000000] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#f0f0f0]">
-              <div className="flex items-center gap-1 text-[#666666]">
-                <button
-                  type="button"
-                  onClick={() => setDraft((prev) => (prev ? `${prev}\n- [ ] ` : "- [ ] "))}
-                  title="Добавить чек-лист"
-                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                >
-                  <CheckSquare className="h-3.5 w-3.5" />
-                  <span>Чек-лист</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft((prev) => (prev ? `${prev}\n- ` : "- "))}
-                  title="Добавить маркированный список"
-                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                >
-                  <List className="h-3.5 w-3.5" />
-                  <span>Список</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft((prev) => (prev ? `${prev}\n> ` : "> "))}
-                  title="Цитата"
-                  className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                >
-                  <Quote className="h-3.5 w-3.5" />
-                  <span>Цитата</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDraft((prev) => (prev ? `${prev} **важно**` : "**важно**"))}
-                  title="Жирный шрифт"
-                  className="rounded-[4px] px-1.5 py-0.5 text-xs font-bold text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                >
-                  B
-                </button>
-              </div>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setComposing(false); setDraft(""); setTitleDraft(""); }}
-                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  onClick={submit}
-                  disabled={create.isPending || draft.trim() === ""}
-                  className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
-                >
-                  {create.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                  Сохранить
-                </button>
-              </div>
-            </div>
-          </div>
+          <StructuredNoteEditor
+            title={titleDraft}
+            body={draft}
+            onTitleChange={setTitleDraft}
+            onBodyChange={setDraft}
+            onSave={submit}
+            onCancel={() => {
+              setComposing(false);
+              setDraft("");
+              setTitleDraft("");
+            }}
+            isSaving={create.isPending}
+            saveLabel="Сохранить"
+          />
         ) : (
           <button
             type="button"
@@ -312,99 +323,16 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
           {notes.data.items.map((note) => (
             <article key={note.id} className="group rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
               {editingId === note.id ? (
-                <div className="space-y-2">
-                  <input
-                    value={editTitleDraft}
-                    autoFocus
-                    onChange={(event) => setEditTitleDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        saveEdit(note.id, note.body, note.title);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        setEditingId(null);
-                      }
-                    }}
-                    placeholder="Заголовок (необязательно)"
-                    className="w-full rounded-[8px] border border-[#4a38f5] bg-white px-2.5 py-1.5 text-sm font-medium text-[#000000] placeholder:text-[#888888] focus:outline-none"
-                  />
-                  <textarea
-                    value={editDraft}
-                    rows={3}
-                    onChange={(event) => setEditDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                        event.preventDefault();
-                        saveEdit(note.id, note.body, note.title);
-                      }
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        setEditingId(null);
-                      }
-                    }}
-                    className="w-full resize-y rounded-[8px] border border-[#4a38f5] bg-white px-2.5 py-1.5 text-sm text-[#000000] focus:outline-none"
-                  />
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#f0f0f0]">
-                    <div className="flex items-center gap-1 text-[#666666]">
-                      <button
-                        type="button"
-                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n- [ ] ` : "- [ ] "))}
-                        title="Добавить чек-лист"
-                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                      >
-                        <CheckSquare className="h-3.5 w-3.5" />
-                        <span>Чек-лист</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n- ` : "- "))}
-                        title="Добавить маркированный список"
-                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                      >
-                        <List className="h-3.5 w-3.5" />
-                        <span>Список</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditDraft((prev) => (prev ? `${prev}\n> ` : "> "))}
-                        title="Цитата"
-                        className="inline-flex items-center gap-1 rounded-[4px] px-1.5 py-0.5 text-xs text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                      >
-                        <Quote className="h-3.5 w-3.5" />
-                        <span>Цитата</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditDraft((prev) => (prev ? `${prev} **важно**` : "**важно**"))}
-                        title="Жирный шрифт"
-                        className="rounded-[4px] px-1.5 py-0.5 text-xs font-bold text-[#666666] hover:bg-black/[0.04] hover:text-[#111111] transition-colors"
-                      >
-                        B
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#000000]"
-                      >
-                        Отмена
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => saveEdit(note.id, note.body, note.title)}
-                        disabled={update.isPending}
-                        className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
-                      >
-                        {update.isPending && <Loader2 className="h-3 w-3 animate-spin" />}
-                        Сохранить
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <StructuredNoteEditor
+                  title={editTitleDraft}
+                  body={editDraft}
+                  onTitleChange={setEditTitleDraft}
+                  onBodyChange={setEditDraft}
+                  onSave={() => saveEdit(note.id, note.body, note.title)}
+                  onCancel={() => setEditingId(null)}
+                  isSaving={update.isPending}
+                  saveLabel="Сохранить"
+                />
               ) : (
                 <div>
                   {note.title !== "" && (
@@ -412,7 +340,14 @@ export function RecordNotesTab({ targetType, targetId, canWrite = true }: Record
                       {note.title}
                     </h4>
                   )}
-                  <NoteFormattedBody body={note.body} />
+                  <NoteFormattedBody
+                    body={note.body}
+                    onToggleCheckbox={
+                      canWrite
+                        ? (lineIndex) => handleToggleCheckbox(note, lineIndex)
+                        : undefined
+                    }
+                  />
                 </div>
               )}
               <div className="mt-2.5 flex items-center gap-2 text-xs text-[#888888]">
