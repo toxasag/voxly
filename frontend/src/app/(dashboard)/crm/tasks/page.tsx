@@ -11,6 +11,7 @@ import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { TaskModal } from "@/components/crm/tasks/TaskModal";
+import { TasksCalendarView } from "@/components/crm/tasks/TasksCalendarView";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
@@ -30,7 +31,7 @@ import type { CreateTaskPayload } from "@/schemas/task.schema";
 import { cn } from "@/lib/utils";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 
-type View = "table" | "kanban";
+type View = "table" | "kanban" | "calendar";
 type Filter = "all" | "today" | "overdue" | "my";
 
 const FILTERS = [
@@ -337,6 +338,17 @@ function TasksContent() {
           >
             <LayoutGrid className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            onClick={() => setView("calendar")}
+            aria-label="Календарь"
+            className={cn(
+              "rounded-md p-1.5 transition-colors",
+              view === "calendar" ? "bg-[#4a38f5] text-white" : "text-[#888888] hover:text-[#111111]"
+            )}
+          >
+            <Calendar className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
@@ -350,7 +362,7 @@ function TasksContent() {
           tableId="tasks"
           onRowClick={(task) => openTaskRecord(task.id)}
         />
-      ) : (
+      ) : view === "kanban" ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {(["todo", "in_progress", "done"] as TaskStatus[]).map((status) => (
             <div key={status} className="rounded-xl border border-[#e5e5e5] bg-[#fbfbfb] p-3">
@@ -359,6 +371,13 @@ function TasksContent() {
             </div>
           ))}
         </div>
+      ) : (
+        <TasksCalendarView
+          tasks={tasks}
+          usersById={usersById}
+          onTaskClick={(task) => openTaskRecord(task.id)}
+          onToggleStatus={change}
+        />
       )}
 
       <TaskModal

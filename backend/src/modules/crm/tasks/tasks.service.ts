@@ -104,15 +104,18 @@ export class TasksService {
       conditions.push(`status = $${params.length}`);
     }
 
-    if (options.linkedEntityType !== undefined && options.linkedEntityId !== undefined) {
+    if (options.linkedEntityType !== undefined && options.linkedEntityId !== undefined && options.linkedEntityId !== "") {
       const column =
         options.linkedEntityType === "deal"
           ? "deal_id"
           : options.linkedEntityType === "contact"
             ? "contact_id"
             : "company_id";
-      params.push(options.linkedEntityId);
-      conditions.push(`${column} = $${params.length}`);
+      params.push(options.linkedEntityId, options.linkedEntityType);
+      conditions.push(`(${column} = $${params.length - 1} OR EXISTS (
+        SELECT 1 FROM task_targets tt
+        WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id AND tt.target_type = $${params.length} AND tt.target_id = $${params.length - 1}
+      ))`);
     }
 
     const where = conditions.join(" AND ");
@@ -174,6 +177,15 @@ export class TasksService {
         payload.assignee_id,
       ],
     );
+
+    if (payload.linked_entity_type && payload.linked_entity_id) {
+      await query(
+        `INSERT INTO task_targets (tenant_id, task_id, target_type, target_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (task_id, target_type, target_id) DO NOTHING`,
+        [tenantId, row.id, payload.linked_entity_type, payload.linked_entity_id],
+      );
+    }
 
     return toTaskDTO(row);
   }

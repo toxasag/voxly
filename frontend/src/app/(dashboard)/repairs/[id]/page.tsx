@@ -13,6 +13,7 @@ import { PartsTable } from "@/components/repairs/detail/PartsTable";
 import { DiagnosticsPanel } from "@/components/repairs/detail/DiagnosticsPanel";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
+import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
 import type { PrefilledInvoicePayload } from "@/components/finance/InvoiceCreateModal";
 import { Guard } from "@/components/shared/Guard";
@@ -61,11 +62,13 @@ export default function RepairDetailPage() {
   const changeStatusMutation = useChangeRepairStatus();
 
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
 
   useEffect(() => {
     if (detail && !isLoading) {
       setReceiptOpen(false);
+      setWorkOrderOpen(false);
       setInvoiceCreateOpen(false);
     }
   }, [detail, isLoading]);
@@ -183,6 +186,7 @@ export default function RepairDetailPage() {
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setReceiptOpen(true)} className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"><Printer className="h-3.5 w-3.5 text-[#666666]" />Печать квитанции</button>
+            <button type="button" onClick={() => setWorkOrderOpen(true)} className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"><Printer className="h-3.5 w-3.5 text-[#666666]" />Печать заказ-наряда</button>
             {hasFinance && (
               <button type="button" onClick={() => setInvoiceCreateOpen(true)} className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors"><Receipt className="h-3.5 w-3.5" />Создать счёт</button>
             )}
@@ -275,6 +279,7 @@ export default function RepairDetailPage() {
       </div>
 
       <RepairReceiptModal open={receiptOpen} ticket={ticket} onClose={() => setReceiptOpen(false)} />
+      <RepairWorkOrderModal open={workOrderOpen} ticket={ticket} onClose={() => setWorkOrderOpen(false)} />
       <InvoiceCreateModal
         open={invoiceCreateOpen}
         onClose={() => setInvoiceCreateOpen(false)}
