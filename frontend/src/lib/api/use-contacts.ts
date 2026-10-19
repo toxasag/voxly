@@ -242,6 +242,59 @@ export function useDeleteContact(): UseMutationResult<
   });
 }
 
+export interface MergeContactsPayload {
+  primary_id: string;
+  loser_ids: string[];
+}
+
+export interface MergeContactsResult {
+  primaryContactId: string;
+  mergedContactIds: string[];
+  dealsRetargeted: number;
+  tasksRetargeted: number;
+  phonesAdded: number;
+  socialsAdded: number;
+}
+
+export function useMergeContacts(): UseMutationResult<
+  MergeContactsResult,
+  ApiClientError,
+  MergeContactsPayload
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<MergeContactsResult, ApiClientError, MergeContactsPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<MergeContactsResult>(`${BASE_PATH}/merge`, payload);
+      return res.data;
+    },
+    onSuccess: (result) => {
+      queryClient.removeQueries({ queryKey: contactKeys.detail(result.primaryContactId) });
+      for (const loserId of result.mergedContactIds) {
+        queryClient.removeQueries({ queryKey: contactKeys.detail(loserId) });
+      }
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
+export function useFindDuplicateContacts(
+  phone: string | null | undefined,
+  excludeId?: string,
+): UseQueryResult<ContactDTO[], ApiClientError> {
+  return useQuery<ContactDTO[], ApiClientError>({
+    queryKey: ["contacts", "duplicates", phone, excludeId] as const,
+    queryFn: async () => {
+      if (!phone) return [];
+      const res = await apiClient.get<ContactDTO[]>(
+        `${BASE_PATH}/duplicates?phone=${encodeURIComponent(phone)}${excludeId ? `&exclude_id=${excludeId}` : ""}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(phone && phone.trim().length >= 4),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plus, ListChecks, LayoutGrid, List, Check, Circle,
-  AlertCircle, RefreshCw, Pencil, Trash2, Search, X,
+  AlertCircle, RefreshCw, Pencil, Trash2, Search, X, Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -11,6 +11,7 @@ import { SkeletonTable } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { TaskModal } from "@/components/crm/tasks/TaskModal";
+import { TaskCalendarView } from "@/components/crm/tasks/TaskCalendarView";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
@@ -30,7 +31,7 @@ import type { CreateTaskPayload } from "@/schemas/task.schema";
 import { cn } from "@/lib/utils";
 import { useRecordParam } from "@/lib/utils/use-record-param";
 
-type View = "table" | "kanban";
+type View = "table" | "kanban" | "calendar";
 type TaskPresetView = "all" | "todo" | "in_progress" | "my" | "overdue" | "high_priority" | "done";
 
 interface PresetTab {
@@ -407,7 +408,7 @@ function TasksContent() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Переключатель Таблица / Канбан */}
+          {/* Переключатель Таблица / Канбан / Календарь */}
           <div className="flex rounded-[8px] border border-[#e5e5e5] bg-white p-0.5 shadow-2xs">
             <button
               type="button"
@@ -436,6 +437,20 @@ function TasksContent() {
             >
               <LayoutGrid className="h-3.5 w-3.5" />
               <span>Канбан</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("calendar")}
+              aria-label="Календарь"
+              className={cn(
+                "rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer",
+                view === "calendar"
+                  ? "bg-[#4a38f5] text-white shadow-2xs"
+                  : "text-[#666666] hover:text-[#111111] hover:bg-black/[0.04]",
+              )}
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              <span>Календарь</span>
             </button>
           </div>
         </div>
@@ -492,6 +507,12 @@ function TasksContent() {
           getRowId={(task) => task.id}
           tableId="tasks"
           onRowClick={(task) => openTaskRecord(task.id)}
+        />
+      ) : view === "calendar" ? (
+        <TaskCalendarView
+          tasks={filteredTasks}
+          onTaskClick={(task) => openTaskRecord(task.id)}
+          onToggleStatus={(task) => change(task)}
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

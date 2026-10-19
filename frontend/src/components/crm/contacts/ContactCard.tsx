@@ -3,10 +3,11 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import {
   Briefcase, Building2, CalendarClock, Linkedin, Mail, MessageCircle,
-  Phone, Radio, Star, Tag, UserCircle2, UserRound,
+  Phone, Radio, Star, Tag, UserCircle2, UserRound, GitMerge, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
-import { contactFullName, useUpdateContact } from "@/lib/api/use-contacts";
+import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
+import { ContactMergeModal } from "@/components/crm/contacts/ContactMergeModal";
 import { EntityChip } from "@/components/crm/shared/EntityChip";
 import { TagPill } from "@/components/ui/tag";
 import {
@@ -102,6 +103,11 @@ export const ContactCard = memo(function ContactCard({
   const update = useUpdateContact();
   const [editing, setEditing] = useState<string | null>(null);
 
+  const duplicatesQuery = useFindDuplicateContacts(contact.phone, contact.id);
+  const duplicates = duplicatesQuery.data ?? [];
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [targetDuplicate, setTargetDuplicate] = useState<ContactDTO | null>(null);
+
   /**
    * Черновики составных полей.
    *
@@ -192,6 +198,25 @@ export const ContactCard = memo(function ContactCard({
 
   const homeTab = (
     <div className="space-y-3 p-4">
+      {duplicates.length > 0 && (
+        <div className="rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-[#854d0e]" />
+            <span>Найден дубликат по номеру телефона ({duplicates.length})</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setTargetDuplicate(duplicates[0]);
+              setMergeModalOpen(true);
+            }}
+            className="rounded-[6px] bg-[#854d0e] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#713f12] transition-colors cursor-pointer"
+          >
+            Объединить
+          </button>
+        </div>
+      )}
+
       {/* ФИО: правится здесь, потому что в заголовке одна строка, а частей три. */}
       <RecordFieldGroup title="ФИО">
         <RecordField
@@ -452,16 +477,49 @@ export const ContactCard = memo(function ContactCard({
   });
 
   return (
-    <RecordDetailShell
-      name={contactFullName(contact)}
-      subtitle={contact.jobTitle}
-      createdAt={contact.createdAt}
-      tabs={tabs}
-      onClose={onClose}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      isDeleting={isDeleting}
-      ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
-    />
+    <>
+      <RecordDetailShell
+        name={contactFullName(contact)}
+        subtitle={contact.jobTitle}
+        createdAt={contact.createdAt}
+        tabs={tabs}
+        onClose={onClose}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        isDeleting={isDeleting}
+        headerActions={
+          duplicates.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                setTargetDuplicate(duplicates[0]);
+                setMergeModalOpen(true);
+              }}
+              title={`Объединить дубликаты (${duplicates.length})`}
+              className="flex items-center gap-1.5 rounded-[6px] border border-[#fef08a] bg-[#fefce8] px-2 py-1 text-xs font-medium text-[#854d0e] hover:bg-[#fef9c3] transition-colors cursor-pointer"
+            >
+              <GitMerge className="h-3.5 w-3.5" />
+              <span>Слияние ({duplicates.length})</span>
+            </button>
+          ) : undefined
+        }
+        ariaLabel={`Карточка контакта: ${contactFullName(contact)}`}
+      />
+
+      <ContactMergeModal
+        open={mergeModalOpen}
+        currentContact={contact}
+        duplicateContact={targetDuplicate}
+        onClose={() => {
+          setMergeModalOpen(false);
+          setTargetDuplicate(null);
+        }}
+        onMerged={(primaryId) => {
+          if (primaryId !== contact.id) {
+            onClose();
+          }
+        }}
+      />
+    </>
   );
 });
