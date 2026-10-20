@@ -7,7 +7,7 @@ import type {
   FunnelStep,
   TopRepairDefect,
   MasterLoad,
-} from "@/lib/analytics/mock-analytics";
+} from "@/lib/analytics/analytics.types";
 
 export interface AnalyticsKpi {
   revenue: number;
