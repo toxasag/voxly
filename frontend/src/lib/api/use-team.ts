@@ -210,3 +210,5 @@ export function pluralDays(count: number): string {
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
   return "дней";
 }
+
+export const useTeamMembers = useTeam;
