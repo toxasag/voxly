@@ -107,24 +107,41 @@ export interface RepairTotals {
 
 export type RepairFilterStatus = RepairStatus | "all";
 
+export const EQUIPMENT_TYPES = [
+  "Смартфон",
+  "Планшет",
+  "Ноутбук",
+  "Компьютер (ПК)",
+  "Монитор",
+  "Принтер / МФУ",
+  "Серверное оборудование",
+  "Фото/видеокамера",
+  "Смарт-часы",
+  "Беспроводные наушники",
+  "Игровая приставка",
+  "Другое",
+] as const;
+
+export type EquipmentType = (typeof EQUIPMENT_TYPES)[number];
+
 const STATUS_LABELS: Record<RepairStatus, string> = {
-  intake: "Intake",
-  diagnostics: "Diagnostics",
-  approval: "Approval",
-  in_progress: "In Progress",
-  ready: "Ready",
-  issued: "Issued",
-  rejected: "Rejected",
+  intake: "Приёмка",
+  diagnostics: "Диагностика",
+  approval: "Согласование",
+  in_progress: "В работе",
+  ready: "Готов к выдаче",
+  issued: "Выдан",
+  rejected: "Отказ",
 };
 
 const STATUS_COLORS: Record<RepairStatus, string> = {
-  intake: "bg-slate-500/10 text-slate-400 border-slate-500/30",
-  diagnostics: "bg-sky-500/10 text-sky-400 border-sky-500/30",
-  approval: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
-  in_progress: "bg-[#4a38f5]/10 text-[#4a38f5] border-[#4a38f5]/30",
-  ready: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  issued: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  rejected: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  intake: "bg-slate-50 text-slate-700 border-slate-200",
+  diagnostics: "bg-sky-50 text-sky-700 border-sky-200",
+  approval: "bg-indigo-50 text-[#4a38f5] border-indigo-200",
+  in_progress: "bg-indigo-50 text-[#4a38f5] border-indigo-200",
+  ready: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  issued: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  rejected: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 export const STATUS_ORDER: RepairStatus[] = [

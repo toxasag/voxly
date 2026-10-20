@@ -401,6 +401,44 @@ export function AdminIntegrationsEditor() {
           </div>
         </div>
 
+        {/* Быстрые пресеты */}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-[#666666]">Быстрый выбор провайдера:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setLlmBaseUrl("https://openrouter.ai/api/v1");
+              setLlmChatModel("openai/gpt-4o-mini");
+              setLlmEmbeddingModel("text-embedding-3-small");
+            }}
+            className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs font-medium text-[#111111] hover:border-[#4a38f5] hover:bg-white hover:text-[#4a38f5] transition-colors"
+          >
+            OpenRouter
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLlmBaseUrl("https://api.openai.com/v1");
+              setLlmChatModel("gpt-4o-mini");
+              setLlmEmbeddingModel("text-embedding-3-small");
+            }}
+            className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs font-medium text-[#111111] hover:border-[#4a38f5] hover:bg-white hover:text-[#4a38f5] transition-colors"
+          >
+            OpenAI
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLlmBaseUrl("https://api.deepseek.com/v1");
+              setLlmChatModel("deepseek-chat");
+              setLlmEmbeddingModel("text-embedding-3-small");
+            }}
+            className="rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs font-medium text-[#111111] hover:border-[#4a38f5] hover:bg-white hover:text-[#4a38f5] transition-colors"
+          >
+            DeepSeek
+          </button>
+        </div>
+
         <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
           {/* Base URL */}
           <div className="space-y-1.5">

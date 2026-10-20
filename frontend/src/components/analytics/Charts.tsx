@@ -12,7 +12,7 @@ import {
   Cell,
   LabelList,
 } from "recharts";
-import type { FunnelStep, TopRepairDefect, MasterLoad } from "@/lib/analytics/mock-analytics";
+import type { FunnelStep, TopRepairDefect, MasterLoad } from "@/lib/analytics/analytics.types";
 import { cn } from "@/lib/utils";
 
 /** «320 сделок», «2 сделки», «1 сделка». */

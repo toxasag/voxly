@@ -12,7 +12,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import type { MonthlyPnL } from "@/lib/analytics/mock-analytics";
+import type { MonthlyPnL } from "@/lib/analytics/analytics.types";
 
 interface PnlChartProps {
   data: MonthlyPnL[];

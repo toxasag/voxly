@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { createRepairSchema, type CreateRepairPayload } from "@/schemas/repair.schema";
-import { MOCK_EQUIPMENT_TYPES } from "@/lib/repairs/mock-repairs";
+import { EQUIPMENT_TYPES } from "@/lib/repairs/repairs.types";
 import { useContacts } from "@/lib/api/use-contacts";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
@@ -246,7 +246,7 @@ export function RepairIntakeModal({
                     <option value="" disabled>
                       Выберите тип...
                     </option>
-                    {MOCK_EQUIPMENT_TYPES.map((t) => (
+                    {EQUIPMENT_TYPES.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
