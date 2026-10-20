@@ -19,6 +19,7 @@ import {
   type PurgeResult,
 } from "./module-data.service.js";
 import { PageLayoutTabsService } from "../crm/page-layout-tabs/page-layout-tabs.service.js";
+import { platformConfigService } from "../admin/platform-config.service.js";
 
 const params = z.object({ slug: moduleSlugSchema });
 
@@ -175,11 +176,18 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
       };
     });
 
+    const integrations = await platformConfigService.getEffectiveIntegrations();
+    const isRoboConfigured = integrations.robokassa.isConfigured;
+
     const summary: BillingSummaryDTO = {
       monthlyTotal: items.reduce((sum, item) => sum + item.monthlyTotal, 0),
       monthlyAfterTrials: items.reduce((sum, item) => sum + item.fullMonthly, 0),
       usersCount,
       items: items.map(({ fullMonthly: _full, ...rest }) => rest),
+      billingProvider: {
+        connected: isRoboConfigured,
+        provider: isRoboConfigured ? "robokassa" : null,
+      },
     };
 
     return { data: summary };

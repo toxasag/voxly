@@ -52,6 +52,10 @@ export interface BillingSummaryDTO {
     trialActive: boolean;
     trialEndsAt: string | null;
   }[];
+  billingProvider?: {
+    connected: boolean;
+    provider: string | null;
+  };
 }
 
 export const marketplaceKeys = {

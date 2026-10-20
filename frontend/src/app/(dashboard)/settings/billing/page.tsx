@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
   AlertCircle,
+  ArrowUpRight,
   Building2,
   CalendarClock,
+  CheckCircle2,
+  Clock,
   CreditCard,
   Gift,
   Info,
@@ -14,6 +17,7 @@ import {
   ShoppingBag,
   Sparkles,
   Users,
+  XCircle,
 } from "lucide-react";
 import { AiBalanceCard } from "@/components/settings/AiBalanceCard";
 import { Guard } from "@/components/shared/Guard";
@@ -27,6 +31,9 @@ import {
   useMarketplaceModules,
 } from "@/lib/api/use-marketplace";
 import { pluralDays, useTenantInfo } from "@/lib/api/use-team";
+import { useAuth } from "@/lib/auth/use-auth";
+import { useCreateCheckout, useBillingPayments } from "@/lib/api/use-billing-checkout";
+import { ApiClientError } from "@/lib/api/apiClient";
 import { cn } from "@/lib/utils";
 
 /** Человекочитаемое имя плана. */
@@ -85,10 +92,42 @@ function BillingContent() {
   const billing = useMarketplaceBilling();
   const modules = useMarketplaceModules();
   const tenant = useTenantInfo();
+  const { user } = useAuth();
+  const checkout = useCreateCheckout();
+  const paymentsQuery = useBillingPayments();
 
-  // Оба диалога оплаты пока информационные: платёжный провайдер не подключён,
-  // и кнопка, ведущая в никуда, была бы хуже честной подписи.
   const [notice, setNotice] = useState<"card" | "invoice" | null>(null);
+
+  const handleSubscriptionCheckout = useCallback(async () => {
+    if (!billing.data) return;
+    try {
+      const amountToPay =
+        billing.data.monthlyTotal > 0
+          ? billing.data.monthlyTotal
+          : billing.data.monthlyAfterTrials > 0
+            ? billing.data.monthlyAfterTrials
+            : 1500;
+
+      toast.info("Формируем защищённую ссылку для оплаты Robokassa...");
+      const result = await checkout.mutateAsync({
+        amount_rubles: amountToPay,
+        product_code: "subscription_monthly",
+        description: `Оплата подписки GETVOXLY за 1 месяц (${amountToPay} ₽)`,
+      });
+
+      if (result.paymentUrl) {
+        window.location.href = result.paymentUrl;
+      } else {
+        toast.error("Платёжная ссылка не получена от шлюза.");
+      }
+    } catch (error) {
+      if (error instanceof ApiClientError) {
+        toast.error(error.message);
+        return;
+      }
+      toast.error("Не удалось сформировать платёж через Robokassa.");
+    }
+  }, [billing.data, checkout]);
 
   const catalogBySlug = useMemo(() => {
     const map = new Map<
@@ -140,6 +179,7 @@ function BillingContent() {
   const summary = billing.data;
   const info = tenant.data;
   const hasTrials = summary.items.some((item) => item.trialActive);
+  const isProviderConnected = Boolean(summary.billingProvider?.connected);
 
   return (
     <div className="space-y-6">
@@ -330,44 +370,77 @@ function BillingContent() {
 
       {/* Способы оплаты */}
       <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
-        <h2 className="text-sm font-semibold text-[#111111]">Способы оплаты</h2>
-        <p className="mt-1 text-xs text-[#666666]">
-          Выберите, как оплачивать подписку после пробного периода
-        </p>
-
-        {/*
-          Платёжный провайдер не подключён (backend отдаёт
-          billingProvider.connected = false). Пишем это прямо, а не имитируем
-          работающую оплату: пользователь должен понимать, что списание пока
-          невозможно, и как поступить.
-        */}
-        <div className="mt-4 flex gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-          <div className="text-xs leading-relaxed text-sky-900">
-            <p className="font-medium text-sky-800">Автоматическое списание пока недоступно</p>
-            <p className="mt-1">
-              Платёжный провайдер в процессе подключения. Оставьте заявку — менеджер выставит счёт
-              и активирует подписку вручную. Доступ к данным при этом не ограничивается.
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-[#111111]">Способы оплаты</h2>
+            <p className="mt-1 text-xs text-[#666666]">
+              Оплата подписки картой через Robokassa или по счёту для юридических лиц
             </p>
           </div>
+          {isProviderConnected && (
+            <span className="inline-flex items-center gap-1 rounded-[4px] border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+              <CheckCircle2 className="h-3 w-3" />
+              Robokassa {summary.billingProvider?.testMode ? "(Тестовый режим)" : "подключена"}
+            </span>
+          )}
         </div>
+
+        {isProviderConnected ? (
+          <div className="mt-4 flex gap-3 rounded-[8px] border border-emerald-200 bg-emerald-50/50 p-4">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            <div className="text-xs leading-relaxed text-emerald-950">
+              <p className="font-medium text-emerald-900">Онлайн-эквайринг Robokassa готов к приёму платежей</p>
+              <p className="mt-1 text-emerald-800">
+                Безопасная оплата картами МИР, Visa, Mastercard, а также через Систему быстрых платежей (СБП). Чек отправляется на ваш email автоматически.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 flex gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+            <div className="text-xs leading-relaxed text-sky-900">
+              <p className="font-medium text-sky-800">Платёжный шлюз не настроен</p>
+              <p className="mt-1">
+                Для активации онлайн-оплаты введите Merchant Login и пароли Robokassa в панели администратора платформы.
+              </p>
+              {user?.platform_role === "platform_owner" && (
+                <Link
+                  href="/admin/integrations"
+                  className="mt-2 inline-flex items-center gap-1 font-medium text-[#4a38f5] hover:underline"
+                >
+                  Настроить шлюзы в админке
+                  <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={() => {
-              setNotice("card");
-              toast.info("Привязка карты станет доступна после подключения платёжного провайдера");
+              if (isProviderConnected) {
+                void handleSubscriptionCheckout();
+              } else {
+                setNotice("card");
+                toast.info("Подключите Robokassa в панели администратора для приёма карт");
+              }
             }}
-            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
+            disabled={checkout.isPending}
+            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
           >
             <div className="rounded-[8px] bg-indigo-50 p-2">
               <CreditCard className="h-4 w-4 text-[#4a38f5]" />
             </div>
             <div>
-              <p className="text-sm font-medium text-[#111111]">Привязать карту</p>
+              <p className="text-sm font-medium text-[#111111]">
+                {checkout.isPending ? "Формируем платёж..." : "Оплатить картой онлайн"}
+              </p>
               <p className="mt-0.5 text-xs text-[#666666]">
-                Автопродление подписки каждый месяц
+                {isProviderConnected
+                  ? `Оплата за 1 месяц (${formatRub(summary.monthlyTotal > 0 ? summary.monthlyTotal : 1500)})`
+                  : "Оплата картой после настройки шлюза"}
               </p>
             </div>
           </button>
@@ -396,10 +469,9 @@ function BillingContent() {
             <div className="text-xs leading-relaxed text-amber-900">
               {notice === "card" ? (
                 <>
-                  <p className="font-medium text-[#111111]">Привязка карты</p>
+                  <p className="font-medium text-[#111111]">Онлайн-оплата картой</p>
                   <p className="mt-1">
-                    Как только эквайринг будет подключён, здесь появится форма привязки карты и
-                    автопродление. Пока подписка активируется вручную.
+                    Шлюз Robokassa ещё не настроен. Администратор платформы может ввести Merchant Login и пароли в разделе «Управление платформой → Шлюзы и ИИ».
                   </p>
                 </>
               ) : (
@@ -413,7 +485,7 @@ function BillingContent() {
                     >
                       admin@getvoxly.ru
                     </a>{" "}
-                    название организации и ИНН — счёт на {formatRub(summary.monthlyAfterTrials)}/мес
+                    название организации и ИНН — счёт на {formatRub(summary.monthlyAfterTrials > 0 ? summary.monthlyAfterTrials : summary.monthlyTotal)}/мес
                     будет выставлен в течение рабочего дня.
                   </p>
                 </>
@@ -423,9 +495,74 @@ function BillingContent() {
         )}
       </div>
 
+      {/* История онлайн-платежей */}
+      <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#e5e5e5] px-5 py-3">
+          <span className="text-sm font-semibold text-[#111111]">История платежей платформы</span>
+          <span className="text-xs text-[#666666]">
+            {paymentsQuery.data?.length ?? 0} операций
+          </span>
+        </div>
+
+        {paymentsQuery.isLoading ? (
+          <div className="p-4 space-y-2">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : !paymentsQuery.data || paymentsQuery.data.length === 0 ? (
+          <div className="p-8 text-center text-xs text-[#888888]">
+            Платежей пока не было. Все проведённые транзакции отобразятся здесь.
+          </div>
+        ) : (
+          <table className="w-full text-left text-xs">
+            <thead className="bg-[#fbfbfb] text-[#666666] border-b border-[#e5e5e5]">
+              <tr>
+                <th className="px-5 py-2 font-medium">Счёт #</th>
+                <th className="px-5 py-2 font-medium">Назначение</th>
+                <th className="px-5 py-2 font-medium">Дата</th>
+                <th className="px-5 py-2 font-medium">Статус</th>
+                <th className="px-5 py-2 font-medium text-right">Сумма</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#f0f0f0]">
+              {paymentsQuery.data.map((p) => (
+                <tr key={p.id} className="h-8 hover:bg-[#fafafa] transition-colors">
+                  <td className="px-5 py-2 font-mono text-[#666666]">#{p.robokassa_inv_id}</td>
+                  <td className="px-5 py-2 font-medium text-[#111111]">{p.description}</td>
+                  <td className="px-5 py-2 text-[#666666]">
+                    {formatDate(p.paid_at || p.created_at)}
+                  </td>
+                  <td className="px-5 py-2">
+                    {p.status === "paid" ? (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Оплачен
+                      </span>
+                    ) : p.status === "pending" ? (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 border border-amber-200">
+                        <Clock className="h-3 w-3" />
+                        Ожидает
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 border border-rose-200">
+                        <XCircle className="h-3 w-3" />
+                        Отменён
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-5 py-2 text-right font-mono font-semibold text-[#111111]">
+                    {formatRub(p.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
       <p className="flex items-center gap-1.5 text-xs text-[#666666]">
         <Receipt className="h-3.5 w-3.5 text-[#888888]" />
-        Счёта вашим клиентам выставляются в модуле «Финансы» — этот раздел о подписке на платформу.
+        Счета вашим клиентам выставляются в модуле «Финансы» — этот раздел об оплате подписки на платформу GETVOXLY.
       </p>
     </div>
   );

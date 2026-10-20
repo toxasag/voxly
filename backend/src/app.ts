@@ -25,6 +25,7 @@ import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
+import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
 import { SalesLearnService } from "./modules/ai/sales-learn.service.js";
 import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
@@ -150,6 +151,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
+  await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.

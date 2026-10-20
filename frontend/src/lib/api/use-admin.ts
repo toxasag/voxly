@@ -284,3 +284,77 @@ export function useUpdateAdminBillingConfig(): UseMutationResult<
     },
   });
 }
+
+export interface AdminIntegrationsConfigDTO {
+  robokassa: {
+    merchantLogin: string;
+    isTest: boolean;
+    hashAlgo: string;
+    tax: string;
+    hasPassword1: boolean;
+    hasPassword2: boolean;
+    isConfigured: boolean;
+  };
+  llm: {
+    baseUrl: string;
+    hasApiKey: boolean;
+    embeddingModel: string;
+    chatModel: string;
+    isConfigured: boolean;
+  };
+  updatedAt: string;
+}
+
+export interface UpdateAdminIntegrationsPayload {
+  robokassa?: {
+    merchantLogin?: string;
+    password1?: string;
+    password2?: string;
+    isTest?: boolean;
+    hashAlgo?: "SHA256" | "MD5";
+    tax?: string;
+  };
+  llm?: {
+    baseUrl?: string;
+    apiKey?: string;
+    embeddingModel?: string;
+    chatModel?: string;
+  };
+}
+
+export function useAdminIntegrationsConfig(): UseQueryResult<AdminIntegrationsConfigDTO, ApiClientError> {
+  return useQuery({
+    queryKey: ["admin", "integrations", "config"],
+    queryFn: async () =>
+      (await apiClient.get<AdminIntegrationsConfigDTO>("/api/v1/admin/integrations/config")).data,
+  });
+}
+
+export function useUpdateAdminIntegrationsConfig(): UseMutationResult<
+  AdminIntegrationsConfigDTO,
+  ApiClientError,
+  UpdateAdminIntegrationsPayload
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.put<AdminIntegrationsConfigDTO>("/api/v1/admin/integrations/config", payload)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "config"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "billing"] });
+      void queryClient.invalidateQueries({ queryKey: ["marketplace", "billing"] });
+    },
+  });
+}
+
+export function useTestAdminLlm(): UseMutationResult<
+  { success: boolean; message: string; modelsCount?: number },
+  ApiClientError,
+  { baseUrl?: string; apiKey?: string }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<{ success: boolean; message: string; modelsCount?: number }>("/api/v1/admin/integrations/test-llm", payload)).data,
+  });
+}
+

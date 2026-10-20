@@ -54,16 +54,38 @@ export default function AdminBillingPage() {
           провайдера в системе нет, поэтому MRR считается умножением прайса на
           число активных арендаторов.
         */}
-        {data?.billingProvider.connected === false && (
-          <div className="flex items-start gap-3 rounded-[8px] border border-sky-200 bg-sky-50 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-            <div className="text-sm text-[#111111]">
-              <p className="font-medium text-sky-800">Платёжный провайдер не подключён</p>
-              <p className="mt-1 text-[#666666]">
-                Суммы ниже — расчётные: прайс плана × число активных арендаторов. Фактических
-                платежей и счетов в системе пока нет.
-              </p>
+        {data?.billingProvider.connected === false ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[8px] border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-3">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+              <div className="text-sm text-[#111111]">
+                <p className="font-medium text-amber-900">Платёжный шлюз Robokassa не подключён</p>
+                <p className="mt-0.5 text-xs text-amber-800">
+                  Клиенты не могут оплачивать подписку картой. Введите ключи магазина в разделе «Шлюзы и ИИ».
+                </p>
+              </div>
             </div>
+            <a
+              href="/admin/integrations"
+              className="inline-flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0]"
+            >
+              Настроить Robokassa
+            </a>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between rounded-[8px] border border-emerald-200 bg-emerald-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-xs font-medium text-emerald-800">
+                Платёжный шлюз Robokassa активен и принимает платежи
+              </span>
+            </div>
+            <a
+              href="/admin/integrations"
+              className="text-xs font-medium text-[#4a38f5] hover:underline"
+            >
+              Управление ключами
+            </a>
           </div>
         )}
 

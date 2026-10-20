@@ -5,7 +5,7 @@ import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Receipt, Plus, Trash2, Loader2 } from "lucide-react";
 import { createInvoiceSchema, type CreateInvoicePayload } from "@/schemas/invoice.schema";
-import { MOCK_COMPANIES } from "@/lib/finance/mock-invoices";
+import { useCompanies } from "@/lib/api/use-companies";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,9 @@ interface InvoiceCreateModalProps {
 export type PrefilledInvoicePayload = CreateInvoicePayload;
 
 export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: InvoiceCreateModalProps) {
+  const companiesQuery = useCompanies({ limit: 100 });
+  const companies = companiesQuery.data?.items ?? [];
+
   const form = useForm<CreateInvoicePayload>({
     resolver: zodResolver(createInvoiceSchema),
     defaultValues: {
@@ -96,10 +99,10 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
                 value={form.watch("company_id")}
                 onChange={(e) => {
                   form.setValue("company_id", e.target.value, { shouldValidate: true });
-                  const c = MOCK_COMPANIES.find((x) => x.id === e.target.value);
+                  const c = companies.find((x) => x.id === e.target.value);
                   if (c) {
-                    form.setValue("contact_name", c.contact_name);
-                    form.setValue("contact_phone", c.contact_phone);
+                    form.setValue("contact_name", c.managerName || c.name);
+                    form.setValue("contact_phone", c.phone || "");
                   }
                 }}
                 className={cn(
@@ -108,11 +111,11 @@ export function InvoiceCreateModal({ open, onClose, onSubmit, prefilled }: Invoi
                 )}
               >
                 <option value="" disabled>
-                  Выберите компанию...
+                  {companiesQuery.isLoading ? "Загрузка компаний..." : "Выберите компанию..."}
                 </option>
-                {MOCK_COMPANIES.map((c) => (
+                {companies.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {c.name} {c.requisites?.inn ? `(ИНН ${c.requisites.inn})` : ""}
                   </option>
                 ))}
               </select>

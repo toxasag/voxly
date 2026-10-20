@@ -17,7 +17,9 @@ import {
   X,
 } from "lucide-react";
 import { createRepairSchema, type CreateRepairPayload } from "@/schemas/repair.schema";
-import { MOCK_CUSTOMERS_FOR_REPAIR, MOCK_EQUIPMENT_TYPES, MOCK_MASTERS } from "@/lib/repairs/mock-repairs";
+import { MOCK_EQUIPMENT_TYPES } from "@/lib/repairs/mock-repairs";
+import { useContacts } from "@/lib/api/use-contacts";
+import { useTeamMembers } from "@/lib/api/use-team";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -40,13 +42,11 @@ export function RepairIntakeModal({
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
 
-  const filteredCustomers = useMemo(() => {
-    if (!customerSearch) return MOCK_CUSTOMERS_FOR_REPAIR.slice(0, 6);
-    const q = customerSearch.toLowerCase();
-    return MOCK_CUSTOMERS_FOR_REPAIR.filter(
-      (c) => c.name.toLowerCase().includes(q) || c.phone.includes(q),
-    );
-  }, [customerSearch]);
+  const contactsQuery = useContacts({ search: customerSearch, limit: 10 });
+  const teamQuery = useTeamMembers();
+
+  const contacts = contactsQuery.data?.items ?? [];
+  const teamMembers = teamQuery.data?.members ?? [];
 
   const form = useForm<CreateRepairPayload>({
     resolver: zodResolver(createRepairSchema),
@@ -76,22 +76,23 @@ export function RepairIntakeModal({
 
   useEffect(() => {
     if (selectedCustomerId) {
-      const customer = MOCK_CUSTOMERS_FOR_REPAIR.find((c) => c.id === selectedCustomerId);
+      const customer = contacts.find((c) => c.id === selectedCustomerId);
       if (customer) {
-        form.setValue("customer_name", customer.name, { shouldValidate: true });
+        const name = [customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Без имени";
+        form.setValue("customer_name", name, { shouldValidate: true });
         form.setValue("customer_phone", customer.phone, { shouldValidate: true });
       }
     }
-  }, [selectedCustomerId, form]);
+  }, [selectedCustomerId, contacts, form]);
 
   useEffect(() => {
     if (selectedMasterId) {
-      const master = MOCK_MASTERS.find((m) => m.id === selectedMasterId);
+      const master = teamMembers.find((m) => m.id === selectedMasterId);
       if (master) {
-        form.setValue("master_name", master.name, { shouldValidate: true });
+        form.setValue("master_name", master.fullName, { shouldValidate: true });
       }
     }
-  }, [selectedMasterId, form]);
+  }, [selectedMasterId, teamMembers, form]);
 
   const handleSubmit = useCallback(
     (v: CreateRepairPayload) => {
@@ -168,27 +169,37 @@ export function RepairIntakeModal({
                     className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-sm text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
                   />
                   <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-[#e5e5e5] bg-white shadow-xl z-10 max-h-48 overflow-y-auto">
-                    {filteredCustomers.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          form.setValue("customer_id", c.id, { shouldValidate: true });
-                          setCustomerSearch("");
-                        }}
-                        className="flex w-full items-center gap-3 px-4 py-2.5 text-sm text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                      >
-                        <span className="font-medium text-[#111111]">{c.name}</span>
-                        <span className="text-xs text-slate-500">{c.phone}</span>
-                      </button>
-                    ))}
+                    {contacts.length === 0 ? (
+                      <div className="p-3 text-xs text-slate-500 text-center">
+                        {customerSearch ? "Контакты не найдены" : "Введите имя или номер для поиска"}
+                      </div>
+                    ) : (
+                      contacts.map((c) => {
+                        const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || "Без имени";
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              form.setValue("customer_id", c.id, { shouldValidate: true });
+                              form.setValue("customer_name", name, { shouldValidate: true });
+                              form.setValue("customer_phone", c.phone || "", { shouldValidate: true });
+                              setCustomerSearch("");
+                            }}
+                            className="flex w-full items-center justify-between px-4 py-2.5 text-sm text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className="font-medium text-[#111111]">{name}</span>
+                            <span className="text-xs text-slate-500 font-mono">{c.phone}</span>
+                          </button>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               ) : (
                 <div className="flex items-center justify-between rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-4 py-2.5">
                   <span className="text-sm font-medium text-[#111111]">
-                    {form.watch("customer_name") ||
-                      MOCK_CUSTOMERS_FOR_REPAIR.find((c) => c.id === selectedCustomerId)?.name}
+                    {form.watch("customer_name") || "Клиент выбран"}
                   </span>
                   <button
                     type="button"
@@ -426,11 +437,11 @@ export function RepairIntakeModal({
                   )}
                 >
                   <option value="" disabled>
-                    Выберите мастера...
+                    {teamQuery.isLoading ? "Загрузка мастеров..." : "Выберите мастера..."}
                   </option>
-                  {MOCK_MASTERS.map((m) => (
+                  {teamMembers.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.name}
+                      {m.fullName}
                     </option>
                   ))}
                 </select>
