@@ -39,7 +39,7 @@ export default async function billingRoutes(app: FastifyInstance): Promise<void>
    */
   const handleSuccess = async (request: FastifyRequest, reply: any) => {
     const params = extractWebhookParams(request);
-    const { valid, invId } = billingService.verifySuccessRedirect(params);
+    const { valid, invId } = await billingService.verifySuccessRedirect(params);
 
     const redirectBase = env.PUBLIC_APP_URL || "https://app.getvoxly.ru";
     if (valid) {

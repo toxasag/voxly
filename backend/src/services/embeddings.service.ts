@@ -141,6 +141,8 @@ function parseEmbeddingResponse(
 // Реализация на OpenAI-совместимом шлюзе
 // ---------------------------------------------------------------------------
 
+import { platformConfigService } from "../modules/admin/platform-config.service.js";
+
 /** Таймаут одного вызова. Пачка из 32 фрагментов укладывается в единицы секунд. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -161,14 +163,19 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embed(inputs: readonly string[]): Promise<EmbeddingResult> {
-    if (this.baseUrl === undefined || this.apiKey === undefined) {
+    const effective = await platformConfigService.getEffectiveIntegrations();
+    const activeBaseUrl = (effective.llm.baseUrl?.trim() || this.baseUrl)?.replace(/\/+$/, "");
+    const activeApiKey = effective.llm.apiKey?.trim() || this.apiKey;
+    const activeModel = effective.llm.embeddingModel?.trim() || this.model;
+
+    if (!activeBaseUrl || !activeApiKey) {
       throw new EmbeddingsUnavailableError(
-        "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору.",
+        "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору в панели управления.",
       );
     }
 
     if (inputs.length === 0) {
-      return { vectors: [], tokensUsed: 0, model: this.model };
+      return { vectors: [], tokensUsed: 0, model: activeModel };
     }
 
     // Явный таймаут: без него зависший вызов шлюза держал бы HTTP-запрос
@@ -177,13 +184,13 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const response = await fetch(`${this.baseUrl}/embeddings`, {
+      const response = await fetch(`${activeBaseUrl}/embeddings`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${activeApiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model: this.model, input: [...inputs] }),
+        body: JSON.stringify({ model: activeModel, input: [...inputs] }),
         signal: controller.signal,
       });
 

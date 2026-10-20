@@ -18,11 +18,9 @@ import {
   createRepairSchema,
   type CreateRepairPayload,
 } from "@/schemas/repair.schema";
-import {
-  MOCK_CUSTOMERS_FOR_REPAIR,
-  MOCK_EQUIPMENT_TYPES,
-  MOCK_MASTERS,
-} from "@/lib/repairs/mock-repairs";
+import { MOCK_EQUIPMENT_TYPES } from "@/lib/repairs/mock-repairs";
+import { useContacts } from "@/lib/api/use-contacts";
+import { useTeamMembers } from "@/lib/api/use-team";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +34,12 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const contactsQuery = useContacts({ limit: 50 });
+  const teamQuery = useTeamMembers();
+
+  const contacts = contactsQuery.data?.items ?? [];
+  const teamMembers = teamQuery.data?.members ?? [];
 
   const form = useForm<CreateRepairPayload>({
     resolver: zodResolver(createRepairSchema),
@@ -137,13 +141,16 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
                   )}
                 >
                   <option value="" disabled>
-                    Выберите клиента...
+                    {contactsQuery.isLoading ? "Загрузка клиентов..." : "Выберите клиента..."}
                   </option>
-                  {MOCK_CUSTOMERS_FOR_REPAIR.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} — {c.phone}
-                    </option>
-                  ))}
+                  {contacts.map((c) => {
+                    const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || "Без имени";
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {name} — {c.phone}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
               {errors.customer_id && (
@@ -347,11 +354,11 @@ export function CreateRepairModal({ open, onClose, onSubmit }: CreateRepairModal
                   )}
                 >
                   <option value="" disabled>
-                    Выберите мастера...
+                    {teamQuery.isLoading ? "Загрузка мастеров..." : "Выберите мастера..."}
                   </option>
-                  {MOCK_MASTERS.map((m) => (
+                  {teamMembers.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.name}
+                      {m.fullName}
                     </option>
                   ))}
                 </select>
