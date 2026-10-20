@@ -46,7 +46,7 @@ export function useAnalyticsOverview() {
     queryKey: analyticsKeys.overview,
     queryFn: async (): Promise<AnalyticsOverviewDTO> => {
       const res = await apiClient.get<{ data: AnalyticsOverviewDTO }>("/api/v1/analytics/overview");
-      return res.data;
+      return res.data.data;
     },
   });
 }

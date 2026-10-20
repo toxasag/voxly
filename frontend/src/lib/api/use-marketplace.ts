@@ -55,6 +55,7 @@ export interface BillingSummaryDTO {
   billingProvider?: {
     connected: boolean;
     provider: string | null;
+    testMode?: boolean;
   };
 }
 

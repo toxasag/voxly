@@ -25,14 +25,14 @@ import { platformConfigService } from "../../admin/platform-config.service.js";
 export class BillingService {
   private readonly customClient: RobokassaClient | null = null;
 
-  constructor(client?: RobokassaClient) {
-    if (client) {
+  constructor(client?: RobokassaClient | null) {
+    if (client !== undefined) {
       this.customClient = client;
     }
   }
 
   async getRobokassaClient(): Promise<RobokassaClient | null> {
-    if (this.customClient) {
+    if (this.customClient !== undefined) {
       return this.customClient;
     }
 
@@ -168,7 +168,8 @@ export class BillingService {
    * Возвращает строго строку "OK{invId}" при успешном исполнении.
    */
   async handleResultWebhook(rawParams: Record<string, unknown>): Promise<string> {
-    if (!this.robokassaClient) {
+    const robokassaClient = await this.getRobokassaClient();
+    if (!robokassaClient) {
       throw new AppError(503, "ROBOKASSA_NOT_CONFIGURED", "Шлюз Robokassa не настроен");
     }
 
@@ -192,10 +193,7 @@ export class BillingService {
       }
     }
 
-    const robokassaClient = await this.getRobokassaClient();
-    if (!robokassaClient) {
-      throw new AppError(503, "ROBOKASSA_NOT_CONFIGURED", "Шлюз Robokassa не настроен в конфигурации платформы");
-    }
+
 
     // 1. Проверяем подпись ResultURL (Пароль №2)
     const isSignatureValid = robokassaClient.verifyResultSignature({
