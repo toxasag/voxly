@@ -198,9 +198,9 @@ export const ContactCard = memo(function ContactCard({
     );
 
   const homeTab = (
-    <div className="space-y-3 p-4">
+    <div className="py-2">
       {duplicates.length > 0 && (
-        <div className="rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
+        <div className="mx-4 mb-3 rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 text-[#854d0e]" />
             <span>Найден дубликат по номеру телефона ({duplicates.length})</span>
@@ -218,7 +218,7 @@ export const ContactCard = memo(function ContactCard({
         </div>
       )}
 
-      {/* ФИО: правится здесь, потому что в заголовке одна строка, а частей три. */}
+      {/* 1. ФИО */}
       <RecordFieldGroup title="ФИО">
         <RecordField
           icon={UserRound}
@@ -244,6 +244,7 @@ export const ContactCard = memo(function ContactCard({
         />
       </RecordFieldGroup>
 
+      {/* 2. Общее */}
       <RecordFieldGroup title="Общее">
         <RecordField
           icon={Mail}
@@ -304,51 +305,7 @@ export const ContactCard = memo(function ContactCard({
         />
       </RecordFieldGroup>
 
-      <RecordFieldGroup title="Работа">
-        <RecordField
-          icon={Building2}
-          label="Компания"
-          value={contact.companyName}
-          display={contact.companyName !== ""
-            ? (
-              <span className="inline-flex min-w-0 items-center">
-                {contact.companyId !== null && onOpenCompany !== undefined ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      // Клик не должен открывать редактор поля: переход по связи
-                      // важнее переименования, как у relation-чипа в Twenty.
-                      event.stopPropagation();
-                      onOpenCompany(contact.companyId as string);
-                    }}
-                    className="inline-flex min-w-0 items-center rounded hover:underline"
-                  >
-                    <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-                  </button>
-                ) : (
-                  <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-                )}
-              </span>
-            )
-            : undefined}
-          {...field("company")}
-          onCommit={(value) => {
-            // Название пустое — связь снимается; иначе сервер найдёт компанию по
-            // названию или создаст её. company_id сбрасывается явно, чтобы
-            // прежняя связь не перебила введённое название.
-            commit({ company_name: value.trim(), company_id: "" });
-          }}
-        />
-        <RecordField
-          icon={Briefcase}
-          label="Должность"
-          value={contact.jobTitle}
-          {...field("jobTitle")}
-          onCommit={(value) => commit({ job_title: value.trim() })}
-        />
-      </RecordFieldGroup>
-
-      {/* Социальные сети: Telegram, WhatsApp и остальные мессенджеры списком. */}
+      {/* 3. Социальные сети (порядок по ТЗ: ФИО -> Общее -> Социальные сети -> Работа -> Система) */}
       <RecordFieldGroup title="Социальные сети">
         <RecordField
           icon={MessageCircle}
@@ -393,6 +350,47 @@ export const ContactCard = memo(function ContactCard({
         />
       </RecordFieldGroup>
 
+      {/* 4. Работа */}
+      <RecordFieldGroup title="Работа">
+        <RecordField
+          icon={Building2}
+          label="Компания"
+          value={contact.companyName}
+          display={contact.companyName !== ""
+            ? (
+              <span className="inline-flex min-w-0 items-center">
+                {contact.companyId !== null && onOpenCompany !== undefined ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenCompany(contact.companyId as string);
+                    }}
+                    className="inline-flex min-w-0 items-center rounded hover:underline cursor-pointer"
+                  >
+                    <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
+                  </button>
+                ) : (
+                  <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
+                )}
+              </span>
+            )
+            : undefined}
+          {...field("company")}
+          onCommit={(value) => {
+            commit({ company_name: value.trim(), company_id: "" });
+          }}
+        />
+        <RecordField
+          icon={Briefcase}
+          label="Должность"
+          value={contact.jobTitle}
+          {...field("jobTitle")}
+          onCommit={(value) => commit({ job_title: value.trim() })}
+        />
+      </RecordFieldGroup>
+
+      {/* 5. Система */}
       <RecordFieldGroup title="Система">
         <RecordField
           icon={CalendarClock}

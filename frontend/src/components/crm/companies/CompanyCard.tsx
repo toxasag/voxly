@@ -115,7 +115,7 @@ export const CompanyCard = memo(function CompanyCard({
   const filledRequisites = requisites.filter(([, value]) => value !== "");
 
   const homeTab = (
-    <div className="space-y-3 p-4">
+    <div className="py-2">
       <RecordFieldGroup title="Общее">
         <RecordField
           icon={Globe}
