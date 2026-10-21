@@ -2,7 +2,20 @@
 
 import { memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Building2, Calendar, Flag, User } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Briefcase,
+  Building2,
+  Calendar,
+  CheckSquare,
+  Flag,
+  Globe,
+  Mail,
+  MapPin,
+  Phone,
+  User,
+} from "lucide-react";
 import type { DealDTO, StageColorKey } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
@@ -10,20 +23,11 @@ import { TagPill } from "@/components/ui/tag";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
 import {
   defaultDealCardFields,
-  hasDealFieldValue,
   type DealCardFieldVisibility,
 } from "@/components/crm/deals/deal-card-fields";
 import { useIsMobile } from "@/lib/utils/use-is-mobile";
 import { cn } from "@/lib/utils";
 
-/**
- * Какие поля сделки показывать на карточке — меню ••• тулбара.
- *
- * Раньше здесь было три флажка: два поля и «Компактно». Теперь состав
- * перечисляет все поля сделки (`DEAL_CARD_FIELDS`), как выбор колонок в списке;
- * «Компактно» убрано — оно меняло отступы, а не состав, и настройкой карточки
- * не было.
- */
 export type DealCardOptions = DealCardFieldVisibility;
 
 interface Props {
@@ -68,17 +72,23 @@ export const DealCard = memo(function DealCard({
     }
   }, [deal.id, onOpen, router]);
 
-  // Поле показывается, только когда включено и когда у сделки есть значение:
-  // пустая строка «Описание:» занимала бы место, ничего не сообщая.
-  const show = (field: keyof DealCardOptions): boolean =>
-    options[field] && hasDealFieldValue(deal, field);
+  const companyFields = options.companyFields ?? {
+    name: true,
+    phone: true,
+    email: true,
+    website: true,
+    city: true,
+  };
+
+  const contactFields = options.contactFields ?? {
+    name: true,
+    jobTitle: true,
+    phone: true,
+    email: true,
+  };
 
   return (
     <div
-      // Перетаскивание карточек только на десктопе: пальцем оно конфликтует с
-      // горизонтальным скроллом доски — жест начинается одинаково, и либо доска не
-      // скроллится, либо карточка не переносится. На мобильном перенос делается
-      // стрелками ниже.
       draggable={!isMobile}
       onDragStart={isMobile ? undefined : drag}
       onClick={handleClick}
@@ -102,65 +112,184 @@ export const DealCard = memo(function DealCard({
 
       {/* Метаданные сделки аккуратным списком как в Twenty */}
       <div className="space-y-1.5 text-xs">
-        {show("budget") && (
+        {/* Бюджет */}
+        {Boolean(options.budget) && (
           <div className="flex items-center gap-2 text-[#333333]">
             <span className="flex h-3.5 w-3.5 items-center justify-center text-[11px] font-medium text-[#888888] shrink-0">
               {deal.currency === "RUB" ? "₽" : deal.currency === "EUR" ? "€" : "$"}
             </span>
             <span className="font-normal text-[#111111] tabular-nums">
-              {new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(deal.budget)} {deal.currency === "RUB" ? "₽" : deal.currency}
+              {deal.budget > 0
+                ? `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(deal.budget)} ${deal.currency === "RUB" ? "₽" : deal.currency}`
+                : `0 ${deal.currency === "RUB" ? "₽" : deal.currency}`}
             </span>
           </div>
         )}
 
-        {show("owner") && (
+        {/* Ответственный */}
+        {Boolean(options.owner) && (
           <div className="flex items-center gap-2 text-[#666666]">
             <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] text-[#333333]">
-              <span
-                className={cn(
-                  "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[2px] text-[8px] font-bold border",
-                  paletteFor(manager?.fullName ?? deal.ownerName ?? "System"),
-                )}
-                aria-hidden="true"
-              >
-                {manager?.fullName ? chipInitials(manager.fullName) : deal.ownerName ? chipInitials(deal.ownerName) : "S"}
+            {manager?.fullName || deal.ownerName ? (
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[11px] text-[#333333]">
+                <span
+                  className={cn(
+                    "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[2px] text-[8px] font-bold border",
+                    paletteFor(manager?.fullName ?? deal.ownerName ?? "System"),
+                  )}
+                  aria-hidden="true"
+                >
+                  {manager?.fullName
+                    ? chipInitials(manager.fullName)
+                    : deal.ownerName
+                    ? chipInitials(deal.ownerName)
+                    : "S"}
+                </span>
+                <span className="truncate">{manager?.fullName ?? deal.ownerName}</span>
               </span>
-              <span className="truncate">{manager?.fullName ?? deal.ownerName ?? "System"}</span>
-            </span>
+            ) : (
+              <span className="text-[#888888]">Ответственный: —</span>
+            )}
           </div>
         )}
 
-        {show("closeDate") && deal.closeDate !== null && (
+        {/* Дата закрытия / срок */}
+        {Boolean(options.closeDate) && (
           <div className="flex items-center gap-2 text-[#666666]">
             <Calendar className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <span className="text-[#333333]">
-              {new Date(deal.closeDate).toLocaleDateString("ru-RU", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+            <span className={deal.closeDate ? "text-[#333333]" : "text-[#888888]"}>
+              {deal.closeDate
+                ? new Date(deal.closeDate).toLocaleDateString("ru-RU", {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "Срок: —"}
             </span>
           </div>
         )}
 
-        {show("company") && deal.companyName !== null && (
-          <div className="flex items-center gap-2 text-[#666666]">
-            <Building2 className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+        {/* Задачи */}
+        {Boolean(options.tasks) && (
+          <div className="flex flex-col gap-1 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa] p-1.5 text-xs">
+            <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1.5 text-[#555555]">
+                <CheckSquare className="h-3.5 w-3.5 text-[#4a38f5] shrink-0" />
+                <span className="font-medium text-[11px]">Задачи</span>
+              </div>
+              {deal.pendingTasksCount !== undefined && deal.pendingTasksCount > 0 ? (
+                <span className="rounded-full bg-indigo-50 px-1.5 py-0.2 text-[10px] font-semibold text-[#4a38f5] border border-indigo-200">
+                  {deal.pendingTasksCount} в работе
+                </span>
+              ) : deal.tasksCount !== undefined && deal.tasksCount > 0 ? (
+                <span className="rounded-full bg-emerald-50 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                  выполнены
+                </span>
+              ) : (
+                <span className="text-[10px] text-[#888888]">нет</span>
+              )}
+            </div>
+            {deal.nextTaskTitle && (
+              <div className="flex items-center gap-1 text-[11px] text-[#333333] truncate pl-5">
+                <span className="truncate">{deal.nextTaskTitle}</span>
+                {deal.nextTaskDueDate && (
+                  <span className="shrink-0 text-[10px] text-[#888888]">
+                    ({new Date(deal.nextTaskDueDate).toLocaleDateString("ru-RU", { day: "numeric", month: "short" })})
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {show("contact") && deal.contactName !== null && (
-          <div className="flex items-center gap-2 text-[#666666]">
-            <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-            <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
+        {/* Компания (с раскрытыми подполями) */}
+        {Boolean(options.company) && (
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center gap-2 text-[#666666]">
+              <Building2 className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              {deal.companyName ? (
+                companyFields.name ? (
+                  <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                ) : (
+                  <span className="font-medium text-[#111111]">{deal.companyName}</span>
+                )
+              ) : (
+                <span className="text-[#888888]">Компания: —</span>
+              )}
+            </div>
+            {deal.companyName && (
+              <div className="pl-5 space-y-0.5 text-[11px] text-[#666666]">
+                {companyFields.phone && deal.companyPhone && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span>{deal.companyPhone}</span>
+                  </div>
+                )}
+                {companyFields.email && deal.companyEmail && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span className="truncate">{deal.companyEmail}</span>
+                  </div>
+                )}
+                {companyFields.website && deal.companyWebsite && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Globe className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span className="truncate">{deal.companyWebsite}</span>
+                  </div>
+                )}
+                {companyFields.city && deal.companyCity && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <MapPin className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span>{deal.companyCity}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {show("stage") && (
+        {/* Контакт (с раскрытыми подполями) */}
+        {Boolean(options.contact) && (
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center gap-2 text-[#666666]">
+              <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              {deal.contactName ? (
+                contactFields.name ? (
+                  <EntityChip name={deal.contactName} label={deal.contactName} icon={User} size="sm" />
+                ) : (
+                  <span className="font-medium text-[#111111]">{deal.contactName}</span>
+                )
+              ) : (
+                <span className="text-[#888888]">Контакт: —</span>
+              )}
+            </div>
+            {deal.contactName && (
+              <div className="pl-5 space-y-0.5 text-[11px] text-[#666666]">
+                {contactFields.jobTitle && deal.contactJobTitle && (
+                  <div className="flex items-center gap-1.5 text-[#666666]">
+                    <Briefcase className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span>{deal.contactJobTitle}</span>
+                  </div>
+                )}
+                {contactFields.phone && deal.contactPhone && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span>{deal.contactPhone}</span>
+                  </div>
+                )}
+                {contactFields.email && deal.contactEmail && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span className="truncate">{deal.contactEmail}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Этап */}
+        {Boolean(options.stage) && (
           <div className="flex items-center gap-2 text-[#666666]">
             <Flag className="h-3.5 w-3.5 text-[#888888] shrink-0" />
             <TagPill color={stageColorKey ? stageTagColor(stageColorKey) : "slate"}>
@@ -169,29 +298,54 @@ export const DealCard = memo(function DealCard({
           </div>
         )}
 
-        {show("description") && (
-          <p className="line-clamp-2 text-xs text-[#888888] pt-0.5">{deal.description}</p>
+        {/* Описание */}
+        {Boolean(options.description) && (
+          deal.description ? (
+            <p className="line-clamp-2 text-xs text-[#888888] pt-0.5">{deal.description}</p>
+          ) : (
+            <p className="text-xs text-[#888888] pt-0.5">Описание: —</p>
+          )
         )}
 
-        {show("latestNote") && Boolean(deal.latestNote) && (
-          <div className="rounded-[6px] border border-[#fef08a] bg-[#fefce8] p-2 text-[11px] text-[#854d0e]">
-            <div className="line-clamp-3 whitespace-pre-wrap break-words font-normal leading-relaxed">
-              {deal.latestNote}
+        {/* Заметка */}
+        {Boolean(options.latestNote) && (
+          deal.latestNote ? (
+            <div className="rounded-[6px] border border-[#fef08a] bg-[#fefce8] p-2 text-[11px] text-[#854d0e]">
+              <div className="line-clamp-3 whitespace-pre-wrap break-words font-normal leading-relaxed">
+                {deal.latestNote}
+              </div>
             </div>
+          ) : (
+            <div className="text-xs text-[#888888]">Заметка: —</div>
+          )
+        )}
+
+        {/* Валюта */}
+        {Boolean(options.currency) && (
+          <div className="text-xs text-[#888888]">Валюта: {deal.currency}</div>
+        )}
+
+        {/* Дата создания */}
+        {Boolean(options.createdAt) && (
+          <div className="text-xs text-[#888888]">
+            Создана: {new Date(deal.createdAt).toLocaleDateString("ru-RU")}
           </div>
         )}
 
-        {show("currency") && (
-          <div className="text-xs text-[#888888]">Валюта: {deal.currency}</div>
+        {/* Дата обновления */}
+        {Boolean(options.updatedAt) && (
+          <div className="text-xs text-[#888888]">
+            Обновлена: {new Date(deal.updatedAt).toLocaleDateString("ru-RU")}
+          </div>
         )}
-        {show("createdAt") && (
-          <div className="text-xs text-[#888888]">Создана: {new Date(deal.createdAt).toLocaleDateString("ru-RU")}</div>
-        )}
-        {show("updatedAt") && (
-          <div className="text-xs text-[#888888]">Обновлена: {new Date(deal.updatedAt).toLocaleDateString("ru-RU")}</div>
-        )}
-        {show("closedAt") && deal.closedAt !== null && (
-          <div className="text-xs text-[#888888]">Закрыта: {new Date(deal.closedAt).toLocaleDateString("ru-RU")}</div>
+
+        {/* Дата закрытия (факт) */}
+        {Boolean(options.closedAt) && (
+          <div className="text-xs text-[#888888]">
+            {deal.closedAt
+              ? `Закрыта: ${new Date(deal.closedAt).toLocaleDateString("ru-RU")}`
+              : "Закрыта: —"}
+          </div>
         )}
       </div>
 
@@ -200,7 +354,10 @@ export const DealCard = memo(function DealCard({
         <button
           type="button"
           disabled={!canMoveLeft}
-          onClick={(event) => { event.stopPropagation(); onMove(deal.id, -1); }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onMove(deal.id, -1);
+          }}
           className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowLeft className="h-4 w-4 md:h-3 md:w-3" />
@@ -209,7 +366,10 @@ export const DealCard = memo(function DealCard({
         <button
           type="button"
           disabled={!canMoveRight}
-          onClick={(event) => { event.stopPropagation(); onMove(deal.id, 1); }}
+          onClick={(event) => {
+            event.stopPropagation();
+            onMove(deal.id, 1);
+          }}
           className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#000000] disabled:opacity-30 md:h-auto md:w-auto md:p-1"
         >
           <ArrowRight className="h-4 w-4 md:h-3 md:w-3" />
