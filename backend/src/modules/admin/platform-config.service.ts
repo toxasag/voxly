@@ -1,6 +1,55 @@
 import { getEnv } from "../../config/env.js";
 import { queryOne, runWithPlatformScope } from "../../db/client.js";
 
+export type LlmProviderType = "gemini" | "openai" | "openrouter" | "deepseek" | "custom";
+
+export interface LlmProviderStoredItem {
+  id: string;
+  name: string;
+  providerType: LlmProviderType;
+  baseUrl: string;
+  apiKeys: string[];
+  chatModel: string;
+  embeddingModel: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface LlmProviderDTO {
+  id: string;
+  name: string;
+  providerType: LlmProviderType;
+  baseUrl: string;
+  apiKeysCount: number;
+  maskedKeys: string[];
+  chatModel: string;
+  embeddingModel: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface LlmProviderPayload {
+  id: string;
+  name: string;
+  providerType: LlmProviderType;
+  baseUrl: string;
+  apiKeys?: string[];
+  chatModel: string;
+  embeddingModel: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface RotatedLlmConfig {
+  baseUrl: string;
+  apiKey: string;
+  allKeys: string[];
+  chatModel: string;
+  embeddingModel: string;
+  providerId?: string;
+  providerName?: string;
+}
+
 export interface IntegrationsConfigDTO {
   robokassa: {
     merchantLogin: string;
@@ -18,6 +67,7 @@ export interface IntegrationsConfigDTO {
     chatModel: string;
     isConfigured: boolean;
   };
+  llmProviders: LlmProviderDTO[];
   updatedAt: string;
 }
 
@@ -38,6 +88,7 @@ export interface EffectiveIntegrations {
     chatModel: string;
     isConfigured: boolean;
   };
+  llmProviders: LlmProviderStoredItem[];
 }
 
 export interface UpdateIntegrationsPayload {
@@ -55,6 +106,7 @@ export interface UpdateIntegrationsPayload {
     embeddingModel?: string;
     chatModel?: string;
   };
+  llmProviders?: LlmProviderPayload[];
 }
 
 interface PlatformIntegrationsRow {
@@ -69,15 +121,31 @@ interface PlatformIntegrationsRow {
   llm_api_key: string | null;
   llm_embedding_model: string | null;
   llm_chat_model: string | null;
+  llm_providers: LlmProviderStoredItem[] | null;
   updated_at: Date | string;
+}
+
+function maskApiKey(key: string): string {
+  const trimmed = key.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 8) return "••••••••";
+  return `${trimmed.slice(0, 4)}••••${trimmed.slice(-4)}`;
 }
 
 export class PlatformConfigService {
   private cachedEffective: EffectiveIntegrations | null = null;
   private cacheExpiresAt = 0;
+  private roundRobinIndex = 0;
 
   isLlmConfiguredSync(): boolean {
     if (this.cachedEffective) {
+      if (
+        this.cachedEffective.llmProviders.some(
+          (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
+        )
+      ) {
+        return true;
+      }
       return this.cachedEffective.llm.isConfigured;
     }
     const env = getEnv();
@@ -89,7 +157,9 @@ export class PlatformConfigService {
       return this.cachedEffective.robokassa.isConfigured;
     }
     const env = getEnv();
-    return Boolean(env.ROBOKASSA_MERCHANT_LOGIN && env.ROBOKASSA_PASSWORD_1 && env.ROBOKASSA_PASSWORD_2);
+    return Boolean(
+      env.ROBOKASSA_MERCHANT_LOGIN && env.ROBOKASSA_PASSWORD_1 && env.ROBOKASSA_PASSWORD_2,
+    );
   }
 
   /**
@@ -103,6 +173,37 @@ export class PlatformConfigService {
         `SELECT updated_at FROM platform_integrations_config WHERE id = 'default'`,
       );
     });
+
+    let providersDTO: LlmProviderDTO[] = effective.llmProviders.map((p) => ({
+      id: p.id,
+      name: p.name,
+      providerType: p.providerType,
+      baseUrl: p.baseUrl,
+      apiKeysCount: p.apiKeys.length,
+      maskedKeys: p.apiKeys.map(maskApiKey),
+      chatModel: p.chatModel,
+      embeddingModel: p.embeddingModel,
+      isActive: p.isActive,
+      isDefault: p.isDefault,
+    }));
+
+    // Если список провайдеров в БД ещё пуст, но заданы базовые URL/ключ — создаём начальный элемент
+    if (providersDTO.length === 0 && (effective.llm.baseUrl || effective.llm.apiKey)) {
+      providersDTO = [
+        {
+          id: "prov-default",
+          name: "Основной провайдер",
+          providerType: "custom",
+          baseUrl: effective.llm.baseUrl ?? "",
+          apiKeysCount: effective.llm.apiKey ? 1 : 0,
+          maskedKeys: effective.llm.apiKey ? [maskApiKey(effective.llm.apiKey)] : [],
+          chatModel: effective.llm.chatModel,
+          embeddingModel: effective.llm.embeddingModel,
+          isActive: true,
+          isDefault: true,
+        },
+      ];
+    }
 
     return {
       robokassa: {
@@ -121,6 +222,7 @@ export class PlatformConfigService {
         chatModel: effective.llm.chatModel,
         isConfigured: effective.llm.isConfigured,
       },
+      llmProviders: providersDTO,
       updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
     };
   }
@@ -144,22 +246,55 @@ export class PlatformConfigService {
     });
 
     // Robokassa: сначала смотрим в БД, если не заполнено — fallback на env
-    const rLogin = (dbRow?.robokassa_login?.trim()) || env.ROBOKASSA_MERCHANT_LOGIN || null;
-    const rPass1 = (dbRow?.robokassa_password_1?.trim()) || env.ROBOKASSA_PASSWORD_1 || null;
-    const rPass2 = (dbRow?.robokassa_password_2?.trim()) || env.ROBOKASSA_PASSWORD_2 || null;
+    const rLogin = dbRow?.robokassa_login?.trim() || env.ROBOKASSA_MERCHANT_LOGIN || null;
+    const rPass1 = dbRow?.robokassa_password_1?.trim() || env.ROBOKASSA_PASSWORD_1 || null;
+    const rPass2 = dbRow?.robokassa_password_2?.trim() || env.ROBOKASSA_PASSWORD_2 || null;
     const rIsTest = dbRow ? dbRow.robokassa_is_test : env.ROBOKASSA_IS_TEST;
-    const rHashAlgo = ((dbRow?.robokassa_hash_algo === "MD5" || env.ROBOKASSA_HASH_ALGO === "MD5") ? "MD5" : "SHA256") as "SHA256" | "MD5";
+    const rHashAlgo = (
+      dbRow?.robokassa_hash_algo === "MD5" || env.ROBOKASSA_HASH_ALGO === "MD5" ? "MD5" : "SHA256"
+    ) as "SHA256" | "MD5";
     const rTax = dbRow?.robokassa_tax || env.ROBOKASSA_TAX || "none";
 
     const isRoboConfigured = !!(rLogin && rPass1 && rPass2);
 
     // LLM: сначала БД, затем env
-    const llmUrl = (dbRow?.llm_api_base_url?.trim()) || env.LLM_API_BASE_URL || null;
-    const llmKey = (dbRow?.llm_api_key?.trim()) || env.LLM_API_KEY || null;
-    const llmEmbedModel = (dbRow?.llm_embedding_model?.trim()) || env.LLM_EMBEDDING_MODEL || "text-embedding-3-small";
-    const llmChatModel = (dbRow?.llm_chat_model?.trim()) || "openai/gpt-4o-mini";
+    const llmUrl = dbRow?.llm_api_base_url?.trim() || env.LLM_API_BASE_URL || null;
+    const llmKey = dbRow?.llm_api_key?.trim() || env.LLM_API_KEY || null;
+    const llmEmbedModel =
+      dbRow?.llm_embedding_model?.trim() || env.LLM_EMBEDDING_MODEL || "text-embedding-3-small";
+    const llmChatModel = dbRow?.llm_chat_model?.trim() || "openai/gpt-4o-mini";
 
-    const isLlmConfigured = !!(llmUrl && llmKey);
+    let storedProviders: LlmProviderStoredItem[] = [];
+    if (Array.isArray(dbRow?.llm_providers) && dbRow.llm_providers.length > 0) {
+      storedProviders = dbRow.llm_providers.filter(
+        (p): p is LlmProviderStoredItem =>
+          typeof p === "object" &&
+          p !== null &&
+          typeof p.id === "string" &&
+          typeof p.baseUrl === "string",
+      );
+    }
+
+    // Если в БД пул ещё не заполнен, но задан одиночный ключ — синтезируем дефолтный элемент пула
+    if (storedProviders.length === 0 && (llmUrl || llmKey)) {
+      storedProviders = [
+        {
+          id: "prov-default",
+          name: "Основной провайдер",
+          providerType: "custom",
+          baseUrl: llmUrl ?? "",
+          apiKeys: llmKey ? [llmKey] : [],
+          chatModel: llmChatModel,
+          embeddingModel: llmEmbedModel,
+          isActive: true,
+          isDefault: true,
+        },
+      ];
+    }
+
+    const isLlmConfigured =
+      storedProviders.some((p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl)) ||
+      Boolean(llmUrl && llmKey);
 
     const result: EffectiveIntegrations = {
       robokassa: {
@@ -178,12 +313,67 @@ export class PlatformConfigService {
         chatModel: llmChatModel,
         isConfigured: isLlmConfigured,
       },
+      llmProviders: storedProviders,
     };
 
     this.cachedEffective = result;
     this.cacheExpiresAt = now + 15_000;
 
     return result;
+  }
+
+  /**
+   * Получение конфигурации активного LLM с циклической ротацией ключей (Round-Robin)
+   * и списком всех ключей пула для прозрачного failover при HTTP 429.
+   */
+  async getRotatedLlmConfig(): Promise<RotatedLlmConfig | null> {
+    const effective = await this.getEffectiveIntegrations();
+
+    // 1. Ищем активный провайдер по умолчанию с заполненными ключами
+    let target = effective.llmProviders.find(
+      (p) => p.isActive && p.isDefault && p.apiKeys.length > 0 && Boolean(p.baseUrl),
+    );
+
+    // 2. Если по умолчанию не найден, берём первый активный с ключами
+    if (!target) {
+      target = effective.llmProviders.find(
+        (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
+      );
+    }
+
+    if (target && target.apiKeys.length > 0) {
+      const keys = target.apiKeys;
+      const pickedIndex = this.roundRobinIndex % keys.length;
+      this.roundRobinIndex = (this.roundRobinIndex + 1) % keys.length;
+      const selectedKey = keys[pickedIndex] ?? keys[0] ?? "";
+
+      // Составляем упорядоченный список ключей для failover, начиная со следующего
+      const allKeys = [...keys.slice(pickedIndex), ...keys.slice(0, pickedIndex)];
+
+      return {
+        baseUrl: target.baseUrl,
+        apiKey: selectedKey,
+        allKeys,
+        chatModel: target.chatModel,
+        embeddingModel: target.embeddingModel,
+        providerId: target.id,
+        providerName: target.name,
+      };
+    }
+
+    // 3. Fallback на одиночный ключ legacy
+    if (effective.llm.baseUrl && effective.llm.apiKey) {
+      return {
+        baseUrl: effective.llm.baseUrl,
+        apiKey: effective.llm.apiKey,
+        allKeys: [effective.llm.apiKey],
+        chatModel: effective.llm.chatModel,
+        embeddingModel: effective.llm.embeddingModel,
+        providerName: "Legacy Default",
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -210,10 +400,18 @@ export class PlatformConfigService {
         if (payload.robokassa.merchantLogin !== undefined) {
           nextLogin = payload.robokassa.merchantLogin.trim() || null;
         }
-        if (payload.robokassa.password1 !== undefined && payload.robokassa.password1.trim() && !payload.robokassa.password1.includes("•")) {
+        if (
+          payload.robokassa.password1 !== undefined &&
+          payload.robokassa.password1.trim() &&
+          !payload.robokassa.password1.includes("•")
+        ) {
           nextPass1 = payload.robokassa.password1.trim();
         }
-        if (payload.robokassa.password2 !== undefined && payload.robokassa.password2.trim() && !payload.robokassa.password2.includes("•")) {
+        if (
+          payload.robokassa.password2 !== undefined &&
+          payload.robokassa.password2.trim() &&
+          !payload.robokassa.password2.includes("•")
+        ) {
           nextPass2 = payload.robokassa.password2.trim();
         }
         if (payload.robokassa.isTest !== undefined) {
@@ -227,17 +425,90 @@ export class PlatformConfigService {
         }
       }
 
+      // Existing stored providers for unmasking
+      const existingProviders = Array.isArray(current?.llm_providers)
+        ? (current.llm_providers as LlmProviderStoredItem[])
+        : [];
+
       // LLM values
       let nextLlmUrl = current?.llm_api_base_url ?? null;
       let nextLlmKey = current?.llm_api_key ?? null;
       let nextLlmEmbedModel = current?.llm_embedding_model ?? "text-embedding-3-small";
       let nextLlmChatModel = current?.llm_chat_model ?? "openai/gpt-4o-mini";
+      let nextProviders: LlmProviderStoredItem[] = existingProviders;
 
+      if (payload.llmProviders !== undefined) {
+        nextProviders = payload.llmProviders.map((p) => {
+          const prevMatch = existingProviders.find((ep) => ep.id === p.id);
+          const rawKeys = p.apiKeys ?? [];
+
+          // Восстанавливаем оригинальные ключи для тех строк, которые пришли замаскированными
+          const unmaskedKeys: string[] = [];
+          for (let i = 0; i < rawKeys.length; i++) {
+            const raw = rawKeys[i];
+            if (!raw) continue;
+            const k = raw.trim();
+            if (!k) continue;
+
+            if (k.includes("•")) {
+              // Ищем исходный ключ из базы
+              let restored = prevMatch?.apiKeys[i];
+              if (!restored && prevMatch?.apiKeys) {
+                // Если индекс сместился, ищем по соответствию маске
+                restored = prevMatch.apiKeys.find((orig) => maskApiKey(orig) === k);
+              }
+              if (restored) {
+                unmaskedKeys.push(restored.trim());
+              }
+            } else {
+              unmaskedKeys.push(k);
+            }
+          }
+
+          return {
+            id: p.id,
+            name: p.name.trim() || "AI Provider",
+            providerType: p.providerType,
+            baseUrl: p.baseUrl.trim(),
+            apiKeys: unmaskedKeys,
+            chatModel: p.chatModel.trim() || "openai/gpt-4o-mini",
+            embeddingModel: p.embeddingModel.trim() || "text-embedding-3-small",
+            isActive: p.isActive,
+            isDefault: p.isDefault,
+          };
+        });
+
+        // Гарантируем, что ровно один активный провайдер отмечен как дефолтный
+        const defaultIndex = nextProviders.findIndex((p) => p.isDefault && p.isActive);
+        if (defaultIndex === -1 && nextProviders.length > 0) {
+          const firstActive = nextProviders.findIndex((p) => p.isActive);
+          if (firstActive !== -1 && nextProviders[firstActive]) {
+            nextProviders[firstActive]!.isDefault = true;
+          } else if (nextProviders[0]) {
+            nextProviders[0]!.isDefault = true;
+          }
+        }
+
+        // Синхронизируем старые скалярные колонки с дефолтным провайдером для 100% обратной совместимости
+        const defProv = nextProviders.find((p) => p.isDefault) || nextProviders[0];
+        if (defProv) {
+          nextLlmUrl = defProv.baseUrl || null;
+          nextLlmKey = defProv.apiKeys[0] || null;
+          nextLlmEmbedModel = defProv.embeddingModel || "text-embedding-3-small";
+          nextLlmChatModel = defProv.chatModel || "openai/gpt-4o-mini";
+        }
+      }
+
+      // Legacy direct `llm` payload support
       if (payload.llm) {
         if (payload.llm.baseUrl !== undefined) {
           nextLlmUrl = payload.llm.baseUrl.trim() || null;
         }
-        if (payload.llm.apiKey !== undefined && payload.llm.apiKey.trim() && !payload.llm.apiKey.includes("•")) {
+        if (
+          payload.llm.apiKey !== undefined &&
+          payload.llm.apiKey.trim() &&
+          !payload.llm.apiKey.includes("•")
+        ) {
           nextLlmKey = payload.llm.apiKey.trim();
         }
         if (payload.llm.embeddingModel !== undefined) {
@@ -252,9 +523,10 @@ export class PlatformConfigService {
         `INSERT INTO platform_integrations_config (
           id, robokassa_login, robokassa_password_1, robokassa_password_2,
           robokassa_is_test, robokassa_hash_algo, robokassa_tax,
-          llm_api_base_url, llm_api_key, llm_embedding_model, llm_chat_model, updated_at
+          llm_api_base_url, llm_api_key, llm_embedding_model, llm_chat_model,
+          llm_providers, updated_at
         ) VALUES (
-          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now()
+          'default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now()
         ) ON CONFLICT (id) DO UPDATE SET
           robokassa_login = EXCLUDED.robokassa_login,
           robokassa_password_1 = EXCLUDED.robokassa_password_1,
@@ -266,6 +538,7 @@ export class PlatformConfigService {
           llm_api_key = EXCLUDED.llm_api_key,
           llm_embedding_model = EXCLUDED.llm_embedding_model,
           llm_chat_model = EXCLUDED.llm_chat_model,
+          llm_providers = EXCLUDED.llm_providers,
           updated_at = now()`,
         [
           nextLogin,
@@ -278,6 +551,7 @@ export class PlatformConfigService {
           nextLlmKey,
           nextLlmEmbedModel,
           nextLlmChatModel,
+          JSON.stringify(nextProviders),
         ],
       );
     });
@@ -288,10 +562,13 @@ export class PlatformConfigService {
   /**
    * Тестовая проверка подключения к LLM-провайдеру.
    */
-  async testLlmConnection(override?: { baseUrl?: string; apiKey?: string }): Promise<{ success: boolean; message: string; modelsCount?: number }> {
+  async testLlmConnection(override?: {
+    baseUrl?: string;
+    apiKey?: string;
+  }): Promise<{ success: boolean; message: string; modelsCount?: number }> {
     const effective = await this.getEffectiveIntegrations();
     const url = (override?.baseUrl?.trim() || effective.llm.baseUrl)?.replace(/\/+$/, "");
-    const key = (override?.apiKey?.trim() || effective.llm.apiKey);
+    const key = override?.apiKey?.trim() || effective.llm.apiKey;
 
     if (!url || !key) {
       return { success: false, message: "Не указан базовый URL или API-ключ провайдера" };

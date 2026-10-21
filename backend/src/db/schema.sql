@@ -1058,6 +1058,7 @@ CREATE TABLE IF NOT EXISTS platform_integrations_config (
   llm_api_key TEXT,
   llm_embedding_model TEXT DEFAULT 'text-embedding-3-small',
   llm_chat_model TEXT DEFAULT 'openai/gpt-4o-mini',
+  llm_providers JSONB DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

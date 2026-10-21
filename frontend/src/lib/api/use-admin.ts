@@ -285,6 +285,33 @@ export function useUpdateAdminBillingConfig(): UseMutationResult<
   });
 }
 
+export type LlmProviderType = "gemini" | "openai" | "openrouter" | "deepseek" | "custom";
+
+export interface AdminLlmProviderDTO {
+  id: string;
+  name: string;
+  providerType: LlmProviderType;
+  baseUrl: string;
+  apiKeysCount: number;
+  maskedKeys: string[];
+  chatModel: string;
+  embeddingModel: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface AdminLlmProviderPayload {
+  id: string;
+  name: string;
+  providerType: LlmProviderType;
+  baseUrl: string;
+  apiKeys?: string[];
+  chatModel: string;
+  embeddingModel: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
 export interface AdminIntegrationsConfigDTO {
   robokassa: {
     merchantLogin: string;
@@ -302,6 +329,7 @@ export interface AdminIntegrationsConfigDTO {
     chatModel: string;
     isConfigured: boolean;
   };
+  llmProviders: AdminLlmProviderDTO[];
   updatedAt: string;
 }
 
@@ -320,6 +348,7 @@ export interface UpdateAdminIntegrationsPayload {
     embeddingModel?: string;
     chatModel?: string;
   };
+  llmProviders?: AdminLlmProviderPayload[];
 }
 
 export function useAdminIntegrationsConfig(): UseQueryResult<AdminIntegrationsConfigDTO, ApiClientError> {
