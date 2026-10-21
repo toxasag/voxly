@@ -73,6 +73,25 @@ interface PlatformIntegrationsRow {
 }
 
 export class PlatformConfigService {
+  private cachedEffective: EffectiveIntegrations | null = null;
+  private cacheExpiresAt = 0;
+
+  isLlmConfiguredSync(): boolean {
+    if (this.cachedEffective) {
+      return this.cachedEffective.llm.isConfigured;
+    }
+    const env = getEnv();
+    return Boolean(env.LLM_API_BASE_URL && env.LLM_API_KEY);
+  }
+
+  isRobokassaConfiguredSync(): boolean {
+    if (this.cachedEffective) {
+      return this.cachedEffective.robokassa.isConfigured;
+    }
+    const env = getEnv();
+    return Boolean(env.ROBOKASSA_MERCHANT_LOGIN && env.ROBOKASSA_PASSWORD_1 && env.ROBOKASSA_PASSWORD_2);
+  }
+
   /**
    * Получение текущих настроек для отображения в панели администратора.
    * Секреты (пароли и API-ключи) маскируются.
@@ -111,6 +130,11 @@ export class PlatformConfigService {
    * (с приоритетом БД над переменными окружения).
    */
   async getEffectiveIntegrations(): Promise<EffectiveIntegrations> {
+    const now = Date.now();
+    if (this.cachedEffective && now < this.cacheExpiresAt) {
+      return this.cachedEffective;
+    }
+
     const env = getEnv();
 
     const dbRow = await runWithPlatformScope(async () => {
@@ -137,7 +161,7 @@ export class PlatformConfigService {
 
     const isLlmConfigured = !!(llmUrl && llmKey);
 
-    return {
+    const result: EffectiveIntegrations = {
       robokassa: {
         merchantLogin: rLogin,
         password1: rPass1,
@@ -155,12 +179,20 @@ export class PlatformConfigService {
         isConfigured: isLlmConfigured,
       },
     };
+
+    this.cachedEffective = result;
+    this.cacheExpiresAt = now + 15_000;
+
+    return result;
   }
 
   /**
    * Обновление настроек интеграций из интерфейса администратора платформы.
    */
   async updateIntegrationsConfig(payload: UpdateIntegrationsPayload): Promise<IntegrationsConfigDTO> {
+    this.cachedEffective = null;
+    this.cacheExpiresAt = 0;
+
     await runWithPlatformScope(async () => {
       const current = await queryOne<PlatformIntegrationsRow>(
         `SELECT * FROM platform_integrations_config WHERE id = 'default'`,
@@ -263,6 +295,18 @@ export class PlatformConfigService {
 
     if (!url || !key) {
       return { success: false, message: "Не указан базовый URL или API-ключ провайдера" };
+    }
+
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { success: false, message: "Поддерживаются только протоколы http:// и https://" };
+      }
+      if (parsed.hostname === "169.254.169.254" || parsed.hostname === "metadata.google.internal") {
+        return { success: false, message: "Запрос к адресам метаданных запрещен" };
+      }
+    } catch {
+      return { success: false, message: "Указан некорректный URL провайдера" };
     }
 
     try {

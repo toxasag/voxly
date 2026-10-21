@@ -134,6 +134,13 @@ export const ReferralTab = memo(function ReferralTab({ referrals, payouts }: Ref
                   <td className="px-4 py-3"><span className="text-xs text-[#888888]">{formatDate(ref.created_at)}</span></td>
                 </tr>
               ))}
+              {referrals.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-xs text-[#888888]">
+                    Активных партнёрских регистраций пока нет
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -175,6 +182,13 @@ export const ReferralTab = memo(function ReferralTab({ referrals, payouts }: Ref
                   </td>
                 </tr>
               ))}
+              {payouts.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-xs text-[#888888]">
+                    История выплат пуста
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

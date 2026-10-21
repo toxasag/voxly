@@ -8,7 +8,6 @@ import { ReferralTab } from "@/components/admin/ReferralTab";
 import { Guard } from "@/components/shared/Guard";
 import type { PlatformTenant } from "@/lib/admin/admin.types";
 import { useAdminTenants, useUpdateTenant } from "@/lib/api/use-admin";
-import { MOCK_REFERRALS, MOCK_PAYOUTS } from "@/lib/admin/mock-admin";
 import { cn } from "@/lib/utils";
 
 type AdminTab = "tenants" | "referrals";
@@ -174,7 +173,7 @@ export default function TenantsPage() {
           onRetry={refetch}
         />
       ) : (
-        <ReferralTab referrals={MOCK_REFERRALS} payouts={MOCK_PAYOUTS} />
+        <ReferralTab referrals={[]} payouts={[]} />
       )}
 
       {/* Modal */}

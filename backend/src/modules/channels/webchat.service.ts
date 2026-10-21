@@ -28,6 +28,8 @@ export interface WebchatAccountInfo {
   position?: "bottom-right" | "bottom-left";
   telegramBot?: string;
   showTelegramBanner?: boolean;
+  consultantName?: string;
+  consultantAvatar?: string;
 }
 
 interface ChannelAccountRow {
@@ -158,6 +160,8 @@ export class WebchatService {
       position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
       telegramBot: typeof creds.telegramBot === "string" ? creds.telegramBot.replace(/^@/, "").trim() : undefined,
       showTelegramBanner: creds.showTelegramBanner !== false,
+      consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
+      consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
     };
   }
 

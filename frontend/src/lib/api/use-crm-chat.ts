@@ -91,7 +91,7 @@ export function useDealChatMessages(
     queryKey: crmChatKeys.deal.messages(dealId),
     queryFn: async () => {
       const response = await apiClient.get<ChatMessageDTO[]>(
-        `/api/v1/crm/deals/${dealId}/timeline`,
+        `/api/v1/crm/deals/${dealId}/messages`,
       );
       return response.data;
     },

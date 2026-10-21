@@ -1,7 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { LogLevel } from "telegram/extensions/Logger.js";
+import { CustomFile } from "telegram/client/uploads.js";
 
 import { getEnv } from "../../config/env.js";
 import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
@@ -10,7 +13,12 @@ import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { nextTypingPauseMs } from "../ai/agent-reply.js";
 import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.js";
-import { registerOutboundSender } from "./outbound-registry.js";
+import {
+  registerOutboundSender,
+  registerStoryPublisher,
+  type StoryPublishPayload,
+  type StoryPublishResult,
+} from "./outbound-registry.js";
 import { ChannelProfileCache } from "./profile-cache.js";
 import type { ChannelProfile } from "../crm/crm-pipeline.service.js";
 
@@ -87,6 +95,8 @@ export class TelegramTransportService {
   private stopped = false;
   /** Снятие регистрации в реестре исходящих; ставится в `start()`. */
   private unregisterOutbound: (() => void) | null = null;
+  /** Снятие регистрации в реестре сторис; ставится в `start()`. */
+  private unregisterStory: (() => void) | null = null;
 
   constructor(
     private readonly log: Logger,
@@ -134,6 +144,9 @@ export class TelegramTransportService {
     this.unregisterOutbound = registerOutboundSender("telegram", (message) =>
       this.sendOutbound(message),
     );
+    this.unregisterStory = registerStoryPublisher("telegram", (payload) =>
+      this.sendStory(payload),
+    );
 
     this.startupTimer = setTimeout(() => {
       void this.resync();
@@ -155,6 +168,11 @@ export class TelegramTransportService {
     if (this.unregisterOutbound !== null) {
       this.unregisterOutbound();
       this.unregisterOutbound = null;
+    }
+
+    if (this.unregisterStory !== null) {
+      this.unregisterStory();
+      this.unregisterStory = null;
     }
 
     if (this.startupTimer !== null) clearTimeout(this.startupTimer);
@@ -647,6 +665,134 @@ export class TelegramTransportService {
       // разных действий оператора.
       const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram";
       return { ok: false, reason: `Telegram отклонил отправку: ${reason}` };
+    }
+  }
+
+  /**
+   * Публикация Stories (истории) в аккаунт Telegram через GramJS MTProto.
+   */
+  async sendStory(payload: StoryPublishPayload): Promise<StoryPublishResult> {
+    let connection: ActiveConnection | undefined;
+
+    if (payload.channelAccountId) {
+      connection = this.connections.get(payload.channelAccountId);
+    }
+
+    if (!connection) {
+      // Ищем любое активное соединение этого арендатора
+      for (const conn of this.connections.values()) {
+        if (conn.tenantId === payload.tenantId) {
+          connection = conn;
+          break;
+        }
+      }
+    }
+
+    if (!connection) {
+      return {
+        ok: false,
+        reason: "Нет активного подключения Telegram MTProto для отправки сторис",
+      };
+    }
+
+    try {
+      let toUpload: CustomFile;
+
+      if (payload.mediaUrl.startsWith("http://") || payload.mediaUrl.startsWith("https://")) {
+        const res = await fetch(payload.mediaUrl);
+        if (!res.ok) {
+          return { ok: false, reason: `Не удалось скачать медиафайл по URL: HTTP ${res.status}` };
+        }
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        const urlPath = new URL(payload.mediaUrl).pathname;
+        const filename = path.basename(urlPath) || (payload.mediaType === "video" ? "story.mp4" : "story.jpg");
+        toUpload = new CustomFile(filename, buf.length, "", buf);
+      } else {
+        if (!fs.existsSync(payload.mediaUrl)) {
+          return { ok: false, reason: `Локальный файл ${payload.mediaUrl} не найден` };
+        }
+        const stat = await fs.promises.stat(payload.mediaUrl);
+        const filename = path.basename(payload.mediaUrl);
+        toUpload = new CustomFile(filename, stat.size, payload.mediaUrl);
+      }
+
+      const inputFile = await connection.client.uploadFile({
+        file: toUpload,
+        workers: 1,
+      });
+
+      let media: Api.TypeInputMedia;
+      if (payload.mediaType === "video") {
+        media = new Api.InputMediaUploadedDocument({
+          file: inputFile,
+          mimeType: "video/mp4",
+          attributes: [
+            new Api.DocumentAttributeVideo({
+              supportsStreaming: true,
+              duration: 15,
+              w: 720,
+              h: 1280,
+            }),
+          ],
+        });
+      } else {
+        media = new Api.InputMediaUploadedPhoto({
+          file: inputFile,
+        });
+      }
+
+      let mediaAreas: Api.TypeMediaArea[] | undefined;
+      if (payload.linkUrl) {
+        mediaAreas = [
+          new Api.MediaAreaUrl({
+            coordinates: new Api.MediaAreaCoordinates({
+              x: 50,
+              y: 75,
+              w: 80,
+              h: 10,
+              rotation: 0,
+            }),
+            url: payload.linkUrl,
+          }),
+        ];
+      }
+
+      const updates = await connection.client.invoke(
+        new Api.stories.SendStory({
+          peer: new Api.InputPeerSelf(),
+          media,
+          caption: payload.caption || undefined,
+          mediaAreas,
+          privacyRules: [new Api.InputPrivacyValueAllowAll()],
+          pinned: false,
+          period: 86400,
+        }),
+      );
+
+      let storyId: string | undefined;
+      if ("updates" in updates && Array.isArray(updates.updates)) {
+        for (const u of updates.updates) {
+          if ("story" in u && u.story && typeof u.story === "object" && "id" in u.story) {
+            storyId = String((u.story as { id: number }).id);
+            break;
+          }
+        }
+      }
+
+      this.log.info(
+        { tenantId: payload.tenantId, channelAccountId: connection.accountId, storyId },
+        "Story successfully published to Telegram",
+      );
+
+      return { ok: true, externalId: storyId };
+    } catch (error) {
+      this.log.error(
+        { error, tenantId: payload.tenantId, channelAccountId: payload.channelAccountId },
+        "Failed to send Telegram Story",
+      );
+      const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram MTProto";
+      return { ok: false, reason: `Telegram отклонил публикацию сторис: ${reason}` };
     }
   }
 

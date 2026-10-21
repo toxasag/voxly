@@ -1,5 +1,6 @@
 import { query, queryOne } from "../../../db/client.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
+import { resolveOutboundSender } from "../../channels/outbound-registry.js";
 
 // ---------------------------------------------------------------------------
 // Автоворонки по этапам сделок (CRM Stage Rules & Bot Broadcasts).
@@ -195,11 +196,12 @@ export class StageRulesService {
         .replaceAll("{{budget}}", dealBudget);
 
       // Записываем автосообщение в таймлайн сделки
-      await query(
+      const rows = await query<{ id: string }>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name,
             content, channel, delivery_status, attachment, attachment_type)
-         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8)`,
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8)
+         RETURNING id`,
         [
           input.tenantId,
           input.dealId,
@@ -212,9 +214,190 @@ export class StageRulesService {
         ],
       );
 
+      const messageId = rows[0]?.id;
+
+      // Реальная отправка в канал с учетом задержки delay_seconds
+      if (messageId) {
+        if (rule.delay_seconds > 0) {
+          const delayMs = rule.delay_seconds * 1000;
+          const timer = setTimeout(() => {
+            void this.deliverAutomatedMessage({
+              tenantId: input.tenantId,
+              dealId: input.dealId,
+              messageId,
+              channel: rule.channel,
+              channelAccountId: rule.channel_account_id,
+              renderedText,
+            });
+          }, delayMs);
+          timer.unref?.();
+        } else {
+          // Отправка немедленно без задержки
+          void this.deliverAutomatedMessage({
+            tenantId: input.tenantId,
+            dealId: input.dealId,
+            messageId,
+            channel: rule.channel,
+            channelAccountId: rule.channel_account_id,
+            renderedText,
+          });
+        }
+      }
+
       firedNames.push(rule.name);
     }
 
     return { fired: firedNames.length, rules: firedNames };
+  }
+
+  /**
+   * Отправка сгенерированного сообщения клиенту в подключённый транспорт канала.
+   */
+  private async deliverAutomatedMessage(input: {
+    tenantId: string;
+    dealId: string;
+    messageId: string;
+    channel: string;
+    channelAccountId: string | null;
+    renderedText: string;
+  }): Promise<void> {
+    const route = await this.resolveRoute(
+      input.tenantId,
+      input.dealId,
+      input.channel,
+      input.channelAccountId,
+    );
+
+    if (!route) {
+      await query(
+        `UPDATE deal_messages
+         SET delivery_status = 'failed', delivery_error = $1
+         WHERE tenant_id = $2 AND id = $3`,
+        ["Не найден адресат у контакта сделки или активный аккаунт канала", input.tenantId, input.messageId],
+      );
+      return;
+    }
+
+    const sender = resolveOutboundSender(input.channel);
+    if (!sender) {
+      await query(
+        `UPDATE deal_messages
+         SET delivery_status = 'failed', delivery_error = $1
+         WHERE tenant_id = $2 AND id = $3`,
+        [`Канал ${input.channel} не отправляет сообщения: подключение не активно`, input.tenantId, input.messageId],
+      );
+      return;
+    }
+
+    try {
+      const result = await sender({
+        tenantId: input.tenantId,
+        channelAccountId: route.channelAccountId,
+        recipient: route.recipient,
+        text: input.renderedText,
+      });
+
+      if (result.ok) {
+        await query(
+          `UPDATE deal_messages
+           SET delivery_status = 'sent', delivery_error = NULL
+           WHERE tenant_id = $1 AND id = $2`,
+          [input.tenantId, input.messageId],
+        );
+      } else {
+        await query(
+          `UPDATE deal_messages
+           SET delivery_status = 'failed', delivery_error = $1
+           WHERE tenant_id = $2 AND id = $3`,
+          [result.reason, input.tenantId, input.messageId],
+        );
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Неизвестная ошибка транспорта канала";
+      await query(
+        `UPDATE deal_messages
+         SET delivery_status = 'failed', delivery_error = $1
+         WHERE tenant_id = $2 AND id = $3`,
+        [reason, input.tenantId, input.messageId],
+      );
+    }
+  }
+
+  /**
+   * Определение маршрута доставки: аккаунт канала и адресат контакта.
+   */
+  private async resolveRoute(
+    tenantId: string,
+    dealId: string,
+    channel: string,
+    channelAccountIdOverride: string | null,
+  ): Promise<{ channelAccountId: string; recipient: string } | null> {
+    const rows = await query<{
+      last_channel_account_id: string | null;
+      telegram_chat_id: string | null;
+      telegram_username: string | null;
+      whatsapp: string | null;
+      phone: string;
+      socials: Array<{ kind: string; value: string }> | null;
+    }>(
+      `SELECT
+         (
+           SELECT m.channel_account_id
+           FROM deal_messages m
+           WHERE m.tenant_id = d.tenant_id
+             AND m.deal_id = d.id
+             AND m.channel = $3
+             AND m.channel_account_id IS NOT NULL
+           ORDER BY m.created_at DESC
+           LIMIT 1
+         ) AS last_channel_account_id,
+         c.telegram_chat_id::text AS telegram_chat_id,
+         c.telegram_username,
+         c.whatsapp,
+         c.phone,
+         c.socials
+       FROM deals d
+       LEFT JOIN contacts c
+         ON c.id = d.contact_id
+        AND c.tenant_id = d.tenant_id
+        AND c.deleted_at IS NULL
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId, channel],
+    );
+
+    const row = rows[0];
+    if (!row) return null;
+
+    let channelAccountId = channelAccountIdOverride || row.last_channel_account_id;
+
+    if (!channelAccountId) {
+      const fallbackAccount = await queryOne<{ id: string }>(
+        `SELECT id FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = $2 AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY created_at ASC LIMIT 1`,
+        [tenantId, channel],
+      );
+      channelAccountId = fallbackAccount?.id ?? null;
+    }
+
+    if (!channelAccountId) return null;
+
+    let recipient: string | null = null;
+    if (channel === "telegram") {
+      recipient = row.telegram_chat_id || row.telegram_username || (row.phone ? row.phone : null);
+    } else if (channel === "whatsapp") {
+      recipient = row.whatsapp || (row.phone ? row.phone : null);
+    } else if (channel === "max") {
+      const maxSocial = Array.isArray(row.socials)
+        ? row.socials.find((s) => s.kind === "max")?.value
+        : null;
+      recipient = maxSocial || (row.phone ? row.phone : null);
+    } else {
+      recipient = row.phone ? row.phone : null;
+    }
+
+    if (!recipient) return null;
+
+    return { channelAccountId, recipient };
   }
 }

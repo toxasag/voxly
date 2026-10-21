@@ -29,6 +29,7 @@ import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
 import { SalesLearnService } from "./modules/ai/sales-learn.service.js";
 import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
+import stageRulesRoutes from "./modules/crm/deals/stage-rules.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import fastify from "fastify";
@@ -142,6 +143,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Core CRM — authenticate + authorize are registered inside the group.
   await app.register(crmRoutes, { prefix: "/api/v1/crm" });
+  await app.register(stageRulesRoutes, { prefix: "/api/v1/crm/stage-rules" });
 
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).

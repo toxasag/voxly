@@ -159,7 +159,7 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== undefined && this.apiKey !== undefined;
+    return platformConfigService.isLlmConfiguredSync();
   }
 
   async embed(inputs: readonly string[]): Promise<EmbeddingResult> {
