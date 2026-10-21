@@ -27,13 +27,15 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
-import { useCompanies } from "@/lib/api/use-companies";
-import { contactFullName, useContacts } from "@/lib/api/use-contacts";
+import { useCompanies, useCompany, useUpdateCompany } from "@/lib/api/use-companies";
+import { contactFullName, useContacts, useContact, useUpdateContact } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
 import { Sheet } from "@/components/ui/sheet";
 import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
+import { ContactModal } from "@/components/crm/contacts/ContactModal";
+import { CompanyModal } from "@/components/crm/companies/CompanyModal";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
@@ -181,14 +183,135 @@ function HomeTab({
   const stage = stagesById?.get(deal.stageId);
 
   const linkedContact = contactsQuery.data?.items.find((c) => c.id === deal.contactId);
-  const contactPhone = deal.contactPhone || (linkedContact?.phones?.[0]?.number ?? null);
-  const contactEmail = deal.contactEmail || linkedContact?.email || null;
-  const contactJobTitle = deal.contactJobTitle || linkedContact?.jobTitle || null;
+  const linkedContactQuery = useContact(deal.contactId);
+  const fullLinkedContact = linkedContactQuery.data ?? linkedContact;
+  const updateContact = useUpdateContact();
 
   const linkedCompany = companiesQuery.data?.items.find((c) => c.id === deal.companyId);
-  const companyPhone = deal.companyPhone || linkedCompany?.phone || null;
-  const companyEmail = deal.companyEmail || linkedCompany?.email || null;
-  const companyWebsite = deal.companyWebsite || linkedCompany?.domainName || null;
+  const linkedCompanyQuery = useCompany(deal.companyId);
+  const fullLinkedCompany = linkedCompanyQuery.data ?? linkedCompany;
+  const updateCompany = useUpdateCompany();
+
+  const [contactModalOpen, setContactModalOpen] = useState(false);
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
+
+  const [editingContactField, setEditingContactField] = useState<"name" | "phone" | "email" | "jobTitle" | null>(null);
+  const [contactFieldDraft, setContactFieldDraft] = useState("");
+
+  const [editingCompanyField, setEditingCompanyField] = useState<"name" | "phone" | "email" | "domain" | null>(null);
+  const [companyFieldDraft, setCompanyFieldDraft] = useState("");
+
+  const contactPhone = deal.contactPhone || (fullLinkedContact?.phones?.[0]?.number ?? null);
+  const contactEmail = deal.contactEmail || fullLinkedContact?.email || null;
+  const contactJobTitle = deal.contactJobTitle || fullLinkedContact?.jobTitle || null;
+
+  const companyPhone = deal.companyPhone || fullLinkedCompany?.phone || null;
+  const companyEmail = deal.companyEmail || fullLinkedCompany?.email || null;
+  const companyWebsite = deal.companyWebsite || fullLinkedCompany?.domainName || null;
+
+  const commitContactEdit = (field: "name" | "phone" | "email" | "jobTitle") => {
+    if (!deal.contactId) {
+      setEditingContactField(null);
+      return;
+    }
+    const val = contactFieldDraft.trim();
+    if (field === "name") {
+      const parts = val.split(/\s+/);
+      let lastName = "";
+      let firstName = val;
+      let middleName = "";
+      if (parts.length === 2) {
+        lastName = parts[0];
+        firstName = parts[1];
+      } else if (parts.length >= 3) {
+        lastName = parts[0];
+        firstName = parts[1];
+        middleName = parts.slice(2).join(" ");
+      }
+      if (firstName) {
+        updateContact.mutate(
+          { id: deal.contactId, payload: { first_name: firstName, last_name: lastName, middle_name: middleName } },
+          {
+            onSuccess: () => toast.success("Контакт обновлен"),
+            onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
+          }
+        );
+      }
+    } else if (field === "phone") {
+      const cleanNumber = val.replace(/[\s()\-.]/g, "");
+      updateContact.mutate(
+        {
+          id: deal.contactId,
+          payload: {
+            phones: cleanNumber ? [{ number: cleanNumber, country_code: "RU", calling_code: "+7" }] : [],
+          },
+        },
+        {
+          onSuccess: () => toast.success("Телефон контакта обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления телефона"),
+        }
+      );
+    } else if (field === "email") {
+      updateContact.mutate(
+        { id: deal.contactId, payload: { email: val } },
+        {
+          onSuccess: () => toast.success("Email контакта обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления email"),
+        }
+      );
+    } else if (field === "jobTitle") {
+      updateContact.mutate(
+        { id: deal.contactId, payload: { job_title: val } },
+        {
+          onSuccess: () => toast.success("Должность контакта обновлена"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления должности"),
+        }
+      );
+    }
+    setEditingContactField(null);
+  };
+
+  const commitCompanyEdit = (field: "name" | "phone" | "email" | "domain") => {
+    if (!deal.companyId) {
+      setEditingCompanyField(null);
+      return;
+    }
+    const val = companyFieldDraft.trim();
+    if (field === "name" && val) {
+      updateCompany.mutate(
+        { id: deal.companyId, payload: { name: val } },
+        {
+          onSuccess: () => toast.success("Компания обновлена"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления компании"),
+        }
+      );
+    } else if (field === "phone") {
+      updateCompany.mutate(
+        { id: deal.companyId, payload: { phone: val } },
+        {
+          onSuccess: () => toast.success("Телефон компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления телефона"),
+        }
+      );
+    } else if (field === "email") {
+      updateCompany.mutate(
+        { id: deal.companyId, payload: { email: val } },
+        {
+          onSuccess: () => toast.success("Email компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления email"),
+        }
+      );
+    } else if (field === "domain") {
+      updateCompany.mutate(
+        { id: deal.companyId, payload: { domain_name: val.replace(/^https?:\/\//, "") } },
+        {
+          onSuccess: () => toast.success("Домен компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления домена"),
+        }
+      );
+    }
+    setEditingCompanyField(null);
+  };
 
   const dateOnly = (iso: string): string =>
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
@@ -936,54 +1059,198 @@ function HomeTab({
           </button>
           <button
             type="button"
-            title="Редактировать контактное лицо"
+            title={deal.contactId ? "Редактировать контактное лицо" : "Выбрать контактное лицо"}
             aria-label="Редактировать контактное лицо"
-            onClick={() => openPicker("contact", "card")}
+            onClick={() => {
+              if (deal.contactId) {
+                setContactModalOpen(true);
+              } else {
+                openPicker("contact", "card");
+              }
+            }}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
         {contactCardOpen && (
-          <div className="relative space-y-1.5">
-            <button
-              type="button"
-              title={deal.contactName !== null && deal.contactName !== "" ? `Контакт: ${deal.contactName}` : "Выбрать контактное лицо"}
-              onClick={() => openPicker("contact", "card")}
-              className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-            >
+          <div className="relative space-y-2">
+            <div className="flex items-center gap-2">
               {deal.contactName !== null && deal.contactName !== "" ? (
-                <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                <>
+                  <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                  <button
+                    type="button"
+                    title="Сменить привязанный контакт"
+                    onClick={() => openPicker("contact", "card")}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    Сменить
+                  </button>
+                </>
               ) : (
-                <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                <button
+                  type="button"
+                  title="Выбрать контактное лицо"
+                  onClick={() => openPicker("contact", "card")}
+                  className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                >
+                  + Привязать контакт
+                </button>
               )}
-            </button>
+            </div>
             {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
 
-            {(contactJobTitle || contactPhone || contactEmail) && (
-              <div className="mt-1 space-y-1 pl-0.5 text-xs text-[#666666]">
-                {contactJobTitle && (
-                  <div className="flex items-center gap-1.5 text-[#666666]">
-                    <Briefcase className="h-3 w-3 text-[#888888] shrink-0" />
-                    <span>{contactJobTitle}</span>
-                  </div>
-                )}
-                {contactPhone && (
-                  <div className="flex items-center gap-1.5 text-[#555555]">
-                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
-                    <a href={`tel:${contactPhone}`} className="hover:text-[#4a38f5] transition-colors">
-                      {contactPhone}
-                    </a>
-                  </div>
-                )}
-                {contactEmail && (
-                  <div className="flex items-center gap-1.5 text-[#555555]">
-                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
-                    <a href={`mailto:${contactEmail}`} className="hover:text-[#4a38f5] transition-colors truncate">
-                      {contactEmail}
-                    </a>
-                  </div>
-                )}
+            {deal.contactId && (
+              <div className="mt-2 space-y-1 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa]/50 p-2 text-xs">
+                {/* ФИО контакта */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>ФИО</span>
+                  </span>
+                  {editingContactField === "name" ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={contactFieldDraft}
+                      onChange={(e) => setContactFieldDraft(e.target.value)}
+                      onBlur={() => commitContactEdit("name")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitContactEdit("name");
+                        if (e.key === "Escape") setEditingContactField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nameStr = fullLinkedContact
+                          ? `${fullLinkedContact.lastName ? fullLinkedContact.lastName + " " : ""}${fullLinkedContact.firstName}${fullLinkedContact.middleName ? " " + fullLinkedContact.middleName : ""}`.trim()
+                          : deal.contactName ?? "";
+                        setContactFieldDraft(nameStr);
+                        setEditingContactField("name");
+                      }}
+                      title="Нажмите для редактирования ФИО"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className="truncate">{deal.contactName || "Указать имя"}</span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Телефон */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Phone className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Телефон</span>
+                  </span>
+                  {editingContactField === "phone" ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={contactFieldDraft}
+                      onChange={(e) => setContactFieldDraft(e.target.value)}
+                      onBlur={() => commitContactEdit("phone")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitContactEdit("phone");
+                        if (e.key === "Escape") setEditingContactField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContactFieldDraft(contactPhone ?? "");
+                        setEditingContactField("phone");
+                      }}
+                      title="Нажмите для редактирования телефона"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !contactPhone && "text-[#888888]")}>
+                        {contactPhone || "Указать телефон"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Email */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Mail className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Email</span>
+                  </span>
+                  {editingContactField === "email" ? (
+                    <input
+                      autoFocus
+                      type="email"
+                      value={contactFieldDraft}
+                      onChange={(e) => setContactFieldDraft(e.target.value)}
+                      onBlur={() => commitContactEdit("email")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitContactEdit("email");
+                        if (e.key === "Escape") setEditingContactField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContactFieldDraft(contactEmail ?? "");
+                        setEditingContactField("email");
+                      }}
+                      title="Нажмите для редактирования email"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !contactEmail && "text-[#888888]")}>
+                        {contactEmail || "Указать email"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Должность */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Briefcase className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Должность</span>
+                  </span>
+                  {editingContactField === "jobTitle" ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={contactFieldDraft}
+                      onChange={(e) => setContactFieldDraft(e.target.value)}
+                      onBlur={() => commitContactEdit("jobTitle")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitContactEdit("jobTitle");
+                        if (e.key === "Escape") setEditingContactField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setContactFieldDraft(contactJobTitle ?? "");
+                        setEditingContactField("jobTitle");
+                      }}
+                      title="Нажмите для редактирования должности"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !contactJobTitle && "text-[#888888]")}>
+                        {contactJobTitle || "Указать должность"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1003,54 +1270,160 @@ function HomeTab({
           </button>
           <button
             type="button"
-            title="Редактировать компанию"
+            title={deal.companyId ? "Редактировать компанию" : "Выбрать компанию"}
             aria-label="Редактировать компанию"
-            onClick={() => openPicker("company", "card")}
+            onClick={() => {
+              if (deal.companyId) {
+                setCompanyModalOpen(true);
+              } else {
+                openPicker("company", "card");
+              }
+            }}
             className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
         {companyCardOpen && (
-          <div className="relative space-y-1.5">
-            <button
-              type="button"
-              title={deal.companyName !== null && deal.companyName !== "" ? `Компания: ${deal.companyName}` : "Выбрать компанию"}
-              onClick={() => openPicker("company", "card")}
-              className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-            >
+          <div className="relative space-y-2">
+            <div className="flex items-center gap-2">
               {deal.companyName !== null && deal.companyName !== "" ? (
-                <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                <>
+                  <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                  <button
+                    type="button"
+                    title="Сменить привязанную компанию"
+                    onClick={() => openPicker("company", "card")}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    Сменить
+                  </button>
+                </>
               ) : (
-                <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                <button
+                  type="button"
+                  title="Выбрать компанию"
+                  onClick={() => openPicker("company", "card")}
+                  className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                >
+                  + Привязать компанию
+                </button>
               )}
-            </button>
+            </div>
             {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
 
-            {(companyPhone || companyEmail || companyWebsite) && (
-              <div className="mt-1 space-y-1 pl-0.5 text-xs text-[#666666]">
-                {companyPhone && (
-                  <div className="flex items-center gap-1.5 text-[#555555]">
-                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
-                    <a href={`tel:${companyPhone}`} className="hover:text-[#4a38f5] transition-colors">
-                      {companyPhone}
-                    </a>
-                  </div>
-                )}
-                {companyEmail && (
-                  <div className="flex items-center gap-1.5 text-[#555555]">
-                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
-                    <a href={`mailto:${companyEmail}`} className="hover:text-[#4a38f5] transition-colors truncate">
-                      {companyEmail}
-                    </a>
-                  </div>
-                )}
-                {companyWebsite && (
-                  <div className="flex items-center gap-1.5 text-[#555555]">
-                    <Globe className="h-3 w-3 text-[#888888] shrink-0" />
-                    <span className="truncate">{companyWebsite}</span>
-                  </div>
-                )}
+            {deal.companyId && (
+              <div className="mt-2 space-y-1 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa]/50 p-2 text-xs">
+                {/* Телефон компании */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Phone className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Телефон</span>
+                  </span>
+                  {editingCompanyField === "phone" ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={companyFieldDraft}
+                      onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                      onBlur={() => commitCompanyEdit("phone")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitCompanyEdit("phone");
+                        if (e.key === "Escape") setEditingCompanyField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompanyFieldDraft(companyPhone ?? "");
+                        setEditingCompanyField("phone");
+                      }}
+                      title="Нажмите для редактирования телефона компании"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !companyPhone && "text-[#888888]")}>
+                        {companyPhone || "Указать телефон"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Email компании */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Mail className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Email</span>
+                  </span>
+                  {editingCompanyField === "email" ? (
+                    <input
+                      autoFocus
+                      type="email"
+                      value={companyFieldDraft}
+                      onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                      onBlur={() => commitCompanyEdit("email")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitCompanyEdit("email");
+                        if (e.key === "Escape") setEditingCompanyField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompanyFieldDraft(companyEmail ?? "");
+                        setEditingCompanyField("email");
+                      }}
+                      title="Нажмите для редактирования email компании"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !companyEmail && "text-[#888888]")}>
+                        {companyEmail || "Указать email"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Сайт / Домен */}
+                <div className="flex items-center justify-between gap-2 min-h-[26px]">
+                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
+                    <Globe className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                    <span>Сайт</span>
+                  </span>
+                  {editingCompanyField === "domain" ? (
+                    <input
+                      autoFocus
+                      type="text"
+                      value={companyFieldDraft}
+                      onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                      onBlur={() => commitCompanyEdit("domain")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitCompanyEdit("domain");
+                        if (e.key === "Escape") setEditingCompanyField(null);
+                      }}
+                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCompanyFieldDraft(companyWebsite ?? "");
+                        setEditingCompanyField("domain");
+                      }}
+                      title="Нажмите для редактирования сайта компании"
+                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                    >
+                      <span className={cn("truncate", !companyWebsite && "text-[#888888]")}>
+                        {companyWebsite || "Указать сайт"}
+                      </span>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1148,6 +1521,78 @@ function HomeTab({
           }}
         />
       </Sheet>
+
+      {contactModalOpen && (
+        <ContactModal
+          open={contactModalOpen}
+          onClose={() => setContactModalOpen(false)}
+          initial={fullLinkedContact ? {
+            first_name: fullLinkedContact.firstName,
+            last_name: fullLinkedContact.lastName,
+            middle_name: fullLinkedContact.middleName,
+            phones: fullLinkedContact.phones.map((p) => ({
+              number: p.number,
+              country_code: p.countryCode,
+              calling_code: p.callingCode,
+            })),
+            email: fullLinkedContact.email ?? "",
+            socials: fullLinkedContact.socials.map((s) => ({ kind: s.kind, value: s.value })),
+            job_title: fullLinkedContact.jobTitle,
+            company_name: fullLinkedContact.companyName,
+            company_id: fullLinkedContact.companyId ?? "",
+            channel: fullLinkedContact.channel,
+            linkedin_link: fullLinkedContact.linkedinLink,
+            notes: fullLinkedContact.notes,
+          } : {
+            first_name: deal.contactName ?? "",
+            last_name: "",
+            middle_name: "",
+            phones: contactPhone ? [{ number: contactPhone, country_code: "RU", calling_code: "+7" }] : [],
+            email: contactEmail ?? "",
+            socials: [],
+            job_title: contactJobTitle ?? "",
+            company_name: deal.companyName ?? "",
+            company_id: deal.companyId ?? "",
+            channel: "phone",
+            linkedin_link: "",
+          }}
+          onSubmit={async (payload) => {
+            if (deal.contactId) {
+              await updateContact.mutateAsync({ id: deal.contactId, payload });
+              toast.success("Контакт обновлён");
+              setContactModalOpen(false);
+            }
+          }}
+        />
+      )}
+
+      {companyModalOpen && (
+        <CompanyModal
+          open={companyModalOpen}
+          onClose={() => setCompanyModalOpen(false)}
+          initial={{
+            name: (fullLinkedCompany ?? linkedCompany)?.name ?? deal.companyName ?? "",
+            phone: (fullLinkedCompany ?? linkedCompany)?.phone ?? companyPhone ?? "",
+            email: (fullLinkedCompany ?? linkedCompany)?.email ?? companyEmail ?? "",
+            inn: (fullLinkedCompany ?? linkedCompany)?.requisites?.inn ?? "",
+            ogrn: (fullLinkedCompany ?? linkedCompany)?.requisites?.ogrn ?? "",
+            bik: (fullLinkedCompany ?? linkedCompany)?.requisites?.bik ?? "",
+            account_number: (fullLinkedCompany ?? linkedCompany)?.requisites?.accountNumber ?? "",
+            legal_address: (fullLinkedCompany ?? linkedCompany)?.requisites?.legalAddress ?? "",
+            manager_name: (fullLinkedCompany ?? linkedCompany)?.managerName ?? "",
+            manager_id: (fullLinkedCompany ?? linkedCompany)?.managerId ?? "",
+            notes: (fullLinkedCompany ?? linkedCompany)?.notes ?? "",
+            custom_fields: {},
+          }}
+          onSubmit={async (payload) => {
+            if (deal.companyId) {
+              await updateCompany.mutateAsync({ id: deal.companyId, payload });
+              toast.success("Компания обновлена");
+              setCompanyModalOpen(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

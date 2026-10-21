@@ -1011,17 +1011,27 @@ export function DrawerCreateDeal({
                   </div>
                   {contactCardOpen && (
                     <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => openPicker("contact", "card")}
-                        className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-                      >
-                        {contactName ? (
+                      {contactName ? (
+                        <div className="flex items-center gap-2">
                           <EntityChip name={contactName} label={contactName} size="sm" />
-                        ) : (
-                          <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-                        )}
-                      </button>
+                          <button
+                            type="button"
+                            title="Сменить привязанный контакт"
+                            onClick={() => openPicker("contact", "card")}
+                            className="rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+                          >
+                            Сменить
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openPicker("contact", "card")}
+                          className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] transition-colors cursor-pointer select-none"
+                        >
+                          + Привязать контакт
+                        </button>
+                      )}
                       {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
                     </div>
                   )}
@@ -1050,17 +1060,27 @@ export function DrawerCreateDeal({
                   </div>
                   {companyCardOpen && (
                     <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => openPicker("company", "card")}
-                        className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-                      >
-                        {companyName ? (
+                      {companyName ? (
+                        <div className="flex items-center gap-2">
                           <EntityChip name={companyName} label={companyName} icon={Building2} size="sm" />
-                        ) : (
-                          <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-                        )}
-                      </button>
+                          <button
+                            type="button"
+                            title="Сменить привязанную компанию"
+                            onClick={() => openPicker("company", "card")}
+                            className="rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+                          >
+                            Сменить
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openPicker("company", "card")}
+                          className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] transition-colors cursor-pointer select-none"
+                        >
+                          + Привязать компанию
+                        </button>
+                      )}
                       {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
                     </div>
                   )}
