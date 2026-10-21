@@ -39,7 +39,24 @@ export interface OutboundMessage {
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;
 
+export interface StoryPublishPayload {
+  tenantId: string;
+  channelAccountId: string | null;
+  mediaUrl: string;
+  mediaType: "photo" | "video";
+  caption?: string;
+  linkUrl?: string | null;
+  linkText?: string | null;
+}
+
+export type StoryPublishResult =
+  | { ok: true; externalId?: string }
+  | { ok: false; reason: string };
+
+export type StoryPublisher = (payload: StoryPublishPayload) => Promise<StoryPublishResult>;
+
 const senders = new Map<ChannelSlug, OutboundSender>();
+const storyPublishers = new Map<ChannelSlug, StoryPublisher>();
 
 /** Транспорт объявляет себя отправителем канала при старте процесса. */
 export function registerOutboundSender(channel: ChannelSlug, sender: OutboundSender): () => void {
@@ -56,7 +73,21 @@ export function resolveOutboundSender(channel: string): OutboundSender | null {
   return senders.get(channel as ChannelSlug) ?? null;
 }
 
+/** Транспорт объявляет себя публикатором сторис канала. */
+export function registerStoryPublisher(channel: ChannelSlug, publisher: StoryPublisher): () => void {
+  storyPublishers.set(channel, publisher);
+  return () => {
+    if (storyPublishers.get(channel) === publisher) storyPublishers.delete(channel);
+  };
+}
+
+/** `null` — канал не умеет публиковать сторис в этом процессе. */
+export function resolveStoryPublisher(channel: string): StoryPublisher | null {
+  return storyPublishers.get(channel as ChannelSlug) ?? null;
+}
+
 /** Для тестов: снимает все регистрации между прогонами. */
 export function clearOutboundSenders(): void {
   senders.clear();
+  storyPublishers.clear();
 }

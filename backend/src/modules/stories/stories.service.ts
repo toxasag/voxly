@@ -1,5 +1,6 @@
 import { query, queryOne } from "../../db/client.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
+import { resolveStoryPublisher } from "../channels/outbound-registry.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публикаций мультимедийных Сторис (Stories Engine).
@@ -181,6 +182,31 @@ export class StoriesService {
 
   async publish(tenantId: string, id: string): Promise<StoryPostDTO> {
     const existing = await this.getById(tenantId, id);
+
+    // Если для канала зарегистрирован реальный транспорт отправки (например Telegram MTProto)
+    const publisher = resolveStoryPublisher(existing.channel);
+    if (publisher !== null) {
+      const result = await publisher({
+        tenantId,
+        channelAccountId: existing.channelAccountId,
+        mediaUrl: existing.mediaUrl,
+        mediaType: existing.mediaType,
+        caption: existing.text,
+        linkUrl: existing.linkUrl,
+        linkText: existing.linkText,
+      });
+
+      if (!result.ok) {
+        await queryOne<StoryRow>(
+          `UPDATE story_posts
+           SET status = 'failed', updated_at = now()
+           WHERE tenant_id = $1 AND id = $2
+           RETURNING *`,
+          [tenantId, existing.id],
+        );
+        throw new Error(`Ошибка публикации сторис в ${existing.channel}: ${result.reason}`);
+      }
+    }
 
     const row = await queryOne<StoryRow>(
       `UPDATE story_posts
