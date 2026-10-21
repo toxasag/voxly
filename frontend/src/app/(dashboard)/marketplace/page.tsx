@@ -33,6 +33,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { DisableModuleDialog } from "@/components/marketplace/DisableModuleDialog";
 import {
   formatRub,
+  pluralUnit,
   trialDaysLeft,
   useMarketplaceBilling,
   useMarketplaceModules,
@@ -81,39 +82,6 @@ function priceCaption(module: MarketplaceModuleDTO): string {
     case "flat":
       return `${formatRub(module.basePrice)}/мес`;
   }
-}
-
-/** Склонение подписи единицы: 1 агент, 2 агента, 5 агентов. */
-function pluralUnit(count: number, label: string): string {
-  if (label === "агент") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "агент";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "агента";
-    return "агентов";
-  }
-  if (label === "аккаунт") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "аккаунт";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
-    return "аккаунтов";
-  }
-  if (label === "сайт") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "сайт";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "сайта";
-    return "сайтов";
-  }
-  if (label === "бот") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "бот";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "бота";
-    return "ботов";
-  }
-  return label;
 }
 
 function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
@@ -257,15 +225,21 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold text-[#111111]">{module.name}</h3>
 
-        {/* Бейдж пробного периода. Для подключённого модуля показываем остаток,
-            иначе пользователь не знает, сколько ещё бесплатно. */}
-        {module.trialActive ? (
+        {/* Бейдж тарифа / пробного периода.
+            Если единицы модуля включены в тариф навсегда (includedUnits > 0) —
+            показываем постоянную отметку «Включено в тариф», а не временный триал. */}
+        {module.includedUnits > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <Check className="h-3 w-3" />
+            {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} в тарифе бесплатно
+          </span>
+        ) : module.trialActive ? (
           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             <Gift className="h-3 w-3" />
             Бесплатно ещё {daysLeft} дн.
           </span>
         ) : (
-          !module.installed && (
+          !module.installed && module.trialDays > 0 && (
             <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
               <Gift className="h-3 w-3" />
               {module.trialDays} дней бесплатно
@@ -280,10 +254,30 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         <p className="text-sm font-bold text-[#111111] tabular-nums font-mono">{priceCaption(module)}</p>
         {module.isMulti && (
           <p className="mt-0.5 text-xs text-[#666666]">
-            {quantity} × {formatRub(module.unitPrice)} ={" "}
-            <span className="font-semibold text-[#111111] tabular-nums font-mono">
-              {formatRub(module.unitPrice * quantity)}/мес
-            </span>
+            {module.includedUnits > 0 ? (
+              quantity <= module.includedUnits ? (
+                <>
+                  {quantity} из {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} ={" "}
+                  <span className="font-semibold text-emerald-700 tabular-nums font-mono">
+                    0 ₽/мес (в тарифе)
+                  </span>
+                </>
+              ) : (
+                <>
+                  {module.includedUnits} в тарифе + {quantity - module.includedUnits} доп. × {formatRub(module.unitPrice)} ={" "}
+                  <span className="font-semibold text-[#111111] tabular-nums font-mono">
+                    {formatRub(module.unitPrice * (quantity - module.includedUnits))}/мес
+                  </span>
+                </>
+              )
+            ) : (
+              <>
+                {quantity} × {formatRub(module.unitPrice)} ={" "}
+                <span className="font-semibold text-[#111111] tabular-nums font-mono">
+                  {formatRub(module.unitPrice * quantity)}/мес
+                </span>
+              </>
+            )}
           </p>
         )}
       </div>
@@ -431,7 +425,7 @@ export default function MarketplacePage() {
         <div>
           <h1 className="text-xl font-bold text-[#111111]">Маркетплейс модулей</h1>
           <p className="mt-1 text-[13px] text-[#666666]">
-            Подключайте модули и каналы. Каждый новый модуль — 14 дней бесплатно.
+            Подключайте модули и каналы. Базовые подключения ботов и каналов уже включены в ваш тариф CRM.
           </p>
         </div>
 

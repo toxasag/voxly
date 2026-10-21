@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { StatusBadge } from "@/components/shared/StatusBadge";
 import {
   formatRub,
+  pluralUnit,
   trialDaysLeft,
   useMarketplaceBilling,
   useMarketplaceModules,
@@ -82,6 +83,13 @@ function itemDetail(
   }
 
   if (catalog.billingKind === "per_unit") {
+    if (catalog.includedUnits > 0) {
+      const extra = Math.max(0, quantity - catalog.includedUnits);
+      if (extra === 0) {
+        return `${quantity} из ${catalog.includedUnits} ${pluralUnit(catalog.includedUnits, catalog.unitLabel)} — включено в базовый тариф (0 ₽)`;
+      }
+      return `${catalog.includedUnits} в тарифе + ${extra} доп. × ${formatRub(catalog.unitPrice)}`;
+    }
     return `${quantity} × ${formatRub(catalog.unitPrice)} за ${catalog.unitLabel}`;
   }
 
@@ -296,7 +304,7 @@ function BillingContent() {
                     <td className="px-5 py-3.5">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium text-[#111111]">{item.name}</span>
-                        {item.trialActive && (
+                        {item.trialActive && !(catalogBySlug.get(item.slug)?.includedUnits ?? 0) && (
                           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                             <Gift className="h-3 w-3" />
                             бесплатно ещё {trialDaysLeft(item.trialEndsAt)} дн.
