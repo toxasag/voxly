@@ -298,6 +298,18 @@ export class PlatformConfigService {
     }
 
     try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { success: false, message: "Поддерживаются только протоколы http:// и https://" };
+      }
+      if (parsed.hostname === "169.254.169.254" || parsed.hostname === "metadata.google.internal") {
+        return { success: false, message: "Запрос к адресам метаданных запрещен" };
+      }
+    } catch {
+      return { success: false, message: "Указан некорректный URL провайдера" };
+    }
+
+    try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
 
