@@ -6,23 +6,19 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
 } from "react";
 import {
   AlertCircle,
   Bot,
   CheckCheck,
   Clock,
-  Code,
-  Link2,
   Loader2,
   MessageCircle,
+  Paperclip,
   Pause,
   Play,
   PowerOff,
-  Quote,
   Send,
-  Smile,
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +31,7 @@ import {
   type CrmChatEntityType,
   type SendFromOptionDTO,
 } from "@/lib/api/use-crm-chat";
+import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
 
 export interface CrmChatViewProps {
   entityType: CrmChatEntityType;
@@ -42,10 +39,6 @@ export interface CrmChatViewProps {
   entityName?: string;
   className?: string;
 }
-
-const POPULAR_EMOJIS = [
-  "👍", "👋", "🤝", "✅", "🙏", "🕒", "📦", "💼", "📞", "💬", "🚀", "💡", "💳", "📍", "❌"
-];
 
 function formatTime(iso: string): string {
   try {
@@ -108,9 +101,7 @@ export function CrmChatView({
 
   const [input, setInput] = useState("");
   const [selectedChannelAccountId, setSelectedChannelAccountId] = useState<string>("");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
@@ -147,39 +138,30 @@ export function CrmChatView({
   }, [sendFromOptions, selectedChannelAccountId]);
 
   // Отправка сообщения
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || sendMessageMutation.isPending) return;
+  const handleSend = useCallback(
+    async (attached?: AttachedFile) => {
+      const text = input.trim();
+      if ((!text && !attached) || sendMessageMutation.isPending) return;
 
-    const channel = selectedOption?.channel ?? "telegram";
-    const channelAccountId = selectedOption?.channelAccountId;
+      const channel = selectedOption?.channel ?? "telegram";
+      const channelAccountId = selectedOption?.channelAccountId;
 
-    try {
-      await sendMessageMutation.mutateAsync({
-        content: text,
-        channel,
-        channel_account_id: channelAccountId || undefined,
-        source: "manager",
-        direction: "outbound",
-      });
-      setInput("");
-      setShowEmojiPicker(false);
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
-    }
-  }, [input, sendMessageMutation, selectedOption]);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        void handleSend();
+      try {
+        await sendMessageMutation.mutateAsync({
+          content: text || (attached ? attached.name : "Вложение"),
+          channel,
+          channel_account_id: channelAccountId || undefined,
+          source: "manager",
+          direction: "outbound",
+          attachment: attached?.name,
+          attachment_type: attached?.file.type,
+        });
+        setInput("");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
       }
     },
-    [handleSend],
+    [input, sendMessageMutation, selectedOption],
   );
 
   // Вызов AI-Copilot (генерация подсказки/черновика ответа)
@@ -189,11 +171,6 @@ export function CrmChatView({
       if (res?.draft) {
         setInput(res.draft);
         toast.success("Черновик ответа подготовлен AI-ассистентом");
-        if (textareaRef.current) {
-          textareaRef.current.focus();
-          textareaRef.current.style.height = "auto";
-          textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
-        }
       } else {
         toast.error("Не удалось сформировать черновик");
       }
@@ -220,37 +197,6 @@ export function CrmChatView({
     },
     [aiControlMutation],
   );
-
-  // Вставка markdown-разметки
-  const insertFormatting = useCallback((prefix: string, suffix: string = "") => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const selected = input.substring(start, end);
-    const next = input.substring(0, start) + prefix + selected + suffix + input.substring(end);
-    setInput(next);
-    setTimeout(() => {
-      el.focus();
-      el.setSelectionRange(start + prefix.length, end + prefix.length);
-    }, 0);
-  }, [input]);
-
-  const insertEmoji = useCallback((emoji: string) => {
-    const el = textareaRef.current;
-    if (!el) {
-      setInput((prev) => prev + emoji);
-      return;
-    }
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    const next = input.substring(0, start) + emoji + input.substring(end);
-    setInput(next);
-    setTimeout(() => {
-      el.focus();
-      el.setSelectionRange(start + emoji.length, start + emoji.length);
-    }, 0);
-  }, [input]);
 
   // Группировка сообщений по датам
   const groupedMessages = useMemo(() => {
@@ -441,6 +387,14 @@ className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-
                         {message.content}
                       </div>
 
+                      {/* Вложение сообщения, если есть */}
+                      {message.attachment && (
+                        <div className="mt-2 flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white/90 px-2.5 py-1.5 text-xs shadow-2xs">
+                          <Paperclip className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                          <span className="font-medium text-[#111111] truncate">{message.attachment}</span>
+                        </div>
+                      )}
+
                       {/* Подвал пузыря: время и статус доставки */}
                       <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] text-[#888888]">
                         <span>{formatTime(message.createdAt)}</span>
@@ -485,18 +439,17 @@ className="flex items-center gap-1 font-medium text-rose-600"
         )}
       </div>
 
-      {/* Панель составления ответа (Composer) */}
-<div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
-        {/* Выбор «Пишем от:» и кнопка «AI Copilot» */}
+      {/* Панель составления ответа (Telegram Composer) */}
+      <div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
+        {/* Выбор «Пишем от:» */}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          {/* Селектор канала отправки */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-[#666666]">Пишем от:</span>
             {sendFromOptions.length > 0 ? (
               <select
                 value={selectedChannelAccountId}
                 onChange={(e) => setSelectedChannelAccountId(e.target.value)}
-className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] outline-none transition-colors focus:border-[#4a38f5]"
+                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] outline-none transition-colors focus:border-[#4a38f5]"
               >
                 {sendFromOptions.map((opt) => (
                   <option
@@ -513,126 +466,19 @@ className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs te
               <span className="text-xs text-[#888888]">Автоматический канал</span>
             )}
           </div>
-
-          {/* Кнопка вызова AI-Copilot */}
-          <button
-            type="button"
-            onClick={handleGenerateAiDraft}
-            disabled={aiDraftMutation.isPending}
-            title="Сгенерировать черновик ответа на основе базы знаний компании и контекста переписки"
-className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/25 bg-[#4a38f5]/5 px-2.5 py-1 text-xs font-medium text-[#4a38f5] transition-colors hover:bg-[#4a38f5]/10 disabled:opacity-50"
-          >
-            {aiDraftMutation.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5" />
-            )}
-            <span>AI Copilot</span>
-          </button>
         </div>
 
-        {/* Панель форматирования и эмодзи */}
-        <div className="mb-1.5 flex items-center justify-between">
-          <div className="flex items-center gap-1 text-[#666666]">
-            <button
-              type="button"
-              onClick={() => insertFormatting("**", "**")}
-              title="Жирный шрифт"
-className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              <span className="px-0.5 text-xs font-bold">B</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => insertFormatting("> ")}
-              title="Цитата"
-className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              <Quote className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => insertFormatting("`", "`")}
-              title="Код"
-className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              <Code className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => insertFormatting("[", "](https://)")}
-              title="Ссылка"
-className="rounded p-1 hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              <Link2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => insertFormatting("||", "||")}
-              title="Спойлер (скрытый текст)"
-className="rounded p-1 font-mono text-[11px] hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              ||
-            </button>
-          </div>
-
-          {/* Быстрые эмодзи */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowEmojiPicker((v) => !v)}
-              title="Быстрые эмодзи"
-className="rounded p-1 text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111]"
-            >
-              <Smile className="h-4 w-4" />
-            </button>
-
-            {showEmojiPicker && (
-<div className="absolute bottom-full right-0 z-30 mb-2 flex w-48 flex-wrap gap-1 rounded-[16px] border border-[#e5e5e5] bg-white p-2 shadow-xl">
-                {POPULAR_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => insertEmoji(emoji)}
-className="flex h-7 w-7 items-center justify-center rounded text-sm hover:bg-[#f5f5f5]"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Поле ввода сообщения и кнопка отправки */}
-        <div className="relative flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
+        {/* Telegram-стиль компонент ввода сообщений */}
+        <div className="rounded-[12px] border border-[#e5e5e5] bg-white shadow-2xs transition-colors focus-within:border-[#cccccc]">
+          <TelegramComposer
             value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              e.target.style.height = "auto";
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Написать сообщение клиенту (Enter для отправки, Shift+Enter для переноса)..."
-            rows={2}
-            className="w-full resize-none rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+            onChange={setInput}
+            onSend={(attached) => void handleSend(attached)}
+            isSending={sendMessageMutation.isPending}
+            onAiDraft={handleGenerateAiDraft}
+            isAiDraftPending={aiDraftMutation.isPending}
+            placeholder="Сообщение..."
           />
-
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={sendMessageMutation.isPending || !input.trim()}
-            title="Отправить сообщение (Enter)"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-[#4a38f5] text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {sendMessageMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
         </div>
       </div>
     </div>
