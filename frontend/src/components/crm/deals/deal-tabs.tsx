@@ -13,14 +13,19 @@ import {
   DollarSign,
   Globe,
   Handshake,
+  Linkedin,
   ListChecks,
   Mail,
+  MapPin,
+  MessageCircle,
   Paperclip,
   Pencil,
   Phone,
   Plus,
+  Radio,
   User,
   UserCircle2,
+  UserRound,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -36,6 +41,9 @@ import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany"
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
 import { CompanyModal } from "@/components/crm/companies/CompanyModal";
+import { SocialsInput } from "@/components/crm/shared/SocialsInput";
+import { socialHref, socialLabel } from "@/lib/crm/socials";
+import type { ContactChannel, ContactSocialInput } from "@/schemas/contact.schema";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
@@ -120,6 +128,28 @@ function ChatTab({ dealId, dealTitle }: { dealId: string; dealTitle?: string }) 
   );
 }
 
+const CHANNEL_OPTIONS = [
+  { value: "telegram", label: "Telegram" },
+  { value: "whatsapp", label: "WhatsApp" },
+  { value: "rumax", label: "Rumax" },
+  { value: "phone", label: "Телефон" },
+  { value: "email", label: "E-mail" },
+] as const;
+
+const CHANNEL_TAG_COLORS = {
+  telegram: "sky",
+  whatsapp: "emerald",
+  rumax: "violet",
+  phone: "amber",
+  email: "cyan",
+} as const;
+
+function normalizeUrl(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 /**
  * Вкладка «Главная» карточки сделки.
  *
@@ -152,10 +182,16 @@ function HomeTab({
 }) {
   const [dealOpen, setDealOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(false);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
   const [contactCardOpen, setContactCardOpen] = useState(true);
   const [companyCardOpen, setCompanyCardOpen] = useState(true);
   const [ownerCardOpen, setOwnerCardOpen] = useState(true);
+
+  // Подсекции контакта в карточке сделки (по ТЗ: ФИО, Общее, Социальные сети)
+  const [contactFioOpen, setContactFioOpen] = useState(true);
+  const [contactGeneralOpen, setContactGeneralOpen] = useState(true);
+  const [contactSocialsOpen, setContactSocialsOpen] = useState(true);
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
 
   // Редактирование суммы
   const [isEditingBudget, setIsEditingBudget] = useState(false);
@@ -195,8 +231,11 @@ function HomeTab({
   const [contactModalOpen, setContactModalOpen] = useState(false);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
 
-  const [editingContactField, setEditingContactField] = useState<"name" | "phone" | "email" | "jobTitle" | null>(null);
+  const [editingContactField, setEditingContactField] = useState<
+    "lastName" | "firstName" | "middleName" | "phone" | "email" | "socials" | "linkedin" | null
+  >(null);
   const [contactFieldDraft, setContactFieldDraft] = useState("");
+  const [contactSocialsDraft, setContactSocialsDraft] = useState<ContactSocialInput[]>([]);
 
   const [editingCompanyField, setEditingCompanyField] = useState<"name" | "phone" | "email" | "domain" | null>(null);
   const [companyFieldDraft, setCompanyFieldDraft] = useState("");
@@ -209,34 +248,40 @@ function HomeTab({
   const companyEmail = deal.companyEmail || fullLinkedCompany?.email || null;
   const companyWebsite = deal.companyWebsite || fullLinkedCompany?.domainName || null;
 
-  const commitContactEdit = (field: "name" | "phone" | "email" | "jobTitle") => {
+  const commitContactEdit = (field: "lastName" | "firstName" | "middleName" | "phone" | "email" | "socials" | "linkedin") => {
     if (!deal.contactId) {
       setEditingContactField(null);
       return;
     }
     const val = contactFieldDraft.trim();
-    if (field === "name") {
-      const parts = val.split(/\s+/);
-      let lastName = "";
-      let firstName = val;
-      let middleName = "";
-      if (parts.length === 2) {
-        lastName = parts[0];
-        firstName = parts[1];
-      } else if (parts.length >= 3) {
-        lastName = parts[0];
-        firstName = parts[1];
-        middleName = parts.slice(2).join(" ");
+    if (field === "lastName") {
+      updateContact.mutate(
+        { id: deal.contactId, payload: { last_name: val } },
+        {
+          onSuccess: () => toast.success("Фамилия контакта обновлена"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
+        }
+      );
+    } else if (field === "firstName") {
+      if (!val) {
+        toast.error("Имя обязательно для заполнения");
+        return;
       }
-      if (firstName) {
-        updateContact.mutate(
-          { id: deal.contactId, payload: { first_name: firstName, last_name: lastName, middle_name: middleName } },
-          {
-            onSuccess: () => toast.success("Контакт обновлен"),
-            onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
-          }
-        );
-      }
+      updateContact.mutate(
+        { id: deal.contactId, payload: { first_name: val } },
+        {
+          onSuccess: () => toast.success("Имя контакта обновлено"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
+        }
+      );
+    } else if (field === "middleName") {
+      updateContact.mutate(
+        { id: deal.contactId, payload: { middle_name: val } },
+        {
+          onSuccess: () => toast.success("Отчество контакта обновлено"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
+        }
+      );
     } else if (field === "phone") {
       const cleanNumber = val.replace(/[\s()\-.]/g, "");
       updateContact.mutate(
@@ -259,16 +304,36 @@ function HomeTab({
           onError: (e) => toast.error(e.message || "Ошибка обновления email"),
         }
       );
-    } else if (field === "jobTitle") {
+    } else if (field === "socials") {
       updateContact.mutate(
-        { id: deal.contactId, payload: { job_title: val } },
+        { id: deal.contactId, payload: { socials: contactSocialsDraft } },
         {
-          onSuccess: () => toast.success("Должность контакта обновлена"),
-          onError: (e) => toast.error(e.message || "Ошибка обновления должности"),
+          onSuccess: () => toast.success("Мессенджеры контакта обновлены"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления мессенджеров"),
+        }
+      );
+    } else if (field === "linkedin") {
+      updateContact.mutate(
+        { id: deal.contactId, payload: { linkedin_link: val ? normalizeUrl(val) : "" } },
+        {
+          onSuccess: () => toast.success("LinkedIn контакта обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления LinkedIn"),
         }
       );
     }
     setEditingContactField(null);
+  };
+
+  const setContactChannel = (channel: ContactChannel) => {
+    if (!deal.contactId) return;
+    updateContact.mutate(
+      { id: deal.contactId, payload: { channel } },
+      {
+        onSuccess: () => toast.success("Канал контакта обновлен"),
+        onError: (e) => toast.error(e.message || "Ошибка обновления канала"),
+      }
+    );
+    setChannelPickerOpen(false);
   };
 
   const commitCompanyEdit = (field: "name" | "phone" | "email" | "domain") => {
@@ -1046,8 +1111,8 @@ function HomeTab({
       </div>
 
       {/* Separate Relation Cards with Pencil Edit Icon (matches Twenty Screenshot 2) */}
-      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
-        <div className="flex items-center justify-between mb-2">
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3">
+        <div className="flex items-center justify-between mb-2 px-4">
           <button
             type="button"
             title="Свернуть / развернуть блок «Контактное лицо»"
@@ -1075,7 +1140,7 @@ function HomeTab({
         </div>
         {contactCardOpen && (
           <div className="relative space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 px-4">
               {deal.contactName !== null && deal.contactName !== "" ? (
                 <>
                   <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
@@ -1099,156 +1164,378 @@ function HomeTab({
                 </button>
               )}
             </div>
-            {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
+            {activePicker === "contact" && pickerAnchor === "card" && (
+              <div className="px-4">{renderContactPicker()}</div>
+            )}
 
             {deal.contactId && (
-              <div className="mt-2 space-y-1 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa]/50 p-2 text-xs">
-                {/* ФИО контакта */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <User className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              <div className="mt-2 space-y-1">
+                {/* 1. Блок: ФИО */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setContactFioOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between px-4 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
                     <span>ФИО</span>
-                  </span>
-                  {editingContactField === "name" ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={contactFieldDraft}
-                      onChange={(e) => setContactFieldDraft(e.target.value)}
-                      onBlur={() => commitContactEdit("name")}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitContactEdit("name");
-                        if (e.key === "Escape") setEditingContactField(null);
-                      }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nameStr = fullLinkedContact
-                          ? `${fullLinkedContact.lastName ? fullLinkedContact.lastName + " " : ""}${fullLinkedContact.firstName}${fullLinkedContact.middleName ? " " + fullLinkedContact.middleName : ""}`.trim()
-                          : deal.contactName ?? "";
-                        setContactFieldDraft(nameStr);
-                        setEditingContactField("name");
-                      }}
-                      title="Нажмите для редактирования ФИО"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
-                    >
-                      <span className="truncate">{deal.contactName || "Указать имя"}</span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                    </button>
+                    <ChevronUp className={cn("h-3 w-3 text-[#888888] transition-transform", !contactFioOpen && "rotate-180")} />
+                  </button>
+                  {contactFioOpen && (
+                    <div className="space-y-0.5 py-0.5">
+                      {/* Фамилия */}
+                      <FieldRow icon={UserRound} label="Фамилия">
+                        {editingContactField === "lastName" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("lastName")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("lastName");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactFieldDraft(fullLinkedContact?.lastName ?? "");
+                              setEditingContactField("lastName");
+                            }}
+                            title="Нажмите для редактирования фамилии"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className={cn("truncate", !fullLinkedContact?.lastName && "text-[#888888]")}>
+                              {fullLinkedContact?.lastName || "—"}
+                            </span>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
+                          </button>
+                        )}
+                      </FieldRow>
+
+                      {/* Имя */}
+                      <FieldRow icon={UserRound} label="Имя">
+                        {editingContactField === "firstName" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("firstName")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("firstName");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const fName = fullLinkedContact?.firstName ?? deal.contactName?.split(" ")[0] ?? "";
+                              setContactFieldDraft(fName);
+                              setEditingContactField("firstName");
+                            }}
+                            title="Нажмите для редактирования имени"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className={cn("truncate", !(fullLinkedContact?.firstName || deal.contactName) && "text-[#888888]")}>
+                              {fullLinkedContact?.firstName || deal.contactName || "—"}
+                            </span>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
+                          </button>
+                        )}
+                      </FieldRow>
+
+                      {/* Отчество */}
+                      <FieldRow icon={UserRound} label="Отчество">
+                        {editingContactField === "middleName" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("middleName")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("middleName");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactFieldDraft(fullLinkedContact?.middleName ?? "");
+                              setEditingContactField("middleName");
+                            }}
+                            title="Нажмите для редактирования отчества"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className={cn("truncate", !fullLinkedContact?.middleName && "text-[#888888]")}>
+                              {fullLinkedContact?.middleName || "—"}
+                            </span>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
+                          </button>
+                        )}
+                      </FieldRow>
+                    </div>
                   )}
                 </div>
 
-                {/* Телефон */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Phone className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Телефон</span>
-                  </span>
-                  {editingContactField === "phone" ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={contactFieldDraft}
-                      onChange={(e) => setContactFieldDraft(e.target.value)}
-                      onBlur={() => commitContactEdit("phone")}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitContactEdit("phone");
-                        if (e.key === "Escape") setEditingContactField(null);
-                      }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setContactFieldDraft(contactPhone ?? "");
-                        setEditingContactField("phone");
-                      }}
-                      title="Нажмите для редактирования телефона"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
-                    >
-                      <span className={cn("truncate", !contactPhone && "text-[#888888]")}>
-                        {contactPhone || "Указать телефон"}
-                      </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                    </button>
+                {/* 2. Блок: Общее */}
+                <div className="mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setContactGeneralOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between px-4 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    <span>Общее</span>
+                    <ChevronUp className={cn("h-3 w-3 text-[#888888] transition-transform", !contactGeneralOpen && "rotate-180")} />
+                  </button>
+                  {contactGeneralOpen && (
+                    <div className="space-y-0.5 py-0.5">
+                      {/* Телефон */}
+                      <FieldRow icon={Phone} label="Телефон">
+                        {editingContactField === "phone" ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("phone")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("phone");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactFieldDraft(contactPhone ?? "");
+                              setEditingContactField("phone");
+                            }}
+                            title="Нажмите для редактирования телефона"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className={cn("truncate", !contactPhone && "text-[#888888]")}>
+                              {contactPhone || "—"}
+                            </span>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
+                          </button>
+                        )}
+                      </FieldRow>
+
+                      {/* Email */}
+                      <FieldRow icon={Mail} label="Email">
+                        {editingContactField === "email" ? (
+                          <input
+                            autoFocus
+                            type="email"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("email")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("email");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactFieldDraft(contactEmail ?? "");
+                              setEditingContactField("email");
+                            }}
+                            title="Нажмите для редактирования email"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <span className={cn("truncate", !contactEmail && "text-[#888888]")}>
+                              {contactEmail || "—"}
+                            </span>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
+                          </button>
+                        )}
+                      </FieldRow>
+
+                      {/* Канал */}
+                      <FieldRow icon={Radio} label="Канал">
+                        <div className="relative inline-block">
+                          <button
+                            type="button"
+                            onClick={() => setChannelPickerOpen((prev) => !prev)}
+                            title="Выбрать канал"
+                            className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
+                          >
+                            <TagPill color={CHANNEL_TAG_COLORS[fullLinkedContact?.channel ?? "phone"]}>
+                              {fullLinkedContact?.channel ?? "phone"}
+                            </TagPill>
+                          </button>
+
+                          {channelPickerOpen && (
+                            <>
+                              <div className="fixed inset-0 z-30 cursor-default" onClick={() => setChannelPickerOpen(false)} />
+                              <div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-xl space-y-0.5">
+                                {CHANNEL_OPTIONS.map((opt) => (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => setContactChannel(opt.value)}
+                                    className={cn(
+                                      "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+                                      (fullLinkedContact?.channel ?? "phone") === opt.value && "bg-[#f5f5f5] font-medium"
+                                    )}
+                                  >
+                                    <TagPill color={CHANNEL_TAG_COLORS[opt.value]}>{opt.label}</TagPill>
+                                    {(fullLinkedContact?.channel ?? "phone") === opt.value && (
+                                      <Check className="h-3.5 w-3.5 text-[#111111]" />
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </FieldRow>
+                    </div>
                   )}
                 </div>
 
-                {/* Email */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Mail className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Email</span>
-                  </span>
-                  {editingContactField === "email" ? (
-                    <input
-                      autoFocus
-                      type="email"
-                      value={contactFieldDraft}
-                      onChange={(e) => setContactFieldDraft(e.target.value)}
-                      onBlur={() => commitContactEdit("email")}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitContactEdit("email");
-                        if (e.key === "Escape") setEditingContactField(null);
-                      }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setContactFieldDraft(contactEmail ?? "");
-                        setEditingContactField("email");
-                      }}
-                      title="Нажмите для редактирования email"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
-                    >
-                      <span className={cn("truncate", !contactEmail && "text-[#888888]")}>
-                        {contactEmail || "Указать email"}
-                      </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                    </button>
-                  )}
-                </div>
+                {/* 3. Блок: Социальные сети */}
+                <div className="mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setContactSocialsOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between px-4 py-1 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    <span>Социальные сети</span>
+                    <ChevronUp className={cn("h-3 w-3 text-[#888888] transition-transform", !contactSocialsOpen && "rotate-180")} />
+                  </button>
+                  {contactSocialsOpen && (
+                    <div className="space-y-0.5 py-0.5">
+                      {/* Мессенджеры */}
+                      <FieldRow icon={MessageCircle} label="Мессенджеры">
+                        {editingContactField === "socials" ? (
+                          <div className="w-full space-y-2 py-1">
+                            <SocialsInput
+                              value={contactSocialsDraft}
+                              onChange={setContactSocialsDraft}
+                              idPrefix="deal-contact-social"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingContactField(null)}
+                                className="rounded px-2 py-0.5 text-xs text-[#666666] hover:text-[#111111]"
+                              >
+                                Отмена
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => commitContactEdit("socials")}
+                                className="rounded bg-[#4a38f5] px-2.5 py-0.5 text-xs font-semibold text-white hover:bg-[#3b2be0]"
+                              >
+                                Сохранить
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactSocialsDraft(
+                                (fullLinkedContact?.socials ?? []).map((s) => ({ kind: s.kind, value: s.value }))
+                              );
+                              setEditingContactField("socials");
+                            }}
+                            title="Нажмите для редактирования мессенджеров"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <div className="min-w-0 flex-1">
+                              {fullLinkedContact?.socials && fullLinkedContact.socials.length > 0 ? (
+                                <div className="flex flex-col gap-0.5">
+                                  {fullLinkedContact.socials.map((social) => {
+                                    const href = socialHref(social.kind, social.value);
+                                    return (
+                                      <div key={`${social.kind}-${social.value}`} className="flex items-center gap-1.5">
+                                        <span className="text-[#888888] text-[11px]">{socialLabel(social.kind)}:</span>
+                                        {href ? (
+                                          <a
+                                            href={href}
+                                            target="_blank"
+                                            rel="noreferrer noopener"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="text-[#4a38f5] hover:underline truncate"
+                                          >
+                                            {social.value}
+                                          </a>
+                                        ) : (
+                                          <span className="truncate text-[#111111]">{social.value}</span>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span className="text-[#888888]">—</span>
+                              )}
+                            </div>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                          </button>
+                        )}
+                      </FieldRow>
 
-                {/* Должность */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Briefcase className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Должность</span>
-                  </span>
-                  {editingContactField === "jobTitle" ? (
-                    <input
-                      autoFocus
-                      type="text"
-                      value={contactFieldDraft}
-                      onChange={(e) => setContactFieldDraft(e.target.value)}
-                      onBlur={() => commitContactEdit("jobTitle")}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitContactEdit("jobTitle");
-                        if (e.key === "Escape") setEditingContactField(null);
-                      }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setContactFieldDraft(contactJobTitle ?? "");
-                        setEditingContactField("jobTitle");
-                      }}
-                      title="Нажмите для редактирования должности"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
-                    >
-                      <span className={cn("truncate", !contactJobTitle && "text-[#888888]")}>
-                        {contactJobTitle || "Указать должность"}
-                      </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                    </button>
+                      {/* LinkedIn */}
+                      <FieldRow icon={Linkedin} label="LinkedIn">
+                        {editingContactField === "linkedin" ? (
+                          <input
+                            autoFocus
+                            type="url"
+                            value={contactFieldDraft}
+                            onChange={(e) => setContactFieldDraft(e.target.value)}
+                            onBlur={() => commitContactEdit("linkedin")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitContactEdit("linkedin");
+                              if (e.key === "Escape") setEditingContactField(null);
+                            }}
+                            placeholder="https://linkedin.com/in/..."
+                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setContactFieldDraft(fullLinkedContact?.linkedinLink ?? "");
+                              setEditingContactField("linkedin");
+                            }}
+                            title="Нажмите для редактирования LinkedIn"
+                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                          >
+                            <div className="truncate">
+                              {fullLinkedContact?.linkedinLink ? (
+                                <a
+                                  href={fullLinkedContact.linkedinLink}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[#4a38f5] hover:underline"
+                                >
+                                  {fullLinkedContact.linkedinLink.replace(/^https?:\/\//, "")}
+                                </a>
+                              ) : (
+                                <span className="text-[#888888]">—</span>
+                              )}
+                            </div>
+                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                          </button>
+                        )}
+                      </FieldRow>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1257,8 +1544,8 @@ function HomeTab({
         )}
       </div>
 
-      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
-        <div className="flex items-center justify-between mb-2">
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3">
+        <div className="flex items-center justify-between mb-2 px-4">
           <button
             type="button"
             title="Свернуть / развернуть блок «Компания»"
@@ -1286,7 +1573,7 @@ function HomeTab({
         </div>
         {companyCardOpen && (
           <div className="relative space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 px-4">
               {deal.companyName !== null && deal.companyName !== "" ? (
                 <>
                   <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
@@ -1310,16 +1597,14 @@ function HomeTab({
                 </button>
               )}
             </div>
-            {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
+            {activePicker === "company" && pickerAnchor === "card" && (
+              <div className="px-4">{renderCompanyPicker()}</div>
+            )}
 
             {deal.companyId && (
-              <div className="mt-2 space-y-1 rounded-[6px] border border-[#f0f0f0] bg-[#fafafa]/50 p-2 text-xs">
+              <div className="mt-2 space-y-0.5 py-0.5">
                 {/* Телефон компании */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Phone className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Телефон</span>
-                  </span>
+                <FieldRow icon={Phone} label="Телефон">
                   {editingCompanyField === "phone" ? (
                     <input
                       autoFocus
@@ -1331,7 +1616,7 @@ function HomeTab({
                         if (e.key === "Enter") commitCompanyEdit("phone");
                         if (e.key === "Escape") setEditingCompanyField(null);
                       }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
                     />
                   ) : (
                     <button
@@ -1341,22 +1626,18 @@ function HomeTab({
                         setEditingCompanyField("phone");
                       }}
                       title="Нажмите для редактирования телефона компании"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                      className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                     >
                       <span className={cn("truncate", !companyPhone && "text-[#888888]")}>
-                        {companyPhone || "Указать телефон"}
+                        {companyPhone || "—"}
                       </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
                     </button>
                   )}
-                </div>
+                </FieldRow>
 
                 {/* Email компании */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Mail className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Email</span>
-                  </span>
+                <FieldRow icon={Mail} label="Email">
                   {editingCompanyField === "email" ? (
                     <input
                       autoFocus
@@ -1368,7 +1649,7 @@ function HomeTab({
                         if (e.key === "Enter") commitCompanyEdit("email");
                         if (e.key === "Escape") setEditingCompanyField(null);
                       }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
                     />
                   ) : (
                     <button
@@ -1378,22 +1659,18 @@ function HomeTab({
                         setEditingCompanyField("email");
                       }}
                       title="Нажмите для редактирования email компании"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                      className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                     >
                       <span className={cn("truncate", !companyEmail && "text-[#888888]")}>
-                        {companyEmail || "Указать email"}
+                        {companyEmail || "—"}
                       </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
                     </button>
                   )}
-                </div>
+                </FieldRow>
 
                 {/* Сайт / Домен */}
-                <div className="flex items-center justify-between gap-2 min-h-[26px]">
-                  <span className="flex w-[90px] shrink-0 items-center gap-1.5 text-[#666666]">
-                    <Globe className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                    <span>Сайт</span>
-                  </span>
+                <FieldRow icon={Globe} label="Сайт">
                   {editingCompanyField === "domain" ? (
                     <input
                       autoFocus
@@ -1405,7 +1682,8 @@ function HomeTab({
                         if (e.key === "Enter") commitCompanyEdit("domain");
                         if (e.key === "Escape") setEditingCompanyField(null);
                       }}
-                      className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      placeholder="example.com"
+                      className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
                     />
                   ) : (
                     <button
@@ -1415,15 +1693,27 @@ function HomeTab({
                         setEditingCompanyField("domain");
                       }}
                       title="Нажмите для редактирования сайта компании"
-                      className="group flex flex-1 items-center justify-between rounded px-1.5 py-0.5 text-left text-xs text-[#111111] hover:bg-black/[0.04] transition-colors cursor-pointer"
+                      className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                     >
-                      <span className={cn("truncate", !companyWebsite && "text-[#888888]")}>
-                        {companyWebsite || "Указать сайт"}
-                      </span>
-                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                      <div className="truncate">
+                        {companyWebsite ? (
+                          <a
+                            href={normalizeUrl(companyWebsite)}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-[#4a38f5] hover:underline"
+                          >
+                            {companyWebsite.replace(/^https?:\/\//, "")}
+                          </a>
+                        ) : (
+                          <span className="text-[#888888]">—</span>
+                        )}
+                      </div>
+                      <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
                     </button>
                   )}
-                </div>
+                </FieldRow>
               </div>
             )}
           </div>

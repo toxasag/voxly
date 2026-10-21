@@ -94,7 +94,7 @@ export function DrawerCreateContact({
   const [generalOpen, setGeneralOpen] = useState(true);
   const [workOpen, setWorkOpen] = useState(true);
   const [socialOpen, setSocialOpen] = useState(true);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
 
   // Company picker
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
@@ -338,7 +338,33 @@ export function DrawerCreateContact({
           )}
         </div>
 
-        {/* Группа 2: Работа */}
+        {/* Группа 2: Социальные сети */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setSocialOpen((v) => !v)}
+            title="Свернуть / Развернуть группу"
+            className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <span>Социальные сети</span>
+            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !socialOpen && "rotate-180")} />
+          </button>
+          {socialOpen && (
+            <div className="space-y-0.5 py-0.5">
+              <FieldRow icon={Linkedin} label="LinkedIn">
+                <input
+                  type="text"
+                  placeholder="LinkedIn"
+                  value={linkedin}
+                  onChange={(e) => setLinkedin(e.target.value)}
+                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
+                />
+              </FieldRow>
+            </div>
+          )}
+        </div>
+
+        {/* Группа 3: Работа */}
         <div>
           <button
             type="button"
@@ -395,32 +421,6 @@ export function DrawerCreateContact({
                   placeholder="Должность"
                   value={jobTitle}
                   onChange={(e) => setJobTitle(e.target.value)}
-                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
-                />
-              </FieldRow>
-            </div>
-          )}
-        </div>
-
-        {/* Группа 3: Социальные сети */}
-        <div>
-          <button
-            type="button"
-            onClick={() => setSocialOpen((v) => !v)}
-            title="Свернуть / Развернуть группу"
-            className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-          >
-            <span>Социальные сети</span>
-            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !socialOpen && "rotate-180")} />
-          </button>
-          {socialOpen && (
-            <div className="space-y-0.5 py-0.5">
-              <FieldRow icon={Linkedin} label="LinkedIn">
-                <input
-                  type="text"
-                  placeholder="LinkedIn"
-                  value={linkedin}
-                  onChange={(e) => setLinkedin(e.target.value)}
                   className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
                 />
               </FieldRow>

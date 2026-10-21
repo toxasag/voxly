@@ -105,7 +105,7 @@ export function DrawerCreateDeal({
 
   const [dealOpen, setDealOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(false);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
   const [contactCardOpen, setContactCardOpen] = useState(true);
   const [companyCardOpen, setCompanyCardOpen] = useState(true);
   const [ownerCardOpen, setOwnerCardOpen] = useState(true);

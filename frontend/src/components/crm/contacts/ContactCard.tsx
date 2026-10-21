@@ -391,7 +391,7 @@ export const ContactCard = memo(function ContactCard({
       </RecordFieldGroup>
 
       {/* 5. Система */}
-      <RecordFieldGroup title="Система">
+      <RecordFieldGroup title="Система" defaultExpanded={false}>
         <RecordField
           icon={CalendarClock}
           label="Создан"
