@@ -17,6 +17,8 @@ import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
+import whatsappIntegrationRoutes from "./modules/channels/whatsapp-integration.routes.js";
+import maxIntegrationRoutes from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
@@ -162,6 +164,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Авторизация аккаунтов Telegram через MTProto. Отдельная группа: у остальных
   // каналов нет двухшагового входа с кодом и облачным паролем.
   await app.register(telegramIntegrationRoutes, { prefix: "/api/v1/integrations/telegram" });
+
+  // Авторизация WhatsApp через Evolution API (QR-код)
+  await app.register(whatsappIntegrationRoutes, { prefix: "/api/v1/integrations/whatsapp" });
+
+  // Авторизация личных аккаунтов MAX через max-bridge (QR-код)
+  await app.register(maxIntegrationRoutes, { prefix: "/api/v1/integrations/max" });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });

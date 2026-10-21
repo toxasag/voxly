@@ -73,6 +73,18 @@ const baseSchema = z.object({
       .string()
       .regex(/^[A-Za-z0-9_-]{5,256}$/, "MAX_WEBHOOK_SECRET must match [A-Za-z0-9_-]{5,256}"),
   ),
+
+  /**
+   * WhatsApp integration via Evolution API (Baileys Web).
+   */
+  EVOLUTION_API_URL: z.string().default("http://evolution-api:8080"),
+  EVOLUTION_API_KEY: optionalNonEmpty(z.string()),
+
+  /**
+   * MAX bridge for personal MAX accounts (PyMax).
+   */
+  MAX_BRIDGE_URL: z.string().default("http://max-bridge:3010"),
+  VOXLY_SERVICE_TOKEN: optionalNonEmpty(z.string()),
   /**
    * Externally reachable base URL of this API, used to register the Telegram
    * webhook. Cannot be derived from HOST/PORT: the API sits behind a proxy and
