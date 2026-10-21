@@ -11,7 +11,9 @@ import { createContactSchema, type CreateContactPayload } from "@/schemas/contac
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useCompanies } from "@/lib/api/use-companies";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
+import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
+import { prepareEmailsPayload } from "@/lib/crm/emails";
 import { cn } from "@/lib/utils";
 import { useOverlay } from "@/lib/utils/use-scroll-lock";
 
@@ -37,14 +39,6 @@ interface ContactModalProps {
   onSubmit: (payload: CreateContactPayload) => Promise<unknown>;
   initial?: CreateContactPayload;
 }
-
-const CHANNELS = [
-  { value: "telegram" as const, icon: MessageCircle, label: "Telegram" },
-  { value: "whatsapp" as const, icon: MessageCircle, label: "WhatsApp" },
-  { value: "rumax" as const, icon: Hash, label: "RuMAX" },
-  { value: "phone" as const, icon: Phone, label: "Телефон" },
-  { value: "email" as const, icon: Mail, label: "E-mail" },
-];
 
 const EMPTY_VALUES: CreateContactPayload = {
   first_name: "",
@@ -150,7 +144,16 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
   const phones = form.watch("phones") ?? [];
   const socials = form.watch("socials") ?? [];
   const companyId = form.watch("company_id") ?? "";
-  const channel = form.watch("channel");
+  const emailVal = form.watch("email") ?? "";
+  const customFieldsVal = form.watch("custom_fields") as Record<string, unknown> | undefined;
+  const emailsList = useMemo(() => {
+    const fromCustom = customFieldsVal?.emails;
+    if (Array.isArray(fromCustom)) {
+      const valid = fromCustom.filter((e): e is string => typeof e === "string" && e.trim() !== "");
+      if (valid.length > 0) return valid;
+    }
+    return emailVal ? [emailVal] : [];
+  }, [emailVal, customFieldsVal]);
 
   const companyOptions = useMemo(
     () => [...(companies.data?.items ?? [])].sort((left, right) => left.name.localeCompare(right.name, "ru")),
@@ -232,17 +235,19 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
             />
 
             <div className="space-y-1.5">
-              <label htmlFor="contact-email" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
-                <Mail className="h-3 w-3 text-[#888888]" /> E-mail
+              <label className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
+                <Mail className="h-3 w-3 text-[#888888]" /> E-mail адреса
               </label>
-              <input
-                id="contact-email"
-                type="text"
-                placeholder="ivan@company.ru"
-                {...form.register("email")}
-                className={cn(INPUT_CLASS, errors.email ? "border-rose-500" : "border-[#e5e5e5]")}
+              <EmailsInput
+                value={emailsList}
+                onChange={(next) => {
+                  const payload = prepareEmailsPayload(next, form.getValues("custom_fields"));
+                  form.setValue("email", payload.email, { shouldValidate: true, shouldDirty: true });
+                  form.setValue("custom_fields", payload.custom_fields, { shouldDirty: true });
+                }}
+                idPrefix="modal-email"
+                error={messageOf(errors.email)}
               />
-              {errors.email && <p className="text-xs text-rose-600">{errors.email.message}</p>}
             </div>
 
             <SocialsInput
@@ -308,27 +313,6 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
                 className={cn(INPUT_CLASS, errors.linkedin_link ? "border-rose-500" : "border-[#e5e5e5]")}
               />
               {errors.linkedin_link && <p className="text-xs text-rose-600">{errors.linkedin_link.message}</p>}
-            </div>
-
-            <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-[#666666]">Канал связи</span>
-              <div className="flex flex-wrap gap-1.5">
-                {CHANNELS.map(({ value, icon: Icon, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => form.setValue("channel", value, { shouldValidate: true })}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-[8px] border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
-                      channel === value
-                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]"
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />{label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <fieldset className="space-y-3 rounded-[8px] border border-[#e5e5e5] p-3.5">

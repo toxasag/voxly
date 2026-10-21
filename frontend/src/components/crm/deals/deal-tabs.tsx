@@ -22,7 +22,7 @@ import {
   Pencil,
   Phone,
   Plus,
-  Radio,
+  Star,
   User,
   UserCircle2,
   UserRound,
@@ -43,9 +43,13 @@ import { ContactCard } from "@/components/crm/contacts/ContactCard";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
 import { CompanyModal } from "@/components/crm/companies/CompanyModal";
+import { PhonesInput } from "@/components/crm/shared/PhonesInput";
+import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
 import { socialHref, socialLabel } from "@/lib/crm/socials";
-import type { ContactChannel, ContactSocialInput } from "@/schemas/contact.schema";
+import type { ContactChannel, ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
+import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
+import { formatPhone, telHref } from "@/lib/utils/phone";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
@@ -130,22 +134,6 @@ function ChatTab({ dealId, dealTitle }: { dealId: string; dealTitle?: string }) 
   );
 }
 
-const CHANNEL_OPTIONS = [
-  { value: "telegram", label: "Telegram" },
-  { value: "whatsapp", label: "WhatsApp" },
-  { value: "rumax", label: "Rumax" },
-  { value: "phone", label: "Телефон" },
-  { value: "email", label: "E-mail" },
-] as const;
-
-const CHANNEL_TAG_COLORS = {
-  telegram: "sky",
-  whatsapp: "emerald",
-  rumax: "violet",
-  phone: "amber",
-  email: "cyan",
-} as const;
-
 function normalizeUrl(value: string): string {
   const trimmed = value.trim();
   if (trimmed === "") return "";
@@ -193,7 +181,6 @@ function HomeTab({
   const [contactFioOpen, setContactFioOpen] = useState(true);
   const [contactGeneralOpen, setContactGeneralOpen] = useState(true);
   const [contactSocialsOpen, setContactSocialsOpen] = useState(true);
-  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
 
   // Редактирование суммы
   const [isEditingBudget, setIsEditingBudget] = useState(false);
@@ -237,10 +224,12 @@ function HomeTab({
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
 
   const [editingContactField, setEditingContactField] = useState<
-    "lastName" | "firstName" | "middleName" | "phone" | "email" | "socials" | "linkedin" | null
+    "lastName" | "firstName" | "middleName" | "phones" | "emails" | "socials" | "linkedin" | null
   >(null);
   const [contactFieldDraft, setContactFieldDraft] = useState("");
   const [contactSocialsDraft, setContactSocialsDraft] = useState<ContactSocialInput[]>([]);
+  const [contactPhonesDraft, setContactPhonesDraft] = useState<ContactPhoneInput[]>([]);
+  const [contactEmailsDraft, setContactEmailsDraft] = useState<string[]>([]);
 
   const [editingCompanyField, setEditingCompanyField] = useState<"name" | "phone" | "email" | "domain" | null>(null);
   const [companyFieldDraft, setCompanyFieldDraft] = useState("");
@@ -248,6 +237,41 @@ function HomeTab({
   const contactPhone = deal.contactPhone || (fullLinkedContact?.phones?.[0]?.number ?? null);
   const contactEmail = deal.contactEmail || fullLinkedContact?.email || null;
   const contactJobTitle = deal.contactJobTitle || fullLinkedContact?.jobTitle || null;
+
+  const contactPhonesList: ContactPhoneInput[] = useMemo(() => {
+    if (fullLinkedContact?.phones && fullLinkedContact.phones.length > 0) {
+      return fullLinkedContact.phones.map((p) => ({
+        number: p.number,
+        country_code: p.countryCode ?? "RU",
+        calling_code: p.callingCode ?? "+7",
+      }));
+    }
+    if (contactPhone) {
+      return [{ number: contactPhone, country_code: "RU", calling_code: "+7" }];
+    }
+    return [];
+  }, [fullLinkedContact?.phones, contactPhone]);
+
+  const contactEmailsList: string[] = useMemo(() => {
+    if (fullLinkedContact) {
+      const list = extractContactEmails(fullLinkedContact);
+      if (list.length > 0) return list;
+    }
+    if (contactEmail && contactEmail.trim()) {
+      return [contactEmail.trim()];
+    }
+    return [];
+  }, [fullLinkedContact, contactEmail]);
+
+  const startContactPhonesEdit = () => {
+    setContactPhonesDraft(contactPhonesList.length > 0 ? contactPhonesList : [{ number: "", country_code: "RU", calling_code: "+7" }]);
+    setEditingContactField("phones");
+  };
+
+  const startContactEmailsEdit = () => {
+    setContactEmailsDraft(contactEmailsList.length > 0 ? contactEmailsList : [""]);
+    setEditingContactField("emails");
+  };
 
   const companyPhone = deal.companyPhone || fullLinkedCompany?.phone || null;
   const companyEmail = deal.companyEmail || fullLinkedCompany?.email || null;
@@ -302,7 +326,7 @@ function HomeTab({
     dealsBudgetTotal: deal.budget ?? 0,
   } : null);
 
-  const commitContactEdit = (field: "lastName" | "firstName" | "middleName" | "phone" | "email" | "socials" | "linkedin") => {
+  const commitContactEdit = (field: "lastName" | "firstName" | "middleName" | "phones" | "emails" | "socials" | "linkedin") => {
     if (!deal.contactId) {
       setEditingContactField(null);
       return;
@@ -336,23 +360,23 @@ function HomeTab({
           onError: (e) => toast.error(e.message || "Ошибка обновления контакта"),
         }
       );
-    } else if (field === "phone") {
-      const cleanNumber = val.replace(/[\s()\-.]/g, "");
+    } else if (field === "phones") {
       updateContact.mutate(
         {
           id: deal.contactId,
           payload: {
-            phones: cleanNumber ? [{ number: cleanNumber, country_code: "RU", calling_code: "+7" }] : [],
+            phones: contactPhonesDraft,
           },
         },
         {
-          onSuccess: () => toast.success("Телефон контакта обновлен"),
-          onError: (e) => toast.error(e.message || "Ошибка обновления телефона"),
+          onSuccess: () => toast.success("Телефоны контакта обновлены"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления телефонов"),
         }
       );
-    } else if (field === "email") {
+    } else if (field === "emails") {
+      const payload = prepareEmailsPayload(contactEmailsDraft, fullLinkedContact?.customFields);
       updateContact.mutate(
-        { id: deal.contactId, payload: { email: val } },
+        { id: deal.contactId, payload },
         {
           onSuccess: () => toast.success("Email контакта обновлен"),
           onError: (e) => toast.error(e.message || "Ошибка обновления email"),
@@ -376,18 +400,6 @@ function HomeTab({
       );
     }
     setEditingContactField(null);
-  };
-
-  const setContactChannel = (channel: ContactChannel) => {
-    if (!deal.contactId) return;
-    updateContact.mutate(
-      { id: deal.contactId, payload: { channel } },
-      {
-        onSuccess: () => toast.success("Канал контакта обновлен"),
-        onError: (e) => toast.error(e.message || "Ошибка обновления канала"),
-      }
-    );
-    setChannelPickerOpen(false);
   };
 
   const commitCompanyEdit = (field: "name" | "phone" | "email" | "domain") => {
@@ -1386,34 +1398,63 @@ function HomeTab({
                   </button>
                   {contactGeneralOpen && (
                     <div className="space-y-0.5 py-0.5">
-                      {/* Телефон */}
-                      <FieldRow icon={Phone} label="Телефон">
-                        {editingContactField === "phone" ? (
-                          <input
-                            autoFocus
-                            type="text"
-                            value={contactFieldDraft}
-                            onChange={(e) => setContactFieldDraft(e.target.value)}
-                            onBlur={() => commitContactEdit("phone")}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") commitContactEdit("phone");
-                              if (e.key === "Escape") setEditingContactField(null);
-                            }}
-                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                          />
+                      {/* Телефоны */}
+                      <FieldRow icon={Phone} label="Телефоны">
+                        {editingContactField === "phones" ? (
+                          <div className="w-full space-y-2 py-1">
+                            <PhonesInput
+                              value={contactPhonesDraft}
+                              onChange={setContactPhonesDraft}
+                              idPrefix="deal-contact-phone"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingContactField(null)}
+                                className="rounded px-2 py-0.5 text-xs text-[#666666] hover:text-[#111111]"
+                              >
+                                Отмена
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => commitContactEdit("phones")}
+                                className="rounded bg-[#4a38f5] px-2.5 py-0.5 text-xs font-semibold text-white hover:bg-[#3b2be0]"
+                              >
+                                Сохранить
+                              </button>
+                            </div>
+                          </div>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => {
-                              setContactFieldDraft(contactPhone ?? "");
-                              setEditingContactField("phone");
-                            }}
-                            title="Нажмите для редактирования телефона"
+                            onClick={startContactPhonesEdit}
+                            title="Нажмите для редактирования телефонов"
                             className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                           >
-                            <span className={cn("truncate", !contactPhone && "text-[#888888]")}>
-                              {contactPhone || "—"}
-                            </span>
+                            <div className="min-w-0 flex-1">
+                              {contactPhonesList.length > 0 ? (
+                                <div className="flex flex-col gap-0.5">
+                                  {contactPhonesList.map((p, idx) => (
+                                    <div key={p.number || idx} className="flex items-center gap-1.5">
+                                      {idx === 0 && contactPhonesList.length > 1 && (
+                                        <span title="Основной номер" className="shrink-0">
+                                          <Star className="h-3 w-3 fill-current text-amber-400" />
+                                        </span>
+                                      )}
+                                      <a
+                                        href={telHref(p.number)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-[#4a38f5] hover:underline truncate"
+                                      >
+                                        {formatPhone(p.number, p.country_code)}
+                                      </a>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[#888888]">—</span>
+                              )}
+                            </div>
                             <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
                           </button>
                         )}
@@ -1421,75 +1462,64 @@ function HomeTab({
 
                       {/* Email */}
                       <FieldRow icon={Mail} label="Email">
-                        {editingContactField === "email" ? (
-                          <input
-                            autoFocus
-                            type="email"
-                            value={contactFieldDraft}
-                            onChange={(e) => setContactFieldDraft(e.target.value)}
-                            onBlur={() => commitContactEdit("email")}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") commitContactEdit("email");
-                              if (e.key === "Escape") setEditingContactField(null);
-                            }}
-                            className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
-                          />
+                        {editingContactField === "emails" ? (
+                          <div className="w-full space-y-2 py-1">
+                            <EmailsInput
+                              value={contactEmailsDraft}
+                              onChange={setContactEmailsDraft}
+                              idPrefix="deal-contact-email"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditingContactField(null)}
+                                className="rounded px-2 py-0.5 text-xs text-[#666666] hover:text-[#111111]"
+                              >
+                                Отмена
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => commitContactEdit("emails")}
+                                className="rounded bg-[#4a38f5] px-2.5 py-0.5 text-xs font-semibold text-white hover:bg-[#3b2be0]"
+                              >
+                                Сохранить
+                              </button>
+                            </div>
+                          </div>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => {
-                              setContactFieldDraft(contactEmail ?? "");
-                              setEditingContactField("email");
-                            }}
+                            onClick={startContactEmailsEdit}
                             title="Нажмите для редактирования email"
                             className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
                           >
-                            <span className={cn("truncate", !contactEmail && "text-[#888888]")}>
-                              {contactEmail || "—"}
-                            </span>
+                            <div className="min-w-0 flex-1">
+                              {contactEmailsList.length > 0 ? (
+                                <div className="flex flex-col gap-0.5">
+                                  {contactEmailsList.map((email, idx) => (
+                                    <div key={email} className="flex items-center gap-1.5">
+                                      {idx === 0 && contactEmailsList.length > 1 && (
+                                        <span title="Основной email" className="shrink-0">
+                                          <Star className="h-3 w-3 fill-current text-amber-400" />
+                                        </span>
+                                      )}
+                                      <a
+                                        href={`mailto:${email}`}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="text-[#4a38f5] hover:underline truncate"
+                                      >
+                                        {email}
+                                      </a>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-[#888888]">—</span>
+                              )}
+                            </div>
                             <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0" />
                           </button>
                         )}
-                      </FieldRow>
-
-                      {/* Канал */}
-                      <FieldRow icon={Radio} label="Канал">
-                        <div className="relative inline-block">
-                          <button
-                            type="button"
-                            onClick={() => setChannelPickerOpen((prev) => !prev)}
-                            title="Выбрать канал"
-                            className="cursor-pointer hover:opacity-85 transition-opacity inline-flex items-center"
-                          >
-                            <TagPill color={CHANNEL_TAG_COLORS[fullLinkedContact?.channel ?? "phone"]}>
-                              {fullLinkedContact?.channel ?? "phone"}
-                            </TagPill>
-                          </button>
-
-                          {channelPickerOpen && (
-                            <>
-                              <div className="fixed inset-0 z-30 cursor-default" onClick={() => setChannelPickerOpen(false)} />
-                              <div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-xl space-y-0.5">
-                                {CHANNEL_OPTIONS.map((opt) => (
-                                  <button
-                                    key={opt.value}
-                                    type="button"
-                                    onClick={() => setContactChannel(opt.value)}
-                                    className={cn(
-                                      "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer",
-                                      (fullLinkedContact?.channel ?? "phone") === opt.value && "bg-[#f5f5f5] font-medium"
-                                    )}
-                                  >
-                                    <TagPill color={CHANNEL_TAG_COLORS[opt.value]}>{opt.label}</TagPill>
-                                    {(fullLinkedContact?.channel ?? "phone") === opt.value && (
-                                      <Check className="h-3.5 w-3.5 text-[#111111]" />
-                                    )}
-                                  </button>
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </div>
                       </FieldRow>
                     </div>
                   )}
