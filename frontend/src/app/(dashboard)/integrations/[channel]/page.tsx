@@ -10,6 +10,8 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { ChannelAccountsTable } from "@/components/integrations/ChannelAccountsTable";
 import { ConnectChannelModal } from "@/components/integrations/ConnectChannelModal";
 import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramModal";
+import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
+import { ConnectMaxModal } from "@/components/integrations/ConnectMaxModal";
 import { channelEntry } from "@/lib/modules/registry";
 import { pluralAccounts, useChannelAccounts } from "@/lib/api/use-channels";
 import { trialDaysLeft } from "@/lib/api/use-marketplace";
@@ -128,14 +130,16 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
         limitReached={limitReached}
       />
 
-      {/*
-        Telegram подключается по коду из приложения (MTProto), остальные каналы —
-        простой записью аккаунта: у них транспорт ещё не реализован, и мастер с
-        кодом обещал бы работающее соединение, которого нет.
-      */}
-      {channel === "telegram" ? (
+      {channel === "telegram" && (
         <ConnectTelegramModal open={connectOpen} onClose={() => setConnectOpen(false)} />
-      ) : (
+      )}
+      {channel === "whatsapp" && (
+        <ConnectWhatsappModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      )}
+      {channel === "max" && (
+        <ConnectMaxModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      )}
+      {channel !== "telegram" && channel !== "whatsapp" && channel !== "max" && (
         <ConnectChannelModal
           open={connectOpen}
           channel={channel}
