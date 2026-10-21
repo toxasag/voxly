@@ -33,7 +33,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
 import { useCompanies, useCompany, useUpdateCompany, useCompanyStats, type CompanyDTO } from "@/lib/api/use-companies";
-import { contactFullName, useContacts, useContact, useUpdateContact, type ContactDTO } from "@/lib/api/use-contacts";
+import { contactFullName, useContacts, useContact, useUpdateContact, useCreateContact, type ContactDTO } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
 import { Sheet } from "@/components/ui/sheet";
@@ -222,6 +222,10 @@ function HomeTab({
   const [companyCardDrawerOpen, setCompanyCardDrawerOpen] = useState(false);
   const [contactModalOpen, setContactModalOpen] = useState(false);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
+  const [createCompanyContactOpen, setCreateCompanyContactOpen] = useState(false);
+
+  const createContact = useCreateContact();
+  const companyContactsQuery = useContacts({ companyId: deal.companyId ?? undefined, limit: 50 });
 
   const [editingContactField, setEditingContactField] = useState<
     "lastName" | "firstName" | "middleName" | "phones" | "emails" | "socials" | "linkedin" | null
@@ -1844,6 +1848,87 @@ function HomeTab({
                     </button>
                   )}
                 </FieldRow>
+
+                {/* Контакты компании */}
+                <div className="mt-3 border-t border-[#f0f0f0] pt-2 px-1">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-medium text-[#666666]">
+                      Контакты компании ({companyContactsQuery.data?.items.length ?? 0})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCreateCompanyContactOpen(true)}
+                      className="flex items-center gap-1 text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors cursor-pointer"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>Добавить</span>
+                    </button>
+                  </div>
+                  {companyContactsQuery.isLoading ? (
+                    <div className="py-2 text-center text-xs text-[#888888]">Загрузка контактов...</div>
+                  ) : (companyContactsQuery.data?.items.length ?? 0) === 0 ? (
+                    <div className="rounded-[6px] border border-dashed border-[#e5e5e5] p-2 text-center text-xs text-[#888888]">
+                      У компании пока нет других контактов
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {companyContactsQuery.data?.items.map((c) => {
+                        const isCurrentDealContact = c.id === deal.contactId;
+                        const fullName = contactFullName(c);
+                        return (
+                          <div
+                            key={c.id}
+                            className={cn(
+                              "flex items-center justify-between rounded-[6px] border p-1.5 text-xs transition-colors",
+                              isCurrentDealContact
+                                ? "border-[#4a38f5]/30 bg-[#4a38f5]/5"
+                                : "border-[#e5e5e5] bg-white hover:border-[#cccccc]"
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium text-[#111111] truncate">{fullName}</span>
+                                {c.jobTitle && (
+                                  <span className="text-[10px] text-[#888888] truncate">({c.jobTitle})</span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-[#888888] truncate">
+                                {c.phones?.[0]?.number ? formatPhone(c.phones[0].number, c.phones[0].countryCode) : c.email || "—"}
+                              </div>
+                            </div>
+                            <div className="shrink-0 ml-2">
+                              {isCurrentDealContact ? (
+                                <span className="rounded bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#4a38f5]">
+                                  Основной в сделке
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateDeal.mutate(
+                                      {
+                                        id: deal.id,
+                                        pipelineId: deal.pipelineId,
+                                        payload: { contact_id: c.id },
+                                      },
+                                      {
+                                        onSuccess: () => toast.success(`Контакт «${fullName}» выбран в сделку`),
+                                        onError: (e) => toast.error(e.message || "Ошибка"),
+                                      }
+                                    );
+                                  }}
+                                  className="rounded border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                                >
+                                  Выбрать в сделку
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -2035,6 +2120,43 @@ function HomeTab({
               await updateCompany.mutateAsync({ id: deal.companyId, payload });
               toast.success("Компания обновлена");
               setCompanyModalOpen(false);
+            }
+          }}
+        />
+      )}
+
+      {createCompanyContactOpen && (
+        <ContactModal
+          open={createCompanyContactOpen}
+          onClose={() => setCreateCompanyContactOpen(false)}
+          initial={{
+            first_name: "",
+            last_name: "",
+            middle_name: "",
+            phones: [],
+            email: "",
+            socials: [],
+            job_title: "",
+            company_name: deal.companyName ?? "",
+            company_id: deal.companyId ?? "",
+            channel: "phone",
+            linkedin_link: "",
+            notes: "",
+          }}
+          onSubmit={async (payload) => {
+            const created = await createContact.mutateAsync({
+              ...payload,
+              company_id: deal.companyId ?? undefined,
+              company_name: deal.companyName ?? undefined,
+            });
+            toast.success("Контакт создан и привязан к компании");
+            setCreateCompanyContactOpen(false);
+            if (!deal.contactId && created?.id) {
+              updateDeal.mutate({
+                id: deal.id,
+                pipelineId: deal.pipelineId,
+                payload: { contact_id: created.id },
+              });
             }
           }}
         />

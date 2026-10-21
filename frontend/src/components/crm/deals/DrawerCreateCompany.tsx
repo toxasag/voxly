@@ -22,7 +22,6 @@ import {
   Pencil,
   Plus,
   RotateCcw,
-  ShoppingBag,
   UserCircle2,
   X,
 } from "lucide-react";
@@ -85,7 +84,6 @@ export function DrawerCreateCompany({
   const [domainName, setDomainName] = useState("");
   const [accountOwner, setAccountOwner] = useState("");
   const [accountOwnerId, setAccountOwnerId] = useState("");
-  const [annualRevenue, setAnnualRevenue] = useState("");
   const [address, setAddress] = useState("");
   const [linkedin, setLinkedin] = useState("");
   const [isFavorite, setIsFavorite] = useState(false);
@@ -93,7 +91,6 @@ export function DrawerCreateCompany({
 
   // Group collapses
   const [generalOpen, setGeneralOpen] = useState(true);
-  const [businessOpen, setBusinessOpen] = useState(true);
   const [contactOpen, setContactOpen] = useState(true);
   const [systemOpen, setSystemOpen] = useState(false);
 
@@ -112,13 +109,11 @@ export function DrawerCreateCompany({
 
   const handleSave = () => {
     const trimmedName = name.trim() || "Новая компания";
-    const revenueNum = annualRevenue.trim() ? Number(annualRevenue.replace(/\D/g, "")) : undefined;
 
     createCompany.mutate(
       {
         name: trimmedName,
         domain_name: domainName.trim(),
-        annual_revenue: revenueNum !== undefined && !Number.isNaN(revenueNum) ? revenueNum : null,
         address_street: address.trim(),
         linkedin_link: linkedin.trim(),
         manager_name: accountOwner.trim() || currentUserName,
@@ -363,33 +358,7 @@ export function DrawerCreateCompany({
           )}
         </div>
 
-        {/* Группа 2: Работа */}
-        <div>
-          <button
-            type="button"
-            onClick={() => setBusinessOpen((v) => !v)}
-            title="Свернуть / Развернуть группу"
-            className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-          >
-            <span>Работа</span>
-            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !businessOpen && "rotate-180")} />
-          </button>
-          {businessOpen && (
-            <div className="space-y-0.5 py-0.5">
-              <FieldRow icon={ShoppingBag} label="Годовой доход">
-                <input
-                  type="text"
-                  placeholder="Годовой доход"
-                  value={annualRevenue}
-                  onChange={(e) => setAnnualRevenue(e.target.value)}
-                  className="w-full bg-transparent text-xs text-[#111111] placeholder:text-[#888888] outline-none"
-                />
-              </FieldRow>
-            </div>
-          )}
-        </div>
-
-        {/* Группа 3: Контакт */}
+        {/* Группа 2: Контакт */}
         <div>
           <button
             type="button"
