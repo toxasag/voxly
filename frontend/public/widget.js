@@ -126,6 +126,54 @@
       transform: scale(1.06);
       box-shadow: 0 12px 30px rgba(245, 158, 11, 0.45);
     }
+    .getvoxly-widget-bubble.is-photo {
+      padding: 2px;
+      overflow: visible;
+      background: #ffffff;
+      border: 2px solid #ffffff;
+    }
+    .getvoxly-bubble-photo-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+      display: block;
+    }
+    .getvoxly-bubble-dot {
+      position: absolute;
+      bottom: 1px;
+      right: 1px;
+      width: 14px;
+      height: 14px;
+      background: #10b981;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+    }
+    .getvoxly-widget-bubble.is-mascot {
+      background: transparent !important;
+      box-shadow: none !important;
+      animation: none !important;
+      overflow: visible;
+      width: 66px;
+      height: 66px;
+    }
+    .getvoxly-mascot-wrap {
+      width: 66px;
+      height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35));
+      transition: transform 0.15s ease-out;
+    }
+    .getvoxly-mascot-wrap:hover {
+      transform: scale(1.08);
+    }
+    .getvoxly-mascot-wrap.booped {
+      transform: scale(0.88);
+    }
 
     .getvoxly-chat-badge {
       position: absolute;
@@ -475,6 +523,9 @@
   badge.addEventListener('click', openWidget);
   closeBtn.addEventListener('click', closeWidget);
 
+  // Фоновая загрузка параметров оформления (цвета, аватар/маскот, позиция)
+  initSession();
+
   // 11. Проактивное открытие через заданный интервал
   if (proactiveEnabled && existingHistory.length === 0) {
     setTimeout(function () {
@@ -512,6 +563,56 @@
           bubble.style.boxShadow = '0 8px 24px ' + data.accentColor + '55';
           sendBtn.style.background = data.accentColor;
           badge.style.background = data.accentColor;
+        }
+
+        // Поддержка 3D-маскота или фото консультанта
+        if (data.avatarType === 'mascot') {
+          bubble.classList.add('is-mascot');
+          bubble.innerHTML = `
+            <div class="getvoxly-mascot-wrap" id="getvoxly-mascot-el">
+              <svg width="62" height="62" viewBox="0 0 64 64" fill="none">
+                <circle cx="32" cy="7" r="3.5" fill="${data.accentColor || '#4a38f5'}" />
+                <path d="M32 10.5V16" stroke="${data.accentColor || '#4a38f5'}" stroke-width="2.5" stroke-linecap="round" />
+                <rect x="7" y="27" width="5" height="12" rx="2.5" fill="#334155" />
+                <rect x="52" y="27" width="5" height="12" rx="2.5" fill="#334155" />
+                <rect x="10" y="15" width="44" height="36" rx="12" fill="#0f172a" stroke="${data.accentColor || '#4a38f5'}" stroke-width="2.5" />
+                <rect x="15" y="21" width="34" height="24" rx="8" fill="#020617" />
+                <circle cx="25" cy="32" r="5" fill="#0369a1" />
+                <circle class="getvoxly-eye-l" cx="25" cy="32" r="3.5" fill="#38bdf8" />
+                <circle cx="39" cy="32" r="5" fill="#0369a1" />
+                <circle class="getvoxly-eye-r" cx="39" cy="32" r="3.5" fill="#38bdf8" />
+                <path d="M28 40C30 42 34 42 36 40" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </div>
+          `;
+
+          const mascotEl = bubble.querySelector('#getvoxly-mascot-el');
+          const eyeL = bubble.querySelector('.getvoxly-eye-l');
+          const eyeR = bubble.querySelector('.getvoxly-eye-r');
+
+          if (window.matchMedia('(hover: hover) and (pointer: fine)').matches && eyeL && eyeR) {
+            window.addEventListener('pointermove', function (e) {
+              const b = bubble.getBoundingClientRect();
+              const cx = b.left + b.width / 2;
+              const cy = b.top + b.height / 2;
+              const dx = e.clientX - cx;
+              const dy = e.clientY - cy;
+              const angle = Math.atan2(dy, dx);
+              const dist = Math.min(Math.hypot(dx, dy) / 200, 1);
+              const sx = Math.cos(angle) * 3 * dist;
+              const sy = Math.sin(angle) * 3 * dist;
+              eyeL.setAttribute('cx', String(25 + sx));
+              eyeL.setAttribute('cy', String(32 + sy));
+              eyeR.setAttribute('cx', String(39 + sx));
+              eyeR.setAttribute('cy', String(32 + sy));
+              if (mascotEl) {
+                mascotEl.style.transform = 'rotate(' + (Math.cos(angle) * 6 * dist) + 'deg)';
+              }
+            }, { passive: true });
+          }
+        } else if (data.avatarType === 'photo' && data.consultantAvatar) {
+          bubble.classList.add('is-photo');
+          bubble.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + data.consultantAvatar + '" alt="Консультант"><span class="getvoxly-bubble-dot"></span>';
         }
 
         if (data.position === 'bottom-left') {
