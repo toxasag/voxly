@@ -19,6 +19,7 @@ import {
   type PurgeResult,
 } from "./module-data.service.js";
 import { PageLayoutTabsService } from "../crm/page-layout-tabs/page-layout-tabs.service.js";
+import { platformConfigService } from "../admin/platform-config.service.js";
 
 const params = z.object({ slug: moduleSlugSchema });
 
@@ -117,10 +118,10 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
         installed: row.installed,
         installedAt: toIso(row.installed_at),
         quantity,
-        trialEndsAt: toIso(row.trial_ends_at),
-        trialActive: isTrialActive(row.trial_ends_at),
+        trialEndsAt: row.included_units > 0 ? null : toIso(row.trial_ends_at),
+        trialActive: row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
         monthlyTotal: row.installed
-          ? effectiveMonthly(pricing, row.trial_ends_at)
+          ? effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at)
           : monthlyPrice(pricing),
       };
     });
@@ -166,20 +167,27 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
         slug: row.slug,
         name: row.name,
         quantity: row.quantity ?? 1,
-        monthlyTotal: effectiveMonthly(pricing, row.trial_ends_at),
+        monthlyTotal: effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at),
         // Полная цена без скидки пробного периода — чтобы показать, во что
         // подписка превратится после его окончания.
         fullMonthly: monthlyPrice(pricing),
-        trialActive: isTrialActive(row.trial_ends_at),
-        trialEndsAt: toIso(row.trial_ends_at),
+        trialActive: row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
+        trialEndsAt: row.included_units > 0 ? null : toIso(row.trial_ends_at),
       };
     });
+
+    const integrations = await platformConfigService.getEffectiveIntegrations();
+    const isRoboConfigured = integrations.robokassa.isConfigured;
 
     const summary: BillingSummaryDTO = {
       monthlyTotal: items.reduce((sum, item) => sum + item.monthlyTotal, 0),
       monthlyAfterTrials: items.reduce((sum, item) => sum + item.fullMonthly, 0),
       usersCount,
       items: items.map(({ fullMonthly: _full, ...rest }) => rest),
+      billingProvider: {
+        connected: isRoboConfigured,
+        provider: isRoboConfigured ? "robokassa" : null,
+      },
     };
 
     return { data: summary };
@@ -194,9 +202,10 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
         name: string;
         billing_kind: BillingKind;
         is_multi: boolean;
+        included_units: number;
         trial_days: number;
       }>(
-        `SELECT name, billing_kind, is_multi, trial_days
+        `SELECT name, billing_kind, is_multi, included_units, trial_days
          FROM marketplace_modules WHERE slug = $1 AND is_available`,
         [slug],
       );
@@ -235,10 +244,9 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
         // иначе клиент мог бы «размножить» модуль с фиксированной ценой.
         const units = module.is_multi ? (quantity ?? 1) : 1;
 
-        // Пробный период начисляется только при первой установке: повторное
-        // включение после отключения не должно давать новые 14 дней.
-        // ON CONFLICT здесь не подходит — строка удаляется при отключении,
-        // поэтому историю проверяем по журналу аудита.
+        // Пробный период начисляется только для модулей без бесплатных квот (included_units == 0)
+        // и только при первой установке: модуль с бесплатными квотами входит в базовый тариф навсегда.
+        const isFreeInPlan = (module.included_units ?? 0) > 0;
         const hadTrial = await tx.queryOne<{ exists: boolean }>(
           `SELECT true AS exists FROM tenant_audit_log
            WHERE tenant_id = $1 AND entity_type = 'module' AND entity_id = $2
@@ -247,7 +255,10 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
           [request.tenant_id, slug],
         );
 
-        const trialInterval = hadTrial === null ? module.trial_days : null;
+        const trialInterval =
+          !isFreeInPlan && hadTrial === null && module.trial_days > 0
+            ? module.trial_days
+            : null;
 
         await tx.query(
           `INSERT INTO installed_modules (tenant_id, slug, name, quantity, trial_ends_at)

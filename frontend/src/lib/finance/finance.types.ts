@@ -37,34 +37,50 @@ export interface Transaction {
 }
 
 const CATEGORY_LABELS: Record<TransactionCategory, string> = {
-  repair: "Repair Services",
-  parts_sale: "Parts Sales",
-  rent: "Rent",
-  salary: "Salary",
-  equipment: "Equipment Purchase",
-  marketing: "Marketing",
-  software: "Software & Licenses",
-  taxes: "Taxes",
-  other_income: "Other Income",
-  other_expense: "Other Expense",
+  repair: "Услуги ремонта",
+  parts_sale: "Продажа запчастей",
+  rent: "Аренда",
+  salary: "Заработная плата",
+  equipment: "Оборудование и инструмент",
+  marketing: "Маркетинг и реклама",
+  software: "ПО и сервисы",
+  taxes: "Налоги и сборы",
+  other_income: "Прочие доходы",
+  other_expense: "Прочие расходы",
 };
 
+export const INCOME_CATEGORIES = [
+  { value: "repair" as const, label: "Услуги ремонта" },
+  { value: "parts_sale" as const, label: "Продажа запчастей" },
+  { value: "other_income" as const, label: "Прочие доходы" },
+];
+
+export const EXPENSE_CATEGORIES = [
+  { value: "rent" as const, label: "Аренда" },
+  { value: "salary" as const, label: "Заработная плата" },
+  { value: "equipment" as const, label: "Оборудование и инструмент" },
+  { value: "marketing" as const, label: "Маркетинг и реклама" },
+  { value: "software" as const, label: "ПО и сервисы" },
+  { value: "taxes" as const, label: "Налоги и сборы" },
+  { value: "other_expense" as const, label: "Прочие расходы" },
+];
+
 const TYPE_ICONS: Record<TransactionType, string> = {
-  income: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  expense: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-  transfer: "bg-sky-500/10 text-sky-400 border-sky-500/30",
+  income: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  expense: "bg-rose-50 text-rose-700 border-rose-200",
+  transfer: "bg-sky-50 text-sky-700 border-sky-200",
 };
 
 const TYPE_LABELS: Record<TransactionType, string> = {
-  income: "Income",
-  expense: "Expense",
-  transfer: "Transfer",
+  income: "Доход",
+  expense: "Расход",
+  transfer: "Перевод",
 };
 
 const ACCOUNT_LABELS: Record<AccountType, string> = {
-  cash: "Cash",
-  bank: "Bank Account",
-  acquiring: "Acquiring",
+  cash: "Наличные (касса)",
+  bank: "Расчётный счёт",
+  acquiring: "Эквайринг",
 };
 
 export function getCategoryLabel(category: TransactionCategory): string {

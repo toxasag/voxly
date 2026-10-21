@@ -31,8 +31,8 @@ export interface ListTasksOptions {
   offset: number;
 }
 
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
+function nullIfBlank(value: string | null | undefined): string | null {
+  if (value === undefined || value === null || value === "") return null;
   return value;
 }
 
@@ -105,17 +105,55 @@ export class TasksService {
     }
 
     if (options.linkedEntityType !== undefined && options.linkedEntityId !== undefined && options.linkedEntityId !== "") {
-      const column =
-        options.linkedEntityType === "deal"
-          ? "deal_id"
-          : options.linkedEntityType === "contact"
-            ? "contact_id"
-            : "company_id";
-      params.push(options.linkedEntityId, options.linkedEntityType);
-      conditions.push(`(${column} = $${params.length - 1} OR EXISTS (
-        SELECT 1 FROM task_targets tt
-        WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id AND tt.target_type = $${params.length} AND tt.target_id = $${params.length - 1}
-      ))`);
+      params.push(options.linkedEntityId);
+      const entityParam = `$${params.length}`;
+
+      if (options.linkedEntityType === "deal") {
+        params.push("deal");
+        const typeParam = `$${params.length}`;
+        conditions.push(`(crm_tasks.deal_id = ${entityParam} OR EXISTS (
+          SELECT 1 FROM task_targets tt
+          WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id AND tt.target_type = ${typeParam} AND tt.target_id = ${entityParam}
+        ))`);
+      } else if (options.linkedEntityType === "contact") {
+        params.push("contact", "deal");
+        const typeParam = `$${params.length - 1}`;
+        const dealTypeParam = `$${params.length}`;
+        conditions.push(`(
+          crm_tasks.contact_id = ${entityParam}
+          OR EXISTS (
+            SELECT 1 FROM task_targets tt
+            WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id AND tt.target_type = ${typeParam} AND tt.target_id = ${entityParam}
+          )
+          OR EXISTS (
+            SELECT 1 FROM deals d
+            WHERE d.tenant_id = crm_tasks.tenant_id AND d.contact_id = ${entityParam}
+              AND (crm_tasks.deal_id = d.id OR EXISTS (
+                SELECT 1 FROM task_targets tt_d
+                WHERE tt_d.tenant_id = crm_tasks.tenant_id AND tt_d.task_id = crm_tasks.id AND tt_d.target_type = ${dealTypeParam} AND tt_d.target_id = d.id
+              ))
+          )
+        )`);
+      } else if (options.linkedEntityType === "company") {
+        params.push("company", "deal");
+        const typeParam = `$${params.length - 1}`;
+        const dealTypeParam = `$${params.length}`;
+        conditions.push(`(
+          crm_tasks.company_id = ${entityParam}
+          OR EXISTS (
+            SELECT 1 FROM task_targets tt
+            WHERE tt.tenant_id = crm_tasks.tenant_id AND tt.task_id = crm_tasks.id AND tt.target_type = ${typeParam} AND tt.target_id = ${entityParam}
+          )
+          OR EXISTS (
+            SELECT 1 FROM deals d
+            WHERE d.tenant_id = crm_tasks.tenant_id AND d.company_id = ${entityParam}
+              AND (crm_tasks.deal_id = d.id OR EXISTS (
+                SELECT 1 FROM task_targets tt_d
+                WHERE tt_d.tenant_id = crm_tasks.tenant_id AND tt_d.task_id = crm_tasks.id AND tt_d.target_type = ${dealTypeParam} AND tt_d.target_id = d.id
+              ))
+          )
+        )`);
+      }
     }
 
     const where = conditions.join(" AND ");
@@ -157,6 +195,28 @@ export class TasksService {
 
   async create(tenantId: string, payload: CreateTaskPayload): Promise<TaskDTO> {
     const link = linkColumns(payload.linked_entity_type, payload.linked_entity_id);
+    let dealId = link.dealId ?? nullIfBlank(payload.deal_id);
+    let contactId = link.contactId ?? nullIfBlank(payload.contact_id);
+    let companyId = link.companyId ?? nullIfBlank(payload.company_id);
+
+    // Если задача создаётся в сделке (или привязана к ней), проверяем,
+    // прикреплены ли к этой сделке контакт и/или компания.
+    // Если да — наследуем их связь, чтобы задача автоматически отображалась
+    // и в карточке контакта, и в карточке компании.
+    if (dealId !== null) {
+      const dealRow = await queryOne<{ contact_id: string | null; company_id: string | null }>(
+        `SELECT contact_id, company_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+        [dealId, tenantId],
+      );
+      if (dealRow !== null) {
+        if (contactId === null && dealRow.contact_id !== null) {
+          contactId = dealRow.contact_id;
+        }
+        if (companyId === null && dealRow.company_id !== null) {
+          companyId = dealRow.company_id;
+        }
+      }
+    }
 
     const row = await queryOneOrThrow<TaskRow>(
       `INSERT INTO crm_tasks
@@ -166,9 +226,9 @@ export class TasksService {
        RETURNING ${TASK_COLUMNS}`,
       [
         tenantId,
-        link.dealId,
-        link.contactId,
-        link.companyId,
+        dealId,
+        contactId,
+        companyId,
         payload.title,
         payload.description ?? "",
         payload.priority,
@@ -178,12 +238,26 @@ export class TasksService {
       ],
     );
 
+    const targetsToInsert: Array<{ type: string; id: string }> = [];
     if (payload.linked_entity_type && payload.linked_entity_id) {
+      targetsToInsert.push({ type: payload.linked_entity_type, id: payload.linked_entity_id });
+    }
+    if (dealId !== null && !targetsToInsert.some((t) => t.type === "deal" && t.id === dealId)) {
+      targetsToInsert.push({ type: "deal", id: dealId });
+    }
+    if (contactId !== null && !targetsToInsert.some((t) => t.type === "contact" && t.id === contactId)) {
+      targetsToInsert.push({ type: "contact", id: contactId });
+    }
+    if (companyId !== null && !targetsToInsert.some((t) => t.type === "company" && t.id === companyId)) {
+      targetsToInsert.push({ type: "company", id: companyId });
+    }
+
+    for (const target of targetsToInsert) {
       await query(
         `INSERT INTO task_targets (tenant_id, task_id, target_type, target_id)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (task_id, target_type, target_id) DO NOTHING`,
-        [tenantId, row.id, payload.linked_entity_type, payload.linked_entity_id],
+        [tenantId, row.id, target.type, target.id],
       );
     }
 
@@ -227,12 +301,37 @@ export class TasksService {
       push("completed_at", completedAt === null ? null : new Date(completedAt).toISOString());
     }
 
-    // Re-linking rewrites all three columns so at most one stays populated.
-    if (payload.linked_entity_type !== undefined || payload.linked_entity_id !== undefined) {
+    const hasRelink =
+      payload.linked_entity_type !== undefined ||
+      payload.linked_entity_id !== undefined ||
+      payload.deal_id !== undefined ||
+      payload.contact_id !== undefined ||
+      payload.company_id !== undefined;
+
+    if (hasRelink) {
       const link = linkColumns(payload.linked_entity_type, payload.linked_entity_id);
-      push("deal_id", link.dealId);
-      push("contact_id", link.contactId);
-      push("company_id", link.companyId);
+      let dealId = link.dealId ?? nullIfBlank(payload.deal_id);
+      let contactId = link.contactId ?? nullIfBlank(payload.contact_id);
+      let companyId = link.companyId ?? nullIfBlank(payload.company_id);
+
+      if (dealId !== null && dealId !== undefined) {
+        const dealRow = await queryOne<{ contact_id: string | null; company_id: string | null }>(
+          `SELECT contact_id, company_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+          [dealId, tenantId],
+        );
+        if (dealRow !== null) {
+          if (!contactId && dealRow.contact_id !== null) {
+            contactId = dealRow.contact_id;
+          }
+          if (!companyId && dealRow.company_id !== null) {
+            companyId = dealRow.company_id;
+          }
+        }
+      }
+
+      push("deal_id", dealId);
+      push("contact_id", contactId);
+      push("company_id", companyId);
     }
 
     if (assignments.length === 0) {
@@ -245,6 +344,22 @@ export class TasksService {
        RETURNING ${TASK_COLUMNS}`,
       params,
     );
+
+    if (row !== null && hasRelink) {
+      const targetsToInsert: Array<{ type: string; id: string }> = [];
+      if (row.deal_id !== null) targetsToInsert.push({ type: "deal", id: row.deal_id });
+      if (row.contact_id !== null) targetsToInsert.push({ type: "contact", id: row.contact_id });
+      if (row.company_id !== null) targetsToInsert.push({ type: "company", id: row.company_id });
+
+      for (const target of targetsToInsert) {
+        await query(
+          `INSERT INTO task_targets (tenant_id, task_id, target_type, target_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (task_id, target_type, target_id) DO NOTHING`,
+          [tenantId, row.id, target.type, target.id],
+        );
+      }
+    }
 
     return row === null ? null : toTaskDTO(row);
   }

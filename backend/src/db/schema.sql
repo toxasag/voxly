@@ -1014,17 +1014,17 @@ VALUES
    500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'Instagram', 14,
    ARRAY['Мульти-аккаунт', 'Direct и комментарии', 'Автоответы', 'Лид в сделку'], 90),
   ('webchat', 'Онлайн-чат на сайт',
-   'Виджет чата для сайтов с AI-ассистентом. 1 сайт включен бесплатно, дополнительные сайты — по тарифу.',
-   500, 'per_unit', 0, 500, 1, 'сайт', true, 'integration', 'MessageSquareText', 14,
+   'Виджет чата для сайтов с AI-ассистентом. 1 сайт включен бесплатно в базовый тариф, дополнительные сайты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'сайт', true, 'integration', 'MessageSquareText', 0,
    ARRAY['1 сайт бесплатно в тарифе', 'Дополнительные сайты — 500 ₽/мес', 'Привязка AI-ассистентов', 'Сбор контактов в CRM'], 95),
   ('telegram_bot', 'Telegram-бот компании',
-   'Официальный публичный бот компании через Bot API токен (@BotFather).',
-   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Bot', 14,
-   ARRAY['Подключение по Bot API токену', 'Неограниченно клиентов', 'Команды и меню', 'Интеграция с AI-агентами'], 55),
+   'Официальный публичный бот компании через Bot API токен (@BotFather). 1 бот включен бесплатно в базовый тариф, дополнительные боты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'бот', true, 'integration', 'Bot', 0,
+   ARRAY['1 бот бесплатно в тарифе', 'Дополнительные боты — 500 ₽/мес', 'Подключение по Bot API токену', 'Неограниченно клиентов', 'Команды и меню', 'Интеграция с AI-агентами'], 55),
   ('max_bot', 'MAX-бот компании',
-   'Официальный публичный бот в мессенджере MAX по Bot API токену.',
-   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Hash', 14,
-   ARRAY['Подключение по Bot API токену', 'Каналы и группы', 'Интеграция с AI-агентами'], 75)
+   'Официальный публичный бот в мессенджере MAX по Bot API токену. 1 бот включен бесплатно в базовый тариф, дополнительные боты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'бот', true, 'integration', 'Hash', 0,
+   ARRAY['1 бот бесплатно в тарифе', 'Дополнительные боты — 500 ₽/мес', 'Подключение по Bot API токену', 'Каналы и группы', 'Интеграция с AI-агентами'], 75)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Платформенные настройки квот и цен Базовой CRM
@@ -1042,6 +1042,27 @@ CREATE TABLE IF NOT EXISTS platform_billing_config (
 );
 
 INSERT INTO platform_billing_config (id)
+VALUES ('default')
+ON CONFLICT (id) DO NOTHING;
+
+-- Платформенные настройки интеграций (Robokassa и LLM)
+CREATE TABLE IF NOT EXISTS platform_integrations_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  robokassa_login TEXT,
+  robokassa_password_1 TEXT,
+  robokassa_password_2 TEXT,
+  robokassa_is_test BOOLEAN NOT NULL DEFAULT true,
+  robokassa_hash_algo TEXT NOT NULL DEFAULT 'SHA256',
+  robokassa_tax TEXT NOT NULL DEFAULT 'none',
+  llm_api_base_url TEXT,
+  llm_api_key TEXT,
+  llm_embedding_model TEXT DEFAULT 'text-embedding-3-small',
+  llm_chat_model TEXT DEFAULT 'openai/gpt-4o-mini',
+  llm_providers JSONB DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO platform_integrations_config (id)
 VALUES ('default')
 ON CONFLICT (id) DO NOTHING;
 

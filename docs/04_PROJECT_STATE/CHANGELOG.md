@@ -1,5 +1,15 @@
 # CHANGELOG
 
+### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
+
+Реализация 4 ключевых блоков дорожной карты адаптации GetVoxly под эталонную архитектуру Twenty CRM:
+- **Unified Activity Timeline:** Миграция `0035` создала junction-таблицы `note_targets` и `task_targets` со строгой RLS-изоляцией `tenant_isolation`. Реализован сервис `TimelineService` (`timeline.service.ts`), объединяющий сообщения мессенджеров, заметки, задачи и историю стадий сделок в единый хронологический поток карточки (`RecordTimelineTab.tsx`) со структурированным форматированием и фильтрами.
+- **Tasks Calendar View & Deadline Reminders:** Календарное представление месяца `TasksCalendarView.tsx` со срезами задач, быстрым переключением статусов и бэкенд-сервисом напоминаний дедлайнов `task-reminders.service.ts`.
+- **Structured Note Editor:** Интерактивный Markdown-редактор `StructuredNoteEditor.tsx` и `NoteFormattedBody` с кликабельными чекбоксами в режиме чтения.
+- **Finance & Service Center Operations:** Приём платежей по счетам `InvoicePaymentModal.tsx` и печатный заказ-наряд `RepairWorkOrderModal.tsx` (А4, суммы прописью).
+- **Contacts Deduplication & Avatars:** Диалог слияния дубликатов `ContactMergeModal.tsx` и поддержка аватаров клиентов из мессенджеров через `avatar_url` в `RecordDetailShell.tsx` и `EntityChip.tsx`.
+- **Боевой деплой:** Образы `backend` и `frontend` собраны и обновлены на VPS (150.241.98.135), контейнеры healthy, внешние healthcheck эндпоинты отдают HTTP 200.
+
 ### Security · Fixed · Docs — безопасный baseline (2026-09-21, локально)
 
 Ручное начисление AI-баланса ограничено platform_owner; tenant-owner получает 403, UI объясняет отсутствие онлайн-оплаты. Paid checkout ещё не реализован. RecordField больше не перехватывает Enter/Space дочерней кнопки или ссылки; добавлены 7 regression tests, из них 3 падали до исправления.

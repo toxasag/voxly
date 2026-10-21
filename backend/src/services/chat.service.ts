@@ -1,5 +1,6 @@
 import { getEnv } from "../config/env.js";
 import { AppError } from "../plugins/errorHandler.js";
+import { platformConfigService } from "../modules/admin/platform-config.service.js";
 
 // ---------------------------------------------------------------------------
 // Слой абстракции чат-вызовов LLM (`.cursorrules` §1: без прямого `fetch` к
@@ -134,7 +135,7 @@ export class GatewayChatProvider implements ChatProvider {
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== undefined && this.apiKey !== undefined;
+    return platformConfigService.isLlmConfiguredSync();
   }
 
   async complete(input: {
@@ -144,62 +145,78 @@ export class GatewayChatProvider implements ChatProvider {
     maxTokens?: number;
     jsonMode?: boolean;
   }): Promise<ChatCompletionResult> {
-    if (this.baseUrl === undefined || this.apiKey === undefined) {
+    const config = await platformConfigService.getRotatedLlmConfig();
+    const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
+    const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
+
+    if (!activeBaseUrl || keysToTry.length === 0) {
       throw new ChatUnavailableError();
     }
 
     const startedAt = Date.now();
+    let lastError: Error | null = null;
 
-    // Явный таймаут: без него зависший вызов держал бы обработчик входящего
-    // сообщения и вместе с ним место в очереди дебаунса.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    for (let i = 0; i < keysToTry.length; i++) {
+      const activeApiKey = keysToTry[i];
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: input.model,
-          messages: input.messages,
-          temperature: input.temperature ?? 0.7,
-          max_tokens: input.maxTokens ?? 1024,
-          // `stream: false` задаётся явно: шлюз для части моделей включает
-          // стриминг по умолчанию, и тогда тело приходит как SSE, а не JSON.
-          stream: false,
-          ...(input.jsonMode === true && { response_format: { type: "json_object" } }),
-        }),
-        signal: controller.signal,
-      });
+      try {
+        const response = await fetch(`${activeBaseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${activeApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: input.model,
+            messages: input.messages,
+            temperature: input.temperature ?? 0.7,
+            max_tokens: input.maxTokens ?? 1024,
+            stream: false,
+            ...(input.jsonMode === true && { response_format: { type: "json_object" } }),
+          }),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        // Тело читается только для сообщения: наружу уходит код и краткая
-        // причина, без заголовков и ключа.
-        const text = await response.text().catch(() => "");
-        throw new ChatFailedError(
-          `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
-        );
+        if (!response.ok) {
+          const text = await response.text().catch(() => "");
+          const isRateLimit = response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit");
+
+          // Если превышена квота или rate limit (429) и в пуле ещё есть запасные ключи — пробуем следующий
+          if (isRateLimit && i < keysToTry.length - 1) {
+            lastError = new ChatFailedError(`HTTP 429 на ключе #${i + 1}`);
+            continue;
+          }
+
+          throw new ChatFailedError(
+            `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
+          );
+        }
+
+        const parsed = parseCompletion(await response.json());
+
+        return {
+          content: parsed.content,
+          tokensIn: parsed.tokensIn,
+          tokensOut: parsed.tokensOut,
+          model: parsed.model.length > 0 ? parsed.model : input.model,
+          latencyMs: Date.now() - startedAt,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === "LLM_FAILED" && error.message.includes("429") && i < keysToTry.length - 1) {
+          lastError = error;
+          continue;
+        }
+        if (error instanceof AppError) throw error;
+
+        const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+        throw new ChatFailedError(reason);
+      } finally {
+        clearTimeout(timeout);
       }
-
-      const parsed = parseCompletion(await response.json());
-
-      return {
-        content: parsed.content,
-        tokensIn: parsed.tokensIn,
-        tokensOut: parsed.tokensOut,
-        model: parsed.model.length > 0 ? parsed.model : input.model,
-        latencyMs: Date.now() - startedAt,
-      };
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-
-      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
-      throw new ChatFailedError(reason);
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError || new ChatFailedError("Все API-ключи в пуле исчерпали лимиты запросов");
   }
 }

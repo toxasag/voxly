@@ -112,6 +112,7 @@ export const MARKETPLACE_NAV: NavItem = {
 export const PLATFORM_NAV: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Все компании", href: "/admin/tenants", icon: Building2 },
   { label: "Тарифы и биллинг", href: "/admin/billing", icon: CreditCard },
+  { label: "Шлюзы и ИИ", href: "/admin/integrations", icon: Sparkles },
   { label: "Метрики системы", href: "/admin/metrics", icon: Activity },
   { label: "Системные логи", href: "/admin/logs", icon: ScrollText },
 ];

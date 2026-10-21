@@ -279,8 +279,8 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
             )}
           </SheetContent>
 
-          {/* Sticky Bottom Actions Bar (Twenty CRM drawer footer) */}
-          {deal.data !== undefined && (
+          {/* Sticky Bottom Actions Bar (Twenty CRM drawer footer) — скрыт на вкладке чата */}
+          {deal.data !== undefined && tab !== "chat" && (
             <div className="sticky bottom-0 z-20 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-4 py-2.5 shrink-0">
               <div className="relative flex items-center gap-1.5">
                 <button

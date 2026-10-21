@@ -17,6 +17,8 @@ import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
+import whatsappIntegrationRoutes from "./modules/channels/whatsapp-integration.routes.js";
+import maxIntegrationRoutes from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
@@ -25,9 +27,11 @@ import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
+import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
 import { SalesLearnService } from "./modules/ai/sales-learn.service.js";
 import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
+import stageRulesRoutes from "./modules/crm/deals/stage-rules.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import fastify from "fastify";
@@ -141,6 +145,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Core CRM — authenticate + authorize are registered inside the group.
   await app.register(crmRoutes, { prefix: "/api/v1/crm" });
+  await app.register(stageRulesRoutes, { prefix: "/api/v1/crm/stage-rules" });
 
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
@@ -150,6 +155,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
+  await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
@@ -158,6 +164,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Авторизация аккаунтов Telegram через MTProto. Отдельная группа: у остальных
   // каналов нет двухшагового входа с кодом и облачным паролем.
   await app.register(telegramIntegrationRoutes, { prefix: "/api/v1/integrations/telegram" });
+
+  // Авторизация WhatsApp через Evolution API (QR-код)
+  await app.register(whatsappIntegrationRoutes, { prefix: "/api/v1/integrations/whatsapp" });
+
+  // Авторизация личных аккаунтов MAX через max-bridge (QR-код)
+  await app.register(maxIntegrationRoutes, { prefix: "/api/v1/integrations/max" });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });

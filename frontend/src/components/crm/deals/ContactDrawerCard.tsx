@@ -58,7 +58,7 @@ export function ContactDrawerCard({
   const [generalOpen, setGeneralOpen] = useState(true);
   const [workOpen, setWorkOpen] = useState(true);
   const [socialOpen, setSocialOpen] = useState(true);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
 
   // Значения полей
   const [fullName, setFullName] = useState("");
@@ -281,7 +281,39 @@ export function ContactDrawerCard({
               )}
             </div>
 
-            {/* Аккордеон 2: Работа */}
+            {/* Аккордеон 2: Социальные сети */}
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setSocialOpen((prev) => !prev)}
+                title="Свернуть/развернуть блок «Социальные сети»"
+                className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                <span>Социальные сети</span>
+                <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !socialOpen && "rotate-180")} />
+              </button>
+
+              {socialOpen && (
+                <div className="space-y-0.5 py-0.5">
+                  <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
+                    <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                      <Linkedin className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                      <span>LinkedIn</span>
+                    </span>
+                    <input
+                      type="text"
+                      value={linkedin}
+                      onChange={(e) => setLinkedin(e.target.value)}
+                      placeholder="LinkedIn"
+                      title="Профиль LinkedIn"
+                      className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#3b82f6]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Аккордеон 3: Работа */}
             <div className="mt-2">
               <button
                 type="button"
@@ -321,38 +353,6 @@ export function ContactDrawerCard({
                       onChange={(e) => setJobTitle(e.target.value)}
                       placeholder="Должность"
                       title="Должность контакта"
-                      className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#3b82f6]"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Аккордеон 3: Социальные сети */}
-            <div className="mt-2">
-              <button
-                type="button"
-                onClick={() => setSocialOpen((prev) => !prev)}
-                title="Свернуть/развернуть блок «Социальные сети»"
-                className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
-              >
-                <span>Социальные сети</span>
-                <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !socialOpen && "rotate-180")} />
-              </button>
-
-              {socialOpen && (
-                <div className="space-y-0.5 py-0.5">
-                  <div className="flex items-center gap-2 px-4 py-1 min-h-[30px]">
-                    <span className="flex w-[140px] shrink-0 items-center gap-2 text-xs text-[#666666]">
-                      <Linkedin className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
-                      <span>LinkedIn</span>
-                    </span>
-                    <input
-                      type="text"
-                      value={linkedin}
-                      onChange={(e) => setLinkedin(e.target.value)}
-                      placeholder="LinkedIn"
-                      title="Профиль LinkedIn"
                       className="min-w-0 flex-1 rounded px-1.5 py-0.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none bg-transparent hover:bg-black/[0.03] focus:bg-white focus:border focus:border-[#3b82f6]"
                     />
                   </div>

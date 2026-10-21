@@ -20,6 +20,7 @@ import {
   type TimelineRecordType,
   type TimelineEventDTO,
 } from "@/lib/api/use-timeline";
+import { NoteFormattedBody } from "@/components/crm/shared/RecordNotesTab";
 import { cn, timeAgo } from "@/lib/utils";
 
 interface RecordTimelineTabProps {
@@ -83,7 +84,7 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
   const { type, data } = event;
 
   if (type === "message") {
-    const text = typeof data.text === "string" ? data.text : "";
+    const text = typeof data.text === "string" ? data.text : (typeof data.content === "string" ? data.content : "");
     const channel = typeof data.channel === "string" ? data.channel : null;
     const direction = typeof data.direction === "string" ? data.direction : null;
 
@@ -117,9 +118,7 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
         {title !== "" && (
           <h4 className="text-[13px] font-semibold text-[#111111]">{title}</h4>
         )}
-        <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#444444]">
-          {body || "—"}
-        </p>
+        <NoteFormattedBody body={body} />
       </div>
     );
   }
@@ -168,10 +167,14 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
   if (type === "stage_change") {
     const fromStage = typeof data.fromStageName === "string" ? data.fromStageName : "Начало";
     const toStage = typeof data.toStageName === "string" ? data.toStageName : "Новый этап";
+    const dealTitle = typeof data.dealTitle === "string" ? data.dealTitle : null;
     const comment = typeof data.comment === "string" ? data.comment : null;
 
     return (
       <div className="space-y-1">
+        {dealTitle && (
+          <p className="text-xs font-medium text-[#4a38f5]">{dealTitle}</p>
+        )}
         <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
           <span className="text-[#666666]">{fromStage}</span>
           <span className="text-[#888888]">→</span>

@@ -128,7 +128,8 @@ export class MaxService {
     }
   }
 
-  private sendMessage(maxUserId: string, text: string): Promise<MaxCallResult> {
+  /** Отправка произвольного сообщения пользователю в диалог с ботом MAX. */
+  async sendMessage(maxUserId: string, text: string): Promise<MaxCallResult> {
     return this.call("POST", "/messages", {
       query: { user_id: maxUserId },
       body: { text, format: "html", notify: true },

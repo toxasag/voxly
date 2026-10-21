@@ -55,7 +55,7 @@ describe("BillingService", () => {
 
   describe("createCheckout", () => {
     it("throws 503 if gateway is not configured", async () => {
-      const unconfiguredService = new BillingService(undefined);
+      const unconfiguredService = new BillingService(null);
       (unconfiguredService as any).robokassaClient = null;
 
       await expect(
@@ -276,12 +276,12 @@ describe("BillingService", () => {
   });
 
   describe("verifySuccessRedirect", () => {
-    it("verifies return redirect signature using Password#1", () => {
+    it("verifies return redirect signature using Password#1", async () => {
       const sig = createHash("sha256")
         .update(`1500.00:100055:pass1_secret:Shp_tenant_id=t-1`)
         .digest("hex");
 
-      const result = service.verifySuccessRedirect({
+      const result = await service.verifySuccessRedirect({
         OutSum: "1500.00",
         InvId: "100055",
         SignatureValue: sig,

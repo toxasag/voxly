@@ -25,10 +25,10 @@ export class TimelineService {
         FROM notes n
         WHERE n.tenant_id = $1 AND n.deleted_at IS NULL
           AND (
-            (CASE WHEN $2 = 'contact' THEN n.contact_id WHEN $2 = 'company' THEN n.company_id WHEN $2 = 'deal' THEN n.deal_id END) = $3
+            (CASE WHEN $2 = 'contact' THEN n.contact_id WHEN $2 = 'company' THEN n.company_id WHEN $2 = 'deal' THEN n.deal_id END) = $3::uuid
             OR EXISTS (
               SELECT 1 FROM note_targets nt
-              WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $2 AND nt.target_id = $3
+              WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $2 AND nt.target_id = $3::uuid
             )
           )
 
@@ -39,10 +39,10 @@ export class TimelineService {
         FROM crm_tasks t
         WHERE t.tenant_id = $1 AND t.deleted_at IS NULL
           AND (
-            (CASE WHEN $2 = 'contact' THEN t.contact_id WHEN $2 = 'company' THEN t.company_id WHEN $2 = 'deal' THEN t.deal_id END) = $3
+            (CASE WHEN $2 = 'contact' THEN t.contact_id WHEN $2 = 'company' THEN t.company_id WHEN $2 = 'deal' THEN t.deal_id END) = $3::uuid
             OR EXISTS (
               SELECT 1 FROM task_targets tt
-              WHERE tt.tenant_id = t.tenant_id AND tt.task_id = t.id AND tt.target_type = $2 AND tt.target_id = $3
+              WHERE tt.tenant_id = t.tenant_id AND tt.task_id = t.id AND tt.target_type = $2 AND tt.target_id = $3::uuid
             )
           )
 
@@ -53,9 +53,9 @@ export class TimelineService {
         FROM deal_messages m
         WHERE m.tenant_id = $1
           AND (
-            ($2 = 'deal' AND m.deal_id = $3)
-            OR ($2 = 'contact' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3))
-            OR ($2 = 'company' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3))
+            ($2 = 'deal' AND m.deal_id = $3::uuid)
+            OR ($2 = 'contact' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3::uuid))
+            OR ($2 = 'company' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3::uuid))
           )
 
         UNION ALL
@@ -65,9 +65,9 @@ export class TimelineService {
         FROM deal_stage_history h
         WHERE h.tenant_id = $1
           AND (
-            ($2 = 'deal' AND h.deal_id = $3)
-            OR ($2 = 'contact' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3))
-            OR ($2 = 'company' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3))
+            ($2 = 'deal' AND h.deal_id = $3::uuid)
+            OR ($2 = 'contact' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3::uuid))
+            OR ($2 = 'company' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3::uuid))
           )
       ) cnt
     `;
@@ -92,10 +92,10 @@ export class TimelineService {
         LEFT JOIN users u ON u.id = n.created_by AND u.tenant_id = n.tenant_id
         WHERE n.tenant_id = $1 AND n.deleted_at IS NULL
           AND (
-            (CASE WHEN $2 = 'contact' THEN n.contact_id WHEN $2 = 'company' THEN n.company_id WHEN $2 = 'deal' THEN n.deal_id END) = $3
+            (CASE WHEN $2 = 'contact' THEN n.contact_id WHEN $2 = 'company' THEN n.company_id WHEN $2 = 'deal' THEN n.deal_id END) = $3::uuid
             OR EXISTS (
               SELECT 1 FROM note_targets nt
-              WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $2 AND nt.target_id = $3
+              WHERE nt.tenant_id = n.tenant_id AND nt.note_id = n.id AND nt.target_type = $2 AND nt.target_id = $3::uuid
             )
           )
 
@@ -120,10 +120,10 @@ export class TimelineService {
         LEFT JOIN users u ON u.id = t.assignee_id AND u.tenant_id = t.tenant_id
         WHERE t.tenant_id = $1 AND t.deleted_at IS NULL
           AND (
-            (CASE WHEN $2 = 'contact' THEN t.contact_id WHEN $2 = 'company' THEN t.company_id WHEN $2 = 'deal' THEN t.deal_id END) = $3
+            (CASE WHEN $2 = 'contact' THEN t.contact_id WHEN $2 = 'company' THEN t.company_id WHEN $2 = 'deal' THEN t.deal_id END) = $3::uuid
             OR EXISTS (
               SELECT 1 FROM task_targets tt
-              WHERE tt.tenant_id = t.tenant_id AND tt.task_id = t.id AND tt.target_type = $2 AND tt.target_id = $3
+              WHERE tt.tenant_id = t.tenant_id AND tt.task_id = t.id AND tt.target_type = $2 AND tt.target_id = $3::uuid
             )
           )
 
@@ -141,14 +141,15 @@ export class TimelineService {
             'direction', m.direction,
             'channel', m.channel,
             'content', m.content,
+            'text', m.content,
             'deliveryStatus', m.delivery_status
           ) AS event_data
         FROM deal_messages m
         WHERE m.tenant_id = $1
           AND (
-            ($2 = 'deal' AND m.deal_id = $3)
-            OR ($2 = 'contact' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3))
-            OR ($2 = 'company' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3))
+            ($2 = 'deal' AND m.deal_id = $3::uuid)
+            OR ($2 = 'contact' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3::uuid))
+            OR ($2 = 'company' AND m.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3::uuid))
           )
 
         UNION ALL
@@ -162,6 +163,7 @@ export class TimelineService {
           u.name AS author_name,
           jsonb_build_object(
             'dealId', h.deal_id,
+            'dealTitle', d.title,
             'fromStageId', h.from_stage_id,
             'fromStageName', fs.name,
             'fromStageColor', fs.color,
@@ -170,14 +172,15 @@ export class TimelineService {
             'toStageColor', ts.color
           ) AS event_data
         FROM deal_stage_history h
+        LEFT JOIN deals d ON d.id = h.deal_id AND d.tenant_id = h.tenant_id
         LEFT JOIN users u ON u.id = h.changed_by AND u.tenant_id = h.tenant_id
-        LEFT JOIN deal_stages fs ON fs.id = h.from_stage_id AND fs.tenant_id = h.tenant_id
-        LEFT JOIN deal_stages ts ON ts.id = h.to_stage_id AND ts.tenant_id = h.tenant_id
+        LEFT JOIN stages fs ON fs.id = h.from_stage_id
+        LEFT JOIN stages ts ON ts.id = h.to_stage_id
         WHERE h.tenant_id = $1
           AND (
-            ($2 = 'deal' AND h.deal_id = $3)
-            OR ($2 = 'contact' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3))
-            OR ($2 = 'company' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3))
+            ($2 = 'deal' AND h.deal_id = $3::uuid)
+            OR ($2 = 'contact' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.contact_id = $3::uuid))
+            OR ($2 = 'company' AND h.deal_id IN (SELECT d.id FROM deals d WHERE d.tenant_id = $1 AND d.company_id = $3::uuid))
           )
       ) stream
       ORDER BY created_at DESC

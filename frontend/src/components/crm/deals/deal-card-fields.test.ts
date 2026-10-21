@@ -41,19 +41,25 @@ describe("Поля карточки сделки", () => {
     // Прежде настройка предлагала два поля и «Компактно»; теперь — весь состав.
     expect(ids).toContain("company");
     expect(ids).toContain("contact");
+    expect(ids).toContain("tasks");
     expect(ids).toContain("owner");
     expect(ids).toContain("closeDate");
     expect(ids).toContain("stage");
-    expect(ids.length).toBeGreaterThanOrEqual(10);
+    expect(ids.length).toBeGreaterThanOrEqual(11);
     expect(ids).not.toContain("compact");
   });
 
-  it("умолчания повторяют прежний вид карточки", () => {
+  it("умолчания повторяют прежний вид карточки и включают подполя", () => {
     const defaults = defaultDealCardFields();
 
     expect(defaults.budget).toBe(true);
     expect(defaults.description).toBe(true);
+    expect(defaults.tasks).toBe(true);
     expect(defaults.closedAt).toBe(false);
+    expect(defaults.companyFields?.name).toBe(true);
+    expect(defaults.companyFields?.phone).toBe(true);
+    expect(defaults.contactFields?.name).toBe(true);
+    expect(defaults.contactFields?.jobTitle).toBe(true);
   });
 
   it("новое поле кода получает своё умолчание, а не «скрыто»", () => {
@@ -62,7 +68,10 @@ describe("Поля карточки сделки", () => {
 
     expect(normalized.budget).toBe(false);
     expect(normalized.company).toBe(true);
+    expect(normalized.tasks).toBe(true);
     expect(normalized.closedAt).toBe(false);
+    expect(normalized.companyFields?.name).toBe(true);
+    expect(normalized.contactFields?.name).toBe(true);
   });
 
   it("испорченная запись не ломает набор", () => {
@@ -74,6 +83,7 @@ describe("Поля карточки сделки", () => {
     const empty = deal();
 
     expect(hasDealFieldValue(empty, "company")).toBe(false);
+    expect(hasDealFieldValue(empty, "tasks")).toBe(false);
     expect(hasDealFieldValue(empty, "budget")).toBe(false);
     expect(hasDealFieldValue(empty, "description")).toBe(false);
     expect(hasDealFieldValue(empty, "closeDate")).toBe(false);

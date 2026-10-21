@@ -193,6 +193,14 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: messages, meta: { total: messages.length } });
   });
 
+  // Алиас для клиентов и фронтенд-чата: таймлайн сообщений сделки
+  app.get("/:id/timeline", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const messages = await service.listMessages(request.tenant_id, id);
+
+    return reply.send({ data: messages, meta: { total: messages.length } });
+  });
+
   /**
    * Ответ менеджера: запись в таймлайн **и** отправка в канал клиента.
    *

@@ -35,6 +35,7 @@ import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell, RecordCellEditor, RecordCellSelectEditor } from "@/components/crm/shared/RecordCell";
 import { TagPill } from "@/components/ui/tag";
 import { stageTagColor } from "@/components/crm/deals/stage-colors";
+import { CreatorCell } from "@/components/crm/shared/twenty-table-helpers";
 import { cn } from "@/lib/utils";
 
 interface DealListViewProps {
@@ -293,22 +294,19 @@ export function DealListView({ deals, columns, pipelineId, usersById, onOpenDeal
       id: "created",
       header: "Создано",
       icon: Clock,
-      width: 130,
+      width: 140,
       align: "left",
       sortValue: (deal) => deal.createdAt,
       render: (deal) => (
         <RecordCellShell align="left">
-          <span
-            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(deal.createdAt))}
-            className="flex items-center gap-1.5 text-[13px] text-[#111111]"
-          >
-            <Bot className="h-3.5 w-3.5 shrink-0 text-[#666666]" />
-            <span>
-              {deal.createdBy === "system" || !deal.createdBy
+          <CreatorCell
+            createdBy={deal.createdBy}
+            createdByName={
+              deal.createdBy === "system" || !deal.createdBy
                 ? "System"
-                : (usersById.get(deal.createdBy)?.fullName ?? deal.createdBy)}
-            </span>
-          </span>
+                : (usersById.get(deal.createdBy)?.fullName ?? deal.createdBy)
+            }
+          />
         </RecordCellShell>
       ),
     },

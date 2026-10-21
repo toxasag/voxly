@@ -115,11 +115,13 @@ export class ChannelsService {
     const row = await queryOne<{
       quantity: number | null;
       trial_ends_at: Date | string | null;
+      included_units: number;
       connected_count: string;
       total: string;
     }>(
       `SELECT i.quantity,
               i.trial_ends_at,
+              COALESCE(m.included_units, 0) AS included_units,
               (SELECT count(*)::text FROM channel_accounts c
                 WHERE c.tenant_id = $1 AND c.channel = $2
                   AND c.deleted_at IS NULL AND c.status = 'connected') AS connected_count,
@@ -127,11 +129,13 @@ export class ChannelsService {
                 WHERE c.tenant_id = $1 AND c.channel = $2
                   AND c.deleted_at IS NULL) AS total
        FROM installed_modules i
+       LEFT JOIN marketplace_modules m ON m.slug = i.slug
        WHERE i.tenant_id = $1 AND i.slug = $2`,
       [tenantId, channel],
     );
 
-    const trialEndsAt = toIso(row?.trial_ends_at ?? null);
+    const isFreeInPlan = (row?.included_units ?? 0) > 0;
+    const trialEndsAt = isFreeInPlan ? null : toIso(row?.trial_ends_at ?? null);
 
     return {
       channel,
@@ -139,9 +143,10 @@ export class ChannelsService {
       connectedCount: Number(row?.connected_count ?? 0),
       total: Number(row?.total ?? 0),
       trialEndsAt,
-      // Считается на сервере: часы браузера можно перевести, и клиент показал бы
-      // действующий пробный период после его окончания.
-      trialActive: trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
+      // Модули с постоянными бесплатными квотами входят в базовый тариф навсегда
+      trialActive: isFreeInPlan
+        ? false
+        : trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
     };
   }
 

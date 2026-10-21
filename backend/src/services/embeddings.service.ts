@@ -141,6 +141,8 @@ function parseEmbeddingResponse(
 // Реализация на OpenAI-совместимом шлюзе
 // ---------------------------------------------------------------------------
 
+import { platformConfigService } from "../modules/admin/platform-config.service.js";
+
 /** Таймаут одного вызова. Пачка из 32 фрагментов укладывается в единицы секунд. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -157,59 +159,78 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== undefined && this.apiKey !== undefined;
+    return platformConfigService.isLlmConfiguredSync();
   }
 
   async embed(inputs: readonly string[]): Promise<EmbeddingResult> {
-    if (this.baseUrl === undefined || this.apiKey === undefined) {
+    const config = await platformConfigService.getRotatedLlmConfig();
+    const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
+    const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
+    const activeModel = config?.embeddingModel || this.model;
+
+    if (!activeBaseUrl || keysToTry.length === 0) {
       throw new EmbeddingsUnavailableError(
-        "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору.",
+        "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору в панели управления.",
       );
     }
 
     if (inputs.length === 0) {
-      return { vectors: [], tokensUsed: 0, model: this.model };
+      return { vectors: [], tokensUsed: 0, model: activeModel };
     }
 
-    // Явный таймаут: без него зависший вызов шлюза держал бы HTTP-запрос
-    // пользователя до таймаута Fastify.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let lastError: Error | null = null;
 
-    try {
-      const response = await fetch(`${this.baseUrl}/embeddings`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ model: this.model, input: [...inputs] }),
-        signal: controller.signal,
-      });
+    for (let i = 0; i < keysToTry.length; i++) {
+      const activeApiKey = keysToTry[i];
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-      if (!response.ok) {
-        // Тело читается только для сообщения: наружу уходит код провайдера и
-        // краткая причина, без заголовков и ключа.
-        const text = await response.text().catch(() => "");
-        throw new EmbeddingsFailedError(
-          `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
-        );
+      try {
+        const response = await fetch(`${activeBaseUrl}/embeddings`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${activeApiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model: activeModel, input: [...inputs] }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => "");
+          const isRateLimit = response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit");
+
+          if (isRateLimit && i < keysToTry.length - 1) {
+            lastError = new EmbeddingsFailedError(`HTTP 429 на ключе #${i + 1}`);
+            continue;
+          }
+
+          throw new EmbeddingsFailedError(
+            `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
+          );
+        }
+
+        const parsed = parseEmbeddingResponse(await response.json(), inputs.length);
+
+        return {
+          vectors: parsed.vectors,
+          tokensUsed: parsed.tokensUsed,
+          model: parsed.model.length > 0 ? parsed.model : this.model,
+        };
+      } catch (error) {
+        if (error instanceof AppError && error.code === "EMBEDDINGS_FAILED" && error.message.includes("429") && i < keysToTry.length - 1) {
+          lastError = error;
+          continue;
+        }
+        if (error instanceof AppError) throw error;
+
+        const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+        throw new EmbeddingsFailedError(reason);
+      } finally {
+        clearTimeout(timeout);
       }
-
-      const parsed = parseEmbeddingResponse(await response.json(), inputs.length);
-
-      return {
-        vectors: parsed.vectors,
-        tokensUsed: parsed.tokensUsed,
-        model: parsed.model.length > 0 ? parsed.model : this.model,
-      };
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-
-      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
-      throw new EmbeddingsFailedError(reason);
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError || new EmbeddingsFailedError("Все API-ключи в пуле исчерпали лимиты запросов");
   }
 }

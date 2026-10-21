@@ -125,10 +125,21 @@ export interface DealRow {
    * сделок стоил бы 100 запросов.
    */
   company_name?: string | null;
+  company_phone?: string | null;
+  company_email?: string | null;
+  company_domain_name?: string | null;
+  company_city?: string | null;
   contact_first_name?: string | null;
   contact_last_name?: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+  contact_job_title?: string | null;
   owner_name?: string | null;
   latest_note_body?: string | null;
+  tasks_count?: string | number | null;
+  pending_tasks_count?: string | number | null;
+  next_task_title?: string | null;
+  next_task_due_date?: Date | string | null;
 }
 
 export interface DealDTO {
@@ -151,9 +162,20 @@ export interface DealDTO {
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
   companyName: string | null;
+  companyPhone?: string | null;
+  companyEmail?: string | null;
+  companyWebsite?: string | null;
+  companyCity?: string | null;
   contactName: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  contactJobTitle?: string | null;
   ownerName: string | null;
   latestNote: string | null;
+  tasksCount?: number;
+  pendingTasksCount?: number;
+  nextTaskTitle?: string | null;
+  nextTaskDueDate?: string | null;
 }
 
 function toIso(value: Date | string): string {
@@ -196,9 +218,20 @@ export function toDealDTO(row: DealRow): DealDTO {
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,
+    companyPhone: row.company_phone || null,
+    companyEmail: row.company_email || null,
+    companyWebsite: row.company_domain_name || null,
+    companyCity: row.company_city || null,
     contactName: joinName(row.contact_first_name, row.contact_last_name),
+    contactPhone: row.contact_phone || null,
+    contactEmail: row.contact_email || null,
+    contactJobTitle: row.contact_job_title || null,
     ownerName: row.owner_name ?? null,
     latestNote: row.latest_note_body ?? null,
+    tasksCount: Number(row.tasks_count ?? 0),
+    pendingTasksCount: Number(row.pending_tasks_count ?? 0),
+    nextTaskTitle: row.next_task_title || null,
+    nextTaskDueDate: toIsoOrNull(row.next_task_due_date ?? null),
   };
 }
 

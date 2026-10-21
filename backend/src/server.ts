@@ -8,6 +8,7 @@ import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js"
 import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
+import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -115,6 +116,17 @@ async function main(): Promise<void> {
   const transport = new TelegramTransportService(app.log);
   const stopTransport = transport.start();
 
+  // Регистрация исходящих сообщений через бота MAX
+  const unregisterMaxOutbound = registerOutboundSender("max", async (message) => {
+    const max = new MaxService();
+    if (!max.isConfigured) {
+      return { ok: false, reason: "MAX-бот не настроен на платформе" };
+    }
+    const res = await max.sendMessage(message.recipient, message.text);
+    if (res.ok) return { ok: true };
+    return { ok: false, reason: res.reason ?? "Неизвестная ошибка платформы MAX" };
+  });
+
   // Drain in-flight requests, then release DB connections.
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "Shutting down");
@@ -126,6 +138,7 @@ async function main(): Promise<void> {
       stopReminders();
       await shutdownWorker();
       stopTransport();
+      unregisterMaxOutbound();
       await app.close();
       await closePool();
       process.exit(0);
