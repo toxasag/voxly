@@ -19,11 +19,19 @@ import {
   Trash2,
   Upload,
   User,
+  Smile,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { useChannelAccounts, useUpdateChannelAccount } from "@/lib/api/use-channels";
+import {
+  InteractiveMascot,
+  AVAILABLE_MASCOTS,
+  type MascotId,
+} from "./InteractiveMascot";
+
+type WebchatAvatarType = "icon" | "photo" | "mascot";
 
 interface WebchatAppearanceSettingsProps {
   account: ChannelAccountDTO;
@@ -138,6 +146,15 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     initialCreds.position === "bottom-left" ? "bottom-left" : "bottom-right",
   );
 
+  // Тип аватара и маскота
+  const [avatarType, setAvatarType] = useState<WebchatAvatarType>(
+    (initialCreds.avatarType as WebchatAvatarType) ||
+      (initialCreds.consultantAvatar ? "photo" : "mascot")
+  );
+  const [mascotId, setMascotId] = useState<MascotId>(
+    (initialCreds.mascotId as MascotId) || "voxly_robot"
+  );
+
   // Консультант: фото и имя
   const [consultantName, setConsultantName] = useState<string>(
     typeof initialCreds.consultantName === "string" ? initialCreds.consultantName : "",
@@ -211,6 +228,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           telegramMode,
           consultantName: consultantName.trim(),
           consultantAvatar: consultantAvatar.trim(),
+          avatarType,
+          mascotId,
         },
       },
       {
@@ -377,157 +396,291 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             </div>
           </div>
 
-          {/* 3. Консультант чата (Фото и Имя) */}
+          {/* 3. Иконка и аватар виджета (Маскот / Фото / Иконка) */}
           <div className="space-y-4 rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
             <div className="flex items-center gap-2">
-              <User className="h-4 w-4 text-[#4a38f5]" />
+              <Smile className="h-4 w-4 text-[#4a38f5]" />
               <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
-                Консультант чата
+                Оформление кнопки и аватара
               </h2>
             </div>
             <p className="text-xs text-[#666666]">
-              Персонализируйте онлайн-чат: установите реальное фото и имя консультанта для повышения доверия посетителей сайта.
+              Выберите, как виджет выглядит на вашем сайте: живой 3D-маскот, фото реального менеджера или классическая лаконичная кнопка.
             </p>
 
-            {/* Фото консультанта */}
-            <div>
-              <label className="text-xs font-medium text-[#666666]">Фото консультанта (аватар)</label>
-              <div className="mt-2 flex items-center gap-4">
-                {/* Круглая миниатюра аватара */}
-                <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#e5e5e5] bg-[#f5f5f5] shadow-xs">
-                  {consultantAvatar ? (
-                    <img
-                      src={consultantAvatar}
-                      alt={consultantName || "Консультант"}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <User className="h-6 w-6 text-[#888888]" />
-                  )}
-                  {consultantAvatar && (
-                    <button
-                      type="button"
-                      onClick={() => setConsultantAvatar("")}
-                      className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 transition-opacity hover:opacity-100 cursor-pointer"
-                      title="Удалить фото"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
+            {/* Переключатель 3 вариантов */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setAvatarType("mascot")}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center transition-all cursor-pointer",
+                  avatarType === "mascot"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+                  <Bot className="h-5 w-5" />
+                </div>
+                <span className="text-xs font-semibold">3D-Маскот</span>
+                <span className="text-[10px] text-[#888888] leading-tight">Следит за курсором</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAvatarType("photo")}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center transition-all cursor-pointer",
+                  avatarType === "photo"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+                  <User className="h-5 w-5" />
+                </div>
+                <span className="text-xs font-semibold">Фото менеджера</span>
+                <span className="text-[10px] text-[#888888] leading-tight">Персональное доверие</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAvatarType("icon")}
+                className={cn(
+                  "flex flex-col items-center gap-1.5 rounded-xl border p-3 text-center transition-all cursor-pointer",
+                  avatarType === "icon"
+                    ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                    : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                )}
+              >
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
+                  <MessageSquare className="h-5 w-5" />
+                </div>
+                <span className="text-xs font-semibold">Классика</span>
+                <span className="text-[10px] text-[#888888] leading-tight">Минимализм иконки</span>
+              </button>
+            </div>
+
+            {/* Настройки для 3D-маскота */}
+            {avatarType === "mascot" && (
+              <div className="mt-3 space-y-3 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#111111]">
+                    Каталог интерактивных 3D-маскотов:
+                  </span>
+                  <span className="text-[11px] text-[#888888]">
+                    Подвигайте мышью над персонажем!
+                  </span>
                 </div>
 
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="file"
-                      ref={avatarFileInputRef}
-                      accept="image/*"
-                      onChange={handleAvatarFileSelect}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => avatarFileInputRef.current?.click()}
-                      disabled={isUploadingAvatar}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:border-[#cccccc] hover:bg-[#fafafa] transition-colors cursor-pointer"
-                    >
-                      {isUploadingAvatar ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
-                      ) : (
-                        <Upload className="h-3.5 w-3.5 text-[#666666]" />
-                      )}
-                      <span>Загрузить фото</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowAvatarUrlInput((v) => !v)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
-                    >
-                      <Link2 className="h-3.5 w-3.5 text-[#666666]" />
-                      <span>{showAvatarUrlInput ? "Скрыть URL" : "Указать ссылку"}</span>
-                    </button>
-
-                    {consultantAvatar && (
-                      <button
-                        type="button"
-                        onClick={() => setConsultantAvatar("")}
-                        className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 transition-colors p-1 cursor-pointer"
-                        title="Сбросить фото"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>Удалить</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {showAvatarUrlInput && (
-                    <div className="pt-1">
-                      <input
-                        type="text"
-                        value={consultantAvatar}
-                        onChange={(e) => setConsultantAvatar(e.target.value)}
-                        placeholder="https://example.com/avatar.jpg"
-                        className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
-                      />
-                    </div>
-                  )}
-
-                  <p className="text-[11px] text-[#888888]">
-                    PNG, JPG или WebP до 5 МБ. Изображение автоматически оптимизируется.
-                  </p>
-                </div>
-              </div>
-
-              {/* Готовые пресеты аватаров */}
-              <div className="mt-3 pt-3 border-t border-[#f0f0f0]">
-                <span className="text-[11px] font-medium text-[#888888]">Или выберите готовый аватар:</span>
-                <div className="mt-1.5 flex flex-wrap gap-2">
-                  {AVATAR_PRESETS.map((preset) => {
-                    const isSelected = consultantAvatar === preset.avatar;
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {AVAILABLE_MASCOTS.map((m) => {
+                    const isSelected = mascotId === m.id;
                     return (
-                      <button
-                        key={preset.name}
-                        type="button"
+                      <div
+                        key={m.id}
                         onClick={() => {
-                          setConsultantAvatar(preset.avatar);
+                          setMascotId(m.id);
                           if (!consultantName) {
-                            setConsultantName(preset.name);
+                            setConsultantName(m.name);
                           }
                         }}
                         className={cn(
-                          "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors cursor-pointer",
+                          "group relative flex flex-col items-center rounded-xl border p-3 transition-all cursor-pointer bg-white text-center",
                           isSelected
-                            ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] font-medium"
-                            : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                            ? "border-[#4a38f5] shadow-xs ring-2 ring-[#4a38f5]/20"
+                            : "border-[#e5e5e5] hover:border-[#cccccc] hover:shadow-2xs",
                         )}
                       >
-                        <img
-                          src={preset.avatar}
-                          alt={preset.name}
-                          className="h-5 w-5 rounded-full object-cover"
-                        />
-                        <span>{preset.name}</span>
-                        <span className="text-[10px] text-[#888888]">({preset.role})</span>
-                      </button>
+                        <span className="absolute top-2 right-2 rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[9px] font-medium text-[#666666]">
+                          {m.badge}
+                        </span>
+
+                        <div className="my-2">
+                          <InteractiveMascot
+                            mascotId={m.id}
+                            size={52}
+                            accentColor={accentColor}
+                            interactive={true}
+                          />
+                        </div>
+
+                        <span className="text-xs font-bold text-[#111111] group-hover:text-[#4a38f5]">
+                          {m.name}
+                        </span>
+                        <p className="mt-1 text-[10px] text-[#888888] leading-tight line-clamp-2">
+                          {m.description}
+                        </p>
+
+                        {isSelected && (
+                          <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
+                            <Check className="h-3 w-3 stroke-[3]" />
+                            <span>Выбран</span>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Имя консультанта */}
+            {/* Настройки для Фото менеджера */}
+            {avatarType === "photo" && (
+              <div className="mt-3 space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-4">
+                <div>
+                  <label className="text-xs font-medium text-[#666666]">Фото сотрудника (аватар)</label>
+                  <div className="mt-2 flex items-center gap-4">
+                    {/* Круглая миниатюра аватара */}
+                    <div className="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-[#e5e5e5] bg-white shadow-xs">
+                      {consultantAvatar ? (
+                        <img
+                          src={consultantAvatar}
+                          alt={consultantName || "Консультант"}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <User className="h-6 w-6 text-[#888888]" />
+                      )}
+                      {consultantAvatar && (
+                        <button
+                          type="button"
+                          onClick={() => setConsultantAvatar("")}
+                          className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 transition-opacity hover:opacity-100 cursor-pointer"
+                          title="Удалить фото"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="file"
+                          ref={avatarFileInputRef}
+                          accept="image/*"
+                          onChange={handleAvatarFileSelect}
+                          className="hidden"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => avatarFileInputRef.current?.click()}
+                          disabled={isUploadingAvatar}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] hover:border-[#cccccc] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                        >
+                          {isUploadingAvatar ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                          ) : (
+                            <Upload className="h-3.5 w-3.5 text-[#666666]" />
+                          )}
+                          <span>Загрузить своё фото</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowAvatarUrlInput((v) => !v)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] hover:bg-[#fafafa] transition-colors cursor-pointer"
+                        >
+                          <Link2 className="h-3.5 w-3.5 text-[#666666]" />
+                          <span>{showAvatarUrlInput ? "Скрыть URL" : "Указать ссылку"}</span>
+                        </button>
+
+                        {consultantAvatar && (
+                          <button
+                            type="button"
+                            onClick={() => setConsultantAvatar("")}
+                            className="inline-flex items-center gap-1 text-xs text-rose-600 hover:text-rose-700 transition-colors p-1 cursor-pointer"
+                            title="Сбросить фото"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Удалить</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {showAvatarUrlInput && (
+                        <div className="pt-1">
+                          <input
+                            type="text"
+                            value={consultantAvatar}
+                            onChange={(e) => setConsultantAvatar(e.target.value)}
+                            placeholder="https://example.com/avatar.jpg"
+                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
+                          />
+                        </div>
+                      )}
+
+                      <p className="text-[11px] text-[#888888]">
+                        PNG, JPG или WebP. Рекомендуется квадратное фото с чётким лицом.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Готовые пресеты аватаров */}
+                  <div className="mt-3 pt-3 border-t border-[#e5e5e5]">
+                    <span className="text-[11px] font-medium text-[#888888]">Или выберите пример сотрудника:</span>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {AVATAR_PRESETS.map((preset) => {
+                        const isSelected = consultantAvatar === preset.avatar;
+                        return (
+                          <button
+                            key={preset.name}
+                            type="button"
+                            onClick={() => {
+                              setConsultantAvatar(preset.avatar);
+                              if (!consultantName) {
+                                setConsultantName(preset.name);
+                              }
+                            }}
+                            className={cn(
+                              "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors cursor-pointer",
+                              isSelected
+                                ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] font-medium"
+                                : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                            )}
+                          >
+                            <img
+                              src={preset.avatar}
+                              alt={preset.name}
+                              className="h-5 w-5 rounded-full object-cover"
+                            />
+                            <span>{preset.name}</span>
+                            <span className="text-[10px] text-[#888888]">({preset.role})</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Имя консультанта / ассистента */}
             <div>
-              <label className="text-xs font-medium text-[#666666]">Имя консультанта</label>
+              <label className="text-xs font-medium text-[#666666]">
+                {avatarType === "mascot"
+                  ? "Имя маскота / ассистента"
+                  : avatarType === "photo"
+                  ? "Имя сотрудника"
+                  : "Название ассистента"}
+              </label>
               <input
                 type="text"
                 value={consultantName}
                 onChange={(e) => setConsultantName(e.target.value)}
-                placeholder="Например, Анна или Максим (Менеджер)"
+                placeholder={
+                  avatarType === "mascot"
+                    ? "Вокси (AI-помощник)"
+                    : avatarType === "photo"
+                    ? "Анна (Консультант)"
+                    : "Онлайн-консультант"
+                }
                 className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               />
               <p className="mt-1 text-[11px] text-[#888888]">
-                Отображается в шапке окна чата и перед сообщениями консультанта.
+                Отображается в шапке окна чата и перед сообщениями посетителям сайта.
               </p>
             </div>
           </div>
@@ -823,7 +976,14 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       <div className="flex items-center gap-2.5 min-w-0">
                         {/* Аватар консультанта */}
                         <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/15 overflow-hidden">
-                          {consultantAvatar ? (
+                          {avatarType === "mascot" ? (
+                            <InteractiveMascot
+                              mascotId={mascotId}
+                              size={32}
+                              accentColor={accentColor}
+                              interactive={false}
+                            />
+                          ) : avatarType === "photo" && consultantAvatar ? (
                             <img
                               src={consultantAvatar}
                               alt={consultantName || "Консультант"}
@@ -875,7 +1035,14 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                           className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white overflow-hidden shadow-xs"
                           style={{ backgroundColor: accentColor }}
                         >
-                          {consultantAvatar ? (
+                          {avatarType === "mascot" ? (
+                            <InteractiveMascot
+                              mascotId={mascotId}
+                              size={28}
+                              accentColor={accentColor}
+                              interactive={false}
+                            />
+                          ) : avatarType === "photo" && consultantAvatar ? (
                             <img
                               src={consultantAvatar}
                               alt={consultantName || "Консультант"}
@@ -940,18 +1107,62 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 )}
 
                 {/* Плавающая кнопка вызова виджета */}
-                <button
-                  type="button"
-                  onClick={() => setPreviewOpen(!previewOpen)}
-                  className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                  style={{ backgroundColor: accentColor }}
-                >
-                  {previewOpen ? (
+                {previewOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(false)}
+                    className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+                    style={{ backgroundColor: accentColor }}
+                    title="Закрыть чат"
+                  >
                     <X className="h-6 w-6 stroke-[2.5]" />
-                  ) : (
+                  </button>
+                ) : avatarType === "mascot" ? (
+                  <div
+                    onClick={() => setPreviewOpen(true)}
+                    className="group relative flex h-16 w-16 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 cursor-pointer"
+                    style={{
+                      filter: `drop-shadow(0 10px 20px ${accentColor}40)`,
+                    }}
+                    title="Нажмите, чтобы открыть чат"
+                  >
+                    <InteractiveMascot
+                      mascotId={mascotId}
+                      size={60}
+                      accentColor={accentColor}
+                      interactive={true}
+                      onClick={() => setPreviewOpen(true)}
+                    />
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs">
+                      1
+                    </span>
+                  </div>
+                ) : avatarType === "photo" && consultantAvatar ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(true)}
+                    className="group relative flex h-14 w-14 items-center justify-center rounded-full overflow-hidden border-2 border-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+                    style={{ backgroundColor: accentColor }}
+                    title="Нажмите, чтобы написать консультанту"
+                  >
+                    <img
+                      src={consultantAvatar}
+                      alt={consultantName || "Консультант"}
+                      className="h-full w-full object-cover"
+                    />
+                    <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow-xs" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(true)}
+                    className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+                    style={{ backgroundColor: accentColor }}
+                    title="Открыть чат"
+                  >
                     <MessageSquare className="h-6 w-6 stroke-[2.5]" />
-                  )}
-                </button>
+                  </button>
+                )}
               </div>
             </div>
           </div>
