@@ -59,7 +59,7 @@ export function CompanyDrawerCard({
   const [generalOpen, setGeneralOpen] = useState(true);
   const [workOpen, setWorkOpen] = useState(true);
   const [contactOpen, setContactOpen] = useState(true);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
 
   // Значения полей
   const [name, setName] = useState("");

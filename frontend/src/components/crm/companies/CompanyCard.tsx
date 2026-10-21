@@ -211,7 +211,7 @@ export const CompanyCard = memo(function CompanyCard({
         />
       </RecordFieldGroup>
 
-      <RecordFieldGroup title="Система">
+      <RecordFieldGroup title="Система" defaultExpanded={false}>
         <RecordField
           icon={CalendarClock}
           label="Создана"

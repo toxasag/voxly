@@ -95,7 +95,7 @@ export function DrawerCreateCompany({
   const [generalOpen, setGeneralOpen] = useState(true);
   const [businessOpen, setBusinessOpen] = useState(true);
   const [contactOpen, setContactOpen] = useState(true);
-  const [systemOpen, setSystemOpen] = useState(true);
+  const [systemOpen, setSystemOpen] = useState(false);
 
   // Owner picker
   const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
