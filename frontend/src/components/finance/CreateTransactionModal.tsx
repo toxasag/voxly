@@ -18,11 +18,11 @@ import {
   type CreateTransactionPayload,
 } from "@/schemas/finance.schema";
 import {
-  MOCK_ACCOUNTS,
   INCOME_CATEGORIES,
   EXPENSE_CATEGORIES,
-} from "@/lib/finance/mock-finance";
-import type { AccountType } from "@/lib/finance/finance.types";
+  type AccountType,
+} from "@/lib/finance/finance.types";
+import { useAccounts } from "@/lib/api/use-invoices";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -43,8 +43,11 @@ export function CreateTransactionModal({
   open,
   onClose,
   onSubmit,
-  accounts = MOCK_ACCOUNTS,
+  accounts: propAccounts,
 }: CreateTransactionModalProps) {
+  const { data: apiAccounts = [] } = useAccounts();
+  const accounts = propAccounts ?? apiAccounts;
+
   const form = useForm<CreateTransactionPayload>({
     resolver: zodResolver(createTransactionSchema),
     defaultValues: {

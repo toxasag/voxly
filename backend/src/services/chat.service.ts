@@ -1,5 +1,6 @@
 import { getEnv } from "../config/env.js";
 import { AppError } from "../plugins/errorHandler.js";
+import { platformConfigService } from "../modules/admin/platform-config.service.js";
 
 // ---------------------------------------------------------------------------
 // Слой абстракции чат-вызовов LLM (`.cursorrules` §1: без прямого `fetch` к
@@ -134,7 +135,7 @@ export class GatewayChatProvider implements ChatProvider {
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== undefined && this.apiKey !== undefined;
+    return platformConfigService.isLlmConfiguredSync();
   }
 
   async complete(input: {
@@ -144,7 +145,11 @@ export class GatewayChatProvider implements ChatProvider {
     maxTokens?: number;
     jsonMode?: boolean;
   }): Promise<ChatCompletionResult> {
-    if (this.baseUrl === undefined || this.apiKey === undefined) {
+    const effective = await platformConfigService.getEffectiveIntegrations();
+    const activeBaseUrl = (effective.llm.baseUrl?.trim() || this.baseUrl)?.replace(/\/+$/, "");
+    const activeApiKey = effective.llm.apiKey?.trim() || this.apiKey;
+
+    if (!activeBaseUrl || !activeApiKey) {
       throw new ChatUnavailableError();
     }
 
@@ -156,10 +161,10 @@ export class GatewayChatProvider implements ChatProvider {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      const response = await fetch(`${activeBaseUrl}/chat/completions`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.apiKey}`,
+          Authorization: `Bearer ${activeApiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
