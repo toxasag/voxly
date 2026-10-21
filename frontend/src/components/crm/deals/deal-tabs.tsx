@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
+  Briefcase,
   Building2,
   Calendar,
   Check,
@@ -10,10 +11,13 @@ import {
   ChevronUp,
   CircleSlash,
   DollarSign,
+  Globe,
   Handshake,
   ListChecks,
+  Mail,
   Paperclip,
   Pencil,
+  Phone,
   Plus,
   User,
   UserCircle2,
@@ -23,7 +27,6 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
-import { useTasks } from "@/lib/api/use-tasks";
 import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
@@ -33,6 +36,7 @@ import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany"
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
+import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -145,8 +149,11 @@ function HomeTab({
   onRequestCreateContact?: () => void;
 }) {
   const [dealOpen, setDealOpen] = useState(true);
-  const [relationsOpen, setRelationsOpen] = useState(true);
+  const [relationsOpen, setRelationsOpen] = useState(false);
   const [systemOpen, setSystemOpen] = useState(true);
+  const [contactCardOpen, setContactCardOpen] = useState(true);
+  const [companyCardOpen, setCompanyCardOpen] = useState(true);
+  const [ownerCardOpen, setOwnerCardOpen] = useState(true);
 
   // Редактирование суммы
   const [isEditingBudget, setIsEditingBudget] = useState(false);
@@ -172,6 +179,16 @@ function HomeTab({
   const creator = usersById.get(deal.createdBy);
   const pipelineName = pipelines?.find((pipeline) => pipeline.id === deal.pipelineId)?.name;
   const stage = stagesById?.get(deal.stageId);
+
+  const linkedContact = contactsQuery.data?.items.find((c) => c.id === deal.contactId);
+  const contactPhone = deal.contactPhone || (linkedContact?.phones?.[0]?.number ?? null);
+  const contactEmail = deal.contactEmail || linkedContact?.email || null;
+  const contactJobTitle = deal.contactJobTitle || linkedContact?.jobTitle || null;
+
+  const linkedCompany = companiesQuery.data?.items.find((c) => c.id === deal.companyId);
+  const companyPhone = deal.companyPhone || linkedCompany?.phone || null;
+  const companyEmail = deal.companyEmail || linkedCompany?.email || null;
+  const companyWebsite = deal.companyWebsite || linkedCompany?.domainName || null;
 
   const dateOnly = (iso: string): string =>
     new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(iso));
@@ -908,7 +925,15 @@ function HomeTab({
       {/* Separate Relation Cards with Pencil Edit Icon (matches Twenty Screenshot 2) */}
       <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Контактное лицо</span>
+          <button
+            type="button"
+            title="Свернуть / развернуть блок «Контактное лицо»"
+            onClick={() => setContactCardOpen((prev) => !prev)}
+            className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+          >
+            <span>Контактное лицо</span>
+            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !contactCardOpen && "rotate-180")} />
+          </button>
           <button
             type="button"
             title="Редактировать контактное лицо"
@@ -919,26 +944,63 @@ function HomeTab({
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            title={deal.contactName !== null && deal.contactName !== "" ? `Контакт: ${deal.contactName}` : "Выбрать контактное лицо"}
-            onClick={() => openPicker("contact", "card")}
-            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-          >
-            {deal.contactName !== null && deal.contactName !== "" ? (
-              <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
-            ) : (
-              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+        {contactCardOpen && (
+          <div className="relative space-y-1.5">
+            <button
+              type="button"
+              title={deal.contactName !== null && deal.contactName !== "" ? `Контакт: ${deal.contactName}` : "Выбрать контактное лицо"}
+              onClick={() => openPicker("contact", "card")}
+              className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+            >
+              {deal.contactName !== null && deal.contactName !== "" ? (
+                <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+              ) : (
+                <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+              )}
+            </button>
+            {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
+
+            {(contactJobTitle || contactPhone || contactEmail) && (
+              <div className="mt-1 space-y-1 pl-0.5 text-xs text-[#666666]">
+                {contactJobTitle && (
+                  <div className="flex items-center gap-1.5 text-[#666666]">
+                    <Briefcase className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span>{contactJobTitle}</span>
+                  </div>
+                )}
+                {contactPhone && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
+                    <a href={`tel:${contactPhone}`} className="hover:text-[#4a38f5] transition-colors">
+                      {contactPhone}
+                    </a>
+                  </div>
+                )}
+                {contactEmail && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
+                    <a href={`mailto:${contactEmail}`} className="hover:text-[#4a38f5] transition-colors truncate">
+                      {contactEmail}
+                    </a>
+                  </div>
+                )}
+              </div>
             )}
-          </button>
-          {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Компания</span>
+          <button
+            type="button"
+            title="Свернуть / развернуть блок «Компания»"
+            onClick={() => setCompanyCardOpen((prev) => !prev)}
+            className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+          >
+            <span>Компания</span>
+            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !companyCardOpen && "rotate-180")} />
+          </button>
           <button
             type="button"
             title="Редактировать компанию"
@@ -949,26 +1011,63 @@ function HomeTab({
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            title={deal.companyName !== null && deal.companyName !== "" ? `Компания: ${deal.companyName}` : "Выбрать компанию"}
-            onClick={() => openPicker("company", "card")}
-            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-          >
-            {deal.companyName !== null && deal.companyName !== "" ? (
-              <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
-            ) : (
-              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+        {companyCardOpen && (
+          <div className="relative space-y-1.5">
+            <button
+              type="button"
+              title={deal.companyName !== null && deal.companyName !== "" ? `Компания: ${deal.companyName}` : "Выбрать компанию"}
+              onClick={() => openPicker("company", "card")}
+              className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+            >
+              {deal.companyName !== null && deal.companyName !== "" ? (
+                <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+              ) : (
+                <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+              )}
+            </button>
+            {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
+
+            {(companyPhone || companyEmail || companyWebsite) && (
+              <div className="mt-1 space-y-1 pl-0.5 text-xs text-[#666666]">
+                {companyPhone && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Phone className="h-3 w-3 text-[#888888] shrink-0" />
+                    <a href={`tel:${companyPhone}`} className="hover:text-[#4a38f5] transition-colors">
+                      {companyPhone}
+                    </a>
+                  </div>
+                )}
+                {companyEmail && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Mail className="h-3 w-3 text-[#888888] shrink-0" />
+                    <a href={`mailto:${companyEmail}`} className="hover:text-[#4a38f5] transition-colors truncate">
+                      {companyEmail}
+                    </a>
+                  </div>
+                )}
+                {companyWebsite && (
+                  <div className="flex items-center gap-1.5 text-[#555555]">
+                    <Globe className="h-3 w-3 text-[#888888] shrink-0" />
+                    <span className="truncate">{companyWebsite}</span>
+                  </div>
+                )}
+              </div>
             )}
-          </button>
-          {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4 pb-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[#111111]">Владелец</span>
+          <button
+            type="button"
+            title="Свернуть / развернуть блок «Владелец»"
+            onClick={() => setOwnerCardOpen((prev) => !prev)}
+            className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+          >
+            <span>Владелец</span>
+            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !ownerCardOpen && "rotate-180")} />
+          </button>
           <button
             type="button"
             title="Редактировать ответственного"
@@ -979,26 +1078,28 @@ function HomeTab({
             <Pencil className="h-3.5 w-3.5" />
           </button>
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            title={owner !== undefined ? `Ответственный: ${owner.fullName}` : deal.ownerName ? `Ответственный: ${deal.ownerName}` : "Выбрать ответственного"}
-            onClick={() => openPicker("owner", "card")}
-            className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-          >
-            {owner !== undefined ? (
-              <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-                <UserAvatar user={owner} fallbackLabel="?" size="sm" />
-                <span>{owner.fullName}</span>
-              </span>
-            ) : deal.ownerName !== null && deal.ownerName !== "" ? (
-              <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
-            ) : (
-              <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-            )}
-          </button>
-          {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
-        </div>
+        {ownerCardOpen && (
+          <div className="relative">
+            <button
+              type="button"
+              title={owner !== undefined ? `Ответственный: ${owner.fullName}` : deal.ownerName ? `Ответственный: ${deal.ownerName}` : "Выбрать ответственного"}
+              onClick={() => openPicker("owner", "card")}
+              className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+            >
+              {owner !== undefined ? (
+                <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
+                  <UserAvatar user={owner} fallbackLabel="?" size="sm" />
+                  <span>{owner.fullName}</span>
+                </span>
+              ) : deal.ownerName !== null && deal.ownerName !== "" ? (
+                <EntityChip name={deal.ownerName} label={deal.ownerName} size="sm" />
+              ) : (
+                <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+              )}
+            </button>
+            {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
+          </div>
+        )}
       </div>
 
       <Sheet
@@ -1051,43 +1152,6 @@ function HomeTab({
   );
 }
 
-function TasksTab({ dealId }: { dealId: string }) {
-  const tasks = useTasks({ limit: 50 });
-
-  const dealTasks = tasks.data?.items.filter((t) => t.dealId === dealId || t.linkedEntityId === dealId) ?? [];
-
-  return (
-    <div className="px-5 py-4">
-      {tasks.isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-        </div>
-      ) : dealTasks.length === 0 ? (
-        <EmptyState icon={ListChecks} title="Задач нет" description="Связанные с этой сделкой задачи появятся здесь" />
-      ) : (
-        <div className="space-y-2">
-          {dealTasks.map((task) => (
-            <div key={task.id} className="rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-[#111111]">{task.title}</p>
-                <span className={cn(
-                  "rounded-full border px-2 py-0.5 text-xs font-medium",
-                  task.status === "done" && "border-emerald-200 bg-emerald-50 text-emerald-700",
-                  task.status === "in_progress" && "border-amber-200 bg-amber-50 text-amber-700",
-                  task.status === "todo" && "border-slate-200 bg-slate-100 text-slate-700",
-                )}>
-                  {task.status === "done" ? "Выполнено" : task.status === "in_progress" ? "В работе" : "К выполнению"}
-                </span>
-              </div>
-              {task.dueDate && <p className="mt-1 text-xs text-[#888888]">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FilesTab() {
   return (
     <div className="px-5 py-4">
@@ -1132,7 +1196,15 @@ export function dealTabContents(
       </Guard>
     ),
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
-    tasks: <TasksTab dealId={deal.id} />,
+    tasks: (
+      <RecordTasksTab
+        targetType="deal"
+        targetId={deal.id}
+        dealId={deal.id}
+        contactId={deal.contactId}
+        companyId={deal.companyId}
+      />
+    ),
     notes: <RecordNotesTab targetType="deal" targetId={deal.id} />,
     files: <FilesTab />,
   };

@@ -104,8 +104,11 @@ export function DrawerCreateDeal({
   const [ownerId, setOwnerId] = useState<string | null>(null);
 
   const [dealOpen, setDealOpen] = useState(true);
-  const [relationsOpen, setRelationsOpen] = useState(true);
+  const [relationsOpen, setRelationsOpen] = useState(false);
   const [systemOpen, setSystemOpen] = useState(true);
+  const [contactCardOpen, setContactCardOpen] = useState(true);
+  const [companyCardOpen, setCompanyCardOpen] = useState(true);
+  const [ownerCardOpen, setOwnerCardOpen] = useState(true);
 
   const [activePicker, setActivePicker] = useState<"stage" | "company" | "contact" | "owner" | null>(null);
   const [pickerAnchor, setPickerAnchor] = useState<"row" | "card">("row");
@@ -987,86 +990,122 @@ export function DrawerCreateDeal({
                 {/* Lower Separate Relation Cards with Pencil Edit Icon */}
                 <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-[#111111]">Контактное лицо</span>
                     <button
                       type="button"
+                      title="Свернуть / развернуть блок «Контактное лицо»"
+                      onClick={() => setContactCardOpen((prev) => !prev)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      <span>Контактное лицо</span>
+                      <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !contactCardOpen && "rotate-180")} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Редактировать контактное лицо"
+                      aria-label="Редактировать контактное лицо"
                       onClick={() => openPicker("contact", "card")}
                       className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => openPicker("contact", "card")}
-                      className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-                    >
-                      {contactName ? (
-                        <EntityChip name={contactName} label={contactName} size="sm" />
-                      ) : (
-                        <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-                      )}
-                    </button>
-                    {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
-                  </div>
+                  {contactCardOpen && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => openPicker("contact", "card")}
+                        className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+                      >
+                        {contactName ? (
+                          <EntityChip name={contactName} label={contactName} size="sm" />
+                        ) : (
+                          <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                        )}
+                      </button>
+                      {activePicker === "contact" && pickerAnchor === "card" && renderContactPicker()}
+                    </div>
+                  )}
                 </div>
 
                 <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-[#111111]">Компания</span>
                     <button
                       type="button"
+                      title="Свернуть / развернуть блок «Компания»"
+                      onClick={() => setCompanyCardOpen((prev) => !prev)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      <span>Компания</span>
+                      <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !companyCardOpen && "rotate-180")} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Редактировать компанию"
+                      aria-label="Редактировать компанию"
                       onClick={() => openPicker("company", "card")}
                       className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => openPicker("company", "card")}
-                      className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-                    >
-                      {companyName ? (
-                        <EntityChip name={companyName} label={companyName} icon={Building2} size="sm" />
-                      ) : (
-                        <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-                      )}
-                    </button>
-                    {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
-                  </div>
+                  {companyCardOpen && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => openPicker("company", "card")}
+                        className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+                      >
+                        {companyName ? (
+                          <EntityChip name={companyName} label={companyName} icon={Building2} size="sm" />
+                        ) : (
+                          <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                        )}
+                      </button>
+                      {activePicker === "company" && pickerAnchor === "card" && renderCompanyPicker()}
+                    </div>
+                  )}
                 </div>
 
                 <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4 pb-4">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-[#111111]">Владелец</span>
                     <button
                       type="button"
+                      title="Свернуть / развернуть блок «Владелец»"
+                      onClick={() => setOwnerCardOpen((prev) => !prev)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      <span>Владелец</span>
+                      <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !ownerCardOpen && "rotate-180")} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Редактировать ответственного"
+                      aria-label="Редактировать ответственного"
                       onClick={() => openPicker("owner", "card")}
                       className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => openPicker("owner", "card")}
-                      className="text-left cursor-pointer hover:opacity-85 transition-opacity"
-                    >
-                      {selectedOwner ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
-                          <UserAvatar user={selectedOwner} fallbackLabel="?" size="sm" />
-                          <span>{selectedOwner.fullName}</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
-                      )}
-                    </button>
-                    {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
-                  </div>
+                  {ownerCardOpen && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => openPicker("owner", "card")}
+                        className="text-left cursor-pointer hover:opacity-85 transition-opacity"
+                      >
+                        {selectedOwner ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-[#111111]">
+                            <UserAvatar user={selectedOwner} fallbackLabel="?" size="sm" />
+                            <span>{selectedOwner.fullName}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] select-none">-</span>
+                        )}
+                      </button>
+                      {activePicker === "owner" && pickerAnchor === "card" && renderOwnerPicker()}
+                    </div>
+                  )}
                 </div>
               </TabsContent>
 

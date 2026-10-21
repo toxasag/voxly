@@ -68,6 +68,9 @@ export interface CreateTaskPayload {
   assignee_id: string;
   linked_entity_type?: LinkedEntityType | "";
   linked_entity_id?: string;
+  deal_id?: string | null;
+  contact_id?: string | null;
+  company_id?: string | null;
 }
 
 export interface UpdateTaskPayload {
@@ -86,6 +89,9 @@ export interface UpdateTaskPayload {
    */
   linked_entity_type?: LinkedEntityType | "";
   linked_entity_id?: string;
+  deal_id?: string | null;
+  contact_id?: string | null;
+  company_id?: string | null;
 }
 
 const BASE = "/api/v1/crm/tasks";
