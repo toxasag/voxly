@@ -9,7 +9,16 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, Columns3, GripVertical, Plus, Search, Settings } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Columns3,
+  GripVertical,
+  Plus,
+  Search,
+  Settings,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   RECORD_TABLE_CHECKBOX_WIDTH,
@@ -651,7 +660,7 @@ export function RecordTable<T>({
           >
             {/* Заголовок */}
             <div
-              className="grid border-b border-[#e5e5e5] bg-white text-xs font-medium uppercase normal-case text-[#666666]"
+              className="grid border-b border-[#e5e5e5] bg-white text-[12px] font-medium text-[#666666] select-none"
               style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
             >
               {selectionEnabled && (
@@ -661,7 +670,7 @@ export function RecordTable<T>({
                     checked={allSelected}
                     onChange={toggleAll}
                     aria-label="Выбрать все"
-                    className="h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111]"
+                    className="h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] cursor-pointer"
                   />
                 </div>
               )}
@@ -692,7 +701,7 @@ export function RecordTable<T>({
                   }}
                   onDragEnd={() => { setDragColumnId(null); setDropColumnId(null); }}
                   className={cn(
-                    "group relative flex items-center overflow-hidden border-r border-[#e5e5e5] pl-2.5 pr-1 text-xs font-medium text-[#666666] bg-white transition-colors",
+                    "group relative flex items-center overflow-hidden border-r border-[#e5e5e5] px-2.5 text-[12px] font-medium text-[#666666] bg-white transition-colors",
                     index === 0 && "sticky z-20 bg-white border-r border-[#e5e5e5]",
                     column.align === "right" && "justify-end",
                     dragColumnId === column.id && "opacity-40",
@@ -716,8 +725,8 @@ export function RecordTable<T>({
                         }
                       }}
                       className={cn(
-                        "flex min-w-0 items-center gap-1 truncate transition-colors hover:text-[#111111]",
-                        sortColumn === column.id && "text-[#111111] font-semibold",
+                        "flex min-w-0 items-center gap-1.5 truncate text-[12px] font-medium transition-colors hover:text-[#111111] cursor-pointer",
+                        sortColumn === column.id ? "text-[#111111]" : "text-[#666666]",
                       )}
                     >
                       {/*
@@ -727,19 +736,21 @@ export function RecordTable<T>({
                         что таблица отсортирована.
                       */}
                       {column.icon && !(index === 0 && identifierCollapsed) && (
-                        <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                        <column.icon className="h-3.5 w-3.5 shrink-0 text-[#737373]" />
                       )}
                       {!(index === 0 && identifierCollapsed) && (
                         <span className="truncate">{column.header}</span>
                       )}
-                      <span className={cn("text-xs", sortColumn === column.id ? "text-[#111111]" : "opacity-0 group-hover:opacity-40")}>
-                        {sortColumn === column.id && sortAsc ? "▲" : "▼"}
-                      </span>
+                      {sortColumn === column.id && (
+                        <span className="shrink-0 text-[#111111]">
+                          {sortAsc ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </span>
+                      )}
                     </button>
                   ) : (
                     !(index === 0 && identifierCollapsed) && (
-                      <span className="flex items-center gap-1 truncate">
-                        {column.icon && <column.icon className="mr-1.5 h-3.5 w-3.5 shrink-0 text-[#888888]" />}
+                      <span className="flex min-w-0 items-center gap-1.5 truncate text-[12px] font-medium text-[#666666]">
+                        {column.icon && <column.icon className="h-3.5 w-3.5 shrink-0 text-[#737373]" />}
                         <span className="truncate">{column.header}</span>
                       </span>
                     )
@@ -789,7 +800,7 @@ export function RecordTable<T>({
                   key={id}
                   onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                   className={cn(
-                    "group grid border-b border-[#e5e5e5] text-sm text-[#111111] transition-colors",
+                    "group grid border-b border-[#e5e5e5] text-[13px] text-[#111111] transition-colors",
                     isSelected
                       ? "bg-[#f0f9ff] shadow-[inset_2px_0_0_#3b82f6]"
                       : isRowFocused
@@ -810,7 +821,7 @@ export function RecordTable<T>({
                         onChange={() => toggleOne(id)}
                         aria-label="Выбрать строку"
                         className={cn(
-                          "h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] transition-opacity",
+                          "h-3.5 w-3.5 rounded-[4px] border border-[#d1d5db] text-[#111111] accent-[#111111] transition-opacity cursor-pointer",
                           isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
                         )}
                       />
