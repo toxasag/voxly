@@ -2,14 +2,18 @@
 
 import { memo, useCallback, useMemo, useState } from "react";
 import {
-  Briefcase, Building2, CalendarClock, GitMerge, Linkedin, Mail, MessageCircle,
-  Phone, Radio, Star, Tag, UserCircle2, UserRound, AlertTriangle,
+  Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
+  GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
+  Phone, Plus, Radio, Star, Tag, UserCircle2, UserRound, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
+import { useCompanies, useCompany, useUpdateCompany } from "@/lib/api/use-companies";
 import { ContactMergeModal } from "@/components/crm/contacts/ContactMergeModal";
-import { EntityChip } from "@/components/crm/shared/EntityChip";
+import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
 import { TagPill } from "@/components/ui/tag";
+import { Sheet } from "@/components/ui/sheet";
+import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
 import {
   RecordField,
   RecordFieldGroup,
@@ -29,7 +33,7 @@ import { SocialsInput } from "@/components/crm/shared/SocialsInput";
 import type { ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
 import { socialHref, socialLabel } from "@/lib/crm/socials";
 import { formatPhone, telHref } from "@/lib/utils/phone";
-import { timeAgo } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
@@ -119,6 +123,154 @@ export const ContactCard = memo(function ContactCard({
    */
   const [phoneDraft, setPhoneDraft] = useState<ContactPhoneInput[]>([]);
   const [socialDraft, setSocialDraft] = useState<ContactSocialInput[]>([]);
+
+  const companiesQuery = useCompanies({ limit: 100 });
+  const linkedCompanyQuery = useCompany(contact.companyId);
+  const fullLinkedCompany = linkedCompanyQuery.data ?? companiesQuery.data?.items.find((c) => c.id === contact.companyId);
+  const updateCompany = useUpdateCompany();
+
+  const [companyCardOpen, setCompanyCardOpen] = useState(true);
+  const [activePicker, setActivePicker] = useState<"company" | null>(null);
+  const [pickerAnchor, setPickerAnchor] = useState<"row" | "card">("card");
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [createCompanyOpen, setCreateCompanyOpen] = useState(false);
+
+  const [editingCompanyField, setEditingCompanyField] = useState<"phone" | "email" | "domain" | null>(null);
+  const [companyFieldDraft, setCompanyFieldDraft] = useState("");
+
+  const companyPhone = fullLinkedCompany?.phone ?? null;
+  const companyEmail = fullLinkedCompany?.email ?? null;
+  const companyWebsite = fullLinkedCompany?.domainName ?? null;
+
+  const commitCompanyEdit = (field: "phone" | "email" | "domain") => {
+    if (!contact.companyId) {
+      setEditingCompanyField(null);
+      return;
+    }
+    const val = companyFieldDraft.trim();
+    if (field === "phone") {
+      updateCompany.mutate(
+        { id: contact.companyId, payload: { phone: val } },
+        {
+          onSuccess: () => toast.success("Телефон компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления"),
+        }
+      );
+    } else if (field === "email") {
+      updateCompany.mutate(
+        { id: contact.companyId, payload: { email: val } },
+        {
+          onSuccess: () => toast.success("Email компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления"),
+        }
+      );
+    } else if (field === "domain") {
+      updateCompany.mutate(
+        { id: contact.companyId, payload: { domain_name: val } },
+        {
+          onSuccess: () => toast.success("Сайт компании обновлен"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления"),
+        }
+      );
+    }
+    setEditingCompanyField(null);
+  };
+
+  const filteredCompanies = useMemo(() => {
+    const list = companiesQuery.data?.items ?? [];
+    if (!pickerSearch.trim()) return list;
+    const q = pickerSearch.toLowerCase();
+    return list.filter((c) => c.name.toLowerCase().includes(q));
+  }, [companiesQuery.data?.items, pickerSearch]);
+
+  const openCompanyPicker = (anchor: "row" | "card") => {
+    setActivePicker("company");
+    setPickerAnchor(anchor);
+    setPickerSearch("");
+  };
+
+  const renderCompanyPicker = () => (
+    <>
+      <div className="fixed inset-0 z-30 cursor-default" onClick={() => setActivePicker(null)} />
+      <div className="absolute left-0 top-full z-40 mt-1 w-64 rounded-[8px] border border-[#e5e5e5] bg-white p-1.5 shadow-xl">
+        <div className="px-2 py-1.5 border-b border-[#f0f0f0] mb-1">
+          <input
+            type="text"
+            placeholder="Поиск"
+            value={pickerSearch}
+            onChange={(e) => setPickerSearch(e.target.value)}
+            className="w-full text-xs text-[#111111] placeholder:text-[#888888] bg-transparent outline-none py-0.5"
+            autoFocus
+          />
+        </div>
+        <div className="max-h-56 overflow-y-auto space-y-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              commit({ company_id: "", company_name: "" });
+              setActivePicker(null);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+              !contact.companyId && !contact.companyName && "bg-[#f5f5f5] font-medium",
+            )}
+          >
+            <div className="flex items-center gap-2 truncate">
+              <CircleSlash className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+              <span>Нет Компания</span>
+            </div>
+            {!contact.companyId && !contact.companyName && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+          </button>
+          {filteredCompanies.map((comp) => {
+            const isSelected = comp.id === contact.companyId;
+            return (
+              <button
+                key={comp.id}
+                type="button"
+                onClick={() => {
+                  if (comp.id !== contact.companyId) {
+                    commit({ company_id: comp.id, company_name: comp.name });
+                  }
+                  setActivePicker(null);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[6px] px-2 py-1.5 text-xs text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer",
+                  isSelected && "bg-[#f5f5f5] font-medium",
+                )}
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <span
+                    className={cn(
+                      "flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border font-bold text-[9px]",
+                      paletteFor(comp.name),
+                    )}
+                  >
+                    {chipInitials(comp.name)}
+                  </span>
+                  <span className="truncate">{comp.name}</span>
+                </div>
+                {isSelected && <Check className="h-3.5 w-3.5 text-[#111111] shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+        <div className="border-t border-[#f0f0f0] pt-1 mt-1">
+          <button
+            type="button"
+            title="Добавить новую компанию"
+            onClick={() => {
+              setActivePicker(null);
+              setCreateCompanyOpen(true);
+            }}
+            className="flex w-full items-center gap-2 rounded-[6px] px-2 py-1.5 text-xs text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            <span>Добавить новый</span>
+          </button>
+        </div>
+      </div>
+    </>
+  );
 
   const commit = useCallback(
     (payload: Parameters<typeof update.mutate>[0]["payload"]) => {
@@ -352,35 +504,57 @@ export const ContactCard = memo(function ContactCard({
 
       {/* 4. Работа */}
       <RecordFieldGroup title="Работа">
-        <RecordField
-          icon={Building2}
-          label="Компания"
-          value={contact.companyName}
-          display={contact.companyName !== ""
-            ? (
-              <span className="inline-flex min-w-0 items-center">
-                {contact.companyId !== null && onOpenCompany !== undefined ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenCompany(contact.companyId as string);
-                    }}
-                    className="inline-flex min-w-0 items-center rounded hover:underline cursor-pointer"
-                  >
-                    <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-                  </button>
-                ) : (
+        <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
+          <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+            <span className="truncate">Компания</span>
+          </span>
+          <div className="relative min-w-0 flex-1 text-[13px] text-[#111111]">
+            {contact.companyName !== "" ? (
+              <div className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  title={`Компания: ${contact.companyName}`}
+                  onClick={() => {
+                    if (contact.companyId && onOpenCompany) {
+                      onOpenCompany(contact.companyId);
+                    } else {
+                      openCompanyPicker("row");
+                    }
+                  }}
+                  className="cursor-pointer hover:opacity-85 transition-opacity"
+                >
                   <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-                )}
-              </span>
-            )
-            : undefined}
-          {...field("company")}
-          onCommit={(value) => {
-            commit({ company_name: value.trim(), company_id: "" });
-          }}
-        />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (contact.companyId && onOpenCompany) {
+                      onOpenCompany(contact.companyId);
+                    } else {
+                      openCompanyPicker("row");
+                    }
+                  }}
+                  title="Редактировать компанию"
+                  aria-label="Редактировать компанию"
+                  className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                title="Выбрать компанию"
+                onClick={() => openCompanyPicker("row")}
+                className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+              >
+                -
+              </button>
+            )}
+            {activePicker === "company" && pickerAnchor === "row" && renderCompanyPicker()}
+          </div>
+        </div>
         <RecordField
           icon={Briefcase}
           label="Должность"
@@ -424,23 +598,197 @@ export const ContactCard = memo(function ContactCard({
       </RecordFieldGroup>
 
       {/* Связанные записи — у Twenty отдельные виджеты внизу вкладки Home. */}
-      <RecordRelationSection title="Компания">
-        {contact.companyName !== "" ? (
-          contact.companyId !== null && onOpenCompany !== undefined ? (
-            <button
-              type="button"
-              onClick={() => onOpenCompany(contact.companyId as string)}
-              className="flex w-full items-center gap-2 rounded-[6px] px-1.5 py-1 text-left transition-colors hover:bg-black/[0.04]"
-            >
-              <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-            </button>
-          ) : (
-            <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-          )
-        ) : (
-          <p className="px-1 text-xs text-[#888888]">Компания не указана</p>
+      <div className="relative mt-4 border-t border-[#f0f0f0] pt-3">
+        <div className="flex items-center justify-between mb-2 px-4">
+          <button
+            type="button"
+            title="Свернуть / развернуть блок «Компания»"
+            onClick={() => setCompanyCardOpen((prev) => !prev)}
+            className="flex items-center gap-1.5 text-xs font-medium text-[#111111] hover:text-[#4a38f5] transition-colors cursor-pointer"
+          >
+            <span>Компания</span>
+            <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !companyCardOpen && "rotate-180")} />
+          </button>
+          <button
+            type="button"
+            title={contact.companyId ? "Редактировать компанию" : "Выбрать компанию"}
+            aria-label="Редактировать компанию"
+            onClick={() => {
+              if (contact.companyId && onOpenCompany) {
+                onOpenCompany(contact.companyId);
+              } else {
+                openCompanyPicker("card");
+              }
+            }}
+            className="rounded-[4px] p-1 text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {companyCardOpen && (
+          <div className="relative space-y-2">
+            <div className="flex items-center gap-2 px-4">
+              {contact.companyName !== "" ? (
+                <>
+                  <button
+                    type="button"
+                    title={`Компания: ${contact.companyName}`}
+                    onClick={() => {
+                      if (contact.companyId && onOpenCompany) {
+                        onOpenCompany(contact.companyId);
+                      }
+                    }}
+                    className="cursor-pointer hover:opacity-85 transition-opacity"
+                  >
+                    <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Сменить привязанную компанию"
+                    onClick={() => openCompanyPicker("card")}
+                    className="rounded-[4px] px-1.5 py-0.5 text-[11px] text-[#888888] hover:bg-black/[0.04] hover:text-[#111111] transition-colors cursor-pointer"
+                  >
+                    Сменить
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  title="Выбрать компанию"
+                  onClick={() => openCompanyPicker("card")}
+                  className="inline-flex h-5 items-center justify-center rounded-[4px] bg-[#f5f5f5] px-2 text-xs font-normal text-[#888888] hover:bg-[#ebebeb] hover:text-[#555555] transition-colors cursor-pointer select-none"
+                >
+                  + Привязать компанию
+                </button>
+              )}
+            </div>
+            {activePicker === "company" && pickerAnchor === "card" && (
+              <div className="px-4">{renderCompanyPicker()}</div>
+            )}
+
+            {contact.companyId && (
+              <div className="mt-2 space-y-0.5 py-0.5">
+                {/* Телефон компании */}
+                <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
+                  <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                    <Phone className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                    <span className="truncate">Телефон</span>
+                  </span>
+                  <div className="min-w-0 flex-1 text-[13px] text-[#111111]">
+                    {editingCompanyField === "phone" ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={companyFieldDraft}
+                        onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                        onBlur={() => commitCompanyEdit("phone")}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitCompanyEdit("phone");
+                          if (e.key === "Escape") setEditingCompanyField(null);
+                        }}
+                        className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompanyFieldDraft(companyPhone ?? "");
+                          setEditingCompanyField("phone");
+                        }}
+                        title="Нажмите для редактирования телефона компании"
+                        className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                      >
+                        <span className={cn("truncate", !companyPhone && "text-[#888888]")}>
+                          {companyPhone || "—"}
+                        </span>
+                        <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Email компании */}
+                <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
+                  <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                    <Mail className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                    <span className="truncate">Email</span>
+                  </span>
+                  <div className="min-w-0 flex-1 text-[13px] text-[#111111]">
+                    {editingCompanyField === "email" ? (
+                      <input
+                        autoFocus
+                        type="email"
+                        value={companyFieldDraft}
+                        onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                        onBlur={() => commitCompanyEdit("email")}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitCompanyEdit("email");
+                          if (e.key === "Escape") setEditingCompanyField(null);
+                        }}
+                        className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompanyFieldDraft(companyEmail ?? "");
+                          setEditingCompanyField("email");
+                        }}
+                        title="Нажмите для редактирования email компании"
+                        className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                      >
+                        <span className={cn("truncate", !companyEmail && "text-[#888888]")}>
+                          {companyEmail || "—"}
+                        </span>
+                        <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Сайт компании */}
+                <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
+                  <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                    <Globe className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                    <span className="truncate">Сайт</span>
+                  </span>
+                  <div className="min-w-0 flex-1 text-[13px] text-[#111111]">
+                    {editingCompanyField === "domain" ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={companyFieldDraft}
+                        onChange={(e) => setCompanyFieldDraft(e.target.value)}
+                        onBlur={() => commitCompanyEdit("domain")}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitCompanyEdit("domain");
+                          if (e.key === "Escape") setEditingCompanyField(null);
+                        }}
+                        className="h-6 w-full rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] outline-none"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCompanyFieldDraft(companyWebsite ?? "");
+                          setEditingCompanyField("domain");
+                        }}
+                        title="Нажмите для редактирования сайта компании"
+                        className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                      >
+                        <span className={cn("truncate", !companyWebsite && "text-[#888888]")}>
+                          {companyWebsite || "—"}
+                        </span>
+                        <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
-      </RecordRelationSection>
+      </div>
 
       <RecordDealsSection
         contactId={contact.id}
@@ -543,6 +891,22 @@ export const ContactCard = memo(function ContactCard({
           }}
         />
       )}
+
+      <Sheet
+        open={createCompanyOpen}
+        onClose={() => setCreateCompanyOpen(false)}
+        resizable
+      >
+        <DrawerCreateCompany
+          onBack={() => setCreateCompanyOpen(false)}
+          onClose={() => setCreateCompanyOpen(false)}
+          onSuccess={(id, name) => {
+            commit({ company_id: id, company_name: name });
+            toast.success("Компания создана и привязана");
+            setCreateCompanyOpen(false);
+          }}
+        />
+      </Sheet>
     </>
   );
 });
