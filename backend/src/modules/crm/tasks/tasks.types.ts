@@ -36,6 +36,9 @@ export const createTaskSchema = z
     assignee_id: z.string().uuid("assignee_id must be a UUID"),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid().optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
   })
   .superRefine(linkedEntityRefinement);
 
@@ -49,6 +52,9 @@ export const updateTaskSchema = z
     assignee_id: z.string().uuid().optional(),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid().optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
     completed_at: optionalDateTime,
   })
   .superRefine(linkedEntityRefinement);

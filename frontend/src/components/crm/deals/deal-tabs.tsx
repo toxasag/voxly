@@ -23,7 +23,6 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
-import { useTasks } from "@/lib/api/use-tasks";
 import { useCompanies } from "@/lib/api/use-companies";
 import { contactFullName, useContacts } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
@@ -33,6 +32,7 @@ import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany"
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
+import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -1051,43 +1051,6 @@ function HomeTab({
   );
 }
 
-function TasksTab({ dealId }: { dealId: string }) {
-  const tasks = useTasks({ limit: 50 });
-
-  const dealTasks = tasks.data?.items.filter((t) => t.dealId === dealId || t.linkedEntityId === dealId) ?? [];
-
-  return (
-    <div className="px-5 py-4">
-      {tasks.isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-        </div>
-      ) : dealTasks.length === 0 ? (
-        <EmptyState icon={ListChecks} title="Задач нет" description="Связанные с этой сделкой задачи появятся здесь" />
-      ) : (
-        <div className="space-y-2">
-          {dealTasks.map((task) => (
-            <div key={task.id} className="rounded-[16px] border border-[#e5e5e5] bg-white p-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-[#111111]">{task.title}</p>
-                <span className={cn(
-                  "rounded-full border px-2 py-0.5 text-xs font-medium",
-                  task.status === "done" && "border-emerald-200 bg-emerald-50 text-emerald-700",
-                  task.status === "in_progress" && "border-amber-200 bg-amber-50 text-amber-700",
-                  task.status === "todo" && "border-slate-200 bg-slate-100 text-slate-700",
-                )}>
-                  {task.status === "done" ? "Выполнено" : task.status === "in_progress" ? "В работе" : "К выполнению"}
-                </span>
-              </div>
-              {task.dueDate && <p className="mt-1 text-xs text-[#888888]">До {new Intl.DateTimeFormat("ru-RU").format(new Date(task.dueDate))}</p>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function FilesTab() {
   return (
     <div className="px-5 py-4">
@@ -1132,7 +1095,15 @@ export function dealTabContents(
       </Guard>
     ),
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
-    tasks: <TasksTab dealId={deal.id} />,
+    tasks: (
+      <RecordTasksTab
+        targetType="deal"
+        targetId={deal.id}
+        dealId={deal.id}
+        contactId={deal.contactId}
+        companyId={deal.companyId}
+      />
+    ),
     notes: <RecordNotesTab targetType="deal" targetId={deal.id} />,
     files: <FilesTab />,
   };

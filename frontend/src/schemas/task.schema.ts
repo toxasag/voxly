@@ -29,6 +29,9 @@ export const createTaskSchema = z
     assignee_id: z.string().uuid("Выберите ответственного"),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid("Выберите запись").optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
   })
   .superRefine((value, ctx) => {
     const hasType = value.linked_entity_type !== undefined && value.linked_entity_type !== "";
