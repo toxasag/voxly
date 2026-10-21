@@ -35,10 +35,21 @@ const DEAL_COLUMNS_WITH_LABELS = `
   d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.created_at, d.updated_at,
   co.name AS company_name,
+  co.phone AS company_phone,
+  co.email AS company_email,
+  co.domain_name AS company_domain_name,
+  co.address_city AS company_city,
   ct.first_name AS contact_first_name,
   ct.last_name AS contact_last_name,
+  ct.phone AS contact_phone,
+  ct.email AS contact_email,
+  ct.job_title AS contact_job_title,
   ow.name AS owner_name,
-  ln.body AS latest_note_body
+  ln.body AS latest_note_body,
+  COALESCE(tk.total_tasks_count, 0) AS tasks_count,
+  COALESCE(tk.pending_tasks_count, 0) AS pending_tasks_count,
+  tk.next_task_title,
+  tk.next_task_due_date
 `;
 
 /**
@@ -65,6 +76,27 @@ const DEAL_LABEL_JOINS = `
     ORDER BY n.created_at DESC
     LIMIT 1
   ) ln ON true
+  LEFT JOIN LATERAL (
+    SELECT 
+      COUNT(*)::int AS total_tasks_count,
+      COUNT(*) FILTER (WHERE t.status != 'done')::int AS pending_tasks_count,
+      (
+        SELECT t2.title 
+        FROM crm_tasks t2 
+        WHERE t2.deal_id = d.id AND t2.tenant_id = d.tenant_id AND t2.deleted_at IS NULL AND t2.status != 'done'
+        ORDER BY t2.due_date ASC NULLS LAST, t2.created_at DESC 
+        LIMIT 1
+      ) AS next_task_title,
+      (
+        SELECT t2.due_date 
+        FROM crm_tasks t2 
+        WHERE t2.deal_id = d.id AND t2.tenant_id = d.tenant_id AND t2.deleted_at IS NULL AND t2.status != 'done'
+        ORDER BY t2.due_date ASC NULLS LAST, t2.created_at DESC 
+        LIMIT 1
+      ) AS next_task_due_date
+    FROM crm_tasks t
+    WHERE t.deal_id = d.id AND t.tenant_id = d.tenant_id AND t.deleted_at IS NULL
+  ) tk ON true
 `;
 
 const MESSAGE_COLUMNS = `
@@ -909,9 +941,11 @@ export class DealsService {
     );
 
     const rows = await tx.query<DealRow>(
-      `SELECT ${DEAL_COLUMNS}
-       FROM deals
-       WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE d.tenant_id = $1 AND d.stage_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.position ASC, d.created_at DESC`,
       [tenantId, stageId],
     );
 

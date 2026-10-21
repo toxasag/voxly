@@ -16,6 +16,7 @@ import type { DealDTO } from "@/lib/api/use-deals";
 export type DealCardFieldId =
   | "company"
   | "contact"
+  | "tasks"
   | "budget"
   | "description"
   | "latestNote"
@@ -27,6 +28,30 @@ export type DealCardFieldId =
   | "closedAt"
   | "currency";
 
+export type ContactSubfieldId = "name" | "jobTitle" | "phone" | "email";
+export type CompanySubfieldId = "name" | "phone" | "email" | "website" | "city";
+
+export interface SubfieldSpec<T extends string> {
+  id: T;
+  label: string;
+  defaultVisible: boolean;
+}
+
+export const CONTACT_SUBFIELDS: readonly SubfieldSpec<ContactSubfieldId>[] = [
+  { id: "name", label: "Имя / ФИО", defaultVisible: true },
+  { id: "jobTitle", label: "Должность", defaultVisible: true },
+  { id: "phone", label: "Телефон", defaultVisible: true },
+  { id: "email", label: "E-mail", defaultVisible: true },
+];
+
+export const COMPANY_SUBFIELDS: readonly SubfieldSpec<CompanySubfieldId>[] = [
+  { id: "name", label: "Название", defaultVisible: true },
+  { id: "phone", label: "Телефон", defaultVisible: true },
+  { id: "email", label: "E-mail", defaultVisible: true },
+  { id: "website", label: "Сайт", defaultVisible: true },
+  { id: "city", label: "Город", defaultVisible: true },
+];
+
 export interface DealCardFieldSpec {
   id: DealCardFieldId;
   label: string;
@@ -37,6 +62,7 @@ export interface DealCardFieldSpec {
 export const DEAL_CARD_FIELDS: readonly DealCardFieldSpec[] = [
   { id: "company", label: "Компания", defaultVisible: true },
   { id: "contact", label: "Контакт", defaultVisible: true },
+  { id: "tasks", label: "Задачи", defaultVisible: true },
   { id: "budget", label: "Бюджет", defaultVisible: true },
   { id: "description", label: "Описание", defaultVisible: true },
   { id: "latestNote", label: "Заметка", defaultVisible: true },
@@ -49,11 +75,35 @@ export const DEAL_CARD_FIELDS: readonly DealCardFieldSpec[] = [
   { id: "closedAt", label: "Закрыта", defaultVisible: false },
 ];
 
-/** Видимость полей карточки: ключ поля → показывать или нет. */
-export type DealCardFieldVisibility = Record<DealCardFieldId, boolean>;
+export interface DealCardFieldVisibility extends Record<DealCardFieldId, boolean> {
+  contactFields?: Record<ContactSubfieldId, boolean>;
+  companyFields?: Record<CompanySubfieldId, boolean>;
+}
+
+export function defaultContactSubfields(): Record<ContactSubfieldId, boolean> {
+  return {
+    name: true,
+    jobTitle: true,
+    phone: true,
+    email: true,
+  };
+}
+
+export function defaultCompanySubfields(): Record<CompanySubfieldId, boolean> {
+  return {
+    name: true,
+    phone: true,
+    email: true,
+    website: true,
+    city: true,
+  };
+}
 
 export function defaultDealCardFields(): DealCardFieldVisibility {
-  const result = {} as DealCardFieldVisibility;
+  const result = {
+    contactFields: defaultContactSubfields(),
+    companyFields: defaultCompanySubfields(),
+  } as DealCardFieldVisibility;
   for (const field of DEAL_CARD_FIELDS) {
     result[field.id] = field.defaultVisible;
   }
@@ -72,11 +122,39 @@ export function normalizeDealCardFields(stored: unknown): DealCardFieldVisibilit
   if (typeof stored !== "object" || stored === null) return defaults;
 
   const candidate = stored as Record<string, unknown>;
-  const result = {} as DealCardFieldVisibility;
+  const result = {
+    contactFields: defaultContactSubfields(),
+    companyFields: defaultCompanySubfields(),
+  } as DealCardFieldVisibility;
+
   for (const field of DEAL_CARD_FIELDS) {
     const value = candidate[field.id];
     result[field.id] = typeof value === "boolean" ? value : field.defaultVisible;
   }
+
+  // Восстанавливаем подполя контактов
+  if (typeof candidate.contactFields === "object" && candidate.contactFields !== null) {
+    const cf = candidate.contactFields as Record<string, unknown>;
+    result.contactFields = {
+      name: typeof cf.name === "boolean" ? cf.name : true,
+      jobTitle: typeof cf.jobTitle === "boolean" ? cf.jobTitle : true,
+      phone: typeof cf.phone === "boolean" ? cf.phone : true,
+      email: typeof cf.email === "boolean" ? cf.email : true,
+    };
+  }
+
+  // Восстанавливаем подполя компании
+  if (typeof candidate.companyFields === "object" && candidate.companyFields !== null) {
+    const cof = candidate.companyFields as Record<string, unknown>;
+    result.companyFields = {
+      name: typeof cof.name === "boolean" ? cof.name : true,
+      phone: typeof cof.phone === "boolean" ? cof.phone : true,
+      email: typeof cof.email === "boolean" ? cof.email : true,
+      website: typeof cof.website === "boolean" ? cof.website : true,
+      city: typeof cof.city === "boolean" ? cof.city : true,
+    };
+  }
+
   return result;
 }
 
@@ -87,6 +165,8 @@ export function hasDealFieldValue(deal: DealDTO, field: DealCardFieldId): boolea
       return deal.companyName !== null && deal.companyName !== "";
     case "contact":
       return deal.contactName !== null && deal.contactName !== "";
+    case "tasks":
+      return Boolean(deal.tasksCount && deal.tasksCount > 0);
     case "budget":
       return deal.budget > 0;
     case "description":

@@ -9,7 +9,40 @@ export type DealMessageDirection = "inbound" | "outbound" | "neutral";
 /** Ключи пресета цвета стадии; маппятся в статические классы на фронте. */
 export type StageColorKey = "amber" | "emerald" | "sky" | "rose" | "violet" | "orange" | "cyan" | "slate";
 
-export interface DealDTO { id: string; pipelineId: string; stageId: string; contactId: string | null; companyId: string | null; title: string; description: string; budget: number; currency: string; customFields: Record<string, unknown>; createdBy: string; ownerId: string | null; closeDate: string | null; position: number; closedAt: string | null; createdAt: string; updatedAt: string; companyName: string | null; contactName: string | null; ownerName: string | null; latestNote?: string | null; }
+export interface DealDTO {
+  id: string;
+  pipelineId: string;
+  stageId: string;
+  contactId: string | null;
+  companyId: string | null;
+  title: string;
+  description: string;
+  budget: number;
+  currency: string;
+  customFields: Record<string, unknown>;
+  createdBy: string;
+  ownerId: string | null;
+  closeDate: string | null;
+  position: number;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  companyName: string | null;
+  companyPhone?: string | null;
+  companyEmail?: string | null;
+  companyWebsite?: string | null;
+  companyCity?: string | null;
+  contactName: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  contactJobTitle?: string | null;
+  ownerName: string | null;
+  latestNote?: string | null;
+  tasksCount?: number;
+  pendingTasksCount?: number;
+  nextTaskTitle?: string | null;
+  nextTaskDueDate?: string | null;
+}
 export interface PipelineDTO { id: string; name: string; sortOrder: number; }
 export interface KanbanColumnDTO { stageId: string; stageName: string; sortOrder: number; isWon: boolean; isLost: boolean; /** Системный этап: вход в воронку, «успех» или «провал» — не правится и не двигается. */ isSystem: boolean; stageColor: StageColorKey; dealCount: number; budgetTotal: number; deals: DealDTO[]; }
 /**
