@@ -515,6 +515,21 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
           chatModel: z.string().optional(),
         })
         .optional(),
+      llmProviders: z
+        .array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            providerType: z.enum(["gemini", "openai", "openrouter", "deepseek", "custom"]),
+            baseUrl: z.string(),
+            apiKeys: z.array(z.string()).optional(),
+            chatModel: z.string(),
+            embeddingModel: z.string(),
+            isActive: z.boolean(),
+            isDefault: z.boolean(),
+          }),
+        )
+        .optional(),
     });
 
     const parsed = bodySchema.parse(request.body ?? {});
