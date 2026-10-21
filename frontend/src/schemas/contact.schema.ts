@@ -74,11 +74,11 @@ export const createContactSchema = z.object({
   job_title: z.string().max(150).optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_id: optionalUuid,
-  channel: contactChannelSchema,
+  channel: contactChannelSchema.default("phone").optional(),
   /** Twenty: person.linkedinLink. Пустая строка разрешена — поле необязательное. */
   linkedin_link: z.string().url("Некорректная ссылка").max(300).optional().or(z.literal("")),
   notes: z.string().max(4000).optional().or(z.literal("")),
-  custom_fields: z.record(z.string()).optional(),
+  custom_fields: z.record(z.unknown()).optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();

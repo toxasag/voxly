@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
   GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
-  Phone, Plus, Radio, Star, Tag, UserCircle2, UserRound, AlertTriangle,
+  Phone, Plus, Star, Tag, UserCircle2, UserRound, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
@@ -29,8 +29,10 @@ import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
+import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
 import type { ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
+import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
 import { socialHref, socialLabel } from "@/lib/crm/socials";
 import { formatPhone, telHref } from "@/lib/utils/phone";
 import { cn, timeAgo } from "@/lib/utils";
@@ -74,18 +76,6 @@ interface ContactCardProps {
   onOpenDeal?: (dealId: string) => void;
 }
 
-const CHANNEL_TAG_COLORS = {
-  telegram: "sky", whatsapp: "emerald", rumax: "violet", phone: "amber", email: "cyan",
-} as const;
-
-const CHANNEL_OPTIONS = [
-  { value: "telegram", label: "Telegram" },
-  { value: "whatsapp", label: "WhatsApp" },
-  { value: "rumax", label: "Rumax" },
-  { value: "phone", label: "Телефон" },
-  { value: "email", label: "E-mail" },
-] as const;
-
 function fullDate(iso: string): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return "—";
@@ -123,6 +113,7 @@ export const ContactCard = memo(function ContactCard({
    */
   const [phoneDraft, setPhoneDraft] = useState<ContactPhoneInput[]>([]);
   const [socialDraft, setSocialDraft] = useState<ContactSocialInput[]>([]);
+  const [emailDraft, setEmailDraft] = useState<string[]>([]);
 
   const companiesQuery = useCompanies({ limit: 100 });
   const linkedCompanyQuery = useCompany(contact.companyId);
@@ -349,6 +340,30 @@ export const ContactCard = memo(function ContactCard({
       </span>
     );
 
+  const contactEmails = useMemo(() => extractContactEmails(contact), [contact]);
+
+  const startEmailEdit = (): void => {
+    setEmailDraft(contactEmails.length > 0 ? contactEmails : [""]);
+    setEditing("emails");
+  };
+
+  const emailsDisplay = contactEmails.length === 0
+    ? undefined
+    : (
+      <span className="flex min-w-0 flex-col gap-0.5">
+        {contactEmails.map((email, idx) => (
+          <span key={email} className="flex min-w-0 items-center gap-1.5">
+            {idx === 0 && contactEmails.length > 1 && (
+              <span title="Основной e-mail" className="shrink-0">
+                <Star className="h-3 w-3 fill-current text-amber-400" />
+              </span>
+            )}
+            <RecordFieldLink href={`mailto:${email}`} label={email} />
+          </span>
+        ))}
+      </span>
+    );
+
   const homeTab = (
     <div className="py-2">
       {duplicates.length > 0 && (
@@ -401,13 +416,32 @@ export const ContactCard = memo(function ContactCard({
         <RecordField
           icon={Mail}
           label="Эл. почта"
-          kind="email"
-          value={contact.email ?? ""}
-          display={contact.email !== null && contact.email !== ""
-            ? <RecordFieldLink href={`mailto:${contact.email}`} label={contact.email} />
-            : undefined}
-          {...field("email")}
-          onCommit={(value) => commit({ email: value.trim() })}
+          value={contactEmails.join(", ")}
+          display={emailsDisplay}
+          editing={editing === "emails"}
+          onStartEdit={startEmailEdit}
+          onCancel={() => setEditing(null)}
+          editor={
+            <div className="space-y-2">
+              <EmailsInput value={emailDraft} onChange={setEmailDraft} idPrefix="card-email" />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditing(null)}
+                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111]"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={() => commit(prepareEmailsPayload(emailDraft, contact.customFields))}
+                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
+                >
+                  Сохранить
+                </button>
+              </div>
+            </div>
+          }
         />
 
         <RecordField
@@ -439,21 +473,6 @@ export const ContactCard = memo(function ContactCard({
               </div>
             </div>
           }
-        />
-
-        <RecordField
-          icon={Radio}
-          label="Канал"
-          kind="select"
-          options={CHANNEL_OPTIONS}
-          value={contact.channel}
-          display={<TagPill color={CHANNEL_TAG_COLORS[contact.channel]}>{contact.channel}</TagPill>}
-          {...field("channel")}
-          onCommit={(value) => {
-            const next = CHANNEL_OPTIONS.find((option) => option.value === value);
-            if (next === undefined) { setEditing(null); return; }
-            commit({ channel: next.value });
-          }}
         />
       </RecordFieldGroup>
 
