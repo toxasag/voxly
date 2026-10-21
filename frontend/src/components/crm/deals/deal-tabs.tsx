@@ -32,13 +32,15 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { Guard } from "@/components/shared/Guard";
 import { useKanban, useMoveDealStage, useUpdateDeal } from "@/lib/api/use-deals";
-import { useCompanies, useCompany, useUpdateCompany } from "@/lib/api/use-companies";
-import { contactFullName, useContacts, useContact, useUpdateContact } from "@/lib/api/use-contacts";
+import { useCompanies, useCompany, useUpdateCompany, useCompanyStats, type CompanyDTO } from "@/lib/api/use-companies";
+import { contactFullName, useContacts, useContact, useUpdateContact, type ContactDTO } from "@/lib/api/use-contacts";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { EntityChip, chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
 import { Sheet } from "@/components/ui/sheet";
 import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
 import { DrawerCreateContact } from "@/components/crm/deals/DrawerCreateContact";
+import { ContactCard } from "@/components/crm/contacts/ContactCard";
+import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
 import { CompanyModal } from "@/components/crm/companies/CompanyModal";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
@@ -227,7 +229,10 @@ function HomeTab({
   const linkedCompanyQuery = useCompany(deal.companyId);
   const fullLinkedCompany = linkedCompanyQuery.data ?? linkedCompany;
   const updateCompany = useUpdateCompany();
+  const companyStats = useCompanyStats(deal.companyId);
 
+  const [contactCardDrawerOpen, setContactCardDrawerOpen] = useState(false);
+  const [companyCardDrawerOpen, setCompanyCardDrawerOpen] = useState(false);
   const [contactModalOpen, setContactModalOpen] = useState(false);
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
 
@@ -247,6 +252,55 @@ function HomeTab({
   const companyPhone = deal.companyPhone || fullLinkedCompany?.phone || null;
   const companyEmail = deal.companyEmail || fullLinkedCompany?.email || null;
   const companyWebsite = deal.companyWebsite || fullLinkedCompany?.domainName || null;
+
+  const resolvedContact: ContactDTO | null = fullLinkedContact ?? (deal.contactId ? {
+    id: deal.contactId,
+    firstName: deal.contactName?.split(" ")[1] ?? deal.contactName ?? "",
+    lastName: deal.contactName?.split(" ")[0] ?? "",
+    middleName: deal.contactName?.split(" ")[2] ?? "",
+    phone: contactPhone ?? "",
+    phones: contactPhone ? [{ number: contactPhone, countryCode: "RU", callingCode: "+7", isPrimary: true }] : [],
+    email: contactEmail ?? null,
+    telegramUsername: null,
+    whatsapp: null,
+    socials: [],
+    jobTitle: contactJobTitle ?? "",
+    companyName: deal.companyName ?? "",
+    companyId: deal.companyId ?? null,
+    channel: "phone" as ContactChannel,
+    linkedinLink: "",
+    customFields: {},
+    notes: "",
+    createdBy: null,
+    createdByName: null,
+    createdAt: deal.createdAt,
+    updatedAt: deal.updatedAt,
+    dealsCount: 1,
+    tasksCount: 0,
+  } : null);
+
+  const resolvedCompany: CompanyDTO | null = fullLinkedCompany ?? (deal.companyId ? {
+    id: deal.companyId,
+    name: deal.companyName ?? "",
+    domainName: companyWebsite ?? "",
+    phone: companyPhone ?? "",
+    email: companyEmail ?? "",
+    requisites: { inn: "", ogrn: "", bik: "", accountNumber: "", legalAddress: "" },
+    managerName: "",
+    managerId: null,
+    annualRevenue: null,
+    linkedinLink: "",
+    address: { city: "", street: "", country: "", postcode: "" },
+    notes: "",
+    customFields: {},
+    createdBy: null,
+    createdByName: null,
+    createdAt: deal.createdAt,
+    updatedAt: deal.updatedAt,
+    contactsCount: deal.contactId ? 1 : 0,
+    dealsCount: 1,
+    dealsBudgetTotal: deal.budget ?? 0,
+  } : null);
 
   const commitContactEdit = (field: "lastName" | "firstName" | "middleName" | "phone" | "email" | "socials" | "linkedin") => {
     if (!deal.contactId) {
@@ -969,14 +1023,26 @@ function HomeTab({
                     <button
                       type="button"
                       title={`Компания: ${deal.companyName}`}
-                      onClick={() => openPicker("company", "row")}
+                      onClick={() => {
+                        if (deal.companyId) {
+                          setCompanyCardDrawerOpen(true);
+                        } else {
+                          openPicker("company", "row");
+                        }
+                      }}
                       className="cursor-pointer hover:opacity-85 transition-opacity"
                     >
                       <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => openPicker("company", "row")}
+                      onClick={() => {
+                        if (deal.companyId) {
+                          setCompanyCardDrawerOpen(true);
+                        } else {
+                          openPicker("company", "row");
+                        }
+                      }}
                       title="Редактировать компанию"
                       aria-label="Редактировать компанию"
                       className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1006,14 +1072,26 @@ function HomeTab({
                     <button
                       type="button"
                       title={`Контакт: ${deal.contactName}`}
-                      onClick={() => openPicker("contact", "row")}
+                      onClick={() => {
+                        if (deal.contactId) {
+                          setContactCardDrawerOpen(true);
+                        } else {
+                          openPicker("contact", "row");
+                        }
+                      }}
                       className="cursor-pointer hover:opacity-85 transition-opacity"
                     >
                       <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
                     </button>
                     <button
                       type="button"
-                      onClick={() => openPicker("contact", "row")}
+                      onClick={() => {
+                        if (deal.contactId) {
+                          setContactCardDrawerOpen(true);
+                        } else {
+                          openPicker("contact", "row");
+                        }
+                      }}
                       title="Редактировать контактное лицо"
                       aria-label="Редактировать контактное лицо"
                       className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#f5f5f5] hover:text-[#111111] transition-colors cursor-pointer"
@@ -1128,7 +1206,7 @@ function HomeTab({
             aria-label="Редактировать контактное лицо"
             onClick={() => {
               if (deal.contactId) {
-                setContactModalOpen(true);
+                setContactCardDrawerOpen(true);
               } else {
                 openPicker("contact", "card");
               }
@@ -1143,7 +1221,18 @@ function HomeTab({
             <div className="flex items-center gap-2 px-4">
               {deal.contactName !== null && deal.contactName !== "" ? (
                 <>
-                  <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                  <button
+                    type="button"
+                    title={`Контакт: ${deal.contactName}`}
+                    onClick={() => {
+                      if (deal.contactId) {
+                        setContactCardDrawerOpen(true);
+                      }
+                    }}
+                    className="cursor-pointer hover:opacity-85 transition-opacity"
+                  >
+                    <EntityChip name={deal.contactName} label={deal.contactName} size="sm" />
+                  </button>
                   <button
                     type="button"
                     title="Сменить привязанный контакт"
@@ -1561,7 +1650,7 @@ function HomeTab({
             aria-label="Редактировать компанию"
             onClick={() => {
               if (deal.companyId) {
-                setCompanyModalOpen(true);
+                setCompanyCardDrawerOpen(true);
               } else {
                 openPicker("company", "card");
               }
@@ -1576,7 +1665,18 @@ function HomeTab({
             <div className="flex items-center gap-2 px-4">
               {deal.companyName !== null && deal.companyName !== "" ? (
                 <>
-                  <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                  <button
+                    type="button"
+                    title={`Компания: ${deal.companyName}`}
+                    onClick={() => {
+                      if (deal.companyId) {
+                        setCompanyCardDrawerOpen(true);
+                      }
+                    }}
+                    className="cursor-pointer hover:opacity-85 transition-opacity"
+                  >
+                    <EntityChip name={deal.companyName} label={deal.companyName} icon={Building2} size="sm" />
+                  </button>
                   <button
                     type="button"
                     title="Сменить привязанную компанию"
@@ -1811,6 +1911,32 @@ function HomeTab({
           }}
         />
       </Sheet>
+
+      {contactCardDrawerOpen && resolvedContact && (
+        <ContactCard
+          contact={resolvedContact}
+          onClose={() => setContactCardDrawerOpen(false)}
+          onEdit={() => setContactModalOpen(true)}
+          onOpenCompany={(_companyId) => {
+            setContactCardDrawerOpen(false);
+            setCompanyCardDrawerOpen(true);
+          }}
+        />
+      )}
+
+      {companyCardDrawerOpen && resolvedCompany && (
+        <CompanyCard
+          company={resolvedCompany}
+          stats={companyStats.data}
+          statsLoading={Boolean(companyStats.isLoading)}
+          onClose={() => setCompanyCardDrawerOpen(false)}
+          onEdit={() => setCompanyModalOpen(true)}
+          onOpenContact={(_contactId) => {
+            setCompanyCardDrawerOpen(false);
+            setContactCardDrawerOpen(true);
+          }}
+        />
+      )}
 
       {contactModalOpen && (
         <ContactModal
