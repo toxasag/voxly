@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeft,
   Bot,
@@ -721,9 +722,9 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                         <p className="font-medium">В системе пока нет подключенных Telegram-аккаунтов или ботов.</p>
                         <p className="mt-1 text-amber-700">
                           Вы можете указать юзернейм вручную или подключить аккаунт в разделе{" "}
-                          <a href="/integrations/telegram" className="underline font-semibold hover:text-amber-900">
+                          <Link href="/integrations/telegram" className="underline font-semibold hover:text-amber-900">
                             Интеграции → Telegram
-                          </a>.
+                          </Link>.
                         </p>
                       </div>
                     )}
