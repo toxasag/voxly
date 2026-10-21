@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Check, Columns3, GripVertical, Plus, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -141,6 +142,122 @@ export function RecordTable<T>({
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [columnsMenuAnchor, setColumnsMenuAnchor] = useState<"toolbar" | "headerPlus">("toolbar");
   const [columnSearch, setColumnSearch] = useState("");
+  const [mounted, setMounted] = useState(false);
+
+  const toolbarButtonRef = useRef<HTMLButtonElement>(null);
+  const headerPlusButtonRef = useRef<HTMLButtonElement>(null);
+  const [menuCoords, setMenuCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    right?: number;
+    left?: number;
+    maxHeight: number;
+    placement: "bottom" | "top";
+  } | null>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const computeMenuCoords = useCallback((anchorEl: HTMLElement) => {
+    const rect = anchorEl.getBoundingClientRect();
+    const hasRealRect = rect.width > 0 || rect.height > 0 || rect.bottom > 0 || rect.right > 0;
+    const isMobileView = typeof window !== "undefined" && window.innerWidth < 640;
+
+    if (!hasRealRect) {
+      return {
+        top: 40,
+        right: 8,
+        maxHeight: 360,
+        placement: "bottom" as const,
+      };
+    }
+
+    if (isMobileView) {
+      const spaceBelow = window.innerHeight - rect.bottom - 12;
+      return {
+        top: rect.bottom + 4,
+        left: 12,
+        right: 12,
+        maxHeight: Math.max(160, Math.min(380, spaceBelow)),
+        placement: "bottom" as const,
+      };
+    }
+
+    const right = Math.max(8, window.innerWidth - rect.right);
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const preferredHeight = 340;
+
+    if (spaceBelow < 220 && spaceAbove > spaceBelow) {
+      return {
+        bottom: window.innerHeight - rect.top + 4,
+        right,
+        maxHeight: Math.max(160, Math.min(preferredHeight, spaceAbove)),
+        placement: "top" as const,
+      };
+    }
+
+    return {
+      top: rect.bottom + 4,
+      right,
+      maxHeight: Math.max(160, Math.min(preferredHeight, spaceBelow)),
+      placement: "bottom" as const,
+    };
+  }, []);
+
+  const updateMenuPosition = useCallback(() => {
+    const anchorEl =
+      columnsMenuAnchor === "toolbar"
+        ? toolbarButtonRef.current
+        : headerPlusButtonRef.current;
+    if (!anchorEl) return;
+    setMenuCoords(computeMenuCoords(anchorEl));
+  }, [columnsMenuAnchor, computeMenuCoords]);
+
+  const openColumnsMenu = useCallback(
+    (anchor: "toolbar" | "headerPlus") => {
+      setColumnsMenuAnchor(anchor);
+      setColumnsMenuOpen((prev) => {
+        const next = !prev;
+        if (next) {
+          const anchorEl =
+            anchor === "toolbar" ? toolbarButtonRef.current : headerPlusButtonRef.current;
+          if (anchorEl) {
+            setMenuCoords(computeMenuCoords(anchorEl));
+          }
+        } else {
+          setColumnSearch("");
+        }
+        return next;
+      });
+    },
+    [computeMenuCoords],
+  );
+
+  useEffect(() => {
+    if (!columnsMenuOpen) return;
+    updateMenuPosition();
+
+    const handleScrollOrResize = () => {
+      updateMenuPosition();
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setColumnsMenuOpen(false);
+        setColumnSearch("");
+      }
+    };
+
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [columnsMenuOpen, updateMenuPosition]);
 
   /**
    * Мобильный режим меняет не геометрию, а состав обработчиков, поэтому здесь
@@ -493,12 +610,10 @@ export function RecordTable<T>({
         {tableId !== undefined && layoutLoaded && (
           <div className="relative flex items-center justify-end border-b border-[#e5e5e5] bg-white px-2 py-1">
             <button
+              ref={toolbarButtonRef}
               type="button"
               title="Управление колонками"
-              onClick={() => {
-                setColumnsMenuAnchor("toolbar");
-                setColumnsMenuOpen((open) => !open);
-              }}
+              onClick={() => openColumnsMenu("toolbar")}
               aria-expanded={columnsMenuOpen && columnsMenuAnchor === "toolbar"}
               className="inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#fafafa] hover:text-[#111111]"
             >
@@ -510,105 +625,6 @@ export function RecordTable<T>({
                 </span>
               )}
             </button>
-
-            {columnsMenuOpen && columnsMenuAnchor === "toolbar" && (
-              <>
-                {/* Подложка закрывает меню по клику вне */}
-                <button
-                  type="button"
-                  aria-label="Закрыть меню колонок"
-                  onClick={() => {
-                    setColumnsMenuOpen(false);
-                    setColumnSearch("");
-                  }}
-                  className="fixed inset-0 z-30 cursor-default"
-                />
-                <div
-                  className={cn(
-                    "absolute top-full z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
-                    isMobile ? "left-0 right-0 w-full" : "right-2 w-56",
-                  )}
-                >
-                  {/* Поиск полей (Twenty CRM style) */}
-                  <div className="border-b border-[#f0f0f0] p-2 bg-white">
-                    <div className="relative flex items-center">
-                      <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
-                      <input
-                        type="text"
-                        value={columnSearch}
-                        onChange={(e) => setColumnSearch(e.target.value)}
-                        placeholder="Поиск полей"
-                        className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
-                        autoFocus
-                      />
-                    </div>
-                  </div>
-
-                  {/* Список полей */}
-                  <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
-                    {filteredMenuColumns.length === 0 ? (
-                      <div className="px-3 py-3 text-center text-xs text-[#888888]">
-                        Поля не найдены
-                      </div>
-                    ) : (
-                      filteredMenuColumns.map((column) => {
-                        const isHidden = hiddenIds.has(column.id);
-                        const canHide =
-                          column.id !== identifierColumnId && column.hideable !== false;
-                        const IconComponent = column.icon;
-
-                        return (
-                          <button
-                            key={column.id}
-                            type="button"
-                            disabled={!canHide}
-                            onClick={() => toggleColumn(column.id)}
-                            className={cn(
-                              "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
-                              canHide
-                                ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
-                                : "cursor-default text-[#888888]",
-                              !isHidden && canHide && "font-medium text-[#111111]",
-                            )}
-                          >
-                            <div className="flex min-w-0 items-center gap-2">
-                              {IconComponent ? (
-                                <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
-                              ) : (
-                                <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
-                              )}
-                              <span className="truncate">{column.header}</span>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5 pl-2">
-                              {!canHide ? (
-                                <span className="text-[11px] text-[#888888]">всегда</span>
-                              ) : !isHidden ? (
-                                <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
-                              ) : null}
-                            </div>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-
-                  {/* Нижняя кнопка сброса раскладки */}
-                  <button
-                    type="button"
-                    title="Сбросить раскладку к значениям по умолчанию"
-                    onClick={() => {
-                      resetLayout();
-                      setColumnsMenuOpen(false);
-                      setColumnSearch("");
-                    }}
-                    className="flex w-full items-center gap-2 border-t border-[#f0f0f0] bg-white px-3 py-2 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
-                  >
-                    <Settings className="h-3.5 w-3.5 text-[#888888]" />
-                    <span>Сбросить раскладку</span>
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         )}
 
@@ -746,119 +762,18 @@ export function RecordTable<T>({
               <div className="relative border-r border-[#e5e5e5] flex items-center justify-center text-[#888888]">
                 {tableId !== undefined && layoutLoaded ? (
                   <button
+                    ref={headerPlusButtonRef}
                     type="button"
-                    onClick={() => {
-                      setColumnsMenuAnchor("headerPlus");
-                      setColumnsMenuOpen((open) => !open);
-                    }}
+                    onClick={() => openColumnsMenu("headerPlus")}
                     aria-label="Добавить колонку"
                     title="Добавить колонку"
+                    aria-expanded={columnsMenuOpen && columnsMenuAnchor === "headerPlus"}
                     className="flex h-full w-full items-center justify-center text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors cursor-pointer"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
                 ) : (
                   <Plus className="h-3.5 w-3.5 opacity-60" />
-                )}
-
-                {columnsMenuOpen && columnsMenuAnchor === "headerPlus" && (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Закрыть меню колонок"
-                      onClick={() => {
-                        setColumnsMenuOpen(false);
-                        setColumnSearch("");
-                      }}
-                      className="fixed inset-0 z-30 cursor-default"
-                    />
-                    <div
-                      className={cn(
-                        "absolute top-full right-0 z-40 mt-1 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-xl text-left",
-                        isMobile ? "left-0 right-0 w-full" : "w-64",
-                      )}
-                    >
-                      {/* Поиск полей */}
-                      <div className="border-b border-[#f0f0f0] p-2 bg-white">
-                        <div className="relative flex items-center">
-                          <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
-                          <input
-                            type="text"
-                            value={columnSearch}
-                            onChange={(e) => setColumnSearch(e.target.value)}
-                            placeholder="Поиск полей"
-                            className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#3b82f6] focus:bg-white"
-                            autoFocus
-                          />
-                        </div>
-                      </div>
-
-                      {/* Список полей */}
-                      <div className="max-h-64 overflow-y-auto p-1 space-y-0.5 bg-white">
-                        {filteredMenuColumns.length === 0 ? (
-                          <div className="px-3 py-3 text-center text-xs text-[#888888]">
-                            Поля не найдены
-                          </div>
-                        ) : (
-                          filteredMenuColumns.map((column) => {
-                            const isHidden = hiddenIds.has(column.id);
-                            const canHide =
-                              column.id !== identifierColumnId && column.hideable !== false;
-                            const IconComponent = column.icon;
-
-                            return (
-                              <button
-                                key={column.id}
-                                type="button"
-                                disabled={!canHide}
-                                onClick={() => toggleColumn(column.id)}
-                                className={cn(
-                                  "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
-                                  canHide
-                                    ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
-                                    : "cursor-default text-[#888888]",
-                                  !isHidden && canHide && "font-medium text-[#111111]",
-                                )}
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  {IconComponent ? (
-                                    <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
-                                  ) : (
-                                    <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
-                                  )}
-                                  <span className="truncate">{column.header}</span>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-1.5 pl-2">
-                                  {!canHide ? (
-                                    <span className="text-[11px] text-[#888888]">всегда</span>
-                                  ) : !isHidden ? (
-                                    <Check className="h-3.5 w-3.5 text-[#3b82f6]" />
-                                  ) : null}
-                                </div>
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-
-                      {/* Нижний бар меню */}
-                      <div className="border-t border-[#f0f0f0] p-1 bg-white">
-                        <button
-                          type="button"
-                          title="Настроить поля (Сбросить раскладку к значениям по умолчанию)"
-                          onClick={() => {
-                            resetLayout();
-                            setColumnsMenuOpen(false);
-                            setColumnSearch("");
-                          }}
-                          className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
-                        >
-                          <Settings className="h-3.5 w-3.5 text-[#888888]" />
-                          <span>Настроить поля (Сбросить раскладку)</span>
-                        </button>
-                      </div>
-                    </div>
-                  </>
                 )}
               </div>
             </div>
@@ -957,6 +872,126 @@ export function RecordTable<T>({
 
         {pagination}
       </div>
+
+      {/* Меню управления колонками на верхнем слое (Portal в document.body) */}
+      {mounted && columnsMenuOpen && typeof document !== "undefined" && createPortal(
+        <>
+          {/* Подложка закрывает меню по клику вне */}
+          <div
+            aria-hidden="true"
+            onClick={() => {
+              setColumnsMenuOpen(false);
+              setColumnSearch("");
+            }}
+            className="fixed inset-0 z-[9998] cursor-default bg-transparent"
+          />
+
+          <div
+            role="dialog"
+            aria-label="Управление колонками"
+            style={
+              menuCoords
+                ? menuCoords.placement === "top"
+                  ? {
+                      bottom: `${menuCoords.bottom}px`,
+                      right: menuCoords.right !== undefined ? `${menuCoords.right}px` : undefined,
+                      left: menuCoords.left !== undefined ? `${menuCoords.left}px` : undefined,
+                      maxHeight: `${menuCoords.maxHeight}px`,
+                    }
+                  : {
+                      top: `${menuCoords.top}px`,
+                      right: menuCoords.right !== undefined ? `${menuCoords.right}px` : undefined,
+                      left: menuCoords.left !== undefined ? `${menuCoords.left}px` : undefined,
+                      maxHeight: `${menuCoords.maxHeight}px`,
+                    }
+                : { top: 40, right: 8, maxHeight: 360 }
+            }
+            className={cn(
+              "fixed z-[9999] flex flex-col overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xl text-left",
+              isMobile ? "w-auto" : "w-64",
+            )}
+          >
+            {/* Поиск полей (Twenty CRM style) */}
+            <div className="shrink-0 border-b border-[#f0f0f0] p-2 bg-white">
+              <div className="relative flex items-center">
+                <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#888888]" />
+                <input
+                  type="text"
+                  value={columnSearch}
+                  onChange={(e) => setColumnSearch(e.target.value)}
+                  placeholder="Поиск полей"
+                  className="w-full rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888] outline-none transition-colors focus:border-[#4a38f5] focus:bg-white"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Список полей */}
+            <div className="flex-1 overflow-y-auto p-1 space-y-0.5 bg-white min-h-[60px]">
+              {filteredMenuColumns.length === 0 ? (
+                <div className="px-3 py-3 text-center text-xs text-[#888888]">
+                  Поля не найдены
+                </div>
+              ) : (
+                filteredMenuColumns.map((column) => {
+                  const isHidden = hiddenIds.has(column.id);
+                  const canHide =
+                    column.id !== identifierColumnId && column.hideable !== false;
+                  const IconComponent = column.icon;
+
+                  return (
+                    <button
+                      key={column.id}
+                      type="button"
+                      disabled={!canHide}
+                      onClick={() => toggleColumn(column.id)}
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-[6px] px-2.5 py-1.5 text-left text-xs transition-colors",
+                        canHide
+                          ? "text-[#111111] hover:bg-[#f5f5f5] cursor-pointer"
+                          : "cursor-default text-[#888888]",
+                        !isHidden && canHide && "font-medium text-[#111111]",
+                      )}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        {IconComponent ? (
+                          <IconComponent className="h-4 w-4 shrink-0 text-[#666666]" />
+                        ) : (
+                          <Columns3 className="h-4 w-4 shrink-0 text-[#666666]" />
+                        )}
+                        <span className="truncate">{column.header}</span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5 pl-2">
+                        {!canHide ? (
+                          <span className="text-[11px] text-[#888888]">всегда</span>
+                        ) : !isHidden ? (
+                          <Check className="h-3.5 w-3.5 text-[#4a38f5]" />
+                        ) : null}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Нижняя кнопка сброса раскладки */}
+            <button
+              type="button"
+              title="Сбросить раскладку к значениям по умолчанию"
+              onClick={() => {
+                resetLayout();
+                setColumnsMenuOpen(false);
+                setColumnSearch("");
+              }}
+              className="shrink-0 flex w-full items-center gap-2 border-t border-[#f0f0f0] bg-white px-3 py-2 text-left text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"
+            >
+              <Settings className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Сбросить раскладку</span>
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }
