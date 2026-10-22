@@ -81,3 +81,48 @@ export type SignInResultDTO =
       requires2FA: false;
       accountId: string;
     };
+
+export const qrStartSchema = z.object({
+  name: z.string().trim().min(1, "Укажите название подключения").max(120).default("Telegram"),
+});
+
+export const qrStatusSchema = z.object({
+  tempSessionId: z.string().uuid("tempSessionId must be a UUID"),
+});
+
+export const qrPasswordSchema = z.object({
+  tempSessionId: z.string().uuid("tempSessionId must be a UUID"),
+  password: z.string().min(1, "Введите пароль").max(200),
+});
+
+export type QrStartPayload = z.infer<typeof qrStartSchema>;
+export type QrStatusPayload = z.infer<typeof qrStatusSchema>;
+export type QrPasswordPayload = z.infer<typeof qrPasswordSchema>;
+
+export interface QrStartResultDTO {
+  tempSessionId: string;
+  qr: string;
+  expires: number;
+}
+
+export type QrStatusResultDTO =
+  | {
+      status: "waiting";
+      qr?: string;
+      expires?: number;
+    }
+  | {
+      status: "requires_2fa";
+      passwordHint: string | null;
+    }
+  | {
+      status: "connected";
+      accountId: string;
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        username: string | null;
+        phone: string | null;
+      };
+    };

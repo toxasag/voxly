@@ -11,6 +11,7 @@ const startQrSchema = z.object({
 const statusQuerySchema = z.object({
   instanceName: z.string().min(1),
   label: z.string().min(1).default("Основной"),
+  refreshQr: z.coerce.boolean().optional(),
 });
 
 export default async function whatsappIntegrationRoutes(app: FastifyInstance): Promise<void> {
@@ -31,7 +32,12 @@ export default async function whatsappIntegrationRoutes(app: FastifyInstance): P
 
   app.get("/auth/qr/status", { onRequest: guards }, async (request, reply) => {
     const query = statusQuerySchema.parse(request.query);
-    const result = await service.checkStatus(request.tenant_id, query.instanceName, query.label);
+    const result = await service.checkStatus(
+      request.tenant_id,
+      query.instanceName,
+      query.label,
+      query.refreshQr,
+    );
     return reply.send({ data: result });
   });
 }

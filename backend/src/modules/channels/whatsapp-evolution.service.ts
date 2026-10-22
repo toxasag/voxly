@@ -69,6 +69,22 @@ export class WhatsappEvolutionService {
     const cleanLabel = label.trim().replace(/[^a-zA-Z0-9_-]/g, "_") || "main";
     const instanceName = `wa_${tenantId.replace(/-/g, "").slice(0, 8)}_${cleanLabel}_${Date.now().toString(36)}`;
 
+    // Чистим старые незавершенные инстансы этого тенанта, чтобы не плодить зомби
+    try {
+      const prefix = `wa_${tenantId.replace(/-/g, "").slice(0, 8)}_`;
+      const allRes = await this.evoFetch("/instance/fetchInstances");
+      const list = Array.isArray(allRes.json) ? allRes.json : [];
+      for (const item of list) {
+        const name = item?.name || item?.instanceName;
+        const state = String(item?.connectionStatus || item?.state || "").toLowerCase();
+        if (typeof name === "string" && name.startsWith(prefix) && state !== "open") {
+          await this.deleteInstance(name);
+        }
+      }
+    } catch {
+      // Игнорируем ошибки очистки
+    }
+
     // 1. Создаем инстанс
     const create = await this.evoFetch("/instance/create", {
       method: "POST",
@@ -106,6 +122,7 @@ export class WhatsappEvolutionService {
     tenantId: string,
     instanceName: string,
     label: string,
+    refreshQr?: boolean,
   ): Promise<{
     ok: boolean;
     status: "connected" | "qr_ready" | "preparing";
@@ -172,15 +189,20 @@ export class WhatsappEvolutionService {
       };
     }
 
-    // Если еще не авторизован — запрашиваем свежий QR
-    const connect = await this.evoFetch(`/instance/connect/${encodeURIComponent(instanceName)}`, {
-      method: "GET",
-    });
-    const qr = this.pickQr(connect.json);
+    // Не вызываем /instance/connect при обычном поллинге статуса:
+    // это сбрасывает Baileys-сокет и аннулирует QR-код каждые 2.5 секунды.
+    // Вызываем только при явном флаге refreshQr.
+    let qr: string | null = null;
+    if (refreshQr) {
+      const connect = await this.evoFetch(`/instance/connect/${encodeURIComponent(instanceName)}`, {
+        method: "GET",
+      });
+      qr = this.pickQr(connect.json);
+    }
 
     return {
       ok: true,
-      status: qr ? "qr_ready" : "preparing",
+      status: "qr_ready",
       qr,
     };
   }
