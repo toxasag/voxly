@@ -112,16 +112,51 @@ async function resizeImageFile(file: File, maxSize: number = 256): Promise<strin
   });
 }
 
+function TelegramIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z" />
+    </svg>
+  );
+}
+
+function WhatsAppIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27" />
+    </svg>
+  );
+}
+
+function MaxIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+    </svg>
+  );
+}
+
 export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearanceSettingsProps) {
   const updateAccount = useUpdateChannelAccount("webchat");
 
-  // Загружаем список подключений Telegram (личные аккаунты и боты)
+  // Загружаем список подключений всех поддерживаемых мессенджеров
   const { data: tgPersonalData } = useChannelAccounts("telegram");
   const { data: tgBotData } = useChannelAccounts("telegram_bot");
+  const { data: waData } = useChannelAccounts("whatsapp");
+  const { data: maxData } = useChannelAccounts("max");
+  const { data: maxBotData } = useChannelAccounts("max_bot");
 
   const personalAccounts = useMemo(() => tgPersonalData?.items ?? [], [tgPersonalData]);
   const botAccounts = useMemo(() => tgBotData?.items ?? [], [tgBotData]);
+  const waAccounts = useMemo(() => waData?.items ?? [], [waData]);
+  const maxAccounts = useMemo(
+    () => [...(maxData?.items ?? []), ...(maxBotData?.items ?? [])],
+    [maxData, maxBotData],
+  );
+
   const hasSystemTgAccounts = personalAccounts.length > 0 || botAccounts.length > 0;
+  const hasSystemWaAccounts = waAccounts.length > 0;
+  const hasSystemMaxAccounts = maxAccounts.length > 0;
 
   const initialCreds = (account.credentials ?? {}) as Record<string, unknown>;
 
@@ -180,9 +215,28 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Telegram-баннер и выбор аккаунта/бота
-  const [showTelegramBanner, setShowTelegramBanner] = useState<boolean>(
-    Boolean(initialCreds.showTelegramBanner),
+  // Баннер перехода в мессенджеры (Telegram, WhatsApp, MAX)
+  const [showMessengerBanner, setShowMessengerBanner] = useState<boolean>(
+    initialCreds.showMessengerBanner !== undefined
+      ? Boolean(initialCreds.showMessengerBanner)
+      : (initialCreds.showTelegramBanner !== undefined ? Boolean(initialCreds.showTelegramBanner) : true),
+  );
+
+  const [messengerBannerMode, setMessengerBannerMode] = useState<"single" | "multi">(
+    initialCreds.messengerBannerMode === "multi" ? "multi" : "single",
+  );
+
+  const [singleTarget, setSingleTarget] = useState<"telegram" | "whatsapp" | "max">(
+    initialCreds.singleTarget === "whatsapp" || initialCreds.singleTarget === "max"
+      ? initialCreds.singleTarget
+      : "telegram",
+  );
+
+  // 1. Telegram
+  const [telegramEnabled, setTelegramEnabled] = useState<boolean>(
+    initialCreds.telegramEnabled !== undefined
+      ? Boolean(initialCreds.telegramEnabled)
+      : (Boolean(initialCreds.showTelegramBanner) || Boolean(initialCreds.telegramBot)),
   );
   const [telegramBot, setTelegramBot] = useState<string>(
     typeof initialCreds.telegramBot === "string" ? initialCreds.telegramBot : "",
@@ -192,6 +246,38 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   );
   const [telegramMode, setTelegramMode] = useState<"system" | "manual">(
     initialCreds.telegramMode === "system" || (!initialCreds.telegramMode && initialCreds.telegramAccountId)
+      ? "system"
+      : "manual",
+  );
+
+  // 2. WhatsApp
+  const [whatsappEnabled, setWhatsappEnabled] = useState<boolean>(
+    Boolean(initialCreds.whatsappEnabled),
+  );
+  const [whatsappPhone, setWhatsappPhone] = useState<string>(
+    typeof initialCreds.whatsappPhone === "string" ? initialCreds.whatsappPhone : "",
+  );
+  const [whatsappAccountId, setWhatsappAccountId] = useState<string>(
+    typeof initialCreds.whatsappAccountId === "string" ? initialCreds.whatsappAccountId : "",
+  );
+  const [whatsappMode, setWhatsappMode] = useState<"system" | "manual">(
+    initialCreds.whatsappMode === "system" || (!initialCreds.whatsappMode && initialCreds.whatsappAccountId)
+      ? "system"
+      : "manual",
+  );
+
+  // 3. MAX
+  const [maxEnabled, setMaxEnabled] = useState<boolean>(
+    Boolean(initialCreds.maxEnabled),
+  );
+  const [maxLink, setMaxLink] = useState<string>(
+    typeof initialCreds.maxLink === "string" ? initialCreds.maxLink : "",
+  );
+  const [maxAccountId, setMaxAccountId] = useState<string>(
+    typeof initialCreds.maxAccountId === "string" ? initialCreds.maxAccountId : "",
+  );
+  const [maxMode, setMaxMode] = useState<"system" | "manual">(
+    initialCreds.maxMode === "system" || (!initialCreds.maxMode && initialCreds.maxAccountId)
       ? "system"
       : "manual",
   );
@@ -236,10 +322,27 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           greeting,
           placeholder,
           position,
-          showTelegramBanner,
+          // Мессенджеры
+          showMessengerBanner,
+          messengerBannerMode,
+          singleTarget,
+          // Telegram
+          telegramEnabled: messengerBannerMode === "single" ? singleTarget === "telegram" : telegramEnabled,
           telegramBot: telegramBot.trim(),
           telegramAccountId: telegramMode === "system" ? telegramAccountId : undefined,
           telegramMode,
+          showTelegramBanner: showMessengerBanner && (messengerBannerMode === "single" ? singleTarget === "telegram" : telegramEnabled),
+          // WhatsApp
+          whatsappEnabled: messengerBannerMode === "single" ? singleTarget === "whatsapp" : whatsappEnabled,
+          whatsappPhone: whatsappPhone.trim(),
+          whatsappAccountId: whatsappMode === "system" ? whatsappAccountId : undefined,
+          whatsappMode,
+          // MAX
+          maxEnabled: messengerBannerMode === "single" ? singleTarget === "max" : maxEnabled,
+          maxLink: maxLink.trim(),
+          maxAccountId: maxMode === "system" ? maxAccountId : undefined,
+          maxMode,
+          // Консультант и маскот
           consultantName: consultantName.trim(),
           consultantAvatar: consultantAvatar.trim(),
           avatarType,
@@ -898,140 +1001,422 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             </div>
           </div>
 
-          {/* 6. Переход в Telegram (Личный аккаунт или Бот) */}
+          {/* 6. Переход в мессенджеры (Telegram, WhatsApp, MAX) */}
           <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
-                  Баннер перехода в Telegram
+                  Быстрый переход в мессенджеры
                 </h2>
                 <p className="mt-0.5 text-xs text-[#666666]">
-                  Предлагает посетителю продолжить диалог в мессенджере.
+                  Предлагает посетителю продолжить диалог в удобном мессенджере (Telegram, WhatsApp или MAX).
                 </p>
               </div>
               <label className="relative inline-flex cursor-pointer items-center">
                 <input
                   type="checkbox"
-                  checked={showTelegramBanner}
-                  onChange={(e) => setShowTelegramBanner(e.target.checked)}
+                  checked={showMessengerBanner}
+                  onChange={(e) => setShowMessengerBanner(e.target.checked)}
                   className="peer sr-only"
                 />
                 <div className="peer h-6 w-11 rounded-full bg-[#e5e5e5] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-xs after:transition-all after:content-[''] peer-checked:bg-[#4a38f5] peer-checked:after:translate-x-full"></div>
               </label>
             </div>
 
-            {showTelegramBanner && (
-              <div className="mt-4 space-y-4 border-t border-[#e5e5e5] pt-4">
-                {/* Переключатель способа выбора Telegram: из добавленных в CRM или вручную */}
+            {showMessengerBanner && (
+              <div className="mt-4 space-y-5 border-t border-[#e5e5e5] pt-4">
+                {/* Формат отображения в виджете */}
                 <div>
-                  <label className="text-xs font-medium text-[#666666] block mb-1.5">
-                    Куда направлять посетителя сайта:
+                  <label className="text-xs font-semibold text-[#111111] block mb-1.5">
+                    Формат отображения в виджете:
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setTelegramMode("system")}
+                      onClick={() => setMessengerBannerMode("single")}
                       className={cn(
-                        "flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors cursor-pointer",
-                        telegramMode === "system"
-                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                        "flex flex-col items-start rounded-lg border p-3 text-left transition-colors cursor-pointer",
+                        messengerBannerMode === "single"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#111111]"
                           : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                       )}
                     >
-                      <Bot className="h-3.5 w-3.5" />
-                      <span>Из подключений системы</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("h-2.5 w-2.5 rounded-full border", messengerBannerMode === "single" ? "bg-[#4a38f5] border-[#4a38f5]" : "border-zinc-300 bg-white")} />
+                        <span className="text-xs font-bold text-[#111111]">Один мессенджер</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#666666] leading-tight">
+                        Широкая плашка: «Продолжить в Telegram / WhatsApp / MAX»
+                      </p>
                     </button>
+
                     <button
                       type="button"
-                      onClick={() => setTelegramMode("manual")}
+                      onClick={() => setMessengerBannerMode("multi")}
                       className={cn(
-                        "flex items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors cursor-pointer",
-                        telegramMode === "manual"
-                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                        "flex flex-col items-start rounded-lg border p-3 text-left transition-colors cursor-pointer",
+                        messengerBannerMode === "multi"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#111111]"
                           : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                       )}
                     >
-                      <Send className="h-3.5 w-3.5" />
-                      <span>Указать вручную</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={cn("h-2.5 w-2.5 rounded-full border", messengerBannerMode === "multi" ? "bg-[#4a38f5] border-[#4a38f5]" : "border-zinc-300 bg-white")} />
+                        <span className="text-xs font-bold text-[#111111]">Несколько кнопок на выбор</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#666666] leading-tight">
+                        Компактная полоса с кнопками, чтобы клиент сам выбрал
+                      </p>
                     </button>
                   </div>
                 </div>
 
-                {/* Вариант 1: Выбор из добавленных в систему личных аккаунтов или ботов */}
-                {telegramMode === "system" && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-[#666666]">
-                      Выберите личный аккаунт или бота:
+                {/* В одиночном режиме: выбор главного мессенджера */}
+                {messengerBannerMode === "single" && (
+                  <div>
+                    <label className="text-xs font-semibold text-[#111111] block mb-1.5">
+                      Выберите мессенджер для плашки:
                     </label>
-                    {hasSystemTgAccounts ? (
-                      <select
-                        value={telegramAccountId}
-                        onChange={(e) => {
-                          const selectedId = e.target.value;
-                          setTelegramAccountId(selectedId);
-                          const foundAcc = [...personalAccounts, ...botAccounts].find((a) => a.id === selectedId);
-                          if (foundAcc) {
-                            const rawId = foundAcc.externalId.trim();
-                            const username = rawId.startsWith("@") || rawId.startsWith("http")
-                              ? rawId
-                              : foundAcc.credentials?.username
-                              ? `@${String(foundAcc.credentials.username).replace(/^@/, "")}`
-                              : `@${rawId.replace(/^@/, "")}`;
-                            setTelegramBot(username);
-                          }
-                        }}
-                        className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 cursor-pointer"
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSingleTarget("telegram")}
+                        className={cn(
+                          "flex items-center justify-center gap-2 rounded-lg border py-2 px-3 text-xs font-medium transition-all cursor-pointer",
+                          singleTarget === "telegram"
+                            ? "border-[#0284c7] bg-[#0284c7]/10 text-[#0284c7] font-semibold"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                        )}
                       >
-                        <option value="">-- Выберите подключение из списка --</option>
-                        {personalAccounts.length > 0 && (
-                          <optgroup label="Личные аккаунты Telegram (MTProto)">
-                            {personalAccounts.map((acc) => (
-                              <option key={acc.id} value={acc.id}>
-                                👤 {acc.label} ({acc.externalId})
-                              </option>
-                            ))}
-                          </optgroup>
+                        <TelegramIcon className="h-4 w-4" />
+                        <span>Telegram</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSingleTarget("whatsapp")}
+                        className={cn(
+                          "flex items-center justify-center gap-2 rounded-lg border py-2 px-3 text-xs font-medium transition-all cursor-pointer",
+                          singleTarget === "whatsapp"
+                            ? "border-[#16a34a] bg-[#16a34a]/10 text-[#16a34a] font-semibold"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                         )}
-                        {botAccounts.length > 0 && (
-                          <optgroup label="Telegram-боты (Bot API)">
-                            {botAccounts.map((acc) => (
-                              <option key={acc.id} value={acc.id}>
-                                🤖 {acc.label} ({acc.externalId})
-                              </option>
-                            ))}
-                          </optgroup>
+                      >
+                        <WhatsAppIcon className="h-4 w-4" />
+                        <span>WhatsApp</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSingleTarget("max")}
+                        className={cn(
+                          "flex items-center justify-center gap-2 rounded-lg border py-2 px-3 text-xs font-medium transition-all cursor-pointer",
+                          singleTarget === "max"
+                            ? "border-[#6366f1] bg-[#6366f1]/10 text-[#6366f1] font-semibold"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
                         )}
-                      </select>
-                    ) : (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-800">
-                        <p className="font-medium">В системе пока нет подключенных Telegram-аккаунтов или ботов.</p>
-                        <p className="mt-1 text-amber-700">
-                          Вы можете указать юзернейм вручную или подключить аккаунт в разделе{" "}
-                          <Link href="/integrations/telegram" className="underline font-semibold hover:text-amber-900">
-                            Интеграции → Telegram
-                          </Link>.
-                        </p>
-                      </div>
-                    )}
+                      >
+                        <MaxIcon className="h-4 w-4" />
+                        <span>MAX</span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                {/* Поле юзернейма / ссылки */}
-                <div>
-                  <label className="text-xs font-medium text-[#666666]">
-                    Юзернейм или ссылка (@username или https://t.me/...)
-                  </label>
-                  <input
-                    type="text"
-                    value={telegramBot}
-                    onChange={(e) => setTelegramBot(e.target.value)}
-                    placeholder="@company_ai_bot или https://t.me/company"
-                    className="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
-                  />
-                  <p className="mt-1 text-[11px] text-[#888888]">
-                    По этой ссылке посетитель перейдёт в мессенджер при клике на баннер.
-                  </p>
-                </div>
+                {/* Настройка Telegram */}
+                {(messengerBannerMode === "multi" || singleTarget === "telegram") && (
+                  <div className="rounded-lg border border-[#e5e5e5] p-3.5 space-y-3 bg-[#fafafa]/50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0284c7]/10 text-[#0284c7]">
+                          <TelegramIcon className="h-4 w-4" />
+                        </div>
+                        <span className="text-xs font-bold text-[#111111]">Telegram</span>
+                      </div>
+                      {messengerBannerMode === "multi" && (
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
+                          <input
+                            type="checkbox"
+                            checked={telegramEnabled}
+                            onChange={(e) => setTelegramEnabled(e.target.checked)}
+                            className="rounded border-[#cccccc] text-[#0284c7] focus:ring-[#0284c7]"
+                          />
+                          <span>Показывать кнопку</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTelegramMode("system")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            telegramMode === "system"
+                              ? "border-[#0284c7] bg-[#0284c7]/10 text-[#0284c7]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Bot className="h-3.5 w-3.5" />
+                          <span>Из подключений</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTelegramMode("manual")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            telegramMode === "manual"
+                              ? "border-[#0284c7] bg-[#0284c7]/10 text-[#0284c7]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>Вручную</span>
+                        </button>
+                      </div>
+
+                      {telegramMode === "system" ? (
+                        hasSystemTgAccounts ? (
+                          <select
+                            value={telegramAccountId}
+                            onChange={(e) => {
+                              const selectedId = e.target.value;
+                              setTelegramAccountId(selectedId);
+                              const foundAcc = [...personalAccounts, ...botAccounts].find((a) => a.id === selectedId);
+                              if (foundAcc) {
+                                const rawId = foundAcc.externalId.trim();
+                                const username = rawId.startsWith("@") || rawId.startsWith("http")
+                                  ? rawId
+                                  : foundAcc.credentials?.username
+                                  ? `@${String(foundAcc.credentials.username).replace(/^@/, "")}`
+                                  : `@${rawId.replace(/^@/, "")}`;
+                                setTelegramBot(username);
+                              }
+                            }}
+                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#0284c7] focus:outline-none focus:ring-1 focus:ring-[#0284c7]/20 cursor-pointer"
+                          >
+                            <option value="">-- Выберите подключение из списка --</option>
+                            {personalAccounts.length > 0 && (
+                              <optgroup label="Личные аккаунты Telegram (MTProto)">
+                                {personalAccounts.map((acc) => (
+                                  <option key={acc.id} value={acc.id}>
+                                    👤 {acc.label} ({acc.externalId})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {botAccounts.length > 0 && (
+                              <optgroup label="Telegram-боты (Bot API)">
+                                {botAccounts.map((acc) => (
+                                  <option key={acc.id} value={acc.id}>
+                                    🤖 {acc.label} ({acc.externalId})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        ) : (
+                          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-800">
+                            <p>В системе пока нет Telegram-подключений. <Link href="/integrations/telegram" className="underline font-semibold hover:text-amber-900">Подключить</Link> или укажите юзернейм вручную.</p>
+                          </div>
+                        )
+                      ) : (
+                        <input
+                          type="text"
+                          value={telegramBot}
+                          onChange={(e) => setTelegramBot(e.target.value)}
+                          placeholder="@company_ai_bot или https://t.me/company"
+                          className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#0284c7] focus:outline-none focus:ring-1 focus:ring-[#0284c7]/20 font-mono"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Настройка WhatsApp */}
+                {(messengerBannerMode === "multi" || singleTarget === "whatsapp") && (
+                  <div className="rounded-lg border border-[#e5e5e5] p-3.5 space-y-3 bg-[#fafafa]/50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#16a34a]/10 text-[#16a34a]">
+                          <WhatsAppIcon className="h-4 w-4" />
+                        </div>
+                        <span className="text-xs font-bold text-[#111111]">WhatsApp</span>
+                      </div>
+                      {messengerBannerMode === "multi" && (
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
+                          <input
+                            type="checkbox"
+                            checked={whatsappEnabled}
+                            onChange={(e) => setWhatsappEnabled(e.target.checked)}
+                            className="rounded border-[#cccccc] text-[#16a34a] focus:ring-[#16a34a]"
+                          />
+                          <span>Показывать кнопку</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setWhatsappMode("system")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            whatsappMode === "system"
+                              ? "border-[#16a34a] bg-[#16a34a]/10 text-[#16a34a]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Bot className="h-3.5 w-3.5" />
+                          <span>Из подключений</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setWhatsappMode("manual")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            whatsappMode === "manual"
+                              ? "border-[#16a34a] bg-[#16a34a]/10 text-[#16a34a]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>Вручную</span>
+                        </button>
+                      </div>
+
+                      {whatsappMode === "system" ? (
+                        hasSystemWaAccounts ? (
+                          <select
+                            value={whatsappAccountId}
+                            onChange={(e) => {
+                              const selectedId = e.target.value;
+                              setWhatsappAccountId(selectedId);
+                              const foundAcc = waAccounts.find((a) => a.id === selectedId);
+                              if (foundAcc) {
+                                setWhatsappPhone(foundAcc.externalId || "");
+                              }
+                            }}
+                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#16a34a] focus:outline-none focus:ring-1 focus:ring-[#16a34a]/20 cursor-pointer"
+                          >
+                            <option value="">-- Выберите подключение WhatsApp --</option>
+                            {waAccounts.map((acc) => (
+                              <option key={acc.id} value={acc.id}>
+                                💬 {acc.label} ({acc.externalId})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-800">
+                            <p>В системе пока нет WhatsApp-подключений. <Link href="/integrations/whatsapp" className="underline font-semibold hover:text-amber-900">Подключить</Link> или укажите номер вручную.</p>
+                          </div>
+                        )
+                      ) : (
+                        <input
+                          type="text"
+                          value={whatsappPhone}
+                          onChange={(e) => setWhatsappPhone(e.target.value)}
+                          placeholder="+79991234567 или https://wa.me/79991234567"
+                          className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#16a34a] focus:outline-none focus:ring-1 focus:ring-[#16a34a]/20 font-mono"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Настройка MAX */}
+                {(messengerBannerMode === "multi" || singleTarget === "max") && (
+                  <div className="rounded-lg border border-[#e5e5e5] p-3.5 space-y-3 bg-[#fafafa]/50">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#6366f1]/10 text-[#6366f1]">
+                          <MaxIcon className="h-4 w-4" />
+                        </div>
+                        <span className="text-xs font-bold text-[#111111]">MAX</span>
+                      </div>
+                      {messengerBannerMode === "multi" && (
+                        <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-[#111111]">
+                          <input
+                            type="checkbox"
+                            checked={maxEnabled}
+                            onChange={(e) => setMaxEnabled(e.target.checked)}
+                            className="rounded border-[#cccccc] text-[#6366f1] focus:ring-[#6366f1]"
+                          />
+                          <span>Показывать кнопку</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setMaxMode("system")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            maxMode === "system"
+                              ? "border-[#6366f1] bg-[#6366f1]/10 text-[#6366f1]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Bot className="h-3.5 w-3.5" />
+                          <span>Из подключений</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMaxMode("manual")}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 rounded-lg border py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                            maxMode === "manual"
+                              ? "border-[#6366f1] bg-[#6366f1]/10 text-[#6366f1]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                          )}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>Вручную</span>
+                        </button>
+                      </div>
+
+                      {maxMode === "system" ? (
+                        hasSystemMaxAccounts ? (
+                          <select
+                            value={maxAccountId}
+                            onChange={(e) => {
+                              const selectedId = e.target.value;
+                              setMaxAccountId(selectedId);
+                              const foundAcc = maxAccounts.find((a) => a.id === selectedId);
+                              if (foundAcc) {
+                                setMaxLink(foundAcc.externalId || "");
+                              }
+                            }}
+                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 cursor-pointer"
+                          >
+                            <option value="">-- Выберите подключение MAX --</option>
+                            {maxAccounts.map((acc) => (
+                              <option key={acc.id} value={acc.id}>
+                                ⚡ {acc.label} ({acc.externalId})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-800">
+                            <p>В системе пока нет MAX-подключений. <Link href="/integrations/max" className="underline font-semibold hover:text-amber-900">Подключить</Link> или укажите юзернейм/ссылку вручную.</p>
+                          </div>
+                        )
+                      ) : (
+                        <input
+                          type="text"
+                          value={maxLink}
+                          onChange={(e) => setMaxLink(e.target.value)}
+                          placeholder="@company_bot или https://max.me/company"
+                          className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 font-mono"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1148,17 +1533,75 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       </button>
                     </div>
 
-                    {/* Баннер Telegram */}
-                    {showTelegramBanner && (
-                      <div className="flex items-center justify-between border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-400">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Send className="h-3.5 w-3.5 text-sky-400 shrink-0" />
-                          <span className="truncate">Продолжить в Telegram</span>
-                        </div>
-                        <span className="text-[10px] underline font-mono truncate max-w-[120px]">
-                          {telegramBot || "@bot"}
-                        </span>
-                      </div>
+                    {/* Баннер перехода в мессенджеры */}
+                    {showMessengerBanner && (
+                      <>
+                        {messengerBannerMode === "single" ? (
+                          singleTarget === "telegram" && (telegramBot || telegramAccountId) ? (
+                            <div className="flex items-center justify-between border-b border-sky-500/20 bg-sky-500/10 px-3 py-2 text-xs text-sky-600 dark:text-sky-400">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <TelegramIcon className="h-3.5 w-3.5 text-sky-500 shrink-0" />
+                                <span className="truncate font-medium">Продолжить в Telegram</span>
+                              </div>
+                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
+                                {telegramBot || "@bot"}
+                              </span>
+                            </div>
+                          ) : singleTarget === "whatsapp" && (whatsappPhone || whatsappAccountId) ? (
+                            <div className="flex items-center justify-between border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <WhatsAppIcon className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                                <span className="truncate font-medium">Продолжить в WhatsApp</span>
+                              </div>
+                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
+                                {whatsappPhone || "Написать"}
+                              </span>
+                            </div>
+                          ) : singleTarget === "max" && (maxLink || maxAccountId) ? (
+                            <div className="flex items-center justify-between border-b border-indigo-500/20 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-700 dark:text-indigo-400">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <MaxIcon className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                                <span className="truncate font-medium">Продолжить в MAX</span>
+                              </div>
+                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
+                                {maxLink || "@bot"}
+                              </span>
+                            </div>
+                          ) : null
+                        ) : (
+                          // Мульти-режим: 2 или 3 кнопки
+                          <div
+                            className={cn(
+                              "flex items-center justify-between border-b px-3 py-1.5 text-xs gap-2",
+                              isDark ? "border-[#27272a] bg-[#18181b]" : "border-[#e5e5e5] bg-[#fafafa]",
+                            )}
+                          >
+                            <span className="text-[11px] font-semibold text-[#888888] shrink-0">
+                              Продолжить в:
+                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {telegramEnabled && (
+                                <span className="inline-flex items-center gap-1 rounded bg-[#0284c7] px-2 py-0.5 text-[10px] font-medium text-white shadow-2xs">
+                                  <TelegramIcon className="h-2.5 w-2.5" />
+                                  <span>Telegram</span>
+                                </span>
+                              )}
+                              {whatsappEnabled && (
+                                <span className="inline-flex items-center gap-1 rounded bg-[#16a34a] px-2 py-0.5 text-[10px] font-medium text-white shadow-2xs">
+                                  <WhatsAppIcon className="h-2.5 w-2.5" />
+                                  <span>WhatsApp</span>
+                                </span>
+                              )}
+                              {maxEnabled && (
+                                <span className="inline-flex items-center gap-1 rounded bg-[#6366f1] px-2 py-0.5 text-[10px] font-medium text-white shadow-2xs">
+                                  <MaxIcon className="h-2.5 w-2.5" />
+                                  <span>MAX</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {/* Тело сообщений */}
