@@ -19,7 +19,6 @@ import {
 import { PasswordField } from "@/components/auth/PasswordField";
 import { ApiClientError } from "@/lib/api/apiClient";
 import {
-  useTelegramCheckAccount,
   useTelegramQrPassword,
   useTelegramQrStatus,
   useTelegramSendCode,
@@ -38,9 +37,9 @@ import { cn } from "@/lib/utils";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 
 // ---------------------------------------------------------------------------
-// Мастер подключения аккаунта Telegram:
-// 1. По QR-коду (рекомендуемый, быстрый через «Устройства» в Telegram)
-// 2. По номеру телефона (код из приложения/SMS + 2FA пароль)
+// Мастер подключения аккаунта Telegram (Twenty CRM Light Canvas):
+// 1. По QR-коду (сканирование через мобильный клиент в «Настройки → Устройства»)
+// 2. По номеру телефона с поддержкой кода подтверждения и 2FA пароля
 // ---------------------------------------------------------------------------
 
 type AuthMode = "qr" | "phone";
@@ -127,6 +126,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
   const handleStartQr = useCallback(
     (customName?: string) => {
       const activeName = customName ?? qrName;
+      setQrBase64(null);
       startQr.mutate(
         { name: activeName },
         {
@@ -348,7 +348,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
             </h2>
             <p className="text-[11px] text-[#666666]">
               {mode === "qr"
-                ? "Мгновенная авторизация через QR-код"
+                ? "Сканирование через мобильный клиент (Настройки → Устройства)"
                 : step === "code"
                   ? "Ввод кода подтверждения"
                   : step === "password"
@@ -359,108 +359,370 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
         </div>
       </SheetHeader>
 
-      <SheetContent className="p-6">
-        {/* Переключатель способа авторизации */}
-        <div className="mb-5 flex rounded-[8px] bg-[#f5f5f5] p-1 gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setMode("qr");
-              if (!qrSessionId && !startQr.isPending) {
-                handleStartQr();
-              }
-            }}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
-              mode === "qr"
-                ? "bg-white text-[#111111] shadow-2xs font-semibold"
-                : "text-[#666666] hover:text-[#111111]",
-            )}
-          >
-            <QrCode className="h-3.5 w-3.5" />
-            <span>По QR-коду (Быстро)</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("phone")}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
-              mode === "phone"
-                ? "bg-white text-[#111111] shadow-2xs font-semibold"
-                : "text-[#666666] hover:text-[#111111]",
-            )}
-          >
-            <Phone className="h-3.5 w-3.5" />
-            <span>По номеру телефона</span>
-          </button>
-        </div>
-
-        {/* -------------------- РЕЖИМ QR-КОДА -------------------- */}
-        {mode === "qr" && (
-          <div>
-            {isQrConnected ? (
-              <div className="flex flex-col items-center justify-center space-y-4 py-8 text-center">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
-                  <CheckCircle2 className="h-8 w-8" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-[#111111]">Telegram подключён!</h3>
-                  <p className="mt-1 text-xs text-[#666666]">
-                    Аккаунт успешно авторизован в CRM. Входящие и исходящие сообщения теперь синхронизируются.
-                  </p>
-                </div>
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
+        {/* -------------------- УСПЕХ (ПОДКЛЮЧЕНО) -------------------- */}
+        {isQrConnected ? (
+          <div className="flex flex-col items-center justify-center flex-1 p-6 space-y-4 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <CheckCircle2 className="h-8 w-8" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-[#111111]">Telegram подключён!</h3>
+              <p className="mt-1 text-xs text-[#666666] max-w-sm">
+                Аккаунт успешно авторизован в CRM. Входящие и исходящие сообщения теперь синхронизируются.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] cursor-pointer"
+            >
+              Готово
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col flex-1 min-h-0">
+            {/* Прокручиваемое содержимое со строгим отступом p-6 */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Переключатель способа авторизации */}
+              <div className="flex rounded-[8px] bg-[#f5f5f5] p-1 gap-1">
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] cursor-pointer"
+                  onClick={() => {
+                    setMode("qr");
+                    if (!qrSessionId && !startQr.isPending) {
+                      handleStartQr();
+                    }
+                  }}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
+                    mode === "qr"
+                      ? "bg-white text-[#111111] shadow-2xs font-semibold"
+                      : "text-[#666666] hover:text-[#111111]",
+                  )}
                 >
-                  Готово
+                  <QrCode className="h-3.5 w-3.5" />
+                  <span>По QR-коду (Быстро)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("phone")}
+                  className={cn(
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
+                    mode === "phone"
+                      ? "bg-white text-[#111111] shadow-2xs font-semibold"
+                      : "text-[#666666] hover:text-[#111111]",
+                  )}
+                >
+                  <Phone className="h-3.5 w-3.5" />
+                  <span>По номеру телефона</span>
                 </button>
               </div>
-            ) : isQrWaiting2fa ? (
-              <form onSubmit={handleQrPasswordSubmit} className="space-y-4">
-                <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                  <p className="text-xs leading-relaxed text-[#666666]">
-                    У аккаунта включена двухэтапная проверка в Telegram. Введите облачный пароль.
-                    {qrStatusData.passwordHint && (
-                      <>
-                        {" "}
-                        Подсказка:{" "}
-                        <span className="font-medium text-[#111111]">
-                          {qrStatusData.passwordHint}
-                        </span>
-                      </>
-                    )}
-                  </p>
-                </div>
 
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-[#666666]">
-                    Облачный пароль (2FA)
-                  </label>
-                  <input
-                    type="password"
-                    value={qr2faPassword}
-                    onChange={(e) => setQr2faPassword(e.target.value)}
-                    placeholder="••••••••"
-                    autoFocus
-                    className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                  />
-                </div>
+              {/* -------------------- РЕЖИМ QR-КОДА -------------------- */}
+              {mode === "qr" && (
+                <div className="space-y-5">
+                  {isQrWaiting2fa ? (
+                    <form id="tg-qr-2fa-form" onSubmit={handleQrPasswordSubmit} className="space-y-4">
+                      <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                        <p className="text-xs leading-relaxed text-[#666666]">
+                          У аккаунта включена двухэтапная проверка в Telegram. Введите облачный пароль.
+                          {qrStatusData?.passwordHint && (
+                            <>
+                              {" "}
+                              Подсказка:{" "}
+                              <span className="font-medium text-[#111111]">
+                                {qrStatusData.passwordHint}
+                              </span>
+                            </>
+                          )}
+                        </p>
+                      </div>
 
-                <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-medium text-[#666666]">
+                          Облачный пароль (2FA)
+                        </label>
+                        <input
+                          type="password"
+                          value={qr2faPassword}
+                          onChange={(e) => setQr2faPassword(e.target.value)}
+                          placeholder="••••••••"
+                          autoFocus
+                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                        />
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <div className="space-y-1.5">
+                        <label htmlFor="tg_qr_name" className="block text-xs font-medium text-[#666666]">
+                          Название подключения
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            id="tg_qr_name"
+                            value={qrName}
+                            onChange={(e) => setQrName(e.target.value)}
+                            placeholder="Основной"
+                            disabled={startQr.isPending}
+                            className="h-8 flex-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleStartQr()}
+                            disabled={startQr.isPending || !qrName.trim()}
+                            className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50 cursor-pointer"
+                          >
+                            {startQr.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3.5 w-3.5" />
+                            )}
+                            Обновить QR
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Блок с QR-кодом */}
+                      <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6">
+                        {startQr.isPending && !qrBase64 ? (
+                          <div className="flex h-52 flex-col items-center justify-center space-y-3">
+                            <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
+                            <p className="text-xs text-[#666666]">Генерируем QR-код авторизации...</p>
+                          </div>
+                        ) : qrBase64 ? (
+                          <div className="space-y-3 text-center">
+                            <div className="relative inline-block rounded-xl border border-[#e5e5e5] bg-white p-3 shadow-xs">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={qrBase64}
+                                alt="Telegram QR Code"
+                                className="h-52 w-52 object-contain"
+                              />
+                            </div>
+                            <div className="flex items-center justify-center gap-2 text-xs text-[#666666]">
+                              <span className="relative flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                              </span>
+                              Ожидание сканирования в приложении Telegram...
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex h-52 flex-col items-center justify-center space-y-3">
+                            <QrCode className="h-10 w-10 text-[#888888]" />
+                            <p className="text-xs text-[#666666]">Нажмите «Обновить QR», чтобы получить код</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Инструкция */}
+                      <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2.5">
+                        <h4 className="text-xs font-semibold text-[#111111]">Как подключить Telegram:</h4>
+                        <ol className="list-decimal pl-4 space-y-1.5 text-xs text-[#666666]">
+                          <li>Откройте приложение <strong>Telegram</strong> на смартфоне.</li>
+                          <li>
+                            Перейдите в <strong>Настройки</strong> → <strong>Устройства</strong>.
+                          </li>
+                          <li>
+                            Нажмите кнопку <strong>Подключить устройство</strong>.
+                          </li>
+                          <li>Наведите камеру на QR-код выше для мгновенного входа.</li>
+                        </ol>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* -------------------- РЕЖИМ НОМЕРА ТЕЛЕФОНА -------------------- */}
+              {mode === "phone" && (
+                <div className="space-y-5">
+                  {step === "phone" && (
+                    <form
+                      id="tg-phone-form"
+                      onSubmit={phoneForm.handleSubmit((values) => void requestCode(values))}
+                      className="space-y-4"
+                    >
+                      <div className="space-y-1.5">
+                        <label htmlFor="tg_name" className="block text-xs font-medium text-[#666666]">
+                          Название подключения
+                        </label>
+                        <input
+                          id="tg_name"
+                          autoFocus
+                          autoComplete="off"
+                          placeholder="Рабочий номер"
+                          {...phoneForm.register("name")}
+                          className={cn(
+                            "h-8 w-full rounded-[6px] border bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
+                            "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                            phoneForm.formState.errors.name !== undefined
+                              ? "border-rose-500"
+                              : "border-[#e5e5e5]",
+                          )}
+                        />
+                        {phoneForm.formState.errors.name && (
+                          <p className="text-xs text-rose-500">{phoneForm.formState.errors.name.message}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor="tg_phone" className="block text-xs font-medium text-[#666666]">
+                          Номер телефона аккаунта
+                        </label>
+                        <div className="relative">
+                          <Phone className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
+                          <input
+                            id="tg_phone"
+                            inputMode="tel"
+                            autoComplete="off"
+                            placeholder="+7 900 000-00-00"
+                            {...phoneForm.register("phone", {
+                              onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+                                phoneForm.setValue("phone", formatPhoneInput(event.target.value), {
+                                  shouldValidate: true,
+                                });
+                              },
+                            })}
+                            className={cn(
+                              "h-8 w-full rounded-[6px] border bg-white py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
+                              "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                              phoneForm.formState.errors.phone !== undefined
+                                ? "border-rose-500"
+                                : "border-[#e5e5e5]",
+                            )}
+                          />
+                        </div>
+                        {phoneForm.formState.errors.phone && (
+                          <p className="text-xs text-rose-500">{phoneForm.formState.errors.phone.message}</p>
+                        )}
+                      </div>
+
+                      <p className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs leading-relaxed text-[#666666]">
+                        CRM получит доступ к переписке этого аккаунта, как обычный клиент Telegram.
+                        Сессия хранится в зашифрованном виде и отзывается в настройках Telegram в любой момент.
+                      </p>
+                    </form>
+                  )}
+
+                  {step === "code" && (
+                    <form
+                      id="tg-code-form"
+                      onSubmit={codeForm.handleSubmit((values) => void submitCode(values))}
+                      className="space-y-4"
+                    >
+                      <p className="text-xs text-[#666666]">
+                        Код отправлен на <span className="font-medium text-[#111111]">{phoneLabel}</span>.
+                        {isCodeViaApp
+                          ? " Откройте Telegram на устройстве, где вы уже вошли."
+                          : " Проверьте SMS."}
+                      </p>
+
+                      <div className="space-y-1.5">
+                        <label htmlFor="tg_code" className="block text-xs font-medium text-[#666666]">
+                          Код из Telegram
+                        </label>
+                        <input
+                          id="tg_code"
+                          autoFocus
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          maxLength={6}
+                          placeholder="12345"
+                          {...codeForm.register("code")}
+                          className={cn(
+                            "h-10 w-full rounded-[6px] border bg-white px-3 text-center text-lg font-semibold tracking-[0.4em] text-[#111111] placeholder:tracking-normal placeholder:text-[#888888]",
+                            "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
+                            codeForm.formState.errors.code !== undefined
+                              ? "border-rose-500"
+                              : "border-[#e5e5e5]",
+                          )}
+                        />
+                        {codeForm.formState.errors.code && (
+                          <p className="text-xs text-rose-500">{codeForm.formState.errors.code.message}</p>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void resend()}
+                        disabled={cooldown > 0 || isPending}
+                        className="text-xs font-medium text-[#4a38f5] transition-colors hover:text-[#3b2be0] disabled:text-[#888888] cursor-pointer"
+                      >
+                        {cooldown > 0 ? `Отправить код снова через ${cooldown} с` : "Отправить код снова"}
+                      </button>
+                    </form>
+                  )}
+
+                  {step === "password" && (
+                    <form
+                      id="tg-password-form"
+                      onSubmit={passwordForm.handleSubmit((values) => void submitPassword(values))}
+                      className="space-y-4"
+                    >
+                      <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
+                        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                        <p className="text-xs leading-relaxed text-[#666666]">
+                          У аккаунта включена двухэтапная проверка. Введите облачный пароль — тот, который запрашивает Telegram при входе с нового устройства.
+                          {passwordHint !== null && passwordHint.length > 0 && (
+                            <>
+                              {" "}
+                              Подсказка: <span className="font-medium text-[#111111]">{passwordHint}</span>
+                            </>
+                          )}
+                        </p>
+                      </div>
+
+                      <PasswordField
+                        label="Облачный пароль (2FA)"
+                        autoFocus
+                        autoComplete="off"
+                        placeholder="••••••••"
+                        error={passwordForm.formState.errors.password?.message}
+                        className="h-8 rounded-[6px] border-[#e5e5e5] bg-white text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20"
+                        {...passwordForm.register("password")}
+                      />
+                    </form>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Фиксированный футер снизу */}
+            <div className="flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-3.5 shrink-0">
+              <div>
+                {mode === "phone" && step !== "phone" ? (
+                  <button
+                    type="button"
+                    onClick={() => setStep(step === "password" ? "code" : "phone")}
+                    disabled={isPending}
+                    className="flex h-8 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Назад
+                  </button>
+                ) : (
                   <button
                     type="button"
                     onClick={onClose}
-                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
+                    disabled={isPending}
+                    className="h-8 rounded-[6px] border border-[#e5e5e5] bg-white px-3.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
                   >
                     Отмена
                   </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {mode === "qr" && isQrWaiting2fa && (
                   <button
                     type="submit"
+                    form="tg-qr-2fa-form"
                     disabled={isSubmittingQr2fa || !qr2faPassword}
-                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
+                    className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
                   >
                     {isSubmittingQr2fa ? (
                       <>
@@ -471,182 +733,14 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                       "Подтвердить пароль"
                     )}
                   </button>
-                </div>
-              </form>
-            ) : (
-              <div className="space-y-5">
-                <div className="space-y-1.5">
-                  <label htmlFor="tg_qr_name" className="block text-xs font-medium text-[#666666]">
-                    Название подключения
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      id="tg_qr_name"
-                      value={qrName}
-                      onChange={(e) => setQrName(e.target.value)}
-                      placeholder="Основной"
-                      disabled={startQr.isPending}
-                      className="h-8 flex-1 rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleStartQr()}
-                      disabled={startQr.isPending || !qrName.trim()}
-                      className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50 cursor-pointer"
-                    >
-                      {startQr.isPending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      )}
-                      Обновить QR
-                    </button>
-                  </div>
-                </div>
+                )}
 
-                {/* Блок с QR-кодом */}
-                <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6">
-                  {startQr.isPending && !qrBase64 ? (
-                    <div className="flex h-52 flex-col items-center justify-center space-y-3">
-                      <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
-                      <p className="text-xs text-[#666666]">Генерируем QR-код авторизации...</p>
-                    </div>
-                  ) : qrBase64 ? (
-                    <div className="space-y-3 text-center">
-                      <div className="relative inline-block rounded-xl border border-[#e5e5e5] bg-white p-3 shadow-xs">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={qrBase64}
-                          alt="Telegram QR Code"
-                          className="h-52 w-52 object-contain"
-                        />
-                      </div>
-                      <div className="flex items-center justify-center gap-2 text-xs text-[#666666]">
-                        <span className="relative flex h-2 w-2">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                          <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                        </span>
-                        Ожидание сканирования в приложении Telegram...
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex h-52 flex-col items-center justify-center space-y-3">
-                      <QrCode className="h-10 w-10 text-[#888888]" />
-                      <p className="text-xs text-[#666666]">Нажмите «Обновить QR», чтобы получить код</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Инструкция */}
-                <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2.5">
-                  <h4 className="text-xs font-semibold text-[#111111]">Как подключить Telegram:</h4>
-                  <ol className="list-decimal pl-4 space-y-1.5 text-xs text-[#666666]">
-                    <li>Откройте приложение <strong>Telegram</strong> на смартфоне.</li>
-                    <li>
-                      Перейдите в <strong>Настройки</strong> → <strong>Устройства</strong>.
-                    </li>
-                    <li>
-                      Нажмите кнопку <strong>Подключить устройство</strong>.
-                    </li>
-                    <li>Наведите камеру на QR-код выше для мгновенного входа.</li>
-                  </ol>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
-                  >
-                    Отмена
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* -------------------- РЕЖИМ НОМЕРА ТЕЛЕФОНА -------------------- */}
-        {mode === "phone" && (
-          <div>
-            {step === "phone" && (
-              <form
-                onSubmit={phoneForm.handleSubmit((values) => void requestCode(values))}
-                className="space-y-4"
-              >
-                <div className="space-y-1.5">
-                  <label htmlFor="tg_name" className="block text-xs font-medium text-[#666666]">
-                    Название подключения
-                  </label>
-                  <input
-                    id="tg_name"
-                    autoFocus
-                    autoComplete="off"
-                    placeholder="Рабочий номер"
-                    {...phoneForm.register("name")}
-                    className={cn(
-                      "h-8 w-full rounded-[4px] border bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
-                      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
-                      phoneForm.formState.errors.name !== undefined
-                        ? "border-rose-500"
-                        : "border-[#e5e5e5]",
-                    )}
-                  />
-                  {phoneForm.formState.errors.name && (
-                    <p className="text-xs text-rose-500">{phoneForm.formState.errors.name.message}</p>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="tg_phone" className="block text-xs font-medium text-[#666666]">
-                    Номер телефона аккаунта
-                  </label>
-                  <div className="relative">
-                    <Phone className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
-                    <input
-                      id="tg_phone"
-                      inputMode="tel"
-                      autoComplete="off"
-                      placeholder="+7 900 000-00-00"
-                      {...phoneForm.register("phone", {
-                        onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
-                          phoneForm.setValue("phone", formatPhoneInput(event.target.value), {
-                            shouldValidate: true,
-                          });
-                        },
-                      })}
-                      className={cn(
-                        "h-8 w-full rounded-[4px] border bg-white py-1.5 pl-8 pr-2.5 text-xs text-[#111111] placeholder:text-[#888888]",
-                        "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
-                        phoneForm.formState.errors.phone !== undefined
-                          ? "border-rose-500"
-                          : "border-[#e5e5e5]",
-                      )}
-                    />
-                  </div>
-                  {phoneForm.formState.errors.phone && (
-                    <p className="text-xs text-rose-500">{phoneForm.formState.errors.phone.message}</p>
-                  )}
-                </div>
-
-                <p className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 text-xs leading-relaxed text-[#666666]">
-                  CRM получит доступ к переписке этого аккаунта, как обычный клиент Telegram.
-                  Сессия хранится в зашифрованном виде и отзывается в настройках Telegram в любой момент.
-                </p>
-
-                <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    disabled={isPending}
-                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
-                  >
-                    Отмена
-                  </button>
+                {mode === "phone" && step === "phone" && (
                   <button
                     type="submit"
+                    form="tg-phone-form"
                     disabled={isPending}
-                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                   >
                     {sendCode.isPending ? (
                       <>
@@ -657,70 +751,14 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                       "Получить код"
                     )}
                   </button>
-                </div>
-              </form>
-            )}
+                )}
 
-            {step === "code" && (
-              <form
-                onSubmit={codeForm.handleSubmit((values) => void submitCode(values))}
-                className="space-y-4"
-              >
-                <p className="text-xs text-[#666666]">
-                  Код отправлен на <span className="font-medium text-[#111111]">{phoneLabel}</span>.
-                  {isCodeViaApp
-                    ? " Откройте Telegram на устройстве, где вы уже вошли."
-                    : " Проверьте SMS."}
-                </p>
-
-                <div className="space-y-1.5">
-                  <label htmlFor="tg_code" className="block text-xs font-medium text-[#666666]">
-                    Код из Telegram
-                  </label>
-                  <input
-                    id="tg_code"
-                    autoFocus
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    placeholder="12345"
-                    {...codeForm.register("code")}
-                    className={cn(
-                      "h-10 w-full rounded-[4px] border bg-white px-3 text-center text-lg font-semibold tracking-[0.4em] text-[#111111] placeholder:tracking-normal placeholder:text-[#888888]",
-                      "focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
-                      codeForm.formState.errors.code !== undefined
-                        ? "border-rose-500"
-                        : "border-[#e5e5e5]",
-                    )}
-                  />
-                  {codeForm.formState.errors.code && (
-                    <p className="text-xs text-rose-500">{codeForm.formState.errors.code.message}</p>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void resend()}
-                  disabled={cooldown > 0 || isPending}
-                  className="text-xs font-medium text-[#4a38f5] transition-colors hover:text-[#3b2be0] disabled:text-[#888888] cursor-pointer"
-                >
-                  {cooldown > 0 ? `Отправить код снова через ${cooldown} с` : "Отправить код снова"}
-                </button>
-
-                <div className="flex items-center justify-between gap-2 border-t border-[#e5e5e5] pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setStep("phone")}
-                    disabled={isPending}
-                    className="flex h-8 items-center gap-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" />
-                    Назад
-                  </button>
+                {mode === "phone" && step === "code" && (
                   <button
                     type="submit"
+                    form="tg-code-form"
                     disabled={isPending}
-                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                   >
                     {signIn.isPending ? (
                       <>
@@ -731,51 +769,14 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                       "Подтвердить"
                     )}
                   </button>
-                </div>
-              </form>
-            )}
+                )}
 
-            {step === "password" && (
-              <form
-                onSubmit={passwordForm.handleSubmit((values) => void submitPassword(values))}
-                className="space-y-4"
-              >
-                <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-                  <p className="text-xs leading-relaxed text-[#666666]">
-                    У аккаунта включена двухэтапная проверка. Введите облачный пароль — тот, который запрашивает Telegram при входе с нового устройства.
-                    {passwordHint !== null && passwordHint.length > 0 && (
-                      <>
-                        {" "}
-                        Подсказка: <span className="font-medium text-[#111111]">{passwordHint}</span>
-                      </>
-                    )}
-                  </p>
-                </div>
-
-                <PasswordField
-                  label="Облачный пароль (2FA)"
-                  autoFocus
-                  autoComplete="off"
-                  placeholder="••••••••"
-                  error={passwordForm.formState.errors.password?.message}
-                  className="h-8 rounded-[4px] border-[#e5e5e5] bg-white text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20"
-                  {...passwordForm.register("password")}
-                />
-
-                <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    disabled={isPending}
-                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
-                  >
-                    Отмена
-                  </button>
+                {mode === "phone" && step === "password" && (
                   <button
                     type="submit"
+                    form="tg-password-form"
                     disabled={isPending}
-                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                    className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                   >
                     {signIn.isPending ? (
                       <>
@@ -786,9 +787,9 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                       "Подключить"
                     )}
                   </button>
-                </div>
-              </form>
-            )}
+                )}
+              </div>
+            </div>
           </div>
         )}
       </SheetContent>
