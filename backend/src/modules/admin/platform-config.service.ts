@@ -71,6 +71,33 @@ export interface IntegrationsConfigDTO {
   updatedAt: string;
 }
 
+export interface AvailableModelItem {
+  id: string;
+  name: string;
+  type: "chat" | "embedding";
+}
+
+export interface KeyVerificationResult {
+  index: number;
+  maskedKey: string;
+  status: "valid" | "invalid";
+  statusCode?: number;
+  message: string;
+  modelsCount?: number;
+}
+
+export interface VerifyProviderKeysResult {
+  success: boolean;
+  summary: {
+    total: number;
+    valid: number;
+    invalid: number;
+  };
+  results: KeyVerificationResult[];
+  models?: AvailableModelItem[];
+  message?: string;
+}
+
 export interface EffectiveIntegrations {
   robokassa: {
     merchantLogin: string | null;
@@ -565,10 +592,19 @@ export class PlatformConfigService {
   async testLlmConnection(override?: {
     baseUrl?: string;
     apiKey?: string;
+    providerId?: string;
   }): Promise<{ success: boolean; message: string; modelsCount?: number }> {
     const effective = await this.getEffectiveIntegrations();
-    const url = (override?.baseUrl?.trim() || effective.llm.baseUrl)?.replace(/\/+$/, "");
-    const key = override?.apiKey?.trim() || effective.llm.apiKey;
+    const provider = override?.providerId
+      ? effective.llmProviders.find((p) => p.id === override.providerId)
+      : effective.llmProviders.find((p) => p.isDefault) || effective.llmProviders[0];
+
+    const url = (override?.baseUrl?.trim() || provider?.baseUrl || effective.llm.baseUrl)?.replace(/\/+$/, "");
+
+    let key = override?.apiKey?.trim();
+    if (!key || key.includes("•")) {
+      key = provider?.apiKeys[0] || effective.llm.apiKey || undefined;
+    }
 
     if (!url || !key) {
       return { success: false, message: "Не указан базовый URL или API-ключ провайдера" };
@@ -618,6 +654,346 @@ export class PlatformConfigService {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, message: `Ошибка сети при запросе к ${url}: ${msg}` };
     }
+  }
+
+  /**
+   * Нормализация и сортировка списка моделей, полученных от провайдера.
+   */
+  parseModelsList(modelsList: unknown[]): AvailableModelItem[] {
+    const models: AvailableModelItem[] = [];
+
+    for (const raw of modelsList) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const item = raw as { id?: unknown; display_name?: unknown; name?: unknown };
+      const rawId = typeof item.id === "string" ? item.id : "";
+      if (!rawId) continue;
+
+      const cleanId = rawId.startsWith("models/") ? rawId.replace(/^models\//, "") : rawId;
+      const displayName =
+        (typeof item.display_name === "string" && item.display_name) ||
+        (typeof item.name === "string" && item.name) ||
+        cleanId;
+
+      const lowerId = cleanId.toLowerCase();
+      const lowerName = displayName.toLowerCase();
+      const isEmbedding = lowerId.includes("embed") || lowerName.includes("embed");
+
+      models.push({
+        id: cleanId,
+        name: displayName,
+        type: isEmbedding ? "embedding" : "chat",
+      });
+    }
+
+    const chatPriority = (id: string): number => {
+      const l = id.toLowerCase();
+      if (l.includes("3.5-flash-lite")) return 1;
+      if (l.includes("3.5-flash")) return 2;
+      if (l.includes("3.8-flash")) return 3;
+      if (l.includes("3.7-flash")) return 4;
+      if (l.includes("3.6-flash")) return 5;
+      if (l.includes("3.1-pro")) return 6;
+      if (l.includes("3.1-flash")) return 7;
+      if (l.includes("2.5-pro")) return 8;
+      if (l.includes("2.5-flash")) return 9;
+      if (l.includes("gpt-4o-mini")) return 1;
+      if (l.includes("gpt-4o")) return 2;
+      if (l.includes("deepseek-chat")) return 1;
+      if (l.includes("deepseek-reasoner")) return 2;
+      if (
+        l.includes("tts") ||
+        l.includes("audio") ||
+        l.includes("video") ||
+        l.includes("veo") ||
+        l.includes("robotics")
+      ) {
+        return 90;
+      }
+      return 20;
+    };
+
+    const embedPriority = (id: string): number => {
+      const l = id.toLowerCase();
+      if (l.includes("gemini-embedding-001")) return 1;
+      if (l.includes("gemini-embedding-2")) return 2;
+      if (l.includes("text-embedding-3-small")) return 1;
+      if (l.includes("text-embedding-3-large")) return 2;
+      return 10;
+    };
+
+    return models.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === "chat" ? -1 : 1;
+      }
+      if (a.type === "chat") {
+        return chatPriority(a.id) - chatPriority(b.id);
+      }
+      return embedPriority(a.id) - embedPriority(b.id);
+    });
+  }
+
+  /**
+   * Получение списка реально доступных моделей у провайдера через /models.
+   */
+  async fetchAvailableModels(override?: {
+    baseUrl?: string;
+    apiKey?: string;
+    providerId?: string;
+  }): Promise<{ success: boolean; models: AvailableModelItem[]; message?: string }> {
+    const effective = await this.getEffectiveIntegrations();
+    const provider = override?.providerId
+      ? effective.llmProviders.find((p) => p.id === override.providerId)
+      : effective.llmProviders.find((p) => p.isDefault) || effective.llmProviders[0];
+
+    const url = (override?.baseUrl?.trim() || provider?.baseUrl || effective.llm.baseUrl)?.replace(/\/+$/, "");
+
+    let key = override?.apiKey?.trim();
+    if (!key || key.includes("•")) {
+      key = provider?.apiKeys[0] || effective.llm.apiKey || undefined;
+    }
+
+    if (!url || !key) {
+      return { success: false, models: [], message: "Не указан базовый URL или API-ключ провайдера" };
+    }
+
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { success: false, models: [], message: "Поддерживаются только протоколы http:// и https://" };
+      }
+      if (parsed.hostname === "169.254.169.254" || parsed.hostname === "metadata.google.internal") {
+        return { success: false, models: [], message: "Запрос к адресам метаданных запрещен" };
+      }
+    } catch {
+      return { success: false, models: [], message: "Указан некорректный URL провайдера" };
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
+      const res = await fetch(`${url}/models`, {
+        headers: {
+          Authorization: `Bearer ${key}`,
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        return {
+          success: false,
+          models: [],
+          message: `Провайдер вернул HTTP ${res.status}: ${text.slice(0, 150) || res.statusText}`,
+        };
+      }
+
+      const data = (await res.json().catch(() => ({}))) as { data?: unknown[] };
+      const rawList = Array.isArray(data?.data) ? data.data : [];
+      const models = this.parseModelsList(rawList);
+
+      return {
+        success: true,
+        models,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, models: [], message: `Ошибка сети при запросе к ${url}: ${msg}` };
+    }
+  }
+
+  /**
+   * Проверка доступности ключей пула (валидность каждого ключа в отдельности).
+   */
+  async verifyProviderKeys(payload: {
+    baseUrl?: string;
+    providerId?: string;
+    keys?: string[];
+  }): Promise<VerifyProviderKeysResult> {
+    const effective = await this.getEffectiveIntegrations();
+    const provider = payload.providerId
+      ? effective.llmProviders.find((p) => p.id === payload.providerId)
+      : effective.llmProviders.find((p) => p.isDefault) || effective.llmProviders[0];
+
+    const url = (payload.baseUrl?.trim() || provider?.baseUrl || effective.llm.baseUrl)?.replace(/\/+$/, "");
+
+    if (!url) {
+      return {
+        success: false,
+        summary: { total: 0, valid: 0, invalid: 0 },
+        results: [],
+        message: "Не указан базовый URL провайдера",
+      };
+    }
+
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return {
+          success: false,
+          summary: { total: 0, valid: 0, invalid: 0 },
+          results: [],
+          message: "Поддерживаются только протоколы http:// и https://",
+        };
+      }
+      if (parsed.hostname === "169.254.169.254" || parsed.hostname === "metadata.google.internal") {
+        return {
+          success: false,
+          summary: { total: 0, valid: 0, invalid: 0 },
+          results: [],
+          message: "Запрос к адресам метаданных запрещен",
+        };
+      }
+    } catch {
+      return {
+        success: false,
+        summary: { total: 0, valid: 0, invalid: 0 },
+        results: [],
+        message: "Указан некорректный URL провайдера",
+      };
+    }
+
+    const keysToCheck =
+      payload.keys && payload.keys.length > 0
+        ? payload.keys
+        : provider?.apiKeys ?? (effective.llm.apiKey ? [effective.llm.apiKey] : []);
+
+    if (keysToCheck.length === 0) {
+      return {
+        success: false,
+        summary: { total: 0, valid: 0, invalid: 0 },
+        results: [],
+        message: "В пуле нет ключей для проверки",
+      };
+    }
+
+    const unmaskedPairs = keysToCheck.map((rawKey, index) => {
+      const trimmed = rawKey.trim();
+      if (trimmed.includes("•")) {
+        let restored = provider?.apiKeys[index];
+        if (!restored && provider?.apiKeys) {
+          restored = provider.apiKeys.find((orig) => maskApiKey(orig) === trimmed);
+        }
+        return {
+          index,
+          masked: maskApiKey(restored || trimmed),
+          secret: restored?.trim() || "",
+        };
+      }
+      return {
+        index,
+        masked: maskApiKey(trimmed),
+        secret: trimmed,
+      };
+    });
+
+    const results: KeyVerificationResult[] = [];
+    let fetchedModels: AvailableModelItem[] | undefined;
+
+    const chunkSize = 4;
+    for (let c = 0; c < unmaskedPairs.length; c += chunkSize) {
+      const chunk = unmaskedPairs.slice(c, c + chunkSize);
+      await Promise.all(
+        chunk.map(async (item) => {
+          if (!item.secret) {
+            results.push({
+              index: item.index,
+              maskedKey: item.masked,
+              status: "invalid",
+              message: "Ключ не найден в хранилище",
+            });
+            return;
+          }
+
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 7000);
+
+            const res = await fetch(`${url}/models`, {
+              headers: {
+                Authorization: `Bearer ${item.secret}`,
+              },
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+
+            if (res.ok) {
+              const data = (await res.json().catch(() => ({}))) as { data?: unknown[] };
+              const modelsList = Array.isArray(data?.data) ? data.data : [];
+              const count = modelsList.length;
+
+              results.push({
+                index: item.index,
+                maskedKey: item.masked,
+                status: "valid",
+                statusCode: 200,
+                message: `Работает (${count} моделей)`,
+                modelsCount: count,
+              });
+
+              if (!fetchedModels && modelsList.length > 0) {
+                fetchedModels = this.parseModelsList(modelsList);
+              }
+            } else {
+              const text = await res.text().catch(() => "");
+              let errDetail = "";
+              try {
+                const errObj = JSON.parse(text) as { error?: { message?: string } };
+                if (errObj?.error?.message) {
+                  errDetail = errObj.error.message;
+                }
+              } catch {
+                errDetail = text.slice(0, 100);
+              }
+
+              let msg = `HTTP ${res.status}`;
+              if (res.status === 400) {
+                msg = `Неверный API-ключ (400)${errDetail ? `: ${errDetail}` : ""}`;
+              } else if (res.status === 401 || res.status === 403) {
+                msg = `Доступ запрещён (HTTP ${res.status})${errDetail ? `: ${errDetail}` : ""}`;
+              } else if (res.status === 429) {
+                msg = `Превышена квота или лимит RPM (429)`;
+              } else if (errDetail) {
+                msg = `HTTP ${res.status}: ${errDetail}`;
+              }
+
+              results.push({
+                index: item.index,
+                maskedKey: item.masked,
+                status: "invalid",
+                statusCode: res.status,
+                message: msg,
+              });
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            results.push({
+              index: item.index,
+              maskedKey: item.masked,
+              status: "invalid",
+              message: `Ошибка сети: ${msg}`,
+            });
+          }
+        }),
+      );
+    }
+
+    results.sort((a, b) => a.index - b.index);
+
+    const validCount = results.filter((r) => r.status === "valid").length;
+    const invalidCount = results.length - validCount;
+
+    return {
+      success: invalidCount === 0,
+      summary: {
+        total: results.length,
+        valid: validCount,
+        invalid: invalidCount,
+      },
+      results,
+      models: fetchedModels,
+    };
   }
 }
 

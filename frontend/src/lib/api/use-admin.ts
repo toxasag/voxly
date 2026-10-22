@@ -376,14 +376,65 @@ export function useUpdateAdminIntegrationsConfig(): UseMutationResult<
   });
 }
 
+export interface LlmModelItem {
+  id: string;
+  name: string;
+  type: "chat" | "embedding";
+}
+
+export interface LlmKeyVerifyResult {
+  index: number;
+  maskedKey: string;
+  status: "valid" | "invalid";
+  statusCode?: number;
+  message: string;
+  modelsCount?: number;
+}
+
+export interface VerifyLlmKeysResponse {
+  success: boolean;
+  summary: { total: number; valid: number; invalid: number };
+  results: LlmKeyVerifyResult[];
+  models?: LlmModelItem[];
+  message?: string;
+}
+
+export interface FetchLlmModelsResponse {
+  success: boolean;
+  models: LlmModelItem[];
+  message?: string;
+}
+
 export function useTestAdminLlm(): UseMutationResult<
   { success: boolean; message: string; modelsCount?: number },
   ApiClientError,
-  { baseUrl?: string; apiKey?: string }
+  { baseUrl?: string; apiKey?: string; providerId?: string }
 > {
   return useMutation({
     mutationFn: async (payload) =>
       (await apiClient.post<{ success: boolean; message: string; modelsCount?: number }>("/api/v1/admin/integrations/test-llm", payload)).data,
+  });
+}
+
+export function useFetchLlmModels(): UseMutationResult<
+  FetchLlmModelsResponse,
+  ApiClientError,
+  { baseUrl?: string; apiKey?: string; providerId?: string }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<FetchLlmModelsResponse>("/api/v1/admin/integrations/llm/models", payload)).data,
+  });
+}
+
+export function useVerifyLlmKeys(): UseMutationResult<
+  VerifyLlmKeysResponse,
+  ApiClientError,
+  { baseUrl?: string; providerId?: string; keys?: string[] }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<VerifyLlmKeysResponse>("/api/v1/admin/integrations/llm/verify-keys", payload)).data,
   });
 }
 
