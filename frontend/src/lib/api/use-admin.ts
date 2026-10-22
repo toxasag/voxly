@@ -13,6 +13,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 export interface AdminTenantDTO {
   id: string;
   name: string;
+  slug?: string;
   plan: string;
   status: string;
   /** УСТАРЕЛО: остаток в штуках токенов. Актуален ai_balance_kopecks. */
@@ -138,6 +139,25 @@ export function useUpdateTenant(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminKeys.tenants });
       void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
+    },
+  });
+}
+
+/** Полное удаление компании (тенанта); инвалидирует список и метрики. */
+export function useDeleteTenant(): UseMutationResult<
+  { success: boolean; message?: string },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; message?: string }, ApiClientError, string>({
+    mutationFn: async (id: string) =>
+      (await apiClient.delete<{ success: boolean; message?: string }>(`/api/v1/admin/tenants/${id}`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminKeys.tenants });
+      void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
+      void queryClient.invalidateQueries({ queryKey: adminKeys.billing });
     },
   });
 }
@@ -376,14 +396,65 @@ export function useUpdateAdminIntegrationsConfig(): UseMutationResult<
   });
 }
 
+export interface LlmModelItem {
+  id: string;
+  name: string;
+  type: "chat" | "embedding";
+}
+
+export interface LlmKeyVerifyResult {
+  index: number;
+  maskedKey: string;
+  status: "valid" | "invalid";
+  statusCode?: number;
+  message: string;
+  modelsCount?: number;
+}
+
+export interface VerifyLlmKeysResponse {
+  success: boolean;
+  summary: { total: number; valid: number; invalid: number };
+  results: LlmKeyVerifyResult[];
+  models?: LlmModelItem[];
+  message?: string;
+}
+
+export interface FetchLlmModelsResponse {
+  success: boolean;
+  models: LlmModelItem[];
+  message?: string;
+}
+
 export function useTestAdminLlm(): UseMutationResult<
   { success: boolean; message: string; modelsCount?: number },
   ApiClientError,
-  { baseUrl?: string; apiKey?: string }
+  { baseUrl?: string; apiKey?: string; providerId?: string }
 > {
   return useMutation({
     mutationFn: async (payload) =>
       (await apiClient.post<{ success: boolean; message: string; modelsCount?: number }>("/api/v1/admin/integrations/test-llm", payload)).data,
+  });
+}
+
+export function useFetchLlmModels(): UseMutationResult<
+  FetchLlmModelsResponse,
+  ApiClientError,
+  { baseUrl?: string; apiKey?: string; providerId?: string }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<FetchLlmModelsResponse>("/api/v1/admin/integrations/llm/models", payload)).data,
+  });
+}
+
+export function useVerifyLlmKeys(): UseMutationResult<
+  VerifyLlmKeysResponse,
+  ApiClientError,
+  { baseUrl?: string; providerId?: string; keys?: string[] }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<VerifyLlmKeysResponse>("/api/v1/admin/integrations/llm/verify-keys", payload)).data,
   });
 }
 
