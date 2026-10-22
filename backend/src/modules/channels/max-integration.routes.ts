@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import QRCode from "qrcode";
 
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
@@ -150,27 +151,48 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
     subApp.post("/auth/qr/start", { onRequest: guards }, async (request, reply) => {
       const body = qrStartSchema.parse(request.body ?? {});
       const result = await service.startQr(request.tenant_id, body.name);
+      if (result && typeof result.qr === "string" && result.qr.length > 0 && !result.qr.startsWith("data:image/")) {
+        try {
+          result.qr = await QRCode.toDataURL(result.qr, { margin: 1, width: 300 });
+        } catch (err) {
+          request.log.error(err, "Failed to convert MAX QR to data URL on start");
+        }
+      }
       return reply.send({ data: result });
     });
 
     subApp.get("/auth/qr/status", { onRequest: guards }, async (request, reply) => {
       const query = qrStatusSchema.parse(request.query);
       const result = await service.checkStatus(request.tenant_id, query.name);
+
+      if (result && typeof result.qr === "string" && result.qr.length > 0) {
+        if (!result.qr.startsWith("data:image/")) {
+          try {
+            result.qr = await QRCode.toDataURL(result.qr, { margin: 1, width: 300 });
+          } catch (err) {
+            request.log.error(err, "Failed to convert MAX QR to data URL on status check");
+          }
+        }
+      } else if (result && result.status === "qr_ready") {
+        try {
+          const buffer = await service.getQrPng(request.tenant_id, query.name);
+          if (buffer) {
+            result.qr = `data:image/png;base64,${buffer.toString("base64")}`;
+          }
+        } catch (err) {
+          request.log.error(err, "Failed to fetch MAX QR PNG buffer from max-bridge");
+        }
+      }
+
       return reply.send({ data: result });
     });
 
     subApp.get("/auth/qr/png", { onRequest: guards }, async (request, reply) => {
       const query = qrStatusSchema.parse(request.query);
-      const url = `${service["baseUrl"]}/auth/qr/png?tenantId=${encodeURIComponent(request.tenant_id)}&name=${encodeURIComponent(query.name)}`;
-      const headers: Record<string, string> = {};
-      if (service["serviceToken"]) {
-        headers["Authorization"] = `Bearer ${service["serviceToken"]}`;
+      const buffer = await service.getQrPng(request.tenant_id, query.name);
+      if (!buffer) {
+        return reply.status(404).send({ error: "QR not ready" });
       }
-      const res = await fetch(url, { headers });
-      if (!res.ok) {
-        return reply.status(res.status).send({ error: "QR not ready" });
-      }
-      const buffer = Buffer.from(await res.arrayBuffer());
       return reply.type("image/png").send(buffer);
     });
 

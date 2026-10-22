@@ -11,6 +11,7 @@ export interface MaxStartQrResult {
   ok: boolean;
   status: string;
   name: string;
+  qr?: string | null;
 }
 
 export interface MaxStatusResult {

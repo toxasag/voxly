@@ -92,9 +92,9 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
         </div>
       </SheetHeader>
 
-      <SheetContent>
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         {isConnected ? (
-          <div className="flex flex-col items-center justify-center space-y-4 py-10 text-center">
+          <div className="flex flex-col items-center justify-center flex-1 p-6 space-y-4 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
               <CheckCircle2 className="h-8 w-8" />
             </div>
@@ -107,13 +107,14 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
             <button
               type="button"
               onClick={onClose}
-              className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0]"
+              className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] cursor-pointer"
             >
               Готово
             </button>
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
             <div className="space-y-1.5">
               <label htmlFor="wa_label" className="block text-xs font-medium text-[#666666]">
                 Название подключения
@@ -191,11 +192,13 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
               </ol>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] bg-white px-6 py-3 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
               >
                 Отмена
               </button>
