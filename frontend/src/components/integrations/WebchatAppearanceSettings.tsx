@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Bot,
+  Camera,
   Check,
   ExternalLink,
   Laptop,
@@ -30,6 +31,7 @@ import {
   AVAILABLE_MASCOTS,
   type MascotId,
 } from "./InteractiveMascot";
+import { CreatePhotoMascotModal } from "./CreatePhotoMascotModal";
 
 type WebchatAvatarType = "icon" | "photo" | "mascot";
 
@@ -152,8 +154,20 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       (initialCreds.consultantAvatar ? "photo" : "mascot")
   );
   const [mascotId, setMascotId] = useState<MascotId>(
-    (initialCreds.mascotId as MascotId) || "voxly_robot"
+    (initialCreds.mascotId as MascotId) || "ballerina"
   );
+  const [customDirections, setCustomDirections] = useState<string>(
+    typeof initialCreds.customMascotDirections === "string"
+      ? initialCreds.customMascotDirections
+      : "",
+  );
+  const [customReactions, setCustomReactions] = useState<string>(
+    typeof initialCreds.customMascotReactions === "string"
+      ? initialCreds.customMascotReactions
+      : "",
+  );
+  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [mascotCategory, setMascotCategory] = useState<"all" | "people" | "robots" | "animals">("all");
 
   // Консультант: фото и имя
   const [consultantName, setConsultantName] = useState<string>(
@@ -230,6 +244,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           consultantAvatar: consultantAvatar.trim(),
           avatarType,
           mascotId,
+          customMascotDirections: customDirections,
+          customMascotReactions: customReactions,
         },
       },
       {
@@ -464,18 +480,133 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
 
             {/* Настройки для 3D-маскота */}
             {avatarType === "mascot" && (
-              <div className="mt-3 space-y-3 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#111111]">
-                    Каталог интерактивных 3D-маскотов:
-                  </span>
-                  <span className="text-[11px] text-[#888888]">
-                    Подвигайте мышью над персонажем!
-                  </span>
+              <div className="mt-3 space-y-4 rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-4">
+                {/* Панель фильтров и кнопка создания по фото */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5e5] pb-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setMascotCategory("all")}
+                      className={cn(
+                        "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                        mascotCategory === "all"
+                          ? "bg-[#4a38f5] text-white"
+                          : "bg-white border border-[#e5e5e5] text-[#666666] hover:text-[#111111]",
+                      )}
+                    >
+                      Все ({AVAILABLE_MASCOTS.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMascotCategory("people")}
+                      className={cn(
+                        "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                        mascotCategory === "people"
+                          ? "bg-[#4a38f5] text-white"
+                          : "bg-white border border-[#e5e5e5] text-[#666666] hover:text-[#111111]",
+                      )}
+                    >
+                      Люди (Девушки, Камран...)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMascotCategory("robots")}
+                      className={cn(
+                        "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                        mascotCategory === "robots"
+                          ? "bg-[#4a38f5] text-white"
+                          : "bg-white border border-[#e5e5e5] text-[#666666] hover:text-[#111111]",
+                      )}
+                    >
+                      Роботы
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMascotCategory("animals")}
+                      className={cn(
+                        "rounded-lg px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+                        mascotCategory === "animals"
+                          ? "bg-[#4a38f5] text-white"
+                          : "bg-white border border-[#e5e5e5] text-[#666666] hover:text-[#111111]",
+                      )}
+                    >
+                      Животные (Кот, Лис...)
+                    </button>
+                  </div>
+
+                  {/* Кнопка создания по фото */}
+                  <button
+                    type="button"
+                    onClick={() => setIsPhotoModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/10 px-3 py-1.5 text-xs font-semibold text-[#4a38f5] hover:bg-[#4a38f5]/15 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Сделать маскота по фото</span>
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {AVAILABLE_MASCOTS.map((m) => {
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                  {/* Карточка создания своего маскота по фото */}
+                  <div
+                    onClick={() => setIsPhotoModalOpen(true)}
+                    className="group relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#4a38f5]/40 bg-white p-3 text-center transition-all hover:border-[#4a38f5] hover:bg-[#4a38f5]/5 cursor-pointer min-h-[170px]"
+                  >
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#4a38f5]/10 text-[#4a38f5] group-hover:scale-110 transition-transform">
+                      <Camera className="h-6 w-6" />
+                    </div>
+                    <span className="mt-2 text-xs font-bold text-[#4a38f5]">
+                      Сделать по фото
+                    </span>
+                    <p className="mt-0.5 text-[10px] text-[#666666] leading-tight">
+                      Генерация чиби по вашему селфи
+                    </p>
+                  </div>
+
+                  {/* Если есть кастомный маскот по фото */}
+                  {customDirections && (
+                    <div
+                      onClick={() => setMascotId("custom")}
+                      className={cn(
+                        "group relative flex flex-col items-center rounded-xl border p-3 transition-all cursor-pointer bg-white text-center",
+                        mascotId === "custom"
+                          ? "border-[#4a38f5] shadow-xs ring-2 ring-[#4a38f5]/20"
+                          : "border-[#e5e5e5] hover:border-[#cccccc] hover:shadow-2xs",
+                      )}
+                    >
+                      <span className="absolute top-2 right-2 rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.5 text-[9px] font-bold">
+                        Мой аватар
+                      </span>
+
+                      <div className="my-1.5">
+                        <InteractiveMascot
+                          mascotId="custom"
+                          customDirections={customDirections}
+                          customReactions={customReactions || customDirections}
+                          size={70}
+                          interactive={true}
+                        />
+                      </div>
+
+                      <span className="text-xs font-bold text-[#111111] group-hover:text-[#4a38f5]">
+                        Из моего фото
+                      </span>
+                      <p className="mt-0.5 text-[10px] text-[#888888]">
+                        Пользовательский спрайт
+                      </p>
+
+                      {mascotId === "custom" && (
+                        <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
+                          <Check className="h-3 w-3 stroke-[3]" />
+                          <span>Выбран</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Каталог готовых персонажей */}
+                  {AVAILABLE_MASCOTS.filter(
+                    (m) => mascotCategory === "all" || m.category === mascotCategory,
+                  ).map((m) => {
                     const isSelected = mascotId === m.id;
                     return (
                       <div
@@ -493,15 +624,16 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                             : "border-[#e5e5e5] hover:border-[#cccccc] hover:shadow-2xs",
                         )}
                       >
-                        <span className="absolute top-2 right-2 rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[9px] font-medium text-[#666666]">
-                          {m.badge}
-                        </span>
+                        {m.badge && (
+                          <span className="absolute top-2 right-2 rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[9px] font-medium text-[#666666]">
+                            {m.badge}
+                          </span>
+                        )}
 
-                        <div className="my-2">
+                        <div className="my-1.5">
                           <InteractiveMascot
                             mascotId={m.id}
-                            size={52}
-                            accentColor={accentColor}
+                            size={70}
                             interactive={true}
                           />
                         </div>
@@ -509,12 +641,12 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                         <span className="text-xs font-bold text-[#111111] group-hover:text-[#4a38f5]">
                           {m.name}
                         </span>
-                        <p className="mt-1 text-[10px] text-[#888888] leading-tight line-clamp-2">
+                        <p className="mt-0.5 text-[10px] text-[#888888] leading-tight line-clamp-2">
                           {m.description}
                         </p>
 
                         {isSelected && (
-                          <div className="mt-2 flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
+                          <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
                             <Check className="h-3 w-3 stroke-[3]" />
                             <span>Выбран</span>
                           </div>
@@ -982,6 +1114,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                               size={32}
                               accentColor={accentColor}
                               interactive={false}
+                              customDirections={customDirections}
+                              customReactions={customReactions}
                             />
                           ) : avatarType === "photo" && consultantAvatar ? (
                             <img
@@ -1041,6 +1175,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                               size={28}
                               accentColor={accentColor}
                               interactive={false}
+                              customDirections={customDirections}
+                              customReactions={customReactions}
                             />
                           ) : avatarType === "photo" && consultantAvatar ? (
                             <img
@@ -1131,6 +1267,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       size={60}
                       accentColor={accentColor}
                       interactive={true}
+                      customDirections={customDirections}
+                      customReactions={customReactions}
                       onClick={() => setPreviewOpen(true)}
                     />
                     <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs">
@@ -1168,6 +1306,19 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           </div>
         </div>
       </div>
+
+      <CreatePhotoMascotModal
+        isOpen={isPhotoModalOpen}
+        onClose={() => setIsPhotoModalOpen(false)}
+        onApply={(dirs, reacts, name) => {
+          setCustomDirections(dirs);
+          setCustomReactions(reacts);
+          setMascotId("custom");
+          if (!consultantName) {
+            setConsultantName(name);
+          }
+        }}
+      />
     </div>
   );
 }
