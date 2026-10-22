@@ -4,7 +4,13 @@ import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TelegramAuthService } from "./telegram-auth.service.js";
 import { TelegramMtprotoUnavailableError } from "./telegram-mtproto.service.js";
-import { sendCodeSchema, signInSchema } from "./telegram-auth.types.js";
+import {
+  qrPasswordSchema,
+  qrStartSchema,
+  qrStatusSchema,
+  sendCodeSchema,
+  signInSchema,
+} from "./telegram-auth.types.js";
 
 // ---------------------------------------------------------------------------
 // Подключение пользовательских аккаунтов Telegram, смонтировано в app.ts под
@@ -49,6 +55,47 @@ export default async function telegramIntegrationRoutes(app: FastifyInstance): P
       actorId: request.authUser.id,
       phone: body.phone,
       label: body.name,
+    });
+
+    return reply.send({ data: result });
+  });
+
+  app.post("/auth/qr/start", { onRequest: guards }, async (request, reply) => {
+    assertConfigured();
+
+    const body = qrStartSchema.parse(request.body ?? {});
+
+    const result = await service.startQr({
+      tenantId: request.tenant_id,
+      actorId: request.authUser.id,
+      label: body.name,
+    });
+
+    return reply.send({ data: result });
+  });
+
+  app.get("/auth/qr/status", { onRequest: guards }, async (request, reply) => {
+    assertConfigured();
+
+    const query = qrStatusSchema.parse(request.query);
+
+    const result = await service.checkQrStatus({
+      tenantId: request.tenant_id,
+      tempSessionId: query.tempSessionId,
+    });
+
+    return reply.send({ data: result });
+  });
+
+  app.post("/auth/qr/password", { onRequest: guards }, async (request, reply) => {
+    assertConfigured();
+
+    const body = qrPasswordSchema.parse(request.body);
+
+    const result = await service.submitQrPassword({
+      tenantId: request.tenant_id,
+      tempSessionId: body.tempSessionId,
+      password: body.password,
     });
 
     return reply.send({ data: result });

@@ -7,7 +7,12 @@ import {
   TelegramMtprotoService,
   TelegramPasswordRequiredError,
 } from "./telegram-mtproto.service.js";
-import type { SendCodeResultDTO, SignInResultDTO } from "./telegram-auth.types.js";
+import type {
+  QrStartResultDTO,
+  QrStatusResultDTO,
+  SendCodeResultDTO,
+  SignInResultDTO,
+} from "./telegram-auth.types.js";
 
 // ---------------------------------------------------------------------------
 // Двухшаговое подключение аккаунта Telegram.
@@ -107,6 +112,145 @@ export class TelegramAuthService {
       phoneCodeHash: outcome.phoneCodeHash,
       isCodeViaApp: outcome.isCodeViaApp,
       expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  /**
+   * Старт подключения Telegram через QR-код.
+   */
+  async startQr(input: {
+    tenantId: string;
+    actorId: string;
+    label: string;
+  }): Promise<QrStartResultDTO> {
+    await this.assertQuotaAvailable(input.tenantId);
+
+    const outcome = await this.mtproto.exportLoginToken();
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000);
+
+    const row = await queryOne<{ id: string }>(
+      `INSERT INTO telegram_auth_sessions
+         (tenant_id, created_by, phone, label, phone_code_hash, session_state, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.actorId,
+        "qr",
+        input.label || "Telegram",
+        "qr",
+        encryptSecret(outcome.sessionState),
+        expiresAt,
+      ],
+    );
+
+    if (row === null) throw new Error("Failed to persist Telegram auth session");
+    await this.purgeExpired(input.tenantId);
+
+    this.app.log.info(
+      { tenantId: input.tenantId, sessionId: row.id },
+      "Telegram MTProto QR code generated",
+    );
+
+    return {
+      tempSessionId: row.id,
+      qr: outcome.qrBase64,
+      expires: outcome.expires,
+    };
+  }
+
+  /**
+   * Проверка состояния авторизации по QR-коду.
+   */
+  async checkQrStatus(input: {
+    tenantId: string;
+    tempSessionId: string;
+  }): Promise<QrStatusResultDTO> {
+    const session = await this.loadSession(input.tenantId, input.tempSessionId);
+    const sessionState = decryptSecret(session.session_state);
+
+    const outcome = await this.mtproto.checkQrStatus(sessionState);
+
+    if (outcome.sessionState && outcome.sessionState !== sessionState) {
+      await query(
+        `UPDATE telegram_auth_sessions
+         SET session_state = $1
+         WHERE tenant_id = $2 AND id = $3`,
+        [encryptSecret(outcome.sessionState), input.tenantId, input.tempSessionId],
+      );
+    }
+
+    if (outcome.status === "requires_2fa") {
+      await this.markRequires2FA(input.tenantId, session.id, outcome.passwordHint ?? null);
+      return {
+        status: "requires_2fa",
+        passwordHint: outcome.passwordHint ?? null,
+      };
+    }
+
+    if (outcome.status === "connected" && outcome.user && outcome.sessionState) {
+      const accountId = await this.persistAccount({
+        tenantId: input.tenantId,
+        label: session.label,
+        sessionState: outcome.sessionState,
+        user: outcome.user,
+      });
+
+      await this.consume(input.tenantId, session.id);
+
+      this.app.log.info(
+        { tenantId: input.tenantId, accountId, tgUserId: outcome.user.id },
+        "Telegram account connected via QR code",
+      );
+
+      return {
+        status: "connected",
+        accountId,
+        user: outcome.user,
+      };
+    }
+
+    return {
+      status: "waiting",
+      qr: outcome.refreshedQr?.qrBase64,
+      expires: outcome.refreshedQr?.expires,
+    };
+  }
+
+  /**
+   * Ввод облачного пароля 2FA для завершения QR-авторизации.
+   */
+  async submitQrPassword(input: {
+    tenantId: string;
+    tempSessionId: string;
+    password: string;
+  }): Promise<Extract<QrStatusResultDTO, { status: "connected" }>> {
+    const session = await this.loadSession(input.tenantId, input.tempSessionId);
+    const sessionState = decryptSecret(session.session_state);
+
+    const outcome = await this.mtproto.submitPassword({
+      sessionState,
+      password: input.password,
+    });
+
+    const accountId = await this.persistAccount({
+      tenantId: input.tenantId,
+      label: session.label,
+      sessionState: outcome.sessionState,
+      user: outcome.user,
+    });
+
+    await this.consume(input.tenantId, session.id);
+
+    this.app.log.info(
+      { tenantId: input.tenantId, accountId, tgUserId: outcome.user.id },
+      "Telegram account connected via QR code + 2FA",
+    );
+
+    return {
+      status: "connected",
+      accountId,
+      user: outcome.user,
     };
   }
 
