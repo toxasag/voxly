@@ -171,8 +171,26 @@
     .getvoxly-mascot-wrap:hover {
       transform: scale(1.08);
     }
-    .getvoxly-mascot-wrap.booped {
-      transform: scale(0.88);
+    .getvoxly-mascot-wrap.squashing {
+      animation: getvoxly-squash 0.35s ease-out;
+    }
+    .getvoxly-mascot-sprite {
+      width: 64px;
+      height: 64px;
+      background-repeat: no-repeat;
+      background-size: 300% 300%;
+      background-position: 50% 50%;
+      image-rendering: -webkit-optimize-contrast;
+      user-select: none;
+      -webkit-user-drag: none;
+      pointer-events: none;
+      transition: background-position 0.05s ease-out;
+    }
+    @keyframes getvoxly-squash {
+      0% { transform: scale(1, 1); }
+      30% { transform: scale(1.18, 0.82); }
+      60% { transform: scale(0.92, 1.08); }
+      100% { transform: scale(1, 1); }
     }
 
     .getvoxly-chat-badge {
@@ -568,48 +586,114 @@
         // Поддержка 3D-маскота или фото консультанта
         if (data.avatarType === 'mascot') {
           bubble.classList.add('is-mascot');
+
+          let assetBaseUrl = 'https://getvoxly.ru';
+          if (currentScript && currentScript.src) {
+            try {
+              assetBaseUrl = new URL(currentScript.src).origin;
+            } catch (e) {}
+          }
+
+          const MASCOT_MAP = {
+            voxly_robot: 'drone',
+            friendly_fox: 'fox',
+            smart_cat: 'cat',
+            cyber_owl: 'scout',
+            happy_alien: 'crt',
+            friendly_panda: 'otter',
+            tech_ninja: 'kamran',
+          };
+
+          let resolvedId = data.mascotId || 'drone';
+          if (MASCOT_MAP[resolvedId]) {
+            resolvedId = MASCOT_MAP[resolvedId];
+          }
+
+          let directionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-directions.webp';
+          let reactionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-reactions.webp';
+
+          if (resolvedId === 'custom' || data.customMascotDirections) {
+            directionsUrl = data.customMascotDirections || directionsUrl;
+            reactionsUrl = data.customMascotReactions || data.customMascotDirections || directionsUrl;
+          }
+
           bubble.innerHTML = `
             <div class="getvoxly-mascot-wrap" id="getvoxly-mascot-el">
-              <svg width="62" height="62" viewBox="0 0 64 64" fill="none">
-                <circle cx="32" cy="7" r="3.5" fill="${data.accentColor || '#4a38f5'}" />
-                <path d="M32 10.5V16" stroke="${data.accentColor || '#4a38f5'}" stroke-width="2.5" stroke-linecap="round" />
-                <rect x="7" y="27" width="5" height="12" rx="2.5" fill="#334155" />
-                <rect x="52" y="27" width="5" height="12" rx="2.5" fill="#334155" />
-                <rect x="10" y="15" width="44" height="36" rx="12" fill="#0f172a" stroke="${data.accentColor || '#4a38f5'}" stroke-width="2.5" />
-                <rect x="15" y="21" width="34" height="24" rx="8" fill="#020617" />
-                <circle cx="25" cy="32" r="5" fill="#0369a1" />
-                <circle class="getvoxly-eye-l" cx="25" cy="32" r="3.5" fill="#38bdf8" />
-                <circle cx="39" cy="32" r="5" fill="#0369a1" />
-                <circle class="getvoxly-eye-r" cx="39" cy="32" r="3.5" fill="#38bdf8" />
-                <path d="M28 40C30 42 34 42 36 40" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" />
-              </svg>
+              <div class="getvoxly-mascot-sprite" id="getvoxly-mascot-sprite" style="background-image: url('${directionsUrl}');"></div>
+              <span class="getvoxly-bubble-dot"></span>
             </div>
           `;
 
           const mascotEl = bubble.querySelector('#getvoxly-mascot-el');
-          const eyeL = bubble.querySelector('.getvoxly-eye-l');
-          const eyeR = bubble.querySelector('.getvoxly-eye-r');
+          const spriteEl = bubble.querySelector('#getvoxly-mascot-sprite');
 
-          if (window.matchMedia('(hover: hover) and (pointer: fine)').matches && eyeL && eyeR) {
+          // Preload reactions
+          const preloadImg = new Image();
+          preloadImg.src = reactionsUrl;
+
+          let isBooped = false;
+          let boopTimer = null;
+
+          function setMascotCell(row, col) {
+            if (!spriteEl) return;
+            const x = col === 0 ? '0%' : col === 1 ? '50%' : '100%';
+            const y = row === 0 ? '0%' : row === 1 ? '50%' : '100%';
+            spriteEl.style.backgroundPosition = x + ' ' + y;
+          }
+
+          // Трекинг курсора мыши (9 направлений взгляда)
+          if (window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
             window.addEventListener('pointermove', function (e) {
+              if (isBooped) return;
               const b = bubble.getBoundingClientRect();
               const cx = b.left + b.width / 2;
               const cy = b.top + b.height / 2;
               const dx = e.clientX - cx;
               const dy = e.clientY - cy;
-              const angle = Math.atan2(dy, dx);
-              const dist = Math.min(Math.hypot(dx, dy) / 200, 1);
-              const sx = Math.cos(angle) * 3 * dist;
-              const sy = Math.sin(angle) * 3 * dist;
-              eyeL.setAttribute('cx', String(25 + sx));
-              eyeL.setAttribute('cy', String(32 + sy));
-              eyeR.setAttribute('cx', String(39 + sx));
-              eyeR.setAttribute('cy', String(32 + sy));
-              if (mascotEl) {
-                mascotEl.style.transform = 'rotate(' + (Math.cos(angle) * 6 * dist) + 'deg)';
+              const dist = Math.hypot(dx, dy);
+
+              if (dist < 35) {
+                setMascotCell(1, 1);
+                return;
+              }
+
+              const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+              if (angle >= -22.5 && angle < 22.5) {
+                setMascotCell(1, 2); // right
+              } else if (angle >= 22.5 && angle < 67.5) {
+                setMascotCell(2, 2); // down-right
+              } else if (angle >= 67.5 && angle < 112.5) {
+                setMascotCell(2, 1); // down
+              } else if (angle >= 112.5 && angle < 157.5) {
+                setMascotCell(2, 0); // down-left
+              } else if (angle >= 157.5 || angle < -157.5) {
+                setMascotCell(1, 0); // left
+              } else if (angle >= -157.5 && angle < -112.5) {
+                setMascotCell(0, 0); // up-left
+              } else if (angle >= -112.5 && angle < -67.5) {
+                setMascotCell(0, 1); // up
+              } else if (angle >= -67.5 && angle < -22.5) {
+                setMascotCell(0, 2); // up-right
               }
             }, { passive: true });
           }
+
+          // Реакция boop при клике
+          bubble.addEventListener('pointerdown', function () {
+            if (!spriteEl) return;
+            isBooped = true;
+            spriteEl.style.backgroundImage = "url('" + reactionsUrl + "')";
+            setMascotCell(1, 1);
+            if (mascotEl) mascotEl.classList.add('squashing');
+
+            clearTimeout(boopTimer);
+            boopTimer = setTimeout(function () {
+              isBooped = false;
+              spriteEl.style.backgroundImage = "url('" + directionsUrl + "')";
+              if (mascotEl) mascotEl.classList.remove('squashing');
+              setMascotCell(1, 1);
+            }, 600);
+          });
         } else if (data.avatarType === 'photo' && data.consultantAvatar) {
           bubble.classList.add('is-photo');
           bubble.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + data.consultantAvatar + '" alt="Консультант"><span class="getvoxly-bubble-dot"></span>';
