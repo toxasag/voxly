@@ -49,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const env = getEnv();
 
   const app = fastify({
+    trustProxy: true,
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
     },
@@ -80,7 +81,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(sensible);
 
   await app.register(rateLimit, {
-    max: 100,
+    max: 300,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
     /**
