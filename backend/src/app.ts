@@ -18,7 +18,7 @@ import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
 import whatsappIntegrationRoutes from "./modules/channels/whatsapp-integration.routes.js";
-import maxIntegrationRoutes from "./modules/channels/max-integration.routes.js";
+import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
@@ -170,6 +170,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Авторизация личных аккаунтов MAX через max-bridge (QR-код)
   await app.register(maxIntegrationRoutes, { prefix: "/api/v1/integrations/max" });
+
+  // Внутренние эндпоинты для сервиса max-bridge (upsert, active bots, delete, inbound/outbound)
+  await app.register(maxInternalRoutes, { prefix: "/api/internal/max" });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });

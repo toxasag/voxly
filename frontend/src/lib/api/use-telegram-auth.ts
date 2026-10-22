@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 import { channelKeys } from "@/lib/api/use-channels";
@@ -87,6 +87,88 @@ export function useTelegramCheckAccount(): UseMutationResult<
     mutationFn: async ({ id }) =>
       (await apiClient.post<{ alive: boolean; reason?: string }>(`${BASE_PATH}/accounts/${id}/check`, {}))
         .data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram") });
+    },
+  });
+}
+
+export interface TelegramStartQrResult {
+  tempSessionId: string;
+  qr: string;
+  expires: number;
+}
+
+export type TelegramQrStatusResult =
+  | {
+      status: "waiting";
+      qr?: string;
+      expires?: number;
+    }
+  | {
+      status: "requires_2fa";
+      passwordHint: string | null;
+    }
+  | {
+      status: "connected";
+      accountId: string;
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        username: string | null;
+        phone: string | null;
+      };
+    };
+
+export function useTelegramStartQr(): UseMutationResult<
+  TelegramStartQrResult,
+  ApiClientError,
+  { name?: string }
+> {
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<TelegramStartQrResult>(`${BASE_PATH}/auth/qr/start`, payload ?? {})).data,
+  });
+}
+
+export function useTelegramQrStatus(
+  tempSessionId: string | null,
+  enabled: boolean,
+) {
+  const queryClient = useQueryClient();
+
+  return useQuery({
+    queryKey: ["telegram", "qr-status", tempSessionId],
+    queryFn: async () => {
+      if (!tempSessionId) return null;
+      const res = await apiClient.get<TelegramQrStatusResult>(
+        `${BASE_PATH}/auth/qr/status?tempSessionId=${encodeURIComponent(tempSessionId)}`,
+      );
+      if (res.data?.status === "connected") {
+        void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram") });
+      }
+      return res.data;
+    },
+    enabled: Boolean(tempSessionId) && enabled,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.status === "connected" || data?.status === "requires_2fa") return false;
+      return 2500;
+    },
+  });
+}
+
+export function useTelegramQrPassword(): UseMutationResult<
+  { status: "connected"; accountId: string },
+  ApiClientError,
+  { tempSessionId: string; password: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload) =>
+      (await apiClient.post<{ status: "connected"; accountId: string }>(`${BASE_PATH}/auth/qr/password`, payload)).data,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("telegram") });
     },

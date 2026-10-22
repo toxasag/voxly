@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw } from "lucide-react";
 
@@ -16,6 +16,7 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
   const [label, setLabel] = useState("Основной");
   const [instanceName, setInstanceName] = useState<string | null>(null);
   const [qrBase64, setQrBase64] = useState<string | null>(null);
+  const startedRef = useRef(false);
 
   const startQr = useWhatsappStartQr();
   const { data: statusData } = useWhatsappQrStatus(
@@ -26,39 +27,52 @@ export function ConnectWhatsappModal({ open, onClose }: ConnectWhatsappModalProp
 
   const isConnected = statusData?.status === "connected";
 
-  // Автоматический старт при открытии
-  const handleStart = useCallback(async (customLabel?: string) => {
-    try {
-      const activeLabel = customLabel ?? label;
-      const res = await startQr.mutateAsync({ label: activeLabel });
-      setInstanceName(res.instanceName);
-      if (res.qr) {
-        setQrBase64(res.qr);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Не удалось запустить подключение WhatsApp";
-      toast.error(message);
-    }
-  }, [label, startQr]);
+  const handleStart = (customLabel?: string) => {
+    const activeLabel = customLabel ?? label;
+    startQr.mutate(
+      { label: activeLabel },
+      {
+        onSuccess: (res) => {
+          setInstanceName(res.instanceName);
+          if (res.qr) {
+            setQrBase64(res.qr);
+          }
+        },
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : "Не удалось запустить подключение WhatsApp";
+          toast.error(message);
+        },
+      },
+    );
+  };
 
+  // Автоматический старт ровно один раз при открытии диалога
   useEffect(() => {
-    if (open) {
+    if (open && !startedRef.current) {
+      startedRef.current = true;
       setLabel("Основной");
       setInstanceName(null);
       setQrBase64(null);
-      void handleStart("Основной");
+      handleStart("Основной");
+    } else if (!open) {
+      startedRef.current = false;
+      setInstanceName(null);
+      setQrBase64(null);
     }
-  }, [open, handleStart]);
+  }, [open]);
 
   // Обновляем QR при получении из статуса
   useEffect(() => {
     if (statusData?.qr) {
       setQrBase64(statusData.qr);
     }
+  }, [statusData?.qr]);
+
+  useEffect(() => {
     if (statusData?.status === "connected") {
       toast.success(`WhatsApp номер ${statusData.phone ?? ""} успешно подключён!`);
     }
-  }, [statusData]);
+  }, [statusData?.status, statusData?.phone]);
 
   return (
     <Sheet open={open} onClose={onClose} width="w-[500px]" resizable>

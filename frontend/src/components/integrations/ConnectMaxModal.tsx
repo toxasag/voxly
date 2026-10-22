@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
 
@@ -16,6 +16,7 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
   const [name, setName] = useState("Основной");
   const [password, setPassword] = useState("");
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+  const startedRef = useRef(false);
 
   const startQr = useMaxStartQr();
   const submitPassword = useMaxPassword();
@@ -28,24 +29,33 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
   const isConnected = statusData?.status === "authorized";
   const isWaitingPassword = statusData?.status === "processing_password" || Boolean(statusData?.passwordHint);
 
-  const handleStart = useCallback(async (customName?: string) => {
-    try {
-      const activeName = customName ?? name;
-      await startQr.mutateAsync({ name: activeName });
-      void refetch();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Не удалось запустить подключение MAX";
-      toast.error(message);
-    }
-  }, [name, startQr, refetch]);
+  const handleStart = (customName?: string) => {
+    const activeName = customName ?? name;
+    startQr.mutate(
+      { name: activeName },
+      {
+        onSuccess: () => {
+          void refetch();
+        },
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : "Не удалось запустить подключение MAX";
+          toast.error(message);
+        },
+      },
+    );
+  };
 
+  // Автоматический запуск ровно один раз при открытии диалога
   useEffect(() => {
-    if (open) {
+    if (open && !startedRef.current) {
+      startedRef.current = true;
       setName("Основной");
       setPassword("");
-      void handleStart("Основной");
+      handleStart("Основной");
+    } else if (!open) {
+      startedRef.current = false;
     }
-  }, [open, handleStart]);
+  }, [open]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -27,6 +27,67 @@ const internalBotUpsertSchema = z.object({
   sessionReady: z.boolean().optional(),
 });
 
+export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
+  // Список активных подключений MAX для поддержания сессий max-bridge на старте
+  app.get("/bots/active", async (_request, reply) => {
+    return reply.send({
+      ok: true,
+      bots: [],
+    });
+  });
+
+  // Внутренний эндпоинт для вызова из max-bridge при успешной авторизации сессии
+  app.post("/bots/upsert", async (request, reply) => {
+    const body = internalBotUpsertSchema.parse(request.body);
+
+    const botId = await withTenant(body.tenantId, async (tx) => {
+      const extId = body.maxUserId || body.username || body.name;
+      const label = body.firstName ? `${body.name} (${body.firstName})` : body.name;
+
+      const existing = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
+           AND (external_id = $2 OR label = $3)
+         LIMIT 1`,
+        [body.tenantId, extId, body.name],
+      );
+
+      if (existing) {
+        await tx.query(
+          `UPDATE channel_accounts
+           SET status = 'connected', label = $3, external_id = $4, remote_user_id = $5,
+               connected_at = COALESCE(connected_at, now())
+           WHERE tenant_id = $1 AND id = $2`,
+          [body.tenantId, existing.id, label, extId, body.maxUserId || null],
+        );
+        return existing.id;
+      }
+
+      const inserted = await tx.queryOneOrThrow<{ id: string }>(
+        `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, remote_user_id, connected_at)
+         VALUES ($1, 'max', $2, $3, 'connected', $4, now())
+         RETURNING id`,
+        [body.tenantId, label, extId, body.maxUserId || null],
+      );
+      return inserted.id;
+    });
+
+    return reply.send({ ok: true, botId });
+  });
+
+  app.post("/bots/delete", async (_request, reply) => {
+    return reply.send({ ok: true });
+  });
+
+  app.post("/inbound", async (_request, reply) => {
+    return reply.send({ ok: true });
+  });
+
+  app.post("/outbound", async (_request, reply) => {
+    return reply.send({ ok: true });
+  });
+}
+
 export default async function maxIntegrationRoutes(app: FastifyInstance): Promise<void> {
   const service = new MaxBridgeService();
 

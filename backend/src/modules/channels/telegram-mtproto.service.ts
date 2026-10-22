@@ -3,6 +3,7 @@ import { StringSession } from "telegram/sessions/index.js";
 import { computeCheck } from "telegram/Password.js";
 import { RPCError } from "telegram/errors/index.js";
 import { LogLevel } from "telegram/extensions/Logger.js";
+import QRCode from "qrcode";
 
 import { getEnv } from "../../config/env.js";
 import { AppError } from "../../plugins/errorHandler.js";
@@ -204,6 +205,139 @@ export class TelegramMtprotoService {
     } finally {
       // Соединение закрывается всегда: иначе каждый запрос кода оставлял бы
       // открытый сокет к DC, и процесс со временем упирался бы в лимит дескрипторов.
+      await this.close(client);
+    }
+  }
+
+  /**
+   * Старт авторизации через QR-код.
+   * Возвращает sessionState, token, qr (data:image/png;base64,...), expires (timestamp в сек).
+   */
+  async exportLoginToken(): Promise<{
+    sessionState: string;
+    token: Buffer;
+    expires: number;
+    qrUrl: string;
+    qrBase64: string;
+  }> {
+    const { apiId, apiHash } = this.credentials();
+    const session = new StringSession("");
+    const client = await this.client(session.save());
+
+    try {
+      const result = await client.invoke(
+        new Api.auth.ExportLoginToken({
+          apiId,
+          apiHash,
+          exceptIds: [],
+        }),
+      );
+
+      if (!(result instanceof Api.auth.LoginToken)) {
+        throw new Error("Неожиданный ответ Telegram при генерации QR-кода");
+      }
+
+      const token = Buffer.from(result.token);
+      const tokenB64Url = token.toString("base64url");
+      const qrUrl = `tg://login?token=${tokenB64Url}`;
+      const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+
+      return {
+        sessionState: (client.session as StringSession).save(),
+        token,
+        expires: result.expires,
+        qrUrl,
+        qrBase64,
+      };
+    } finally {
+      await this.close(client);
+    }
+  }
+
+  /**
+   * Проверка состояния QR-авторизации:
+   * возвращает статус ожидания, авторизации (с объектом пользователя) или требование 2FA.
+   */
+  async checkQrStatus(sessionState: string): Promise<{
+    status: "waiting" | "connected" | "requires_2fa";
+    sessionState?: string;
+    user?: SignInOutcome["user"];
+    passwordHint?: string | null;
+    refreshedQr?: {
+      qrBase64: string;
+      expires: number;
+    };
+  }> {
+    const { apiId, apiHash } = this.credentials();
+    const client = await this.client(sessionState);
+
+    try {
+      const result = await client.invoke(
+        new Api.auth.ExportLoginToken({
+          apiId,
+          apiHash,
+          exceptIds: [],
+        }),
+      );
+
+      // 1. Успешная авторизация
+      if (result instanceof Api.auth.LoginTokenSuccess) {
+        const user = this.extractUser(result.authorization);
+        return {
+          status: "connected",
+          sessionState: (client.session as StringSession).save(),
+          user: this.toUserInfo(user),
+        };
+      }
+
+      // 2. Миграция на другой DC (если аккаунт пользователя на другом датацентре)
+      if (result instanceof Api.auth.LoginTokenMigrateTo) {
+        await client._switchDC(result.dcId);
+        const migrated = await client.invoke(
+          new Api.auth.ImportLoginToken({
+            token: result.token,
+          }),
+        );
+        if (migrated instanceof Api.auth.LoginTokenSuccess) {
+          const user = this.extractUser(migrated.authorization);
+          return {
+            status: "connected",
+            sessionState: (client.session as StringSession).save(),
+            user: this.toUserInfo(user),
+          };
+        }
+      }
+
+      // 3. Всё ещё ожидает сканирования
+      if (result instanceof Api.auth.LoginToken) {
+        const token = Buffer.from(result.token);
+        const qrUrl = `tg://login?token=${token.toString("base64url")}`;
+        const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+        return {
+          status: "waiting",
+          sessionState: (client.session as StringSession).save(),
+          refreshedQr: {
+            qrBase64,
+            expires: result.expires,
+          },
+        };
+      }
+
+      return {
+        status: "waiting",
+        sessionState: (client.session as StringSession).save(),
+      };
+    } catch (error: unknown) {
+      if (error instanceof RPCError && error.errorMessage === "SESSION_PASSWORD_NEEDED") {
+        const passwordInfo = await client.invoke(new Api.account.GetPassword());
+        return {
+          status: "requires_2fa",
+          sessionState: (client.session as StringSession).save(),
+          passwordHint: passwordInfo.hint ?? null,
+        };
+      }
+      throw error instanceof RPCError ? translateRpcError(error) : error;
+    } finally {
       await this.close(client);
     }
   }
