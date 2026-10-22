@@ -2,17 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Building2, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Building2, Loader2, RefreshCw, Trash2, X } from "lucide-react";
 import { PlatformOwnerGuard } from "@/components/auth/PlatformOwnerGuard";
 import {
   renewSubscriptionDate,
   useAdminTenants,
+  useDeleteTenant,
   useUpdateTenant,
   type AdminTenantDTO,
 } from "@/lib/api/use-admin";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { cn } from "@/lib/utils";
+import { useOverlay } from "@/lib/utils/use-scroll-lock";
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -114,10 +116,175 @@ function MarkupEditor({ tenant }: { tenant: AdminTenantDTO }) {
   );
 }
 
+function DeleteTenantDialog({
+  tenant,
+  open,
+  onClose,
+  onDeleted,
+}: {
+  tenant: AdminTenantDTO | null;
+  open: boolean;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const deleteMutation = useDeleteTenant();
+  const [confirmText, setConfirmText] = useState("");
+
+  useOverlay(open, { onEscape: onClose });
+
+  useEffect(() => {
+    if (open) {
+      setConfirmText("");
+    }
+  }, [open, tenant]);
+
+  if (!open || !tenant) return null;
+
+  const targetName = tenant.name.trim();
+  const isMatch =
+    confirmText.trim().toLowerCase() === "удалить" ||
+    confirmText.trim().toLowerCase() === targetName.toLowerCase();
+
+  const handleDelete = async () => {
+    if (!isMatch || deleteMutation.isPending) return;
+
+    try {
+      await deleteMutation.mutateAsync(tenant.id);
+      toast.success(`Компания «${tenant.name}» успешно и полностью удалена`);
+      onDeleted();
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить компанию");
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-[16px] border border-[#e5e5e5] bg-white p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-50 border border-rose-200 text-rose-600">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold text-[#111111]">
+                Полное удаление компании
+              </h2>
+              <p className="text-xs text-[#666666]">
+                Безвозвратное уничтожение всех данных компании
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-[6px] p-1 text-[#888888] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-[8px] border border-rose-200 bg-rose-50/40 p-3.5">
+          <p className="text-sm font-semibold text-[#111111]">{tenant.name}</p>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#666666]">
+            {tenant.slug && (
+              <span>
+                Слаг: <span className="font-mono text-[#111111]">{tenant.slug}</span>
+              </span>
+            )}
+            <span>
+              Пользователей: <span className="font-mono text-[#111111]">{tenant.users_count}</span>
+            </span>
+            <span>
+              Модулей: <span className="font-mono text-[#111111]">{tenant.modules_count}</span>
+            </span>
+            <span>
+              Тариф: <span className="capitalize text-[#111111]">{tenant.plan}</span>
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <p className="text-xs font-medium text-[#111111]">
+            Будут окончательно и безвозвратно удалены:
+          </p>
+          <ul className="space-y-1.5 text-xs text-[#666666]">
+            <li className="flex items-start gap-1.5">
+              <span className="text-rose-500 font-bold">•</span>
+              <span>Все учётные записи сотрудников компании ({tenant.users_count}) и сессии</span>
+            </li>
+            <li className="flex items-start gap-1.5">
+              <span className="text-rose-500 font-bold">•</span>
+              <span>Вся база CRM: контакты, компании, сделки, задачи и воронки</span>
+            </li>
+            <li className="flex items-start gap-1.5">
+              <span className="text-rose-500 font-bold">•</span>
+              <span>Подключенные каналы связи (Telegram, WhatsApp, MAX)</span>
+            </li>
+            <li className="flex items-start gap-1.5">
+              <span className="text-rose-500 font-bold">•</span>
+              <span>База знаний, векторные эмбеддинги, AI-боты и файлы вложений</span>
+            </li>
+            <li className="flex items-start gap-1.5">
+              <span className="text-rose-500 font-bold">•</span>
+              <span>Заказ-наряды сервисного центра, счета, кассы и история транзакций</span>
+            </li>
+          </ul>
+        </div>
+
+        <div className="mt-5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3">
+          <label className="block text-xs font-medium text-[#111111]">
+            Для подтверждения введите слово <span className="font-semibold text-rose-600">удалить</span> или имя «{tenant.name}»:
+          </label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={tenant.name}
+            className="mt-2 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500/20"
+            autoFocus
+          />
+        </div>
+
+        <div className="mt-6 flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleteMutation.isPending}
+            className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50"
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={!isMatch || deleteMutation.isPending}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] border border-rose-600 bg-rose-600 px-3.5 text-xs font-medium text-white shadow-xs transition-colors hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {deleteMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="h-3.5 w-3.5" />
+            )}
+            <span>Удалить компанию навсегда</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TenantsTable() {
   const { data, isLoading, isError, error, refetch } = useAdminTenants();
   const update = useUpdateTenant();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [deletingTenant, setDeletingTenant] = useState<AdminTenantDTO | null>(null);
 
   const handleToggleStatus = useCallback(
     async (tenant: AdminTenantDTO) => {
@@ -268,12 +435,38 @@ function TenantsTable() {
                       "Приостановить"
                     )}
                   </button>
+                  {tenant.slug !== "voxly" && tenant.slug !== "platform" ? (
+                    <button
+                      type="button"
+                      onClick={() => setDeletingTenant(tenant)}
+                      disabled={pendingId === tenant.id}
+                      title="Полное удаление компании"
+                      className="flex items-center gap-1 rounded-[8px] border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-600 transition-colors hover:bg-rose-100 disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Удалить</span>
+                    </button>
+                  ) : (
+                    <span
+                      title="Платформенная компания защищена от удаления"
+                      className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1.5 text-xs text-[#aaaaaa] cursor-not-allowed select-none"
+                    >
+                      Защищена
+                    </span>
+                  )}
                 </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      <DeleteTenantDialog
+        tenant={deletingTenant}
+        open={deletingTenant !== null}
+        onClose={() => setDeletingTenant(null)}
+        onDeleted={() => void refetch()}
+      />
     </div>
   );
 }

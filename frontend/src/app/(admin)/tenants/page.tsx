@@ -1,13 +1,15 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
+import { toast } from "sonner";
 import { Building2, Users } from "lucide-react";
 import { TenantsTable } from "@/components/admin/TenantsTable";
 import { TenantManageModal } from "@/components/admin/TenantManageModal";
 import { ReferralTab } from "@/components/admin/ReferralTab";
 import { Guard } from "@/components/shared/Guard";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import type { PlatformTenant } from "@/lib/admin/admin.types";
-import { useAdminTenants, useUpdateTenant } from "@/lib/api/use-admin";
+import { useAdminTenants, useDeleteTenant, useUpdateTenant } from "@/lib/api/use-admin";
 import { cn } from "@/lib/utils";
 
 type AdminTab = "tenants" | "referrals";
@@ -48,11 +50,13 @@ function mapAdminTenantToPlatform(dto: {
 export default function TenantsPage() {
   const { data: adminTenants = [], isLoading, isError, error, refetch } = useAdminTenants();
   const updateTenant = useUpdateTenant();
+  const deleteTenant = useDeleteTenant();
   const [activeTab, setActiveTab] = useState<AdminTab>("tenants");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "trial" | "expired" | "suspended">("all");
   const [manageTarget, setManageTarget] = useState<PlatformTenant | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<PlatformTenant | null>(null);
 
   const tenants = useMemo(() => adminTenants.map(mapAdminTenantToPlatform), [adminTenants]);
 
@@ -76,6 +80,18 @@ export default function TenantsPage() {
     setManageTarget(t);
     setManageOpen(true);
   }, []);
+
+  const handleDeleteTenant = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteTenant.mutateAsync(deleteTarget.id);
+      toast.success(`Компания «${deleteTarget.company_name}» полностью удалена`);
+      setDeleteTarget(null);
+      void refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить компанию");
+    }
+  }, [deleteTarget, deleteTenant, refetch]);
 
   const handleSaveTenant = useCallback(async (updated: PlatformTenant) => {
     await updateTenant.mutateAsync({
@@ -167,6 +183,7 @@ export default function TenantsPage() {
           filterStatus={filterStatus}
           onFilterStatusChange={setFilterStatus}
           onManage={handleManage}
+          onDelete={setDeleteTarget}
           isLoading={isLoading}
           isError={isError}
           error={error}
@@ -183,6 +200,22 @@ export default function TenantsPage() {
         onClose={() => setManageOpen(false)}
         onSave={handleSaveTenant}
         isSubmitting={updateTenant.isPending}
+      />
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteTenant}
+        title="Удаление компании"
+        description={
+          deleteTarget
+            ? `Вы уверены, что хотите полностью и безвозвратно удалить компанию «${deleteTarget.company_name}»? Все связанные данные (пользователи, клиенты, сделки, чаты) будут удалены.`
+            : ""
+        }
+        confirmLabel="Удалить компанию"
+        variant="destructive"
+        isPending={deleteTenant.isPending}
       />
     </div>
     </Guard>

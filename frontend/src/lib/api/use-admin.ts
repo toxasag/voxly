@@ -13,6 +13,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 export interface AdminTenantDTO {
   id: string;
   name: string;
+  slug?: string;
   plan: string;
   status: string;
   /** УСТАРЕЛО: остаток в штуках токенов. Актуален ai_balance_kopecks. */
@@ -138,6 +139,25 @@ export function useUpdateTenant(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminKeys.tenants });
       void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
+    },
+  });
+}
+
+/** Полное удаление компании (тенанта); инвалидирует список и метрики. */
+export function useDeleteTenant(): UseMutationResult<
+  { success: boolean; message?: string },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; message?: string }, ApiClientError, string>({
+    mutationFn: async (id: string) =>
+      (await apiClient.delete<{ success: boolean; message?: string }>(`/api/v1/admin/tenants/${id}`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: adminKeys.tenants });
+      void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
+      void queryClient.invalidateQueries({ queryKey: adminKeys.billing });
     },
   });
 }
