@@ -30,6 +30,8 @@ export interface WebchatAccountInfo {
   showTelegramBanner?: boolean;
   consultantName?: string;
   consultantAvatar?: string;
+  avatarType?: "icon" | "photo" | "mascot";
+  mascotId?: string;
 }
 
 interface ChannelAccountRow {
@@ -162,6 +164,8 @@ export class WebchatService {
       showTelegramBanner: creds.showTelegramBanner !== false,
       consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
       consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
+      avatarType: creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon" ? creds.avatarType : (creds.consultantAvatar ? "photo" : "icon"),
+      mascotId: typeof creds.mascotId === "string" ? creds.mascotId : "voxly_robot",
     };
   }
 
