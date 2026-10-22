@@ -5,6 +5,27 @@ import { AppError } from "../../plugins/errorHandler.js";
 // Интеграция личных аккаунтов MAX через сервис max-bridge (PyMax / maxapi-python).
 // ---------------------------------------------------------------------------
 
+export interface MaxQrStatusResponse {
+  ok: boolean;
+  status: "preparing" | "qr_ready" | "authorized" | "processing_password" | "error" | "unknown";
+  botId?: string;
+  qr?: string | null;
+  error?: string | null;
+  passwordHint?: string | null;
+  user?: {
+    id: string;
+    username?: string;
+    firstName?: string;
+  } | null;
+}
+
+export interface MaxQrStartResponse {
+  ok: boolean;
+  status: string;
+  name: string;
+  qr?: string | null;
+}
+
 export class MaxBridgeService {
   private get baseUrl(): string {
     return getEnv().MAX_BRIDGE_URL.replace(/\/$/, "");
@@ -14,10 +35,10 @@ export class MaxBridgeService {
     return getEnv().VOXLY_SERVICE_TOKEN;
   }
 
-  private async bridgeFetch(
+  private async bridgeFetch<T = Record<string, unknown>>(
     path: string,
     options: RequestInit = {},
-  ): Promise<{ ok: boolean; status: number; json: any }> {
+  ): Promise<{ ok: boolean; status: number; json: T }> {
     const headers = new Headers(options.headers ?? {});
     if (this.serviceToken) {
       headers.set("Authorization", `Bearer ${this.serviceToken}`);
@@ -31,7 +52,7 @@ export class MaxBridgeService {
         ...options,
         headers,
       });
-      const json = await res.json().catch(() => ({}));
+      const json = (await res.json().catch(() => ({}))) as T;
       return { ok: res.ok, status: res.status, json };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -44,11 +65,14 @@ export class MaxBridgeService {
   }
 
   /** Старт генерации QR-кода авторизации MAX */
-  async startQr(tenantId: string, name: string): Promise<any> {
-    const res = await this.bridgeFetch("/auth/qr/start", {
-      method: "POST",
-      body: JSON.stringify({ tenantId, name }),
-    });
+  async startQr(tenantId: string, name: string): Promise<MaxQrStartResponse> {
+    const res = await this.bridgeFetch<{ detail?: string; ok: boolean; status: string; name: string; qr?: string | null }>(
+      "/auth/qr/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ tenantId, name }),
+      },
+    );
 
     if (!res.ok) {
       throw new AppError(res.status, "MAX_QR_START_FAILED", res.json?.detail || "Не удалось запустить авторизацию MAX");
@@ -58,8 +82,8 @@ export class MaxBridgeService {
   }
 
   /** Проверка статуса QR-авторизации MAX */
-  async checkStatus(tenantId: string, name: string): Promise<any> {
-    const res = await this.bridgeFetch(
+  async checkStatus(tenantId: string, name: string): Promise<MaxQrStatusResponse> {
+    const res = await this.bridgeFetch<MaxQrStatusResponse & { detail?: string }>(
       `/auth/qr/status?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}`,
       { method: "GET" },
     );
@@ -72,8 +96,8 @@ export class MaxBridgeService {
   }
 
   /** Ввод облачного пароля 2FA MAX */
-  async submitPassword(tenantId: string, name: string, password: string): Promise<any> {
-    const res = await this.bridgeFetch("/auth/qr/password", {
+  async submitPassword(tenantId: string, name: string, password: string): Promise<{ ok: boolean; status: string }> {
+    const res = await this.bridgeFetch<{ detail?: string; ok: boolean; status: string }>("/auth/qr/password", {
       method: "POST",
       body: JSON.stringify({ tenantId, name, password }),
     });
@@ -83,5 +107,21 @@ export class MaxBridgeService {
     }
 
     return res.json;
+  }
+
+  /** Получение бинарного PNG буфера QR-кода напрямую из max-bridge */
+  async getQrPng(tenantId: string, name: string): Promise<Buffer | null> {
+    const url = `${this.baseUrl}/auth/qr/png?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}`;
+    const headers = new Headers();
+    if (this.serviceToken) {
+      headers.set("Authorization", `Bearer ${this.serviceToken}`);
+    }
+    try {
+      const res = await fetch(url, { headers });
+      if (!res.ok) return null;
+      return Buffer.from(await res.arrayBuffer());
+    } catch {
+      return null;
+    }
   }
 }

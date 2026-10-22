@@ -15,6 +15,7 @@ interface ConnectMaxModalProps {
 export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
   const [name, setName] = useState("Основной");
   const [password, setPassword] = useState("");
+  const [qrBase64, setQrBase64] = useState<string | null>(null);
   const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
   const startedRef = useRef(false);
 
@@ -26,15 +27,26 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
     open && Boolean(name),
   );
 
+  useEffect(() => {
+    if (statusData?.qr) {
+      setQrBase64(statusData.qr);
+    }
+  }, [statusData?.qr]);
+
   const isConnected = statusData?.status === "authorized";
   const isWaitingPassword = statusData?.status === "processing_password" || Boolean(statusData?.passwordHint);
+  const activeQr = statusData?.qr || qrBase64;
 
   const handleStart = (customName?: string) => {
     const activeName = customName ?? name;
+    setQrBase64(null);
     startQr.mutate(
       { name: activeName },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          if (data?.qr) {
+            setQrBase64(data.qr);
+          }
           void refetch();
         },
         onError: (err) => {
@@ -51,9 +63,11 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
       startedRef.current = true;
       setName("Основной");
       setPassword("");
+      setQrBase64(null);
       handleStart("Основной");
     } else if (!open) {
       startedRef.current = false;
+      setQrBase64(null);
     }
   }, [open]);
 
@@ -91,9 +105,9 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
         </div>
       </SheetHeader>
 
-      <SheetContent>
+      <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         {isConnected ? (
-          <div className="flex flex-col items-center justify-center space-y-4 py-10 text-center">
+          <div className="flex flex-col items-center justify-center flex-1 p-6 space-y-4 text-center">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">
               <CheckCircle2 className="h-8 w-8" />
             </div>
@@ -106,49 +120,57 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0]"
+              className="mt-4 rounded-[8px] bg-[#4a38f5] px-5 py-2 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] cursor-pointer"
             >
               Готово
             </button>
           </div>
         ) : isWaitingPassword ? (
-          <form onSubmit={handlePasswordSubmit} className="space-y-4">
-            <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
-              <p className="text-xs leading-relaxed text-[#666666]">
-                У аккаунта включена двухэтапная аутентификация в MAX. Введите облачный пароль.
-                {statusData?.passwordHint && (
-                  <> Подсказка: <span className="font-medium text-[#111111]">{statusData.passwordHint}</span></>
-                )}
-              </p>
+          <form onSubmit={handlePasswordSubmit} className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                <p className="text-xs leading-relaxed text-[#666666]">
+                  У аккаунта включена двухэтапная аутентификация в MAX. Введите облачный пароль.
+                  {statusData?.passwordHint && (
+                    <>
+                      {" "}
+                      Подсказка:{" "}
+                      <span className="font-medium text-[#111111]">
+                        {statusData.passwordHint}
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-[#666666]">
+                  Облачный пароль 2FA
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoFocus
+                  className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                />
+              </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-[#666666]">
-                Облачный пароль 2FA
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoFocus
-                className="h-8 w-full rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
+            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] bg-white px-6 py-3 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
               >
                 Отмена
               </button>
               <button
                 type="submit"
                 disabled={isSubmittingPassword || !password}
-                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
               >
                 {isSubmittingPassword ? (
                   <>
@@ -162,86 +184,88 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
             </div>
           </form>
         ) : (
-          <div className="space-y-5">
-            <div className="space-y-1.5">
-              <label htmlFor="max_name" className="block text-xs font-medium text-[#666666]">
-                Имя аккаунта в CRM
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="max_name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Основной"
-                  disabled={startQr.isPending}
-                  className="h-8 flex-1 rounded-[4px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleStart()}
-                  disabled={startQr.isPending || !name.trim()}
-                  className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50"
-                >
-                  {startQr.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                  Обновить QR
-                </button>
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              <div className="space-y-1.5">
+                <label htmlFor="max_name" className="block text-xs font-medium text-[#666666]">
+                  Имя аккаунта в CRM
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="max_name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Основной"
+                    disabled={startQr.isPending}
+                    className="h-8 flex-1 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleStart()}
+                    disabled={startQr.isPending || !name.trim()}
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa] disabled:opacity-50 cursor-pointer"
+                  >
+                    {startQr.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Обновить QR
+                  </button>
+                </div>
+              </div>
+
+              {/* Блок QR-кода */}
+              <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6">
+                {startQr.isPending && !activeQr ? (
+                  <div className="flex h-52 flex-col items-center justify-center space-y-3">
+                    <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
+                    <p className="text-xs text-[#666666]">Генерируем QR-код авторизации MAX...</p>
+                  </div>
+                ) : activeQr ? (
+                  <div className="space-y-3 text-center">
+                    <div className="relative inline-block rounded-xl border border-[#e5e5e5] bg-white p-3 shadow-xs">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeQr}
+                        alt="MAX QR Code"
+                        className="h-52 w-52 object-contain"
+                      />
+                    </div>
+                    <div className="flex items-center justify-center gap-2 text-xs text-[#666666]">
+                      <span className="relative flex h-2 w-2">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                      </span>
+                      Ожидание сканирования в приложении MAX...
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-52 flex-col items-center justify-center space-y-3">
+                    <QrCode className="h-10 w-10 text-[#888888]" />
+                    <p className="text-xs text-[#666666]">
+                      {statusData?.error ? statusData.error : "Нажмите «Обновить QR» для генерации кода"}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Инструкция */}
+              <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2.5">
+                <h4 className="text-xs font-semibold text-[#111111]">Как подключить:</h4>
+                <ol className="list-decimal pl-4 space-y-1.5 text-xs text-[#666666]">
+                  <li>Откройте приложение <strong>MAX</strong> на вашем смартфоне.</li>
+                  <li>Перейдите в <strong>Настройки</strong> → <strong>Устройства</strong>.</li>
+                  <li>Нажмите <strong>Привязать устройство</strong> и отсканируйте этот QR-код.</li>
+                </ol>
               </div>
             </div>
 
-            {/* Блок QR-кода */}
-            <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6">
-              {startQr.isPending ? (
-                <div className="flex h-52 flex-col items-center justify-center space-y-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
-                  <p className="text-xs text-[#666666]">Генерируем QR-код авторизации MAX...</p>
-                </div>
-              ) : statusData?.qr ? (
-                <div className="space-y-3 text-center">
-                  <div className="relative inline-block rounded-xl border border-[#e5e5e5] bg-white p-3 shadow-xs">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={`/api/v1/integrations/max/auth/qr/png?name=${encodeURIComponent(name)}`}
-                      alt="MAX QR Code"
-                      className="h-52 w-52 object-contain"
-                    />
-                  </div>
-                  <div className="flex items-center justify-center gap-2 text-xs text-[#666666]">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-                    </span>
-                    Ожидание сканирования в приложении MAX...
-                  </div>
-                </div>
-              ) : (
-                <div className="flex h-52 flex-col items-center justify-center space-y-3">
-                  <QrCode className="h-10 w-10 text-[#888888]" />
-                  <p className="text-xs text-[#666666]">
-                    {statusData?.error ? statusData.error : "Нажмите «Обновить QR» для генерации кода"}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Инструкция */}
-            <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2.5">
-              <h4 className="text-xs font-semibold text-[#111111]">Как подключить:</h4>
-              <ol className="list-decimal pl-4 space-y-1.5 text-xs text-[#666666]">
-                <li>Откройте приложение <strong>MAX</strong> на вашем смартфоне.</li>
-                <li>Перейдите в <strong>Настройки</strong> → <strong>Устройства</strong>.</li>
-                <li>Нажмите <strong>Привязать устройство</strong> и отсканируйте этот QR-код.</li>
-              </ol>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] pt-4">
+            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] bg-white px-6 py-3 shrink-0">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa]"
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
               >
                 Отмена
               </button>

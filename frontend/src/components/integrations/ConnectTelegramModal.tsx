@@ -359,7 +359,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
         </div>
       </SheetHeader>
 
-      <SheetContent>
+      <SheetContent className="p-6">
         {/* Переключатель способа авторизации */}
         <div className="mb-5 flex rounded-[8px] bg-[#f5f5f5] p-1 gap-1">
           <button
