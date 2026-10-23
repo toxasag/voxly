@@ -1,5 +1,6 @@
-import { queryOne, transaction } from "../../db/client.js";
+import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
+import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -306,19 +307,30 @@ export class CrmEnrichmentService {
     }
   }
 
-  private async defaultMaxProvider(phone: string, _tenantId: string): Promise<MaxProfileResolved> {
+  private async defaultMaxProvider(phone: string, tenantId: string): Promise<MaxProfileResolved> {
     const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
     const token = process.env.VOXLY_SERVICE_TOKEN;
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
+      const account = await runWithPlatformScope(() =>
+        queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY connected_at DESC NULLS LAST
+           LIMIT 1`,
+          [tenantId],
+        ),
+      );
+      if (!account) return { exists: false, error: "No active MAX account" };
+
       const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ phone: `+${phone}` }),
+        body: JSON.stringify({ botId: account.id, phone: `+${phone}` }),
       });
       if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
       const data = (await res.json()) as {
@@ -343,31 +355,34 @@ export class CrmEnrichmentService {
     }
   }
 
-  private async defaultWhatsAppProvider(phone: string, _tenantId: string): Promise<WhatsAppProfileResolved> {
-    const workerUrl = process.env.AI_WHATSAPP_WORKER_URL ?? "http://ai-whatsapp-worker:3006";
-    const token = process.env.VOXLY_SERVICE_TOKEN;
-    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+  private async defaultWhatsAppProvider(phone: string, tenantId: string): Promise<WhatsAppProfileResolved> {
+    const evo = new WhatsappEvolutionService();
+    if (!evo.isConfigured) return { exists: false, error: "Evolution API not configured" };
 
     try {
-      const res = await fetch(`${workerUrl.replace(/\/$/, "")}/internal/crm/check-on-whatsapp`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ phone: `+${phone}` }),
-      });
-      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
-      const data = (await res.json()) as {
-        ok?: boolean;
-        exists?: boolean;
-        jid?: string;
-      };
-      return {
-        exists: Boolean(data.ok && data.exists),
-        jid: data.jid,
-        phone: `+${phone}`,
-      };
+      const account = await runWithPlatformScope(() =>
+        queryOne<{ credentials: { instanceName?: string } }>(
+          `SELECT credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY connected_at DESC NULLS LAST
+           LIMIT 1`,
+          [tenantId],
+        ),
+      );
+      const instanceName = account?.credentials?.instanceName;
+      if (!instanceName) return { exists: false, error: "No connected WhatsApp instance" };
+
+      const cleanDigits = phone.replace(/\D/g, "");
+      const res = await evo.checkNumberStatus(instanceName, [cleanDigits]);
+      const matched = res.find((r) => r.exists);
+      if (matched) {
+        return {
+          exists: true,
+          jid: matched.jid,
+          phone: `+${cleanDigits}`,
+        };
+      }
+      return { exists: false, phone: `+${cleanDigits}` };
     } catch (err) {
       return { exists: false, error: String(err) };
     }

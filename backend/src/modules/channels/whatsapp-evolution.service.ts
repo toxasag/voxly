@@ -85,13 +85,29 @@ export class WhatsappEvolutionService {
       // Игнорируем ошибки очистки
     }
 
-    // 1. Создаем инстанс
+    // 1. Создаем инстанс с автоматической регистрацией webhook
+    const publicApiUrl = getEnv().PUBLIC_API_URL;
+    const webhookUrl = publicApiUrl
+      ? `${publicApiUrl.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+      : "http://backend:4000/api/internal/whatsapp/webhook";
+
     const create = await this.evoFetch("/instance/create", {
       method: "POST",
       body: JSON.stringify({
         instanceName,
         qrcode: true,
         integration: "WHATSAPP-BAILEYS",
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            "QRCODE_UPDATED",
+            "CONNECTION_UPDATE",
+            "MESSAGES_UPSERT",
+          ],
+        },
       }),
     });
 
@@ -181,6 +197,13 @@ export class WhatsappEvolutionService {
         return inserted.id;
       });
 
+      // Гарантируем регистрацию webhook для получения входящих сообщений
+      const publicUrl = getEnv().PUBLIC_API_URL;
+      const webhookUrl = publicUrl
+        ? `${publicUrl.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+        : "http://backend:4000/api/internal/whatsapp/webhook";
+      void this.setWebhook(instanceName, webhookUrl).catch(() => undefined);
+
       return {
         ok: true,
         status: "connected",
@@ -227,6 +250,45 @@ export class WhatsappEvolutionService {
     }
 
     return { ok: true, messageId: res.json?.key?.id };
+  }
+
+  /** Проверка регистрации номеров в WhatsApp через Evolution API */
+  async checkNumberStatus(
+    instanceName: string,
+    numbers: string[],
+  ): Promise<Array<{ exists: boolean; jid?: string; number?: string }>> {
+    const res = await this.evoFetch(`/chat/whatsappNumbers/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({ numbers }),
+    });
+    if (!res.ok) return [];
+    const rows = Array.isArray(res.json) ? res.json : [];
+    return rows.map((r: any) => ({
+      exists: Boolean(r?.exists),
+      jid: r?.jid,
+      number: r?.number,
+    }));
+  }
+
+  /** Настройка webhook в Evolution API */
+  async setWebhook(instanceName: string, webhookUrl: string): Promise<boolean> {
+    const res = await this.evoFetch(`/webhook/set/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            "QRCODE_UPDATED",
+            "CONNECTION_UPDATE",
+            "MESSAGES_UPSERT",
+          ],
+        },
+      }),
+    });
+    return res.ok;
   }
 
   /** Удаление инстанса из Evolution API */

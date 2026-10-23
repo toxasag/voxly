@@ -17,7 +17,7 @@ import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
-import whatsappIntegrationRoutes from "./modules/channels/whatsapp-integration.routes.js";
+import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
@@ -41,6 +41,10 @@ const WEBHOOK_PATHS: ReadonlySet<string> = new Set([
   "/auth/telegram/webhook",
   "/auth/max/webhook",
   "/api/v1/billing/robokassa/result",
+  "/api/internal/whatsapp/webhook",
+  "/api/v1/integrations/whatsapp/webhook",
+  "/api/internal/max/inbound",
+  "/api/internal/max/outbound",
 ]);
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -168,6 +172,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Авторизация WhatsApp через Evolution API (QR-код)
   await app.register(whatsappIntegrationRoutes, { prefix: "/api/v1/integrations/whatsapp" });
+
+  // Внутренний эндпоинт для webhook от Evolution API (WhatsApp incoming/outgoing)
+  await app.register(whatsappInternalRoutes, { prefix: "/api/internal/whatsapp" });
 
   // Авторизация личных аккаунтов MAX через max-bridge (QR-код)
   await app.register(maxIntegrationRoutes, { prefix: "/api/v1/integrations/max" });
