@@ -1,5 +1,5 @@
 -- =============================================================================
--- 0040: Исправление RLS политик subscriptions и billing_payments
+-- 0038: Исправление RLS политик subscriptions и billing_payments
 --
 -- Миграция 0031 использовала прямой каст current_setting('app.tenant_id', true)::uuid
 -- вместо функции current_tenant_id() OR platform_scope(). При пустом app.tenant_id
