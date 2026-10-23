@@ -468,78 +468,73 @@ export function CrmChatView({
         </div>
       </div>
 
-      {/* Вкладки переключения каналов переписки (MAX, WhatsApp, Telegram, Все) */}
-      {availableChannels.length > 0 && (
-        <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-1.5">
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-            {/* Вкладки конкретных мессенджеров */}
-            {availableChannels.map((ch) => {
-              const badge = getChannelBadge(ch.slug);
-              const isActive = activeChannel === ch.slug;
-              return (
-                <button
-                  key={ch.slug}
-                  type="button"
-                  onClick={() => handleSelectChannelTab(ch.slug)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-all",
-                    isActive
-                      ? cn("border bg-white font-semibold shadow-2xs", badge.activeBorder)
-                      : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
-                  )}
-                >
-                  <span className={cn("h-2 w-2 rounded-full", badge.dotColor)} />
-                  <span>{badge.label}</span>
-                  {ch.count > 0 && (
-                    <span
-                      className={cn(
-                        "rounded-full px-1.5 py-0.2 text-[10px] font-semibold",
-                        isActive ? badge.badgeBg : "bg-black/[0.05] text-[#666666]",
-                      )}
-                    >
-                      {ch.count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-
-            {/* Вкладка «Все сообщения» */}
-            <button
-              type="button"
-              onClick={() => handleSelectChannelTab("all")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-all",
-                activeChannel === "all"
-                  ? "border border-[#e5e5e5] bg-white font-semibold text-[#111111] shadow-2xs"
-                  : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
-              )}
+      {/* Выбор активного чата / канала переписки (выпадающий список как в «Пишем от:») */}
+      <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-[#666666]">Чат:</span>
+          <div className="flex items-center gap-1.5">
+            <select
+              aria-label="Выбор канала чата"
+              value={activeChannel}
+              onChange={(e) => handleSelectChannelTab(e.target.value)}
+              className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5] cursor-pointer"
             >
-              <MessageCircle className="h-3.5 w-3.5 text-[#888888]" />
-              <span>Все</span>
-              {messages.length > 0 && (
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 py-0.2 text-[10px] font-semibold",
-                    activeChannel === "all" ? "bg-[#f0f0f0] text-[#111111]" : "bg-black/[0.05] text-[#666666]",
-                  )}
-                >
-                  {messages.length}
-                </span>
-              )}
-            </button>
-          </div>
+              <option value="all">
+                Все каналы {messages.length > 0 ? `(${messages.length})` : ""}
+              </option>
+              {availableChannels.map((ch) => {
+                const badge = getChannelBadge(ch.slug);
+                return (
+                  <option key={ch.slug} value={ch.slug}>
+                    {badge.label} {ch.count > 0 ? `(${ch.count})` : ""}
+                  </option>
+                );
+              })}
+            </select>
 
-          {/* Индикатор текущего активного чата */}
-          <div className="hidden text-[11px] text-[#888888] sm:block">
-            {activeChannel === "all" ? (
-              <span>Все каналы ({messages.length})</span>
-            ) : (
-              <span>Чат {getChannelBadge(activeChannel).label} ({displayedMessages.length})</span>
+            {activeChannel !== "all" && (
+              <span
+                className={cn(
+                  "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                  getChannelBadge(activeChannel).color,
+                )}
+              >
+                {getChannelBadge(activeChannel).label}
+              </span>
             )}
           </div>
         </div>
-      )}
+
+        <div className="flex items-center gap-2">
+          {/* Кнопка синхронизации истории переписки */}
+          <button
+            type="button"
+            onClick={handleSyncHistory}
+            disabled={syncHistoryMutation.isPending}
+            title={
+              activeChannel !== "all"
+                ? `Подтянуть историю диалога ${getChannelBadge(activeChannel).label} из мессенджера`
+                : "Подтянуть историю прошлых сообщений из подключенных каналов (MAX, Telegram)"
+            }
+            className="flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-xs text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={cn("h-3 w-3 text-[#888888]", syncHistoryMutation.isPending && "animate-spin text-[#4a38f5]")} />
+            <span>
+              {syncHistoryMutation.isPending
+                ? "Синхронизация..."
+                : "Синхронизировать"}
+            </span>
+          </button>
+
+          <span className="hidden text-[11px] text-[#888888] sm:inline">
+            {activeChannel === "all" ? (
+              <span>Всего: {messages.length}</span>
+            ) : (
+              <span>В чате: {displayedMessages.length}</span>
+            )}
+          </span>
+        </div>
+      </div>
 
       {/* Список сообщений диалога */}
       <div
@@ -693,8 +688,8 @@ className="flex items-center gap-1 font-medium text-rose-600"
 
       {/* Панель составления ответа (Telegram Composer) */}
       <div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
-        {/* Выбор «Пишем от:» и Синхронизация истории */}
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        {/* Выбор «Пишем от:» */}
+        <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-[#666666]">Пишем от:</span>
             {sendFromOptionsQuery.isLoading ? (
@@ -707,7 +702,7 @@ className="flex items-center gap-1 font-medium text-rose-600"
                 <select
                   value={selectedChannelAccountId}
                   onChange={(e) => handleSelectAccount(e.target.value)}
-                  className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5]"
+                  className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5] cursor-pointer"
                 >
                   {sendFromOptions.map((opt) => (
                     <option
@@ -736,28 +731,6 @@ className="flex items-center gap-1 font-medium text-rose-600"
               <span className="text-xs text-[#888888]">Автоматический канал</span>
             )}
           </div>
-
-          {/* Кнопка синхронизации истории переписки */}
-          <button
-            type="button"
-            onClick={handleSyncHistory}
-            disabled={syncHistoryMutation.isPending}
-            title={
-              activeChannel !== "all"
-                ? `Синхронизировать историю диалога ${getChannelBadge(activeChannel).label}`
-                : "Синхронизировать прошлые сообщения из подключенных каналов (MAX, Telegram)"
-            }
-            className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3 w-3 text-[#888888]", syncHistoryMutation.isPending && "animate-spin text-[#4a38f5]")} />
-            <span>
-              {syncHistoryMutation.isPending
-                ? "Синхронизация..."
-                : activeChannel !== "all"
-                  ? `Синхронизировать ${getChannelBadge(activeChannel).label}`
-                  : "Синхронизировать историю"}
-            </span>
-          </button>
         </div>
 
         {/* Telegram-стиль компонент ввода сообщений */}

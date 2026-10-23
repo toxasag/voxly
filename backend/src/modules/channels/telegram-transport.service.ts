@@ -657,6 +657,8 @@ export class TelegramTransportService {
     channelAccountId: string;
     recipient: string;
     text: string;
+    username?: string;
+    phone?: string;
   }): Promise<{ ok: true } | { ok: false; reason: string }> {
     const connection = this.connections.get(message.channelAccountId);
 
@@ -668,6 +670,53 @@ export class TelegramTransportService {
       await connection.client.sendMessage(message.recipient, { message: message.text });
       return { ok: true };
     } catch (error) {
+      const errStr = error instanceof Error ? error.message : String(error);
+
+      // Если в кэше сессии GramJS нет access_hash для этого peerId (например, после рестарта бэкенда)
+      if (errStr.includes("Could not find the input entity") || errStr.includes("Cannot cast") || errStr.includes("PeerUser")) {
+        this.log.info(
+          { recipient: message.recipient, username: message.username },
+          "Telegram entity not found in cache, attempting resolution",
+        );
+
+        // 1. Попытка резолва по username (@genadich_agency)
+        if (message.username) {
+          try {
+            const uname = message.username.replace(/^@/, "");
+            const entity = await connection.client.getEntity(uname);
+            if (entity) {
+              await connection.client.sendMessage(entity, { message: message.text });
+              return { ok: true };
+            }
+          } catch (unameErr) {
+            this.log.warn({ unameErr, username: message.username }, "Failed to resolve peer by username");
+          }
+        }
+
+        // 2. Прогрев кэша сущностей через getDialogs (загружает активные чаты с их access_hash)
+        try {
+          await connection.client.getDialogs({ limit: 100 });
+          await connection.client.sendMessage(message.recipient, { message: message.text });
+          return { ok: true };
+        } catch (dialogsErr) {
+          this.log.warn({ dialogsErr }, "Failed to resolve peer via getDialogs");
+        }
+
+        // 3. Попытка резолва по номеру телефона, если номер известен
+        if (message.phone) {
+          try {
+            const digits = message.phone.replace(/\D/g, "");
+            const phoneResolve = await this.resolveUserByPhone(connection.tenantId, digits);
+            if (phoneResolve.exists && phoneResolve.userId) {
+              await connection.client.sendMessage(phoneResolve.userId, { message: message.text });
+              return { ok: true };
+            }
+          } catch (phoneErr) {
+            this.log.warn({ phoneErr }, "Failed to resolve peer by phone");
+          }
+        }
+      }
+
       this.log.error(
         { error, channelAccountId: message.channelAccountId },
         "Failed to send manager reply to Telegram",

@@ -34,6 +34,8 @@ import { KnowledgeBaseService } from "../../ai/knowledge.service.js";
 interface OutboundRoute {
   channelAccountId: string;
   recipient: string;
+  username?: string;
+  phone?: string;
 }
 
 export interface SendFromOptionDTO {
@@ -255,6 +257,8 @@ export class DealMessagingService {
         channelAccountId: route.channelAccountId,
         recipient: route.recipient,
         text: payload.content,
+        username: route.username,
+        phone: route.phone,
       });
     } catch (error) {
       this.log?.error({ error, dealId }, "Outbound sender threw while sending deal message");
@@ -335,7 +339,12 @@ export class DealMessagingService {
     const recipient = this.recipientFor(payload.channel, row);
     if (recipient === null) return null;
 
-    return { channelAccountId, recipient };
+    return {
+      channelAccountId,
+      recipient,
+      username: row.telegram_username ?? undefined,
+      phone: row.phone && row.phone.length > 0 ? row.phone : undefined,
+    };
   }
 
   /** Адрес получателя зависит от канала: у Telegram это numeric id, не username. */
