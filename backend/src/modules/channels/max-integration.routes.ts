@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyBaseLogger, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import QRCode from "qrcode";
 
@@ -91,11 +91,114 @@ const internalInboundSchema = z.object({
   name: z.string().optional().nullable(),
 });
 
+// Кэш для защиты от повторной доставки сообщений (idempotency)
+const recentInboundMessages = new Map<string, number>();
+
+function isDuplicateInbound(key: string): boolean {
+  const now = Date.now();
+  for (const [k, ts] of recentInboundMessages) {
+    if (now - ts > 60_000) recentInboundMessages.delete(k);
+  }
+  if (recentInboundMessages.has(key)) return true;
+  recentInboundMessages.set(key, now);
+  return false;
+}
+
+/**
+ * Синхронизирует историю приватного диалога MAX в сделку.
+ * Подтягивает все предшествующие сообщения клиента и менеджера с точными датами.
+ */
+export async function syncMaxDialogHistory(opts: {
+  tenantId: string;
+  dealId: string;
+  channelAccountId: string;
+  peerId: string;
+  peerPhone?: string | null;
+  peerUserId?: string | null;
+  senderName?: string;
+  log?: FastifyBaseLogger;
+}): Promise<number> {
+  const bridge = new MaxBridgeService();
+  const resp = await bridge.getPrivateDialogs({
+    botId: opts.channelAccountId,
+    dialogLimit: 20,
+    messageLimit: 50,
+  });
+
+  if (!resp.ok || !Array.isArray(resp.dialogs)) return 0;
+
+  const cleanPhone = opts.peerPhone ? opts.peerPhone.replace(/\D/g, "") : "";
+  const target = resp.dialogs.find((d) => {
+    if (d.chatId === opts.peerId) return true;
+    if (opts.peerUserId && d.userId === opts.peerUserId) return true;
+    if (cleanPhone && d.phone && d.phone.replace(/\D/g, "").endsWith(cleanPhone.slice(-10))) return true;
+    return false;
+  });
+
+  if (!target || !Array.isArray(target.messages) || target.messages.length === 0) return 0;
+
+  let insertedCount = 0;
+  await runWithTenantContext(opts.tenantId, async () => {
+    for (const msg of target.messages) {
+      const text = (msg.text || "").trim();
+      if (!text) continue;
+      const msgDate = msg.date ? new Date(msg.date * 1000) : new Date();
+
+      const existing = await queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND content = $3
+           AND created_at >= $4::timestamptz - interval '10 seconds'
+           AND created_at <= $4::timestamptz + interval '10 seconds'
+         LIMIT 1`,
+        [opts.tenantId, opts.dealId, text, msgDate.toISOString()],
+      );
+
+      if (existing) continue;
+
+      const source = msg.out ? "manager" : "client";
+      const direction = msg.out ? "outbound" : "inbound";
+      const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
+
+      await query(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9)`,
+        [
+          opts.tenantId,
+          opts.dealId,
+          opts.channelAccountId,
+          source,
+          direction,
+          senderName,
+          text,
+          msg.out ? "sent" : "neutral",
+          msgDate.toISOString(),
+        ],
+      );
+      insertedCount++;
+    }
+  });
+
+  opts.log?.info({ dealId: opts.dealId, insertedCount }, "MAX dialog history synced to deal");
+  return insertedCount;
+}
+
 async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
   const body = internalInboundSchema.parse(request.body);
   const peerId = (body.peerId || body.chatId || "").trim();
   if (!peerId) {
     return reply.code(400).send({ ok: false, error: "peerId or chatId required" });
+  }
+
+  // Дедупликация входящих сообщений (по messageId или по связке botId + peerId + text)
+  const dedupKey = body.messageId
+    ? `max:msg:${body.messageId}`
+    : `max:txt:${body.botId ?? ""}:${peerId}:${body.text}`;
+
+  if (isDuplicateInbound(dedupKey)) {
+    request.log.info({ key: dedupKey }, "Duplicate MAX inbound message absorbed");
+    return reply.send({ ok: true, duplicate: true });
   }
 
   // Каналы и группы никогда не становятся сделками (только личный диалог 1-на-1)
@@ -229,6 +332,22 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     }
   } catch (err) {
     request.log.error(err, "Failed to run AI agent auto-reply for MAX inbound");
+  }
+
+  // Фоновая синхронизация предшествующей истории переписки при создании сделки
+  if (crmResult.dealId && crmResult.isNewDeal) {
+    void syncMaxDialogHistory({
+      tenantId,
+      dealId: crmResult.dealId,
+      channelAccountId,
+      peerId,
+      peerPhone,
+      peerUserId: peerUser || null,
+      senderName,
+      log: request.log,
+    }).catch((err) => {
+      request.log.warn(err, "Failed to sync MAX dialog history for new deal");
+    });
   }
 
   return reply.send({

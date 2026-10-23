@@ -262,4 +262,13 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const draft = await messaging.generateAiDraft(request.tenant_id, id);
     return reply.send({ data: draft });
   });
+
+  /**
+   * Синхронизация предшествующей переписки из подключенных каналов (MAX, Telegram).
+   */
+  app.post("/:id/sync-chat-history", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await messaging.syncDealChatHistory(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
 }

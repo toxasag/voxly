@@ -18,6 +18,7 @@ import {
   Pause,
   Play,
   PowerOff,
+  RefreshCw,
   Send,
   Sparkles,
 } from "lucide-react";
@@ -84,6 +85,22 @@ function formatDateHeader(iso: string): string {
   }
 }
 
+function getChannelBadge(channel: string) {
+  switch (channel.toLowerCase()) {
+    case "telegram":
+      return { label: "Telegram", color: "text-[#229ed9] bg-[#229ed9]/10 border-[#229ed9]/25" };
+    case "whatsapp":
+      return { label: "WhatsApp", color: "text-[#16a34a] bg-[#16a34a]/10 border-[#16a34a]/25" };
+    case "max":
+    case "rumax":
+      return { label: "MAX", color: "text-[#4a38f5] bg-[#4a38f5]/10 border-[#4a38f5]/25" };
+    case "webchat":
+      return { label: "Чат", color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]" };
+    default:
+      return { label: channel, color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]" };
+  }
+}
+
 export function CrmChatView({
   entityType,
   entityId,
@@ -97,6 +114,7 @@ export function CrmChatView({
     sendMessageMutation,
     aiControlMutation,
     aiDraftMutation,
+    syncHistoryMutation,
   } = useCrmChat({ entityType, entityId, live: true });
 
   const [input, setInput] = useState("");
@@ -199,6 +217,20 @@ export function CrmChatView({
     },
     [aiControlMutation],
   );
+
+  // Ручная синхронизация истории сообщений из подключенных каналов (MAX, Telegram)
+  const handleSyncHistory = useCallback(async () => {
+    try {
+      const res = await syncHistoryMutation.mutateAsync();
+      if (res?.synced && res.synced > 0) {
+        toast.success(`Подтянуто сообщений из истории: ${res.synced}`);
+      } else {
+        toast.info("История переписки актуальна");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось синхронизировать историю чата");
+    }
+  }, [syncHistoryMutation]);
 
   // Группировка сообщений по датам
   const groupedMessages = useMemo(() => {
@@ -443,31 +475,61 @@ className="flex items-center gap-1 font-medium text-rose-600"
 
       {/* Панель составления ответа (Telegram Composer) */}
       <div className="shrink-0 border-t border-[#e5e5e5] bg-[#fbfbfb] p-3">
-        {/* Выбор «Пишем от:» */}
+        {/* Выбор «Пишем от:» и Синхронизация истории */}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-[#666666]">Пишем от:</span>
-            {sendFromOptions.length > 0 ? (
-              <select
-                value={selectedChannelAccountId}
-                onChange={(e) => setSelectedChannelAccountId(e.target.value)}
-                className="rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs text-[#111111] outline-none transition-colors focus:border-[#4a38f5]"
-              >
-                {sendFromOptions.map((opt) => (
-                  <option
-                    key={opt.channelAccountId}
-                    value={opt.channelAccountId}
-                    disabled={!opt.available}
+            <span className="text-xs font-medium text-[#666666]">Пишем от:</span>
+            {sendFromOptionsQuery.isLoading ? (
+              <span className="inline-flex items-center gap-1.5 text-xs text-[#888888]">
+                <Loader2 className="h-3 w-3 animate-spin text-[#888888]" />
+                Загрузка каналов...
+              </span>
+            ) : sendFromOptions.length > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={selectedChannelAccountId}
+                  onChange={(e) => setSelectedChannelAccountId(e.target.value)}
+                  className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5]"
+                >
+                  {sendFromOptions.map((opt) => (
+                    <option
+                      key={opt.channelAccountId}
+                      value={opt.channelAccountId}
+                      disabled={!opt.available}
+                    >
+                      {opt.label || `${opt.accountName} (${opt.channel})`}
+                      {!opt.available ? ` — ${opt.unavailableReason || "недоступен"}` : ""}
+                    </option>
+                  ))}
+                </select>
+
+                {selectedOption && (
+                  <span
+                    className={cn(
+                      "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                      getChannelBadge(selectedOption.channel).color,
+                    )}
                   >
-                    {opt.accountName} ({opt.channel})
-                    {!opt.available ? ` — ${opt.unavailableReason || "недоступен"}` : ""}
-                  </option>
-                ))}
-              </select>
+                    {getChannelBadge(selectedOption.channel).label}
+                  </span>
+                )}
+              </div>
             ) : (
               <span className="text-xs text-[#888888]">Автоматический канал</span>
             )}
           </div>
+
+          {/* Кнопка синхронизации истории переписки */}
+          <button
+            type="button"
+            onClick={handleSyncHistory}
+            disabled={syncHistoryMutation.isPending}
+            title="Синхронизировать прошлые сообщения из подключенных каналов (MAX, Telegram)"
+            className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3 w-3 text-[#888888]", syncHistoryMutation.isPending && "animate-spin text-[#4a38f5]")} />
+            <span>{syncHistoryMutation.isPending ? "Синхронизация..." : "Синхронизировать историю"}</span>
+          </button>
         </div>
 
         {/* Telegram-стиль компонент ввода сообщений */}

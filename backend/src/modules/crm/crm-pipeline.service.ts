@@ -189,21 +189,33 @@ export class CrmPipelineService {
         }
       }
 
-      await tx.query(
-        `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          input.tenantId,
-          dealId,
-          nullIfBlank(input.channelAccountId),
-          "client",
-          "inbound",
-          input.senderName,
-          input.text,
-          input.channel,
-        ],
+      // Защита от дублирования сообщений при параллельной доставке вебхуков
+      const existingMsg = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND direction = 'inbound' AND content = $3 AND channel = $4
+           AND created_at > now() - interval '15 seconds'
+         LIMIT 1`,
+        [input.tenantId, dealId, input.text, input.channel],
       );
+
+      if (!existingMsg) {
+        await tx.query(
+          `INSERT INTO deal_messages
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            input.tenantId,
+            dealId,
+            nullIfBlank(input.channelAccountId),
+            "client",
+            "inbound",
+            input.senderName,
+            input.text,
+            input.channel,
+          ],
+        );
+      }
 
       // Обновляем таймстамп активности сделки для поднятия в канбане/списке
       await tx.query(
