@@ -245,8 +245,16 @@ export class WebchatService {
       maxLink: rawMax || undefined,
       consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
       consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
-      avatarType: creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon" ? creds.avatarType : (creds.consultantAvatar ? "photo" : "icon"),
-      mascotId: typeof creds.mascotId === "string" ? creds.mascotId : "voxly_robot",
+      avatarType:
+        creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon"
+          ? (creds.avatarType as "mascot" | "photo" | "icon")
+          : (creds.customMascotDirections || creds.mascotId === "custom"
+              ? "mascot"
+              : (creds.consultantAvatar ? "photo" : "icon")),
+      mascotId:
+        typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
+          ? creds.mascotId
+          : (creds.customMascotDirections ? "custom" : "drone"),
       customMascotDirections: typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0 ? creds.customMascotDirections.trim() : undefined,
       customMascotReactions: typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0 ? creds.customMascotReactions.trim() : undefined,
     };

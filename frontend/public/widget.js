@@ -634,7 +634,7 @@
         }
 
         // Поддержка 3D-маскота или фото консультанта
-        if (data.avatarType === 'mascot') {
+        if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
           bubble.classList.add('is-mascot');
 
           let assetBaseUrl = 'https://getvoxly.ru';

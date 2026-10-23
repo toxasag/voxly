@@ -230,8 +230,11 @@ export function InteractiveMascot({
 
   // Находим пути к спрайт-листам
   const { directions, reactions } = useMemo(() => {
-    if (mascotId === "custom" && customDirections && customReactions) {
-      return { directions: customDirections, reactions: customReactions };
+    if (mascotId === "custom" && customDirections) {
+      return {
+        directions: customDirections,
+        reactions: customReactions && customReactions.trim().length > 0 ? customReactions : customDirections,
+      };
     }
     const found = AVAILABLE_MASCOTS.find((m) => m.id === mascotId);
     if (found) {

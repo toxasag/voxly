@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   ArrowLeft,
   Bot,
   Camera,
@@ -183,24 +184,37 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     initialCreds.position === "bottom-left" ? "bottom-left" : "bottom-right",
   );
 
-  // Тип аватара и маскота
-  const [avatarType, setAvatarType] = useState<WebchatAvatarType>(
-    (initialCreds.avatarType as WebchatAvatarType) ||
-      (initialCreds.consultantAvatar ? "photo" : "mascot")
-  );
-  const [mascotId, setMascotId] = useState<MascotId>(
-    (initialCreds.mascotId as MascotId) || "ballerina"
-  );
-  const [customDirections, setCustomDirections] = useState<string>(
+  const initialCustomDirs =
     typeof initialCreds.customMascotDirections === "string"
       ? initialCreds.customMascotDirections
-      : "",
-  );
-  const [customReactions, setCustomReactions] = useState<string>(
+      : "";
+  const initialCustomReacts =
     typeof initialCreds.customMascotReactions === "string"
       ? initialCreds.customMascotReactions
-      : "",
-  );
+      : "";
+
+  // Тип аватара и маскота
+  const [avatarType, setAvatarType] = useState<WebchatAvatarType>(() => {
+    if (
+      initialCreds.avatarType === "mascot" ||
+      initialCreds.avatarType === "photo" ||
+      initialCreds.avatarType === "icon"
+    ) {
+      if (initialCreds.mascotId === "custom" || initialCustomDirs) {
+        return "mascot";
+      }
+      return initialCreds.avatarType as WebchatAvatarType;
+    }
+    return initialCustomDirs ? "mascot" : (initialCreds.consultantAvatar ? "photo" : "mascot");
+  });
+  const [mascotId, setMascotId] = useState<MascotId>(() => {
+    if (typeof initialCreds.mascotId === "string" && initialCreds.mascotId) {
+      return initialCreds.mascotId as MascotId;
+    }
+    return initialCustomDirs ? "custom" : "ballerina";
+  });
+  const [customDirections, setCustomDirections] = useState<string>(initialCustomDirs);
+  const [customReactions, setCustomReactions] = useState<string>(initialCustomReacts);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [mascotCategory, setMascotCategory] = useState<"all" | "people" | "robots" | "animals">("all");
 
@@ -283,6 +297,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   );
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(true);
 
   // Сброс индикатора успешного сохранения
@@ -312,6 +327,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   };
 
   const handleSave = () => {
+    setSaveError(null);
     updateAccount.mutate(
       {
         id: account.id,
@@ -354,6 +370,10 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       {
         onSuccess: () => {
           setSavedSuccess(true);
+          setSaveError(null);
+        },
+        onError: (err) => {
+          setSaveError(err.message || "Ошибка при сохранении настроек виджета");
         },
       },
     );
@@ -388,6 +408,12 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
         </div>
 
         <div className="flex items-center gap-3">
+          {saveError && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
+              <AlertCircle className="h-3.5 w-3.5" />
+              {saveError}
+            </span>
+          )}
           {savedSuccess && (
             <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
               <Check className="h-4 w-4" />
@@ -398,14 +424,14 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             type="button"
             onClick={handleSave}
             disabled={updateAccount.isPending}
-            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50 cursor-pointer"
           >
             {updateAccount.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Check className="h-4 w-4" />
             )}
-            Сохранить настройки
+            {updateAccount.isPending ? "Сохранение..." : "Сохранить настройки"}
           </button>
         </div>
       </div>
@@ -680,6 +706,22 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                         Мой аватар
                       </span>
 
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCustomDirections("");
+                          setCustomReactions("");
+                          if (mascotId === "custom") {
+                            setMascotId("ballerina");
+                          }
+                        }}
+                        className="absolute top-2 left-2 rounded p-1 text-[#888888] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Удалить своего маскота"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+
                       <div className="my-1.5">
                         <InteractiveMascot
                           mascotId="custom"
@@ -697,12 +739,25 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                         Пользовательский спрайт
                       </p>
 
-                      {mascotId === "custom" && (
-                        <div className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
-                          <Check className="h-3 w-3 stroke-[3]" />
-                          <span>Выбран</span>
-                        </div>
-                      )}
+                      <div className="mt-1 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsPhotoModalOpen(true);
+                          }}
+                          className="text-[11px] text-[#4a38f5] font-semibold underline hover:text-[#3d2ee0] cursor-pointer"
+                        >
+                          Изменить
+                        </button>
+
+                        {mascotId === "custom" && (
+                          <div className="flex items-center gap-1 text-[11px] font-semibold text-[#4a38f5]">
+                            <Check className="h-3 w-3 stroke-[3]" />
+                            <span>Выбран</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -1753,11 +1808,15 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       <CreatePhotoMascotModal
         isOpen={isPhotoModalOpen}
         onClose={() => setIsPhotoModalOpen(false)}
+        initialDirections={customDirections}
+        initialReactions={customReactions}
+        initialName={consultantName}
         onApply={(dirs, reacts, name) => {
           setCustomDirections(dirs);
           setCustomReactions(reacts);
           setMascotId("custom");
-          if (!consultantName) {
+          setAvatarType("mascot");
+          if (name) {
             setConsultantName(name);
           }
         }}
