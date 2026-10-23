@@ -171,7 +171,7 @@ export class CrmPipelineService {
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
             title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
-            description: input.text.slice(0, 500),
+            description: "",
             budget: 0,
             currency: "RUB",
             pipeline_id: pipelineId,
