@@ -54,6 +54,50 @@ interface ContextMenuPosition {
 }
 
 /**
+ * Проверяет, находится ли узел внутри инлайн-тега форматирования
+ */
+function getInlineAncestor(node: Node | null, root: HTMLElement): HTMLElement | null {
+  const inlineTags = new Set([
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "s",
+    "del",
+    "strike",
+    "code",
+    "a",
+  ]);
+  let curr = node;
+  while (curr && curr !== root && curr !== document.body) {
+    if (curr.nodeType === Node.ELEMENT_NODE) {
+      const el = curr as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (inlineTags.has(tag) || el.classList.contains("tg-spoiler")) {
+        return el;
+      }
+    }
+    curr = curr.parentNode;
+  }
+  return null;
+}
+
+/**
+ * Проверяет, находится ли курсор в самом конце содержимого элемента
+ */
+function isCaretAtEndOfElement(el: HTMLElement, range: Range): boolean {
+  try {
+    const testRange = document.createRange();
+    testRange.setStart(range.startContainer, range.startOffset);
+    testRange.setEnd(el, el.childNodes.length);
+    return testRange.toString().length === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Рекурсивный сериализатор DOM-узлов в Markdown
  */
 function serializeDomNode(node: Node): string {
@@ -362,107 +406,183 @@ export function TelegramComposer({
     setIsFormattingSubmenuOpen(false);
   };
 
+  /**
+   * Чистое DOM-применение инлайн-форматирования строго к ВЫДЕЛЕННОМУ тексту.
+   * Исключает document.execCommand, благодаря чему браузер не накапливает глобальный стек стилей.
+   */
+  const toggleInlineFormat = useCallback(
+    (
+      tagNames: string[],
+      wrapperTag: string,
+      className?: string,
+      style?: string,
+      attributes?: Record<string, string>
+    ) => {
+      const activeEl = getTargetEditor();
+      if (!activeEl) return;
+      activeEl.focus();
+
+      restoreSelection();
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+
+      const range = sel.getRangeAt(0);
+      if (range.collapsed) {
+        // Если ничего не выделено — не создаём скрытых тегов, чтобы не загрязнять дальнейший ввод
+        return;
+      }
+
+      // Проверяем, находится ли выделение уже внутри одного из tagNames
+      let matchedAncestor: HTMLElement | null = null;
+      let curr: Node | null = range.commonAncestorContainer;
+      if (curr.nodeType === Node.TEXT_NODE) {
+        curr = curr.parentElement;
+      }
+      while (curr && curr !== activeEl && curr !== document.body) {
+        if (curr.nodeType === Node.ELEMENT_NODE) {
+          const el = curr as HTMLElement;
+          const lower = el.tagName.toLowerCase();
+          if (tagNames.includes(lower)) {
+            if (!className || el.classList.contains(className)) {
+              matchedAncestor = el;
+              break;
+            }
+          }
+        }
+        curr = curr.parentNode;
+      }
+
+      if (matchedAncestor) {
+        // Снимаем форматирование (разворачиваем тег)
+        const parent = matchedAncestor.parentNode;
+        if (parent) {
+          while (matchedAncestor.firstChild) {
+            parent.insertBefore(matchedAncestor.firstChild, matchedAncestor);
+          }
+          parent.removeChild(matchedAncestor);
+        }
+      } else {
+        // Применяем форматирование ТОЛЬКО к выделенному фрагменту
+        const wrapper = document.createElement(wrapperTag);
+        if (className) wrapper.className = className;
+        if (style) wrapper.setAttribute("style", style);
+        if (attributes) {
+          Object.entries(attributes).forEach(([k, v]) => {
+            wrapper.setAttribute(k, v);
+          });
+        }
+
+        try {
+          const fragment = range.extractContents();
+          wrapper.appendChild(fragment);
+          range.insertNode(wrapper);
+
+          // Гарантируем наличие чистого текстового узла после элемента для выхода из форматирования
+          if (!wrapper.nextSibling || wrapper.nextSibling.nodeType !== Node.TEXT_NODE) {
+            const emptyText = document.createTextNode("");
+            if (wrapper.nextSibling) {
+              wrapper.parentNode?.insertBefore(emptyText, wrapper.nextSibling);
+            } else {
+              wrapper.parentNode?.appendChild(emptyText);
+            }
+          }
+
+          // Выделяем содержимое wrapper
+          sel.removeAllRanges();
+          const newRange = document.createRange();
+          newRange.selectNodeContents(wrapper);
+          sel.addRange(newRange);
+          savedRangeRef.current = newRange.cloneRange();
+        } catch {
+          // Игнорируем ошибки при сложных пересечениях
+        }
+      }
+
+      syncFromDOM();
+      setContextMenuPos(null);
+      setIsFormattingSubmenuOpen(false);
+    },
+    [getTargetEditor, restoreSelection, syncFromDOM]
+  );
+
   // Команды форматирования
   const applyBold = useCallback(() => {
-    restoreSelection();
-    getTargetEditor()?.focus();
-    document.execCommand("bold", false);
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
+    toggleInlineFormat(["strong", "b"], "strong");
+  }, [toggleInlineFormat]);
 
   const applyItalic = useCallback(() => {
-    restoreSelection();
-    getTargetEditor()?.focus();
-    document.execCommand("italic", false);
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
+    toggleInlineFormat(["em", "i"], "em");
+  }, [toggleInlineFormat]);
 
   const applyUnderline = useCallback(() => {
-    restoreSelection();
-    getTargetEditor()?.focus();
-    document.execCommand("underline", false);
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
+    toggleInlineFormat(["u"], "u");
+  }, [toggleInlineFormat]);
 
   const applyStrike = useCallback(() => {
-    restoreSelection();
-    getTargetEditor()?.focus();
-    document.execCommand("strikeThrough", false);
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
-
-  const applyQuote = useCallback(() => {
-    restoreSelection();
-    getTargetEditor()?.focus();
-    document.execCommand("formatBlock", false, "blockquote");
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
+    toggleInlineFormat(["s", "del", "strike"], "s");
+  }, [toggleInlineFormat]);
 
   const applyMonospace = useCallback(() => {
-    restoreSelection();
-    const activeEl = getTargetEditor();
-    if (!activeEl) return;
-    activeEl.focus();
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-      const range = sel.getRangeAt(0);
-      let parent = range.commonAncestorContainer as HTMLElement | null;
-      if (parent && parent.nodeType === Node.TEXT_NODE) {
-        parent = parent.parentElement;
-      }
-      if (parent && parent.tagName.toLowerCase() === "code") {
-        const text = document.createTextNode(parent.textContent || "");
-        parent.parentNode?.replaceChild(text, parent);
-      } else {
-        const code = document.createElement("code");
-        code.className = "rounded bg-[#f0f0f0] px-1 py-0.5 font-mono text-xs text-[#111111]";
-        code.appendChild(range.extractContents());
-        range.insertNode(code);
-        sel.removeAllRanges();
-        const newRange = document.createRange();
-        newRange.selectNodeContents(code);
-        sel.addRange(newRange);
-      }
-    } else {
-      document.execCommand("insertHTML", false, "<code>&#8203;</code>");
-    }
-    syncFromDOM();
-    setContextMenuPos(null);
-    setIsFormattingSubmenuOpen(false);
-  }, [getTargetEditor, restoreSelection, syncFromDOM]);
+    toggleInlineFormat(
+      ["code"],
+      "code",
+      "rounded bg-[#f0f0f0] px-1 py-0.5 font-mono text-xs text-[#111111]"
+    );
+  }, [toggleInlineFormat]);
 
   const applySpoiler = useCallback(() => {
-    restoreSelection();
+    toggleInlineFormat(
+      ["span"],
+      "span",
+      "tg-spoiler",
+      "background-color:#e5e5e5;color:#111111;padding:1px 4px;border-radius:4px;border:1px dashed #cccccc;",
+      { "data-spoiler": "true" }
+    );
+  }, [toggleInlineFormat]);
+
+  const applyQuote = useCallback(() => {
     const activeEl = getTargetEditor();
     if (!activeEl) return;
     activeEl.focus();
+
+    restoreSelection();
     const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
-      const range = sel.getRangeAt(0);
-      const span = document.createElement("span");
-      span.className = "tg-spoiler";
-      span.setAttribute("data-spoiler", "true");
-      span.setAttribute(
-        "style",
-        "background-color:#e5e5e5;color:#111111;padding:1px 4px;border-radius:4px;border:1px dashed #cccccc;"
-      );
-      span.appendChild(range.extractContents());
-      range.insertNode(span);
-      sel.removeAllRanges();
-      const newRange = document.createRange();
-      newRange.selectNodeContents(span);
-      sel.addRange(newRange);
+    if (!sel || sel.rangeCount === 0) return;
+
+    const range = sel.getRangeAt(0);
+
+    let quoteEl: HTMLElement | null = null;
+    let curr: Node | null = range.commonAncestorContainer;
+    if (curr.nodeType === Node.TEXT_NODE) curr = curr.parentElement;
+    while (curr && curr !== activeEl && curr !== document.body) {
+      if (curr.nodeType === Node.ELEMENT_NODE && (curr as HTMLElement).tagName.toLowerCase() === "blockquote") {
+        quoteEl = curr as HTMLElement;
+        break;
+      }
+      curr = curr.parentNode;
     }
+
+    if (quoteEl) {
+      const parent = quoteEl.parentNode;
+      if (parent) {
+        while (quoteEl.firstChild) {
+          parent.insertBefore(quoteEl.firstChild, quoteEl);
+        }
+        parent.removeChild(quoteEl);
+      }
+    } else {
+      const bq = document.createElement("blockquote");
+      bq.className = "border-l-2 border-[#2aabee] pl-2 text-[#666666] italic my-1";
+      if (!range.collapsed) {
+        const fragment = range.extractContents();
+        bq.appendChild(fragment);
+        range.insertNode(bq);
+      } else {
+        bq.innerHTML = "<br>";
+        range.insertNode(bq);
+      }
+    }
+
     syncFromDOM();
     setContextMenuPos(null);
     setIsFormattingSubmenuOpen(false);
@@ -473,15 +593,23 @@ export function TelegramComposer({
     const activeEl = getTargetEditor();
     if (!activeEl) return;
     activeEl.focus();
-    document.execCommand("removeFormat", false);
+
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
-      const container = range.commonAncestorContainer as HTMLElement;
-      const parent = container.nodeType === Node.TEXT_NODE ? container.parentElement : container;
-      if (parent && (parent.tagName.toLowerCase() === "code" || parent.classList.contains("tg-spoiler"))) {
-        const text = document.createTextNode(parent.textContent || "");
-        parent.parentNode?.replaceChild(text, parent);
+      if (!range.collapsed) {
+        const text = range.toString();
+        range.deleteContents();
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+        const newRange = document.createRange();
+        newRange.selectNodeContents(textNode);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
+      } else {
+        const text = activeEl.innerText || activeEl.textContent || "";
+        activeEl.innerHTML = text.replace(/\n/g, "<br>");
       }
     }
     syncFromDOM();
@@ -515,22 +643,34 @@ export function TelegramComposer({
     const url = window.prompt("Введите адрес ссылки (URL):", "https://");
     if (!url) return;
 
-    if (selectedText) {
-      document.execCommand("createLink", false, url);
-    } else {
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      const range = sel.getRangeAt(0);
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.className = "text-[#2aabee] underline";
+      a.appendChild(range.extractContents());
+      range.insertNode(a);
+      sel.removeAllRanges();
+      const newRange = document.createRange();
+      newRange.setStartAfter(a);
+      newRange.setEndAfter(a);
+      sel.addRange(newRange);
+    } else if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
       const a = document.createElement("a");
       a.href = url;
       a.target = "_blank";
       a.rel = "noreferrer";
       a.className = "text-[#2aabee] underline";
       a.textContent = url;
-      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-      if (range) {
-        range.insertNode(a);
-        range.collapse(false);
-      } else {
-        activeEl.appendChild(a);
-      }
+      range.insertNode(a);
+      sel.removeAllRanges();
+      const newRange = document.createRange();
+      newRange.setStartAfter(a);
+      newRange.setEndAfter(a);
+      sel.addRange(newRange);
     }
     syncFromDOM();
     setContextMenuPos(null);
@@ -594,13 +734,16 @@ export function TelegramComposer({
     setContextMenuPos(null);
   }, [getTargetEditor]);
 
-  // Обработка горячих клавиш клавиатуры
+  // Обработка горячих клавиш клавиатуры и защита от утечки форматирования
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const isMac = typeof navigator !== "undefined" && navigator.platform.toUpperCase().includes("MAC");
     const modKey = isMac ? e.metaKey : e.ctrlKey;
+    const activeEl = getTargetEditor();
+    if (!activeEl) return;
 
-    // Enter для отправки, Shift+Enter для переноса строки
-    if (e.key === "Enter" && !e.shiftKey) {
+    // 1. Enter для отправки в обычном режиме (Enter без Shift)
+    const isEnterSend = e.key === "Enter" && !e.shiftKey && !isFullscreen;
+    if (isEnterSend) {
       e.preventDefault();
       if (value.trim() || attachedFile) {
         handleSendAction();
@@ -608,7 +751,102 @@ export function TelegramComposer({
       return;
     }
 
-    // Горячие клавиши форматирования
+    // 2. Enter для переноса строки (Shift+Enter в основном режиме или Enter в полноэкранном)
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        const inlineEl = getInlineAncestor(range.startContainer, activeEl);
+
+        const br = document.createElement("br");
+
+        if (inlineEl) {
+          if (isCaretAtEndOfElement(inlineEl, range)) {
+            // Вставляем перенос строки СТРОГО СНАРУЖИ inlineEl, чтобы новая строка была чистой!
+            if (inlineEl.nextSibling) {
+              inlineEl.parentNode?.insertBefore(br, inlineEl.nextSibling);
+            } else {
+              inlineEl.parentNode?.appendChild(br);
+            }
+          } else {
+            range.deleteContents();
+            range.insertNode(br);
+          }
+        } else {
+          range.deleteContents();
+          range.insertNode(br);
+        }
+
+        // Если это последний элемент в редакторе, добавляем второй <br> для курсора
+        if (!br.nextSibling) {
+          const trailingBr = document.createElement("br");
+          br.parentNode?.appendChild(trailingBr);
+        }
+
+        // Ставим курсор строго ПОСЛЕ <br> вне любых инлайн-стилей
+        const newRange = document.createRange();
+        newRange.setStartAfter(br);
+        newRange.setEndAfter(br);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
+        syncFromDOM();
+        return;
+      }
+    }
+
+    // 3. Пробел после форматированного слова: пробел и следующее слово выходят ИЗ тега форматирования!
+    if (e.key === " " && !modKey) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        const inlineEl = getInlineAncestor(range.startContainer, activeEl);
+
+        if (inlineEl && isCaretAtEndOfElement(inlineEl, range)) {
+          e.preventDefault();
+          // Вставляем обычный пробел СНАРУЖИ inlineEl
+          const textNode = document.createTextNode(" ");
+          if (inlineEl.nextSibling) {
+            inlineEl.parentNode?.insertBefore(textNode, inlineEl.nextSibling);
+          } else {
+            inlineEl.parentNode?.appendChild(textNode);
+          }
+          // Курсор переносим за пробел
+          const newRange = document.createRange();
+          newRange.setStart(textNode, 1);
+          newRange.setEnd(textNode, 1);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+          savedRangeRef.current = newRange.cloneRange();
+          syncFromDOM();
+          return;
+        }
+      }
+    }
+
+    // 4. Стрелка вправо на границе форматированного слова: выходит наружу тега
+    if (e.key === "ArrowRight" && !modKey && !e.shiftKey) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && sel.isCollapsed) {
+        const range = sel.getRangeAt(0);
+        const inlineEl = getInlineAncestor(range.startContainer, activeEl);
+        if (inlineEl && isCaretAtEndOfElement(inlineEl, range)) {
+          if (inlineEl.nextSibling) {
+            e.preventDefault();
+            const newRange = document.createRange();
+            newRange.setStartAfter(inlineEl);
+            newRange.setEndAfter(inlineEl);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            savedRangeRef.current = newRange.cloneRange();
+            return;
+          }
+        }
+      }
+    }
+
+    // 5. Горячие клавиши форматирования
     if (modKey) {
       if (e.key.toLowerCase() === "b") {
         e.preventDefault();
