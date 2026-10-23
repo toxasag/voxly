@@ -2,17 +2,32 @@
   'use strict';
 
   // 1. Поиск скрипта подключения и параметров
-  const currentScript = document.currentScript || document.querySelector('script[data-channel-id]');
-  if (!currentScript) {
-    console.warn('[GetVoxly] Webchat script is missing data-channel-id attribute.');
+  function findScriptElement() {
+    if (document.currentScript) return document.currentScript;
+    return (
+      document.querySelector('script[data-account-id]') ||
+      document.querySelector('script[data-channel-id]') ||
+      document.querySelector('script[src*="widget.js"]')
+    );
+  }
+
+  const currentScript = findScriptElement();
+  const channelAccountId =
+    (currentScript && (currentScript.getAttribute('data-account-id') || currentScript.getAttribute('data-channel-id'))) ||
+    '';
+
+  if (!channelAccountId) {
+    console.warn('[GetVoxly] Webchat script is missing data-account-id or data-channel-id attribute.');
     return;
   }
 
-  const channelAccountId = currentScript.getAttribute('data-channel-id');
-  const apiUrl = (currentScript.getAttribute('data-api-url') || 'https://api.getvoxly.ru').replace(/\/$/, '');
-  const telegramBot = currentScript.getAttribute('data-telegram-bot') || '';
-  const proactiveEnabled = currentScript.getAttribute('data-proactive') !== 'false';
-  const proactiveDelay = parseInt(currentScript.getAttribute('data-proactive-delay') || '30000', 10);
+  const apiUrl = (
+    (currentScript && currentScript.getAttribute('data-api-url')) ||
+    'https://api.getvoxly.ru'
+  ).replace(/\/$/, '');
+  const telegramBot = (currentScript && currentScript.getAttribute('data-telegram-bot')) || '';
+  const proactiveEnabled = (currentScript && currentScript.getAttribute('data-proactive')) !== 'false';
+  const proactiveDelay = parseInt((currentScript && currentScript.getAttribute('data-proactive-delay')) || '30000', 10);
 
   // 2. Вспомогательные функции для cookies и хранилища
   function getCookie(name) {
@@ -473,12 +488,34 @@
     }
   `;
 
-  const styleEl = document.createElement('style');
-  styleEl.textContent = styles;
-  document.head.appendChild(styleEl);
+  // 8. Безопасное монтирование виджета в DOM
+  function mount() {
+    if (!document.body) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount, { once: true });
+      } else {
+        window.addEventListener('load', mount, { once: true });
+      }
+      return;
+    }
 
-  // 8. Создание DOM-структуры виджета
-  const wrapper = document.createElement('div');
+    if (document.getElementById('getvoxly-bubble')) {
+      return;
+    }
+
+    let isOpen = false;
+    let sessionInitialized = false;
+    let lastDraft = '';
+    let sentDrafts = {};
+    let messageBuffer = [];
+    let sendTimer = null;
+
+    const styleEl = document.createElement('style');
+    styleEl.textContent = styles;
+    (document.head || document.body).appendChild(styleEl);
+
+    // Создание DOM-структуры виджета
+    const wrapper = document.createElement('div');
   wrapper.className = 'getvoxly-widget-wrapper';
   wrapper.innerHTML = `
     <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
@@ -564,7 +601,7 @@
   }
 
   // 10. Переключение окна виджета
-  let isOpen = false;
+  isOpen = false;
   function openWidget() {
     isOpen = true;
     win.style.display = 'flex';
@@ -604,7 +641,7 @@
   }
 
   // 12. Инициализация сессии на сервере (загрузка настроек аккаунта)
-  let sessionInitialized = false;
+  sessionInitialized = false;
   async function initSession() {
     if (sessionInitialized) return;
     try {
@@ -638,11 +675,6 @@
           bubble.classList.add('is-mascot');
 
           let assetBaseUrl = 'https://getvoxly.ru';
-          if (currentScript && currentScript.src) {
-            try {
-              assetBaseUrl = new URL(currentScript.src).origin;
-            } catch (e) {}
-          }
 
           const MASCOT_MAP = {
             voxly_robot: 'drone',
@@ -692,7 +724,7 @@
           }
 
           // Трекинг курсора мыши (9 направлений взгляда)
-          if (window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
+          if (typeof window.matchMedia === 'function' && window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
             window.addEventListener('pointermove', function (e) {
               if (isBooped) return;
               const b = bubble.getBoundingClientRect();
@@ -837,8 +869,8 @@
   }
 
   // 13. Умная склейка сообщений (Message Buffer / Debounce)
-  let messageBuffer = [];
-  let sendTimer = null;
+  messageBuffer = [];
+  sendTimer = null;
 
   function flushMessageBuffer() {
     if (messageBuffer.length === 0) return;
@@ -931,8 +963,8 @@
   });
 
   // 15. Перехват брошенных черновиков (Lead Salvage)
-  let lastDraft = '';
-  let sentDrafts = {};
+  lastDraft = '';
+  sentDrafts = {};
 
   inputEl.addEventListener('input', function (e) {
     const current = e.target.value.trim();
@@ -969,4 +1001,12 @@
       }
     }
   });
+  }
+
+  // 16. Запуск монтирования виджета
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
+  }
 })();

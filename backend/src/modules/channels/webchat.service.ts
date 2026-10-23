@@ -139,7 +139,7 @@ export class WebchatService {
 
     const tenant = await runWithPlatformScope(() =>
       queryOne<TenantRow>(
-        `SELECT id, name FROM tenants WHERE id = $1 AND deleted_at IS NULL`,
+        `SELECT id, name FROM tenants WHERE id = $1`,
         [account.tenant_id],
       ),
     );
