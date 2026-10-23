@@ -109,6 +109,29 @@ export class MaxBridgeService {
     return res.json;
   }
 
+  /** Отправка сообщения клиенту через max-bridge */
+  async sendMessage(input: {
+    tenantId: string;
+    name?: string;
+    botId?: string;
+    chatId: string;
+    text: string;
+  }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const res = await this.bridgeFetch<{ ok: boolean; messageId?: string; detail?: string }>(
+      "/messages/send",
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+
+    if (!res.ok) {
+      return { ok: false, error: res.json?.detail || "Ошибка отправки сообщения в max-bridge" };
+    }
+
+    return { ok: true, messageId: res.json?.messageId };
+  }
+
   /** Получение бинарного PNG буфера QR-кода напрямую из max-bridge */
   async getQrPng(tenantId: string, name: string): Promise<Buffer | null> {
     const url = `${this.baseUrl}/auth/qr/png?tenantId=${encodeURIComponent(tenantId)}&name=${encodeURIComponent(name)}`;

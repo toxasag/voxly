@@ -163,7 +163,7 @@ export class WhatsappEvolutionService {
         if (existing) {
           await tx.query(
             `UPDATE channel_accounts
-             SET status = 'connected', label = $3, external_id = $4,
+             SET status = 'connected', status_message = '', label = $3, external_id = $4,
                  credentials = jsonb_set(COALESCE(credentials, '{}'::jsonb), '{instanceName}', to_jsonb($5::text)),
                  connected_at = COALESCE(connected_at, now())
              WHERE tenant_id = $1 AND id = $2`,
@@ -173,8 +173,8 @@ export class WhatsappEvolutionService {
         }
 
         const inserted = await tx.queryOneOrThrow<{ id: string }>(
-          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, credentials, connected_at)
-           VALUES ($1, 'whatsapp', $2, $3, 'connected', jsonb_build_object('instanceName', $4::text), now())
+          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, credentials, connected_at)
+           VALUES ($1, 'whatsapp', $2, $3, 'connected', '', jsonb_build_object('instanceName', $4::text), now())
            RETURNING id`,
           [tenantId, label, phone, instanceName],
         );
@@ -205,6 +205,28 @@ export class WhatsappEvolutionService {
       status: "qr_ready",
       qr,
     };
+  }
+
+  /** Отправка текстового сообщения через Evolution API */
+  async sendTextMessage(
+    instanceName: string,
+    recipient: string,
+    text: string,
+  ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const cleanNumber = recipient.replace(/[^\d]/g, "");
+    const res = await this.evoFetch(`/message/sendText/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        number: cleanNumber,
+        text,
+      }),
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: res.json?.response?.message || "Ошибка отправки WhatsApp" };
+    }
+
+    return { ok: true, messageId: res.json?.key?.id };
   }
 
   /** Удаление инстанса из Evolution API */

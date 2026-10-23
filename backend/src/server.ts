@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
-import { closePool } from "./db/client.js";
+import { closePool, queryOne } from "./db/client.js";
 import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
@@ -9,6 +9,8 @@ import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.servic
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
+import { MaxBridgeService } from "./modules/channels/max-bridge.service.js";
+import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -116,15 +118,60 @@ async function main(): Promise<void> {
   const transport = new TelegramTransportService(app.log);
   const stopTransport = transport.start();
 
-  // Регистрация исходящих сообщений через бота MAX
+  // Регистрация исходящих сообщений через личный аккаунт MAX (max-bridge) или бота платформы MAX
   const unregisterMaxOutbound = registerOutboundSender("max", async (message) => {
+    const maxBridge = new MaxBridgeService();
+    try {
+      const account = await queryOne<{ label: string }>(
+        `SELECT label FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+        [message.tenantId, message.channelAccountId],
+      );
+      if (account) {
+        const res = await maxBridge.sendMessage({
+          tenantId: message.tenantId,
+          name: account.label,
+          chatId: message.recipient,
+          text: message.text,
+        });
+        if (res.ok) return { ok: true };
+      }
+    } catch {
+      // Fallback к Bot API
+    }
+
     const max = new MaxService();
     if (!max.isConfigured) {
-      return { ok: false, reason: "MAX-бот не настроен на платформе" };
+      return { ok: false, reason: "MAX не настроен на платформе" };
     }
     const res = await max.sendMessage(message.recipient, message.text);
     if (res.ok) return { ok: true };
     return { ok: false, reason: res.reason ?? "Неизвестная ошибка платформы MAX" };
+  });
+
+  // Регистрация исходящих сообщений через WhatsApp Evolution API
+  const unregisterWhatsappOutbound = registerOutboundSender("whatsapp", async (message) => {
+    const evo = new WhatsappEvolutionService();
+    if (!evo.isConfigured) {
+      return { ok: false, reason: "Evolution API (WhatsApp) не настроен" };
+    }
+    try {
+      const account = await queryOne<{ credentials: { instanceName?: string } }>(
+        `SELECT credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'whatsapp' AND deleted_at IS NULL`,
+        [message.tenantId, message.channelAccountId],
+      );
+      const instanceName = account?.credentials?.instanceName;
+      if (!instanceName) {
+        return { ok: false, reason: "Инстанс WhatsApp не найден у подключения" };
+      }
+      const res = await evo.sendTextMessage(instanceName, message.recipient, message.text);
+      if (res.ok) return { ok: true };
+      return { ok: false, reason: res.error ?? "Ошибка отправки WhatsApp" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, reason: msg };
+    }
   });
 
   // Drain in-flight requests, then release DB connections.
@@ -139,6 +186,7 @@ async function main(): Promise<void> {
       await shutdownWorker();
       stopTransport();
       unregisterMaxOutbound();
+      unregisterWhatsappOutbound();
       await app.close();
       await closePool();
       process.exit(0);
