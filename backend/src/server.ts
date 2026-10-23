@@ -154,8 +154,8 @@ async function main(): Promise<void> {
   const unregisterMaxOutbound = registerOutboundSender("max", async (message) => {
     const maxBridge = new MaxBridgeService();
     try {
-      const account = await queryOne<{ label: string }>(
-        `SELECT label FROM channel_accounts
+      const account = await queryOne<{ id: string; label: string }>(
+        `SELECT id, label FROM channel_accounts
          WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
         [message.tenantId, message.channelAccountId],
       );
@@ -163,7 +163,8 @@ async function main(): Promise<void> {
         const res = await maxBridge.sendMessage({
           tenantId: message.tenantId,
           name: account.label,
-          chatId: message.recipient,
+          botId: account.id,
+          recipient: message.recipient,
           text: message.text,
         });
         if (res.ok) return { ok: true };

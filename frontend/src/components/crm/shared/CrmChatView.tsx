@@ -143,7 +143,9 @@ export function CrmChatView({
       const text = input.trim();
       if ((!text && !attached) || sendMessageMutation.isPending) return;
 
-      const channel = selectedOption?.channel ?? "telegram";
+      const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
+      const fallbackChannel = lastMessageWithChannel?.channel ?? "telegram";
+      const channel = selectedOption?.channel ?? fallbackChannel;
       const channelAccountId = selectedOption?.channelAccountId;
 
       try {

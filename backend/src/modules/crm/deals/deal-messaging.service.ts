@@ -5,6 +5,7 @@ import {
   type OutboundSendResult,
 } from "../../channels/outbound-registry.js";
 import type { CreateDealMessagePayload, DealMessageDTO } from "./deals.types.js";
+import type { ContactSocialJson } from "../contacts/contacts.types.js";
 import {
   GatewayChatProvider,
   type ChatProvider,
@@ -39,6 +40,7 @@ export interface SendFromOptionDTO {
   channelAccountId: string;
   channel: string;
   label: string;
+  accountName: string;
   available: boolean;
   unavailableReason?: string;
   isDefault: boolean;
@@ -66,11 +68,13 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
-              c.phone
+              c.phone,
+              c.socials
        FROM deals d
        LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id AND c.deleted_at IS NULL
        WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
@@ -82,10 +86,11 @@ export class DealMessagingService {
       telegram_username: null,
       whatsapp: null,
       phone: "",
+      socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; name: string }>(
-      `SELECT id, channel, name
+    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
+      `SELECT id, channel, label
        FROM channel_accounts
        WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
        ORDER BY created_at ASC`,
@@ -117,7 +122,8 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан телефон для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
-        if (contact.phone) {
+        const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
+        if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан телефон для MAX";
@@ -126,10 +132,12 @@ export class DealMessagingService {
         available = true;
       }
 
+      const accountLabel = acc.label || acc.name || acc.channel;
       return {
         channelAccountId: acc.id,
         channel: acc.channel,
-        label: `${acc.name || acc.channel} (${acc.channel})`,
+        label: `${accountLabel} (${acc.channel})`,
+        accountName: accountLabel,
         available,
         unavailableReason,
         isDefault: acc.id === defaultAccountId,
@@ -261,6 +269,7 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT
          (
@@ -276,7 +285,8 @@ export class DealMessagingService {
          c.telegram_chat_id::text AS telegram_chat_id,
          c.telegram_username,
          c.whatsapp,
-         c.phone
+         c.phone,
+         c.socials
        FROM deals d
        LEFT JOIN contacts c
          ON c.id = d.contact_id
@@ -321,20 +331,27 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     },
   ): string | null {
     if (channel === "telegram") {
       // Числовой id, а не username: транспорт обращается к peer по нему, и
       // username мог измениться после первого сообщения.
-      return contact.telegram_chat_id ?? contact.telegram_username ?? null;
+      return contact.telegram_chat_id ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
     }
 
     if (channel === "whatsapp") {
       const value = contact.whatsapp ?? contact.phone;
-      return value.length > 0 ? value : null;
+      return value && value.length > 0 ? value : null;
     }
 
-    return contact.phone.length > 0 ? contact.phone : null;
+    if (channel === "max" || channel === "rumax") {
+      const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
+      if (maxSocial && maxSocial.length > 0) return maxSocial;
+      return contact.phone && contact.phone.length > 0 ? contact.phone : null;
+    }
+
+    return contact.phone && contact.phone.length > 0 ? contact.phone : null;
   }
 
   /**
@@ -503,11 +520,13 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
-              c.phone
+              c.phone,
+              c.socials
        FROM contacts c
        WHERE c.tenant_id = $1 AND c.id = $2 AND c.deleted_at IS NULL`,
       [tenantId, contactId],
@@ -518,10 +537,11 @@ export class DealMessagingService {
       telegram_username: null,
       whatsapp: null,
       phone: "",
+      socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; name: string }>(
-      `SELECT id, channel, name
+    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
+      `SELECT id, channel, label
        FROM channel_accounts
        WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
        ORDER BY created_at ASC`,
@@ -545,7 +565,8 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан телефон для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
-        if (contact.phone) {
+        const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
+        if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан телефон для MAX";
@@ -554,10 +575,12 @@ export class DealMessagingService {
         available = true;
       }
 
+      const accountLabel = acc.label || acc.name || acc.channel;
       return {
         channelAccountId: acc.id,
         channel: acc.channel,
-        label: `${acc.name || acc.channel} (${acc.channel})`,
+        label: `${accountLabel} (${acc.channel})`,
+        accountName: accountLabel,
         available,
         unavailableReason,
         isDefault: index === 0,

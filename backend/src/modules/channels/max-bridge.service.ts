@@ -114,14 +114,41 @@ export class MaxBridgeService {
     tenantId: string;
     name?: string;
     botId?: string;
-    chatId: string;
+    chatId?: string;
+    recipient?: string;
     text: string;
   }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const target = (input.recipient || input.chatId || "").trim();
+    let peerUserId = "";
+    let resolvePhone: string | undefined;
+
+    const maxUrlMatch = target.match(/id=(\d+)/);
+    if (maxUrlMatch && maxUrlMatch[1]) {
+      peerUserId = maxUrlMatch[1];
+    } else if (target.startsWith("+") || /^[78]\d{10}$/.test(target.replace(/\D/g, ""))) {
+      resolvePhone = target.startsWith("+") ? target : `+${target.replace(/\D/g, "")}`;
+    } else if (/^\d+$/.test(target)) {
+      peerUserId = target;
+    } else {
+      resolvePhone = target;
+    }
+
+    const payload: Record<string, unknown> = {
+      botId: input.botId,
+      text: input.text,
+    };
+    if (peerUserId) {
+      payload.peerUserId = peerUserId;
+    }
+    if (resolvePhone) {
+      payload.resolvePhone = resolvePhone;
+    }
+
     const res = await this.bridgeFetch<{ ok: boolean; messageId?: string; detail?: string }>(
       "/messages/send",
       {
         method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify(payload),
       },
     );
 
