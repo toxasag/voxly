@@ -1,422 +1,427 @@
 "use client";
 
-import React, { useState } from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   MessageSquare,
   Search,
-  Filter,
-  Send,
-  Paperclip,
-  Check,
-  CheckCheck,
-  Clock,
-  User,
-  Phone,
-  Briefcase,
-  ChevronRight,
-  Sparkles,
+  ExternalLink,
+  ChevronLeft,
+  RefreshCw,
+  X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { Skeleton } from "@/components/shared/Skeleton";
+import { CrmChatView } from "@/components/crm/shared/CrmChatView";
+import { useInboxThreads, type InboxThreadDTO } from "@/lib/api/use-inbox";
 
-interface InboxThread {
-  id: string;
-  dealId: string;
-  contactName: string;
-  contactPhone: string;
-  channel: "telegram" | "whatsapp" | "max" | "webchat";
-  lastMessage: string;
-  lastMessageAt: string;
-  unreadCount: number;
-  dealTitle: string;
-  stageName: string;
-  budget: number;
+function formatThreadTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const now = new Date();
+    const isToday =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+
+    if (isToday) {
+      return new Intl.DateTimeFormat("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d);
+    }
+
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday =
+      d.getDate() === yesterday.getDate() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getFullYear() === yesterday.getFullYear();
+
+    if (isYesterday) return "Вчера";
+
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "numeric",
+      month: "short",
+    }).format(d);
+  } catch {
+    return "";
+  }
 }
 
-interface ThreadMessage {
-  id: string;
-  source: "client" | "manager" | "ai";
-  senderName: string;
-  content: string;
-  createdAt: string;
-  deliveryStatus: "pending" | "sent" | "delivered" | "read";
+function getChannelBadge(channel: string) {
+  const norm = channel.toLowerCase();
+  switch (norm) {
+    case "telegram":
+      return { label: "Telegram", className: "bg-sky-50 text-sky-700 border-sky-200" };
+    case "whatsapp":
+      return { label: "WhatsApp", className: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+    case "max":
+    case "rumax":
+      return { label: "MAX", className: "bg-violet-50 text-violet-700 border-violet-200" };
+    case "webchat":
+      return { label: "Онлайн-чат", className: "bg-blue-50 text-blue-700 border-blue-200" };
+    default:
+      return { label: channel || "Чат", className: "bg-[#fafafa] text-[#666666] border-[#e5e5e5]" };
+  }
 }
 
-const INITIAL_THREADS: InboxThread[] = [
-  {
-    id: "thread-1",
-    dealId: "deal-101",
-    contactName: "Алексей Смирнов",
-    contactPhone: "+7 (916) 123-45-67",
-    channel: "telegram",
-    lastMessage: "Здравствуйте, подскажите статус готовности заказа?",
-    lastMessageAt: "10:42",
-    unreadCount: 1,
-    dealTitle: "Ремонт MacBook Pro 16",
-    stageName: "В работе",
-    budget: 24500,
-  },
-  {
-    id: "thread-2",
-    dealId: "deal-102",
-    contactName: "Елена Васильева",
-    contactPhone: "+7 (925) 987-65-43",
-    channel: "whatsapp",
-    lastMessage: "Спасибо, оплату отправила по ссылке!",
-    lastMessageAt: "Вчера",
-    unreadCount: 0,
-    dealTitle: "Замена экрана iPhone 15",
-    stageName: "Согласование",
-    budget: 18000,
-  },
-  {
-    id: "thread-3",
-    dealId: "deal-103",
-    contactName: "Дмитрий Ковалев",
-    contactPhone: "+7 (903) 555-12-34",
-    channel: "webchat",
-    lastMessage: "Добрый день! Работаете ли вы в выходные дни?",
-    lastMessageAt: "18 окт",
-    unreadCount: 0,
-    dealTitle: "Диагностика системного блока",
-    stageName: "Новый лид",
-    budget: 0,
-  },
-];
+const CHANNELS = [
+  { id: "all", label: "Все каналы" },
+  { id: "telegram", label: "Telegram" },
+  { id: "whatsapp", label: "WhatsApp" },
+  { id: "max", label: "MAX" },
+] as const;
 
 export default function InboxPage() {
-  const [threads, setThreads] = useState<InboxThread[]>(INITIAL_THREADS);
-  const [selectedThreadId, setSelectedThreadId] = useState<string>("thread-1");
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [channelFilter, setChannelFilter] = useState<string>("all");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [inputText, setInputText] = useState("");
-  const [isSending, setIsSending] = useState(false);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
-  const [messagesByThread, setMessagesByThread] = useState<Record<string, ThreadMessage[]>>({
-    "thread-1": [
-      {
-        id: "m-1",
-        source: "client",
-        senderName: "Алексей Смирнов",
-        content: "Добрый день! Сдал вчера ноутбук на замену термопасты и чистку.",
-        createdAt: "10:30",
-        deliveryStatus: "read",
-      },
-      {
-        id: "m-2",
-        source: "manager",
-        senderName: "Менеджер",
-        content: "Здравствуйте, Алексей! Мастер уже завершил профилактику и сейчас проводит стресс-тесты.",
-        createdAt: "10:35",
-        deliveryStatus: "read",
-      },
-      {
-        id: "m-3",
-        source: "client",
-        senderName: "Алексей Смирнов",
-        content: "Здравствуйте, подскажите статус готовности заказа?",
-        createdAt: "10:42",
-        deliveryStatus: "read",
-      },
-    ],
-  });
+  const {
+    data: threads = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useInboxThreads(
+    {
+      channel: channelFilter,
+      unread_only: unreadOnly,
+      search: searchQuery,
+    },
+    { refetchInterval: 5000 },
+  );
 
-  const activeThread = threads.find((t) => t.id === selectedThreadId) ?? threads[0];
-  const activeMessages = activeThread ? (messagesByThread[activeThread.id] ?? []) : [];
-
-  const filteredThreads = threads.filter((t) => {
-    if (channelFilter !== "all" && t.channel !== channelFilter) return false;
-    if (unreadOnly && t.unreadCount === 0) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        t.contactName.toLowerCase().includes(q) ||
-        t.dealTitle.toLowerCase().includes(q) ||
-        t.lastMessage.toLowerCase().includes(q)
-      );
+  // Автоматический выбор первого диалога, если текущий не выбран или исчез из фильтра
+  const activeThread = useMemo(() => {
+    if (threads.length === 0) return null;
+    if (selectedDealId) {
+      const found = threads.find((t) => t.dealId === selectedDealId);
+      if (found) return found;
     }
-    return true;
-  });
+    return threads[0] ?? null;
+  }, [threads, selectedDealId]);
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputText.trim() || !activeThread) return;
+  const unreadCount = useMemo(() => {
+    return threads.filter((t) => t.unreadCount > 0 || t.lastDirection === "inbound").length;
+  }, [threads]);
 
-    setIsSending(true);
-    const newMessage: ThreadMessage = {
-      id: `msg-${Date.now()}`,
-      source: "manager",
-      senderName: "Менеджер",
-      content: inputText.trim(),
-      createdAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      deliveryStatus: "sent",
-    };
-
-    setMessagesByThread((prev) => ({
-      ...prev,
-      [activeThread.id]: [...(prev[activeThread.id] ?? []), newMessage],
-    }));
-
-    setThreads((prev) =>
-      prev.map((t) =>
-        t.id === activeThread.id
-          ? { ...t, lastMessage: inputText.trim(), lastMessageAt: newMessage.createdAt, unreadCount: 0 }
-          : t,
-      ),
-    );
-
-    setInputText("");
-    setIsSending(false);
+  const handleSelectThread = (thread: InboxThreadDTO) => {
+    setSelectedDealId(thread.dealId);
+    setMobileDetailOpen(true);
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-white font-sans text-[#111111] overflow-hidden">
-      {/* Шапка раздела */}
-      <div className="h-14 border-b border-[#e5e5e5] px-6 flex items-center justify-between shrink-0 bg-white">
+    <div className="flex h-[calc(100vh-4rem)] flex-col -m-6 bg-white overflow-hidden">
+      {/* Шапка Inbox */}
+      <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-5 py-3">
         <div className="flex items-center gap-3">
-          <MessageSquare className="w-5 h-5 text-[#4a38f5]" />
-          <h1 className="text-base font-semibold text-[#111111]">Входящие (Inbox)</h1>
-          <span className="text-xs bg-indigo-50 text-[#4a38f5] border border-indigo-200 px-2.5 py-0.5 rounded-full font-medium">
-            Омниканальный чат
-          </span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-[#4a38f5]/10 text-[#4a38f5]">
+            <MessageSquare className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-semibold text-[#111111]">Входящие</h1>
+              {unreadCount > 0 && (
+                <span className="rounded-full bg-[#4a38f5] px-2 py-0.5 text-[11px] font-medium text-white tabular-nums">
+                  {unreadCount}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-[#666666]">
+              Единый омниканальный центр сообщений (Telegram, WhatsApp, MAX)
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs transition-colors hover:bg-[#fafafa] disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin text-[#4a38f5]")} />
+            <span className="hidden sm:inline">Обновить</span>
+          </button>
         </div>
       </div>
 
-      {/* 3-колоночный рабочий стол */}
-      <div className="flex-1 flex min-h-0">
-        {/* Левая колонка: Список диалогов */}
-        <div className="w-80 md:w-96 border-r border-[#e5e5e5] flex flex-col shrink-0 bg-[#fbfbfb]">
-          {/* Поиск и фильтры */}
-          <div className="p-3 border-b border-[#e5e5e5] space-y-2 bg-white">
+      {/* Основная рабочая область: Сплиттер Master-Detail */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Левая колонка: список диалогов */}
+        <aside
+          className={cn(
+            "flex flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] transition-all",
+            "w-full md:w-80 lg:w-96 shrink-0",
+            mobileDetailOpen ? "hidden md:flex" : "flex",
+          )}
+        >
+          {/* Поиск и фильтры каналов */}
+          <div className="space-y-2 border-b border-[#e5e5e5] bg-white p-3">
             <div className="relative">
-              <Search className="w-4 h-4 text-[#888888] absolute left-3 top-2.5" />
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#888888]" />
               <input
                 type="text"
-                placeholder="Поиск диалогов или сделок..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-xs rounded-[8px] border border-[#e5e5e5] pl-9 pr-3 py-2 bg-white focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 focus:border-[#4a38f5] text-[#111111] placeholder:text-[#888888] shadow-2xs"
+                placeholder="Поиск по диалогам и контактам..."
+                className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] pl-8 pr-7 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
               />
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-              <button
-                type="button"
-                onClick={() => setChannelFilter("all")}
-                className={`px-2.5 py-1 rounded-[6px] text-[11px] font-medium whitespace-nowrap transition-colors ${
-                  channelFilter === "all"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "bg-[#f5f5f5] hover:bg-[#ebebeb] text-[#666666]"
-                }`}
-              >
-                Все каналы
-              </button>
-              <button
-                type="button"
-                onClick={() => setChannelFilter("telegram")}
-                className={`px-2.5 py-1 rounded-[6px] text-[11px] font-medium whitespace-nowrap transition-colors ${
-                  channelFilter === "telegram"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "bg-[#f5f5f5] hover:bg-[#ebebeb] text-[#666666]"
-                }`}
-              >
-                Telegram
-              </button>
-              <button
-                type="button"
-                onClick={() => setChannelFilter("whatsapp")}
-                className={`px-2.5 py-1 rounded-[6px] text-[11px] font-medium whitespace-nowrap transition-colors ${
-                  channelFilter === "whatsapp"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "bg-[#f5f5f5] hover:bg-[#ebebeb] text-[#666666]"
-                }`}
-              >
-                WhatsApp
-              </button>
-              <button
-                type="button"
-                onClick={() => setChannelFilter("max")}
-                className={`px-2.5 py-1 rounded-[6px] text-[11px] font-medium whitespace-nowrap transition-colors ${
-                  channelFilter === "max"
-                    ? "bg-[#4a38f5] text-white shadow-2xs"
-                    : "bg-[#f5f5f5] hover:bg-[#ebebeb] text-[#666666]"
-                }`}
-              >
-                MAX
-              </button>
-            </div>
-          </div>
-
-          {/* Список бесед */}
-          <div className="flex-1 overflow-y-auto divide-y divide-[#f0f0f0]">
-            {filteredThreads.map((thread) => {
-              const isSelected = thread.id === selectedThreadId;
-              return (
+              {searchQuery.trim() && (
                 <button
-                  key={thread.id}
                   type="button"
-                  onClick={() => setSelectedThreadId(thread.id)}
-                  className={`w-full p-3.5 text-left transition-colors flex items-start gap-3 ${
-                    isSelected ? "bg-indigo-50/60 border-l-4 border-l-[#4a38f5]" : "hover:bg-[#fafafa]"
-                  }`}
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#888888] hover:text-[#111111]"
                 >
-                  <div className="w-10 h-10 rounded-full bg-[#f0f0f0] text-[#111111] flex items-center justify-center font-medium text-xs shrink-0">
-                    {thread.contactName.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs font-semibold text-[#111111] truncate">{thread.contactName}</span>
-                      <span className="text-[10px] text-[#888888] shrink-0">{thread.lastMessageAt}</span>
-                    </div>
-                    <p className="text-xs text-[#666666] truncate mb-1">{thread.dealTitle}</p>
-                    <p className="text-xs text-[#666666] truncate line-clamp-1">{thread.lastMessage}</p>
-                  </div>
-                  {thread.unreadCount > 0 && (
-                    <span className="w-4 h-4 rounded-full bg-[#4a38f5] text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                      {thread.unreadCount}
-                    </span>
-                  )}
+                  <X className="h-3 w-3" />
                 </button>
-              );
-            })}
+              )}
+            </div>
+
+            {/* Фильтры каналов */}
+            <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+              {CHANNELS.map((ch) => {
+                const active = channelFilter === ch.id;
+                return (
+                  <button
+                    key={ch.id}
+                    type="button"
+                    onClick={() => setChannelFilter(ch.id)}
+                    className={cn(
+                      "rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors shrink-0",
+                      active
+                        ? "bg-[#4a38f5] text-white shadow-2xs"
+                        : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
+                    )}
+                  >
+                    {ch.label}
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setUnreadOnly((prev) => !prev)}
+                className={cn(
+                  "ml-auto rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors shrink-0 border",
+                  unreadOnly
+                    ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                    : "border-transparent text-[#666666] hover:bg-black/[0.04]",
+                )}
+              >
+                Неотвеченные
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Центральная колонка: Чат */}
-        <div className="flex-1 flex flex-col min-w-0 bg-white">
-          {activeThread ? (
-            <>
-              {/* Шапка беседы */}
-              <div className="h-14 border-b border-[#e5e5e5] px-6 flex items-center justify-between shrink-0 bg-white">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-indigo-50 text-[#4a38f5] flex items-center justify-center font-semibold text-xs">
-                    {activeThread.contactName.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div>
-                    <h2 className="text-xs font-semibold text-[#111111] leading-tight">
-                      {activeThread.contactName}
-                    </h2>
-                    <p className="text-[11px] text-[#888888] uppercase tracking-wider flex items-center gap-1">
-                      Канал: <span className="font-medium text-[#666666]">{activeThread.channel}</span>
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs px-2.5 py-1 rounded-full bg-[#f5f5f5] text-[#111111] font-medium border border-[#e5e5e5]">
-                    {activeThread.stageName}
-                  </span>
-                </div>
-              </div>
-
-              {/* Сообщения */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-[#fbfbfb]">
-                {activeMessages.map((msg) => {
-                  const isManager = msg.source === "manager";
-                  const isAi = msg.source === "ai";
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`flex flex-col ${isManager || isAi ? "items-end" : "items-start"}`}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1 px-1">
-                        <span className="text-[11px] font-medium text-[#666666]">{msg.senderName}</span>
-                        <span className="text-[10px] text-[#888888]">{msg.createdAt}</span>
+          {/* Список тредов */}
+          <div className="flex-1 overflow-y-auto divide-y divide-[#f0f0f0]">
+            {isLoading ? (
+              <div className="p-3 space-y-3">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div key={i} className="flex gap-3 p-2">
+                    <Skeleton className="h-9 w-9 rounded-full shrink-0" />
+                    <div className="flex-1 space-y-1.5">
+                      <div className="flex justify-between">
+                        <Skeleton className="h-3.5 w-24" />
+                        <Skeleton className="h-3 w-10" />
                       </div>
-                      <div
-                        className={`max-w-lg rounded-2xl p-3.5 text-xs leading-relaxed shadow-2xs ${
-                          isManager
-                            ? "bg-[#4a38f5] text-white rounded-br-none"
-                            : isAi
-                              ? "bg-indigo-700 text-white rounded-br-none"
-                              : "bg-white text-[#111111] border border-[#e5e5e5] rounded-bl-none"
-                        }`}
-                      >
-                        {msg.content}
-                      </div>
+                      <Skeleton className="h-3 w-40" />
+                      <Skeleton className="h-2.5 w-28" />
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
-
-              {/* Поле ввода */}
-              <div className="p-4 border-t border-[#e5e5e5] bg-white shrink-0">
-                <form onSubmit={handleSendMessage} className="flex items-center gap-3">
+            ) : isError ? (
+              <div className="p-4">
+                <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">
+                  <p className="font-semibold text-rose-900">Не удалось загрузить сообщения</p>
+                  <p className="mt-1">{error instanceof Error ? error.message : "Ошибка сервера"}</p>
                   <button
                     type="button"
-                    className="p-2 text-[#888888] hover:text-[#111111] rounded-[8px] hover:bg-[#fafafa] transition-colors"
+                    onClick={() => void refetch()}
+                    className="mt-2 text-rose-900 underline font-medium"
                   >
-                    <Paperclip className="w-5 h-5" />
+                    Повторить
                   </button>
-
-                  <input
-                    type="text"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder="Написать ответ клиенту..."
-                    className="flex-1 text-xs rounded-[8px] border border-[#e5e5e5] p-2.5 focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 focus:border-[#4a38f5] bg-white placeholder:text-[#888888] text-[#111111] shadow-2xs"
-                  />
-
-                  <button
-                    type="submit"
-                    disabled={isSending || !inputText.trim()}
-                    className="py-2 px-4 bg-[#4a38f5] hover:bg-[#3d2ee0] text-white font-medium rounded-[8px] text-xs shadow-2xs transition-colors disabled:opacity-50 flex items-center gap-1.5 shrink-0"
-                  >
-                    <Send className="w-3.5 h-3.5" /> Отправить
-                  </button>
-                </form>
+                </div>
               </div>
-            </>
+            ) : threads.length === 0 ? (
+              <div className="p-6">
+                <EmptyState
+                  icon={MessageSquare}
+                  title="Нет сообщений"
+                  description={
+                    searchQuery.trim()
+                      ? "По вашему запросу диалогов не найдено."
+                      : unreadOnly
+                        ? "Все входящие сообщения обработаны."
+                        : "Диалоги с клиентами появятся здесь при входящем сообщении или создании сделки."
+                  }
+                />
+              </div>
+            ) : (
+              threads.map((thread) => {
+                const isSelected = activeThread?.dealId === thread.dealId;
+                const channelBadge = getChannelBadge(thread.channel);
+                const needsReply = thread.unreadCount > 0 || thread.lastDirection === "inbound";
+
+                return (
+                  <button
+                    key={thread.dealId}
+                    type="button"
+                    onClick={() => handleSelectThread(thread)}
+                    className={cn(
+                      "w-full text-left p-3.5 transition-colors cursor-pointer flex gap-3 relative",
+                      isSelected
+                        ? "bg-white shadow-2xs border-l-[3px] border-l-[#4a38f5]"
+                        : "hover:bg-black/[0.02]",
+                    )}
+                  >
+                    {/* Аватар с первой буквой */}
+                    <div className="relative shrink-0">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111]">
+                        {thread.contactName.charAt(0).toUpperCase() || "К"}
+                      </div>
+                      {needsReply && (
+                        <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4a38f5] opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#4a38f5]" />
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Текстовая колонка треда */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="truncate text-[13px] font-semibold text-[#111111]">
+                          {thread.contactName}
+                        </span>
+                        <span className="text-[10px] text-[#888888] shrink-0 font-mono">
+                          {formatThreadTime(thread.lastMessageAt)}
+                        </span>
+                      </div>
+
+                      {/* Канал + Сделка */}
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span
+                          className={cn(
+                            "rounded-[4px] border px-1.5 py-0.2 text-[10px] font-medium leading-none shrink-0",
+                            channelBadge.className,
+                          )}
+                        >
+                          {channelBadge.label}
+                        </span>
+                        <span className="truncate text-[11px] text-[#666666]">
+                          {thread.dealTitle}
+                        </span>
+                      </div>
+
+                      {/* Текст последнего сообщения */}
+                      <p
+                        className={cn(
+                          "truncate text-xs",
+                          needsReply ? "font-medium text-[#111111]" : "text-[#888888]",
+                        )}
+                      >
+                        {thread.lastDirection === "outbound" && (
+                          <span className="text-[#888888] font-normal">Вы: </span>
+                        )}
+                        {thread.lastMessage}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        {/* Правая колонка: Чат активного треда */}
+        <section
+          className={cn(
+            "flex flex-1 flex-col bg-white overflow-hidden min-w-0",
+            !mobileDetailOpen && "hidden md:flex",
+          )}
+        >
+          {activeThread ? (
+            <div className="flex flex-1 flex-col h-full overflow-hidden">
+              {/* Шапка чата */}
+              <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-white px-4 py-2.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setMobileDetailOpen(false)}
+                    className="rounded-[6px] p-1 text-[#666666] hover:bg-black/[0.04] md:hidden"
+                    aria-label="Назад к списку"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f0f0] text-xs font-semibold text-[#111111] shrink-0">
+                    {activeThread.contactName.charAt(0).toUpperCase() || "К"}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-[#111111]">
+                        {activeThread.contactName}
+                      </span>
+                      {activeThread.contactPhone && (
+                        <span className="hidden sm:inline text-xs text-[#666666] font-mono">
+                          {activeThread.contactPhone}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-[#888888] truncate">
+                      <span className="truncate">{activeThread.dealTitle}</span>
+                      <span>·</span>
+                      <span className="rounded bg-[#f5f5f5] px-1.5 py-0.2 text-[10px] text-[#666666]">
+                        {activeThread.stageName}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <Link
+                    href={`/crm/deals?record=${activeThread.dealId}`}
+                    className="inline-flex items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
+                  >
+                    <span>Карточка сделки</span>
+                    <ExternalLink className="h-3 w-3 text-[#888888]" />
+                  </Link>
+                </div>
+              </div>
+
+              {/* Полнофункциональный чат CrmChatView */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <CrmChatView
+                  key={activeThread.dealId}
+                  entityType="deal"
+                  entityId={activeThread.dealId}
+                  entityName={activeThread.contactName}
+                  className="h-full border-0 rounded-none shadow-none"
+                />
+              </div>
+            </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-[#888888] text-xs">
-              Выберите диалог из списка слева
+            <div className="flex flex-1 items-center justify-center p-8 bg-[#fafafa]">
+              <EmptyState
+                icon={MessageSquare}
+                title="Выберите диалог"
+                description="Выберите чат из списка слева, чтобы просмотреть переписку и ответить клиенту."
+              />
             </div>
           )}
-        </div>
-
-        {/* Правая колонка: Контекст клиента и сделки */}
-        {activeThread && (
-          <div className="w-72 border-l border-[#e5e5e5] p-5 bg-white shrink-0 space-y-6 hidden lg:block overflow-y-auto">
-            <div>
-              <h3 className="text-xs font-semibold text-[#888888] uppercase tracking-wider mb-3">
-                Карточка сделки
-              </h3>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[11px] text-[#888888]">Название</label>
-                  <p className="text-xs font-medium text-[#111111]">{activeThread.dealTitle}</p>
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#888888]">Бюджет</label>
-                  <p className="text-xs font-semibold text-[#111111] tabular-nums font-mono">
-                    {activeThread.budget.toLocaleString("ru-RU")} ₽
-                  </p>
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#888888]">Этап воронки</label>
-                  <span className="inline-block mt-0.5 text-xs px-2.5 py-0.5 rounded-full bg-indigo-50 text-[#4a38f5] font-medium border border-indigo-200">
-                    {activeThread.stageName}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <hr className="border-[#f0f0f0]" />
-
-            <div>
-              <h3 className="text-xs font-semibold text-[#888888] uppercase tracking-wider mb-3">
-                Контактные данные
-              </h3>
-              <div className="space-y-3 text-xs">
-                <div className="flex items-center gap-2 text-[#111111]">
-                  <User className="w-4 h-4 text-[#888888]" /> {activeThread.contactName}
-                </div>
-                <div className="flex items-center gap-2 text-[#111111]">
-                  <Phone className="w-4 h-4 text-[#888888]" /> {activeThread.contactPhone}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        </section>
       </div>
     </div>
   );

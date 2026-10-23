@@ -215,14 +215,13 @@ export class AnalyticsService {
     const rows = await query<StageFunnelRow>(
       `SELECT
          s.name,
-         s.position,
+         s.sort_order AS position,
          COUNT(d.id)::text AS deals_count
        FROM stages s
        JOIN pipelines p ON p.id = s.pipeline_id AND p.tenant_id = $1
-       LEFT JOIN deals d ON d.stage_id = s.id AND d.tenant_id = $1
-       WHERE s.tenant_id = $1
-       GROUP BY s.id, s.name, s.position
-       ORDER BY s.position ASC`,
+       LEFT JOIN deals d ON d.stage_id = s.id AND d.tenant_id = $1 AND d.deleted_at IS NULL
+       GROUP BY s.id, s.name, s.sort_order
+       ORDER BY s.sort_order ASC`,
       [tenantId],
     );
 
@@ -293,14 +292,13 @@ export class AnalyticsService {
 
     const rows = await query<LoadRow>(
       `SELECT
-         u.full_name AS name,
+         u.name AS name,
          COUNT(CASE WHEN r.status IN ('intake', 'diagnostic', 'in_progress', 'waiting_parts') THEN 1 END)::text AS active,
          COUNT(CASE WHEN r.status IN ('ready', 'issued') THEN 1 END)::text AS completed
        FROM users u
-       JOIN tenant_users tu ON tu.user_id = u.id AND tu.tenant_id = $1
        LEFT JOIN repair_orders r ON r.master_id = u.id AND r.tenant_id = $1
-       WHERE tu.tenant_id = $1
-       GROUP BY u.id, u.full_name
+       WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+       GROUP BY u.id, u.name
        ORDER BY (COUNT(CASE WHEN r.status IN ('ready', 'issued') THEN 1 END) +
                  COUNT(CASE WHEN r.status IN ('intake', 'diagnostic', 'in_progress', 'waiting_parts') THEN 1 END)) DESC
        LIMIT 5`,
