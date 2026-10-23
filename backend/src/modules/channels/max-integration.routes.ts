@@ -414,6 +414,11 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
     return reply.send({ ok: true, skipped: "self" });
   }
 
+  // Защита от утечки собственного телефона (INC-113)
+  const rawPhone = body.phone || body.senderPhone;
+  const selfPhone = body.selfPhone;
+  const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
+
   const crm = new CrmPipelineService();
   const result = await runWithTenantContext(account.tenant_id, () =>
     crm.processNativeOutbound({
@@ -421,10 +426,18 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
       channel: "max",
       channelAccountId: account.id,
       chatId: peerId,
+      peerUserId: peerUser || null,
+      senderPhone: peerPhone || null,
+      username: body.username ?? body.senderUsername ?? null,
       text: body.text,
-      senderName: "Оператор",
+      senderName: "Менеджер",
       pauseMinutes: 30,
     }),
+  );
+
+  request.log.info(
+    { peerId, peerUser, peerPhone, text: body.text, dealId: result.dealId, messageId: result.messageId },
+    "MAX native outbound processed into CRM deal",
   );
 
   return reply.send({
