@@ -65,6 +65,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(helmet, {
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: false,
   });
 
   // Function form, not a static list: each tenant has its own subdomain
@@ -206,11 +208,17 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(maxInternalRoutes, { prefix: "/api/internal/max" });
 
   // Раздача клиентского JS-виджета для внешних сайтов (WordPress, Tilda и др.)
-  app.get("/widget.js", async (_request, reply) => {
+  app.get("/widget.js", async (request, reply) => {
+    app.log.info(
+      { ip: request.ip, ua: request.headers["user-agent"], referer: request.headers.referer },
+      "[WIDGET_JS_REQUEST]",
+    );
     return reply
       .type("application/javascript; charset=utf-8")
       .header("Cache-Control", "no-cache, no-store, must-revalidate")
       .header("Access-Control-Allow-Origin", "*")
+      .header("Cross-Origin-Resource-Policy", "cross-origin")
+      .header("Cross-Origin-Embedder-Policy", "unsafe-none")
       .send(WIDGET_SCRIPT);
   });
 

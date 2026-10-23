@@ -4,9 +4,18 @@
   // 1. Вспомогательная функция телеметрии для диагностики в реальном времени
   function sendTelemetry(step, detail) {
     try {
-      var img = new Image();
       var d = detail ? '&d=' + encodeURIComponent(String(detail).slice(0, 200)) : '';
-      img.src = 'https://api.getvoxly.ru/api/v1/public/chat/debug?step=' + encodeURIComponent(step) + d + '&t=' + Date.now();
+      var url = 'https://api.getvoxly.ru/api/v1/public/chat/debug?step=' + encodeURIComponent(step) + d + '&t=' + Date.now();
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        navigator.sendBeacon(url);
+      } else {
+        var img = new Image();
+        if (typeof window !== 'undefined') {
+          window._gvx_imgs = window._gvx_imgs || [];
+          window._gvx_imgs.push(img);
+        }
+        img.src = url;
+      }
     } catch (e) {}
   }
 
@@ -127,7 +136,9 @@
   var styles = `
     .getvoxly-widget-wrapper {
       position: fixed !important;
+      bottom: 20px !important;
       bottom: calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+      right: 20px !important;
       right: calc(20px + env(safe-area-inset-right, 0px)) !important;
       z-index: 2147483647 !important;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
@@ -144,6 +155,7 @@
     }
     .getvoxly-widget-wrapper.position-left {
       right: auto !important;
+      left: 20px !important;
       left: calc(20px + env(safe-area-inset-left, 0px)) !important;
     }
     .getvoxly-widget-wrapper * {
