@@ -39,6 +39,12 @@ const historyQuerySchema = z.object({
 export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   const service = new WebchatService(app.log);
 
+  // Разрешаем кросс-доменное обращение к публичному чату с любых клиентских сайтов
+  app.addHook("onSend", async (_request, reply) => {
+    reply.header("Access-Control-Allow-Origin", "*");
+    reply.header("Cross-Origin-Resource-Policy", "cross-origin");
+  });
+
   // Телеметрия и диагностика подключения виджета
   app.get("/debug", async (request, reply) => {
     app.log.info(
