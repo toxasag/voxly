@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
-import { closePool, queryOne } from "./db/client.js";
+import { closePool, query, queryOne, runWithPlatformScope } from "./db/client.js";
 import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
@@ -79,6 +79,38 @@ async function registerMaxWebhook(app: FastifyInstance): Promise<void> {
 
   if (result.ok) app.log.info({ url }, "MAX webhook registered");
   else app.log.error({ url, reason: result.reason }, "MAX webhook registration failed");
+}
+
+/**
+ * Подписывает подключенные инстансы WhatsApp (Evolution API) на входящие сообщения.
+ */
+async function registerWhatsappWebhooks(app: FastifyInstance): Promise<void> {
+  const evo = new WhatsappEvolutionService();
+  if (!evo.isConfigured) return;
+
+  const accounts = await runWithPlatformScope(async () =>
+    query<{ credentials: { instanceName?: string } | null }>(
+      `SELECT credentials FROM channel_accounts
+       WHERE channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL`,
+    ),
+  );
+
+  const env = getEnv();
+  const webhookUrl = env.PUBLIC_API_URL
+    ? `${env.PUBLIC_API_URL.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+    : "http://backend:4000/api/internal/whatsapp/webhook";
+
+  for (const acc of accounts) {
+    const inst = acc.credentials?.instanceName;
+    if (inst) {
+      try {
+        await evo.setWebhook(inst, webhookUrl);
+        app.log.info({ instance: inst, webhookUrl }, "WhatsApp Evolution webhook configured");
+      } catch (err) {
+        app.log.warn({ instance: inst, err }, "Failed to configure WhatsApp Evolution webhook");
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -208,6 +240,7 @@ async function main(): Promise<void> {
     // webhook остаётся вход по паролю, поэтому сервер продолжает работу.
     await registerTelegramWebhook(app);
     await registerMaxWebhook(app);
+    await registerWhatsappWebhooks(app);
   } catch (error) {
     app.log.error(error);
     await closePool();

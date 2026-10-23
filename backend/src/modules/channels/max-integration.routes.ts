@@ -1,12 +1,31 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import QRCode from "qrcode";
 
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
-import { query, queryOne, withTenant, runWithTenantContext } from "../../db/client.js";
+import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
+
+/**
+ * INC-113: никогда не записывать номер подключенного аккаунта оператора
+ * в качестве телефона лида/собеседника.
+ */
+export function stripOwnerPhone(phone?: string | null, selfPhone?: string | null): string | undefined {
+  if (!phone) return undefined;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 10) return undefined;
+  if (selfPhone) {
+    const selfDigits = selfPhone.replace(/\D/g, "");
+    if (selfDigits.length >= 10) {
+      if (digits === selfDigits || digits.slice(-10) === selfDigits.slice(-10)) {
+        return undefined;
+      }
+    }
+  }
+  return digits;
+}
 
 const qrStartSchema = z.object({
   name: z.string().min(1).default("Основной"),
@@ -37,46 +56,287 @@ const internalBotDeleteSchema = z.object({
   maxUserId: z.string().optional(),
 });
 
+const inboundAttachmentSchema = z.object({
+  type: z.string(),
+  fileId: z.string().optional(),
+  fileName: z.string().optional(),
+  mimeType: z.string().optional(),
+  fileSize: z.number().optional(),
+});
+
 const internalInboundSchema = z.object({
-  tenantId: z.string().uuid(),
-  chatId: z.string().min(1),
-  text: z.string().min(1),
-  senderName: z.string().default("Клиент MAX"),
+  // Поля от max-bridge (основные)
+  botId: z.string().optional(),
+  peerId: z.string().optional(),
+  maxUserId: z.string().nullable().optional(),
+  chatType: z.string().nullable().optional(),
+  text: z.string().max(8000).default(""),
+  messageId: z
+    .union([z.string(), z.number()])
+    .optional()
+    .transform((v) => (v == null ? undefined : String(v))),
+  username: z.string().nullable().optional(),
+  firstName: z.string().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  selfPhone: z.string().nullable().optional(),
+  maxLink: z.string().nullable().optional(),
+  attachments: z.array(inboundAttachmentSchema).max(20).optional(),
+  // Устаревшие поля для обратной совместимости
+  tenantId: z.string().uuid().optional(),
+  chatId: z.string().optional(),
+  senderName: z.string().optional(),
   senderPhone: z.string().optional().nullable(),
   senderUserId: z.string().optional().nullable(),
   senderUsername: z.string().optional().nullable(),
-  botId: z.string().optional().nullable(),
   name: z.string().optional().nullable(),
 });
 
-const internalOutboundSchema = z.object({
-  tenantId: z.string().uuid(),
-  name: z.string().optional(),
-  botId: z.string().optional(),
-  chatId: z.string().min(1),
-  text: z.string().min(1),
-});
+async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
+  const body = internalInboundSchema.parse(request.body);
+  const peerId = (body.peerId || body.chatId || "").trim();
+  if (!peerId) {
+    return reply.code(400).send({ ok: false, error: "peerId or chatId required" });
+  }
+
+  // Каналы и группы никогда не становятся сделками (только личный диалог 1-на-1)
+  const chatTypeNorm = String(body.chatType || "").trim().toUpperCase();
+  if (chatTypeNorm && chatTypeNorm !== "DIALOG") {
+    return reply.send({ ok: true, skipped: "non_private_chat", chatType: chatTypeNorm });
+  }
+  if (peerId.startsWith("-")) {
+    return reply.send({ ok: true, skipped: "non_private_chat", chatType: "negative_id" });
+  }
+
+  // Поиск аккаунта в channel_accounts
+  let account: { id: string; tenant_id: string; remote_user_id: string | null; external_id: string } | null = null;
+  const botIdCandidate = body.botId;
+  if (botIdCandidate && botIdCandidate.includes("-")) {
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE id = $1 AND channel = 'max' AND deleted_at IS NULL`,
+        [botIdCandidate],
+      ),
+    );
+  }
+
+  if (!account && body.tenantId) {
+    const tId = body.tenantId;
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
+           AND ($2::text IS NULL OR label = $2 OR external_id = $2)
+         ORDER BY connected_at DESC NULLS LAST
+         LIMIT 1`,
+        [tId, body.name ?? null],
+      ),
+    );
+  }
+
+  if (!account) {
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+           AND ($1::text IS NULL OR id::text = $1 OR external_id = $1 OR label = $1)
+         ORDER BY connected_at DESC NULLS LAST
+         LIMIT 1`,
+        [botIdCandidate ?? body.name ?? null],
+      ),
+    );
+  }
+
+  if (!account) {
+    request.log.warn({ botId: body.botId, name: body.name }, "MAX account not found for inbound message");
+    return reply.code(404).send({ ok: false, error: "MAX account not found" });
+  }
+
+  const tenantId = account.tenant_id;
+  const channelAccountId = account.id;
+
+  // Игнорируем сообщения от самого себя
+  const selfMaxUserId = (account.remote_user_id || account.external_id || "").trim();
+  const peerUser = String(body.maxUserId || "").trim();
+  if (selfMaxUserId && (peerUser === selfMaxUserId || peerId === selfMaxUserId)) {
+    return reply.send({ ok: true, skipped: "self" });
+  }
+
+  // Защита от утечки собственного телефона (INC-113)
+  const rawPhone = body.phone || body.senderPhone;
+  const selfPhone = body.selfPhone;
+  const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
+
+  const senderName =
+    body.firstName?.trim() ||
+    (body.username ? `@${body.username.replace(/^@/, "")}` : null) ||
+    body.senderName ||
+    "Клиент MAX";
+
+  const crm = new CrmPipelineService();
+  const crmResult = await runWithTenantContext(tenantId, () =>
+    crm.processIncoming({
+      tenantId,
+      channel: "max",
+      channelAccountId,
+      chatId: peerId,
+      text: body.text,
+      senderName,
+      senderPhone: peerPhone,
+      profile: {
+        firstName: body.firstName ?? undefined,
+        phone: peerPhone,
+        username: body.username ?? body.senderUsername ?? undefined,
+      },
+    }),
+  );
+
+  // AI-автоответ при наличии привязанного ассистента
+  try {
+    const agentService = new AgentPipelineService(request.log);
+    const outcome = await runWithTenantContext(tenantId, () =>
+      agentService.prepareReply({
+        tenantId,
+        channelAccountId,
+        chatId: peerId,
+        text: body.text,
+      }),
+    );
+
+    if (outcome.kind === "replied") {
+      if (crmResult.dealId !== null) {
+        await runWithTenantContext(tenantId, () =>
+          crm.saveAgentReply({
+            tenantId,
+            dealId: crmResult.dealId!,
+            reply: outcome.reply,
+            channel: "max",
+            channelAccountId,
+          }),
+        );
+      }
+
+      const bridge = new MaxBridgeService();
+      for (const msg of outcome.reply.messages) {
+        await bridge.sendMessage({
+          tenantId,
+          name: body.name ?? undefined,
+          botId: channelAccountId,
+          chatId: peerId,
+          text: msg,
+        });
+      }
+    }
+  } catch (err) {
+    request.log.error(err, "Failed to run AI agent auto-reply for MAX inbound");
+  }
+
+  return reply.send({
+    ok: true,
+    dealId: crmResult.dealId,
+    contactId: crmResult.contactId,
+  });
+}
+
+async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) {
+  const body = internalInboundSchema.parse(request.body);
+  const peerId = (body.peerId || body.chatId || "").trim();
+  if (!peerId) {
+    return reply.code(400).send({ ok: false, error: "peerId or chatId required" });
+  }
+
+  const chatTypeNorm = String(body.chatType || "").trim().toUpperCase();
+  if (chatTypeNorm && chatTypeNorm !== "DIALOG") {
+    return reply.send({ ok: true, skipped: "non_private_chat", chatType: chatTypeNorm });
+  }
+  if (peerId.startsWith("-")) {
+    return reply.send({ ok: true, skipped: "non_private_chat", chatType: "negative_id" });
+  }
+
+  let account: { id: string; tenant_id: string; remote_user_id: string | null; external_id: string } | null = null;
+  if (body.botId && body.botId.includes("-")) {
+    const bId = body.botId;
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE id = $1 AND channel = 'max' AND deleted_at IS NULL`,
+        [bId],
+      ),
+    );
+  }
+  if (!account && body.tenantId) {
+    const tId = body.tenantId;
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
+         LIMIT 1`,
+        [tId],
+      ),
+    );
+  }
+  if (!account) {
+    account = await runWithPlatformScope(() =>
+      queryOne(
+        `SELECT id, tenant_id, remote_user_id, external_id FROM channel_accounts
+         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY connected_at DESC NULLS LAST LIMIT 1`,
+      ),
+    );
+  }
+
+  if (!account) {
+    return reply.code(404).send({ ok: false, error: "MAX account not found" });
+  }
+
+  const selfMaxUserId = (account.remote_user_id || account.external_id || "").trim();
+  const peerUser = String(body.maxUserId || "").trim();
+  if (selfMaxUserId && (peerUser === selfMaxUserId || peerId === selfMaxUserId)) {
+    return reply.send({ ok: true, skipped: "self" });
+  }
+
+  const crm = new CrmPipelineService();
+  const result = await runWithTenantContext(account.tenant_id, () =>
+    crm.processNativeOutbound({
+      tenantId: account.tenant_id,
+      channel: "max",
+      channelAccountId: account.id,
+      chatId: peerId,
+      text: body.text,
+      senderName: "Оператор",
+      pauseMinutes: 30,
+    }),
+  );
+
+  return reply.send({
+    ok: true,
+    ...result,
+  });
+}
 
 export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
   // Список активных подключений MAX для восстановления сессий в max-bridge
   app.get("/bots/active", async (_request, reply) => {
-    const bots = await query<{
-      id: string;
-      tenant_id: string;
-      label: string;
-      external_id: string;
-      remote_user_id: string | null;
-    }>(
-      `SELECT id, tenant_id, label, external_id, remote_user_id
-       FROM channel_accounts
-       WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-       ORDER BY created_at ASC`,
+    const bots = await runWithPlatformScope(() =>
+      query<{
+        id: string;
+        tenant_id: string;
+        label: string;
+        external_id: string;
+        remote_user_id: string | null;
+      }>(
+        `SELECT id, tenant_id, label, external_id, remote_user_id
+         FROM channel_accounts
+         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY created_at ASC`,
+      ),
     );
 
     return reply.send({
       ok: true,
       bots: bots.map((b) => ({
         id: b.id,
+        botId: b.id,
         tenantId: b.tenant_id,
         name: b.label,
         maxUserId: b.remote_user_id || b.external_id,
@@ -147,102 +407,10 @@ export async function maxInternalRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // Приём входящих сообщений MAX из max-bridge и доставка в CRM + AI-автоответ
-  app.post("/inbound", async (request, reply) => {
-    const body = internalInboundSchema.parse(request.body);
-    const crm = new CrmPipelineService();
+  app.post("/inbound", processMaxInbound);
 
-    let channelAccountId = body.botId;
-    if (!channelAccountId || !channelAccountId.includes("-")) {
-      const acc = await queryOne<{ id: string }>(
-        `SELECT id FROM channel_accounts
-         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
-           AND ($2::text IS NULL OR label = $2 OR external_id = $2)
-         ORDER BY connected_at DESC NULLS LAST
-         LIMIT 1`,
-        [body.tenantId, body.name ?? null],
-      );
-      channelAccountId = acc?.id ?? body.chatId;
-    }
-
-    const crmResult = await runWithTenantContext(body.tenantId, () =>
-      crm.processIncoming({
-        tenantId: body.tenantId,
-        channel: "max",
-        channelAccountId: channelAccountId!,
-        chatId: body.chatId,
-        text: body.text,
-        senderName: body.senderName,
-        senderPhone: body.senderPhone ?? undefined,
-        senderTelegramChatId: undefined,
-        profile: {
-          firstName: body.senderName,
-          phone: body.senderPhone ?? undefined,
-          username: body.senderUsername ?? undefined,
-        },
-      }),
-    );
-
-    // AI-автоответ при наличии привязанного ассистента
-    try {
-      const agentService = new AgentPipelineService(request.log);
-      const outcome = await runWithTenantContext(body.tenantId, () =>
-        agentService.prepareReply({
-          tenantId: body.tenantId,
-          channelAccountId: channelAccountId!,
-          chatId: body.chatId,
-          text: body.text,
-        }),
-      );
-
-      if (outcome.kind === "replied") {
-        if (crmResult.dealId !== null) {
-          await runWithTenantContext(body.tenantId, () =>
-            crm.saveAgentReply({
-              tenantId: body.tenantId,
-              dealId: crmResult.dealId!,
-              reply: outcome.reply,
-              channel: "max",
-              channelAccountId: channelAccountId!,
-            }),
-          );
-        }
-
-        const bridge = new MaxBridgeService();
-        for (const msg of outcome.reply.messages) {
-          await bridge.sendMessage({
-            tenantId: body.tenantId,
-            name: body.name ?? undefined,
-            botId: channelAccountId,
-            chatId: body.chatId,
-            text: msg,
-          });
-        }
-      }
-    } catch (err) {
-      request.log.error(err, "Failed to run AI agent auto-reply for MAX inbound");
-    }
-
-    return reply.send({
-      ok: true,
-      dealId: crmResult.dealId,
-      contactId: crmResult.contactId,
-    });
-  });
-
-  // Отправка сообщений из CRM в max-bridge
-  app.post("/outbound", async (request, reply) => {
-    const body = internalOutboundSchema.parse(request.body);
-    const bridge = new MaxBridgeService();
-    const result = await bridge.sendMessage({
-      tenantId: body.tenantId,
-      name: body.name,
-      botId: body.botId,
-      chatId: body.chatId,
-      text: body.text,
-    });
-
-    return reply.send(result);
-  });
+  // Нативное исходящее сообщение оператора из мобильного MAX → запись в CRM + AI handoff
+  app.post("/outbound", processMaxOutbound);
 }
 
 export default async function maxIntegrationRoutes(app: FastifyInstance): Promise<void> {
@@ -250,23 +418,26 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
 
   // Дублирование внутренних маршрутов под префиксом /internal/ для обратной совместимости
   app.get("/internal/bots/active", async (_request, reply) => {
-    const bots = await query<{
-      id: string;
-      tenant_id: string;
-      label: string;
-      external_id: string;
-      remote_user_id: string | null;
-    }>(
-      `SELECT id, tenant_id, label, external_id, remote_user_id
-       FROM channel_accounts
-       WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
-       ORDER BY created_at ASC`,
+    const bots = await runWithPlatformScope(() =>
+      query<{
+        id: string;
+        tenant_id: string;
+        label: string;
+        external_id: string;
+        remote_user_id: string | null;
+      }>(
+        `SELECT id, tenant_id, label, external_id, remote_user_id
+         FROM channel_accounts
+         WHERE channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+         ORDER BY created_at ASC`,
+      ),
     );
 
     return reply.send({
       ok: true,
       bots: bots.map((b) => ({
         id: b.id,
+        botId: b.id,
         tenantId: b.tenant_id,
         name: b.label,
         maxUserId: b.remote_user_id || b.external_id,
@@ -312,47 +483,8 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
     return reply.send({ ok: true, botId });
   });
 
-  app.post("/internal/inbound", async (request, reply) => {
-    const body = internalInboundSchema.parse(request.body);
-    const crm = new CrmPipelineService();
-
-    let channelAccountId = body.botId;
-    if (!channelAccountId || !channelAccountId.includes("-")) {
-      const acc = await queryOne<{ id: string }>(
-        `SELECT id FROM channel_accounts
-         WHERE tenant_id = $1 AND channel = 'max' AND deleted_at IS NULL
-           AND ($2::text IS NULL OR label = $2 OR external_id = $2)
-         ORDER BY connected_at DESC NULLS LAST
-         LIMIT 1`,
-        [body.tenantId, body.name ?? null],
-      );
-      channelAccountId = acc?.id ?? body.chatId;
-    }
-
-    const crmResult = await runWithTenantContext(body.tenantId, () =>
-      crm.processIncoming({
-        tenantId: body.tenantId,
-        channel: "max",
-        channelAccountId: channelAccountId!,
-        chatId: body.chatId,
-        text: body.text,
-        senderName: body.senderName,
-        senderPhone: body.senderPhone ?? undefined,
-        senderTelegramChatId: undefined,
-        profile: {
-          firstName: body.senderName,
-          phone: body.senderPhone ?? undefined,
-          username: body.senderUsername ?? undefined,
-        },
-      }),
-    );
-
-    return reply.send({
-      ok: true,
-      dealId: crmResult.dealId,
-      contactId: crmResult.contactId,
-    });
-  });
+  app.post("/internal/inbound", processMaxInbound);
+  app.post("/internal/outbound", processMaxOutbound);
 
   // Пользовательские эндпоинты авторизации по QR
   const protectedRoutes = async (subApp: FastifyInstance) => {

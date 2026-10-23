@@ -11,6 +11,7 @@ import {
   type ChannelProfile,
 } from "./channel-identity.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
+import { CrmEnrichmentService } from "./enrichment.service.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
 // реэкспортируется здесь: транспорт получает его вместе с типом входящего
@@ -88,7 +89,7 @@ export class CrmPipelineService {
    * - saves the inbound message to deal_messages
    */
   async processIncoming(input: InboundMessageInput): Promise<CrmPipelineResult> {
-    return transaction(async (tx) => {
+    const result = await transaction(async (tx) => {
       const contact = await this.findContact(tx, input.tenantId, input);
       const isNewContact = contact === null;
 
@@ -204,8 +205,31 @@ export class CrmPipelineService {
         ],
       );
 
+      // Обновляем таймстамп активности сделки для поднятия в канбане/списке
+      await tx.query(
+        `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [dealId, input.tenantId],
+      );
+
       return { contactId, dealId, isNewContact, isNewDeal };
     });
+
+    // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
+    const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
+    const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
+    if (validPhone) {
+      const enrichService = new CrmEnrichmentService();
+      void enrichService
+        .enrichContact(input.tenantId, result.contactId, {
+          phoneOverride: validPhone,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {
+          // Ошибки провайдеров не влияют на создание сделки
+        });
+    }
+
+    return result;
   }
 
   /**
@@ -362,8 +386,11 @@ export class CrmPipelineService {
       if (byPhone !== null) return byPhone;
     }
 
-    const byChatIdAsPhone = await this.findContactByPhone(tx, tenantId, input.chatId);
-    if (byChatIdAsPhone !== null) return byChatIdAsPhone;
+    // Идентификатор чата проверяется как номер телефона только для WhatsApp (где chatId — реальный номер)
+    if (input.channel === "whatsapp" || input.chatId.startsWith("+")) {
+      const byChatIdAsPhone = await this.findContactByPhone(tx, tenantId, input.chatId);
+      if (byChatIdAsPhone !== null) return byChatIdAsPhone;
+    }
 
     return null;
   }
@@ -371,22 +398,54 @@ export class CrmPipelineService {
   /**
    * Поиск по любому номеру контакта, а не только по основному.
    *
-   * Клиент звонит со второго номера так же часто, как с первого. Проверка
-   * основной колонки и JSONB-массива дополнительных: у второго индекс GIN
-   * (idx_contacts_additional_phones), поэтому запрос не читает таблицу целиком.
+   * Клиент звонит со второго номера так же часто, как с первого. Поддерживает
+   * сопоставление номеров с кодом страны (+7/8/7), без знака плюса и по последним 10 цифрам.
    */
   private async findContactByPhone(
     tx: TransactionClient,
     tenantId: string,
     phone: string,
   ): Promise<ExistingContact | null> {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 10) {
+      return tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (phone = $2 OR additional_phones @> $3::jsonb)
+         LIMIT 1`,
+        [tenantId, phone, JSON.stringify([{ number: phone }])],
+      );
+    }
+
+    const last10 = digits.slice(-10);
+    const withPlus = `+${digits}`;
+    const altWith8 = digits.length === 11 && digits.startsWith("7") ? `8${digits.slice(1)}` : digits;
+    const altWith7 = digits.length === 11 && digits.startsWith("8") ? `7${digits.slice(1)}` : digits;
+
     return tx.queryOne<ExistingContact>(
       `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
        WHERE tenant_id = $1
          AND deleted_at IS NULL
-         AND (phone = $2 OR additional_phones @> $3::jsonb)
+         AND (
+           phone IN ($2, $3, $4, $5)
+           OR additional_phones @> $6::jsonb
+           OR additional_phones @> $7::jsonb
+           OR additional_phones @> $8::jsonb
+           OR right(regexp_replace(phone, '\\D', '', 'g'), 10) = $9
+         )
        LIMIT 1`,
-      [tenantId, phone, JSON.stringify([{ number: phone }])],
+      [
+        tenantId,
+        withPlus,
+        digits,
+        altWith8,
+        altWith7,
+        JSON.stringify([{ number: withPlus }]),
+        JSON.stringify([{ number: digits }]),
+        JSON.stringify([{ number: altWith8 }]),
+        last10,
+      ],
     );
   }
 
