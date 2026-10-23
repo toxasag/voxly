@@ -85,19 +85,61 @@ function formatDateHeader(iso: string): string {
   }
 }
 
+function normalizeChannel(ch: string | undefined): string {
+  if (!ch) return "unknown";
+  const lower = ch.toLowerCase();
+  if (lower === "rumax") return "max";
+  return lower;
+}
+
 function getChannelBadge(channel: string) {
   switch (channel.toLowerCase()) {
     case "telegram":
-      return { label: "Telegram", color: "text-[#229ed9] bg-[#229ed9]/10 border-[#229ed9]/25" };
+      return {
+        slug: "telegram",
+        label: "Telegram",
+        color: "text-[#229ed9] bg-[#229ed9]/10 border-[#229ed9]/25",
+        activeBorder: "border-[#229ed9] text-[#229ed9]",
+        badgeBg: "bg-[#229ed9]/15 text-[#229ed9]",
+        dotColor: "bg-[#229ed9]",
+      };
     case "whatsapp":
-      return { label: "WhatsApp", color: "text-[#16a34a] bg-[#16a34a]/10 border-[#16a34a]/25" };
+      return {
+        slug: "whatsapp",
+        label: "WhatsApp",
+        color: "text-[#16a34a] bg-[#16a34a]/10 border-[#16a34a]/25",
+        activeBorder: "border-[#16a34a] text-[#16a34a]",
+        badgeBg: "bg-[#16a34a]/15 text-[#16a34a]",
+        dotColor: "bg-[#16a34a]",
+      };
     case "max":
     case "rumax":
-      return { label: "MAX", color: "text-[#4a38f5] bg-[#4a38f5]/10 border-[#4a38f5]/25" };
+      return {
+        slug: "max",
+        label: "MAX",
+        color: "text-[#4a38f5] bg-[#4a38f5]/10 border-[#4a38f5]/25",
+        activeBorder: "border-[#4a38f5] text-[#4a38f5]",
+        badgeBg: "bg-[#4a38f5]/15 text-[#4a38f5]",
+        dotColor: "bg-[#4a38f5]",
+      };
     case "webchat":
-      return { label: "Чат", color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]" };
+      return {
+        slug: "webchat",
+        label: "Онлайн-чат",
+        color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]",
+        activeBorder: "border-[#666666] text-[#111111]",
+        badgeBg: "bg-[#f0f0f0] text-[#111111]",
+        dotColor: "bg-[#888888]",
+      };
     default:
-      return { label: channel, color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]" };
+      return {
+        slug: channel.toLowerCase(),
+        label: channel.toUpperCase(),
+        color: "text-[#666666] bg-[#f0f0f0] border-[#e5e5e5]",
+        activeBorder: "border-[#666666] text-[#111111]",
+        badgeBg: "bg-[#f0f0f0] text-[#111111]",
+        dotColor: "bg-[#888888]",
+      };
   }
 }
 
@@ -119,11 +161,49 @@ export function CrmChatView({
 
   const [input, setInput] = useState("");
   const [selectedChannelAccountId, setSelectedChannelAccountId] = useState<string>("");
+  const [activeChannel, setActiveChannel] = useState<string>("all");
+  const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
   const aiStatus = aiStatusQuery.data;
+
+  // Список доступных каналов переписки (с подсчетом сообщений)
+  const availableChannels = useMemo(() => {
+    const channelMap = new Map<string, { slug: string; label: string; count: number }>();
+
+    // 1. Каналы из доступных для отправки аккаунтов
+    for (const opt of sendFromOptions) {
+      const slug = normalizeChannel(opt.channel);
+      if (slug === "system" || slug === "unknown") continue;
+      if (!channelMap.has(slug)) {
+        channelMap.set(slug, {
+          slug,
+          label: getChannelBadge(slug).label,
+          count: 0,
+        });
+      }
+    }
+
+    // 2. Каналы из фактических сообщений
+    for (const msg of messages) {
+      const slug = normalizeChannel(msg.channel);
+      if (slug === "system" || slug === "unknown") continue;
+      const existing = channelMap.get(slug);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        channelMap.set(slug, {
+          slug,
+          label: getChannelBadge(slug).label,
+          count: 1,
+        });
+      }
+    }
+
+    return Array.from(channelMap.values());
+  }, [messages, sendFromOptions]);
 
   // Автоматический выбор первого доступного аккаунта отправки
   useEffect(() => {
@@ -144,16 +224,75 @@ export function CrmChatView({
     }
   }, [sendFromOptions, selectedChannelAccountId]);
 
+  // Первоначальный выбор вкладки канала (по умолчанию канал последнего диалога или первого активного канала)
+  useEffect(() => {
+    if (hasUserSelectedTabRef.current) return;
+    if (messages.length === 0 && sendFromOptions.length === 0) return;
+
+    // Предпочитаем канал последнего сообщения в переписке
+    const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
+    if (lastMessageWithChannel) {
+      setActiveChannel(normalizeChannel(lastMessageWithChannel.channel));
+      return;
+    }
+
+    const defaultOpt = sendFromOptions.find((o) => o.isDefault && o.available) || sendFromOptions.find((o) => o.available);
+    if (defaultOpt) {
+      setActiveChannel(normalizeChannel(defaultOpt.channel));
+    }
+  }, [messages, sendFromOptions]);
+
+  // Переключение вкладки канала пользователем
+  const handleSelectChannelTab = useCallback(
+    (channelSlug: string) => {
+      hasUserSelectedTabRef.current = true;
+      setActiveChannel(channelSlug);
+
+      if (channelSlug !== "all") {
+        // Синхронизируем выпадающий список «Пишем от:» с выбранным каналом
+        const matchingOption =
+          sendFromOptions.find((o) => normalizeChannel(o.channel) === channelSlug && o.available) ||
+          sendFromOptions.find((o) => normalizeChannel(o.channel) === channelSlug);
+
+        if (matchingOption) {
+          setSelectedChannelAccountId(matchingOption.channelAccountId);
+        }
+      }
+    },
+    [sendFromOptions],
+  );
+
+  // Выбор аккаунта в поле «Пишем от:»
+  const handleSelectAccount = useCallback(
+    (channelAccountId: string) => {
+      hasUserSelectedTabRef.current = true;
+      setSelectedChannelAccountId(channelAccountId);
+
+      const opt = sendFromOptions.find((o) => o.channelAccountId === channelAccountId);
+      if (opt) {
+        // При переключении канала отправки открываем чат этого же канала
+        setActiveChannel(normalizeChannel(opt.channel));
+      }
+    },
+    [sendFromOptions],
+  );
+
+  const selectedOption: SendFromOptionDTO | undefined = useMemo(() => {
+    return sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
+  }, [sendFromOptions, selectedChannelAccountId]);
+
+  // Фильтрация сообщений по выбранному каналу
+  const displayedMessages = useMemo(() => {
+    if (activeChannel === "all") return messages;
+    return messages.filter((m) => normalizeChannel(m.channel) === activeChannel);
+  }, [messages, activeChannel]);
+
   // Автоскролл к низу переписки при открытии или получении сообщений
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages.length]);
-
-  const selectedOption: SendFromOptionDTO | undefined = useMemo(() => {
-    return sendFromOptions.find((o) => o.channelAccountId === selectedChannelAccountId);
-  }, [sendFromOptions, selectedChannelAccountId]);
+  }, [displayedMessages.length, activeChannel]);
 
   // Отправка сообщения
   const handleSend = useCallback(
@@ -163,7 +302,7 @@ export function CrmChatView({
 
       const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
       const fallbackChannel = lastMessageWithChannel?.channel ?? "telegram";
-      const channel = selectedOption?.channel ?? fallbackChannel;
+      const channel = selectedOption?.channel ?? (activeChannel !== "all" ? activeChannel : fallbackChannel);
       const channelAccountId = selectedOption?.channelAccountId;
 
       try {
@@ -181,7 +320,7 @@ export function CrmChatView({
         toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
       }
     },
-    [input, sendMessageMutation, selectedOption],
+    [input, sendMessageMutation, selectedOption, activeChannel, messages],
   );
 
   // Вызов AI-Copilot (генерация подсказки/черновика ответа)
@@ -232,13 +371,13 @@ export function CrmChatView({
     }
   }, [syncHistoryMutation]);
 
-  // Группировка сообщений по датам
+  // Группировка сообщений по датам (для отображаемого канала)
   const groupedMessages = useMemo(() => {
     const groups: { dateLabel: string; items: ChatMessageDTO[] }[] = [];
     let currentDateLabel = "";
     let currentBucket: ChatMessageDTO[] = [];
 
-    for (const msg of messages) {
+    for (const msg of displayedMessages) {
       const label = formatDateHeader(msg.createdAt);
       if (label !== currentDateLabel) {
         if (currentBucket.length > 0) {
@@ -256,12 +395,12 @@ export function CrmChatView({
     }
 
     return groups;
-  }, [messages]);
+  }, [displayedMessages]);
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
-<div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fbfbfb] px-4 py-2.5">
+      <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fbfbfb] px-4 py-2.5">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
@@ -278,13 +417,13 @@ export function CrmChatView({
             </span>
             <span className="text-xs font-medium text-[#111111]">
               {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
-<span className="font-semibold text-emerald-700">AI Автопилот активен</span>
+                <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
               ) : aiStatus?.isPaused ? (
                 <span className="text-amber-700">
                   AI на паузе {aiStatus.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
                 </span>
               ) : (
-<span className="text-[#666666]">AI Автопилот выключен</span>
+                <span className="text-[#666666]">AI Автопилот выключен</span>
               )}
             </span>
           </div>
@@ -299,7 +438,7 @@ export function CrmChatView({
                 onClick={() => handleAiAction("pause")}
                 disabled={aiControlMutation.isPending}
                 title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
-className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
               >
                 <Pause className="h-3 w-3 text-amber-600" />
                 <span>Пауза на 1 ч</span>
@@ -309,7 +448,7 @@ className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5
                 onClick={() => handleAiAction("disable")}
                 disabled={aiControlMutation.isPending}
                 title="Полностью отключить автоответчик по этой сделке/контакту"
-className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
               >
                 <PowerOff className="h-3.5 w-3.5" />
               </button>
@@ -320,7 +459,7 @@ className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-whi
               onClick={() => handleAiAction("enable")}
               disabled={aiControlMutation.isPending}
               title="Включить AI-автопилот"
-className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
             >
               <Play className="h-3 w-3 fill-current" />
               <span>Включить AI</span>
@@ -328,6 +467,79 @@ className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-
           )}
         </div>
       </div>
+
+      {/* Вкладки переключения каналов переписки (MAX, WhatsApp, Telegram, Все) */}
+      {availableChannels.length > 0 && (
+        <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+            {/* Вкладки конкретных мессенджеров */}
+            {availableChannels.map((ch) => {
+              const badge = getChannelBadge(ch.slug);
+              const isActive = activeChannel === ch.slug;
+              return (
+                <button
+                  key={ch.slug}
+                  type="button"
+                  onClick={() => handleSelectChannelTab(ch.slug)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-all",
+                    isActive
+                      ? cn("border bg-white font-semibold shadow-2xs", badge.activeBorder)
+                      : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
+                  )}
+                >
+                  <span className={cn("h-2 w-2 rounded-full", badge.dotColor)} />
+                  <span>{badge.label}</span>
+                  {ch.count > 0 && (
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.2 text-[10px] font-semibold",
+                        isActive ? badge.badgeBg : "bg-black/[0.05] text-[#666666]",
+                      )}
+                    >
+                      {ch.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {/* Вкладка «Все сообщения» */}
+            <button
+              type="button"
+              onClick={() => handleSelectChannelTab("all")}
+              className={cn(
+                "flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-all",
+                activeChannel === "all"
+                  ? "border border-[#e5e5e5] bg-white font-semibold text-[#111111] shadow-2xs"
+                  : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",
+              )}
+            >
+              <MessageCircle className="h-3.5 w-3.5 text-[#888888]" />
+              <span>Все</span>
+              {messages.length > 0 && (
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-0.2 text-[10px] font-semibold",
+                    activeChannel === "all" ? "bg-[#f0f0f0] text-[#111111]" : "bg-black/[0.05] text-[#666666]",
+                  )}
+                >
+                  {messages.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Индикатор текущего активного чата */}
+          <div className="hidden text-[11px] text-[#888888] sm:block">
+            {activeChannel === "all" ? (
+              <span>Все каналы ({messages.length})</span>
+            ) : (
+              <span>Чат {getChannelBadge(activeChannel).label} ({displayedMessages.length})</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Список сообщений диалога */}
       <div
@@ -337,18 +549,24 @@ className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-
         {messagesQuery.isLoading ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
-<Skeleton key={i} className="h-16 w-full rounded-[16px] bg-[#f5f5f5]" />
+              <Skeleton key={i} className="h-16 w-full rounded-[16px] bg-[#f5f5f5]" />
             ))}
           </div>
-        ) : messages.length === 0 ? (
+        ) : displayedMessages.length === 0 ? (
           <div className="py-12">
             <EmptyState
               icon={MessageCircle}
-              title="Сообщений пока нет"
+              title={
+                activeChannel === "all"
+                  ? "Сообщений пока нет"
+                  : `Нет сообщений в ${getChannelBadge(activeChannel).label}`
+              }
               description={
-                entityName
-                  ? `Начните омниканальную переписку с клиентом ${entityName}`
-                  : "Начните омниканальную переписку с клиентом"
+                activeChannel === "all"
+                  ? entityName
+                    ? `Начните омниканальную переписку с клиентом ${entityName}`
+                    : "Начните омниканальную переписку с клиентом"
+                  : `В канале ${getChannelBadge(activeChannel).label} сообщений пока нет. Напишите сообщение ниже, чтобы отправить его клиенту в ${getChannelBadge(activeChannel).label}.`
               }
             />
           </div>
@@ -488,7 +706,7 @@ className="flex items-center gap-1 font-medium text-rose-600"
               <div className="flex items-center gap-1.5">
                 <select
                   value={selectedChannelAccountId}
-                  onChange={(e) => setSelectedChannelAccountId(e.target.value)}
+                  onChange={(e) => handleSelectAccount(e.target.value)}
                   className="h-7 rounded-[8px] border border-[#e5e5e5] bg-white px-2 text-xs font-medium text-[#111111] shadow-2xs outline-none transition-colors hover:border-[#cccccc] focus:border-[#4a38f5]"
                 >
                   {sendFromOptions.map((opt) => (
@@ -524,11 +742,21 @@ className="flex items-center gap-1 font-medium text-rose-600"
             type="button"
             onClick={handleSyncHistory}
             disabled={syncHistoryMutation.isPending}
-            title="Синхронизировать прошлые сообщения из подключенных каналов (MAX, Telegram)"
+            title={
+              activeChannel !== "all"
+                ? `Синхронизировать историю диалога ${getChannelBadge(activeChannel).label}`
+                : "Синхронизировать прошлые сообщения из подключенных каналов (MAX, Telegram)"
+            }
             className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] hover:text-[#111111] disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3 w-3 text-[#888888]", syncHistoryMutation.isPending && "animate-spin text-[#4a38f5]")} />
-            <span>{syncHistoryMutation.isPending ? "Синхронизация..." : "Синхронизировать историю"}</span>
+            <span>
+              {syncHistoryMutation.isPending
+                ? "Синхронизация..."
+                : activeChannel !== "all"
+                  ? `Синхронизировать ${getChannelBadge(activeChannel).label}`
+                  : "Синхронизировать историю"}
+            </span>
           </button>
         </div>
 
