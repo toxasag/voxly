@@ -39,6 +39,23 @@ const historyQuerySchema = z.object({
 export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   const service = new WebchatService(app.log);
 
+  // Телеметрия и диагностика подключения виджета
+  app.get("/debug", async (request, reply) => {
+    app.log.info(
+      {
+        query: request.query,
+        ip: request.ip,
+        ua: request.headers["user-agent"],
+      },
+      "[WIDGET_TELEMETRY]",
+    );
+    return reply
+      .header("Access-Control-Allow-Origin", "*")
+      .header("Cache-Control", "no-cache, no-store")
+      .type("image/gif")
+      .send(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+  });
+
   // Получение настроек чата для виджета (название компании, имя агента)
   app.get<{ Params: { channelAccountId: string } }>(
     "/info/:channelAccountId",

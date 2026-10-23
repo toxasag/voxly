@@ -57,7 +57,7 @@ async function generateSpriteFromSinglePhoto(
         const sw = minDim;
         const sh = minDim;
 
-        const size = 1024;
+        const size = 768;
         const cellSize = size / 3;
 
         // 1. Directions canvas (9 направлений головы)
@@ -128,15 +128,15 @@ async function generateSpriteFromSinglePhoto(
         let reactions = "";
 
         try {
-          directions = dirCanvas.toDataURL("image/webp", 0.88);
-          reactions = reactCanvas.toDataURL("image/webp", 0.88);
+          directions = dirCanvas.toDataURL("image/webp", 0.85);
+          reactions = reactCanvas.toDataURL("image/webp", 0.85);
           if (!directions.startsWith("data:image/webp")) {
-            directions = dirCanvas.toDataURL("image/png");
-            reactions = reactCanvas.toDataURL("image/png");
+            directions = dirCanvas.toDataURL("image/jpeg", 0.85);
+            reactions = reactCanvas.toDataURL("image/jpeg", 0.85);
           }
         } catch {
-          directions = dirCanvas.toDataURL("image/png");
-          reactions = reactCanvas.toDataURL("image/png");
+          directions = dirCanvas.toDataURL("image/jpeg", 0.85);
+          reactions = reactCanvas.toDataURL("image/jpeg", 0.85);
         }
 
         resolve({ directions, reactions });
