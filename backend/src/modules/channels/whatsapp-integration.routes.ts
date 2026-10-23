@@ -93,8 +93,9 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           channel: "whatsapp",
           channelAccountId: account.id,
           chatId: phoneE164,
+          senderPhone: phoneE164,
           text,
-          senderName: "Оператор",
+          senderName: "Менеджер",
           pauseMinutes: 30,
         }),
       );
