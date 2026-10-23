@@ -33,6 +33,7 @@ export const createTaskSchema = z
     contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
     company_id: z.string().uuid().optional().nullable().or(z.literal("")),
     notify_telegram: z.boolean().optional(),
+    remind_before_minutes: z.coerce.number().int().min(0).max(10080).optional(),
   })
   .superRefine((value, ctx) => {
     const hasType = value.linked_entity_type !== undefined && value.linked_entity_type !== "";

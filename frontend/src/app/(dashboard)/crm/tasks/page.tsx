@@ -76,7 +76,8 @@ function toTaskFormValues(task: TaskDTO): CreateTaskPayload {
     assignee_id: task.assigneeId,
     linked_entity_type: task.linkedEntityType ?? "",
     linked_entity_id: task.linkedEntityId ?? "",
-    notify_telegram: false,
+    notify_telegram: task.notifyTelegram ?? false,
+    remind_before_minutes: task.remindBeforeMinutes ?? 30,
   };
 }
 
@@ -695,6 +696,8 @@ function TasksContent() {
                 // полей выбор пользователя молча терялся.
                 linked_entity_type: payload.linked_entity_type,
                 linked_entity_id: payload.linked_entity_id,
+                notify_telegram: payload.notify_telegram,
+                remind_before_minutes: payload.remind_before_minutes,
               },
              });
              toast.success("Задача обновлена");

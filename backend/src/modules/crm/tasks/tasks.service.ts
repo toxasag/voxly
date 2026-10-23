@@ -9,11 +9,11 @@ import type {
 } from "./tasks.types.js";
 import { toTaskDTO } from "./tasks.types.js";
 import { query, queryOne, queryOneOrThrow, type SqlParam } from "../../../db/client.js";
-import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
 
 const TASK_COLUMNS = `
   id, tenant_id, deal_id, contact_id, company_id, title, description,
-  priority, status, due_date, assignee_id, completed_at, created_at, updated_at
+  priority, status, due_date, assignee_id, completed_at, created_at, updated_at,
+  notify_telegram, remind_before_minutes, reminder_sent_at
 `;
 
 export type TaskQuickFilter = "today" | "overdue" | "upcoming" | "my" | "unassigned";
@@ -194,7 +194,7 @@ export class TasksService {
     return row === null ? null : toTaskDTO(row);
   }
 
-  async create(tenantId: string, payload: CreateTaskPayload, creatorUserId?: string): Promise<TaskDTO> {
+  async create(tenantId: string, payload: CreateTaskPayload): Promise<TaskDTO> {
     const link = linkColumns(payload.linked_entity_type, payload.linked_entity_id);
     let dealId = link.dealId ?? nullIfBlank(payload.deal_id);
     let contactId = link.contactId ?? nullIfBlank(payload.contact_id);
@@ -222,8 +222,8 @@ export class TasksService {
     const row = await queryOneOrThrow<TaskRow>(
       `INSERT INTO crm_tasks
          (tenant_id, deal_id, contact_id, company_id, title, description,
-          priority, status, due_date, assignee_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          priority, status, due_date, assignee_id, notify_telegram, remind_before_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING ${TASK_COLUMNS}`,
       [
         tenantId,
@@ -236,6 +236,8 @@ export class TasksService {
         payload.status,
         nullIfBlank(payload.due_date),
         payload.assignee_id,
+        Boolean(payload.notify_telegram),
+        payload.remind_before_minutes ?? 30,
       ],
     );
 
@@ -262,106 +264,7 @@ export class TasksService {
       );
     }
 
-    if (payload.notify_telegram) {
-      try {
-        await this.sendTelegramTaskNotification(tenantId, row, payload, creatorUserId);
-      } catch (err) {
-        console.error("[TasksService] Failed to send Telegram notification:", err);
-      }
-    }
-
     return toTaskDTO(row);
-  }
-
-  private async sendTelegramTaskNotification(
-    tenantId: string,
-    row: TaskRow,
-    payload: CreateTaskPayload,
-    creatorUserId?: string,
-  ): Promise<void> {
-    const telegramService = new TelegramService();
-    if (!telegramService.isConfigured) return;
-
-    // 1. Ищем получателя: сначала назначенный ответственный
-    const assignee = await queryOne<{ id: string; name: string; telegram_chat_id: string | null }>(
-      `SELECT id, name, telegram_chat_id::text FROM users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
-      [payload.assignee_id, tenantId],
-    );
-
-    let recipientChatId = assignee?.telegram_chat_id;
-
-    // Если у ответственного нет Telegram, но автор другой и у него Telegram привязан — шлём автору
-    if (!recipientChatId && creatorUserId && creatorUserId !== payload.assignee_id) {
-      const creator = await queryOne<{ id: string; name: string; telegram_chat_id: string | null }>(
-        `SELECT id, name, telegram_chat_id::text FROM users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
-        [creatorUserId, tenantId],
-      );
-      recipientChatId = creator?.telegram_chat_id;
-    }
-
-    if (!recipientChatId) return;
-
-    // 2. Получаем сведения о связанной сущности, если есть
-    let linkedInfo: string | null = null;
-    if (row.deal_id) {
-      const deal = await queryOne<{ title: string }>(
-        `SELECT title FROM deals WHERE id = $1 AND tenant_id = $2`,
-        [row.deal_id, tenantId],
-      );
-      if (deal) linkedInfo = `Сделка «${deal.title}»`;
-    } else if (row.contact_id) {
-      const contact = await queryOne<{ first_name: string; last_name: string }>(
-        `SELECT first_name, last_name FROM contacts WHERE id = $1 AND tenant_id = $2`,
-        [row.contact_id, tenantId],
-      );
-      if (contact) {
-        linkedInfo = `Контакт «${[contact.first_name, contact.last_name].filter(Boolean).join(" ")}»`;
-      }
-    } else if (row.company_id) {
-      const comp = await queryOne<{ name: string }>(
-        `SELECT name FROM companies WHERE id = $1 AND tenant_id = $2`,
-        [row.company_id, tenantId],
-      );
-      if (comp) linkedInfo = `Компания «${comp.name}»`;
-    }
-
-    const priorityLabels: Record<string, string> = {
-      high: "🔴 Высокий",
-      medium: "🟡 Средний",
-      low: "⚪ Низкий",
-    };
-
-    let text = `📋 <b>Новая задача:</b> ${escapeHtml(row.title)}\n\n`;
-    text += `<b>Приоритет:</b> ${priorityLabels[row.priority] ?? row.priority}\n`;
-
-    if (row.due_date) {
-      const d = new Date(row.due_date);
-      const formattedDate = new Intl.DateTimeFormat("ru-RU", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        timeZone: "Europe/Moscow",
-      }).format(d);
-      text += `<b>Срок:</b> ${formattedDate}\n`;
-    }
-
-    if (assignee?.name) {
-      text += `<b>Ответственный:</b> ${escapeHtml(assignee.name)}\n`;
-    }
-
-    if (linkedInfo) {
-      text += `<b>Связь:</b> ${escapeHtml(linkedInfo)}\n`;
-    }
-
-    if (row.description && row.description.trim().length > 0) {
-      text += `\n<b>Описание:</b>\n${escapeHtml(row.description.trim())}\n`;
-    }
-
-    text += `\n🔗 <a href="https://voxly.getvoxly.ru/crm/tasks?record=${row.id}">Открыть задачу в CRM</a>`;
-
-    await telegramService.sendMessage(recipientChatId, text);
   }
 
   async update(
@@ -381,7 +284,13 @@ export class TasksService {
     if (payload.description !== undefined) push("description", payload.description);
     if (payload.priority !== undefined) push("priority", payload.priority);
     if (payload.assignee_id !== undefined) push("assignee_id", payload.assignee_id);
-    if (payload.due_date !== undefined) push("due_date", nullIfBlank(payload.due_date));
+    if (payload.notify_telegram !== undefined) push("notify_telegram", payload.notify_telegram);
+    if (payload.remind_before_minutes !== undefined) push("remind_before_minutes", payload.remind_before_minutes);
+    if (payload.due_date !== undefined) {
+      push("due_date", nullIfBlank(payload.due_date));
+      // Сброс отправленного напоминания для новой даты дедлайна
+      push("reminder_sent_at", null);
+    }
 
     // Status and completed_at move together unless the caller sets the stamp.
     if (payload.status !== undefined) {
