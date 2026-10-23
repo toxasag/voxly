@@ -171,7 +171,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
     }
   }, [open]);
 
-  // Обновление QR-кода при получении из статуса
+  // Обновление QR-кода при получении из статуса и автозакрытие при успехе
   useEffect(() => {
     if (qrStatusData?.status === "waiting" && qrStatusData.qr) {
       setQrBase64(qrStatusData.qr);
@@ -182,8 +182,14 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
         .join(" ");
       const userTag = qrStatusData.user.username ? `@${qrStatusData.user.username}` : "";
       toast.success(`Telegram аккаунт ${userName || userTag} успешно подключён!`);
+
+      // Даём пользователю увидеть статус успеха и автоматически закрываем шторку
+      const timer = setTimeout(() => {
+        onClose();
+      }, 1600);
+      return () => clearTimeout(timer);
     }
-  }, [qrStatusData]);
+  }, [qrStatusData, onClose]);
 
   // Таймер повторной отправки SMS/кода
   useEffect(() => {
@@ -212,6 +218,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
         password: qr2faPassword,
       });
       toast.success("Telegram успешно подключён с двухэтапной аутентификацией!");
+      onClose();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Неверный облачный пароль (2FA)";
       toast.error(message);
