@@ -209,7 +209,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get("/widget.js", async (_request, reply) => {
     return reply
       .type("application/javascript; charset=utf-8")
-      .header("Cache-Control", "public, max-age=300")
+      .header("Cache-Control", "no-cache, no-store, must-revalidate")
       .header("Access-Control-Allow-Origin", "*")
       .send(WIDGET_SCRIPT);
   });

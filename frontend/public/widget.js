@@ -503,6 +503,13 @@
       return;
     }
 
+    let isOpen = false;
+    let sessionInitialized = false;
+    let lastDraft = '';
+    let sentDrafts = {};
+    let messageBuffer = [];
+    let sendTimer = null;
+
     const styleEl = document.createElement('style');
     styleEl.textContent = styles;
     (document.head || document.body).appendChild(styleEl);
@@ -594,7 +601,7 @@
   }
 
   // 10. Переключение окна виджета
-  let isOpen = false;
+  isOpen = false;
   function openWidget() {
     isOpen = true;
     win.style.display = 'flex';
@@ -634,7 +641,7 @@
   }
 
   // 12. Инициализация сессии на сервере (загрузка настроек аккаунта)
-  let sessionInitialized = false;
+  sessionInitialized = false;
   async function initSession() {
     if (sessionInitialized) return;
     try {
@@ -717,7 +724,7 @@
           }
 
           // Трекинг курсора мыши (9 направлений взгляда)
-          if (window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
+          if (typeof window.matchMedia === 'function' && window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
             window.addEventListener('pointermove', function (e) {
               if (isBooped) return;
               const b = bubble.getBoundingClientRect();
@@ -862,8 +869,8 @@
   }
 
   // 13. Умная склейка сообщений (Message Buffer / Debounce)
-  let messageBuffer = [];
-  let sendTimer = null;
+  messageBuffer = [];
+  sendTimer = null;
 
   function flushMessageBuffer() {
     if (messageBuffer.length === 0) return;
@@ -956,8 +963,8 @@
   });
 
   // 15. Перехват брошенных черновиков (Lead Salvage)
-  let lastDraft = '';
-  let sentDrafts = {};
+  lastDraft = '';
+  sentDrafts = {};
 
   inputEl.addEventListener('input', function (e) {
     const current = e.target.value.trim();
