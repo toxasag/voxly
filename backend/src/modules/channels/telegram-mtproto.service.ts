@@ -147,7 +147,7 @@ export class TelegramMtprotoService {
     return this.apiId !== undefined && this.apiHash !== undefined;
   }
 
-  private credentials(): { apiId: number; apiHash: string } {
+  public credentials(): { apiId: number; apiHash: string } {
     if (this.apiId === undefined || this.apiHash === undefined) {
       throw new TelegramMtprotoUnavailableError();
     }
