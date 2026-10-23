@@ -297,30 +297,89 @@
     .getvoxly-header-close:hover {
       color: #f1f5f9;
     }
-    .getvoxly-telegram-banner {
-      background: #0b1e36;
-      border-bottom: 1px solid #1e3a5f;
-      padding: 8px 14px;
+    .getvoxly-messenger-container {
       font-size: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+    }
+    .getvoxly-widget-window.light .getvoxly-messenger-container {
+      border-bottom: 1px solid #e5e5e5;
+    }
+    .getvoxly-msg-banner-single {
+      padding: 8px 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      text-decoration: none;
+    }
+    .getvoxly-msg-banner-single.is-telegram {
+      background: #0284c718;
       color: #38bdf8;
     }
-    .getvoxly-telegram-btn {
-      background: #0284c7;
-      color: #ffffff;
+    .getvoxly-widget-window.light .getvoxly-msg-banner-single.is-telegram {
+      background: #f0f9ff;
+      color: #0369a1;
+    }
+    .getvoxly-msg-banner-single.is-whatsapp {
+      background: #16a34a18;
+      color: #4ade80;
+    }
+    .getvoxly-widget-window.light .getvoxly-msg-banner-single.is-whatsapp {
+      background: #f0fdf4;
+      color: #15803d;
+    }
+    .getvoxly-msg-banner-single.is-max {
+      background: #6366f118;
+      color: #818cf8;
+    }
+    .getvoxly-widget-window.light .getvoxly-msg-banner-single.is-max {
+      background: #eef2ff;
+      color: #4338ca;
+    }
+    .getvoxly-msg-btn-pill {
+      color: #ffffff !important;
       padding: 4px 10px;
       border-radius: 6px;
       font-weight: 500;
-      text-decoration: none;
+      font-size: 11px;
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      font-size: 11px;
+      gap: 5px;
+      text-decoration: none;
+      transition: transform 0.1s ease, opacity 0.1s ease;
+      cursor: pointer;
     }
-    .getvoxly-telegram-btn:hover {
-      background: #0369a1;
+    .getvoxly-msg-btn-pill:hover {
+      transform: scale(1.04);
+      opacity: 0.95;
+    }
+    .getvoxly-msg-btn-pill.btn-telegram { background: #0284c7; }
+    .getvoxly-msg-btn-pill.btn-whatsapp { background: #16a34a; }
+    .getvoxly-msg-btn-pill.btn-max { background: #6366f1; }
+
+    .getvoxly-msg-bar-multi {
+      padding: 7px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .getvoxly-widget-window.light .getvoxly-msg-bar-multi {
+      background: #f8fafc;
+    }
+    .getvoxly-msg-bar-title {
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0.75;
+      white-space: nowrap;
+    }
+    .getvoxly-msg-buttons-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
     .getvoxly-messages {
       flex: 1;
@@ -440,15 +499,7 @@
       </div>
       <button class="getvoxly-header-close" id="getvoxly-close">&times;</button>
     </div>
-    <div class="getvoxly-telegram-banner" id="getvoxly-tg-banner" style="display: none;">
-      <span>Удобнее в Telegram?</span>
-      <a href="#" target="_blank" class="getvoxly-telegram-btn" id="getvoxly-tg-link">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
-        </svg>
-        Перейти
-      </a>
-    </div>
+    <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
     <div class="getvoxly-messages" id="getvoxly-messages"></div>
     <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
     <div class="getvoxly-input-area">
@@ -475,8 +526,7 @@
   const closeBtn = win.querySelector('#getvoxly-close');
   const typingIndicator = win.querySelector('#getvoxly-typing');
   const botTitle = win.querySelector('#getvoxly-bot-title');
-  const tgBanner = win.querySelector('#getvoxly-tg-banner');
-  const tgLink = win.querySelector('#getvoxly-tg-link');
+  const msgContainer = win.querySelector('#getvoxly-messenger-container');
 
   // 9. Локальная история переписки
   const STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
@@ -584,7 +634,7 @@
         }
 
         // Поддержка 3D-маскота или фото консультанта
-        if (data.avatarType === 'mascot') {
+        if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
           bubble.classList.add('is-mascot');
 
           let assetBaseUrl = 'https://getvoxly.ru';
@@ -713,13 +763,72 @@
           saveAndRenderMessage(data.greeting, false);
         }
 
-        // Telegram banner deep-link
-        const targetBot = telegramBot || data.telegramBot;
-        if (targetBot && data.showTelegramBanner !== false) {
-          tgBanner.style.display = 'flex';
-          tgLink.href = 'https://t.me/' + targetBot + '?start=site_' + visitorId;
-        } else {
-          tgBanner.style.display = 'none';
+        // Баннер перехода в мессенджеры (Telegram, WhatsApp, MAX)
+        const buttons = data.messengerButtons || [];
+
+        // Обратная совместимость для устаревших вызовов
+        if (buttons.length === 0 && (telegramBot || data.telegramBot) && data.showTelegramBanner !== false) {
+          const tb = (telegramBot || data.telegramBot).replace(/^@/, '');
+          buttons.push({
+            type: 'telegram',
+            label: 'Telegram',
+            url: 'https://t.me/' + tb,
+            handle: '@' + tb,
+          });
+        }
+
+        if (msgContainer && buttons.length > 0 && data.showMessengerBanner !== false && data.showTelegramBanner !== false) {
+          msgContainer.style.display = 'block';
+
+          if (buttons.length === 1) {
+            const b = buttons[0];
+            const linkHref = b.url + (b.type === 'telegram' ? '?start=site_' + visitorId : '');
+            let iconSvg = '';
+            let actionText = 'Перейти';
+
+            if (b.type === 'telegram') {
+              iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
+            } else if (b.type === 'whatsapp') {
+              actionText = 'Написать';
+              iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+            } else if (b.type === 'max') {
+              iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
+            }
+
+            msgContainer.innerHTML = '<div class="getvoxly-msg-banner-single is-' + b.type + '">' +
+              '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
+                iconSvg +
+                '<span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Продолжить в ' + b.label + '</span>' +
+              '</div>' +
+              '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-btn-pill btn-' + b.type + '">' +
+                actionText +
+              '</a>' +
+            '</div>';
+          } else {
+            let buttonsHtml = '';
+            for (let i = 0; i < buttons.length; i++) {
+              const btn = buttons[i];
+              const href = btn.url + (btn.type === 'telegram' ? '?start=site_' + visitorId : '');
+              let icon = '';
+              if (btn.type === 'telegram') {
+                icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
+              } else if (btn.type === 'whatsapp') {
+                icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+              } else if (btn.type === 'max') {
+                icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
+              }
+              buttonsHtml += '<a href="' + href + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-btn-pill btn-' + btn.type + '">' + icon + ' ' + btn.label + '</a>';
+            }
+
+            msgContainer.innerHTML = '<div class="getvoxly-msg-bar-multi">' +
+              '<span class="getvoxly-msg-bar-title">Продолжить в:</span>' +
+              '<div class="getvoxly-msg-buttons-row">' +
+                buttonsHtml +
+              '</div>' +
+            '</div>';
+          }
+        } else if (msgContainer) {
+          msgContainer.style.display = 'none';
         }
       }
     } catch (e) {
