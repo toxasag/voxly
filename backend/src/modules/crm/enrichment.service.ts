@@ -189,7 +189,7 @@ export class CrmEnrichmentService {
       try {
         const maxRes = await this.providers.checkMax(phoneDigits, tenantId);
         if (maxRes.exists) {
-          const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : (maxRes.userId ? `+${maxRes.userId}` : "")));
+          const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : ""));
           if (maxVal) {
             const existingMax = existingSocials.find((s) => s.kind === "max");
             if (existingMax) {
