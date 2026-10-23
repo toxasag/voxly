@@ -512,7 +512,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
       const queryParam = qrStatusSchema.parse(request.query);
       const result = await service.checkStatus(request.tenant_id, queryParam.name);
 
-      if (result && typeof result.qr === "string" && result.qr.length > 0) {
+      if (result && result.status === "qr_ready" && typeof result.qr === "string" && result.qr.length > 0) {
         if (!result.qr.startsWith("data:image/")) {
           try {
             result.qr = await QRCode.toDataURL(result.qr, { margin: 1, width: 300 });
@@ -520,7 +520,7 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
             request.log.error(err, "Failed to convert MAX QR to data URL on status check");
           }
         }
-      } else if (result && result.status === "qr_ready") {
+      } else if (result && result.status === "qr_ready" && !result.qr) {
         try {
           const buffer = await service.getQrPng(request.tenant_id, queryParam.name);
           if (buffer) {
@@ -529,6 +529,8 @@ export default async function maxIntegrationRoutes(app: FastifyInstance): Promis
         } catch (err) {
           request.log.error(err, "Failed to fetch MAX QR PNG buffer from max-bridge");
         }
+      } else if (result && result.status !== "qr_ready") {
+        result.qr = null;
       }
 
       return reply.send({ data: result });

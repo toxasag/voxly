@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, MessageSquare, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { useMaxPassword, useMaxQrStatus, useMaxStartQr } from "@/lib/api/use-max-auth";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
@@ -13,6 +14,7 @@ interface ConnectMaxModalProps {
 }
 
 export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState("Основной");
   const [password, setPassword] = useState("");
   const [qrBase64, setQrBase64] = useState<string | null>(null);
@@ -28,18 +30,30 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
   );
 
   useEffect(() => {
-    if (statusData?.qr) {
+    if (statusData?.status === "qr_ready" && statusData?.qr) {
       setQrBase64(statusData.qr);
+    } else if (statusData?.status && statusData.status !== "qr_ready") {
+      setQrBase64(null);
     }
-  }, [statusData?.qr]);
+  }, [statusData?.qr, statusData?.status]);
 
   const isConnected = statusData?.status === "authorized";
-  const isWaitingPassword = statusData?.status === "processing_password" || Boolean(statusData?.passwordHint);
-  const activeQr = statusData?.qr || qrBase64;
+  const isWaitingPassword =
+    statusData?.status === "waiting_password" ||
+    statusData?.status === "processing_password" ||
+    Boolean(statusData?.passwordHint);
+  const isError =
+    statusData?.status === "error" ||
+    (Boolean(statusData?.error) && statusData?.status !== "waiting_password");
+  const isPreparing = startQr.isPending || statusData?.status === "preparing";
+  const activeQr = !isError && statusData?.status === "qr_ready" ? (statusData?.qr || qrBase64) : null;
 
   const handleStart = (customName?: string) => {
+    if (startQr.isPending) return;
     const activeName = customName ?? name;
     setQrBase64(null);
+    setPassword("");
+    queryClient.removeQueries({ queryKey: ["max", "qr-status", activeName] });
     startQr.mutate(
       { name: activeName },
       {
@@ -68,6 +82,7 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
     } else if (!open) {
       startedRef.current = false;
       setQrBase64(null);
+      setPassword("");
     }
   }, [open]);
 
@@ -131,7 +146,7 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
               <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
                 <p className="text-xs leading-relaxed text-[#666666]">
-                  У аккаунта включена двухэтапная аутентификация в MAX. Введите облачный пароль.
+                  QR-код успешно отсканирован! У вашего аккаунта включена двухэтапная аутентификация в MAX. Введите облачный пароль для завершения подключения.
                   {statusData?.passwordHint && (
                     <>
                       {" "}
@@ -143,6 +158,13 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
                   )}
                 </p>
               </div>
+
+              {statusData?.error && (
+                <div className="flex gap-2 rounded-[8px] border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700">
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{statusData.error}</span>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="block text-xs font-medium text-[#666666]">
@@ -159,28 +181,37 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-[#e5e5e5] bg-white px-6 py-3 shrink-0">
+            <div className="flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-3 shrink-0">
               <button
                 type="button"
-                onClick={onClose}
-                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
+                onClick={() => void handleStart()}
+                className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#666666] hover:bg-[#fafafa] cursor-pointer"
               >
-                Отмена
+                Начать заново
               </button>
-              <button
-                type="submit"
-                disabled={isSubmittingPassword || !password}
-                className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
-              >
-                {isSubmittingPassword ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Проверяем...
-                  </>
-                ) : (
-                  "Подтвердить пароль"
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingPassword || !password}
+                  className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmittingPassword ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Проверяем...
+                    </>
+                  ) : (
+                    "Подтвердить пароль"
+                  )}
+                </button>
+              </div>
             </div>
           </form>
         ) : (
@@ -216,11 +247,35 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
               </div>
 
               {/* Блок QR-кода */}
-              <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6">
-                {startQr.isPending && !activeQr ? (
-                  <div className="flex h-52 flex-col items-center justify-center space-y-3">
+              <div className="flex flex-col items-center justify-center rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-6 min-h-[260px]">
+                {isPreparing ? (
+                  <div className="flex h-56 flex-col items-center justify-center space-y-3">
                     <Loader2 className="h-8 w-8 animate-spin text-[#4a38f5]" />
                     <p className="text-xs text-[#666666]">Генерируем QR-код авторизации MAX...</p>
+                  </div>
+                ) : isError ? (
+                  <div className="flex h-56 flex-col items-center justify-center space-y-3 p-4 text-center">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                      <AlertCircle className="h-5 w-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-[#111111]">
+                        {statusData?.error?.includes("expired") || statusData?.error?.includes("истёк")
+                          ? "Срок действия QR-кода истёк"
+                          : "Ошибка подключения MAX"}
+                      </p>
+                      <p className="text-[11px] text-[#666666] max-w-xs">
+                        {statusData?.error || "Не удалось получить QR-код или время ожидания истекло"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleStart()}
+                      className="mt-2 flex h-8 items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white transition-colors hover:bg-[#3d2ee0] cursor-pointer"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Сгенерировать новый QR
+                    </button>
                   </div>
                 ) : activeQr ? (
                   <div className="space-y-3 text-center">
@@ -241,10 +296,10 @@ export function ConnectMaxModal({ open, onClose }: ConnectMaxModalProps) {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex h-52 flex-col items-center justify-center space-y-3">
+                  <div className="flex h-56 flex-col items-center justify-center space-y-3">
                     <QrCode className="h-10 w-10 text-[#888888]" />
                     <p className="text-xs text-[#666666]">
-                      {statusData?.error ? statusData.error : "Нажмите «Обновить QR» для генерации кода"}
+                      Нажмите «Обновить QR» для генерации кода
                     </p>
                   </div>
                 )}
