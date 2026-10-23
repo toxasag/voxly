@@ -2,17 +2,32 @@
   'use strict';
 
   // 1. Поиск скрипта подключения и параметров
-  const currentScript = document.currentScript || document.querySelector('script[data-channel-id]');
-  if (!currentScript) {
-    console.warn('[GetVoxly] Webchat script is missing data-channel-id attribute.');
+  function findScriptElement() {
+    if (document.currentScript) return document.currentScript;
+    return (
+      document.querySelector('script[data-account-id]') ||
+      document.querySelector('script[data-channel-id]') ||
+      document.querySelector('script[src*="widget.js"]')
+    );
+  }
+
+  const currentScript = findScriptElement();
+  const channelAccountId =
+    (currentScript && (currentScript.getAttribute('data-account-id') || currentScript.getAttribute('data-channel-id'))) ||
+    '';
+
+  if (!channelAccountId) {
+    console.warn('[GetVoxly] Webchat script is missing data-account-id or data-channel-id attribute.');
     return;
   }
 
-  const channelAccountId = currentScript.getAttribute('data-channel-id');
-  const apiUrl = (currentScript.getAttribute('data-api-url') || 'https://api.getvoxly.ru').replace(/\/$/, '');
-  const telegramBot = currentScript.getAttribute('data-telegram-bot') || '';
-  const proactiveEnabled = currentScript.getAttribute('data-proactive') !== 'false';
-  const proactiveDelay = parseInt(currentScript.getAttribute('data-proactive-delay') || '30000', 10);
+  const apiUrl = (
+    (currentScript && currentScript.getAttribute('data-api-url')) ||
+    'https://api.getvoxly.ru'
+  ).replace(/\/$/, '');
+  const telegramBot = (currentScript && currentScript.getAttribute('data-telegram-bot')) || '';
+  const proactiveEnabled = (currentScript && currentScript.getAttribute('data-proactive')) !== 'false';
+  const proactiveDelay = parseInt((currentScript && currentScript.getAttribute('data-proactive-delay')) || '30000', 10);
 
   // 2. Вспомогательные функции для cookies и хранилища
   function getCookie(name) {
@@ -473,12 +488,27 @@
     }
   `;
 
-  const styleEl = document.createElement('style');
-  styleEl.textContent = styles;
-  document.head.appendChild(styleEl);
+  // 8. Безопасное монтирование виджета в DOM
+  function mount() {
+    if (!document.body) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount, { once: true });
+      } else {
+        window.addEventListener('load', mount, { once: true });
+      }
+      return;
+    }
 
-  // 8. Создание DOM-структуры виджета
-  const wrapper = document.createElement('div');
+    if (document.getElementById('getvoxly-bubble')) {
+      return;
+    }
+
+    const styleEl = document.createElement('style');
+    styleEl.textContent = styles;
+    (document.head || document.body).appendChild(styleEl);
+
+    // Создание DOM-структуры виджета
+    const wrapper = document.createElement('div');
   wrapper.className = 'getvoxly-widget-wrapper';
   wrapper.innerHTML = `
     <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
@@ -638,11 +668,6 @@
           bubble.classList.add('is-mascot');
 
           let assetBaseUrl = 'https://getvoxly.ru';
-          if (currentScript && currentScript.src) {
-            try {
-              assetBaseUrl = new URL(currentScript.src).origin;
-            } catch (e) {}
-          }
 
           const MASCOT_MAP = {
             voxly_robot: 'drone',
@@ -969,4 +994,12 @@
       }
     }
   });
+  }
+
+  // 16. Запуск монтирования виджета
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
+  }
 })();
