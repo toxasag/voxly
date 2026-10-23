@@ -108,7 +108,7 @@ export function ConnectChannelModal({
         </div>
       </SheetHeader>
 
-      <SheetContent>
+      <SheetContent className="p-6">
         <form onSubmit={form.handleSubmit((values) => void submit(values))} className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor="channel_label" className="block text-xs font-medium text-[#666666]">

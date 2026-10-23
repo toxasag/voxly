@@ -174,6 +174,22 @@ export function contactSocialsFrom(
     return phone === "" ? [] : [{ kind, value: phone }];
   }
 
+  if (kind === "max") {
+    const username = identity.profile?.username?.trim() ?? "";
+    if (username !== "") {
+      return [{ kind, value: username.startsWith("@") ? username : `@${username}` }];
+    }
+    const phone = normalizePhone(identity.profile?.phone ?? identity.senderPhone ?? "");
+    if (phone !== "") {
+      return [{ kind, value: phone }];
+    }
+    const fromChatId = identity.chatId.trim();
+    if (fromChatId.startsWith("@") && !/^@\d+$/.test(fromChatId)) {
+      return [{ kind, value: fromChatId }];
+    }
+    return [];
+  }
+
   const username = identity.profile?.username?.trim() ?? "";
   if (username !== "") {
     return [{ kind, value: username.startsWith("@") ? username : `@${username}` }];

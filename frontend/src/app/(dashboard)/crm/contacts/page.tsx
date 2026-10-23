@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Search,
   Tag,
+  Trash2,
   User,
   Users,
 } from "lucide-react";
@@ -123,8 +124,11 @@ function ContactsPageContent() {
     openRecord: setCompanyDetailId,
     closeRecord: closeCompanyDetail,
   } = useRecordParam("company");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<ContactDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
 
   // Debounced so typing does not fire a request per keystroke.
@@ -132,6 +136,7 @@ function ContactsPageContent() {
     const handle = setTimeout(() => {
       setSearch(searchInput.trim());
       setPage(1);
+      setSelected(new Set());
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
@@ -204,7 +209,32 @@ function ContactsPageContent() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteContact, deleteTarget]);
+  }, [deleteContact, deleteTarget, closeDetail]);
+
+  const bulkDelete = useCallback(async () => {
+    setBulkDeleteConfirmOpen(false);
+    setIsBulkDeleting(true);
+    const ids = Array.from(selected);
+    let successCount = 0;
+    for (const id of ids) {
+      try {
+        await deleteContact.mutateAsync(id);
+        successCount++;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Не удалось удалить контакт");
+        break;
+      }
+    }
+    setIsBulkDeleting(false);
+    setSelected(new Set());
+    if (detailId !== null && selected.has(detailId)) {
+      closeDetail();
+    }
+    if (successCount > 0) {
+      toast.success(`Удалено контактов: ${successCount}`);
+      void query.refetch();
+    }
+  }, [selected, deleteContact, detailId, closeDetail, query]);
 
   const editInitialValues = useMemo(
     () => (editTarget === null ? undefined : toContactFormValues(editTarget)),
@@ -484,7 +514,7 @@ function ContactsPageContent() {
         <div className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
           {CHANNEL_FILTERS.map((filter) => (
             <button key={filter.value} type="button"
-              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); }}
+              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); setSelected(new Set()); }}
               aria-pressed={channelFilter === filter.value}
               className={cn("shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors",
                 channelFilter === filter.value
@@ -519,7 +549,7 @@ function ContactsPageContent() {
             ? "Измените поисковый запрос или фильтр по каналу."
             : "Создайте первый контакт, чтобы начать работу."}
           action={hasFilters ? (
-            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); }}
+            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); setSelected(new Set()); }}
               className="rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa]">
               Сбросить фильтры
             </button>
@@ -538,10 +568,36 @@ function ContactsPageContent() {
             getRowId={(contact) => contact.id}
             columns={contactColumns}
             tableId="contacts"
+            selectable={true}
+            selectedIds={selected}
+            onSelectionChange={setSelected}
             onRowClick={editing === null ? (contact) => setDetailId(contact.id) : undefined}
             // Enter на ячейке в фокусе открывает тот же редактор, что и клик:
             // состояние правки уже описано парой {rowId, columnId}.
             onCellEdit={(contact, columnId) => setEditing({ rowId: contact.id, columnId })}
+            bulkBar={
+              <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
+                <span className="text-xs font-medium text-[#111111]">
+                  Выбрано: {selected.size}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выделение
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteConfirmOpen(true)}
+                  disabled={isBulkDeleting}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Удалить
+                </button>
+              </div>
+            }
             pagination={
               totalPages > 1 ? (
                 <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-3">
@@ -609,6 +665,17 @@ function ContactsPageContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isDeleting}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        onConfirm={bulkDelete}
+        title={`Удалить контакты: ${selected.size}?`}
+        description="Контакты будут перемещены в корзину (мягкое удаление). В связанных сделках останется ссылка на удалённый контакт."
+        confirmLabel="Удалить"
+        variant="destructive"
+        isPending={isBulkDeleting}
       />
     </div>
   );

@@ -85,13 +85,29 @@ export class WhatsappEvolutionService {
       // Игнорируем ошибки очистки
     }
 
-    // 1. Создаем инстанс
+    // 1. Создаем инстанс с автоматической регистрацией webhook
+    const publicApiUrl = getEnv().PUBLIC_API_URL;
+    const webhookUrl = publicApiUrl
+      ? `${publicApiUrl.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+      : "http://backend:4000/api/internal/whatsapp/webhook";
+
     const create = await this.evoFetch("/instance/create", {
       method: "POST",
       body: JSON.stringify({
         instanceName,
         qrcode: true,
         integration: "WHATSAPP-BAILEYS",
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            "QRCODE_UPDATED",
+            "CONNECTION_UPDATE",
+            "MESSAGES_UPSERT",
+          ],
+        },
       }),
     });
 
@@ -163,7 +179,7 @@ export class WhatsappEvolutionService {
         if (existing) {
           await tx.query(
             `UPDATE channel_accounts
-             SET status = 'connected', label = $3, external_id = $4,
+             SET status = 'connected', status_message = '', label = $3, external_id = $4,
                  credentials = jsonb_set(COALESCE(credentials, '{}'::jsonb), '{instanceName}', to_jsonb($5::text)),
                  connected_at = COALESCE(connected_at, now())
              WHERE tenant_id = $1 AND id = $2`,
@@ -173,13 +189,20 @@ export class WhatsappEvolutionService {
         }
 
         const inserted = await tx.queryOneOrThrow<{ id: string }>(
-          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, credentials, connected_at)
-           VALUES ($1, 'whatsapp', $2, $3, 'connected', jsonb_build_object('instanceName', $4::text), now())
+          `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, credentials, connected_at)
+           VALUES ($1, 'whatsapp', $2, $3, 'connected', '', jsonb_build_object('instanceName', $4::text), now())
            RETURNING id`,
           [tenantId, label, phone, instanceName],
         );
         return inserted.id;
       });
+
+      // Гарантируем регистрацию webhook для получения входящих сообщений
+      const publicUrl = getEnv().PUBLIC_API_URL;
+      const webhookUrl = publicUrl
+        ? `${publicUrl.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+        : "http://backend:4000/api/internal/whatsapp/webhook";
+      void this.setWebhook(instanceName, webhookUrl).catch(() => undefined);
 
       return {
         ok: true,
@@ -205,6 +228,67 @@ export class WhatsappEvolutionService {
       status: "qr_ready",
       qr,
     };
+  }
+
+  /** Отправка текстового сообщения через Evolution API */
+  async sendTextMessage(
+    instanceName: string,
+    recipient: string,
+    text: string,
+  ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const cleanNumber = recipient.replace(/[^\d]/g, "");
+    const res = await this.evoFetch(`/message/sendText/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        number: cleanNumber,
+        text,
+      }),
+    });
+
+    if (!res.ok) {
+      return { ok: false, error: res.json?.response?.message || "Ошибка отправки WhatsApp" };
+    }
+
+    return { ok: true, messageId: res.json?.key?.id };
+  }
+
+  /** Проверка регистрации номеров в WhatsApp через Evolution API */
+  async checkNumberStatus(
+    instanceName: string,
+    numbers: string[],
+  ): Promise<Array<{ exists: boolean; jid?: string; number?: string }>> {
+    const res = await this.evoFetch(`/chat/whatsappNumbers/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({ numbers }),
+    });
+    if (!res.ok) return [];
+    const rows = Array.isArray(res.json) ? res.json : [];
+    return rows.map((r: any) => ({
+      exists: Boolean(r?.exists),
+      jid: r?.jid,
+      number: r?.number,
+    }));
+  }
+
+  /** Настройка webhook в Evolution API */
+  async setWebhook(instanceName: string, webhookUrl: string): Promise<boolean> {
+    const res = await this.evoFetch(`/webhook/set/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        webhook: {
+          enabled: true,
+          url: webhookUrl,
+          byEvents: false,
+          base64: false,
+          events: [
+            "QRCODE_UPDATED",
+            "CONNECTION_UPDATE",
+            "MESSAGES_UPSERT",
+          ],
+        },
+      }),
+    });
+    return res.ok;
   }
 
   /** Удаление инстанса из Evolution API */

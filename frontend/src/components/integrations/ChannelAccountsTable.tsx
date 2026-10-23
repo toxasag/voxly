@@ -30,12 +30,19 @@ const STATUS_VARIANTS: Record<ChannelStatus, StatusBadgeVariant> = {
   disabled: "neutral",
 };
 
-function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(iso));
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(d);
+  } catch {
+    return "—";
+  }
 }
 
 interface ChannelAccountsTableProps {
@@ -212,14 +219,14 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
               <tr key={account.id} className="transition-colors hover:bg-[#f5f5f5]">
                 <td className="px-4 py-3">
                   <p className="text-sm font-medium text-[#111111]">{account.label}</p>
-                  {account.statusMessage.length > 0 && (
+                  {Boolean(account.statusMessage && account.statusMessage.length > 0) && (
                     <p className="mt-0.5 text-xs text-rose-600">{account.statusMessage}</p>
                   )}
                 </td>
                 <td className="px-4 py-3 font-mono text-xs text-[#666666]">{account.externalId}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge variant={STATUS_VARIANTS[account.status]} size="sm">
-                    {CHANNEL_STATUS_LABELS[account.status]}
+                  <StatusBadge variant={STATUS_VARIANTS[account.status] ?? "neutral"} size="sm">
+                    {CHANNEL_STATUS_LABELS[account.status] ?? account.status}
                   </StatusBadge>
                 </td>
                 <td className="px-4 py-3 text-sm text-[#666666]">

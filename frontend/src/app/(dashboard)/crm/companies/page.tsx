@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   User,
   Users,
 } from "lucide-react";
@@ -77,14 +78,18 @@ function CompaniesContent() {
   /** Контакт, открытый из секции «Контакты» карточки компании. */
   const [contactDetailId, setContactDetailId] = useState<string | null>(null);
   const [edit, setEdit] = useState<CompanyDTO | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<CompanyDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
 
   useEffect(() => {
     const handle = setTimeout(() => {
       setSearch(input.trim());
       setPage(1);
+      setSelected(new Set());
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [input]);
@@ -137,7 +142,32 @@ function CompaniesContent() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteCompany, deleteTarget]);
+  }, [deleteCompany, deleteTarget, closeDetail]);
+
+  const bulkDelete = useCallback(async () => {
+    setBulkDeleteConfirmOpen(false);
+    setIsBulkDeleting(true);
+    const ids = Array.from(selected);
+    let successCount = 0;
+    for (const id of ids) {
+      try {
+        await deleteCompany.mutateAsync(id);
+        successCount++;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Не удалось удалить компанию");
+        break;
+      }
+    }
+    setIsBulkDeleting(false);
+    setSelected(new Set());
+    if (detailId !== null && selected.has(detailId)) {
+      closeDetail();
+    }
+    if (successCount > 0) {
+      toast.success(`Удалено компаний: ${successCount}`);
+      void query.refetch();
+    }
+  }, [selected, deleteCompany, detailId, closeDetail, query]);
 
   const commitCompany = useCallback(
     (company: CompanyDTO, payload: CreateCompanyPayload) => {
@@ -424,6 +454,9 @@ function CompaniesContent() {
           getRowId={(company) => company.id}
           columns={companyColumns}
           tableId="companies"
+          selectable={true}
+          selectedIds={selected}
+          onSelectionChange={setSelected}
           onRowClick={editing === null ? (company) => setDetailId(company.id) : undefined}
           onCellEdit={(company, columnId) => setEditing({ rowId: company.id, columnId })}
           footerCells={{
@@ -434,6 +467,29 @@ function CompaniesContent() {
               </span>
             ),
           }}
+          bulkBar={
+            <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
+              <span className="text-xs font-medium text-[#111111]">
+                Выбрано: {selected.size}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Снять выделение
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirmOpen(true)}
+                disabled={isBulkDeleting}
+                className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Удалить
+              </button>
+            </div>
+          }
           emptyState={
             <EmptyState
               icon={Building2}
@@ -514,6 +570,17 @@ function CompaniesContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isDeleting}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        onConfirm={bulkDelete}
+        title={`Удалить компании: ${selected.size}?`}
+        description="Компании будут перемещены в корзину (мягкое удаление). Связанные контакты и сделки останутся, но потеряют ссылку на компанию."
+        confirmLabel="Удалить"
+        variant="destructive"
+        isPending={isBulkDeleting}
       />
     </div>
   );

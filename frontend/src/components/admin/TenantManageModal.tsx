@@ -113,7 +113,7 @@ export function TenantManageModal({ open, tenant, onClose, onSave, isSubmitting 
         </div>
       </SheetHeader>
 
-      <SheetContent>
+      <SheetContent className="p-6">
         <div className="space-y-5">
           {/* Owner Info */}
           <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3.5 grid grid-cols-2 gap-2.5 text-xs">

@@ -192,7 +192,11 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
             Authorization: `Bearer ${activeApiKey}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ model: activeModel, input: [...inputs] }),
+          body: JSON.stringify({
+            model: activeModel,
+            input: [...inputs],
+            dimensions: EMBEDDING_DIMENSIONS,
+          }),
           signal: controller.signal,
         });
 

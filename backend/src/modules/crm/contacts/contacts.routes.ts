@@ -10,6 +10,7 @@ import {
 import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { DealMessagingService } from "../deals/deal-messaging.service.js";
 import { createDealMessageSchema } from "../deals/deals.types.js";
+import { CrmEnrichmentService } from "../enrichment.service.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -203,5 +204,18 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const draft = await messaging.generateContactAiDraft(request.tenant_id, id);
     return reply.send({ data: draft });
+  });
+
+  app.post("/:id/enrich", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const enrichment = new CrmEnrichmentService();
+    const result = await enrichment.enrichContact(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
+
+  app.post("/:id/sync-chat-history", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await messaging.syncContactChatHistory(request.tenant_id, id);
+    return reply.send({ data: result });
   });
 }

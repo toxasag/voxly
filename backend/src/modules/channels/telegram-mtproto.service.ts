@@ -147,7 +147,7 @@ export class TelegramMtprotoService {
     return this.apiId !== undefined && this.apiHash !== undefined;
   }
 
-  private credentials(): { apiId: number; apiHash: string } {
+  public credentials(): { apiId: number; apiHash: string } {
     if (this.apiId === undefined || this.apiHash === undefined) {
       throw new TelegramMtprotoUnavailableError();
     }
@@ -207,6 +207,174 @@ export class TelegramMtprotoService {
       // открытый сокет к DC, и процесс со временем упирался бы в лимит дескрипторов.
       await this.close(client);
     }
+  }
+
+  /**
+   * Создаёт подключённый клиент и запрашивает первичный QR-код.
+   * Клиент остаётся подключённым и возвращается вызывающему коду для ожидания события `UpdateLoginToken`.
+   */
+  async createQrClient(): Promise<{
+    client: TelegramClient;
+    token: Buffer;
+    expires: number;
+    qrUrl: string;
+    qrBase64: string;
+  }> {
+    const { apiId, apiHash } = this.credentials();
+    const client = await this.client("");
+
+    try {
+      const result = await client.invoke(
+        new Api.auth.ExportLoginToken({
+          apiId,
+          apiHash,
+          exceptIds: [],
+        }),
+      );
+
+      if (!(result instanceof Api.auth.LoginToken)) {
+        throw new Error("Неожиданный ответ Telegram при генерации QR-кода");
+      }
+
+      const token = Buffer.from(result.token);
+      const tokenB64Url = token.toString("base64url");
+      const qrUrl = `tg://login?token=${tokenB64Url}`;
+      const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+
+      return {
+        client,
+        token,
+        expires: result.expires,
+        qrUrl,
+        qrBase64,
+      };
+    } catch (err) {
+      await this.close(client);
+      throw err;
+    }
+  }
+
+  /**
+   * Проверяет или завершает QR-авторизацию на открытом клиенте:
+   * 1. Если отсканировано и нет 2FA -> "connected" + user
+   * 2. Если аккаунт на другом DC -> мигрирует DC и завершает -> "connected" + user
+   * 3. Если требуется 2FA -> "requires_2fa" + passwordHint
+   * 4. Если токен ещё ждёт сканирования или обновился -> "waiting" + refreshedQr
+   */
+  async checkOrCompleteQr(client: TelegramClient): Promise<{
+    status: "waiting" | "connected" | "requires_2fa";
+    sessionState?: string;
+    user?: SignInOutcome["user"];
+    passwordHint?: string | null;
+    refreshedQr?: { qrBase64: string; expires: number };
+  }> {
+    const { apiId, apiHash } = this.credentials();
+
+    try {
+      const result = await client.invoke(
+        new Api.auth.ExportLoginToken({
+          apiId,
+          apiHash,
+          exceptIds: [],
+        }),
+      );
+
+      // 1. Успешная авторизация (без 2FA)
+      if (result instanceof Api.auth.LoginTokenSuccess) {
+        const user = this.extractUser(result.authorization);
+        return {
+          status: "connected",
+          sessionState: (client.session as StringSession).save(),
+          user: this.toUserInfo(user),
+        };
+      }
+
+      // 2. Миграция на другой DC (если аккаунт пользователя на другом датацентре)
+      if (result instanceof Api.auth.LoginTokenMigrateTo) {
+        await client._switchDC(result.dcId);
+        const migrated = await client.invoke(
+          new Api.auth.ImportLoginToken({
+            token: result.token,
+          }),
+        );
+        if (migrated instanceof Api.auth.LoginTokenSuccess) {
+          const user = this.extractUser(migrated.authorization);
+          return {
+            status: "connected",
+            sessionState: (client.session as StringSession).save(),
+            user: this.toUserInfo(user),
+          };
+        }
+      }
+
+      // 3. Токен ожидает сканирования
+      if (result instanceof Api.auth.LoginToken) {
+        const token = Buffer.from(result.token);
+        const qrUrl = `tg://login?token=${token.toString("base64url")}`;
+        const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+        return {
+          status: "waiting",
+          refreshedQr: {
+            qrBase64,
+            expires: result.expires,
+          },
+        };
+      }
+
+      return { status: "waiting" };
+    } catch (error: unknown) {
+      if (error instanceof RPCError && error.errorMessage === "SESSION_PASSWORD_NEEDED") {
+        const passwordInfo = await client.invoke(new Api.account.GetPassword());
+        return {
+          status: "requires_2fa",
+          sessionState: (client.session as StringSession).save(),
+          passwordHint: passwordInfo.hint ?? null,
+        };
+      }
+      throw error instanceof RPCError ? translateRpcError(error) : error;
+    }
+  }
+
+  /**
+   * Обновляет QR-токен на существующем клиенте (если истёк срок ~30 сек до сканирования).
+   */
+  async refreshQrToken(client: TelegramClient): Promise<{
+    qrBase64: string;
+    expires: number;
+  }> {
+    const { apiId, apiHash } = this.credentials();
+    const result = await client.invoke(
+      new Api.auth.ExportLoginToken({
+        apiId,
+        apiHash,
+        exceptIds: [],
+      }),
+    );
+
+    if (!(result instanceof Api.auth.LoginToken)) {
+      throw new Error("Не удалось обновить QR-код Telegram");
+    }
+
+    const token = Buffer.from(result.token);
+    const qrUrl = `tg://login?token=${token.toString("base64url")}`;
+    const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+
+    return {
+      qrBase64,
+      expires: result.expires,
+    };
+  }
+
+  /**
+   * Ввод 2FA пароля на уже существующем подключённом клиенте.
+   */
+  async submitPasswordWithClient(client: TelegramClient, password: string): Promise<SignInOutcome> {
+    const authorization = await this.checkPassword(client, password);
+
+    return {
+      sessionState: (client.session as StringSession).save(),
+      user: this.toUserInfo(authorization),
+    };
   }
 
   /**
@@ -502,7 +670,8 @@ export class TelegramMtprotoService {
    * завершена, и сбой при закрытии сокета не должен превращать успешное
    * подключение в ошибку для пользователя.
    */
-  private async close(client: TelegramClient): Promise<void> {
+  /** Закрывает клиент MTProto. */
+  async close(client: TelegramClient): Promise<void> {
     try {
       await client.destroy();
     } catch {

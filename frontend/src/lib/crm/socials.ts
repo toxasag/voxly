@@ -1,3 +1,12 @@
+import {
+  Globe,
+  Instagram,
+  MessageCircle,
+  Phone,
+  Send,
+  Share2,
+  type LucideIcon,
+} from "lucide-react";
 import type { SocialKind } from "@/schemas/contact.schema";
 
 // ---------------------------------------------------------------------------
@@ -99,4 +108,54 @@ export function socialLabel(kind: SocialKind): string {
 
 export function socialHref(kind: SocialKind, value: string): string | null {
   return socialDefinition(kind).href(value);
+}
+
+export function socialIcon(kind: SocialKind): LucideIcon {
+  switch (kind) {
+    case "telegram":
+      return Send;
+    case "whatsapp":
+      return Phone;
+    case "max":
+      return MessageCircle;
+    case "viber":
+      return Phone;
+    case "vk":
+      return Share2;
+    case "instagram":
+      return Instagram;
+    case "other":
+    default:
+      return Globe;
+  }
+}
+
+/**
+ * Проверяет, является ли значение соцсети пользовательским (телефон, юзернейм, URL),
+ * а не внутренним техническим идентификатором (например, чат-ID или ID пользователя MAX).
+ * Технические ID хранятся в custom_fields (max_chat_id, max_user_id), а пользователю
+ * в UI не показываются, так как с ними человек ничего сделать не может.
+ */
+export function isDisplayableSocial(
+  social: { kind?: string | null; value?: string | null } | null | undefined,
+): boolean {
+  if (!social || !social.value) return false;
+  const val = social.value.trim();
+  if (!val) return false;
+
+  // Технический ID MAX (например, 461879064, max://...):
+  if (social.kind === "max") {
+    if (val.startsWith("max://")) return false;
+    // Числовые ID чатов/пользователей — это 1-10 цифр без плюса. Телефон в России начинается с + или имеет 11+ цифр.
+    if (/^\d{1,10}$/.test(val)) return false;
+    // Если это id с плюсом вроде +461879064 (менее 11 цифр):
+    if (/^\+\d{1,10}$/.test(val)) return false;
+  }
+
+  // Также для telegram: числовой ID без @ (например, "123456789")
+  if (social.kind === "telegram") {
+    if (/^\d+$/.test(val)) return false;
+  }
+
+  return true;
 }

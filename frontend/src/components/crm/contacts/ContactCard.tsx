@@ -33,7 +33,7 @@ import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
 import type { ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
 import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
-import { socialHref, socialLabel } from "@/lib/crm/socials";
+import { isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
 import { formatPhone, telHref } from "@/lib/utils/phone";
 import { cn, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
@@ -290,18 +290,21 @@ export const ContactCard = memo(function ContactCard({
   );
 
   const socials = useMemo<ContactSocialInput[]>(
-    () => contact.socials.map((social) => ({ kind: social.kind, value: social.value })),
+    () =>
+      contact.socials
+        .filter(isDisplayableSocial)
+        .map((social) => ({ kind: social.kind, value: social.value })),
+    [contact.socials],
+  );
+
+  const displayableSocials = useMemo(
+    () => contact.socials.filter(isDisplayableSocial),
     [contact.socials],
   );
 
   const startPhoneEdit = (): void => {
     setPhoneDraft(phones);
     setEditing("phones");
-  };
-
-  const startSocialEdit = (): void => {
-    setSocialDraft(socials);
-    setEditing("socials");
   };
 
   const phonesDisplay = contact.phones.length === 0
@@ -321,24 +324,10 @@ export const ContactCard = memo(function ContactCard({
       </span>
     );
 
-  const socialsDisplay = contact.socials.length === 0
-    ? undefined
-    : (
-      <span className="flex min-w-0 flex-col gap-0.5">
-        {contact.socials.map((social) => {
-          const href = socialHref(social.kind, social.value);
-
-          return (
-            <span key={`${social.kind}-${social.value}`} className="flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0 text-xs text-[#888888]">{socialLabel(social.kind)}</span>
-              {href !== null
-                ? <RecordFieldLink href={href} label={social.value} />
-                : <span className="truncate text-[#111111]">{social.value}</span>}
-            </span>
-          );
-        })}
-      </span>
-    );
+  const startSocialEdit = (): void => {
+    setSocialDraft(socials);
+    setEditing("socials");
+  };
 
   const contactEmails = useMemo(() => extractContactEmails(contact), [contact]);
 
@@ -478,36 +467,80 @@ export const ContactCard = memo(function ContactCard({
 
       {/* 3. Социальные сети (порядок по ТЗ: ФИО -> Общее -> Социальные сети -> Работа -> Система) */}
       <RecordFieldGroup title="Социальные сети">
-        <RecordField
-          icon={MessageCircle}
-          label="Мессенджеры"
-          value={contact.socials.map((social) => social.value).join(", ")}
-          display={socialsDisplay}
-          editing={editing === "socials"}
-          onStartEdit={startSocialEdit}
-          onCancel={() => setEditing(null)}
-          editor={
-            <div className="space-y-2">
-              <SocialsInput value={socialDraft} onChange={setSocialDraft} idPrefix="card-social" />
-              <div className="flex items-center justify-end gap-2">
+        {editing === "socials" ? (
+          <div className="space-y-2 px-4 py-2">
+            <SocialsInput value={socialDraft} onChange={setSocialDraft} idPrefix="card-social" />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditing(null)}
+                className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111] cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={() => commit({ socials: socialDraft })}
+                className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0] cursor-pointer"
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {displayableSocials.length === 0 ? (
+              <div className="flex items-center justify-between px-4 py-1.5 min-h-[30px]">
+                <span className="flex w-[120px] shrink-0 items-center gap-2 text-xs text-[#666666]">
+                  <MessageCircle className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                  <span className="truncate">Соцсети</span>
+                </span>
                 <button
                   type="button"
-                  onClick={() => setEditing(null)}
-                  className="rounded px-2 py-1 text-xs text-[#666666] hover:text-[#111111]"
+                  onClick={startSocialEdit}
+                  className="text-xs text-[#888888] hover:text-[#4a38f5] transition-colors cursor-pointer"
                 >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  onClick={() => commit({ socials: socialDraft })}
-                  className="rounded bg-[#4a38f5] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#3b2be0]"
-                >
-                  Сохранить
+                  + Добавить соцсеть
                 </button>
               </div>
-            </div>
-          }
-        />
+            ) : (
+              displayableSocials.map((social, idx) => {
+                const Icon = socialIcon(social.kind);
+                const href = socialHref(social.kind, social.value);
+                return (
+                  <RecordField
+                    key={`${social.kind}-${idx}-${social.value}`}
+                    icon={Icon}
+                    label={socialLabel(social.kind)}
+                    value={social.value}
+                    display={
+                      href !== null ? (
+                        <RecordFieldLink href={href} label={social.value} />
+                      ) : (
+                        <span className="truncate text-[#111111]">{social.value}</span>
+                      )
+                    }
+                    onStartEdit={startSocialEdit}
+                  />
+                );
+              })
+            )}
+
+            {displayableSocials.length > 0 && (
+              <div className="px-4 py-1">
+                <button
+                  type="button"
+                  onClick={startSocialEdit}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#666666] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  <span>Добавить соцсеть</span>
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
         <RecordField
           icon={Linkedin}
           label="LinkedIn"

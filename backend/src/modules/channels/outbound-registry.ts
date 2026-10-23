@@ -35,6 +35,8 @@ export interface OutboundMessage {
   /** Адрес получателя в терминах канала: peer id Telegram, номер WhatsApp. */
   recipient: string;
   text: string;
+  username?: string;
+  phone?: string;
 }
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;
@@ -55,8 +57,40 @@ export type StoryPublishResult =
 
 export type StoryPublisher = (payload: StoryPublishPayload) => Promise<StoryPublishResult>;
 
+export interface TelegramPhoneResolveResult {
+  exists: boolean;
+  userId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  error?: string;
+}
+
+export type TelegramPhoneResolver = (
+  tenantId: string,
+  phoneDigits: string,
+) => Promise<TelegramPhoneResolveResult>;
+
 const senders = new Map<ChannelSlug, OutboundSender>();
 const storyPublishers = new Map<ChannelSlug, StoryPublisher>();
+let telegramPhoneResolver: TelegramPhoneResolver | null = null;
+
+/** Транспорт Telegram регистрирует резолвер поиска по номеру телефона */
+export function registerTelegramPhoneResolver(resolver: TelegramPhoneResolver): () => void {
+  telegramPhoneResolver = resolver;
+  return () => {
+    if (telegramPhoneResolver === resolver) telegramPhoneResolver = null;
+  };
+}
+
+/** Вызов резолвера Telegram по номеру телефона */
+export async function resolveTelegramPhone(
+  tenantId: string,
+  phoneDigits: string,
+): Promise<TelegramPhoneResolveResult | null> {
+  if (!telegramPhoneResolver) return null;
+  return telegramPhoneResolver(tenantId, phoneDigits);
+}
 
 /** Транспорт объявляет себя отправителем канала при старте процесса. */
 export function registerOutboundSender(channel: ChannelSlug, sender: OutboundSender): () => void {
@@ -90,4 +124,5 @@ export function resolveStoryPublisher(channel: string): StoryPublisher | null {
 export function clearOutboundSenders(): void {
   senders.clear();
   storyPublishers.clear();
+  telegramPhoneResolver = null;
 }

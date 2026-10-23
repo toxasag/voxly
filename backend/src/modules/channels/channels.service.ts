@@ -47,7 +47,7 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     label: row.label,
     externalId: row.external_id,
     status: row.status,
-    statusMessage: row.status_message,
+    statusMessage: row.status_message ?? "",
     hasCredentials: row.has_credentials,
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,

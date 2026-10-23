@@ -544,9 +544,38 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
     const bodySchema = z.object({
       baseUrl: z.string().optional(),
       apiKey: z.string().optional(),
+      providerId: z.string().optional(),
     });
     const parsed = bodySchema.parse(request.body ?? {});
     const result = await platformConfigService.testLlmConnection(parsed);
+    return reply.send({ data: result });
+  });
+
+  /**
+   * Получение списка реально доступных моделей у провайдера.
+   */
+  app.post("/integrations/llm/models", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      baseUrl: z.string().optional(),
+      apiKey: z.string().optional(),
+      providerId: z.string().optional(),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const result = await platformConfigService.fetchAvailableModels(parsed);
+    return reply.send({ data: result });
+  });
+
+  /**
+   * Проверка доступности ключей пула (валидность каждого ключа в отдельности).
+   */
+  app.post("/integrations/llm/verify-keys", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      baseUrl: z.string().optional(),
+      providerId: z.string().optional(),
+      keys: z.array(z.string()).optional(),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const result = await platformConfigService.verifyProviderKeys(parsed);
     return reply.send({ data: result });
   });
 }

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
@@ -16,6 +17,8 @@ import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.
 import {
   registerOutboundSender,
   registerStoryPublisher,
+  registerTelegramPhoneResolver,
+  type TelegramPhoneResolveResult,
   type StoryPublishPayload,
   type StoryPublishResult,
 } from "./outbound-registry.js";
@@ -97,6 +100,8 @@ export class TelegramTransportService {
   private unregisterOutbound: (() => void) | null = null;
   /** Снятие регистрации в реестре сторис; ставится в `start()`. */
   private unregisterStory: (() => void) | null = null;
+  /** Снятие регистрации резолвера поиска по номеру телефона */
+  private unregisterPhoneResolver: (() => void) | null = null;
 
   constructor(
     private readonly log: Logger,
@@ -147,6 +152,9 @@ export class TelegramTransportService {
     this.unregisterStory = registerStoryPublisher("telegram", (payload) =>
       this.sendStory(payload),
     );
+    this.unregisterPhoneResolver = registerTelegramPhoneResolver((tenantId, phoneDigits) =>
+      this.resolveUserByPhone(tenantId, phoneDigits),
+    );
 
     this.startupTimer = setTimeout(() => {
       void this.resync();
@@ -173,6 +181,11 @@ export class TelegramTransportService {
     if (this.unregisterStory !== null) {
       this.unregisterStory();
       this.unregisterStory = null;
+    }
+
+    if (this.unregisterPhoneResolver !== null) {
+      this.unregisterPhoneResolver();
+      this.unregisterPhoneResolver = null;
     }
 
     if (this.startupTimer !== null) clearTimeout(this.startupTimer);
@@ -644,6 +657,8 @@ export class TelegramTransportService {
     channelAccountId: string;
     recipient: string;
     text: string;
+    username?: string;
+    phone?: string;
   }): Promise<{ ok: true } | { ok: false; reason: string }> {
     const connection = this.connections.get(message.channelAccountId);
 
@@ -655,6 +670,53 @@ export class TelegramTransportService {
       await connection.client.sendMessage(message.recipient, { message: message.text });
       return { ok: true };
     } catch (error) {
+      const errStr = error instanceof Error ? error.message : String(error);
+
+      // Если в кэше сессии GramJS нет access_hash для этого peerId (например, после рестарта бэкенда)
+      if (errStr.includes("Could not find the input entity") || errStr.includes("Cannot cast") || errStr.includes("PeerUser")) {
+        this.log.info(
+          { recipient: message.recipient, username: message.username },
+          "Telegram entity not found in cache, attempting resolution",
+        );
+
+        // 1. Попытка резолва по username (@genadich_agency)
+        if (message.username) {
+          try {
+            const uname = message.username.replace(/^@/, "");
+            const entity = await connection.client.getEntity(uname);
+            if (entity) {
+              await connection.client.sendMessage(entity, { message: message.text });
+              return { ok: true };
+            }
+          } catch (unameErr) {
+            this.log.warn({ unameErr, username: message.username }, "Failed to resolve peer by username");
+          }
+        }
+
+        // 2. Прогрев кэша сущностей через getDialogs (загружает активные чаты с их access_hash)
+        try {
+          await connection.client.getDialogs({ limit: 100 });
+          await connection.client.sendMessage(message.recipient, { message: message.text });
+          return { ok: true };
+        } catch (dialogsErr) {
+          this.log.warn({ dialogsErr }, "Failed to resolve peer via getDialogs");
+        }
+
+        // 3. Попытка резолва по номеру телефона, если номер известен
+        if (message.phone) {
+          try {
+            const digits = message.phone.replace(/\D/g, "");
+            const phoneResolve = await this.resolveUserByPhone(connection.tenantId, digits);
+            if (phoneResolve.exists && phoneResolve.userId) {
+              await connection.client.sendMessage(phoneResolve.userId, { message: message.text });
+              return { ok: true };
+            }
+          } catch (phoneErr) {
+            this.log.warn({ phoneErr }, "Failed to resolve peer by phone");
+          }
+        }
+      }
+
       this.log.error(
         { error, channelAccountId: message.channelAccountId },
         "Failed to send manager reply to Telegram",
@@ -793,6 +855,92 @@ export class TelegramTransportService {
       );
       const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram MTProto";
       return { ok: false, reason: `Telegram отклонил публикацию сторис: ${reason}` };
+    }
+  }
+
+  /**
+   * Поиск пользователя в Telegram по номеру телефона (ImportContacts).
+   * Используется для автоматического кросс-канального обогащения контакта.
+   */
+  async resolveUserByPhone(
+    tenantId: string,
+    phoneRaw: string,
+  ): Promise<TelegramPhoneResolveResult> {
+    const digits = phoneRaw.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) return { exists: false, error: "bad_phone" };
+    const phone = `+${digits}`;
+
+    let conn = Array.from(this.connections.values()).find((c) => c.tenantId === tenantId);
+    if (!conn) {
+      conn = this.connections.values().next().value;
+    }
+    if (!conn) {
+      return { exists: false, error: "no_active_telegram_session" };
+    }
+
+    try {
+      const imported = (await conn.client.invoke(
+        new Api.contacts.ImportContacts({
+          contacts: [
+            new Api.InputPhoneContact({
+              clientId: bigInt(Date.now()),
+              phone,
+              firstName: "Lead",
+              lastName: "Contact",
+            }),
+          ],
+        }),
+      )) as { users?: Api.User[]; imported?: Array<{ userId?: unknown }> };
+
+      const users: Api.User[] = Array.isArray(imported?.users) ? imported.users : [];
+      let user = users.find((u) => u instanceof Api.User && !u.bot);
+
+      if (!user && Array.isArray(imported?.imported) && imported.imported.length > 0) {
+        const uid = imported.imported[0]?.userId;
+        if (uid != null) {
+          try {
+            const entity = await conn.client.getEntity(String(uid));
+            if (entity instanceof Api.User && !entity.bot) user = entity;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (!user || user.bot) {
+        return { exists: false };
+      }
+
+      let username: string | undefined = user.username ? String(user.username).trim().replace(/^@/, "") : undefined;
+      if (!username) {
+        try {
+          const fresh = await conn.client.getEntity(user);
+          if (fresh instanceof Api.User && fresh.username) {
+            username = String(fresh.username).trim().replace(/^@/, "");
+            user = fresh;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      try {
+        const input = await conn.client.getInputEntity(user);
+        await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
+      } catch {
+        // ignore
+      }
+
+      return {
+        exists: true,
+        userId: user.id ? user.id.toString() : undefined,
+        username: username || undefined,
+        firstName: user.firstName ? String(user.firstName).trim() : undefined,
+        lastName: user.lastName ? String(user.lastName).trim() : undefined,
+      };
+    } catch (err) {
+      this.log.warn({ err, phone }, "Telegram resolveUserByPhone failed");
+      return { exists: false, error: String(err) };
     }
   }
 

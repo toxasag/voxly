@@ -152,9 +152,10 @@ export function useTelegramQrStatus(
     },
     enabled: Boolean(tempSessionId) && enabled,
     refetchInterval: (query) => {
+      if (query.state.status === "error") return false;
       const data = query.state.data;
-      if (data?.status === "connected" || data?.status === "requires_2fa") return false;
-      return 2500;
+      if (data?.status === "connected") return false;
+      return 2000;
     },
   });
 }

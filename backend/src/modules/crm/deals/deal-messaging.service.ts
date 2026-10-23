@@ -5,6 +5,7 @@ import {
   type OutboundSendResult,
 } from "../../channels/outbound-registry.js";
 import type { CreateDealMessagePayload, DealMessageDTO } from "./deals.types.js";
+import type { ContactSocialJson } from "../contacts/contacts.types.js";
 import {
   GatewayChatProvider,
   type ChatProvider,
@@ -33,12 +34,15 @@ import { KnowledgeBaseService } from "../../ai/knowledge.service.js";
 interface OutboundRoute {
   channelAccountId: string;
   recipient: string;
+  username?: string;
+  phone?: string;
 }
 
 export interface SendFromOptionDTO {
   channelAccountId: string;
   channel: string;
   label: string;
+  accountName: string;
   available: boolean;
   unavailableReason?: string;
   isDefault: boolean;
@@ -66,11 +70,13 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
-              c.phone
+              c.phone,
+              c.socials
        FROM deals d
        LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id AND c.deleted_at IS NULL
        WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
@@ -82,23 +88,29 @@ export class DealMessagingService {
       telegram_username: null,
       whatsapp: null,
       phone: "",
+      socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; name: string }>(
-      `SELECT id, channel, name
+    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
+      `SELECT id, channel, label
        FROM channel_accounts
        WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
        ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    const lastMsgAccountRow = await query<{ channel_account_id: string }>(
-      `SELECT channel_account_id FROM deal_messages
-       WHERE tenant_id = $1 AND deal_id = $2 AND channel_account_id IS NOT NULL
+    const lastMsgAccountRow = await query<{ channel_account_id: string | null; channel: string }>(
+      `SELECT channel_account_id, channel FROM deal_messages
+       WHERE tenant_id = $1 AND deal_id = $2
        ORDER BY created_at DESC LIMIT 1`,
       [tenantId, dealId],
     );
-    const defaultAccountId = lastMsgAccountRow[0]?.channel_account_id ?? accounts[0]?.id;
+    const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
+    const lastChannel = lastMsgAccountRow[0]?.channel;
+
+    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
+    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
+    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
 
     return accounts.map((acc) => {
       let available = false;
@@ -117,7 +129,8 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан телефон для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
-        if (contact.phone) {
+        const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
+        if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан телефон для MAX";
@@ -126,10 +139,22 @@ export class DealMessagingService {
         available = true;
       }
 
+      let channelPrefix = acc.channel.toUpperCase();
+      if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
+      else if (acc.channel === "telegram") channelPrefix = "Telegram";
+      else if (acc.channel === "whatsapp") channelPrefix = "WhatsApp";
+      else if (acc.channel === "webchat") channelPrefix = "Онлайн-чат";
+
+      const cleanLabel = (acc.label || acc.name || "")
+        .replace(/\s*\((telegram|whatsapp|max|rumax|webchat)\)/gi, "")
+        .trim();
+      const accountLabel = cleanLabel || acc.label || acc.name || channelPrefix;
+
       return {
         channelAccountId: acc.id,
         channel: acc.channel,
-        label: `${acc.name || acc.channel} (${acc.channel})`,
+        label: `${channelPrefix} — ${accountLabel}`,
+        accountName: accountLabel,
         available,
         unavailableReason,
         isDefault: acc.id === defaultAccountId,
@@ -232,6 +257,8 @@ export class DealMessagingService {
         channelAccountId: route.channelAccountId,
         recipient: route.recipient,
         text: payload.content,
+        username: route.username,
+        phone: route.phone,
       });
     } catch (error) {
       this.log?.error({ error, dealId }, "Outbound sender threw while sending deal message");
@@ -261,6 +288,7 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT
          (
@@ -276,7 +304,8 @@ export class DealMessagingService {
          c.telegram_chat_id::text AS telegram_chat_id,
          c.telegram_username,
          c.whatsapp,
-         c.phone
+         c.phone,
+         c.socials
        FROM deals d
        LEFT JOIN contacts c
          ON c.id = d.contact_id
@@ -310,7 +339,12 @@ export class DealMessagingService {
     const recipient = this.recipientFor(payload.channel, row);
     if (recipient === null) return null;
 
-    return { channelAccountId, recipient };
+    return {
+      channelAccountId,
+      recipient,
+      username: row.telegram_username ?? undefined,
+      phone: row.phone && row.phone.length > 0 ? row.phone : undefined,
+    };
   }
 
   /** Адрес получателя зависит от канала: у Telegram это numeric id, не username. */
@@ -321,20 +355,27 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     },
   ): string | null {
     if (channel === "telegram") {
       // Числовой id, а не username: транспорт обращается к peer по нему, и
       // username мог измениться после первого сообщения.
-      return contact.telegram_chat_id ?? contact.telegram_username ?? null;
+      return contact.telegram_chat_id ?? contact.telegram_username ?? (contact.phone && contact.phone.length > 0 ? contact.phone : null);
     }
 
     if (channel === "whatsapp") {
       const value = contact.whatsapp ?? contact.phone;
-      return value.length > 0 ? value : null;
+      return value && value.length > 0 ? value : null;
     }
 
-    return contact.phone.length > 0 ? contact.phone : null;
+    if (channel === "max" || channel === "rumax") {
+      const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
+      if (maxSocial && maxSocial.length > 0) return maxSocial;
+      return contact.phone && contact.phone.length > 0 ? contact.phone : null;
+    }
+
+    return contact.phone && contact.phone.length > 0 ? contact.phone : null;
   }
 
   /**
@@ -503,11 +544,13 @@ export class DealMessagingService {
       telegram_username: string | null;
       whatsapp: string | null;
       phone: string;
+      socials?: ContactSocialJson[];
     }>(
       `SELECT c.telegram_chat_id::text AS telegram_chat_id,
               c.telegram_username,
               c.whatsapp,
-              c.phone
+              c.phone,
+              c.socials
        FROM contacts c
        WHERE c.tenant_id = $1 AND c.id = $2 AND c.deleted_at IS NULL`,
       [tenantId, contactId],
@@ -518,17 +561,33 @@ export class DealMessagingService {
       telegram_username: null,
       whatsapp: null,
       phone: "",
+      socials: [],
     };
 
-    const accounts = await query<{ id: string; channel: string; name: string }>(
-      `SELECT id, channel, name
+    const accounts = await query<{ id: string; channel: string; label?: string; name?: string }>(
+      `SELECT id, channel, label
        FROM channel_accounts
        WHERE tenant_id = $1 AND status = 'connected' AND deleted_at IS NULL
        ORDER BY created_at ASC`,
       [tenantId],
     );
 
-    return accounts.map((acc, index) => {
+    const lastMsgAccountRow = await query<{ channel_account_id: string | null; channel: string }>(
+      `SELECT dm.channel_account_id, dm.channel
+       FROM deal_messages dm
+       JOIN deals d ON d.id = dm.deal_id AND d.tenant_id = dm.tenant_id
+       WHERE dm.tenant_id = $1 AND d.contact_id = $2
+       ORDER BY dm.created_at DESC LIMIT 1`,
+      [tenantId, contactId],
+    );
+    const lastAccId = lastMsgAccountRow[0]?.channel_account_id;
+    const lastChannel = lastMsgAccountRow[0]?.channel;
+
+    const matchedByAccount = lastAccId ? accounts.find((a) => a.id === lastAccId) : undefined;
+    const matchedByChannel = lastChannel ? accounts.find((a) => a.channel === lastChannel) : undefined;
+    const defaultAccountId = matchedByAccount?.id ?? matchedByChannel?.id ?? accounts[0]?.id;
+
+    return accounts.map((acc) => {
       let available = false;
       let unavailableReason: string | undefined;
 
@@ -545,7 +604,8 @@ export class DealMessagingService {
           unavailableReason = "У контакта не указан телефон для WhatsApp";
         }
       } else if (acc.channel === "rumax" || acc.channel === "max") {
-        if (contact.phone) {
+        const hasMaxSocial = contact.socials?.some((s) => s.kind === "max" && s.value);
+        if (contact.phone || hasMaxSocial) {
           available = true;
         } else {
           unavailableReason = "У контакта не указан телефон для MAX";
@@ -554,13 +614,25 @@ export class DealMessagingService {
         available = true;
       }
 
+      let channelPrefix = acc.channel.toUpperCase();
+      if (acc.channel === "max" || acc.channel === "rumax") channelPrefix = "MAX";
+      else if (acc.channel === "telegram") channelPrefix = "Telegram";
+      else if (acc.channel === "whatsapp") channelPrefix = "WhatsApp";
+      else if (acc.channel === "webchat") channelPrefix = "Онлайн-чат";
+
+      const cleanLabel = (acc.label || acc.name || "")
+        .replace(/\s*\((telegram|whatsapp|max|rumax|webchat)\)/gi, "")
+        .trim();
+      const accountLabel = cleanLabel || acc.label || acc.name || channelPrefix;
+
       return {
         channelAccountId: acc.id,
         channel: acc.channel,
-        label: `${acc.name || acc.channel} (${acc.channel})`,
+        label: `${channelPrefix} — ${accountLabel}`,
+        accountName: accountLabel,
         available,
         unavailableReason,
-        isDefault: index === 0,
+        isDefault: acc.id === defaultAccountId,
       };
     });
   }
@@ -692,5 +764,79 @@ export class DealMessagingService {
       return { draft: "Здравствуйте! Чем я могу вам помочь?" };
     }
     return this.generateAiDraft(tenantId, deal.id);
+  }
+
+  /**
+   * Синхронизирует историю сообщений сделки из внешних подключенных каналов (MAX, Telegram).
+   */
+  async syncDealChatHistory(tenantId: string, dealId: string): Promise<{ ok: boolean; synced: number }> {
+    const dealRows = await query<{
+      contact_id: string | null;
+      channel: string | null;
+    }>(
+      `SELECT d.contact_id,
+              (SELECT m.channel FROM deal_messages m WHERE m.deal_id = d.id AND m.tenant_id = d.tenant_id ORDER BY m.created_at DESC LIMIT 1) AS channel
+       FROM deals d
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    const deal = dealRows[0];
+    if (!deal || !deal.contact_id) return { ok: true, synced: 0 };
+
+    let totalSynced = 0;
+
+    // Синхронизация истории диалогов MAX
+    const maxAccount = await queryOne<{ id: string }>(
+      `SELECT id FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId],
+    );
+
+    if (maxAccount) {
+      const contact = await queryOne<{
+        first_name: string;
+        last_name: string;
+        phone: string;
+        socials?: ContactSocialJson[];
+      }>(
+        `SELECT first_name, last_name, phone, socials FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+
+      if (contact) {
+        const { syncMaxDialogHistory } = await import("../../channels/max-integration.routes.js");
+        const maxSocial = contact.socials?.find((s) => s.kind === "max")?.value;
+        const count = await syncMaxDialogHistory({
+          tenantId,
+          dealId,
+          channelAccountId: maxAccount.id,
+          peerId: maxSocial || contact.phone,
+          peerPhone: contact.phone,
+          peerUserId: maxSocial,
+          senderName: `${contact.first_name} ${contact.last_name}`.trim(),
+        });
+        totalSynced += count;
+      }
+    }
+
+    return { ok: true, synced: totalSynced };
+  }
+
+  /**
+   * Синхронизирует историю сообщений контакта из внешних подключенных каналов.
+   */
+  async syncContactChatHistory(tenantId: string, contactId: string): Promise<{ ok: boolean; synced: number }> {
+    const deal = await queryOne<{ id: string }>(
+      `SELECT id FROM deals
+       WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
+       ORDER BY updated_at DESC LIMIT 1`,
+      [tenantId, contactId],
+    );
+
+    if (!deal) return { ok: true, synced: 0 };
+    return this.syncDealChatHistory(tenantId, deal.id);
   }
 }

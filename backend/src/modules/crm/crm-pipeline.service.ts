@@ -11,6 +11,8 @@ import {
   type ChannelProfile,
 } from "./channel-identity.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
+import { CrmEnrichmentService } from "./enrichment.service.js";
+import { MaxBridgeService } from "../channels/max-bridge.service.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
 // реэкспортируется здесь: транспорт получает его вместе с типом входящего
@@ -88,7 +90,7 @@ export class CrmPipelineService {
    * - saves the inbound message to deal_messages
    */
   async processIncoming(input: InboundMessageInput): Promise<CrmPipelineResult> {
-    return transaction(async (tx) => {
+    const result = await transaction(async (tx) => {
       const contact = await this.findContact(tx, input.tenantId, input);
       const isNewContact = contact === null;
 
@@ -112,6 +114,22 @@ export class CrmPipelineService {
           );
         }
 
+        // 1.5. Привязываем max_chat_id для MAX, если его ещё не было
+        if (input.channel === "max" && input.chatId) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(
+               COALESCE(custom_fields, '{}'::jsonb),
+               '{max_chat_id}',
+               to_jsonb($1::text),
+               true
+             )
+             WHERE id = $2 AND tenant_id = $3
+               AND (custom_fields->>'max_chat_id' IS NULL OR custom_fields->>'max_chat_id' = '')`,
+            [input.chatId, contact.id, input.tenantId],
+          );
+        }
+
         // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
         const newName = contactNameFrom(input);
         if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
@@ -123,6 +141,11 @@ export class CrmPipelineService {
           contact.last_name = newName.last_name;
         }
       } else {
+        const customFields: Record<string, unknown> = {};
+        if (input.channel === "max" && input.chatId) {
+          customFields.max_chat_id = input.chatId;
+        }
+
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
         // ещё нет, а строка-заглушка создавала бы фиктивную организацию.
         contactId = await this.contacts.createInTx(tx, input.tenantId, {
@@ -132,7 +155,7 @@ export class CrmPipelineService {
           telegram_chat_id: input.senderTelegramChatId ?? undefined,
           channel: contactChannelFor(input.channel),
           notes: `Автоматически создан из ${this.channelLabel(input.channel)}`,
-          custom_fields: {},
+          custom_fields: customFields,
         });
       }
 
@@ -170,7 +193,7 @@ export class CrmPipelineService {
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
             title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
-            description: input.text.slice(0, 500),
+            description: "",
             budget: 0,
             currency: "RUB",
             pipeline_id: pipelineId,
@@ -188,24 +211,59 @@ export class CrmPipelineService {
         }
       }
 
+      // Защита от дублирования сообщений при параллельной доставке вебхуков
+      const existingMsg = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND direction = 'inbound' AND content = $3 AND channel = $4
+           AND created_at > now() - interval '15 seconds'
+         LIMIT 1`,
+        [input.tenantId, dealId, input.text, input.channel],
+      );
+
+      if (!existingMsg) {
+        await tx.query(
+          `INSERT INTO deal_messages
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            input.tenantId,
+            dealId,
+            nullIfBlank(input.channelAccountId),
+            "client",
+            "inbound",
+            input.senderName,
+            input.text,
+            input.channel,
+          ],
+        );
+      }
+
+      // Обновляем таймстамп активности сделки для поднятия в канбане/списке
       await tx.query(
-        `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          input.tenantId,
-          dealId,
-          nullIfBlank(input.channelAccountId),
-          "client",
-          "inbound",
-          input.senderName,
-          input.text,
-          input.channel,
-        ],
+        `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [dealId, input.tenantId],
       );
 
       return { contactId, dealId, isNewContact, isNewDeal };
     });
+
+    // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
+    const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
+    const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
+    if (validPhone) {
+      const enrichService = new CrmEnrichmentService();
+      void enrichService
+        .enrichContact(input.tenantId, result.contactId, {
+          phoneOverride: validPhone,
+          channels: ["telegram", "max", "whatsapp"],
+        })
+        .catch(() => {
+          // Ошибки провайдеров не влияют на создание сделки
+        });
+    }
+
+    return result;
   }
 
   /**
@@ -261,21 +319,100 @@ export class CrmPipelineService {
     chatId: string;
     text: string;
     senderName?: string;
+    senderPhone?: string | null;
+    peerUserId?: string | null;
+    username?: string | null;
     pauseMinutes?: number;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     return transaction(async (tx) => {
-      const contact = await this.findContact(tx, input.tenantId, {
+      let contact = await this.findContact(tx, input.tenantId, {
         tenantId: input.tenantId,
         channel: input.channel,
         channelAccountId: input.channelAccountId,
         chatId: input.chatId,
         text: input.text,
-        senderName: input.senderName ?? "Оператор",
-        senderTelegramChatId: input.chatId,
+        senderName: input.senderName ?? "Менеджер",
+        senderPhone: input.senderPhone ?? undefined,
+        senderTelegramChatId: input.channel === "telegram" ? input.chatId : undefined,
+        profile: {
+          username: input.username ?? undefined,
+          phone: input.senderPhone ?? undefined,
+        },
       });
+
+      // Специфичный поиск контакта для MAX: по custom_fields (max_chat_id, max_user_id) и по socials
+      if (!contact && input.channel === "max") {
+        contact = await tx.queryOne<ExistingContact>(
+          `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+             AND (
+               custom_fields->>'max_chat_id' = $2
+               OR ($3::text IS NOT NULL AND custom_fields->>'max_user_id' = $3)
+               OR socials @> $4::jsonb
+               OR ($3::text IS NOT NULL AND socials @> $5::jsonb)
+             )
+           LIMIT 1`,
+          [
+            input.tenantId,
+            input.chatId,
+            input.peerUserId ?? null,
+            JSON.stringify([{ kind: "max", value: input.chatId }]),
+            JSON.stringify([{ kind: "max", value: input.peerUserId ?? "" }]),
+          ],
+        );
+      }
+
+      // Fallback через bridge для MAX: если телефон не пришел в вебхуке, берем его из диалогов моста
+      if (!contact && input.channel === "max" && input.channelAccountId) {
+        try {
+          const bridge = new MaxBridgeService();
+          const dialogsResp = await bridge.getPrivateDialogs({
+            botId: input.channelAccountId,
+            dialogLimit: 30,
+            messageLimit: 1,
+          });
+          if (dialogsResp.ok && Array.isArray(dialogsResp.dialogs)) {
+            const foundDialog = dialogsResp.dialogs.find(
+              (d) => d.chatId === input.chatId || (input.peerUserId && d.userId === input.peerUserId),
+            );
+            if (foundDialog?.phone) {
+              contact = await this.findContactByPhone(tx, input.tenantId, foundDialog.phone);
+              if (contact) {
+                await tx.query(
+                  `UPDATE contacts
+                   SET custom_fields = jsonb_set(
+                     jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{max_chat_id}', to_jsonb($1::text), true),
+                     '{max_user_id}', to_jsonb($2::text), true
+                   )
+                   WHERE id = $3 AND tenant_id = $4`,
+                  [input.chatId, foundDialog.userId || input.peerUserId || "", contact.id, input.tenantId],
+                );
+              }
+            }
+          }
+        } catch {
+          // best-effort lookup
+        }
+      }
 
       if (contact === null) {
         return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      // Привязываем max_chat_id к контакту, если его еще не было
+      if (input.channel === "max" && input.chatId) {
+        await tx.query(
+          `UPDATE contacts
+           SET custom_fields = jsonb_set(
+             COALESCE(custom_fields, '{}'::jsonb),
+             '{max_chat_id}',
+             to_jsonb($1::text),
+             true
+           )
+           WHERE id = $2 AND tenant_id = $3
+             AND (custom_fields->>'max_chat_id' IS NULL OR custom_fields->>'max_chat_id' = '')`,
+          [input.chatId, contact.id, input.tenantId],
+        );
       }
 
       const activeDeal =
@@ -284,6 +421,26 @@ export class CrmPipelineService {
 
       if (activeDeal === null) {
         return { dealId: null, messageId: null, pausedUntil: null };
+      }
+
+      // Дедупликация исходящих сообщений в пределах 20 секунд (исключает дублирование при отправке из веб-CRM)
+      const existingOutbound = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deal_messages
+         WHERE tenant_id = $1 AND deal_id = $2
+           AND direction = 'outbound'
+           AND content = $3
+           AND channel = $4
+           AND created_at >= now() - interval '20 seconds'
+         ORDER BY created_at DESC LIMIT 1`,
+        [input.tenantId, activeDeal.id, input.text, input.channel],
+      );
+
+      if (existingOutbound) {
+        return {
+          dealId: activeDeal.id,
+          messageId: existingOutbound.id,
+          pausedUntil: null,
+        };
       }
 
       const pauseMins = input.pauseMinutes ?? 30;
@@ -305,7 +462,7 @@ export class CrmPipelineService {
           input.tenantId,
           activeDeal.id,
           nullIfBlank(input.channelAccountId),
-          input.senderName ?? "Оператор",
+          input.senderName ?? "Менеджер",
           input.text,
           input.channel,
         ],
@@ -362,8 +519,11 @@ export class CrmPipelineService {
       if (byPhone !== null) return byPhone;
     }
 
-    const byChatIdAsPhone = await this.findContactByPhone(tx, tenantId, input.chatId);
-    if (byChatIdAsPhone !== null) return byChatIdAsPhone;
+    // Идентификатор чата проверяется как номер телефона только для WhatsApp (где chatId — реальный номер)
+    if (input.channel === "whatsapp" || input.chatId.startsWith("+")) {
+      const byChatIdAsPhone = await this.findContactByPhone(tx, tenantId, input.chatId);
+      if (byChatIdAsPhone !== null) return byChatIdAsPhone;
+    }
 
     return null;
   }
@@ -371,22 +531,54 @@ export class CrmPipelineService {
   /**
    * Поиск по любому номеру контакта, а не только по основному.
    *
-   * Клиент звонит со второго номера так же часто, как с первого. Проверка
-   * основной колонки и JSONB-массива дополнительных: у второго индекс GIN
-   * (idx_contacts_additional_phones), поэтому запрос не читает таблицу целиком.
+   * Клиент звонит со второго номера так же часто, как с первого. Поддерживает
+   * сопоставление номеров с кодом страны (+7/8/7), без знака плюса и по последним 10 цифрам.
    */
   private async findContactByPhone(
     tx: TransactionClient,
     tenantId: string,
     phone: string,
   ): Promise<ExistingContact | null> {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 10) {
+      return tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (phone = $2 OR additional_phones @> $3::jsonb)
+         LIMIT 1`,
+        [tenantId, phone, JSON.stringify([{ number: phone }])],
+      );
+    }
+
+    const last10 = digits.slice(-10);
+    const withPlus = `+${digits}`;
+    const altWith8 = digits.length === 11 && digits.startsWith("7") ? `8${digits.slice(1)}` : digits;
+    const altWith7 = digits.length === 11 && digits.startsWith("8") ? `7${digits.slice(1)}` : digits;
+
     return tx.queryOne<ExistingContact>(
       `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
        WHERE tenant_id = $1
          AND deleted_at IS NULL
-         AND (phone = $2 OR additional_phones @> $3::jsonb)
+         AND (
+           phone IN ($2, $3, $4, $5)
+           OR additional_phones @> $6::jsonb
+           OR additional_phones @> $7::jsonb
+           OR additional_phones @> $8::jsonb
+           OR right(regexp_replace(phone, '\\D', '', 'g'), 10) = $9
+         )
        LIMIT 1`,
-      [tenantId, phone, JSON.stringify([{ number: phone }])],
+      [
+        tenantId,
+        withPlus,
+        digits,
+        altWith8,
+        altWith7,
+        JSON.stringify([{ number: withPlus }]),
+        JSON.stringify([{ number: digits }]),
+        JSON.stringify([{ number: altWith8 }]),
+        last10,
+      ],
     );
   }
 

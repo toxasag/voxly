@@ -1,9 +1,13 @@
 import type { FastifyInstance } from "fastify";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
-import { query, queryOne } from "../../db/client.js";
+import { query, queryOne, transaction } from "../../db/client.js";
 import { updateTenantSchema } from "./admin.types.js";
-import { NotFoundError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
+import { getEnv } from "../../config/env.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -23,6 +27,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const rows = await query<{
       id: string;
       name: string;
+      slug: string;
       plan: string;
       status: string;
       ai_tokens_balance: string;
@@ -34,7 +39,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       users_count: string;
       modules_count: string;
     }>(
-      `SELECT t.id, t.name, t.plan, t.status, t.ai_tokens_balance,
+      `SELECT t.id, t.name, t.slug, t.plan, t.status, t.ai_tokens_balance,
           t.ai_balance_kopecks::text AS ai_balance_kopecks,
           t.ai_markup_percent::text AS ai_markup_percent,
           COALESCE((
@@ -51,6 +56,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     return reply.send({
       data: rows.map((row) => ({
         ...row,
+        slug: row.slug,
         ai_tokens_balance: Number(row.ai_tokens_balance),
         ai_balance_kopecks: Number(row.ai_balance_kopecks),
         ai_markup_percent: Number(row.ai_markup_percent),
@@ -131,5 +137,147 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     );
 
     return reply.send({ data: row });
+  });
+
+  app.delete("/tenants/:id", { onRequest: platformOwner }, async (request, reply) => {
+    const tenantId = tenantParams.parse(request.params).id;
+
+    // 1. Проверяем существование тенанта
+    const tenant = await queryOne<{ id: string; name: string; slug: string }>(
+      "SELECT id, name, slug FROM tenants WHERE id = $1",
+      [tenantId],
+    );
+    if (tenant === null) {
+      throw new NotFoundError("Компания не найдена");
+    }
+
+    // 2. Защита платформенного арендатора от удаления
+    if (tenant.slug === "voxly" || tenant.slug === "platform") {
+      throw new AppError(400, "CANNOT_DELETE_PLATFORM_TENANT", "Нельзя удалить платформенную организацию (Voxly Platform)");
+    }
+
+    // 3. Защита от удаления компании, под которой авторизован текущий пользователь
+    if (request.authUser.tenant_id === tenantId) {
+      throw new AppError(400, "CANNOT_DELETE_OWN_TENANT", "Нельзя удалить компанию, в которой вы сейчас авторизованы");
+    }
+
+    // 4. Очистка внешних инстансов WhatsApp Evolution API
+    try {
+      const evoService = new WhatsappEvolutionService();
+      if (evoService.isConfigured) {
+        const prefix = `wa_${tenantId.replace(/-/g, "").slice(0, 8)}_`;
+        const evoHeaders: Record<string, string> = {};
+        if (getEnv().EVOLUTION_API_KEY) {
+          evoHeaders.apikey = getEnv().EVOLUTION_API_KEY!;
+        }
+        const evoRes = await fetch(`${getEnv().EVOLUTION_API_URL.replace(/\/$/, "")}/instance/fetchInstances`, {
+          headers: evoHeaders,
+        });
+        if (evoRes.ok) {
+          const instances = await evoRes.json();
+          const list = Array.isArray(instances) ? instances : [];
+          for (const item of list) {
+            const name = (item as { name?: string; instanceName?: string })?.name ||
+              (item as { name?: string; instanceName?: string })?.instanceName;
+            if (typeof name === "string" && name.startsWith(prefix)) {
+              await evoService.deleteInstance(name);
+            }
+          }
+        }
+      }
+    } catch (evoErr) {
+      request.log.warn({ err: evoErr, tenantId }, "Failed to clean up Evolution API instances for tenant");
+    }
+
+    // 5. Очистка загруженных файлов с диска (uploads)
+    try {
+      const uploadsDir = path.resolve(process.cwd(), "uploads");
+      const files = await fs.readdir(uploadsDir).catch(() => []);
+      const tenantPrefix = `${tenantId}_`;
+      for (const file of files) {
+        if (file.startsWith(tenantPrefix)) {
+          await fs.unlink(path.join(uploadsDir, file)).catch(() => {});
+        }
+      }
+    } catch (fsErr) {
+      request.log.warn({ err: fsErr, tenantId }, "Failed to clean up uploads for tenant");
+    }
+
+    // 6. Полное удаление данных из PostgreSQL в рамках единой транзакции
+    await transaction(async (tx) => {
+      // Таблицы без внешних ключей, созданные миграциями
+      await tx.query("DELETE FROM contacts_company_backfill_0020 WHERE tenant_id = $1", [tenantId]).catch(() => {});
+
+      // Очистка связующих таблиц, задач, заметок, сообщений
+      await tx.query("DELETE FROM note_targets WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM task_targets WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM deal_messages WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM deal_stage_history WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM story_posts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM mailing_stage_rules WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM notes WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM crm_tasks WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM deals WHERE tenant_id = $1", [tenantId]);
+      await tx.query(
+        "DELETE FROM stages WHERE pipeline_id IN (SELECT id FROM pipelines WHERE tenant_id = $1)",
+        [tenantId],
+      );
+      await tx.query("DELETE FROM pipelines WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM contacts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM companies WHERE tenant_id = $1", [tenantId]);
+
+      // Сервисный центр
+      await tx.query("DELETE FROM repair_photos WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM repair_notes WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM repair_parts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM repair_works WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM repair_counters WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM device_models WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM repair_orders WHERE tenant_id = $1", [tenantId]);
+
+      // Финансы и биллинг
+      await tx.query(
+        "DELETE FROM invoice_items WHERE invoice_id IN (SELECT id FROM invoices WHERE tenant_id = $1)",
+        [tenantId],
+      );
+      await tx.query("DELETE FROM invoices WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM transactions WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM cash_accounts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM finance_categories WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM billing_payments WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM subscriptions WHERE tenant_id = $1", [tenantId]);
+
+      // AI и база знаний
+      await tx.query("DELETE FROM knowledge_base_chunks WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM knowledge_base_documents WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM ai_sales_examples WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM ai_agent_channel_bindings WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM ai_usage_log WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM ai_agents WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM ai_balance_topups WHERE tenant_id = $1", [tenantId]);
+
+      // Каналы, авторизация и метаданные
+      await tx.query("DELETE FROM telegram_auth_sessions WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM channel_accounts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM password_reset_tokens WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM refresh_tokens WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM tenant_audit_log WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM module_data_purges WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM installed_modules WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM record_table_layouts WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM page_layout_tabs WHERE tenant_id = $1", [tenantId]);
+
+      // Пользователи и сам арендатор
+      await tx.query("DELETE FROM users WHERE tenant_id = $1", [tenantId]);
+      await tx.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+    });
+
+    request.log.info({ tenantId, tenantName: tenant.name }, "Tenant completely deleted by platform owner");
+
+    return reply.send({
+      success: true,
+      data: { id: tenant.id, name: tenant.name },
+      message: `Компания «${tenant.name}» успешно и полностью удалена`,
+    });
   });
 }

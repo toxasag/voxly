@@ -1,9 +1,8 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import { useMutation, useQuery, type UseMutationResult } from "@tanstack/react-query";
 
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
-import { channelKeys } from "@/lib/api/use-channels";
 
 const BASE_PATH = "/api/v1/integrations/whatsapp";
 
@@ -38,8 +37,6 @@ export function useWhatsappQrStatus(
   label: string,
   enabled: boolean,
 ) {
-  const queryClient = useQueryClient();
-
   return useQuery({
     queryKey: ["whatsapp", "qr-status", instanceName],
     queryFn: async () => {
@@ -47,15 +44,14 @@ export function useWhatsappQrStatus(
       const res = await apiClient.get<WhatsappStatusResult>(
         `${BASE_PATH}/auth/qr/status?instanceName=${encodeURIComponent(instanceName)}&label=${encodeURIComponent(label)}`,
       );
-      if (res.data?.status === "connected") {
-        void queryClient.invalidateQueries({ queryKey: channelKeys.accounts("whatsapp") });
-      }
       return res.data;
     },
     enabled: Boolean(instanceName) && enabled,
+    retry: 1,
     refetchInterval: (query) => {
       const data = query.state.data;
       if (data?.status === "connected") return false;
+      if (query.state.status === "error") return 5000;
       return 2500;
     },
   });
