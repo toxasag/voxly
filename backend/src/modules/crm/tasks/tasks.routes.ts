@@ -21,7 +21,7 @@ const listQuerySchema = z
     status: taskStatusSchema.optional(),
     linked_entity_type: linkedEntityTypeSchema.optional(),
     linked_entity_id: z.string().uuid().optional(),
-    limit: z.coerce.number().int().positive().max(100).default(25),
+    limit: z.coerce.number().int().positive().max(500).default(25),
     offset: z.coerce.number().int().nonnegative().default(0),
   })
   .refine(
