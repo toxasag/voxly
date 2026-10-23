@@ -347,7 +347,7 @@ function TasksContent() {
         </Guard>
       ),
     },
-  ], [change, usersById]);
+  ], [change, usersById, openTaskRecord]);
 
   if (query.isLoading) return <SkeletonTable rows={7} columns={6} />;
   if (query.isError) return (
