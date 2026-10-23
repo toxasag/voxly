@@ -1,4 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import { Api } from "telegram";
+import type { TelegramClient } from "telegram";
+import { StringSession } from "telegram/sessions/index.js";
 
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
@@ -6,6 +9,7 @@ import { decryptSecret, encryptSecret } from "../../services/credentials-cipher.
 import {
   TelegramMtprotoService,
   TelegramPasswordRequiredError,
+  type SignInOutcome,
 } from "./telegram-mtproto.service.js";
 import type {
   QrStartResultDTO,
@@ -46,17 +50,51 @@ interface SessionRow {
   expires_at: Date | string;
 }
 
+interface ActiveQrSession {
+  tempSessionId: string;
+  tenantId: string;
+  actorId: string;
+  label: string;
+  client: TelegramClient;
+  status: "waiting" | "connected" | "requires_2fa" | "error";
+  qrBase64: string;
+  expires: number;
+  user?: { id: string; firstName: string; lastName: string; username: string | null; phone: string | null };
+  passwordHint?: string | null;
+  accountId?: string;
+  sessionState: string;
+  error?: string;
+  isClosed: boolean;
+  cleanupTimer: NodeJS.Timeout;
+  refreshInterval?: NodeJS.Timeout;
+}
+
 function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
 export class TelegramAuthService {
   private readonly mtproto = new TelegramMtprotoService();
+  private static readonly activeQrSessions = new Map<string, ActiveQrSession>();
 
   constructor(private readonly app: FastifyInstance) {}
 
   get isConfigured(): boolean {
     return this.mtproto.isConfigured;
+  }
+
+  private closeActiveQrSession(tempSessionId: string): void {
+    const active = TelegramAuthService.activeQrSessions.get(tempSessionId);
+    if (!active) return;
+
+    active.isClosed = true;
+    clearTimeout(active.cleanupTimer);
+    if (active.refreshInterval) {
+      clearInterval(active.refreshInterval);
+    }
+    TelegramAuthService.activeQrSessions.delete(tempSessionId);
+
+    void this.mtproto.close(active.client).catch(() => {});
   }
 
   /**
@@ -117,6 +155,7 @@ export class TelegramAuthService {
 
   /**
    * Старт подключения Telegram через QR-код.
+   * Клиент остаётся подключённым и ожидает сканирования в реальном времени.
    */
   async startQr(input: {
     tenantId: string;
@@ -125,8 +164,16 @@ export class TelegramAuthService {
   }): Promise<QrStartResultDTO> {
     await this.assertQuotaAvailable(input.tenantId);
 
-    const outcome = await this.mtproto.exportLoginToken();
+    // Закрываем предыдущие незавершённые QR-сессии этой компании
+    for (const [id, s] of TelegramAuthService.activeQrSessions.entries()) {
+      if (s.tenantId === input.tenantId) {
+        this.closeActiveQrSession(id);
+      }
+    }
+
+    const qrInit = await this.mtproto.createQrClient();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60_000);
+    const initialSessionState = (qrInit.client.session as StringSession).save();
 
     const row = await queryOne<{ id: string }>(
       `INSERT INTO telegram_auth_sessions
@@ -139,23 +186,129 @@ export class TelegramAuthService {
         "qr",
         input.label || "Telegram",
         "qr",
-        encryptSecret(outcome.sessionState),
+        encryptSecret(initialSessionState),
         expiresAt,
       ],
     );
 
-    if (row === null) throw new Error("Failed to persist Telegram auth session");
+    if (row === null) {
+      await this.mtproto.close(qrInit.client);
+      throw new Error("Failed to persist Telegram auth session");
+    }
+
     await this.purgeExpired(input.tenantId);
 
+    const tempSessionId = row.id;
+    let isFinished = false;
+
+    // Автоматическая очистка по истечении TTL
+    const cleanupTimer = setTimeout(() => {
+      this.closeActiveQrSession(tempSessionId);
+    }, SESSION_TTL_MINUTES * 60_000);
+
+    // Периодическое обновление токена на открытом клиенте (QR-код в Telegram живёт ~30 секунд)
+    const refreshInterval = setInterval(async () => {
+      const active = TelegramAuthService.activeQrSessions.get(tempSessionId);
+      if (!active || active.isClosed || isFinished || active.status !== "waiting") {
+        clearInterval(refreshInterval);
+        return;
+      }
+      try {
+        const refreshed = await this.mtproto.refreshQrToken(active.client);
+        active.qrBase64 = refreshed.qrBase64;
+        active.expires = refreshed.expires;
+        this.app.log.info({ tempSessionId }, "Telegram QR token refreshed");
+      } catch (err) {
+        this.app.log.warn({ tempSessionId, err }, "Telegram QR token refresh failed");
+      }
+    }, 25_000);
+
+    const activeSession: ActiveQrSession = {
+      tempSessionId,
+      tenantId: input.tenantId,
+      actorId: input.actorId,
+      label: input.label || "Telegram",
+      client: qrInit.client,
+      status: "waiting",
+      qrBase64: qrInit.qrBase64,
+      expires: qrInit.expires,
+      sessionState: initialSessionState,
+      isClosed: false,
+      cleanupTimer,
+      refreshInterval,
+    };
+
+    TelegramAuthService.activeQrSessions.set(tempSessionId, activeSession);
+
+    // Слушатель пуш-уведомления от Telegram о сканировании QR-кода на телефоне
+    qrInit.client.addEventHandler(async (update) => {
+      if (update instanceof Api.UpdateLoginToken) {
+        if (isFinished || activeSession.isClosed) return;
+        isFinished = true;
+        if (activeSession.refreshInterval) {
+          clearInterval(activeSession.refreshInterval);
+        }
+
+        this.app.log.info(
+          { tempSessionId, tenantId: input.tenantId },
+          "Received Telegram UpdateLoginToken! Finalizing QR login...",
+        );
+
+        try {
+          const outcome = await this.mtproto.completeQrLogin(activeSession.client);
+
+          if (outcome.status === "requires_2fa") {
+            activeSession.status = "requires_2fa";
+            activeSession.passwordHint = outcome.passwordHint ?? null;
+            activeSession.sessionState = outcome.sessionState;
+
+            await this.markRequires2FA(input.tenantId, tempSessionId, outcome.passwordHint ?? null);
+            await query(
+              `UPDATE telegram_auth_sessions
+               SET session_state = $1
+               WHERE tenant_id = $2 AND id = $3`,
+              [encryptSecret(outcome.sessionState), input.tenantId, tempSessionId],
+            );
+            return;
+          }
+
+          if (outcome.status === "connected" && outcome.user) {
+            const accountId = await this.persistAccount({
+              tenantId: input.tenantId,
+              label: activeSession.label,
+              sessionState: outcome.sessionState,
+              user: outcome.user,
+            });
+
+            await this.consume(input.tenantId, tempSessionId);
+
+            activeSession.status = "connected";
+            activeSession.accountId = accountId;
+            activeSession.user = outcome.user;
+            activeSession.sessionState = outcome.sessionState;
+
+            this.app.log.info(
+              { tenantId: input.tenantId, accountId, tgUserId: outcome.user.id },
+              "Telegram account connected successfully via QR code!",
+            );
+          }
+        } catch (err: unknown) {
+          this.app.log.error({ err, tempSessionId }, "Error finalizing QR login after scan");
+          activeSession.status = "error";
+          activeSession.error = err instanceof Error ? err.message : "Ошибка авторизации QR";
+        }
+      }
+    });
+
     this.app.log.info(
-      { tenantId: input.tenantId, sessionId: row.id },
-      "Telegram MTProto QR code generated",
+      { tenantId: input.tenantId, sessionId: tempSessionId },
+      "Telegram MTProto QR code session started and listening for scan",
     );
 
     return {
-      tempSessionId: row.id,
-      qr: outcome.qrBase64,
-      expires: outcome.expires,
+      tempSessionId,
+      qr: qrInit.qrBase64,
+      expires: qrInit.expires,
     };
   }
 
@@ -166,55 +319,77 @@ export class TelegramAuthService {
     tenantId: string;
     tempSessionId: string;
   }): Promise<QrStatusResultDTO> {
-    const session = await this.loadSession(input.tenantId, input.tempSessionId);
-    const sessionState = decryptSecret(session.session_state);
+    const active = TelegramAuthService.activeQrSessions.get(input.tempSessionId);
 
-    const outcome = await this.mtproto.checkQrStatus(sessionState);
+    if (active) {
+      if (active.status === "connected" && active.accountId && active.user) {
+        const response: QrStatusResultDTO = {
+          status: "connected",
+          accountId: active.accountId,
+          user: active.user,
+        };
+        // Закрываем клиент после успешной отдачи статуса
+        this.closeActiveQrSession(input.tempSessionId);
+        return response;
+      }
 
-    if (outcome.sessionState && outcome.sessionState !== sessionState) {
-      await query(
-        `UPDATE telegram_auth_sessions
-         SET session_state = $1
-         WHERE tenant_id = $2 AND id = $3`,
-        [encryptSecret(outcome.sessionState), input.tenantId, input.tempSessionId],
-      );
+      if (active.status === "requires_2fa") {
+        return {
+          status: "requires_2fa",
+          passwordHint: active.passwordHint ?? null,
+        };
+      }
+
+      if (active.status === "error") {
+        this.closeActiveQrSession(input.tempSessionId);
+        throw new AppError(400, "TELEGRAM_QR_FAILED", active.error || "Ошибка авторизации");
+      }
+
+      return {
+        status: "waiting",
+        qr: active.qrBase64,
+        expires: active.expires,
+      };
     }
 
-    if (outcome.status === "requires_2fa") {
-      await this.markRequires2FA(input.tenantId, session.id, outcome.passwordHint ?? null);
+    // Если в памяти сессии нет (например, был перезапуск бэкенда или сессия уже завершена)
+    const session = await this.loadSession(input.tenantId, input.tempSessionId);
+
+    // Если сессия уже была использована (consumed), отдаём созданный аккаунт
+    if (session.consumed_at !== null) {
+      const account = await queryOne<{ id: string; remote_user_id: string; label: string }>(
+        `SELECT id, remote_user_id, label FROM channel_accounts
+         WHERE tenant_id = $1 AND channel = 'telegram' AND deleted_at IS NULL
+         ORDER BY updated_at DESC LIMIT 1`,
+        [input.tenantId],
+      );
+      if (account) {
+        return {
+          status: "connected",
+          accountId: account.id,
+          user: {
+            id: account.remote_user_id,
+            firstName: account.label,
+            lastName: "",
+            username: null,
+            phone: null,
+          },
+        };
+      }
+    }
+
+    if (session.requires_2fa) {
       return {
         status: "requires_2fa",
-        passwordHint: outcome.passwordHint ?? null,
+        passwordHint: session.password_hint,
       };
     }
 
-    if (outcome.status === "connected" && outcome.user && outcome.sessionState) {
-      const accountId = await this.persistAccount({
-        tenantId: input.tenantId,
-        label: session.label,
-        sessionState: outcome.sessionState,
-        user: outcome.user,
-      });
-
-      await this.consume(input.tenantId, session.id);
-
-      this.app.log.info(
-        { tenantId: input.tenantId, accountId, tgUserId: outcome.user.id },
-        "Telegram account connected via QR code",
-      );
-
-      return {
-        status: "connected",
-        accountId,
-        user: outcome.user,
-      };
-    }
-
-    return {
-      status: "waiting",
-      qr: outcome.refreshedQr?.qrBase64,
-      expires: outcome.refreshedQr?.expires,
-    };
+    throw new AppError(
+      410,
+      "TELEGRAM_SESSION_EXPIRED",
+      "Сессия подключения истекла. Пожалуйста, обновите QR-код.",
+    );
   }
 
   /**
@@ -226,12 +401,19 @@ export class TelegramAuthService {
     password: string;
   }): Promise<Extract<QrStatusResultDTO, { status: "connected" }>> {
     const session = await this.loadSession(input.tenantId, input.tempSessionId);
-    const sessionState = decryptSecret(session.session_state);
+    const active = TelegramAuthService.activeQrSessions.get(input.tempSessionId);
 
-    const outcome = await this.mtproto.submitPassword({
-      sessionState,
-      password: input.password,
-    });
+    let outcome: SignInOutcome;
+
+    if (active && !active.isClosed) {
+      outcome = await this.mtproto.submitPasswordWithClient(active.client, input.password);
+    } else {
+      const sessionState = decryptSecret(session.session_state);
+      outcome = await this.mtproto.submitPassword({
+        sessionState,
+        password: input.password,
+      });
+    }
 
     const accountId = await this.persistAccount({
       tenantId: input.tenantId,
@@ -241,6 +423,7 @@ export class TelegramAuthService {
     });
 
     await this.consume(input.tenantId, session.id);
+    this.closeActiveQrSession(input.tempSessionId);
 
     this.app.log.info(
       { tenantId: input.tenantId, accountId, tgUserId: outcome.user.id },
