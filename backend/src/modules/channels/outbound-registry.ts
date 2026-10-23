@@ -35,6 +35,8 @@ export interface OutboundMessage {
   /** Адрес получателя в терминах канала: peer id Telegram, номер WhatsApp. */
   recipient: string;
   text: string;
+  username?: string;
+  phone?: string;
 }
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;
