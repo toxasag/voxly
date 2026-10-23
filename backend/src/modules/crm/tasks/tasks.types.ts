@@ -39,6 +39,7 @@ export const createTaskSchema = z
     deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
     contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
     company_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    notify_telegram: z.boolean().optional().default(false),
   })
   .superRefine(linkedEntityRefinement);
 

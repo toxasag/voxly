@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Plus, ListChecks, LayoutGrid, List, Check, Circle,
   AlertCircle, RefreshCw, Pencil, Trash2, Search, X, Calendar,
+  Flag, User, Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -15,6 +16,7 @@ import { TasksCalendarView } from "@/components/crm/tasks/TasksCalendarView";
 import { UserAvatar } from "@/components/shared/UserAvatar";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
+import { RecordCellShell } from "@/components/crm/shared/RecordCell";
 import {
   useTask,
   useTasks,
@@ -74,6 +76,7 @@ function toTaskFormValues(task: TaskDTO): CreateTaskPayload {
     assignee_id: task.assigneeId,
     linked_entity_type: task.linkedEntityType ?? "",
     linked_entity_id: task.linkedEntityId ?? "",
+    notify_telegram: false,
   };
 }
 
@@ -259,92 +262,165 @@ function TasksContent() {
     {
       id: "title",
       header: "Задача",
-      width: 300,
+      icon: ListChecks,
+      width: 320,
       sortValue: (task) => task.title,
       render: (task) => {
         const done = task.status === "done";
 
         return (
-          <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={(event) => { event.stopPropagation(); change(task); }}
-              aria-label={done ? "Вернуть в работу" : "Завершить"}
-              className={cn("shrink-0", done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]")}
-            >
-              {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
-            </button>
-            <div className="min-w-0">
-              <p className={cn("truncate text-sm font-medium", done ? "text-[#888888] line-through" : "text-[#111111]")}>{task.title}</p>
-              {task.description !== "" && <p className="truncate text-xs text-[#888888]">{task.description}</p>}
+          <RecordCellShell isLabelIdentifier>
+            <div className="flex min-w-0 items-center gap-2 flex-1">
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); change(task); }}
+                aria-label={done ? "Вернуть в работу" : "Завершить"}
+                className={cn(
+                  "shrink-0 transition-colors cursor-pointer",
+                  done ? "text-[#15803d]" : "text-[#888888] hover:text-[#15803d]",
+                )}
+              >
+                {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
+              </button>
+              <span
+                title={task.title}
+                className={cn(
+                  "truncate text-[13px] font-medium leading-normal",
+                  done ? "text-[#888888] line-through" : "text-[#111111]",
+                )}
+              >
+                {task.title}
+              </span>
+              {task.description ? (
+                <span
+                  title={task.description}
+                  className="hidden xl:inline truncate text-xs text-[#888888] max-w-[200px]"
+                >
+                  — {task.description}
+                </span>
+              ) : null}
             </div>
-          </div>
+
+            {/* Быстрые действия при наведении строки */}
+            <div className="hidden group-hover:flex items-center gap-0.5 shrink-0 pl-1">
+              <Guard requiredPermission="tasks:write">
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }}
+                  aria-label="Изменить задачу"
+                  title="Изменить задачу"
+                  className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }}
+                  aria-label="Удалить задачу"
+                  title="Удалить задачу"
+                  className="rounded p-1 text-[#888888] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </Guard>
+            </div>
+          </RecordCellShell>
         );
       },
     },
     {
       id: "priority",
       header: "Приоритет",
-      width: 130,
+      icon: Flag,
+      width: 140,
       hideable: true,
       sortValue: (task) => PRIORITY_ORDER[task.priority] ?? 0,
       render: (task) => (
-        <span className={cn(
-          "rounded-full border px-2 py-0.5 text-xs font-medium",
-          task.priority === "high" ? "border-rose-200 bg-rose-50 text-rose-700"
-            : task.priority === "medium" ? "border-amber-200 bg-amber-50 text-amber-700"
-            : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
-        )}>
-          {PRIORITY_LABELS[task.priority] ?? task.priority}
-        </span>
+        <RecordCellShell align="left">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-[4px] px-2 py-0.5 text-xs font-medium border",
+              task.priority === "high"
+                ? "border-rose-200 bg-rose-50 text-rose-700"
+                : task.priority === "medium"
+                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                  : "border-[#e5e5e5] bg-[#fafafa] text-[#666666]",
+            )}
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full shrink-0",
+                task.priority === "high"
+                  ? "bg-rose-500"
+                  : task.priority === "medium"
+                    ? "bg-amber-500"
+                    : "bg-[#888888]",
+              )}
+            />
+            {PRIORITY_LABELS[task.priority] ?? task.priority}
+          </span>
+        </RecordCellShell>
       ),
     },
     {
       id: "due",
       header: "Срок",
-      width: 110,
+      icon: Calendar,
+      width: 120,
       hideable: true,
-      // Пустой срок сортируется в конец: задача без даты не «самая срочная».
       sortValue: (task) => task.dueDate ?? "9999-12-31",
       render: (task) => (
-        <span className={cn("text-xs", task.isOverdue ? "font-medium text-rose-600" : "text-[#666666]")}>
-          {formatDue(task.dueDate)}
-        </span>
+        <RecordCellShell isEmpty={!task.dueDate} emptyLabel="срок">
+          {task.dueDate ? (
+            <span
+              className={cn(
+                "text-xs tabular-nums font-mono",
+                task.isOverdue && task.status !== "done" ? "font-semibold text-rose-600" : "text-[#666666]",
+              )}
+            >
+              {formatDue(task.dueDate)}
+            </span>
+          ) : null}
+        </RecordCellShell>
       ),
     },
     {
       id: "assignee",
       header: "Ответственный",
-      width: 160,
+      icon: User,
+      width: 180,
       hideable: true,
       sortValue: (task) => usersById.get(task.assigneeId)?.fullName ?? "",
-      render: (task) => <UserAvatar user={usersById.get(task.assigneeId)} size="sm" />,
+      render: (task) => {
+        const assignee = usersById.get(task.assigneeId);
+        return (
+          <RecordCellShell isEmpty={!assignee} emptyLabel="ответственного">
+            {assignee ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <UserAvatar user={assignee} size="sm" />
+                <span className="truncate text-[13px] text-[#111111]">{assignee.fullName}</span>
+              </div>
+            ) : null}
+          </RecordCellShell>
+        );
+      },
     },
     {
       id: "link",
       header: "Связь",
-      width: 120,
+      icon: Link2,
+      width: 140,
       hideable: true,
       sortValue: (task) => task.linkedEntityType ?? "",
       render: (task) => (
-        <span className="text-xs text-[#888888]">
-          {task.linkedEntityType === null ? "—" : LINK_LABELS[task.linkedEntityType] ?? task.linkedEntityType}
-        </span>
-      ),
-    },
-    {
-      id: "actions",
-      header: "",
-      width: 90,
-      hideable: true,
-      render: (task) => (
-        <Guard requiredPermission="tasks:write">
-          {/* Как в канбане: на мобильном кнопки видны без наведения. */}
-          <span className="flex items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
-            <button type="button" onClick={(event) => { event.stopPropagation(); openTaskRecord(task.id); }} aria-label="Изменить задачу" className="rounded p-1 text-[#888888] hover:text-[#111111]"><Pencil className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={(event) => { event.stopPropagation(); setDeleteTarget(task); }} aria-label="Удалить задачу" className="rounded p-1 text-[#888888] hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
-          </span>
-        </Guard>
+        <RecordCellShell isEmpty={task.linkedEntityType === null} emptyLabel="связь">
+          {task.linkedEntityType ? (
+            <span className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#e5e5e5] bg-[#fafafa] px-2 py-0.5 text-xs text-[#666666]">
+              <Link2 className="h-3 w-3 text-[#888888]" />
+              {LINK_LABELS[task.linkedEntityType] ?? task.linkedEntityType}
+            </span>
+          ) : null}
+        </RecordCellShell>
       ),
     },
   ], [change, usersById, openTaskRecord]);

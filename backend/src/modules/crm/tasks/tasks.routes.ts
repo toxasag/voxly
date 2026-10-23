@@ -88,7 +88,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("", { onRequest: canWrite }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
-    const task = await service.create(request.tenant_id, body);
+    const task = await service.create(request.tenant_id, body, request.authUser.id);
 
     return reply.status(201).send({ data: task });
   });
