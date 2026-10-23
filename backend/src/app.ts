@@ -54,6 +54,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   const app = fastify({
     trustProxy: true,
+    bodyLimit: 15 * 1024 * 1024,
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
     },

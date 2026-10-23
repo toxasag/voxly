@@ -12,6 +12,13 @@ import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 // генерируются подключенным AI-агентом или передаются оператору.
 // ---------------------------------------------------------------------------
 
+export interface WebchatMessengerButton {
+  type: "telegram" | "whatsapp" | "max";
+  label: string;
+  url: string;
+  handle?: string;
+}
+
 export interface WebchatAccountInfo {
   id: string;
   tenantId: string;
@@ -26,8 +33,14 @@ export interface WebchatAccountInfo {
   greeting?: string;
   placeholder?: string;
   position?: "bottom-right" | "bottom-left";
+  showMessengerBanner?: boolean;
+  messengerBannerMode?: "single" | "multi";
+  singleTarget?: "telegram" | "whatsapp" | "max";
+  messengerButtons?: WebchatMessengerButton[];
   telegramBot?: string;
   showTelegramBanner?: boolean;
+  whatsappPhone?: string;
+  maxLink?: string;
   consultantName?: string;
   consultantAvatar?: string;
   avatarType?: "icon" | "photo" | "mascot";
@@ -148,6 +161,66 @@ export class WebchatService {
 
     const creds = (account.credentials ?? {}) as Record<string, unknown>;
 
+    // Мессенджеры (Telegram, WhatsApp, MAX)
+    const showMessengerBanner = creds.showMessengerBanner !== undefined
+      ? Boolean(creds.showMessengerBanner)
+      : (creds.showTelegramBanner !== undefined ? Boolean(creds.showTelegramBanner) : true);
+
+    const messengerBannerMode = creds.messengerBannerMode === "multi" ? "multi" : "single";
+    const singleTarget = creds.singleTarget === "whatsapp" || creds.singleTarget === "max" ? creds.singleTarget : "telegram";
+
+    const rawTg = typeof creds.telegramBot === "string" ? creds.telegramBot.trim() : "";
+    const rawWa = typeof creds.whatsappPhone === "string" ? creds.whatsappPhone.trim() : "";
+    const rawMax = typeof creds.maxLink === "string" ? creds.maxLink.trim() : "";
+
+    const tgEnabled = creds.telegramEnabled !== undefined
+      ? Boolean(creds.telegramEnabled)
+      : (Boolean(creds.showTelegramBanner) || Boolean(rawTg));
+
+    const waEnabled = Boolean(creds.whatsappEnabled);
+    const maxEnabled = Boolean(creds.maxEnabled);
+
+    const messengerButtons: WebchatMessengerButton[] = [];
+
+    if (rawTg && (messengerBannerMode === "multi" ? tgEnabled : singleTarget === "telegram")) {
+      const clean = rawTg.replace(/^https?:\/\/t\.me\//, "").replace(/^@/, "");
+      messengerButtons.push({
+        type: "telegram",
+        label: "Telegram",
+        url: `https://t.me/${clean}`,
+        handle: `@${clean}`,
+      });
+    }
+
+    if (rawWa && (messengerBannerMode === "multi" ? waEnabled : singleTarget === "whatsapp")) {
+      let waUrl = rawWa;
+      if (!waUrl.startsWith("http")) {
+        let digits = waUrl.replace(/\D/g, "");
+        if (digits.length === 11 && digits.startsWith("8")) digits = "7" + digits.slice(1);
+        waUrl = `https://wa.me/${digits}`;
+      }
+      messengerButtons.push({
+        type: "whatsapp",
+        label: "WhatsApp",
+        url: waUrl,
+        handle: rawWa,
+      });
+    }
+
+    if (rawMax && (messengerBannerMode === "multi" ? maxEnabled : singleTarget === "max")) {
+      let maxUrl = rawMax;
+      if (!maxUrl.startsWith("http")) {
+        const clean = maxUrl.replace(/^@/, "");
+        maxUrl = `https://max.me/${clean}`;
+      }
+      messengerButtons.push({
+        type: "max",
+        label: "MAX",
+        url: maxUrl,
+        handle: rawMax,
+      });
+    }
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -162,12 +235,26 @@ export class WebchatService {
       greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
       placeholder: typeof creds.placeholder === "string" ? creds.placeholder : "Введите ваш вопрос...",
       position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
-      telegramBot: typeof creds.telegramBot === "string" ? creds.telegramBot.replace(/^@/, "").trim() : undefined,
-      showTelegramBanner: creds.showTelegramBanner !== false,
+      showMessengerBanner,
+      messengerBannerMode,
+      singleTarget,
+      messengerButtons,
+      telegramBot: rawTg ? rawTg.replace(/^@/, "") : undefined,
+      showTelegramBanner: showMessengerBanner && messengerButtons.some((b) => b.type === "telegram"),
+      whatsappPhone: rawWa || undefined,
+      maxLink: rawMax || undefined,
       consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
       consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
-      avatarType: creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon" ? creds.avatarType : (creds.consultantAvatar ? "photo" : "icon"),
-      mascotId: typeof creds.mascotId === "string" ? creds.mascotId : "voxly_robot",
+      avatarType:
+        creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon"
+          ? (creds.avatarType as "mascot" | "photo" | "icon")
+          : (creds.customMascotDirections || creds.mascotId === "custom"
+              ? "mascot"
+              : (creds.consultantAvatar ? "photo" : "icon")),
+      mascotId:
+        typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
+          ? creds.mascotId
+          : (creds.customMascotDirections ? "custom" : "drone"),
       customMascotDirections: typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0 ? creds.customMascotDirections.trim() : undefined,
       customMascotReactions: typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0 ? creds.customMascotReactions.trim() : undefined,
     };
