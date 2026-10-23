@@ -344,6 +344,17 @@ export function normalizeSocials(socials: ContactSocialPayload[]): ContactSocial
     const value = entry.value.trim();
     if (value === "") continue;
 
+    // Технические числовые ID каналов не должны попадать в socials:
+    // с ними пользователь ничего сделать не может, а для роутинга есть custom_fields и telegram_chat_id.
+    if (entry.kind === "max") {
+      if (value.startsWith("max://")) continue;
+      if (/^\d{1,10}$/.test(value)) continue;
+      if (/^\+\d{1,10}$/.test(value)) continue;
+    }
+    if (entry.kind === "telegram" && /^\d+$/.test(value)) {
+      continue;
+    }
+
     const key = `${entry.kind}:${value.toLowerCase()}`;
     if (seen.has(key)) continue;
 

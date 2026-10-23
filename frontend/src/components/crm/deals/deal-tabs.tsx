@@ -46,7 +46,7 @@ import { CompanyModal } from "@/components/crm/companies/CompanyModal";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
-import { socialHref, socialLabel } from "@/lib/crm/socials";
+import { isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
 import type { ContactChannel, ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
 import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
 import { formatPhone, telHref } from "@/lib/utils/phone";
@@ -390,8 +390,8 @@ function HomeTab({
       updateContact.mutate(
         { id: deal.contactId, payload: { socials: contactSocialsDraft } },
         {
-          onSuccess: () => toast.success("Мессенджеры контакта обновлены"),
-          onError: (e) => toast.error(e.message || "Ошибка обновления мессенджеров"),
+          onSuccess: () => toast.success("Социальные сети контакта обновлены"),
+          onError: (e) => toast.error(e.message || "Ошибка обновления социальных сетей"),
         }
       );
     } else if (field === "linkedin") {
@@ -1541,9 +1541,9 @@ function HomeTab({
                   </button>
                   {contactSocialsOpen && (
                     <div className="space-y-0.5 py-0.5">
-                      {/* Мессенджеры */}
-                      <FieldRow icon={MessageCircle} label="Мессенджеры">
-                        {editingContactField === "socials" ? (
+                      {/* Социальные сети */}
+                      {editingContactField === "socials" ? (
+                        <div className="px-4 py-1.5">
                           <div className="w-full space-y-2 py-1">
                             <SocialsInput
                               value={contactSocialsDraft}
@@ -1554,64 +1554,95 @@ function HomeTab({
                               <button
                                 type="button"
                                 onClick={() => setEditingContactField(null)}
-                                className="rounded px-2 py-0.5 text-xs text-[#666666] hover:text-[#111111]"
+                                className="rounded px-2 py-0.5 text-xs text-[#666666] hover:text-[#111111] cursor-pointer"
                               >
                                 Отмена
                               </button>
                               <button
                                 type="button"
                                 onClick={() => commitContactEdit("socials")}
-                                className="rounded bg-[#4a38f5] px-2.5 py-0.5 text-xs font-semibold text-white hover:bg-[#3b2be0]"
+                                className="rounded bg-[#4a38f5] px-2.5 py-0.5 text-xs font-semibold text-white hover:bg-[#3b2be0] cursor-pointer"
                               >
                                 Сохранить
                               </button>
                             </div>
                           </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setContactSocialsDraft(
-                                (fullLinkedContact?.socials ?? []).map((s) => ({ kind: s.kind, value: s.value }))
+                        </div>
+                      ) : (
+                        <>
+                          {(() => {
+                            const displayableSocials = (fullLinkedContact?.socials ?? []).filter(isDisplayableSocial);
+                            if (displayableSocials.length === 0) {
+                              return (
+                                <FieldRow icon={MessageCircle} label="Соцсети">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setContactSocialsDraft([]);
+                                      setEditingContactField("socials");
+                                    }}
+                                    className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
+                                  >
+                                    <span className="text-[#888888]">+ Добавить соцсеть</span>
+                                    <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                                  </button>
+                                </FieldRow>
                               );
-                              setEditingContactField("socials");
-                            }}
-                            title="Нажмите для редактирования мессенджеров"
-                            className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                          >
-                            <div className="min-w-0 flex-1">
-                              {fullLinkedContact?.socials && fullLinkedContact.socials.length > 0 ? (
-                                <div className="flex flex-col gap-0.5">
-                                  {fullLinkedContact.socials.map((social) => {
-                                    const href = socialHref(social.kind, social.value);
-                                    return (
-                                      <div key={`${social.kind}-${social.value}`} className="flex items-center gap-1.5">
-                                        <span className="text-[#888888] text-[11px]">{socialLabel(social.kind)}:</span>
-                                        {href ? (
-                                          <a
-                                            href={href}
-                                            target="_blank"
-                                            rel="noreferrer noopener"
-                                            onClick={(e) => e.stopPropagation()}
-                                            className="text-[#4a38f5] hover:underline truncate"
-                                          >
-                                            {social.value}
-                                          </a>
-                                        ) : (
-                                          <span className="truncate text-[#111111]">{social.value}</span>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+                            }
+                            return (
+                              <>
+                                {displayableSocials.map((social, idx) => {
+                                  const Icon = socialIcon(social.kind);
+                                  const href = socialHref(social.kind, social.value);
+                                  return (
+                                    <FieldRow key={`${social.kind}-${idx}-${social.value}`} icon={Icon} label={socialLabel(social.kind)}>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setContactSocialsDraft(displayableSocials.map((s) => ({ kind: s.kind, value: s.value })));
+                                          setEditingContactField("socials");
+                                        }}
+                                        title={`Нажмите для редактирования ${socialLabel(social.kind)}`}
+                                        className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer w-full"
+                                      >
+                                        <div className="min-w-0 flex-1">
+                                          {href ? (
+                                            <a
+                                              href={href}
+                                              target="_blank"
+                                              rel="noreferrer noopener"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="text-[#4a38f5] hover:underline truncate inline-block max-w-full"
+                                            >
+                                              {social.value}
+                                            </a>
+                                          ) : (
+                                            <span className="truncate text-[#111111]">{social.value}</span>
+                                          )}
+                                        </div>
+                                        <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
+                                      </button>
+                                    </FieldRow>
+                                  );
+                                })}
+                                <div className="px-4 py-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setContactSocialsDraft(displayableSocials.map((s) => ({ kind: s.kind, value: s.value })));
+                                      setEditingContactField("socials");
+                                    }}
+                                    className="inline-flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    <span>Добавить соцсеть</span>
+                                  </button>
                                 </div>
-                              ) : (
-                                <span className="text-[#888888]">—</span>
-                              )}
-                            </div>
-                            <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
-                          </button>
-                        )}
-                      </FieldRow>
+                              </>
+                            );
+                          })()}
+                        </>
+                      )}
 
                       {/* LinkedIn */}
                       <FieldRow icon={Linkedin} label="LinkedIn">
