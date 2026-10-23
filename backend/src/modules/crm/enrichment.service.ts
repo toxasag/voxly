@@ -1,6 +1,7 @@
 import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
+import { resolveTelegramPhone } from "../channels/outbound-registry.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -188,13 +189,21 @@ export class CrmEnrichmentService {
       try {
         const maxRes = await this.providers.checkMax(phoneDigits, tenantId);
         if (maxRes.exists) {
-          const hasMaxSocial = existingSocials.some((s) => s.kind === "max");
-          if (!hasMaxSocial && (maxRes.link || maxRes.username || maxRes.userId)) {
-            existingSocials.push({
-              kind: "max",
-              value: maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : `max://user?id=${maxRes.userId}`),
-            });
-            enrichedFields.push("socials:max");
+          const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : (maxRes.userId ? `+${maxRes.userId}` : "")));
+          if (maxVal) {
+            const existingMax = existingSocials.find((s) => s.kind === "max");
+            if (existingMax) {
+              if (existingMax.value.startsWith("max://user") && (phoneDigits || maxRes.username || maxRes.link)) {
+                existingMax.value = maxVal;
+                enrichedFields.push("socials:max");
+              }
+            } else {
+              existingSocials.push({
+                kind: "max",
+                value: maxVal,
+              });
+              enrichedFields.push("socials:max");
+            }
           }
           if (shouldUpdateName && !enrichedFields.includes("name") && (maxRes.firstName || maxRes.lastName)) {
             if (maxRes.firstName) updatedFirstName = maxRes.firstName;
@@ -229,6 +238,18 @@ export class CrmEnrichmentService {
         }
       } catch (err) {
         // пропускаем ошибку канала
+      }
+    }
+
+    // 3.5. Нормализация legacy socials (если ранее туда попал служебный max://user?id=...)
+    if (phoneDigits) {
+      for (const social of existingSocials) {
+        if (social.kind === "max" && social.value.startsWith("max://user")) {
+          social.value = `+${phoneDigits}`;
+          if (!enrichedFields.includes("socials:max")) {
+            enrichedFields.push("socials:max");
+          }
+        }
       }
     }
 
@@ -270,7 +291,22 @@ export class CrmEnrichmentService {
 
   // --- Реализации провайдеров по умолчанию ---
 
-  private async defaultTelegramProvider(phone: string, _tenantId: string): Promise<TelegramProfileResolved> {
+  private async defaultTelegramProvider(phone: string, tenantId: string): Promise<TelegramProfileResolved> {
+    try {
+      const resolved = await resolveTelegramPhone(tenantId, phone);
+      if (resolved && resolved.exists) {
+        return {
+          exists: true,
+          userId: resolved.userId,
+          username: resolved.username,
+          firstName: resolved.firstName,
+          lastName: resolved.lastName,
+        };
+      }
+    } catch {
+      // Игнорируем и пробуем bridge fallback
+    }
+
     const bridgeUrl = process.env.GRAMJS_BRIDGE_URL ?? "http://gramjs-bridge:3008";
     const token = process.env.VOXLY_SERVICE_TOKEN;
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
