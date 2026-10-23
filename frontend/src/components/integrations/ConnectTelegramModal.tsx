@@ -78,6 +78,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
   const [qrBase64, setQrBase64] = useState<string | null>(null);
   const [qr2faPassword, setQr2faPassword] = useState("");
+  const [qr2faError, setQr2faError] = useState<string | null>(null);
   const [isSubmittingQr2fa, setIsSubmittingQr2fa] = useState(false);
   const startedQrRef = useRef(false);
 
@@ -151,6 +152,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
       setQrSessionId(null);
       setQrBase64(null);
       setQr2faPassword("");
+      setQr2faError(null);
       startedQrRef.current = false;
 
       setStep("phone");
@@ -212,6 +214,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
     if (!qrSessionId || !qr2faPassword) return;
 
     setIsSubmittingQr2fa(true);
+    setQr2faError(null);
     try {
       await submitQr2fa.mutateAsync({
         tempSessionId: qrSessionId,
@@ -220,7 +223,13 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
       toast.success("Telegram успешно подключён с двухэтапной аутентификацией!");
       onClose();
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Неверный облачный пароль (2FA)";
+      const message =
+        err instanceof ApiClientError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Неверный облачный пароль (2FA)";
+      setQr2faError(message);
       toast.error(message);
     } finally {
       setIsSubmittingQr2fa(false);
@@ -340,7 +349,11 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] bg-[#4a38f5]/10">
             {mode === "qr" ? (
-              <QrCode className="h-3.5 w-3.5 text-[#4a38f5]" />
+              isQrWaiting2fa ? (
+                <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
+              ) : (
+                <QrCode className="h-3.5 w-3.5 text-[#4a38f5]" />
+              )
             ) : step === "password" ? (
               <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />
             ) : step === "code" ? (
@@ -355,7 +368,9 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
             </h2>
             <p className="text-[11px] text-[#666666]">
               {mode === "qr"
-                ? "Сканирование через мобильный клиент (Настройки → Устройства)"
+                ? isQrWaiting2fa
+                  ? "Двухэтапная проверка (облачный пароль)"
+                  : "Сканирование через мобильный клиент (Настройки → Устройства)"
                 : step === "code"
                   ? "Ввод кода подтверждения"
                   : step === "password"
@@ -391,40 +406,42 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
           <div className="flex flex-col flex-1 min-h-0">
             {/* Прокручиваемое содержимое со строгим отступом p-6 */}
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              {/* Переключатель способа авторизации */}
-              <div className="flex rounded-[8px] bg-[#f5f5f5] p-1 gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("qr");
-                    if (!qrSessionId && !startQr.isPending) {
-                      handleStartQr();
-                    }
-                  }}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
-                    mode === "qr"
-                      ? "bg-white text-[#111111] shadow-2xs font-semibold"
-                      : "text-[#666666] hover:text-[#111111]",
-                  )}
-                >
-                  <QrCode className="h-3.5 w-3.5" />
-                  <span>По QR-коду (Быстро)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode("phone")}
-                  className={cn(
-                    "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
-                    mode === "phone"
-                      ? "bg-white text-[#111111] shadow-2xs font-semibold"
-                      : "text-[#666666] hover:text-[#111111]",
-                  )}
-                >
-                  <Phone className="h-3.5 w-3.5" />
-                  <span>По номеру телефона</span>
-                </button>
-              </div>
+              {/* Переключатель способа авторизации (скрыт во время ввода 2FA облачного пароля) */}
+              {!isQrWaiting2fa && (
+                <div className="flex rounded-[8px] bg-[#f5f5f5] p-1 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("qr");
+                      if (!qrSessionId && !startQr.isPending) {
+                        handleStartQr();
+                      }
+                    }}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
+                      mode === "qr"
+                        ? "bg-white text-[#111111] shadow-2xs font-semibold"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    <QrCode className="h-3.5 w-3.5" />
+                    <span>По QR-коду (Быстро)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("phone")}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-[6px] py-1.5 text-xs font-medium transition-all cursor-pointer",
+                      mode === "phone"
+                        ? "bg-white text-[#111111] shadow-2xs font-semibold"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    <span>По номеру телефона</span>
+                  </button>
+                </div>
+              )}
 
               {/* -------------------- РЕЖИМ QR-КОДА -------------------- */}
               {mode === "qr" && (
@@ -434,7 +451,7 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                       <div className="flex gap-2.5 rounded-[8px] border border-sky-500/20 bg-sky-500/5 p-3">
                         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
                         <p className="text-xs leading-relaxed text-[#666666]">
-                          У аккаунта включена двухэтапная проверка в Telegram. Введите облачный пароль.
+                          У аккаунта включена двухэтапная проверка в Telegram. Введите облачный пароль — тот, который запрашивает Telegram при входе с нового устройства.
                           {qrStatusData?.passwordHint && (
                             <>
                               {" "}
@@ -447,19 +464,19 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
                         </p>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label className="block text-xs font-medium text-[#666666]">
-                          Облачный пароль (2FA)
-                        </label>
-                        <input
-                          type="password"
-                          value={qr2faPassword}
-                          onChange={(e) => setQr2faPassword(e.target.value)}
-                          placeholder="••••••••"
-                          autoFocus
-                          className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                        />
-                      </div>
+                      <PasswordField
+                        label="Облачный пароль (2FA)"
+                        value={qr2faPassword}
+                        onChange={(e) => {
+                          setQr2faPassword(e.target.value);
+                          if (qr2faError) setQr2faError(null);
+                        }}
+                        autoFocus
+                        autoComplete="off"
+                        placeholder="••••••••"
+                        error={qr2faError ?? undefined}
+                        className="h-8 rounded-[6px] border-[#e5e5e5] bg-white text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:ring-[#4a38f5]/20"
+                      />
                     </form>
                   ) : (
                     <>
@@ -701,7 +718,17 @@ export function ConnectTelegramModal({ open, onClose }: ConnectTelegramModalProp
             {/* Фиксированный футер снизу */}
             <div className="flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-3.5 shrink-0">
               <div>
-                {mode === "phone" && step !== "phone" ? (
+                {mode === "qr" && isQrWaiting2fa ? (
+                  <button
+                    type="button"
+                    onClick={() => handleStartQr()}
+                    disabled={isPending}
+                    className="flex h-8 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] disabled:opacity-40 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    К QR-коду
+                  </button>
+                ) : mode === "phone" && step !== "phone" ? (
                   <button
                     type="button"
                     onClick={() => setStep(step === "password" ? "code" : "phone")}

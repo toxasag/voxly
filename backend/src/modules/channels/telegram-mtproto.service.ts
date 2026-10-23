@@ -255,13 +255,18 @@ export class TelegramMtprotoService {
   }
 
   /**
-   * Завершает QR-авторизацию после получения события `UpdateLoginToken` (второй вызов ExportLoginToken).
+   * Проверяет или завершает QR-авторизацию на открытом клиенте:
+   * 1. Если отсканировано и нет 2FA -> "connected" + user
+   * 2. Если аккаунт на другом DC -> мигрирует DC и завершает -> "connected" + user
+   * 3. Если требуется 2FA -> "requires_2fa" + passwordHint
+   * 4. Если токен ещё ждёт сканирования или обновился -> "waiting" + refreshedQr
    */
-  async completeQrLogin(client: TelegramClient): Promise<{
-    status: "connected" | "requires_2fa";
-    sessionState: string;
+  async checkOrCompleteQr(client: TelegramClient): Promise<{
+    status: "waiting" | "connected" | "requires_2fa";
+    sessionState?: string;
     user?: SignInOutcome["user"];
     passwordHint?: string | null;
+    refreshedQr?: { qrBase64: string; expires: number };
   }> {
     const { apiId, apiHash } = this.credentials();
 
@@ -274,7 +279,7 @@ export class TelegramMtprotoService {
         }),
       );
 
-      // 1. Успешная авторизация
+      // 1. Успешная авторизация (без 2FA)
       if (result instanceof Api.auth.LoginTokenSuccess) {
         const user = this.extractUser(result.authorization);
         return {
@@ -302,7 +307,21 @@ export class TelegramMtprotoService {
         }
       }
 
-      throw new Error(`Неожиданный ответ Telegram при подтверждении QR: ${result.className}`);
+      // 3. Токен ожидает сканирования
+      if (result instanceof Api.auth.LoginToken) {
+        const token = Buffer.from(result.token);
+        const qrUrl = `tg://login?token=${token.toString("base64url")}`;
+        const qrBase64 = await QRCode.toDataURL(qrUrl, { margin: 1, width: 300 });
+        return {
+          status: "waiting",
+          refreshedQr: {
+            qrBase64,
+            expires: result.expires,
+          },
+        };
+      }
+
+      return { status: "waiting" };
     } catch (error: unknown) {
       if (error instanceof RPCError && error.errorMessage === "SESSION_PASSWORD_NEEDED") {
         const passwordInfo = await client.invoke(new Api.account.GetPassword());
