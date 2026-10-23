@@ -34,6 +34,9 @@ export interface TaskDTO {
   dueDate: string | null;
   assigneeId: string;
   completedAt: string | null;
+  notifyTelegram?: boolean;
+  remindBeforeMinutes?: number | null;
+  reminderSentAt?: string | null;
   isOverdue: boolean;
   createdAt: string;
   updatedAt: string;
@@ -72,6 +75,7 @@ export interface CreateTaskPayload {
   contact_id?: string | null;
   company_id?: string | null;
   notify_telegram?: boolean;
+  remind_before_minutes?: number;
 }
 
 export interface UpdateTaskPayload {
@@ -94,6 +98,7 @@ export interface UpdateTaskPayload {
   contact_id?: string | null;
   company_id?: string | null;
   notify_telegram?: boolean;
+  remind_before_minutes?: number;
 }
 
 const BASE = "/api/v1/crm/tasks";
