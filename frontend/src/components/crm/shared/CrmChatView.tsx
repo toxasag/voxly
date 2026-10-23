@@ -656,17 +656,6 @@ export function CrmChatView({
                 );
               })}
             </select>
-
-            {activeChannel !== "all" && (
-              <span
-                className={cn(
-                  "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                  getChannelBadge(activeChannel).color,
-                )}
-              >
-                {getChannelBadge(activeChannel).label}
-              </span>
-            )}
           </div>
         </div>
 
@@ -880,17 +869,6 @@ className="flex items-center gap-1 font-medium text-rose-600"
                     </option>
                   ))}
                 </select>
-
-                {selectedOption && (
-                  <span
-                    className={cn(
-                      "rounded-[4px] border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                      getChannelBadge(selectedOption.channel).color,
-                    )}
-                  >
-                    {getChannelBadge(selectedOption.channel).label}
-                  </span>
-                )}
               </div>
             ) : (
               <span className="text-xs text-[#888888]">Автоматический канал</span>
