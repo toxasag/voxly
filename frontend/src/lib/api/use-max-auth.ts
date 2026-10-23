@@ -16,7 +16,7 @@ export interface MaxStartQrResult {
 
 export interface MaxStatusResult {
   ok: boolean;
-  status: "preparing" | "qr_ready" | "authorized" | "processing_password" | "error" | "unknown";
+  status: "preparing" | "qr_ready" | "authorized" | "waiting_password" | "processing_password" | "error" | "unknown";
   botId?: string;
   qr?: string | null;
   error?: string | null;
