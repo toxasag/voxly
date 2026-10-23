@@ -212,4 +212,10 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const result = await enrichment.enrichContact(request.tenant_id, id);
     return reply.send({ data: result });
   });
+
+  app.post("/:id/sync-chat-history", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await messaging.syncContactChatHistory(request.tenant_id, id);
+    return reply.send({ data: result });
+  });
 }

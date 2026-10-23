@@ -26,6 +26,38 @@ export interface MaxQrStartResponse {
   qr?: string | null;
 }
 
+export interface MaxBridgeDialogMessage {
+  id: string | number;
+  out: boolean;
+  text: string;
+  date: number;
+  attachments?: Array<{
+    type: string;
+    fileId?: string;
+    fileName?: string;
+    mimeType?: string;
+    fileSize?: number;
+  }>;
+}
+
+export interface MaxBridgeDialog {
+  chatId: string;
+  userId?: string;
+  username?: string | null;
+  firstName?: string | null;
+  phone?: string | null;
+  link?: string | null;
+  messages: MaxBridgeDialogMessage[];
+}
+
+export interface MaxPrivateDialogsResponse {
+  ok: boolean;
+  dialogs: MaxBridgeDialog[];
+  selfPhone?: string;
+  selfMaxUserId?: string;
+  error?: string;
+}
+
 export class MaxBridgeService {
   private get baseUrl(): string {
     return getEnv().MAX_BRIDGE_URL.replace(/\/$/, "");
@@ -157,6 +189,28 @@ export class MaxBridgeService {
     }
 
     return { ok: true, messageId: res.json?.messageId };
+  }
+
+  /** Получение истории приватных диалогов и сообщений из max-bridge */
+  async getPrivateDialogs(input: {
+    botId: string;
+    dialogLimit?: number;
+    messageLimit?: number;
+  }): Promise<MaxPrivateDialogsResponse> {
+    const res = await this.bridgeFetch<MaxPrivateDialogsResponse>("/crm/private-dialogs", {
+      method: "POST",
+      body: JSON.stringify({
+        botId: input.botId,
+        dialogLimit: input.dialogLimit ?? 20,
+        messageLimit: input.messageLimit ?? 50,
+      }),
+    });
+
+    if (!res.ok || !res.json) {
+      return { ok: false, dialogs: [], error: res.json?.error || "Не удалось загрузить диалоги из max-bridge" };
+    }
+
+    return res.json;
   }
 
   /** Получение бинарного PNG буфера QR-кода напрямую из max-bridge */
