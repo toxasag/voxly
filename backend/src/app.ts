@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
@@ -34,10 +34,12 @@ import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
 import stageRulesRoutes from "./modules/crm/deals/stage-rules.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
+import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import fastify from "fastify";
 
 /** Пути webhook-ов ботов и платёжных шлюзов — исключения из общего лимита, сверяются точно. */
 const WEBHOOK_PATHS: ReadonlySet<string> = new Set([
+  "/widget.js",
   "/auth/telegram/webhook",
   "/auth/max/webhook",
   "/api/v1/billing/robokassa/result",
@@ -71,16 +73,36 @@ export async function buildApp(): Promise<FastifyInstance> {
   const isAllowedOrigin = corsOriginMatcher();
 
   await app.register(cors, {
-    origin: (origin, callback) => {
-      if (isAllowedOrigin(origin ?? undefined)) {
-        callback(null, true);
-        return;
+    delegator: (req: FastifyRequest) => {
+      const url = (req.url ?? "").split("?")[0] ?? "";
+      // Публичный виджет и чат для внешних сайтов клиентов (WordPress, Tilda и др.)
+      const isPublicRoute =
+        url === "/widget.js" ||
+        url.startsWith("/api/v1/public/chat/") ||
+        url.startsWith("/mascots/");
+
+      if (isPublicRoute) {
+        return Promise.resolve({
+          origin: true,
+          credentials: true,
+          methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+        });
       }
+
+      const origin = req.headers.origin;
+      if (isAllowedOrigin(origin)) {
+        return Promise.resolve({
+          origin: true,
+          credentials: true,
+        });
+      }
+
       // Rejected without throwing: the browser then blocks the response, which
       // is the intended outcome, and the server logs stay clean.
-      callback(null, false);
+      return Promise.resolve({
+        origin: false,
+      });
     },
-    credentials: true,
   });
 
   await app.register(sensible);
@@ -182,6 +204,15 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Внутренние эндпоинты для сервиса max-bridge (upsert, active bots, delete, inbound/outbound)
   await app.register(maxInternalRoutes, { prefix: "/api/internal/max" });
+
+  // Раздача клиентского JS-виджета для внешних сайтов (WordPress, Tilda и др.)
+  app.get("/widget.js", async (_request, reply) => {
+    return reply
+      .type("application/javascript; charset=utf-8")
+      .header("Cache-Control", "public, max-age=300")
+      .header("Access-Control-Allow-Origin", "*")
+      .send(WIDGET_SCRIPT);
+  });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
