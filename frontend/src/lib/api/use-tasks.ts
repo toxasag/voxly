@@ -71,6 +71,7 @@ export interface CreateTaskPayload {
   deal_id?: string | null;
   contact_id?: string | null;
   company_id?: string | null;
+  notify_telegram?: boolean;
 }
 
 export interface UpdateTaskPayload {
@@ -92,6 +93,7 @@ export interface UpdateTaskPayload {
   deal_id?: string | null;
   contact_id?: string | null;
   company_id?: string | null;
+  notify_telegram?: boolean;
 }
 
 const BASE = "/api/v1/crm/tasks";

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ListChecks, User, Calendar, AlertCircle, Link2, Loader2 } from "lucide-react";
+import { ListChecks, User, Calendar, AlertCircle, Link2, Loader2, Send } from "lucide-react";
 import { createTaskSchema, type CreateTaskPayload } from "@/schemas/task.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
@@ -59,6 +59,7 @@ const EMPTY: CreateTaskPayload = {
   assignee_id: "",
   linked_entity_type: "",
   linked_entity_id: "",
+  notify_telegram: false,
 };
 
 const INPUT_CLASS =
@@ -307,6 +308,41 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
               </div>
               {message(errors.linked_entity_id) && <p className="text-xs text-rose-600">{message(errors.linked_entity_id)}</p>}
             </div>
+
+            {initial === undefined && (
+              <div className="flex items-center justify-between rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 transition-colors">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#0088cc]/10 text-[#0088cc]">
+                    <Send className="h-3.5 w-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-[#111111]">
+                      Уведомление в Telegram-бот
+                    </div>
+                    <div className="text-[11px] text-[#666666]">
+                      Отправить карточку задачи в @GetVoxlybot
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(form.watch("notify_telegram"))}
+                  onClick={() => form.setValue("notify_telegram", !form.watch("notify_telegram"), { shouldValidate: true })}
+                  className={cn(
+                    "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/40 cursor-pointer",
+                    form.watch("notify_telegram") ? "bg-[#4a38f5]" : "bg-[#d4d4d4]",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-xs transition-transform",
+                      form.watch("notify_telegram") ? "translate-x-[18px]" : "translate-x-0.5",
+                    )}
+                  />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4 shrink-0">

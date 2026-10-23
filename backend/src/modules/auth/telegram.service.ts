@@ -41,7 +41,7 @@ export class TelegramUnavailableError extends AppError {
 }
 
 /** Экранирование под parse_mode=HTML: код и логин подставляются в сообщение. */
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -126,6 +126,25 @@ export class TelegramService {
       text,
       parse_mode: "HTML",
       disable_notification: false,
+    });
+
+    return res.ok ? { delivered: true } : { delivered: false, reason: res.description };
+  }
+
+  /**
+   * Отправка произвольного текстового сообщения в чат (HTML).
+   */
+  async sendMessage(
+    chatId: number | string,
+    text: string,
+    options?: { parseMode?: "HTML" | "MarkdownV2"; disablePreview?: boolean },
+  ): Promise<TelegramSendResult> {
+    const res = await this.call("sendMessage", {
+      chat_id: typeof chatId === "string" ? Number(chatId) : chatId,
+      text,
+      parse_mode: options?.parseMode ?? "HTML",
+      disable_notification: false,
+      disable_web_page_preview: options?.disablePreview ?? true,
     });
 
     return res.ok ? { delivered: true } : { delivered: false, reason: res.description };
