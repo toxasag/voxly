@@ -143,6 +143,171 @@ function getChannelBadge(channel: string) {
   }
 }
 
+function renderChatMessageContent(content: string): React.ReactNode {
+  if (!content) return null;
+
+  const lines = content.split("\n");
+
+  return lines.map((line, lineIdx) => {
+    const isQuote = /^>\s?/.test(line);
+    const lineText = isQuote ? line.replace(/^>\s?/, "") : line;
+
+    // Регулярное выражение для распознавания форматирования Markdown и HTML
+    const regex = /(\*\*\*[^*]+?\*\*\*|\*\*[^*]+?\*\*|<b>.*?<\/b>|<strong>.*?<\/strong>|(?<!\*)\*[^*]+?\*(?!\*)|<i>.*?<\/i>|<em>.*?<\/em>|<u>.*?<\/u>|~~[^~]+?~~|<s>.*?<\/s>|<del>.*?<\/del>|`[^`]+?`|<code>.*?<\/code>|\|\|[^|]+?\|\||\[[^\]]+?\]\([^)]+?\)|https?:\/\/[^\s]+)/g;
+    const parts = lineText.split(regex);
+
+    const rendered = parts.map((part, partIdx) => {
+      if (!part) return null;
+
+      // Bold + Italic
+      if (part.startsWith("***") && part.endsWith("***") && part.length >= 6) {
+        return (
+          <strong key={partIdx} className="font-semibold italic text-[#111111]">
+            {part.slice(3, -3)}
+          </strong>
+        );
+      }
+      // Bold
+      if (
+        (part.startsWith("**") && part.endsWith("**") && part.length >= 4) ||
+        (part.startsWith("<b>") && part.endsWith("</b>")) ||
+        (part.startsWith("<strong>") && part.endsWith("</strong>"))
+      ) {
+        const text = part.startsWith("**")
+          ? part.slice(2, -2)
+          : part.startsWith("<b>")
+          ? part.slice(3, -4)
+          : part.slice(8, -9);
+        return (
+          <strong key={partIdx} className="font-semibold text-[#111111]">
+            {text}
+          </strong>
+        );
+      }
+      // Italic
+      if (
+        (part.startsWith("*") && part.endsWith("*") && part.length >= 2) ||
+        (part.startsWith("<i>") && part.endsWith("</i>")) ||
+        (part.startsWith("<em>") && part.endsWith("</em>"))
+      ) {
+        const text = part.startsWith("*")
+          ? part.slice(1, -1)
+          : part.startsWith("<i>")
+          ? part.slice(3, -4)
+          : part.slice(4, -5);
+        return (
+          <em key={partIdx} className="italic text-[#111111]">
+            {text}
+          </em>
+        );
+      }
+      // Underline
+      if (part.startsWith("<u>") && part.endsWith("</u>") && part.length >= 7) {
+        return (
+          <u key={partIdx} className="underline text-[#111111]">
+            {part.slice(3, -4)}
+          </u>
+        );
+      }
+      // Strikethrough
+      if (
+        (part.startsWith("~~") && part.endsWith("~~") && part.length >= 4) ||
+        (part.startsWith("<s>") && part.endsWith("</s>")) ||
+        (part.startsWith("<del>") && part.endsWith("</del>"))
+      ) {
+        const text = part.startsWith("~~")
+          ? part.slice(2, -2)
+          : part.startsWith("<s>")
+          ? part.slice(3, -4)
+          : part.slice(5, -6);
+        return (
+          <s key={partIdx} className="line-through text-[#666666]">
+            {text}
+          </s>
+        );
+      }
+      // Code
+      if (
+        (part.startsWith("`") && part.endsWith("`") && part.length >= 2) ||
+        (part.startsWith("<code>") && part.endsWith("</code>"))
+      ) {
+        const text = part.startsWith("`") ? part.slice(1, -1) : part.slice(6, -7);
+        return (
+          <code
+            key={partIdx}
+            className="rounded bg-black/[0.06] px-1 py-0.5 font-mono text-[12px] text-[#111111]"
+          >
+            {text}
+          </code>
+        );
+      }
+      // Spoiler
+      if (part.startsWith("||") && part.endsWith("||") && part.length >= 4) {
+        return (
+          <span
+            key={partIdx}
+            className="cursor-pointer rounded bg-[#e5e5e5] px-1 py-0.2 text-transparent hover:text-[#111111] transition-colors select-none"
+            title="Спойлер (наведите для просмотра)"
+          >
+            {part.slice(2, -2)}
+          </span>
+        );
+      }
+      // Link: [text](url)
+      if (part.startsWith("[") && part.includes("](") && part.endsWith(")")) {
+        const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+        if (linkMatch && linkMatch[1] && linkMatch[2]) {
+          return (
+            <a
+              key={partIdx}
+              href={linkMatch[2]}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#2aabee] underline hover:text-[#208bbf] break-all"
+            >
+              {linkMatch[1]}
+            </a>
+          );
+        }
+      }
+      // Raw URL
+      if (part.startsWith("http://") || part.startsWith("https://")) {
+        return (
+          <a
+            key={partIdx}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[#2aabee] underline hover:text-[#208bbf] break-all"
+          >
+            {part}
+          </a>
+        );
+      }
+
+      return <span key={partIdx}>{part}</span>;
+    });
+
+    if (isQuote) {
+      return (
+        <blockquote
+          key={lineIdx}
+          className="my-1 border-l-2 border-[#2aabee] pl-2.5 text-[#555555] italic"
+        >
+          {rendered}
+        </blockquote>
+      );
+    }
+
+    return (
+      <span key={lineIdx}>
+        {rendered}
+        {lineIdx < lines.length - 1 && <br />}
+      </span>
+    );
+  });
+}
+
 export function CrmChatView({
   entityType,
   entityId,
@@ -585,7 +750,7 @@ export function CrmChatView({
                   return (
 <div key={message.id} className="my-1.5 flex justify-center">
                       <div className="max-w-md rounded-full border border-[#e5e5e5] bg-[#f5f5f5] px-3 py-1 text-center text-xs text-[#666666]">
-                        {message.content}
+                        {renderChatMessageContent(message.content)}
                       </div>
                     </div>
                   );
@@ -631,7 +796,7 @@ export function CrmChatView({
 
                       {/* Текст сообщения */}
                       <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                        {message.content}
+                        {renderChatMessageContent(message.content)}
                       </div>
 
                       {/* Вложение сообщения, если есть */}
