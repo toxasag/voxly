@@ -16,8 +16,10 @@ import { toast } from "sonner";
 
 import {
   useAddKnowledgeText,
+  useCrawlSite,
   useDeleteKnowledgeDocument,
   useImportKnowledgeUrl,
+  useImportMapReviews,
   useKnowledgeDocuments,
   useSalesExamples,
   useUploadKnowledgeFile,
@@ -85,6 +87,8 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const addText = useAddKnowledgeText(agentId);
   const uploadFile = useUploadKnowledgeFile(agentId);
   const importUrl = useImportKnowledgeUrl(agentId);
+  const crawlSite = useCrawlSite(agentId);
+  const importMapReviews = useImportMapReviews(agentId);
   const remove = useDeleteKnowledgeDocument(agentId);
   const { data: salesExamplesData, isLoading: isLoadingSales } = useSalesExamples(agentId);
 
@@ -98,8 +102,12 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const [urlOpen, setUrlOpen] = useState(false);
   const [urlValue, setUrlValue] = useState("");
   const [urlTitle, setUrlTitle] = useState("");
+  const [isCrawlAll, setIsCrawlAll] = useState(true);
+  const [crawlMaxPages, setCrawlMaxPages] = useState(25);
 
   const [reviewsOpen, setReviewsOpen] = useState(false);
+  const [reviewsUrl, setReviewsUrl] = useState("");
+  const [manualReviewMode, setManualReviewMode] = useState(false);
   const [reviewsSource, setReviewsSource] = useState("Яндекс Карты");
   const [reviewsText, setReviewsText] = useState("");
 
@@ -152,42 +160,83 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   }, [addText, title, text]);
 
   const handleImportUrl = useCallback(() => {
-    if (urlValue.trim().length === 0) {
-      toast.error("Укажите адрес веб-страницы");
+    const raw = urlValue.trim();
+    if (raw.length === 0) {
+      toast.error("Укажите адрес веб-сайта (например, https://mysite.ru)");
       return;
     }
 
-    void importUrl
-      .mutateAsync({ url: urlValue.trim(), title: urlTitle.trim() || undefined })
-      .then((doc) => {
-        toast.success(`Страница «${doc.filename}» успешно импортирована: ${pluralChunks(doc.chunksCount)}`);
-        setUrlValue("");
-        setUrlTitle("");
-        setUrlOpen(false);
-      })
-      .catch((err: unknown) => {
-        toast.error(err instanceof Error ? err.message : "Не удалось импортировать страницу");
-      });
-  }, [importUrl, urlValue, urlTitle]);
+    if (isCrawlAll) {
+      void crawlSite
+        .mutateAsync({ url: raw, maxPages: crawlMaxPages })
+        .then((res) => {
+          toast.success(
+            `Сайт успешно просканирован! Обработано страниц: ${res.scannedCount}, добавлено в базу знаний: ${res.indexedCount}`,
+          );
+          setUrlValue("");
+          setUrlTitle("");
+          setUrlOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось просканировать сайт");
+        });
+    } else {
+      void importUrl
+        .mutateAsync({ url: raw, title: urlTitle.trim() || undefined })
+        .then((doc) => {
+          toast.success(`Страница «${doc.filename}» успешно импортирована: ${pluralChunks(doc.chunksCount)}`);
+          setUrlValue("");
+          setUrlTitle("");
+          setUrlOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось импортировать страницу");
+        });
+    }
+  }, [crawlSite, importUrl, isCrawlAll, crawlMaxPages, urlValue, urlTitle]);
 
-  const handleAddReviews = useCallback(() => {
-    if (reviewsText.trim().length === 0) {
-      toast.error("Вставьте текст отзывов или описание справочника");
+  const handleImportMapReviews = useCallback(() => {
+    if (manualReviewMode) {
+      if (reviewsText.trim().length === 0) {
+        toast.error("Вставьте текст отзывов или описание справочника");
+        return;
+      }
+
+      const docTitle = `Отзывы и репутация (${reviewsSource})`;
+      void addText
+        .mutateAsync({ title: docTitle, text: reviewsText.trim() })
+        .then((doc) => {
+          toast.success(`Отзывы успешно добавлены в базу знаний: ${pluralChunks(doc.chunksCount)}`);
+          setReviewsText("");
+          setReviewsOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось сохранить отзывы");
+        });
       return;
     }
 
-    const docTitle = `Отзывы и репутация (${reviewsSource})`;
-    void addText
-      .mutateAsync({ title: docTitle, text: reviewsText.trim() })
-      .then((doc) => {
-        toast.success(`Отзывы успешно добавлены в базу знаний: ${pluralChunks(doc.chunksCount)}`);
-        setReviewsText("");
+    const raw = reviewsUrl.trim();
+    if (raw.length === 0) {
+      toast.error("Укажите ссылку на карточку компании на картах (Яндекс Карты, 2ГИС, Google Maps, Zoon)");
+      return;
+    }
+
+    void importMapReviews
+      .mutateAsync({ url: raw })
+      .then((res) => {
+        const ratingInfo = res.details.rating ? `Рейтинг: ${res.details.rating}★` : "Профиль загружен";
+        const reviewsInfo = res.details.reviewsCount ? ` (${res.details.reviewsCount} отзывов)` : "";
+        toast.success(
+          `«${res.details.orgName}» успешно импортирован с ${res.details.platform}! ${ratingInfo}${reviewsInfo}`,
+        );
+        setReviewsUrl("");
         setReviewsOpen(false);
       })
       .catch((err: unknown) => {
-        toast.error(err instanceof Error ? err.message : "Не удалось сохранить отзывы");
+        toast.error(err instanceof Error ? err.message : "Не удалось загрузить данные с карт");
       });
-  }, [addText, reviewsSource, reviewsText]);
+  }, [addText, importMapReviews, manualReviewMode, reviewsSource, reviewsText, reviewsUrl]);
 
   const handleDelete = useCallback(() => {
     if (pendingDelete === null) return;
@@ -202,7 +251,12 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       .finally(() => setPendingDelete(null));
   }, [pendingDelete, remove]);
 
-  const isBusy = uploadFile.isPending || addText.isPending || importUrl.isPending;
+  const isBusy =
+    uploadFile.isPending ||
+    addText.isPending ||
+    importUrl.isPending ||
+    crawlSite.isPending ||
+    importMapReviews.isPending;
   const accept = (meta?.supportedExtensions ?? []).map((ext) => `.${ext}`).join(",");
 
   return (
@@ -385,104 +439,221 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
             </div>
           )}
 
-          {/* Форма: Импорт веб-страницы по ссылке (URL) */}
+          {/* Форма: Импорт и сканирование сайта (Краулер / Страница) */}
           {urlOpen && canEdit && (
-            <div className="space-y-3 border-b border-[#e5e5e5] bg-blue-50/40 px-6 py-4">
-              <div className="flex items-center gap-2 text-xs font-semibold text-[#111111]">
-                <Globe className="h-4 w-4 text-[#4a38f5]" />
-                Импорт материалов сайта по прямой ссылке
+            <div className="space-y-4 border-b border-[#e5e5e5] bg-blue-50/30 px-6 py-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#111111]">
+                  <Globe className="h-4 w-4 text-[#4a38f5]" />
+                  Импорт и сканирование сайта компании
+                </div>
+                <div className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsCrawlAll(true)}
+                    className={cn(
+                      "px-2.5 py-1 text-[11px] font-medium rounded-[4px] transition-colors cursor-pointer",
+                      isCrawlAll
+                        ? "bg-[#4a38f5] text-white shadow-2xs"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    Весь сайт (краулер)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCrawlAll(false)}
+                    className={cn(
+                      "px-2.5 py-1 text-[11px] font-medium rounded-[4px] transition-colors cursor-pointer",
+                      !isCrawlAll
+                        ? "bg-[#4a38f5] text-white shadow-2xs"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    Одна страница
+                  </button>
+                </div>
               </div>
+
               <p className="text-xs text-[#666666]">
-                Укажите адрес страницы сайта компании (например, прайс, описание гарантий или раздел контактов). Система загрузит текст, очистит теги и добавит выдержки в базу знаний.
+                {isCrawlAll
+                  ? "Краулер автоматически найдёт все страницы через sitemap.xml и внутренние ссылки (услуги, прайсы, контакты, условия), очистит разметку и проиндексирует базу знаний."
+                  : "Загрузить текст только одной конкретной страницы сайта по прямому адресу."}
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input
-                  type="url"
-                  value={urlValue}
-                  onChange={(e) => setUrlValue(e.target.value)}
-                  placeholder="https://mysite.ru/services/prices"
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                />
-                <input
-                  type="text"
-                  value={urlTitle}
-                  onChange={(e) => setUrlTitle(e.target.value)}
-                  placeholder="Название (например «Услуги и цены с сайта»)"
-                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                />
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className={cn(isCrawlAll ? "sm:col-span-2" : "sm:col-span-1")}>
+                  <input
+                    type="url"
+                    value={urlValue}
+                    onChange={(e) => setUrlValue(e.target.value)}
+                    placeholder={isCrawlAll ? "https://mysite.ru" : "https://mysite.ru/services/prices"}
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+
+                {isCrawlAll ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#666666] whitespace-nowrap">Лимит:</span>
+                    <select
+                      value={crawlMaxPages}
+                      onChange={(e) => setCrawlMaxPages(Number(e.target.value))}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 cursor-pointer"
+                    >
+                      <option value={10}>до 10 страниц</option>
+                      <option value={25}>до 25 страниц (рекомендуется)</option>
+                      <option value={50}>до 50 страниц (полный охват)</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="sm:col-span-2">
+                    <input
+                      type="text"
+                      value={urlTitle}
+                      onChange={(e) => setUrlTitle(e.target.value)}
+                      placeholder="Название (например «Услуги и цены»)"
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                  </div>
+                )}
               </div>
+
               <div className="flex items-center justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setUrlOpen(false)}
-                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111] cursor-pointer"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
                   onClick={handleImportUrl}
-                  disabled={importUrl.isPending}
-                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
                 >
-                  {importUrl.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Импортировать страницу
+                  {(crawlSite.isPending || importUrl.isPending) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  {isCrawlAll
+                    ? crawlSite.isPending
+                      ? "Сканируем сайт..."
+                      : "Запустить сканирование сайта"
+                    : importUrl.isPending
+                      ? "Импортируем..."
+                      : "Импортировать страницу"}
                 </button>
               </div>
             </div>
           )}
 
-          {/* Форма: Отзывы из справочников (Яндекс Карты, 2ГИС) */}
+          {/* Форма: Отзывы и профиль из справочников по ссылке */}
           {reviewsOpen && canEdit && (
-            <div className="space-y-3 border-b border-[#e5e5e5] bg-amber-50/40 px-6 py-4">
-              <div className="flex items-center gap-2 text-xs font-semibold text-[#854d0e]">
-                <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
-                Импорт отзывов клиентов и справочников (Яндекс Карты, 2ГИС, Google)
+            <div className="space-y-4 border-b border-[#e5e5e5] bg-amber-50/30 px-6 py-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#854d0e]">
+                  <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                  Импорт отзывов и рейтинга с карт по ссылке
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setManualReviewMode((m) => !m)}
+                  className="text-xs text-[#4a38f5] hover:underline cursor-pointer text-left"
+                >
+                  {manualReviewMode ? "← Импортировать по ссылке на карты" : "Вставить текст отзывов вручную"}
+                </button>
               </div>
+
               <p className="text-xs text-[#666666]">
-                Скопируйте текст реальных отзывов клиентов с Яндекс Карт, 2ГИС или Zoon и вставьте сюда. Агент будет использовать цитаты и высокий рейтинг компании для снятия сомнений и закрытия сделок.
+                {manualReviewMode
+                  ? "Скопируйте текст реальных отзывов клиентов и вставьте сюда. Агент будет использовать цитаты и высокий рейтинг компании для снятия сомнений и закрытия сделок."
+                  : "Вставьте прямую ссылку на карточку компании на картах. Система извлечёт название, общий рейтинг (например, 4.9★), адрес и реальные цитаты клиентов для использования в диалогах."}
               </p>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-[#111111]">Источник:</span>
-                {["Яндекс Карты", "2ГИС", "Google Карты", "Zoon"].map((source) => (
-                  <button
-                    key={source}
-                    type="button"
-                    onClick={() => setReviewsSource(source)}
-                    className={cn(
-                      "px-2.5 py-1 text-xs rounded-[6px] border font-medium transition-colors cursor-pointer",
-                      reviewsSource === source
-                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
-                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
-                    )}
-                  >
-                    {source}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                value={reviewsText}
-                onChange={(e) => setReviewsText(e.target.value)}
-                rows={6}
-                placeholder="Вставьте скопированные отзывы (например: «Отличный сервис, починили коробку за 2 дня, гарантию дали на год. Мастер Дмитрий все объяснил... Рейтинг 4.9 из 5»)..."
-                className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-              />
-              <div className="flex items-center justify-end gap-2">
+
+              {!manualReviewMode ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-[#111111] mr-1">Поддерживаемые сервисы:</span>
+                    {[
+                      { name: "Яндекс Карты", sample: "https://yandex.ru/maps/org/..." },
+                      { name: "2ГИС", sample: "https://2gis.ru/moscow/firm/..." },
+                      { name: "Google Maps", sample: "https://maps.google.com/..." },
+                      { name: "Zoon", sample: "https://zoon.ru/..." },
+                      { name: "Flamp", sample: "https://flamp.ru/..." },
+                    ].map((svc) => (
+                      <button
+                        key={svc.name}
+                        type="button"
+                        onClick={() => {
+                          if (!reviewsUrl) setReviewsUrl(svc.sample);
+                        }}
+                        className="rounded-[4px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] text-[#666666] hover:border-[#4a38f5] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                      >
+                        {svc.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  <input
+                    type="url"
+                    value={reviewsUrl}
+                    onChange={(e) => setReviewsUrl(e.target.value)}
+                    placeholder="https://yandex.ru/maps/org/remont_i_servis/123456789/ или https://2gis.ru/..."
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-[#111111]">Источник:</span>
+                    {["Яндекс Карты", "2ГИС", "Google Карты", "Zoon"].map((source) => (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() => setReviewsSource(source)}
+                        className={cn(
+                          "px-2.5 py-1 text-xs rounded-[6px] border font-medium transition-colors cursor-pointer",
+                          reviewsSource === source
+                            ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                        )}
+                      >
+                        {source}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={reviewsText}
+                    onChange={(e) => setReviewsText(e.target.value)}
+                    rows={5}
+                    placeholder="Вставьте скопированные отзывы (например: «Отличный сервис, починили за 2 часа, дали гарантию на год. Мастер Дмитрий все объяснил... Рейтинг 4.9 из 5»)..."
+                    className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setReviewsOpen(false)}
-                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111] cursor-pointer"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddReviews}
-                  disabled={addText.isPending}
-                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                  onClick={handleImportMapReviews}
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
                 >
-                  {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Сохранить отзывы в базу знаний
+                  {(importMapReviews.isPending || addText.isPending) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  {importMapReviews.isPending
+                    ? "Загружаем отзывы..."
+                    : !manualReviewMode
+                      ? "Импортировать отзывы по ссылке"
+                      : "Сохранить отзывы в базу"}
                 </button>
               </div>
             </div>

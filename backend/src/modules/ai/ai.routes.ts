@@ -15,6 +15,8 @@ import {
   updateAgentSchema,
 } from "./ai.types.js";
 import { AI_MODEL_CATALOG } from "./ai-pricing.js";
+import { crawlWebsite } from "./site-crawler.js";
+import { crawlMapReviews } from "./map-reviews-crawler.js";
 import {
   extensionOf,
   extractText,
@@ -61,6 +63,21 @@ const knowledgeTextSchema = z.object({
 const knowledgeUrlSchema = z.object({
   url: z.string().url("Укажите корректный URL (http:// или https://)"),
   title: z.string().trim().max(120).optional(),
+});
+
+/**
+ * Сканирование всех страниц сайта (Краулер).
+ */
+const crawlSiteSchema = z.object({
+  url: z.string().url("Укажите корректный URL (http:// или https://)"),
+  maxPages: z.number().int().min(1).max(50).default(25).optional(),
+});
+
+/**
+ * Импорт отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon).
+ */
+const mapReviewsSchema = z.object({
+  url: z.string().url("Укажите корректный URL на Яндекс Карты, 2ГИС, Google Maps, Zoon или Flamp"),
 });
 
 /**
@@ -328,6 +345,83 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.status(201).send({ data: document });
+  });
+
+  // Сканирование всех страниц сайта (Краулер / Паук по внутренним ссылкам и sitemap.xml)
+  app.post("/agents/:id/knowledge/crawl-site", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url, maxPages } = crawlSiteSchema.parse(request.body);
+
+    let crawledPages;
+    try {
+      crawledPages = await crawlWebsite(url, { maxPages: maxPages ?? 25 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Не удалось просканировать сайт";
+      throw new AppError(400, "CRAWL_FAILED", msg);
+    }
+
+    if (crawledPages.length === 0) {
+      throw new AppError(400, "NO_PAGES_FOUND", "На сайте не найдено подходящих страниц с текстовым содержимым");
+    }
+
+    const createdDocs = [];
+    for (const page of crawledPages) {
+      try {
+        const doc = await knowledge.addDocument({
+          tenantId: request.tenant_id,
+          agentId: id,
+          filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
+          mimeType: "text/html",
+          text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
+        });
+        createdDocs.push(doc);
+      } catch {
+        // Пропускаем страницу, если векторизация отдельного фрагмента вызвала ошибку
+      }
+    }
+
+    return reply.status(201).send({
+      data: {
+        scannedCount: crawledPages.length,
+        indexedCount: createdDocs.length,
+        documents: createdDocs,
+      },
+    });
+  });
+
+  // Загрузка отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon) по ссылке
+  app.post("/agents/:id/knowledge/map-reviews", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url } = mapReviewsSchema.parse(request.body);
+
+    let result;
+    try {
+      result = await crawlMapReviews(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить отзывы с карт";
+      throw new AppError(400, "MAP_REVIEWS_FAILED", msg);
+    }
+
+    const document = await knowledge.addDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      filename: `Отзывы (${result.platform}): ${result.orgName.slice(0, 50)}`,
+      mimeType: "text/markdown",
+      text: result.markdownContent,
+    });
+
+    return reply.status(201).send({
+      data: {
+        document,
+        details: {
+          platform: result.platform,
+          orgName: result.orgName,
+          rating: result.rating,
+          reviewsCount: result.reviewsCount,
+          reviewsFound: result.reviews.length,
+        },
+      },
+    });
   });
 
   app.get("/agents/:id/sales-examples", { onRequest: readAgents }, async (request, reply) => {
