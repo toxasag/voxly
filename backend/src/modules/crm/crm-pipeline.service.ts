@@ -57,7 +57,10 @@ interface ExistingContact {
   id: string;
   first_name: string;
   last_name: string;
+  phone?: string | null;
   telegram_chat_id?: string | number | null;
+  telegram_username?: string | null;
+  whatsapp?: string | null;
 }
 
 export interface CrmPipelineResult {
@@ -74,7 +77,8 @@ const DEFAULT_STAGES: ReadonlyArray<{
   isSystem: boolean;
   color: string;
 }> = [
-  // Системные этапы: вход янтарный, успех зелёный предпоследним, провал красный последним.
+  // Системные этапы: нулевой этап серый для входящих диалогов без контактов, новый лид янтарный, успех зелёный, провал красный.
+  { name: "Первый контакт", isWon: false, isLost: false, isSystem: true, color: "slate" },
   { name: "Новый лид", isWon: false, isLost: false, isSystem: true, color: "amber" },
   { name: "Квалификация", isWon: false, isLost: false, isSystem: false, color: "sky" },
   { name: "Согласование", isWon: false, isLost: false, isSystem: false, color: "violet" },
@@ -121,6 +125,15 @@ export class CrmPipelineService {
             `UPDATE contacts SET telegram_chat_id = $1 WHERE id = $2 AND telegram_chat_id IS NULL`,
             [Number(input.senderTelegramChatId), contact.id],
           );
+        }
+
+        // 1.1. Привязываем телефон, если он появился
+        if (input.senderPhone && (!contact.phone || contact.phone.trim().length === 0)) {
+          await tx.query(
+            `UPDATE contacts SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = '')`,
+            [input.senderPhone, contact.id],
+          );
+          contact.phone = input.senderPhone;
         }
 
         // 1.5. Привязываем max_chat_id для MAX, если его ещё не было
@@ -252,6 +265,60 @@ export class CrmPipelineService {
 
       if (activeDeal !== null) {
         dealId = activeDeal.id;
+
+        // Эскалация «Первый контакт» -> «Новый лид», если у контакта появились контактные данные
+        const hasRealContact = Boolean(
+          input.senderPhone ||
+          (contact && contact.phone && contact.phone.trim().length > 0) ||
+          (contact && contact.telegram_chat_id) ||
+          input.senderTelegramChatId ||
+          (input.channel !== "webchat")
+        );
+
+        if (hasRealContact) {
+          const currentStage = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT s.id, s.name FROM stages s
+             JOIN deals d ON d.stage_id = s.id
+             WHERE d.id = $1 AND d.tenant_id = $2`,
+            [activeDeal.id, input.tenantId],
+          );
+
+          if (currentStage && currentStage.name === "Первый контакт") {
+            const newLeadStage = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM stages
+               WHERE pipeline_id = (SELECT pipeline_id FROM deals WHERE id = $1)
+                 AND name = 'Новый лид'
+               LIMIT 1`,
+              [activeDeal.id],
+            );
+
+            if (newLeadStage) {
+              await tx.query(
+                `UPDATE deals SET stage_id = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+                [newLeadStage.id, activeDeal.id, input.tenantId],
+              );
+
+              const contactIdentifier =
+                input.senderPhone ||
+                (contact && contact.phone) ||
+                (input.channel === "telegram" ? "Telegram" : input.channel === "whatsapp" ? "WhatsApp" : input.channel === "max" ? "MAX" : "мессенджер");
+
+              await this.deals.createMessage(
+                input.tenantId,
+                activeDeal.id,
+                "Система",
+                {
+                  source: "system",
+                  direction: "neutral",
+                  content: `Получены контактные данные клиента (${contactIdentifier}). Сделка автоматически переведена из этапа «Первый контакт» в «Новый лид».`,
+                  channel: input.channel,
+                  channel_account_id: input.channelAccountId,
+                },
+                "neutral",
+              );
+            }
+          }
+        }
       } else {
         const isSuppressed = await this.shouldSuppressDeal(tx, input.tenantId, contactId);
         const lastDeal = isSuppressed ? await this.findLastDeal(tx, input.tenantId, contactId) : null;
@@ -266,10 +333,32 @@ export class CrmPipelineService {
             pipelineId = await this.seedDefaultPipeline(tx, input.tenantId);
           }
 
-          const stage = await tx.queryOne<{ id: string }>(
-            `SELECT id FROM stages WHERE pipeline_id = $1 ORDER BY sort_order ASC LIMIT 1`,
-            [pipelineId],
+          // Анонимный веб-чат без контактов идёт в «Первый контакт»,
+          // заявки с подтвержденными контактами (мессенджеры, телефон) — в «Новый лид»
+          const isAnonymousWebchat =
+            input.channel === "webchat" &&
+            !input.senderPhone &&
+            (!contact || !contact.phone || contact.phone.trim().length === 0);
+
+          const targetStageName = isAnonymousWebchat ? "Первый контакт" : "Новый лид";
+
+          let stage = await tx.queryOne<{ id: string }>(
+            `SELECT id FROM stages
+             WHERE pipeline_id = $1 AND name = $2
+             LIMIT 1`,
+            [pipelineId, targetStageName],
           );
+
+          // Fallback, если этап не найден
+          if (!stage) {
+            stage = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM stages
+               WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+               ORDER BY sort_order ASC
+               LIMIT 1`,
+              [pipelineId],
+            );
+          }
 
           if (stage === null) {
             throw new NotFoundError("No stage found for pipeline");
@@ -454,7 +543,7 @@ export class CrmPipelineService {
       // Специфичный поиск контакта для MAX: по custom_fields (max_chat_id, max_user_id) и по socials
       if (!contact && input.channel === "max") {
         contact = await tx.queryOne<ExistingContact>(
-          `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+          `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
            WHERE tenant_id = $1 AND deleted_at IS NULL
              AND (
                custom_fields->>'max_chat_id' = $2
@@ -600,7 +689,7 @@ export class CrmPipelineService {
   ): Promise<ExistingContact | null> {
     if (input.senderTelegramChatId !== undefined && input.senderTelegramChatId.length > 0) {
       const byChatId = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1 AND telegram_chat_id = $2 AND deleted_at IS NULL LIMIT 1`,
         [tenantId, Number(input.senderTelegramChatId)],
       );
@@ -611,7 +700,7 @@ export class CrmPipelineService {
     if (input.profile?.username !== undefined && input.profile.username.length > 0) {
       const clean = input.profile.username.replace(/^@/, "").trim();
       const byUsername = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND (
@@ -652,7 +741,7 @@ export class CrmPipelineService {
 
     if (effectiveVisitorId !== undefined && effectiveVisitorId.length > 0) {
       const byVisitorId = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND (
@@ -668,7 +757,7 @@ export class CrmPipelineService {
     // Поиск по сквозным идентификаторам веб-аналитики (Яндекс.Метрика, GA4, Meta)
     if (input.ymUid !== undefined && input.ymUid.length > 0) {
       const byYm = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND custom_fields->>'ym_uid' = $2
@@ -680,7 +769,7 @@ export class CrmPipelineService {
 
     if (input.gaId !== undefined && input.gaId.length > 0) {
       const byGa = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND custom_fields->>'ga_id' = $2
@@ -692,7 +781,7 @@ export class CrmPipelineService {
 
     if (input.fbId !== undefined && input.fbId.length > 0) {
       const byFb = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND custom_fields->>'fb_id' = $2
@@ -719,7 +808,7 @@ export class CrmPipelineService {
     const digits = phone.replace(/\D/g, "");
     if (digits.length < 10) {
       return tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND (phone = $2 OR additional_phones @> $3::jsonb)
@@ -734,7 +823,7 @@ export class CrmPipelineService {
     const altWith7 = digits.length === 11 && digits.startsWith("8") ? `7${digits.slice(1)}` : digits;
 
     return tx.queryOne<ExistingContact>(
-      `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+      `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
        WHERE tenant_id = $1
          AND deleted_at IS NULL
          AND (

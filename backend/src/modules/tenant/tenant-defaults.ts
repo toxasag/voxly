@@ -18,7 +18,8 @@ const DEFAULT_STAGES: ReadonlyArray<{
   isSystem: boolean;
   color: string;
 }> = [
-  // Системные этапы: вход янтарный, успех зелёный предпоследним, провал красный последним.
+  // Системные этапы: нулевой этап серый для входящих диалогов без контактов, новый лид янтарный, успех зелёный, провал красный.
+  { name: "Первый контакт", isWon: false, isLost: false, isSystem: true, color: "slate" },
   { name: "Новый лид", isWon: false, isLost: false, isSystem: true, color: "amber" },
   { name: "Квалификация", isWon: false, isLost: false, isSystem: false, color: "sky" },
   { name: "Согласование", isWon: false, isLost: false, isSystem: false, color: "violet" },
