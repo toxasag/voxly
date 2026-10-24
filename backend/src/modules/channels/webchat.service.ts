@@ -1,4 +1,3 @@
-import { getEnv } from "../../config/env.js";
 import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
@@ -296,23 +295,58 @@ export class WebchatService {
       }
     }
 
-    if (rawMax && (messengerBannerMode === "multi" ? maxEnabled : singleTarget === "max")) {
-      let maxUrl = rawMax;
-      if (!maxUrl.startsWith("http")) {
-        const clean = maxUrl.replace(/^@/, "");
-        if (/^\d+$/.test(clean)) {
-          const defaultBot = getEnv().MAX_BOT_USERNAME || "id505030516451_bot";
-          maxUrl = `https://max.ru/${defaultBot}`;
-        } else {
+    let resolvedMax = rawMax;
+    const maxAccId = typeof creds.maxAccountId === "string" ? creds.maxAccountId : "";
+    if (maxAccId || !resolvedMax || resolvedMax === "id505030516451_bot" || /^\d+$/.test(resolvedMax)) {
+      const maxAccount = await runWithPlatformScope(() =>
+        queryOne<ChannelAccountRow>(
+          `SELECT id, tenant_id, label, status, external_id, credentials
+           FROM channel_accounts
+           WHERE tenant_id = $1
+             AND channel = 'max'
+             AND deleted_at IS NULL
+             AND (
+               id = $2::uuid
+               OR external_id = $3
+             )
+           LIMIT 1`,
+          [account.tenant_id, maxAccId && maxAccId.length === 36 ? maxAccId : "00000000-0000-0000-0000-000000000000", resolvedMax || ""],
+        ),
+      );
+      if (maxAccount) {
+        const mCreds = (maxAccount.credentials ?? {}) as Record<string, unknown>;
+        const cand = typeof mCreds.maxLink === "string" ? mCreds.maxLink.trim() : "";
+        if (cand) {
+          resolvedMax = cand;
+        }
+      }
+    }
+
+    if (resolvedMax && (messengerBannerMode === "multi" ? maxEnabled : singleTarget === "max")) {
+      const trimmed = resolvedMax.trim();
+      let maxUrl: string | null = null;
+      if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+        maxUrl = trimmed;
+      } else if (trimmed.startsWith("max.ru/")) {
+        maxUrl = `https://${trimmed}`;
+      } else if (trimmed.startsWith("u/") || trimmed.startsWith("/u/")) {
+        const path = trimmed.replace(/^\/+/, "");
+        maxUrl = `https://max.ru/${path}`;
+      } else {
+        const clean = trimmed.replace(/^@/, "");
+        if (!/^\d+$/.test(clean) && clean !== "id505030516451_bot") {
           maxUrl = `https://max.ru/${clean}`;
         }
       }
-      messengerButtons.push({
-        type: "max",
-        label: "MAX",
-        url: maxUrl,
-        handle: rawMax,
-      });
+
+      if (maxUrl) {
+        messengerButtons.push({
+          type: "max",
+          label: "MAX",
+          url: maxUrl,
+          handle: resolvedMax,
+        });
+      }
     }
 
     const proactiveEnabled = Boolean(creds.proactiveEnabled);
