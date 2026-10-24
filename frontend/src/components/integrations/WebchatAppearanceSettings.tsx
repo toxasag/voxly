@@ -311,6 +311,58 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.",
   );
 
+  // 5. Всплывающая подсказка возле кнопки (Бейдж и сменяющиеся фразы)
+  const [badgeEnabled, setBadgeEnabled] = useState<boolean>(
+    initialCreds.badgeEnabled !== undefined ? Boolean(initialCreds.badgeEnabled) : true,
+  );
+  const [badgeTextsInput, setBadgeTextsInput] = useState<string>(() => {
+    if (Array.isArray(initialCreds.badgeTexts) && initialCreds.badgeTexts.length > 0) {
+      return (initialCreds.badgeTexts as string[]).join("\n");
+    }
+    if (typeof initialCreds.badgeTexts === "string" && initialCreds.badgeTexts.trim()) {
+      return initialCreds.badgeTexts.trim();
+    }
+    if (typeof initialCreds.badgeText === "string" && initialCreds.badgeText.trim()) {
+      return initialCreds.badgeText.trim();
+    }
+    return "Задайте вопрос\nЯ онлайн, спрашивайте\nЧем помочь вам?\nЯ еще тут, давайте подскажу";
+  });
+  const [badgeRotateIntervalSec, setBadgeRotateIntervalSec] = useState<number>(
+    typeof initialCreds.badgeRotateIntervalSec === "number" && initialCreds.badgeRotateIntervalSec >= 2
+      ? initialCreds.badgeRotateIntervalSec
+      : (typeof initialCreds.badgeRotateIntervalSec === "string" && parseInt(initialCreds.badgeRotateIntervalSec, 10) >= 2
+          ? parseInt(initialCreds.badgeRotateIntervalSec, 10)
+          : 5),
+  );
+
+  const parsedBadgeTexts = useMemo(() => {
+    const list = badgeTextsInput
+      .split("\n")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return list.length > 0 ? list : ["Задайте вопрос"];
+  }, [badgeTextsInput]);
+
+  // Ротация фраз для Live Preview
+  const [previewBadgeIdx, setPreviewBadgeIdx] = useState(0);
+  const [badgeAnimating, setBadgeAnimating] = useState(false);
+
+  useEffect(() => {
+    if (parsedBadgeTexts.length <= 1) {
+      setPreviewBadgeIdx(0);
+      return;
+    }
+    const intervalMs = Math.max(2, badgeRotateIntervalSec) * 1000;
+    const timer = setInterval(() => {
+      setBadgeAnimating(true);
+      setTimeout(() => {
+        setPreviewBadgeIdx((prev) => (prev + 1) % parsedBadgeTexts.length);
+        setBadgeAnimating(false);
+      }, 250);
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [parsedBadgeTexts, badgeRotateIntervalSec]);
+
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(true);
@@ -384,6 +436,12 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           proactiveEnabled,
           proactiveDelaySeconds,
           proactiveMessage: proactiveMessage.trim(),
+          // Бейдж-подсказка возле кнопки и сменяющиеся фразы
+          badgeEnabled,
+          badgeText: parsedBadgeTexts[0] || "Задайте вопрос",
+          badgeTexts: parsedBadgeTexts,
+          badgeRotateIntervalSec,
+          badgeIntervalSeconds: badgeRotateIntervalSec,
         },
       },
       {
@@ -1039,6 +1097,173 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             </div>
           </div>
 
+          {/* Всплывающая подсказка возле кнопки (Бейдж и сменяющиеся фразы) */}
+          <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+                  <MessageSquare className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
+                    Подсказка возле кнопки (Бейдж)
+                  </h2>
+                  <p className="mt-0.5 text-xs text-[#666666]">
+                    Текст сбоку от кнопки чата, привлекающий внимание посетителя сайта.
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={badgeEnabled}
+                  onChange={(e) => setBadgeEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-[#e5e5e5] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[#cccccc] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4a38f5]"></div>
+              </label>
+            </div>
+
+            {badgeEnabled && (
+              <div className="space-y-4 pt-1">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-[#111111]">
+                      Текст или сменяющиеся фразы (каждая с новой строки)
+                    </label>
+                    <span className="text-[11px] font-mono text-[#888888]">
+                      Фраз: {parsedBadgeTexts.length}
+                    </span>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={badgeTextsInput}
+                    onChange={(e) => setBadgeTextsInput(e.target.value)}
+                    placeholder="Задайте вопрос&#10;Я онлайн, спрашивайте&#10;Чем помочь вам?&#10;Я еще тут, давайте подскажу"
+                    className="w-full rounded-lg border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono leading-relaxed"
+                  />
+                  <p className="mt-1 text-[11px] text-[#888888]">
+                    Если указано несколько фраз — они будут по очереди плавно сменять друг друга, стимулируя начать диалог.
+                  </p>
+
+                  {/* Быстрые шаблоны фраз */}
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-medium text-[#888888]">Шаблоны:</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput("Задайте вопрос\nЯ онлайн, спрашивайте\nЧем помочь вам?\nЯ еще тут, давайте подскажу")
+                      }
+                      className="rounded bg-[#fafafa] border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#666666] hover:border-[#cccccc] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      Дружелюбный (4 фразы)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput("Онлайн-консультант\nОтветим за 1 минуту\nПоможем с выбором")
+                      }
+                      className="rounded bg-[#fafafa] border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#666666] hover:border-[#cccccc] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      Быстрый ответ (3 фразы)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBadgeTextsInput("Задайте вопрос")}
+                      className="rounded bg-[#fafafa] border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#666666] hover:border-[#cccccc] hover:text-[#111111] transition-colors cursor-pointer"
+                    >
+                      Один текст (статично)
+                    </button>
+                  </div>
+
+                  {/* Быстрое добавление отдельных фраз */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-medium text-[#888888]">Добавить фразу:</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput((prev) =>
+                          prev.trim().length > 0 ? prev.trim() + "\nЯ онлайн, спрашивайте" : "Я онлайн, спрашивайте"
+                        )
+                      }
+                      className="rounded bg-white border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#4a38f5] hover:bg-[#4a38f5]/5 hover:border-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      + «Я онлайн, спрашивайте»
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput((prev) =>
+                          prev.trim().length > 0 ? prev.trim() + "\nЧем помочь вам?" : "Чем помочь вам?"
+                        )
+                      }
+                      className="rounded bg-white border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#4a38f5] hover:bg-[#4a38f5]/5 hover:border-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      + «Чем помочь вам?»
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput((prev) =>
+                          prev.trim().length > 0 ? prev.trim() + "\nЯ еще тут, давайте подскажу" : "Я еще тут, давайте подскажу"
+                        )
+                      }
+                      className="rounded bg-white border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#4a38f5] hover:bg-[#4a38f5]/5 hover:border-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      + «Я еще тут, давайте подскажу»
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setBadgeTextsInput((prev) =>
+                          prev.trim().length > 0 ? prev.trim() + "\nЗдравствуйте! Чем могу помочь?" : "Здравствуйте! Чем могу помочь?"
+                        )
+                      }
+                      className="rounded bg-white border border-[#e5e5e5] px-2 py-0.5 text-[10px] text-[#4a38f5] hover:bg-[#4a38f5]/5 hover:border-[#4a38f5] transition-colors cursor-pointer"
+                    >
+                      + «Здравствуйте! Чем могу помочь?»
+                    </button>
+                  </div>
+                </div>
+
+                {parsedBadgeTexts.length > 1 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-semibold text-[#111111]">
+                        Интервал смены надписей
+                      </label>
+                      <span className="text-xs font-mono font-semibold text-[#4a38f5]">
+                        {badgeRotateIntervalSec} сек
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min={2}
+                        max={30}
+                        step={1}
+                        value={badgeRotateIntervalSec}
+                        onChange={(e) => setBadgeRotateIntervalSec(parseInt(e.target.value, 10) || 5)}
+                        className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-[#e5e5e5] accent-[#4a38f5]"
+                      />
+                      <input
+                        type="number"
+                        min={2}
+                        max={60}
+                        value={badgeRotateIntervalSec}
+                        onChange={(e) => setBadgeRotateIntervalSec(Math.max(2, parseInt(e.target.value, 10) || 5))}
+                        className="w-16 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-center text-xs font-mono text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#888888]">
+                      Рекомендуется 4–7 секунд, чтобы посетитель успел комфортно прочитать текст перед сменой.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* 5. Позиция на экране */}
           <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
@@ -1599,10 +1824,20 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   <ExternalLink className="h-3 w-3 text-[#888888]" />
                 </div>
               </div>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-[#4a38f5]">
-                <Sparkles className="h-3.5 w-3.5" />
-                Live Preview
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(!previewOpen)}
+                  className="rounded-md border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs font-medium text-[#666666] hover:bg-white hover:text-[#111111] hover:border-[#cccccc] transition-colors cursor-pointer"
+                  title="Переключить вид между открытым окном и свёрнутой кнопкой"
+                >
+                  {previewOpen ? "Показать кнопку с бейджем" : "Показать окно чата"}
+                </button>
+                <span className="flex items-center gap-1.5 text-xs font-medium text-[#4a38f5]">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Live Preview
+                </span>
+              </div>
             </div>
 
             {/* Макет сайта */}
@@ -1847,65 +2082,103 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   </div>
                 )}
 
-                {/* Плавающая кнопка вызова виджета */}
-                {previewOpen ? (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(false)}
-                    className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                    style={{ backgroundColor: accentColor }}
-                    title="Закрыть чат"
-                  >
-                    <X className="h-6 w-6 stroke-[2.5]" />
-                  </button>
-                ) : avatarType === "mascot" ? (
-                  <div
-                    onClick={() => setPreviewOpen(true)}
-                    className="group relative flex h-16 w-16 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 cursor-pointer"
-                    style={{
-                      filter: `drop-shadow(0 10px 20px ${accentColor}40)`,
-                    }}
-                    title="Нажмите, чтобы открыть чат"
-                  >
-                    <InteractiveMascot
-                      mascotId={mascotId}
-                      size={60}
-                      accentColor={accentColor}
-                      interactive={true}
-                      customDirections={customDirections}
-                      customReactions={customReactions}
+                {/* Плавающая кнопка вызова виджета и бейдж */}
+                <div
+                  className={cn(
+                    "flex items-center gap-2.5",
+                    position === "bottom-right" ? "flex-row" : "flex-row-reverse",
+                  )}
+                >
+                  {!previewOpen && badgeEnabled && (
+                    <div
                       onClick={() => setPreviewOpen(true)}
-                    />
-                    <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs">
-                      1
-                    </span>
-                  </div>
-                ) : avatarType === "photo" && consultantAvatar ? (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(true)}
-                    className="group relative flex h-14 w-14 items-center justify-center rounded-full overflow-hidden border-2 border-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                    style={{ backgroundColor: accentColor }}
-                    title="Нажмите, чтобы написать консультанту"
-                  >
-                    <img
-                      src={consultantAvatar}
-                      alt={consultantName || "Консультант"}
-                      className="h-full w-full object-cover"
-                    />
-                    <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow-xs" />
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(true)}
-                    className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                    style={{ backgroundColor: accentColor }}
-                    title="Открыть чат"
-                  >
-                    <MessageSquare className="h-6 w-6 stroke-[2.5]" />
-                  </button>
-                )}
+                      className={cn(
+                        "relative cursor-pointer rounded-[10px] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg transition-all duration-250 select-none whitespace-nowrap",
+                        badgeAnimating ? "opacity-0 -translate-y-2 scale-90" : "opacity-100 translate-y-0 scale-100",
+                      )}
+                      style={{
+                        backgroundColor: accentColor,
+                      }}
+                      title="Нажмите, чтобы открыть чат"
+                    >
+                      <span>
+                        {parsedBadgeTexts[previewBadgeIdx % parsedBadgeTexts.length] || "Задайте вопрос"}
+                      </span>
+                      {/* Стрелочка speech-bubble */}
+                      <span
+                        className={cn(
+                          "absolute top-1/2 -translate-y-1/2 h-0 w-0 border-solid",
+                          position === "bottom-right"
+                            ? "-right-1.5 border-y-[5px] border-y-transparent border-l-[6px] border-r-0"
+                            : "-left-1.5 border-y-[5px] border-y-transparent border-r-[6px] border-l-0",
+                        )}
+                        style={{
+                          borderLeftColor: position === "bottom-right" ? accentColor : "transparent",
+                          borderRightColor: position === "bottom-left" ? accentColor : "transparent",
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {previewOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewOpen(false)}
+                      className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                      style={{ backgroundColor: accentColor }}
+                      title="Закрыть чат"
+                    >
+                      <X className="h-6 w-6 stroke-[2.5]" />
+                    </button>
+                  ) : avatarType === "mascot" ? (
+                    <div
+                      onClick={() => setPreviewOpen(true)}
+                      className="group relative flex h-16 w-16 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 cursor-pointer shrink-0"
+                      style={{
+                        filter: `drop-shadow(0 10px 20px ${accentColor}40)`,
+                      }}
+                      title="Нажмите, чтобы открыть чат"
+                    >
+                      <InteractiveMascot
+                        mascotId={mascotId}
+                        size={60}
+                        accentColor={accentColor}
+                        interactive={true}
+                        customDirections={customDirections}
+                        customReactions={customReactions}
+                        onClick={() => setPreviewOpen(true)}
+                      />
+                      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs">
+                        1
+                      </span>
+                    </div>
+                  ) : avatarType === "photo" && consultantAvatar ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewOpen(true)}
+                      className="group relative flex h-14 w-14 items-center justify-center rounded-full overflow-hidden border-2 border-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                      style={{ backgroundColor: accentColor }}
+                      title="Нажмите, чтобы написать консультанту"
+                    >
+                      <img
+                        src={consultantAvatar}
+                        alt={consultantName || "Консультант"}
+                        className="h-full w-full object-cover"
+                      />
+                      <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow-xs" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewOpen(true)}
+                      className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                      style={{ backgroundColor: accentColor }}
+                      title="Открыть чат"
+                    >
+                      <MessageSquare className="h-6 w-6 stroke-[2.5]" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
