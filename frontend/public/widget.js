@@ -833,16 +833,126 @@
     var proactiveDelay = parseInt((currentScript && currentScript.getAttribute('data-proactive-delay')) || '30000', 10);
 
     var ymUid = getCookie('_ym_uid') || null;
+    var yandexuid = getCookie('yandexuid') || null;
+    var ymD = getCookie('_ym_d') || null;
+    var yabsSid = getCookie('yabs-sid') || null;
     var gaId = getCookie('_ga') || null;
+    var gaGid = getCookie('_gid') || null;
     var fbId = getCookie('_fbp') || getCookie('_fbc') || null;
+    var tmrLvid = getCookie('_tmr_lvid') || null;
+    var vkUid = getCookie('_vk_uid') || getCookie('remixsid') || null;
 
-    // UTM-метки
+    try {
+      if (!ymUid && window.Ya && window.Ya.Metrika2) {
+        var counters = window.Ya.Metrika2.counters ? window.Ya.Metrika2.counters() : [];
+        if (counters && counters[0] && typeof counters[0].getClientID === 'function') {
+          ymUid = counters[0].getClientID();
+        }
+      }
+    } catch (e) {}
+
+    try {
+      if (!gaId && window.ga && typeof window.ga.getAll === 'function') {
+        var trackers = window.ga.getAll();
+        if (trackers && trackers[0] && typeof trackers[0].get === 'function') {
+          gaId = trackers[0].get('clientId');
+        }
+      }
+    } catch (e) {}
+
+    function setPersistentCookie(name, value, days) {
+      try {
+        var d = new Date();
+        d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+        document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax';
+      } catch (e) {}
+    }
+
+    function getDeviceFingerprint() {
+      try {
+        var scr = window.screen ? [window.screen.width, window.screen.height, window.screen.colorDepth, window.devicePixelRatio || 1].join('x') : '';
+        var tz = '';
+        try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+        var tzOff = new Date().getTimezoneOffset();
+        var lng = (navigator.languages ? navigator.languages.join(',') : navigator.language) || '';
+        var plt = navigator.platform || (navigator.userAgentData && navigator.userAgentData.platform) || '';
+        var cores = navigator.hardwareConcurrency || 0;
+        var mem = navigator.deviceMemory || 0;
+        var touch = navigator.maxTouchPoints || 0;
+
+        var cvsHash = '';
+        try {
+          var cvs = document.createElement('canvas');
+          cvs.width = 180;
+          cvs.height = 30;
+          var ctx = cvs.getContext('2d');
+          if (ctx) {
+            ctx.textBaseline = 'top';
+            ctx.font = '13px Arial';
+            ctx.fillStyle = '#4a38f5';
+            ctx.fillRect(0, 0, 80, 20);
+            ctx.fillStyle = '#03b2cb';
+            ctx.fillText('GetVoxly,fp26', 2, 2);
+            var dUrl = cvs.toDataURL();
+            var h = 0;
+            for (var i = 0; i < dUrl.length; i++) {
+              h = ((h << 5) - h) + dUrl.charCodeAt(i);
+              h |= 0;
+            }
+            cvsHash = 'cv_' + Math.abs(h).toString(36);
+          }
+        } catch (e) {}
+
+        var gpu = '';
+        try {
+          var glCvs = document.createElement('canvas');
+          var gl = glCvs.getContext('webgl') || glCvs.getContext('experimental-webgl');
+          if (gl) {
+            var ext = gl.getExtension('WEBGL_debug_renderer_info');
+            if (ext) {
+              gpu = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').replace(/[^\w.-]/g, '_').slice(0, 50);
+            }
+          }
+        } catch (e) {}
+
+        var raw = [scr, tz, tzOff, lng, plt, cores, mem, touch, cvsHash, gpu].join('|');
+        var fpH = 0;
+        for (var j = 0; j < raw.length; j++) {
+          fpH = ((fpH << 5) - fpH) + raw.charCodeAt(j);
+          fpH |= 0;
+        }
+
+        return {
+          fingerprint: 'dfp_' + Math.abs(fpH).toString(36),
+          screen: scr,
+          timezone: tz,
+          timezoneOffset: tzOff,
+          language: lng,
+          platform: plt,
+          cpuCores: cores,
+          deviceMemory: mem,
+          maxTouchPoints: touch,
+          canvasHash: cvsHash,
+          gpuRenderer: gpu,
+        };
+      } catch (e) {
+        return { fingerprint: 'dfp_fallback', screen: '', timezone: '', language: '', platform: '' };
+      }
+    }
+
+    var dfp = getDeviceFingerprint();
+
+    // UTM-метки и рекламные Click ID
     var STORAGE_KEY_UTM = 'getvoxly_utm_tags';
+    var STORAGE_KEY_CLICKS = 'getvoxly_click_ids';
     var utmTags = {};
+    var clickIds = {};
     try {
       utmTags = JSON.parse(safeStorage.getItem(STORAGE_KEY_UTM) || '{}');
+      clickIds = JSON.parse(safeStorage.getItem(STORAGE_KEY_CLICKS) || '{}');
     } catch (e) {
       utmTags = {};
+      clickIds = {};
     }
 
     try {
@@ -857,15 +967,39 @@
         utmTags = Object.assign({}, utmTags, detectedUtm);
         safeStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
       }
+
+      var detectedClicks = {};
+      ['yclid', 'gclid', 'fbclid', 'vkclid', '_openstat'].forEach(function (param) {
+        if (searchParams.has(param)) {
+          detectedClicks[param] = searchParams.get(param);
+        }
+      });
+      if (Object.keys(detectedClicks).length > 0) {
+        clickIds = Object.assign({}, clickIds, detectedClicks);
+        safeStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+      }
     } catch (e) {}
 
-    // Идентификация посетителя
+    // Идентификация посетителя с многоуровневым хранением (Evercookie sync)
     var STORAGE_KEY_VISITOR = 'getvoxly_visitor_' + channelAccountId;
-    var visitorId = safeStorage.getItem(STORAGE_KEY_VISITOR) || '';
+    var COOKIE_KEY_VISITOR = 'getvoxly_vid_' + channelAccountId;
+    var visitorId = safeStorage.getItem(STORAGE_KEY_VISITOR) || getCookie(COOKIE_KEY_VISITOR) || '';
+
     if (!visitorId) {
-      visitorId = ymUid ? 'ym_' + ymUid : 'usr_' + Math.random().toString(36).substring(2, 11);
-      safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+      if (yandexuid) {
+        visitorId = 'ya_' + yandexuid;
+      } else if (ymUid) {
+        visitorId = 'ym_' + ymUid;
+      } else if (dfp.fingerprint && dfp.fingerprint !== 'dfp_fallback') {
+        visitorId = 'usr_' + dfp.fingerprint.slice(4) + '_' + Math.random().toString(36).substring(2, 7);
+      } else {
+        visitorId = 'usr_' + Math.random().toString(36).substring(2, 11);
+      }
     }
+
+    safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+    safeSessionStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+    setPersistentCookie(COOKIE_KEY_VISITOR, visitorId, 365);
 
     // Счётчик визитов
     var STORAGE_KEY_VISIT_COUNT = 'getvoxly_visit_count';
@@ -1656,10 +1790,33 @@
           visitorId: visitorId,
           text: fullText,
           pageUrl: window.location.href,
+          referrer: document.referrer || undefined,
           utmTags: utmTags,
-          ymUid: ymUid || undefined,
-          gaId: gaId || undefined,
-          fbId: fbId || undefined,
+          clickIds: clickIds,
+          analytics: {
+            ymUid: ymUid || undefined,
+            yandexuid: yandexuid || undefined,
+            ymD: ymD || undefined,
+            yabsSid: yabsSid || undefined,
+            gaId: gaId || undefined,
+            gaGid: gaGid || undefined,
+            fbId: fbId || undefined,
+            tmrLvid: tmrLvid || undefined,
+            vkUid: vkUid || undefined,
+          },
+          deviceFingerprint: dfp.fingerprint,
+          deviceInfo: {
+            screen: dfp.screen,
+            timezone: dfp.timezone,
+            timezoneOffset: dfp.timezoneOffset,
+            language: dfp.language,
+            platform: dfp.platform,
+            cpuCores: dfp.cpuCores,
+            deviceMemory: dfp.deviceMemory,
+            maxTouchPoints: dfp.maxTouchPoints,
+            canvasHash: dfp.canvasHash,
+            gpuRenderer: dfp.gpuRenderer,
+          },
           visitCount: visitCount,
           pageHistory: pageHistory,
           isDraft: Boolean(isDraft),
@@ -1739,10 +1896,23 @@
             visitorId: visitorId,
             text: lastDraft,
             pageUrl: window.location.href,
+            referrer: document.referrer || undefined,
             utmTags: utmTags,
-            ymUid: ymUid || undefined,
-            gaId: gaId || undefined,
-            fbId: fbId || undefined,
+            clickIds: clickIds,
+            analytics: {
+              ymUid: ymUid || undefined,
+              yandexuid: yandexuid || undefined,
+              gaId: gaId || undefined,
+              fbId: fbId || undefined,
+              tmrLvid: tmrLvid || undefined,
+            },
+            deviceFingerprint: dfp.fingerprint,
+            deviceInfo: {
+              screen: dfp.screen,
+              timezone: dfp.timezone,
+              language: dfp.language,
+              platform: dfp.platform,
+            },
             visitCount: visitCount,
             pageHistory: pageHistory,
             isDraft: true,
