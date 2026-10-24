@@ -248,3 +248,53 @@ export function useSaveAgentChannels(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Импорт веб-страниц по ссылке (URL)
+// ---------------------------------------------------------------------------
+
+export function useImportKnowledgeUrl(
+  agentId: string,
+): UseMutationResult<KnowledgeDocument, ApiClientError, { url: string; title?: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url, title }) => {
+      const res = await apiClient.post<KnowledgeDocument>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/url`,
+        { url, title },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Обучение на успешных сделках (Closed-Won RAG)
+// ---------------------------------------------------------------------------
+
+export interface SalesExample {
+  id: string;
+  dealId: string;
+  dealTitle: string;
+  customerQuery: string;
+  agentReply: string;
+  createdAt: string;
+}
+
+export function useSalesExamples(
+  agentId: string,
+): UseQueryResult<SalesExample[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "sales-examples"],
+    queryFn: async () => {
+      const res = await apiClient.get<SalesExample[]>(
+        `${BASE_PATH}/agents/${agentId}/sales-examples`,
+      );
+      return res.data;
+    },
+  });
+}

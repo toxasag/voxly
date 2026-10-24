@@ -4,8 +4,11 @@ import { useCallback, useRef, useState } from "react";
 import {
   AlertTriangle,
   FileText,
+  Globe,
   Loader2,
   Plus,
+  Sparkles,
+  Star,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -14,7 +17,9 @@ import { toast } from "sonner";
 import {
   useAddKnowledgeText,
   useDeleteKnowledgeDocument,
+  useImportKnowledgeUrl,
   useKnowledgeDocuments,
+  useSalesExamples,
   useUploadKnowledgeFile,
   type KnowledgeDocument,
 } from "@/lib/api/use-agent-knowledge";
@@ -79,12 +84,25 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const { data, isLoading, error } = useKnowledgeDocuments(agentId);
   const addText = useAddKnowledgeText(agentId);
   const uploadFile = useUploadKnowledgeFile(agentId);
+  const importUrl = useImportKnowledgeUrl(agentId);
   const remove = useDeleteKnowledgeDocument(agentId);
+  const { data: salesExamplesData, isLoading: isLoadingSales } = useSalesExamples(agentId);
+
+  const [activeSubTab, setActiveSubTab] = useState<"documents" | "sales">("documents");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [textOpen, setTextOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
+
+  const [urlOpen, setUrlOpen] = useState(false);
+  const [urlValue, setUrlValue] = useState("");
+  const [urlTitle, setUrlTitle] = useState("");
+
+  const [reviewsOpen, setReviewsOpen] = useState(false);
+  const [reviewsSource, setReviewsSource] = useState("Яндекс Карты");
+  const [reviewsText, setReviewsText] = useState("");
+
   const [pendingDelete, setPendingDelete] = useState<KnowledgeDocument | null>(null);
 
   const meta = data?.meta;
@@ -133,6 +151,44 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       });
   }, [addText, title, text]);
 
+  const handleImportUrl = useCallback(() => {
+    if (urlValue.trim().length === 0) {
+      toast.error("Укажите адрес веб-страницы");
+      return;
+    }
+
+    void importUrl
+      .mutateAsync({ url: urlValue.trim(), title: urlTitle.trim() || undefined })
+      .then((doc) => {
+        toast.success(`Страница «${doc.filename}» успешно импортирована: ${pluralChunks(doc.chunksCount)}`);
+        setUrlValue("");
+        setUrlTitle("");
+        setUrlOpen(false);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Не удалось импортировать страницу");
+      });
+  }, [importUrl, urlValue, urlTitle]);
+
+  const handleAddReviews = useCallback(() => {
+    if (reviewsText.trim().length === 0) {
+      toast.error("Вставьте текст отзывов или описание справочника");
+      return;
+    }
+
+    const docTitle = `Отзывы и репутация (${reviewsSource})`;
+    void addText
+      .mutateAsync({ title: docTitle, text: reviewsText.trim() })
+      .then((doc) => {
+        toast.success(`Отзывы успешно добавлены в базу знаний: ${pluralChunks(doc.chunksCount)}`);
+        setReviewsText("");
+        setReviewsOpen(false);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Не удалось сохранить отзывы");
+      });
+  }, [addText, reviewsSource, reviewsText]);
+
   const handleDelete = useCallback(() => {
     if (pendingDelete === null) return;
     const target = pendingDelete;
@@ -146,13 +202,42 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       .finally(() => setPendingDelete(null));
   }, [pendingDelete, remove]);
 
-  const isBusy = uploadFile.isPending || addText.isPending;
+  const isBusy = uploadFile.isPending || addText.isPending || importUrl.isPending;
   const accept = (meta?.supportedExtensions ?? []).map((ext) => `.${ext}`).join(",");
 
   return (
     <div className="space-y-4">
-      {/* Предупреждение о неготовности платформы: показывается до попытки
-          загрузки, иначе пользователь узнаёт о ней только по ошибке. */}
+      {/* Sub-tab switcher */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("documents")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "documents"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          Документы и материалы ({documents.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("sales")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "sales"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Опыт успешных сделок (Closed-Won) ({salesExamplesData?.length ?? 0})
+        </button>
+      </div>
+
+      {/* Предупреждение о неготовности платформы */}
       {!isLoading && !vectorisationAvailable && (
         <div className="flex items-start gap-3 rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
@@ -166,173 +251,395 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         </div>
       )}
 
-      <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-        <div className="flex items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
-          <div>
-            <h3 className="text-sm font-semibold text-[#111111]">База знаний</h3>
-            <p className="text-xs text-[#666666]">
-              Документы, по которым агент отвечает. Загруженный текст разбивается на фрагменты и
-              переводится в векторы для поиска по смыслу.
-            </p>
-          </div>
-
-          {canEdit && (
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTextOpen((open) => !open)}
-                disabled={!vectorisationAvailable || isBusy}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] transition-colors",
-                  "hover:bg-[#f5f5f5]",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Текстом
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={!vectorisationAvailable || isBusy}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors",
-                  "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              >
-                {uploadFile.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Upload className="h-3.5 w-3.5" />
-                )}
-                Загрузить файл
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={accept}
-                onChange={handleFileChange}
-                className="hidden"
-              />
+      {/* Вкладка 1: ДОКУМЕНТЫ И МАТЕРИАЛЫ */}
+      {activeSubTab === "documents" && (
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+            <div>
+              <h3 className="text-sm font-semibold text-[#111111]">База знаний и регламенты</h3>
+              <p className="text-xs text-[#666666]">
+                Файлы, тексты регламентов, сайт компании и отзывы. Текст индексируется в векторы для поиска по смыслу.
+              </p>
             </div>
-          )}
-        </div>
 
-        {/* Форма ввода текстом */}
-        {textOpen && canEdit && (
-          <div className="space-y-3 border-b border-[#e5e5e5] bg-[#fafafa] px-6 py-4">
-            <input
-              type="text"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Название документа, например «Регламент сервисного центра»"
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-            />
-            <textarea
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              rows={8}
-              placeholder="Вставьте текст: регламент, прайс, ответы на частые вопросы..."
-              className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-[#666666]">{text.length} символов</span>
-              <div className="flex items-center gap-2">
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setTextOpen(false)}
-                  className="rounded-[8px] px-3 py-2 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  onClick={() => {
+                    setTextOpen((open) => !open);
+                    setUrlOpen(false);
+                    setReviewsOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors",
+                    "hover:bg-[#f5f5f5]",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Текстом
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors",
+                    "hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  {uploadFile.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5" />
+                  )}
+                  Файлом
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUrlOpen((open) => !open);
+                    setTextOpen(false);
+                    setReviewsOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#4a38f5] transition-colors",
+                    "hover:bg-[#4a38f5]/5 disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Globe className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  Ссылка на сайт
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewsOpen((open) => !open);
+                    setTextOpen(false);
+                    setUrlOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-semibold text-white transition-colors",
+                    "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Star className="h-3.5 w-3.5" />
+                  Отзывы (Карты)
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={accept}
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Форма: Текстом */}
+          {textOpen && canEdit && (
+            <div className="space-y-3 border-b border-[#e5e5e5] bg-[#fafafa] px-6 py-4">
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Название документа, например «Прайс-лист на ремонт и ТО 2026»"
+                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+              <textarea
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                rows={6}
+                placeholder="Вставьте регламент, ответы на частые вопросы или правила обслуживания..."
+                className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#666666]">{text.length} символов</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTextOpen(false)}
+                    className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddText}
+                    disabled={addText.isPending}
+                    className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                  >
+                    {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Добавить в базу знаний
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Форма: Импорт веб-страницы по ссылке (URL) */}
+          {urlOpen && canEdit && (
+            <div className="space-y-3 border-b border-[#e5e5e5] bg-blue-50/40 px-6 py-4">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#111111]">
+                <Globe className="h-4 w-4 text-[#4a38f5]" />
+                Импорт материалов сайта по прямой ссылке
+              </div>
+              <p className="text-xs text-[#666666]">
+                Укажите адрес страницы сайта компании (например, прайс, описание гарантий или раздел контактов). Система загрузит текст, очистит теги и добавит выдержки в базу знаний.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <input
+                  type="url"
+                  value={urlValue}
+                  onChange={(e) => setUrlValue(e.target.value)}
+                  placeholder="https://mysite.ru/services/prices"
+                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                />
+                <input
+                  type="text"
+                  value={urlTitle}
+                  onChange={(e) => setUrlTitle(e.target.value)}
+                  placeholder="Название (например «Услуги и цены с сайта»)"
+                  className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setUrlOpen(false)}
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddText}
-                  disabled={addText.isPending}
-                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleImportUrl}
+                  disabled={importUrl.isPending}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
                 >
-                  {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Добавить в базу знаний
+                  {importUrl.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Импортировать страницу
                 </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Список */}
-        <div className="p-6">
-          {isLoading && (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }, (_, index) => (
-                <Skeleton key={index} className="h-14 w-full" />
-              ))}
-            </div>
           )}
 
-          {error !== null && !isLoading && (
-            <p className="text-sm text-rose-500">
-              Не удалось загрузить документы: {error.message}
-            </p>
-          )}
-
-          {!isLoading && error === null && documents.length === 0 && (
-            <EmptyState
-              icon={FileText}
-              title="База знаний пуста"
-              description="Загрузите регламент, прайс или ответы на частые вопросы — агент будет опираться на них при ответах."
-            />
-          )}
-
-          {!isLoading && documents.length > 0 && (
-            <div className="space-y-2">
-              {documents.map((document) => (
-                <div
-                  key={document.id}
-                  className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
-
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-[#111111]">
-                      {document.filename}
-                    </p>
-                    <p className="text-xs text-[#666666]">
-                      {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
-                      {formatDate(document.createdAt)}
-                      {document.agentId === null && " · общий для всех агентов"}
-                    </p>
-                    {document.status === "failed" && document.errorMessage.length > 0 && (
-                      <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
-                    )}
-                  </div>
-
-                  <span
+          {/* Форма: Отзывы из справочников (Яндекс Карты, 2ГИС) */}
+          {reviewsOpen && canEdit && (
+            <div className="space-y-3 border-b border-[#e5e5e5] bg-amber-50/40 px-6 py-4">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#854d0e]">
+                <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                Импорт отзывов клиентов и справочников (Яндекс Карты, 2ГИС, Google)
+              </div>
+              <p className="text-xs text-[#666666]">
+                Скопируйте текст реальных отзывов клиентов с Яндекс Карт, 2ГИС или Zoon и вставьте сюда. Агент будет использовать цитаты и высокий рейтинг компании для снятия сомнений и закрытия сделок.
+              </p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-[#111111]">Источник:</span>
+                {["Яндекс Карты", "2ГИС", "Google Карты", "Zoon"].map((source) => (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => setReviewsSource(source)}
                     className={cn(
-                      "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                      STATUS_CLASS[document.status],
+                      "px-2.5 py-1 text-xs rounded-[6px] border font-medium transition-colors cursor-pointer",
+                      reviewsSource === source
+                        ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
                     )}
                   >
-                    {STATUS_LABEL[document.status]}
-                  </span>
-
-                  {canEdit && (
-                    <button
-                      type="button"
-                      onClick={() => setPendingDelete(document)}
-                      aria-label={`Удалить ${document.filename}`}
-                      className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                    {source}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={reviewsText}
+                onChange={(e) => setReviewsText(e.target.value)}
+                rows={6}
+                placeholder="Вставьте скопированные отзывы (например: «Отличный сервис, починили коробку за 2 дня, гарантию дали на год. Мастер Дмитрий все объяснил... Рейтинг 4.9 из 5»)..."
+                className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setReviewsOpen(false)}
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddReviews}
+                  disabled={addText.isPending}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                >
+                  {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Сохранить отзывы в базу знаний
+                </button>
+              </div>
             </div>
           )}
+
+          {/* Список документов */}
+          <div className="p-6">
+            {isLoading && (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }, (_, index) => (
+                  <Skeleton key={index} className="h-14 w-full" />
+                ))}
+              </div>
+            )}
+
+            {error !== null && !isLoading && (
+              <p className="text-sm text-rose-500">
+                Не удалось загрузить документы: {error.message}
+              </p>
+            )}
+
+            {!isLoading && error === null && documents.length === 0 && (
+              <EmptyState
+                icon={FileText}
+                title="База знаний пока пуста"
+                description="Загрузите регламент, прайс, добавьте ссылку на сайт или вставьте отзывы — агент будет опираться на них при диалогах."
+              />
+            )}
+
+            {!isLoading && documents.length > 0 && (
+              <div className="space-y-2">
+                {documents.map((document) => (
+                  <div
+                    key={document.id}
+                    className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[#111111]">
+                        {document.filename}
+                      </p>
+                      <p className="text-xs text-[#666666]">
+                        {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
+                        {formatDate(document.createdAt)}
+                        {document.agentId === null && " · общий для всех агентов"}
+                      </p>
+                      {document.status === "failed" && document.errorMessage.length > 0 && (
+                        <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
+                      )}
+                    </div>
+
+                    <span
+                      className={cn(
+                        "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        STATUS_CLASS[document.status],
+                      )}
+                    >
+                      {STATUS_LABEL[document.status]}
+                    </span>
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(document)}
+                        aria-label={`Удалить ${document.filename}`}
+                        className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Вкладка 2: ОБУЧЕНИЕ НА СДЕЛКАХ (CLOSED-WON RAG) */}
+      {activeSubTab === "sales" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3.5 rounded-[8px] border border-blue-200 bg-blue-50/70 p-4">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#4a38f5]" />
+            <div className="space-y-1.5 text-xs">
+              <p className="font-semibold text-[#111111]">
+                Автоматическое обучение на закрытых сделках (Closed-Won Sales Learning)
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                Когда любая сделка в CRM переходит на этап <strong>«Успешно реализовано» (closed_won)</strong>, система автоматически анализирует переписку менеджеров с клиентом, находит связки «вопрос клиента → победный ответ менеджера», векторизует их через ИИ и сохраняет в память агента.
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                При последующих диалогах с новыми клиентами бот выполняет векторный поиск по этому опыту и применяет реальные победные формулировки вашей команды.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <div className="border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+              <h3 className="text-sm font-semibold text-[#111111]">
+                Извлеченные диалоги победных сделок
+              </h3>
+              <p className="text-xs text-[#666666]">
+                Список вопросов клиентов и ответов операторов, сохраненных как золотой эталон продаж.
+              </p>
+            </div>
+
+            <div className="p-6">
+              {isLoadingSales && (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <Skeleton key={index} className="h-16 w-full" />
+                  ))}
+                </div>
+              )}
+
+              {!isLoadingSales && (!salesExamplesData || salesExamplesData.length === 0) && (
+                <EmptyState
+                  icon={Sparkles}
+                  title="Пока нет данных обучения"
+                  description="Как только менеджеры переведут сделки с историей диалогов в статус «Успешно реализовано», система автоматически извлечет эффективные ответы и отобразит их здесь."
+                />
+              )}
+
+              {!isLoadingSales && salesExamplesData && salesExamplesData.length > 0 && (
+                <div className="space-y-3">
+                  {salesExamplesData.map((example) => (
+                    <div
+                      key={example.id}
+                      className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2 hover:border-[#cccccc] transition-colors shadow-2xs"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-[#111111]">
+                          Сделка: {example.dealTitle}
+                        </span>
+                        <span className="text-[#888888] font-mono text-[11px]">
+                          {formatDate(example.createdAt)}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 text-xs bg-[#fafafa] p-3 rounded-[6px] border border-[#f0f0f0]">
+                        <div>
+                          <span className="font-medium text-[#666666]">Клиент: </span>
+                          <span className="text-[#111111]">{example.customerQuery}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-[#4a38f5]">Менеджер (эталон): </span>
+                          <span className="text-[#111111]">{example.agentReply}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={pendingDelete !== null}

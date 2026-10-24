@@ -8,6 +8,7 @@ import {
   Bot,
   Check,
   FileCode,
+  FileText,
   Loader2,
   RefreshCw,
   Save,
@@ -24,6 +25,7 @@ import {
   getModelInfo,
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
+import { useAiModels } from "@/lib/api/use-ai-agents";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -134,6 +136,10 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const systemPrompt = form.watch("system_prompt");
   const isPaused = form.watch("status") === "paused";
   const wizardConfig = form.watch("wizard_config");
+
+  const { data: modelsData } = useAiModels();
+  const activeProvider = modelsData?.activeProvider;
+  const modelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
 
   const toggleEntity = useCallback(
     (entity: BotContextEntity) => {
@@ -272,35 +278,57 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
 
             {/* Model */}
             <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-slate-700">Модель</span>
+              <div className="flex items-center justify-between">
+                <span className="block text-xs font-medium text-slate-700">Модель</span>
+                {activeProvider && activeProvider.isConfigured && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Провайдер платформы: {activeProvider.name} {activeProvider.chatModel ? `(${activeProvider.chatModel})` : ""}
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-2">
-                {MODEL_CATALOG.map((model) => (
-                  <button
-                    key={model.id}
-                    type="button"
-                    onClick={() =>
-                      form.setValue("model", model.id, { shouldValidate: true, shouldDirty: true })
-                    }
-                    className={cn(
-                      "rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
-                      selectedModel === model.id
-                        ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                        : "border-[#e5e5e5] bg-white hover:bg-slate-50",
-                    )}
-                  >
-                    <span
+                {modelsList.map((model) => {
+                  const isSelected = selectedModel === model.id;
+                  const isConfigured = "isConfigured" in model ? model.isConfigured !== false : true;
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      onClick={() =>
+                        form.setValue("model", model.id as BotModel, {
+                          shouldValidate: true,
+                          shouldDirty: true,
+                        })
+                      }
                       className={cn(
-                        "block truncate text-xs font-semibold",
-                        selectedModel === model.id ? "text-[#4a38f5]" : "text-[#111111]",
+                        "rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
+                        isSelected
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white hover:bg-slate-50",
                       )}
                     >
-                      {model.label}
-                    </span>
-                    <span className="block text-[11px] text-[#666666]">
-                      {getProviderLabel(model.provider)}
-                    </span>
-                  </button>
-                ))}
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={cn(
+                            "block text-xs font-semibold leading-tight",
+                            isSelected ? "text-[#4a38f5]" : "text-[#111111]",
+                          )}
+                        >
+                          {model.label}
+                        </span>
+                        {isConfigured && (
+                          <span className="text-[9px] font-medium px-1 py-0.2 rounded bg-emerald-50 text-emerald-600 border border-emerald-200">
+                            Подключена
+                          </span>
+                        )}
+                      </div>
+                      <span className="block text-[11px] text-[#666666] mt-0.5">
+                        {getProviderLabel(model.provider)}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -495,30 +523,34 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <label className="block text-xs font-medium text-slate-700">
                       Отраслевой шаблон (Метод Станиславского v2.0)
                     </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      {INDUSTRY_PRESETS.map((preset) => {
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {INDUSTRY_PRESETS.map((preset, index) => {
                         const isSelected = wizardConfig?.presetId === preset.id;
+                        const isLast = index === INDUSTRY_PRESETS.length - 1;
                         return (
                           <button
                             key={preset.id}
                             type="button"
                             onClick={() => handleSelectPreset(preset)}
                             className={cn(
-                              "rounded-lg border p-2.5 text-left transition-all cursor-pointer",
+                              "rounded-lg border p-3 text-left transition-all cursor-pointer flex flex-col justify-between",
+                              isLast && "col-span-2",
                               isSelected
                                 ? "border-[#4a38f5] bg-white ring-1 ring-[#4a38f5] shadow-2xs"
                                 : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
                             )}
                           >
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-semibold text-[#111111] truncate">
-                                {preset.name}
-                              </span>
-                              {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5]" />}
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-xs font-semibold text-[#111111] leading-snug break-words">
+                                  {preset.name}
+                                </span>
+                                {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5] shrink-0 mt-0.5" />}
+                              </div>
+                              <p className="mt-1.5 text-[11px] text-[#666666] leading-relaxed break-words">
+                                {preset.description}
+                              </p>
                             </div>
-                            <p className="mt-1 text-[11px] text-[#666666] line-clamp-2 leading-relaxed">
-                              {preset.description}
-                            </p>
                           </button>
                         );
                       })}
@@ -610,6 +642,19 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                         placeholder="руководитель сервисного участка"
                         className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                       />
+                    </div>
+                  </div>
+
+                  {/* Knowledge Base Guidance Banner */}
+                  <div className="rounded-[8px] border border-blue-100 bg-blue-50/60 p-3 text-xs text-[#333333] flex items-start gap-2.5">
+                    <FileText className="h-4 w-4 text-[#4a38f5] shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-medium text-[#111111]">
+                        База знаний, материалы сайта и отзывы
+                      </p>
+                      <p className="text-[11px] text-[#555555] leading-relaxed">
+                        Конструктор роли задаёт характер и скрипт продаж консультанта. Факты о ценах, гарантиях, адресах и отзывы с Яндекс Карт загружаются во вкладке <strong>«База знаний»</strong> внутри карточки бота после сохранения (поддерживаются файлы, вставка текстов и импорт страниц по ссылке).
+                      </p>
                     </div>
                   </div>
 

@@ -1,12 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { query } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { AppError } from "../../plugins/errorHandler.js";
 import { AiService } from "./ai.service.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
 import { BillingService } from "../finance/billing/billing.service.js";
 import { PRODUCT_CODES } from "../finance/billing/billing.types.js";
+import { platformConfigService } from "../admin/platform-config.service.js";
 import {
   createAgentSchema,
   topupBalanceSchema,
@@ -54,6 +56,14 @@ const knowledgeTextSchema = z.object({
 });
 
 /**
+ * Импорт веб-страницы или справочника по URL.
+ */
+const knowledgeUrlSchema = z.object({
+  url: z.string().url("Укажите корректный URL (http:// или https://)"),
+  title: z.string().trim().max(120).optional(),
+});
+
+/**
  * Набор привязанных аккаунтов каналов — целиком, а не по одному.
  *
  * Интерфейс отправляет итоговый список отмеченных чекбоксов; инкрементальные
@@ -73,18 +83,67 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   const readAgents = [app.requirePermission("ai_bots:read"), app.requireModule("ai_bots")];
   const writeAgents = [app.requirePermission("ai_bots:configure"), app.requireModule("ai_bots")];
 
-  // Каталог моделей с ценами. Отдаётся сервером, потому что цена — основание для
-  // списания: держать её копию на клиенте означало бы риск расхождения.
+  // Каталог моделей с ценами и информацией о реальных провайдерах платформы.
   app.get("/models", { onRequest: [app.requirePermission("ai_bots:read")] }, async (_request, reply) => {
+    let activeProvider: {
+      name: string;
+      providerType: string;
+      chatModel?: string;
+      isConfigured: boolean;
+    } | null = null;
+
+    try {
+      const effective = await platformConfigService.getEffectiveIntegrations();
+      const activeItem = effective.llmProviders.find(
+        (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
+      );
+      if (activeItem) {
+        activeProvider = {
+          name: activeItem.name,
+          providerType: activeItem.providerType,
+          chatModel: activeItem.chatModel,
+          isConfigured: true,
+        };
+      } else if (effective.llm.isConfigured) {
+        activeProvider = {
+          name: "Основной провайдер",
+          providerType: "custom",
+          chatModel: effective.llm.chatModel || undefined,
+          isConfigured: true,
+        };
+      }
+    } catch {
+      // Игнорируем ошибку чтения интеграций, возвращая каталог по умолчанию
+    }
+
+    const defaultProvider = activeProvider ?? {
+      name: "Провайдер платформы",
+      providerType: "unknown",
+      isConfigured: false,
+    };
+
     return reply.send({
-      data: Object.values(AI_MODEL_CATALOG).map((model) => ({
-        id: model.id,
-        label: model.label,
-        provider: model.provider,
-        contextWindow: model.contextWindow,
-        costInPer1k: model.costInPer1k,
-        costOutPer1k: model.costOutPer1k,
-      })),
+      activeProvider: defaultProvider,
+      data: Object.values(AI_MODEL_CATALOG).map((model) => {
+        // Проверяем, соответствует ли модель активному провайдеру
+        const isProviderMatch = defaultProvider.isConfigured
+          ? (defaultProvider.providerType === "gemini" && model.provider === "google") ||
+            (defaultProvider.providerType === "openai" && model.provider === "openai") ||
+            (defaultProvider.providerType === "anthropic" && model.provider === "anthropic") ||
+            (defaultProvider.providerType === "deepseek" && model.provider === "deepseek") ||
+            defaultProvider.providerType === "custom"
+          : true;
+
+        return {
+          id: model.id,
+          label: model.label,
+          provider: model.provider,
+          contextWindow: model.contextWindow,
+          costInPer1k: model.costInPer1k,
+          costOutPer1k: model.costOutPer1k,
+          isConfigured: isProviderMatch,
+        };
+      }),
     });
   });
 
@@ -199,6 +258,109 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return reply.status(201).send({ data: document });
+  });
+
+  app.post("/agents/:id/knowledge/url", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url, title } = knowledgeUrlSchema.parse(request.body);
+
+    const parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      throw new AppError(400, "INVALID_URL", "Поддерживаются только протоколы http:// и https://");
+    }
+    if (
+      parsedUrl.hostname === "localhost" ||
+      parsedUrl.hostname.startsWith("127.") ||
+      parsedUrl.hostname.startsWith("169.254.") ||
+      parsedUrl.hostname.startsWith("10.") ||
+      parsedUrl.hostname.startsWith("192.168.")
+    ) {
+      throw new AppError(400, "FORBIDDEN_URL", "Запрос к локальным адресам запрещен");
+    }
+
+    let html = "";
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,text/plain;q=0.9",
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!response.ok) {
+        throw new AppError(502, "FETCH_FAILED", `Не удалось загрузить страницу: HTTP ${response.status}`);
+      }
+
+      html = await response.text();
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const msg = err instanceof Error ? err.message : "Ошибка сети";
+      throw new AppError(502, "FETCH_FAILED", `Ошибка при загрузке URL: ${msg}`);
+    }
+
+    const cleanText = html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (cleanText.length < 50) {
+      throw new AppError(400, "EMPTY_CONTENT", "На странице не найдено достаточного текстового содержимого");
+    }
+
+    const docTitle = title?.trim() || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
+
+    const document = await knowledge.addDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      filename: `Сайт: ${docTitle}`,
+      mimeType: "text/html",
+      text: cleanText.slice(0, 100_000),
+    });
+
+    return reply.status(201).send({ data: document });
+  });
+
+  app.get("/agents/:id/sales-examples", { onRequest: readAgents }, async (request, reply) => {
+    const examples = await query<{
+      id: string;
+      deal_id: string;
+      deal_title: string | null;
+      customer_query: string;
+      agent_reply: string;
+      created_at: Date;
+    }>(
+      `SELECT e.id, e.deal_id, d.title as deal_title, e.customer_query, e.agent_reply, e.created_at
+       FROM ai_sales_examples e
+       LEFT JOIN deals d ON d.id = e.deal_id
+       WHERE e.tenant_id = $1
+       ORDER BY e.created_at DESC
+       LIMIT 50`,
+      [request.tenant_id],
+    );
+
+    return reply.send({
+      data: examples.map((ex) => ({
+        id: ex.id,
+        dealId: ex.deal_id,
+        dealTitle: ex.deal_title ?? "Сделка",
+        customerQuery: ex.customer_query,
+        agentReply: ex.agent_reply,
+        createdAt: ex.created_at.toISOString(),
+      })),
+      meta: {
+        total: examples.length,
+      },
+    });
   });
 
   app.delete("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {
