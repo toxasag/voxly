@@ -169,6 +169,10 @@ export function contactSocialsFrom(
   const kind = SOCIAL_KIND_BY_SLUG[identity.channel];
   if (kind === undefined) return [];
 
+  if (identity.channel === "webchat" && identity.chatId) {
+    return [{ kind: "other", value: identity.chatId }];
+  }
+
   if (kind === "whatsapp") {
     const phone = normalizePhone(identity.profile?.phone ?? identity.chatId);
     return phone === "" ? [] : [{ kind, value: phone }];

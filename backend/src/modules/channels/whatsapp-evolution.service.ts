@@ -153,9 +153,12 @@ export class WhatsappEvolutionService {
       // Инстанс успешно подключен! Получаем информацию о номере
       const infoRes = await this.evoFetch(`/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`);
       const instances = Array.isArray(infoRes.json) ? infoRes.json : [infoRes.json];
-      const inst = instances.find((i: any) => i?.name === instanceName || i?.instanceName === instanceName) || instances[0];
+      const inst = instances.find((i: Record<string, unknown>) => i?.name === instanceName || i?.instanceName === instanceName) || instances[0];
 
-      let phone = inst?.owner || inst?.wuid || inst?.number || "";
+      let phone = (typeof inst?.ownerJid === "string" ? inst.ownerJid : "") ||
+                  (typeof inst?.owner === "string" ? inst.owner : "") ||
+                  (typeof inst?.wuid === "string" ? inst.wuid : "") ||
+                  (typeof inst?.number === "string" ? inst.number : "");
       if (phone.includes("@")) {
         phone = phone.split("@")[0];
       }
@@ -180,7 +183,10 @@ export class WhatsappEvolutionService {
           await tx.query(
             `UPDATE channel_accounts
              SET status = 'connected', status_message = '', label = $3, external_id = $4,
-                 credentials = jsonb_set(COALESCE(credentials, '{}'::jsonb), '{instanceName}', to_jsonb($5::text)),
+                 credentials = jsonb_set(
+                   jsonb_set(COALESCE(credentials, '{}'::jsonb), '{instanceName}', to_jsonb($5::text)),
+                   '{phone}', to_jsonb($4::text)
+                 ),
                  connected_at = COALESCE(connected_at, now())
              WHERE tenant_id = $1 AND id = $2`,
             [tenantId, existing.id, label, phone, instanceName],
@@ -190,7 +196,7 @@ export class WhatsappEvolutionService {
 
         const inserted = await tx.queryOneOrThrow<{ id: string }>(
           `INSERT INTO channel_accounts (tenant_id, channel, label, external_id, status, status_message, credentials, connected_at)
-           VALUES ($1, 'whatsapp', $2, $3, 'connected', '', jsonb_build_object('instanceName', $4::text), now())
+           VALUES ($1, 'whatsapp', $2, $3, 'connected', '', jsonb_build_object('instanceName', $4::text, 'phone', $3::text), now())
            RETURNING id`,
           [tenantId, label, phone, instanceName],
         );
