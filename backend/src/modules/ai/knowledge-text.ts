@@ -1,3 +1,4 @@
+import zlib from "node:zlib";
 import { AppError } from "../../plugins/errorHandler.js";
 
 // ---------------------------------------------------------------------------
@@ -8,7 +9,7 @@ import { AppError } from "../../plugins/errorHandler.js";
 // ---------------------------------------------------------------------------
 
 /** Поддерживаемые типы. Ключ — расширение, значение — ожидаемый MIME. */
-export const SUPPORTED_EXTENSIONS = ["txt", "md", "docx", "pdf"] as const;
+export const SUPPORTED_EXTENSIONS = ["txt", "md", "docx", "pdf", "xlsx", "csv"] as const;
 export type SupportedExtension = (typeof SUPPORTED_EXTENSIONS)[number];
 
 /**
@@ -26,8 +27,8 @@ export class UnsupportedDocumentError extends AppError {
     super(
       400,
       "UNSUPPORTED_DOCUMENT_TYPE",
-      `Файл «${filename}» не поддерживается. Допустимы txt, md, docx и pdf.`,
-      { file: ["Допустимы форматы txt, md, docx, pdf"] },
+      `Файл «${filename}» не поддерживается. Допустимы txt, md, docx, pdf, xlsx и csv.`,
+      { file: ["Допустимы форматы txt, md, docx, pdf, xlsx, csv"] },
     );
   }
 }
@@ -82,6 +83,129 @@ export function normaliseText(raw: string): string {
 // Извлечение
 // ---------------------------------------------------------------------------
 
+function readZipFiles(buffer: Buffer): Map<string, string> {
+  const files = new Map<string, string>();
+  let eocdOffset = -1;
+  for (let i = buffer.length - 22; i >= 0; i--) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+
+  if (eocdOffset !== -1) {
+    const cdOffset = buffer.readUInt32LE(eocdOffset + 16);
+    const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+    let cur = cdOffset;
+    for (let i = 0; i < totalEntries && cur + 46 <= buffer.length; i++) {
+      if (buffer.readUInt32LE(cur) !== 0x02014b50) break;
+      const compression = buffer.readUInt16LE(cur + 10);
+      const compressedSize = buffer.readUInt32LE(cur + 20);
+      const nameLen = buffer.readUInt16LE(cur + 28);
+      const extraLen = buffer.readUInt16LE(cur + 30);
+      const commentLen = buffer.readUInt16LE(cur + 32);
+      const localHeaderOffset = buffer.readUInt32LE(cur + 42);
+      const fileName = buffer.toString("utf8", cur + 46, cur + 46 + nameLen);
+
+      if (localHeaderOffset + 30 <= buffer.length && buffer.readUInt32LE(localHeaderOffset) === 0x04034b50) {
+        const localNameLen = buffer.readUInt16LE(localHeaderOffset + 26);
+        const localExtraLen = buffer.readUInt16LE(localHeaderOffset + 28);
+        const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
+        const compressedData = buffer.subarray(dataStart, dataStart + compressedSize);
+        try {
+          if (compression === 8) {
+            files.set(fileName, zlib.inflateRawSync(compressedData).toString("utf8"));
+          } else if (compression === 0) {
+            files.set(fileName, compressedData.toString("utf8"));
+          }
+        } catch {
+          // ignore corrupted entry
+        }
+      }
+      cur += 46 + nameLen + extraLen + commentLen;
+    }
+  }
+  return files;
+}
+
+function parseXlsx(buffer: Buffer): string {
+  const files = readZipFiles(buffer);
+  if (files.size === 0) {
+    throw new Error("Не удалось прочитать структуру архива XLSX");
+  }
+
+  const sharedStrings: string[] = [];
+  const sstContent = files.get("xl/sharedStrings.xml");
+  if (sstContent) {
+    const siMatches = sstContent.match(/<si\b[^>]*>(.*?)<\/si>/gis) ?? [];
+    for (const si of siMatches) {
+      const textMatches = Array.from(si.matchAll(/<t\b[^>]*>([^<]*)<\/t>/gi));
+      const str = textMatches.map((m) => m[1] ?? "").join("");
+      sharedStrings.push(
+        str
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"'),
+      );
+    }
+  }
+
+  const sheetKeys = Array.from(files.keys())
+    .filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(k))
+    .sort();
+  const outputLines: string[] = [];
+
+  for (const sheetKey of sheetKeys) {
+    const sheetXml = files.get(sheetKey);
+    if (!sheetXml) continue;
+
+    const rowMatches = sheetXml.match(/<row\b[^>]*>(.*?)<\/row>/gis) ?? [];
+    for (const rowXml of rowMatches) {
+      const cellMatches = Array.from(rowXml.matchAll(/<c\b([^>]*)>(.*?)<\/c>/gis));
+      const cells: string[] = [];
+
+      for (const cell of cellMatches) {
+        const attrs = cell[1] ?? "";
+        const body = cell[2] ?? "";
+        const isString = /t="s"/i.test(attrs);
+        const isInline = /t="inlineStr"/i.test(attrs);
+
+        let cellVal = "";
+        if (isString) {
+          const vMatch = /<v>(\d+)<\/v>/i.exec(body);
+          if (vMatch && vMatch[1]) {
+            const idx = parseInt(vMatch[1], 10);
+            cellVal = sharedStrings[idx] ?? "";
+          }
+        } else if (isInline) {
+          const tMatch = /<t\b[^>]*>([^<]*)<\/t>/i.exec(body);
+          cellVal = tMatch?.[1] ?? "";
+        } else {
+          const vMatch = /<v>([^<]*)<\/v>/i.exec(body);
+          cellVal = vMatch?.[1] ?? "";
+        }
+
+        cellVal = cellVal
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .trim();
+        if (cellVal) {
+          cells.push(cellVal);
+        }
+      }
+
+      if (cells.length > 0) {
+        outputLines.push(cells.join(" | "));
+      }
+    }
+  }
+
+  return outputLines.join("\n");
+}
+
 /**
  * Достаёт текст из буфера по расширению файла.
  *
@@ -96,8 +220,26 @@ export async function extractText(input: {
 }): Promise<string> {
   const { extension, buffer, filename } = input;
 
-  if (extension === "txt" || extension === "md") {
+  if (extension === "txt" || extension === "md" || extension === "csv") {
     return normaliseText(buffer.toString("utf8"));
+  }
+
+  if (extension === "xlsx") {
+    try {
+      const text = parseXlsx(buffer);
+      if (!text.trim()) {
+        throw new EmptyDocumentError(filename);
+      }
+      return normaliseText(text);
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        400,
+        "DOCUMENT_PARSE_FAILED",
+        `Не удалось прочитать таблицу «${filename}»: ${error instanceof Error ? error.message : "неизвестная ошибка"}`,
+        { file: ["Файл таблицы повреждён или защищён паролем"] },
+      );
+    }
   }
 
   if (extension === "docx") {

@@ -166,7 +166,17 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
     const config = await platformConfigService.getRotatedLlmConfig();
     const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
     const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
-    const activeModel = config?.embeddingModel || this.model;
+    let activeModel = config?.embeddingModel || this.model;
+    const isGoogle =
+      (activeBaseUrl?.includes("generativelanguage.googleapis.com") ?? false) ||
+      (config?.providerId?.includes("gemini") ?? false);
+    if (isGoogle) {
+      if (!activeModel || activeModel.startsWith("text-embedding") || activeModel === "default") {
+        activeModel = "gemini-embedding-001";
+      } else if (activeModel.startsWith("models/")) {
+        activeModel = activeModel.replace(/^models\//, "");
+      }
+    }
 
     if (!activeBaseUrl || keysToTry.length === 0) {
       throw new EmbeddingsUnavailableError(

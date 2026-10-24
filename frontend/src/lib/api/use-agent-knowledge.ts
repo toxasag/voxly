@@ -36,6 +36,7 @@ export interface KnowledgeDocument {
   status: DocumentStatus;
   errorMessage: string;
   chunksCount: number;
+  category?: string;
   createdAt: string;
 }
 
@@ -163,16 +164,21 @@ export function useAddKnowledgeText(
  */
 export function useUploadKnowledgeFile(
   agentId: string,
-): UseMutationResult<KnowledgeDocument, Error, File> {
+): UseMutationResult<KnowledgeDocument, Error, File | { file: File; category?: string }> {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file) => {
+    mutationFn: async (input) => {
+      const file = input instanceof File ? input : input.file;
+      const category = input instanceof File ? undefined : input.category;
       const { API_BASE_URL } = await import("@/lib/api/apiClient");
       const { readAccessToken } = await import("@/lib/auth/session");
 
       const form = new FormData();
       form.append("file", file);
+      if (category) {
+        form.append("category", category);
+      }
 
       const token = readAccessToken();
 
