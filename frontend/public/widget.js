@@ -78,7 +78,6 @@
 
   // 3. Отказоустойчивый поиск ID канала (только стандартные селекторы CSS2)
   function getChannelAccountId() {
-    // 3.1. Прямой поиск script[data-account-id]
     try {
       var s1 = document.querySelector('script[data-account-id]');
       if (s1) {
@@ -87,7 +86,6 @@
       }
     } catch (e) {}
 
-    // 3.2. Прямой поиск script[data-channel-id]
     try {
       var s2 = document.querySelector('script[data-channel-id]');
       if (s2) {
@@ -96,7 +94,6 @@
       }
     } catch (e) {}
 
-    // 3.3. Проверка document.currentScript
     try {
       if (document.currentScript) {
         var idCur =
@@ -106,7 +103,6 @@
       }
     } catch (e) {}
 
-    // 3.4. Итерация по всем script-тегам на странице
     try {
       var allScripts = document.getElementsByTagName('script');
       for (var i = 0; i < allScripts.length; i++) {
@@ -132,7 +128,7 @@
     }
   }
 
-  // 4. Стили виджета с поддержкой мобильных устройств и safe-area
+  // 4. Стили виджета с поддержкой тем (Twenty Light Canvas по умолчанию), мобильных устройств и safe-area
   var styles = `
     .getvoxly-widget-wrapper {
       position: fixed !important;
@@ -152,6 +148,8 @@
       pointer-events: auto !important;
       visibility: visible !important;
       opacity: 1 !important;
+      --accent-color: #6366F1;
+      --badge-color: #6366F1;
     }
     .getvoxly-widget-wrapper.position-left {
       right: auto !important;
@@ -163,9 +161,9 @@
     }
 
     @keyframes getvoxlyPulse {
-      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 56, 245, 0.45); }
-      70% { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(74, 56, 245, 0); }
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(74, 56, 245, 0); }
+      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); }
+      70% { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
     }
 
     .getvoxly-widget-bubble {
@@ -174,15 +172,15 @@
       min-width: 60px !important;
       min-height: 60px !important;
       border-radius: 50% !important;
-      background: #4a38f5 !important;
-      box-shadow: 0 8px 24px rgba(74, 56, 245, 0.35) !important;
+      background: var(--accent-color, #6366F1) !important;
+      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35) !important;
       cursor: pointer !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
       position: relative !important;
       animation: getvoxlyPulse 2.4s infinite !important;
-      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s !important;
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s !important;
       user-select: none !important;
       border: none !important;
       outline: none !important;
@@ -192,8 +190,45 @@
     .getvoxly-widget-bubble:hover {
       animation: none !important;
       transform: scale(1.06) !important;
-      box-shadow: 0 12px 30px rgba(74, 56, 245, 0.45) !important;
+      box-shadow: 0 12px 30px rgba(99, 102, 241, 0.45) !important;
     }
+    .getvoxly-bubble-icon {
+      display: flex !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-bubble-close-icon {
+      display: none !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
+      color: #ffffff !important;
+    }
+
+    /* Когда чат открыт: кнопка превращается в аккуратную круглую кнопку-крестик, бейдж скрыт */
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble {
+      width: 56px !important;
+      height: 56px !important;
+      min-width: 56px !important;
+      min-height: 56px !important;
+      border-radius: 50% !important;
+      background: var(--accent-color, #6366F1) !important;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
+      animation: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon {
+      display: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-close-icon {
+      display: flex !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
+      display: none !important;
+    }
+
     .getvoxly-widget-bubble.is-photo {
       padding: 2px !important;
       overflow: visible !important;
@@ -250,8 +285,8 @@
       height: 64px !important;
       background-repeat: no-repeat !important;
       background-size: 300% 300% !important;
-      background-position: 50% 50% !important;
-      background-color: rgba(74, 56, 245, 0.12) !important;
+      background-position: 50% 50%;
+      background-color: rgba(99, 102, 241, 0.12) !important;
       image-rendering: -webkit-optimize-contrast !important;
       user-select: none !important;
       -webkit-user-drag: none !important;
@@ -271,7 +306,7 @@
       right: 74px !important;
       top: 50% !important;
       transform: translateY(-50%) !important;
-      background: var(--badge-color, #4a38f5) !important;
+      background: var(--badge-color, #6366F1) !important;
       color: #ffffff !important;
       padding: 7px 14px !important;
       font-size: 13px !important;
@@ -301,15 +336,16 @@
       transform: translateY(-50%) !important;
       border-width: 6px 0 6px 6px !important;
       border-style: solid !important;
-      border-color: transparent transparent transparent var(--badge-color, #4a38f5) !important;
+      border-color: transparent transparent transparent var(--badge-color, #6366F1) !important;
     }
     .position-left .getvoxly-chat-badge::after {
       right: auto !important;
       left: -6px !important;
       border-width: 6px 6px 6px 0 !important;
-      border-color: transparent var(--badge-color, #4a38f5) transparent transparent !important;
+      border-color: transparent var(--badge-color, #6366F1) transparent transparent !important;
     }
 
+    /* Окно диалога (Светлая тема по умолчанию Twenty Light Canvas) */
     .getvoxly-widget-window {
       position: fixed !important;
       bottom: calc(88px + env(safe-area-inset-bottom, 0px)) !important;
@@ -318,11 +354,11 @@
       max-width: calc(100vw - 32px) !important;
       height: 580px !important;
       max-height: calc(100vh - 120px) !important;
-      background: #090d16 !important;
-      color: #f8fafc !important;
+      background: #ffffff !important;
+      color: #111111 !important;
       border-radius: 16px !important;
-      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45) !important;
-      border: 1px solid #1e293b !important;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.18) !important;
+      border: 1px solid #e5e5e5 !important;
       display: none;
       flex-direction: column !important;
       overflow: hidden !important;
@@ -330,6 +366,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
       box-sizing: border-box !important;
       direction: ltr !important;
+      --accent-color: #6366F1;
     }
     .getvoxly-widget-window * {
       box-sizing: border-box !important;
@@ -337,6 +374,14 @@
     .getvoxly-widget-window.position-left {
       right: auto !important;
       left: calc(20px + env(safe-area-inset-left, 0px)) !important;
+    }
+
+    /* Тёмная тема (если явно задана в настройках) */
+    .getvoxly-widget-window.is-dark-theme {
+      background: #111111 !important;
+      color: #f8fafc !important;
+      border-color: #27272a !important;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45) !important;
     }
 
     @media (max-width: 480px) {
@@ -354,202 +399,370 @@
       }
     }
 
+    /* Шапка виджета: цвет акцента, аватар консультанта, статус онлайн и крестик */
     .getvoxly-header {
-      background: #0f172a;
-      padding: 14px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #1e293b;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      padding: 12px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
+      flex-shrink: 0 !important;
     }
-    .getvoxly-header-title {
-      font-weight: 600;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .getvoxly-header-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      min-width: 0 !important;
+      flex: 1 !important;
     }
-    .getvoxly-status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #10b981;
+    .getvoxly-header-avatar {
+      width: 36px !important;
+      height: 36px !important;
+      border-radius: 50% !important;
+      background: rgba(0, 0, 0, 0.15) !important;
+      position: relative !important;
+      flex-shrink: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      overflow: visible !important;
+    }
+    .getvoxly-header-avatar-inner {
+      width: 36px !important;
+      height: 36px !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-header-status-dot {
+      position: absolute !important;
+      right: -1px !important;
+      bottom: -1px !important;
+      width: 10px !important;
+      height: 10px !important;
+      border-radius: 50% !important;
+      background: #10b981 !important;
+      border: 2px solid #ffffff !important;
+      z-index: 3 !important;
+    }
+    .getvoxly-header-info {
+      min-width: 0 !important;
+      flex: 1 !important;
+    }
+    .getvoxly-header-name {
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      line-height: 1.25 !important;
+      color: #ffffff !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .getvoxly-header-sub {
+      font-size: 11px !important;
+      font-weight: 500 !important;
+      opacity: 0.85 !important;
+      line-height: 1.2 !important;
+      color: #ffffff !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
     }
     .getvoxly-header-close {
-      background: none;
-      border: none;
-      color: #94a3b8;
-      cursor: pointer;
-      font-size: 20px;
-      padding: 0;
-      line-height: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      transition: background 0.15s, color 0.15s;
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 6px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 50% !important;
+      transition: background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
     }
     .getvoxly-header-close:hover {
-      background: #1e293b;
-      color: #f8fafc;
+      background: rgba(0, 0, 0, 0.15) !important;
     }
 
+    /* Баннер перехода в мессенджеры */
     .getvoxly-messenger-container {
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid #e5e5e5 !important;
+      flex-shrink: 0 !important;
     }
+    .is-dark-theme .getvoxly-messenger-container {
+      border-bottom-color: #27272a !important;
+    }
+
     .getvoxly-msg-banner-single {
-      padding: 8px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      font-size: 12px;
+      padding: 8px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 10px !important;
+      font-size: 12px !important;
+      text-decoration: none !important;
+      cursor: pointer !important;
+      transition: opacity 0.15s, background 0.15s !important;
+    }
+    .getvoxly-msg-banner-single:hover {
+      opacity: 0.9 !important;
     }
     .getvoxly-msg-banner-single.is-telegram {
-      background: rgba(2, 132, 199, 0.12);
-      color: #38bdf8;
+      background: rgba(2, 132, 199, 0.08) !important;
+      border-bottom: 1px solid rgba(2, 132, 199, 0.2) !important;
+      color: #0284c7 !important;
     }
     .getvoxly-msg-banner-single.is-whatsapp {
-      background: rgba(22, 163, 74, 0.12);
-      color: #4ade80;
+      background: rgba(22, 163, 74, 0.08) !important;
+      border-bottom: 1px solid rgba(22, 163, 74, 0.2) !important;
+      color: #15803d !important;
     }
     .getvoxly-msg-banner-single.is-max {
-      background: rgba(99, 102, 241, 0.12);
-      color: #818cf8;
+      background: rgba(99, 102, 241, 0.08) !important;
+      border-bottom: 1px solid rgba(99, 102, 241, 0.2) !important;
+      color: #4f46e5 !important;
+    }
+    .getvoxly-msg-banner-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-msg-banner-title {
+      font-weight: 600 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .getvoxly-msg-banner-handle {
+      font-family: monospace, -apple-system, sans-serif !important;
+      font-size: 11px !important;
+      text-decoration: underline !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      max-width: 140px !important;
+    }
+
+    .getvoxly-msg-bar-multi {
+      padding: 7px 12px !important;
+      background: #fafafa !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 6px !important;
+    }
+    .is-dark-theme .getvoxly-msg-bar-multi {
+      background: #18181b !important;
+    }
+    .getvoxly-msg-bar-title {
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #888888 !important;
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-msg-buttons-row {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      flex-wrap: wrap !important;
+      justify-content: flex-end !important;
     }
     .getvoxly-msg-btn-pill {
       color: #ffffff !important;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-weight: 500;
-      font-size: 11px;
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      text-decoration: none;
-      transition: transform 0.1s ease, opacity 0.1s ease;
-      cursor: pointer;
+      padding: 3px 8px !important;
+      border-radius: 4px !important;
+      font-weight: 500 !important;
+      font-size: 10px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 4px !important;
+      text-decoration: none !important;
+      cursor: pointer !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      transition: transform 0.1s ease, opacity 0.1s ease !important;
     }
     .getvoxly-msg-btn-pill:hover {
-      transform: scale(1.04);
-      opacity: 0.95;
+      transform: scale(1.04) !important;
+      opacity: 0.95 !important;
     }
-    .getvoxly-msg-btn-pill.btn-telegram { background: #0284c7; }
-    .getvoxly-msg-btn-pill.btn-whatsapp { background: #16a34a; }
-    .getvoxly-msg-btn-pill.btn-max { background: #6366f1; }
+    .getvoxly-msg-btn-pill.btn-telegram { background: #0284c7 !important; }
+    .getvoxly-msg-btn-pill.btn-whatsapp { background: #16a34a !important; }
+    .getvoxly-msg-btn-pill.btn-max { background: #6366f1 !important; }
 
-    .getvoxly-msg-bar-multi {
-      padding: 7px 12px;
-      background: rgba(255, 255, 255, 0.04);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 6px;
-    }
-    .getvoxly-msg-bar-title {
-      font-size: 11px;
-      font-weight: 600;
-      opacity: 0.75;
-      white-space: nowrap;
-    }
-    .getvoxly-msg-buttons-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
+    /* Область сообщений */
     .getvoxly-messages {
-      flex: 1;
-      padding: 16px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      background: #090d16;
+      flex: 1 !important;
+      padding: 14px !important;
+      overflow-y: auto !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      background: #ffffff !important;
     }
+    .is-dark-theme .getvoxly-messages {
+      background: #111111 !important;
+    }
+
+    .getvoxly-msg-row {
+      display: flex !important;
+      width: 100% !important;
+    }
+    .getvoxly-msg-row-bot {
+      align-items: flex-start !important;
+      gap: 8px !important;
+      max-width: 90% !important;
+    }
+    .getvoxly-msg-row-user {
+      justify-content: flex-end !important;
+      align-self: flex-end !important;
+      max-width: 82% !important;
+    }
+    .getvoxly-msg-bot-avatar {
+      width: 28px !important;
+      height: 28px !important;
+      border-radius: 50% !important;
+      background: var(--accent-color, #6366F1) !important;
+      flex-shrink: 0 !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin-top: 2px !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-msg-bot-content {
+      flex: 1 !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-msg-bot-author {
+      font-size: 10px !important;
+      font-weight: 600 !important;
+      color: #888888 !important;
+      margin-bottom: 2px !important;
+    }
+
     .getvoxly-msg {
-      max-width: 82%;
-      padding: 10px 14px;
-      border-radius: 12px;
-      font-size: 13px;
-      line-height: 1.45;
-      word-break: break-word;
+      padding: 10px 14px !important;
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+      word-break: break-word !important;
     }
     .getvoxly-msg-bot {
-      background: #1e293b;
-      color: #f8fafc;
-      align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      background: #f5f5f5 !important;
+      color: #111111 !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 16px !important;
+      border-top-left-radius: 4px !important;
+    }
+    .is-dark-theme .getvoxly-msg-bot {
+      background: #18181b !important;
+      color: #e4e4e7 !important;
+      border-color: #27272a !important;
     }
     .getvoxly-msg-user {
-      background: #4a38f5;
-      color: #ffffff;
-      font-weight: 500;
-      align-self: flex-end;
-      border-bottom-right-radius: 4px;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      font-weight: 500 !important;
+      border-radius: 16px !important;
+      border-top-right-radius: 4px !important;
     }
+
+    /* Поле ввода */
     .getvoxly-input-area {
-      padding: 10px 14px 4px;
-      background: #0f172a;
-      border-top: 1px solid #1e293b;
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
+      padding: 10px 12px 6px !important;
+      background: #fafafa !important;
+      border-top: 1px solid #e5e5e5 !important;
+      flex-shrink: 0 !important;
+    }
+    .is-dark-theme .getvoxly-input-area {
+      background: #18181b !important;
+      border-top-color: #27272a !important;
+    }
+    .getvoxly-input-wrapper {
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 12px !important;
+      padding: 6px 8px 6px 12px !important;
+      transition: border-color 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-input-wrapper {
+      background: #111111 !important;
+      border-color: #27272a !important;
+    }
+    .getvoxly-input-wrapper:focus-within {
+      border-color: var(--accent-color, #6366F1) !important;
     }
     .getvoxly-textarea {
-      flex: 1;
-      background: #090d16;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      color: #f1f5f9;
-      padding: 8px 12px;
-      font-size: 13px;
-      font-family: inherit;
-      resize: none;
-      height: 38px;
-      max-height: 90px;
-      outline: none;
-      line-height: 1.35;
+      flex: 1 !important;
+      background: transparent !important;
+      border: none !important;
+      color: #111111 !important;
+      padding: 0 !important;
+      font-size: 13px !important;
+      font-family: inherit !important;
+      resize: none !important;
+      height: 24px !important;
+      max-height: 80px !important;
+      outline: none !important;
+      line-height: 24px !important;
     }
-    .getvoxly-textarea:focus {
-      border-color: #4a38f5;
+    .is-dark-theme .getvoxly-textarea {
+      color: #f1f5f9 !important;
     }
     .getvoxly-send-btn {
-      background: #4a38f5;
-      color: #ffffff;
-      border: none;
-      border-radius: 8px;
-      width: 38px;
-      height: 38px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-weight: bold;
-      transition: background 0.15s, opacity 0.15s;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      border: none !important;
+      border-radius: 8px !important;
+      width: 30px !important;
+      height: 30px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
+      transition: transform 0.1s ease, opacity 0.15s !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-send-btn:hover {
+      transform: scale(1.05) !important;
+    }
+    .getvoxly-send-btn:active {
+      transform: scale(0.95) !important;
     }
     .getvoxly-send-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+      opacity: 0.5 !important;
+      cursor: not-allowed !important;
     }
     .getvoxly-typing {
-      font-size: 11px;
-      color: #94a3b8;
-      font-style: italic;
-      padding: 0 16px 8px;
+      font-size: 11px !important;
+      color: #888888 !important;
+      font-style: italic !important;
+      padding: 0 16px 6px !important;
       display: none;
     }
     .getvoxly-consent {
-      background: #0f172a;
-      font-size: 10px;
-      color: #64748b;
-      text-align: center;
-      padding: 2px 14px 8px;
-      line-height: 1.25;
-      user-select: none;
+      background: #fafafa !important;
+      font-size: 10px !important;
+      color: #888888 !important;
+      text-align: center !important;
+      padding: 2px 12px 6px !important;
+      line-height: 1.25 !important;
+      user-select: none !important;
+    }
+    .is-dark-theme .getvoxly-consent {
+      background: #18181b !important;
+      color: #71717a !important;
     }
   `;
 
@@ -634,6 +847,7 @@
 
     var isOpen = false;
     var sessionInitialized = false;
+    var currentConfig = null;
     var lastDraft = '';
     var sentDrafts = {};
     var messageBuffer = [];
@@ -652,10 +866,17 @@
     wrapper.id = 'getvoxly-wrapper';
     wrapper.innerHTML = `
       <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
-      <div class="getvoxly-widget-bubble" id="getvoxly-bubble">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-        </svg>
+      <div class="getvoxly-widget-bubble" id="getvoxly-bubble" title="Онлайн-консультант">
+        <div class="getvoxly-bubble-icon" id="getvoxly-bubble-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+          </svg>
+        </div>
+        <div class="getvoxly-bubble-close-icon" id="getvoxly-bubble-close-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+          </svg>
+        </div>
       </div>
     `;
 
@@ -663,23 +884,39 @@
     win.className = 'getvoxly-widget-window';
     win.id = 'getvoxly-window';
     win.innerHTML = `
-      <div class="getvoxly-header">
-        <div class="getvoxly-header-title">
-          <span class="getvoxly-status-dot"></span>
-          <span id="getvoxly-bot-title">Онлайн-консультант</span>
+      <div class="getvoxly-header" id="getvoxly-header">
+        <div class="getvoxly-header-left">
+          <div class="getvoxly-header-avatar" id="getvoxly-header-avatar">
+            <div class="getvoxly-header-avatar-inner" id="getvoxly-header-avatar-inner">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>
+              </svg>
+            </div>
+            <span class="getvoxly-header-status-dot"></span>
+          </div>
+          <div class="getvoxly-header-info">
+            <div class="getvoxly-header-name" id="getvoxly-header-name">Онлайн-консультант</div>
+            <div class="getvoxly-header-sub" id="getvoxly-header-sub">В сети · Консультант онлайн</div>
+          </div>
         </div>
-        <button class="getvoxly-header-close" id="getvoxly-close">&times;</button>
+        <button class="getvoxly-header-close" id="getvoxly-close" title="Закрыть окно">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+          </svg>
+        </button>
       </div>
       <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
       <div class="getvoxly-messages" id="getvoxly-messages"></div>
       <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
       <div class="getvoxly-input-area">
-        <textarea class="getvoxly-textarea" id="getvoxly-input" placeholder="Введите ваш вопрос..."></textarea>
-        <button class="getvoxly-send-btn" id="getvoxly-send">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
-          </svg>
-        </button>
+        <div class="getvoxly-input-wrapper">
+          <textarea class="getvoxly-textarea" id="getvoxly-input" placeholder="Введите ваш вопрос..."></textarea>
+          <button class="getvoxly-send-btn" id="getvoxly-send" title="Отправить">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="getvoxly-consent">
         Нажимая «Отправить», вы даете согласие на обработку персональных данных.
@@ -692,13 +929,16 @@
     sendTelemetry('dom_appended', 'bubble_ready');
 
     var bubble = document.getElementById('getvoxly-bubble');
+    var bubbleIcon = document.getElementById('getvoxly-bubble-icon');
     var badge = document.getElementById('getvoxly-badge');
     var messagesContainer = document.getElementById('getvoxly-messages');
     var inputEl = document.getElementById('getvoxly-input');
     var sendBtn = document.getElementById('getvoxly-send');
     var closeBtn = document.getElementById('getvoxly-close');
     var typingIndicator = document.getElementById('getvoxly-typing');
-    var botTitle = document.getElementById('getvoxly-bot-title');
+    var headerName = document.getElementById('getvoxly-header-name');
+    var headerSub = document.getElementById('getvoxly-header-sub');
+    var headerAvatarInner = document.getElementById('getvoxly-header-avatar-inner');
     var msgContainer = document.getElementById('getvoxly-messenger-container');
 
     // Локальная история сообщений
@@ -711,12 +951,55 @@
       }
     }
 
+    function createMiniAvatarHtml() {
+      if (!currentConfig) {
+        return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+      }
+      if (currentConfig.avatarType === 'photo' && currentConfig.consultantAvatar) {
+        return '<img src="' + currentConfig.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;">';
+      }
+      if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
+        return '<div style="width:28px;height:28px;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+      }
+      return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+    }
+
     function appendMessageToUI(text, isUser) {
       if (!messagesContainer) return;
-      var el = document.createElement('div');
-      el.className = 'getvoxly-msg ' + (isUser ? 'getvoxly-msg-user' : 'getvoxly-msg-bot');
-      el.textContent = text;
-      messagesContainer.appendChild(el);
+
+      var row = document.createElement('div');
+      row.className = 'getvoxly-msg-row ' + (isUser ? 'getvoxly-msg-row-user' : 'getvoxly-msg-row-bot');
+
+      if (isUser) {
+        var userBubble = document.createElement('div');
+        userBubble.className = 'getvoxly-msg getvoxly-msg-user';
+        userBubble.textContent = text;
+        row.appendChild(userBubble);
+      } else {
+        var avatarEl = document.createElement('div');
+        avatarEl.className = 'getvoxly-msg-bot-avatar';
+        avatarEl.innerHTML = createMiniAvatarHtml();
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'getvoxly-msg-bot-content';
+
+        if (currentConfig && currentConfig.consultantName) {
+          var authorEl = document.createElement('div');
+          authorEl.className = 'getvoxly-msg-bot-author';
+          authorEl.textContent = currentConfig.consultantName;
+          contentEl.appendChild(authorEl);
+        }
+
+        var botBubble = document.createElement('div');
+        botBubble.className = 'getvoxly-msg getvoxly-msg-bot';
+        botBubble.textContent = text;
+        contentEl.appendChild(botBubble);
+
+        row.appendChild(avatarEl);
+        row.appendChild(contentEl);
+      }
+
+      messagesContainer.appendChild(row);
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
@@ -739,12 +1022,12 @@
     function openWidget() {
       isOpen = true;
       win.style.display = 'flex';
-      badge.style.display = 'none';
+      wrapper.classList.add('is-chat-open');
       if (messagesContainer) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
       if (inputEl && typeof inputEl.focus === 'function') {
-        inputEl.focus();
+        setTimeout(function () { inputEl.focus(); }, 100);
       }
       initSession();
     }
@@ -752,6 +1035,10 @@
     function closeWidget() {
       isOpen = false;
       win.style.display = 'none';
+      wrapper.classList.remove('is-chat-open');
+      if (badge) {
+        badge.style.display = '';
+      }
     }
 
     function toggleWidget() {
@@ -791,6 +1078,7 @@
         if (res.ok) {
           sessionInitialized = true;
           var data = (await res.json()).data;
+          currentConfig = data;
           sendTelemetry('init_success', data.mascotId || 'none');
 
           if (data.visitorId) {
@@ -798,43 +1086,78 @@
             safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
           }
 
-          botTitle.textContent = data.title || (data.tenantName + ' (' + data.botName + ')');
+          // Установка акцентного цвета
+          var accent = data.accentColor || '#6366F1';
+          wrapper.style.setProperty('--accent-color', accent);
+          wrapper.style.setProperty('--badge-color', accent);
+          win.style.setProperty('--accent-color', accent);
 
-          if (data.accentColor) {
-            bubble.style.background = data.accentColor;
-            bubble.style.boxShadow = '0 8px 24px ' + data.accentColor + '55';
-            sendBtn.style.background = data.accentColor;
-            badge.style.background = data.accentColor;
-            badge.style.setProperty('--badge-color', data.accentColor);
+          // Тема (светлая / тёмная)
+          if (data.theme === 'dark') {
+            win.classList.add('is-dark-theme');
+          } else {
+            win.classList.remove('is-dark-theme');
           }
 
-          // Поддержка 3D-маскота или фото консультанта
+          // Шапка виджета: имя консультанта и статус
+          if (headerName) {
+            headerName.textContent = data.consultantName || data.title || (data.tenantName + ' (' + data.botName + ')');
+          }
+          if (headerSub) {
+            headerSub.textContent = data.consultantName
+              ? (data.title || 'Онлайн-консультант')
+              : (data.isAiEnabled ? (data.botName || 'AI-ассистент онлайн') : 'В сети · Консультант онлайн');
+          }
+
+          // Позиционирование (слева / справа)
+          if (data.position === 'bottom-left') {
+            wrapper.classList.add('position-left');
+            win.classList.add('position-left');
+          }
+
+          if (data.placeholder && inputEl) {
+            inputEl.placeholder = data.placeholder;
+          }
+
+          // Поддержка интерактивного 3D-маскота или фото консультанта
+          var assetBaseUrl = 'https://getvoxly.ru';
+          var MASCOT_MAP = {
+            voxly_robot: 'drone',
+            friendly_fox: 'fox',
+            smart_cat: 'cat',
+            cyber_owl: 'scout',
+            happy_alien: 'crt',
+            friendly_panda: 'otter',
+            tech_ninja: 'kamran',
+          };
+
+          var resolvedId = data.mascotId || 'drone';
+          if (MASCOT_MAP[resolvedId]) {
+            resolvedId = MASCOT_MAP[resolvedId];
+          }
+
+          var directionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-directions.webp';
+          var reactionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-reactions.webp';
+
+          if (resolvedId === 'custom' || data.customMascotDirections) {
+            directionsUrl = data.customMascotDirections || directionsUrl;
+            reactionsUrl = data.customMascotReactions || data.customMascotDirections || directionsUrl;
+          }
+          data._directionsUrl = directionsUrl;
+          data._reactionsUrl = reactionsUrl;
+
+          // Обновление аватара в шапке
+          if (headerAvatarInner) {
+            if (data.avatarType === 'photo' && data.consultantAvatar) {
+              headerAvatarInner.innerHTML = '<img src="' + data.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;">';
+            } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            }
+          }
+
+          // Рендер плавающего маскота / фото в кнопке
           if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
             bubble.classList.add('is-mascot');
-
-            var assetBaseUrl = 'https://getvoxly.ru';
-            var MASCOT_MAP = {
-              voxly_robot: 'drone',
-              friendly_fox: 'fox',
-              smart_cat: 'cat',
-              cyber_owl: 'scout',
-              happy_alien: 'crt',
-              friendly_panda: 'otter',
-              tech_ninja: 'kamran',
-            };
-
-            var resolvedId = data.mascotId || 'drone';
-            if (MASCOT_MAP[resolvedId]) {
-              resolvedId = MASCOT_MAP[resolvedId];
-            }
-
-            var directionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-directions.webp';
-            var reactionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-reactions.webp';
-
-            if (resolvedId === 'custom' || data.customMascotDirections) {
-              directionsUrl = data.customMascotDirections || directionsUrl;
-              reactionsUrl = data.customMascotReactions || data.customMascotDirections || directionsUrl;
-            }
 
             var mascotEl = document.createElement('div');
             mascotEl.className = 'getvoxly-mascot-wrap';
@@ -844,6 +1167,7 @@
             spriteEl.className = 'getvoxly-mascot-sprite';
             spriteEl.id = 'getvoxly-mascot-sprite';
             spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
+            spriteEl.style.setProperty('background-position', '50% 50%', 'important');
 
             var dot = document.createElement('span');
             dot.className = 'getvoxly-bubble-dot';
@@ -851,61 +1175,84 @@
             mascotEl.appendChild(spriteEl);
             mascotEl.appendChild(dot);
 
-            bubble.innerHTML = '';
-            bubble.appendChild(mascotEl);
+            bubbleIcon.innerHTML = '';
+            bubbleIcon.appendChild(mascotEl);
 
             var isBooped = false;
             var boopTimer = null;
 
-            function setMascotCell(row, col) {
-              if (!spriteEl) return;
-              var x = col === 0 ? '0%' : col === 1 ? '50%' : '100%';
-              var y = row === 0 ? '0%' : row === 1 ? '50%' : '100%';
-              spriteEl.style.backgroundPosition = x + ' ' + y;
+            // Точное отслеживание направления взгляда маскота по 8 секторам
+            var CLOCKWISE = [
+              'right',
+              'down-right',
+              'down',
+              'down-left',
+              'left',
+              'up-left',
+              'up',
+              'up-right',
+            ];
+            var POSITIONS = {
+              center: '50% 50%',
+              'up-left': '0% 0%',
+              up: '50% 0%',
+              'up-right': '100% 0%',
+              left: '0% 50%',
+              right: '100% 50%',
+              'down-left': '0% 100%',
+              down: '50% 100%',
+              'down-right': '100% 100%',
+            };
+            var SECTOR = (Math.PI * 2) / 8;
+            var HYSTERESIS = 0.12;
+            var DEAD_ZONE = 36;
+
+            function wrapAngle(angle) {
+              return Math.atan2(Math.sin(angle), Math.cos(angle));
             }
 
-            if (typeof window.matchMedia === 'function' && window.matchMedia('(hover: hover) and (pointer: fine)').matches && spriteEl) {
-              window.addEventListener('pointermove', function (e) {
-                if (isBooped) return;
-                var b = bubble.getBoundingClientRect();
-                var cx = b.left + b.width / 2;
-                var cy = b.top + b.height / 2;
-                var dx = e.clientX - cx;
-                var dy = e.clientY - cy;
-                var dist = Math.hypot(dx, dy);
+            var currentSector = -1;
+            function updateMascotAim(clientX, clientY) {
+              if (!spriteEl || isBooped || isOpen) return;
+              var b = bubble.getBoundingClientRect();
+              var cx = b.left + b.width / 2;
+              var cy = b.top + b.height / 2;
+              var dx = clientX - cx;
+              var dy = clientY - cy;
 
-                if (dist < 35) {
-                  setMascotCell(1, 1);
-                  return;
-                }
+              if (Math.hypot(dx, dy) < DEAD_ZONE) {
+                currentSector = -1;
+                spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+                return;
+              }
 
-                var angle = Math.atan2(dy, dx) * (180 / Math.PI);
-                if (angle >= -22.5 && angle < 22.5) {
-                  setMascotCell(1, 2);
-                } else if (angle >= 22.5 && angle < 67.5) {
-                  setMascotCell(2, 2);
-                } else if (angle >= 67.5 && angle < 112.5) {
-                  setMascotCell(2, 1);
-                } else if (angle >= 112.5 && angle < 157.5) {
-                  setMascotCell(2, 0);
-                } else if (angle >= 157.5 || angle < -157.5) {
-                  setMascotCell(1, 0);
-                } else if (angle >= -157.5 && angle < -112.5) {
-                  setMascotCell(0, 0);
-                } else if (angle >= -112.5 && angle < -67.5) {
-                  setMascotCell(0, 1);
-                } else if (angle >= -67.5 && angle < -22.5) {
-                  setMascotCell(0, 2);
-                }
-              }, { passive: true });
+              var angle = Math.atan2(dy, dx);
+              if (currentSector !== -1 && Math.abs(wrapAngle(angle - currentSector * SECTOR)) < SECTOR / 2 + HYSTERESIS) {
+                return;
+              }
+
+              currentSector = (Math.round(angle / SECTOR) + 8) % 8;
+              var dirName = CLOCKWISE[currentSector];
+              var pos = POSITIONS[dirName] || '50% 50%';
+              spriteEl.style.setProperty('background-position', pos, 'important');
             }
+
+            // Слушаем и pointermove, и mousemove для надёжности на всех ОС и экранах
+            window.addEventListener('pointermove', function (e) {
+              updateMascotAim(e.clientX, e.clientY);
+            }, { passive: true });
+
+            window.addEventListener('mousemove', function (e) {
+              updateMascotAim(e.clientX, e.clientY);
+            }, { passive: true });
 
             if (bubble) {
-              bubble.addEventListener('pointerdown', function () {
+              bubble.addEventListener('pointerdown', function (e) {
+                if (isOpen) return; // Если окно уже открыто, клик обрабатывается как закрытие
                 if (!spriteEl) return;
                 isBooped = true;
                 spriteEl.style.backgroundImage = 'url("' + reactionsUrl + '")';
-                setMascotCell(1, 1);
+                spriteEl.style.setProperty('background-position', '50% 50%', 'important');
                 if (mascotEl) mascotEl.classList.add('squashing');
 
                 clearTimeout(boopTimer);
@@ -913,30 +1260,21 @@
                   isBooped = false;
                   spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
                   if (mascotEl) mascotEl.classList.remove('squashing');
-                  setMascotCell(1, 1);
+                  spriteEl.style.setProperty('background-position', '50% 50%', 'important');
                 }, 600);
               });
             }
           } else if (data.avatarType === 'photo' && data.consultantAvatar) {
-            if (bubble) {
-              bubble.classList.add('is-photo');
-              bubble.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + data.consultantAvatar + '" alt="Консультант"><span class="getvoxly-bubble-dot"></span>';
-            }
+            bubble.classList.add('is-photo');
+            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + data.consultantAvatar + '" alt="Консультант"><span class="getvoxly-bubble-dot"></span>';
           }
 
-          if (data.position === 'bottom-left') {
-            wrapper.classList.add('position-left');
-            win.classList.add('position-left');
-          }
-
-          if (data.placeholder) {
-            inputEl.placeholder = data.placeholder;
-          }
-
+          // Приветственное сообщение
           if ((!messagesContainer.children || messagesContainer.children.length === 0) && data.greeting) {
             saveAndRenderMessage(data.greeting, false);
           }
 
+          // Кнопки перехода в мессенджеры (Telegram, WhatsApp, MAX)
           var buttons = data.messengerButtons || [];
           if (buttons.length === 0 && (telegramBot || data.telegramBot) && data.showTelegramBanner !== false) {
             var tb = (telegramBot || data.telegramBot).replace(/^@/, '');
@@ -948,33 +1286,30 @@
             });
           }
 
-          if (msgContainer && buttons.length > 0 && data.showMessengerBanner !== false && data.showTelegramBanner !== false) {
+          // Проверяем настройку показа баннера мессенджеров (независимо от того, Telegram это, WhatsApp или MAX)
+          if (msgContainer && buttons.length > 0 && data.showMessengerBanner !== false) {
             msgContainer.style.display = 'block';
 
             if (buttons.length === 1) {
               var b = buttons[0];
               var linkHref = b.url + (b.type === 'telegram' ? '?start=site_' + visitorId : '');
               var iconSvg = '';
-              var actionText = 'Перейти';
 
               if (b.type === 'telegram') {
                 iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
               } else if (b.type === 'whatsapp') {
-                actionText = 'Написать';
                 iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
               } else if (b.type === 'max') {
                 iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
               }
 
-              msgContainer.innerHTML = '<div class="getvoxly-msg-banner-single is-' + b.type + '">' +
-                '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
+              msgContainer.innerHTML = '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-banner-single is-' + b.type + '">' +
+                '<div class="getvoxly-msg-banner-left">' +
                   iconSvg +
-                  '<span style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Продолжить в ' + b.label + '</span>' +
+                  '<span class="getvoxly-msg-banner-title">Продолжить в ' + b.label + '</span>' +
                 '</div>' +
-                '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-btn-pill btn-' + b.type + '">' +
-                  actionText +
-                '</a>' +
-              '</div>';
+                '<span class="getvoxly-msg-banner-handle">' + (b.handle || 'Открыть') + '</span>' +
+              '</a>';
             } else {
               var buttonsHtml = '';
               for (var j = 0; j < buttons.length; j++) {
@@ -1025,7 +1360,7 @@
       if (!text) return;
 
       inputEl.value = '';
-      inputEl.style.height = '38px';
+      inputEl.style.height = '24px';
       lastDraft = '';
 
       saveAndRenderMessage(text, true);
