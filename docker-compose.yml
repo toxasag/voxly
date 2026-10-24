@@ -169,6 +169,8 @@ services:
       SMTP_USER: admin@getvoxly.ru
       SMTP_PASS: ${SMTP_PASS:?SMTP_PASS is required}
       SMTP_FROM: '"Voxly" <admin@getvoxly.ru>'
+    volumes:
+      - uploads-data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -250,6 +252,8 @@ volumes:
     name: getvoxly_evolution_instances
   max-sessions-data:
     name: getvoxly_max_sessions_data
+  uploads-data:
+    name: getvoxly_uploads_data
 
 networks:
   automation:

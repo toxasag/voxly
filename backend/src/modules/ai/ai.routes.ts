@@ -17,6 +17,7 @@ import {
 import { AI_MODEL_CATALOG } from "./ai-pricing.js";
 import { crawlWebsite } from "./site-crawler.js";
 import { crawlMapReviews } from "./map-reviews-crawler.js";
+import { knowledgeSynthesizerService } from "./knowledge-synthesizer.service.js";
 import {
   extensionOf,
   extractText,
@@ -91,6 +92,16 @@ const channelBindingsSchema = z.object({
   channel_account_ids: z.array(z.string().uuid()).max(50),
 });
 
+const whatsappImportSchema = z.object({
+  text: z.string().min(10, "Переписка должна содержать текст").max(1_000_000, "Превышен максимальный объём текста (1 МБ)"),
+  filename: z.string().optional(),
+});
+
+const updateDocumentSchema = z.object({
+  text: z.string().min(1, "Текст документа не может быть пустым"),
+  filename: z.string().optional(),
+});
+
 export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
 
@@ -108,6 +119,16 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       chatModel?: string;
       isConfigured: boolean;
     } | null = null;
+
+    let dynamicModels: Array<{
+      id: string;
+      label: string;
+      provider: string;
+      contextWindow: number;
+      costInPer1k: number;
+      costOutPer1k: number;
+      isConfigured: boolean;
+    }> = [];
 
     try {
       const effective = await platformConfigService.getEffectiveIntegrations();
@@ -129,9 +150,56 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
           isConfigured: true,
         };
       }
+
+      // Запрашиваем РЕАЛЬНО доступные чат-модели у провайдера
+      const available = await platformConfigService.fetchAvailableModels();
+      if (available.success && available.models.length > 0) {
+        const chatOnly = available.models.filter((m) => m.type === "chat");
+        dynamicModels = chatOnly.map((m) => ({
+          id: m.id,
+          label: m.name,
+          provider: activeProvider?.providerType || "google",
+          contextWindow: 128_000,
+          costInPer1k: 5,
+          costOutPer1k: 15,
+          isConfigured: true,
+        }));
+      }
     } catch {
-      // Игнорируем ошибку чтения интеграций, возвращая каталог по умолчанию
+      // Игнорируем ошибку чтения интеграций
     }
+
+    // Если у активного провайдера задана chatModel, гарантируем её присутствие на первом месте
+    if (activeProvider?.chatModel) {
+      const idx = dynamicModels.findIndex((m) => m.id === activeProvider?.chatModel);
+      if (idx > -1) {
+        const [target] = dynamicModels.splice(idx, 1);
+        if (target) dynamicModels.unshift(target);
+      } else {
+        dynamicModels.unshift({
+          id: activeProvider.chatModel,
+          label: activeProvider.chatModel,
+          provider: activeProvider.providerType || "google",
+          contextWindow: 128_000,
+          costInPer1k: 5,
+          costOutPer1k: 15,
+          isConfigured: true,
+        });
+      }
+    }
+
+    // Если динамические модели от провайдера не вернулись, используем базовый каталог
+    const finalModels = dynamicModels.length > 0
+      ? dynamicModels
+      : Object.values(AI_MODEL_CATALOG).map((model) => ({
+          id: model.id,
+          label: model.label,
+          provider: model.provider,
+          contextWindow: model.contextWindow,
+          costInPer1k: model.costInPer1k,
+          costOutPer1k: model.costOutPer1k,
+          isConfigured: activeProvider?.isConfigured ?? false,
+        }));
 
     const defaultProvider = activeProvider ?? {
       name: "Провайдер платформы",
@@ -141,26 +209,7 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       activeProvider: defaultProvider,
-      data: Object.values(AI_MODEL_CATALOG).map((model) => {
-        // Проверяем, соответствует ли модель активному провайдеру
-        const isProviderMatch = defaultProvider.isConfigured
-          ? (defaultProvider.providerType === "gemini" && model.provider === "google") ||
-            (defaultProvider.providerType === "openai" && model.provider === "openai") ||
-            (defaultProvider.providerType === "anthropic" && model.provider === "anthropic") ||
-            (defaultProvider.providerType === "deepseek" && model.provider === "deepseek") ||
-            defaultProvider.providerType === "custom"
-          : true;
-
-        return {
-          id: model.id,
-          label: model.label,
-          provider: model.provider,
-          contextWindow: model.contextWindow,
-          costInPer1k: model.costInPer1k,
-          costOutPer1k: model.costOutPer1k,
-          isConfigured: isProviderMatch,
-        };
-      }),
+      data: finalModels,
     });
   });
 
@@ -177,6 +226,66 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/agents", { onRequest: writeAgents }, async (request, reply) => {
     const body = createAgentSchema.parse(request.body);
     const agent = await service.createAgent(request.tenant_id, body);
+
+    // Если при создании передан URL сайта, запускаем сканирование страниц сайта в базу знаний
+    if (body.website_url && body.website_url.trim()) {
+      try {
+        const pages = await crawlWebsite(body.website_url.trim(), { maxPages: 20 });
+        for (const page of pages) {
+          try {
+            await knowledge.addDocument({
+              tenantId: request.tenant_id,
+              agentId: agent.id,
+              filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
+              mimeType: "text/html",
+              text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
+            });
+          } catch {
+            // Продолжаем индексацию остальных страниц
+          }
+        }
+      } catch (err) {
+        request.log.warn({ err }, "Не удалось автоматически просканировать сайт при создании агента");
+      }
+    }
+
+    // Если при создании передан URL на отзывы/карты, извлекаем рейтинг и отзывы
+    if (body.map_reviews_url && body.map_reviews_url.trim()) {
+      try {
+        const reviewsResult = await crawlMapReviews(body.map_reviews_url.trim());
+        await knowledge.addDocument({
+          tenantId: request.tenant_id,
+          agentId: agent.id,
+          filename: `Отзывы (${reviewsResult.platform}): ${reviewsResult.orgName.slice(0, 50)}`,
+          mimeType: "text/markdown",
+          text: reviewsResult.markdownContent,
+        });
+      } catch (err) {
+        request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при создании агента");
+      }
+    }
+
+    // Если включен автосбор опыта из CRM (сделки и переписки)
+    if (body.sync_crm === true) {
+      void knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, agent.id).catch((err) => {
+        request.log.warn({ err }, "Не удалось автоматически синтезировать опыт из CRM");
+      });
+    }
+
+    // Если передана выгрузка переписки WhatsApp
+    if (body.whatsapp_chat_text && body.whatsapp_chat_text.trim().length > 20) {
+      void knowledgeSynthesizerService
+        .synthesizeFromWhatsApp(
+          request.tenant_id,
+          agent.id,
+          body.whatsapp_chat_text.trim(),
+          "WhatsApp-чат.txt",
+        )
+        .catch((err) => {
+          request.log.warn({ err }, "Не удалось автоматически синтезировать переписку WhatsApp");
+        });
+    }
+
     return reply.status(201).send({ data: agent });
   });
 
@@ -455,6 +564,48 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
         total: examples.length,
       },
     });
+  });
+
+  app.get("/knowledge/crm-stats", { onRequest: readAgents }, async (request, reply) => {
+    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id);
+    return reply.send({ data: stats });
+  });
+
+  app.post("/agents/:id/knowledge/sync-crm", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const result = await knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, id);
+    return reply.status(201).send({ data: result });
+  });
+
+  app.post("/agents/:id/knowledge/import-whatsapp", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = whatsappImportSchema.parse(request.body);
+    const result = await knowledgeSynthesizerService.synthesizeFromWhatsApp(
+      request.tenant_id,
+      id,
+      body.text,
+      body.filename,
+    );
+    return reply.status(201).send({ data: result });
+  });
+
+  app.get("/agents/:id/knowledge/:docId", { onRequest: readAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const doc = await knowledge.getDocument(request.tenant_id, id, docId);
+    return reply.send({ data: doc });
+  });
+
+  app.put("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const body = updateDocumentSchema.parse(request.body);
+    const doc = await knowledge.updateDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      text: body.text,
+      filename: body.filename,
+    });
+    return reply.send({ data: doc });
   });
 
   app.delete("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {

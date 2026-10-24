@@ -39,6 +39,8 @@ export interface InboundMessageInput {
   senderName: string;
   senderPhone?: string;
   senderTelegramChatId?: string;
+  attachment?: string | null;
+  attachmentType?: string | null;
   /** Профиль из канала; без него имя контакта станет «Клиент». */
   profile?: ChannelProfile;
   /** Идентификатор и аналитика посетителя сайта */
@@ -386,21 +388,31 @@ export class CrmPipelineService {
         }
       }
 
+      const contentText =
+        input.text.trim() ||
+        (input.attachment
+          ? input.attachmentType?.startsWith("image/")
+            ? "Фотография"
+            : "Вложение"
+          : "");
+
       // Защита от дублирования сообщений при параллельной доставке вебхуков
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
-           AND direction = 'inbound' AND content = $3 AND channel = $4
+           AND direction = 'inbound'
+           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
+           AND channel = $5
            AND created_at > now() - interval '15 seconds'
          LIMIT 1`,
-        [input.tenantId, dealId, input.text, input.channel],
+        [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
 
       if (!existingMsg) {
         await tx.query(
           `INSERT INTO deal_messages
-             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             input.tenantId,
             dealId,
@@ -408,8 +420,10 @@ export class CrmPipelineService {
             "client",
             "inbound",
             input.senderName,
-            input.text,
+            contentText,
             input.channel,
+            input.attachment ?? null,
+            input.attachmentType ?? null,
           ],
         );
       }
@@ -523,6 +537,8 @@ export class CrmPipelineService {
     peerUserId?: string | null;
     username?: string | null;
     pauseMinutes?: number;
+    attachment?: string | null;
+    attachmentType?: string | null;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     return transaction(async (tx) => {
       let contact = await this.findContact(tx, input.tenantId, {
@@ -623,16 +639,24 @@ export class CrmPipelineService {
         return { dealId: null, messageId: null, pausedUntil: null };
       }
 
+      const contentText =
+        input.text.trim() ||
+        (input.attachment
+          ? input.attachmentType?.startsWith("image/")
+            ? "Фотография"
+            : "Вложение"
+          : "");
+
       // Дедупликация исходящих сообщений в пределах 20 секунд (исключает дублирование при отправке из веб-CRM)
       const existingOutbound = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'outbound'
-           AND content = $3
-           AND channel = $4
+           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
+           AND channel = $5
            AND created_at >= now() - interval '20 seconds'
          ORDER BY created_at DESC LIMIT 1`,
-        [input.tenantId, activeDeal.id, input.text, input.channel],
+        [input.tenantId, activeDeal.id, contentText, input.attachment ?? null, input.channel],
       );
 
       if (existingOutbound) {
@@ -655,16 +679,18 @@ export class CrmPipelineService {
 
       const msgRes = await tx.queryOne<{ id: string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status)
-         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent')
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8)
          RETURNING id`,
         [
           input.tenantId,
           activeDeal.id,
           nullIfBlank(input.channelAccountId),
           input.senderName ?? "Менеджер",
-          input.text,
+          contentText,
           input.channel,
+          input.attachment ?? null,
+          input.attachmentType ?? null,
         ],
       );
 

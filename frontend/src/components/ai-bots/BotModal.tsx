@@ -9,11 +9,14 @@ import {
   Check,
   FileCode,
   FileText,
+  Globe,
   Loader2,
+  MessageSquare,
   RefreshCw,
   Save,
   Sliders,
   Sparkles,
+  Star,
 } from "lucide-react";
 import type { AiBot, BotContextEntity, BotMode, BotModel } from "@/lib/ai-bots/ai-bots.types";
 import {
@@ -26,6 +29,7 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels } from "@/lib/api/use-ai-agents";
+import { useCrmKnowledgeStats } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -57,7 +61,7 @@ const ACCENTS: { value: CreateBotPayload["accent"]; swatch: string }[] = [
 const DEFAULT_VALUES: CreateBotPayload = {
   name: "",
   description: "",
-  model: "gpt-4o-mini",
+  model: "gemini-3.5-flash",
   mode: "suggester",
   status: "active",
   accent: "amber",
@@ -65,6 +69,10 @@ const DEFAULT_VALUES: CreateBotPayload = {
   max_tokens: 1024,
   system_prompt: DIRECTOR_PROMPT_TEMPLATE,
   context_entities: ["contacts", "deals"],
+  website_url: "",
+  map_reviews_url: "",
+  sync_crm: true,
+  whatsapp_chat_text: "",
   wizard_config: {
     presetId: "tpl-universal-closer",
     consultantName: "Алексей",
@@ -88,6 +96,10 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     max_tokens: bot.max_tokens,
     system_prompt: bot.system_prompt,
     context_entities: [...bot.context_entities],
+    website_url: "",
+    map_reviews_url: "",
+    sync_crm: false,
+    whatsapp_chat_text: "",
     wizard_config: bot.wizard_config ?? {
       presetId: "tpl-universal-closer",
       consultantName: "Алексей",
@@ -138,8 +150,27 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const wizardConfig = form.watch("wizard_config");
 
   const { data: modelsData } = useAiModels();
+  const { data: crmStats } = useCrmKnowledgeStats();
   const activeProvider = modelsData?.activeProvider;
   const modelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
+
+  // Автоматически синхронизируем выбранную модель с активной моделью провайдера
+  useEffect(() => {
+    if (!open || isEdit) return;
+    if (modelsList.length > 0) {
+      const currentModel = form.getValues("model");
+      const isKnown = modelsList.some((m) => m.id === currentModel);
+      if (!isKnown || currentModel === "gpt-4o-mini" || currentModel === "gemini-3.5-flash") {
+        const preferred =
+          modelsList.find((m) => "isConfigured" in m ? m.isConfigured !== false : true)?.id ??
+          activeProvider?.chatModel ??
+          modelsList[0]?.id;
+        if (preferred && preferred !== currentModel) {
+          form.setValue("model", preferred as BotModel, { shouldValidate: true });
+        }
+      }
+    }
+  }, [open, isEdit, modelsList, activeProvider, form]);
 
   const toggleEntity = useCallback(
     (entity: BotContextEntity) => {
@@ -439,6 +470,114 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                 />
                 {errors.max_tokens && (
                   <p className="text-xs text-rose-500">{errors.max_tokens.message}</p>
+                )}
+              </div>
+            </div>
+
+            {/* База знаний и ссылки (обучение при создании) */}
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-4 w-4 text-[#4a38f5]" />
+                  <span className="text-xs font-semibold text-[#111111]">
+                    База знаний и ссылки компании
+                  </span>
+                </div>
+                <span className="text-[11px] text-[#666666]">
+                  {isEdit ? "Для детального управления файлами используйте вкладку агента" : "Автоматическое обучение"}
+                </span>
+              </div>
+              <p className="text-xs text-[#666666]">
+                Укажите адрес сайта и ссылку на карты — система автоматически просканирует страницы и отзывы клиентов, чтобы обучить агента сразу при создании.
+              </p>
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label htmlFor="bot-website-url" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                    <Globe className="h-3.5 w-3.5 text-[#4a38f5]" />
+                    Ссылка на сайт компании (сканирование всех страниц)
+                  </label>
+                  <input
+                    id="bot-website-url"
+                    type="url"
+                    {...form.register("website_url")}
+                    placeholder="https://mysite.ru"
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Краулер обойдёт sitemap.xml и внутренние ссылки (услуги, прайсы, контакты) и проиндексирует базу знаний.
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="bot-map-reviews-url" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                    <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+                    Отзывы и рейтинг (Яндекс Карты, 2ГИС, Google Maps, Zoon)
+                  </label>
+                  <input
+                    id="bot-map-reviews-url"
+                    type="url"
+                    {...form.register("map_reviews_url")}
+                    placeholder="https://yandex.ru/maps/org/... или https://2gis.ru/..."
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                  <p className="text-[11px] text-[#888888]">
+                    Парсер выгрузит оценку компании и реальные отзывы клиентов для использования в аргументации при продажах.
+                  </p>
+                </div>
+
+                {/* Опыт из CRM */}
+                {!isEdit && (
+                  <div className="flex items-start gap-2.5 rounded-[8px] border border-[#e5e5e5] bg-white p-3">
+                    <input
+                      id="bot-sync-crm"
+                      type="checkbox"
+                      {...form.register("sync_crm")}
+                      className="mt-0.5 h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                    />
+                    <label htmlFor="bot-sync-crm" className="text-xs cursor-pointer select-none">
+                      <span className="font-semibold text-[#111111] flex items-center gap-1.5">
+                        <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                        Синтезировать опыт из CRM (сделки и чаты)
+                      </span>
+                      <span className="block text-[#666666] mt-0.5">
+                        {crmStats?.wonDeals
+                          ? `В CRM найдено ${crmStats.wonDeals} успешных сделок и ${crmStats.totalMessages} сообщений. AI выделит прайс и частые вопросы.`
+                          : "AI проанализирует сделки и переписки в вашей CRM и создаст структурированную базу знаний."}
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                {/* Выгрузка переписки WhatsApp */}
+                {!isEdit && (
+                  <div className="space-y-1">
+                    <label htmlFor="bot-whatsapp-file" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                      <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                      Выгрузка переписки из WhatsApp (_chat.txt)
+                    </label>
+                    <input
+                      id="bot-whatsapp-file"
+                      type="file"
+                      accept=".txt"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const content = ev.target?.result;
+                          if (typeof content === "string") {
+                            form.setValue("whatsapp_chat_text", content);
+                          }
+                        };
+                        reader.readAsText(file);
+                      }}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] file:mr-2 file:rounded-[4px] file:border-0 file:bg-emerald-50 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-emerald-700 hover:file:bg-emerald-100"
+                    />
+                    <p className="text-[11px] text-[#888888]">
+                      Прикрепите текстовый файл экспорта чата WhatsApp (Экспорт чата → Без медиафайлов) для обучения агента на живом стиле компании.
+                    </p>
+                  </div>
                 )}
               </div>
             </div>

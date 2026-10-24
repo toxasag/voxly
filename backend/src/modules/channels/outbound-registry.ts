@@ -71,9 +71,37 @@ export type TelegramPhoneResolver = (
   phoneDigits: string,
 ) => Promise<TelegramPhoneResolveResult>;
 
+export interface TelegramHistorySyncParams {
+  tenantId: string;
+  dealId: string;
+  channelAccountId: string;
+  peerId: string;
+  username?: string;
+  phone?: string;
+  limit?: number;
+}
+
+export type TelegramHistorySyncer = (params: TelegramHistorySyncParams) => Promise<number>;
+
 const senders = new Map<ChannelSlug, OutboundSender>();
 const storyPublishers = new Map<ChannelSlug, StoryPublisher>();
 let telegramPhoneResolver: TelegramPhoneResolver | null = null;
+let telegramHistorySyncer: TelegramHistorySyncer | null = null;
+
+/** Транспорт Telegram регистрирует синхронизатор истории сообщений */
+export function registerTelegramHistorySyncer(syncer: TelegramHistorySyncer): () => void {
+  telegramHistorySyncer = syncer;
+  return () => {
+    if (telegramHistorySyncer === syncer) telegramHistorySyncer = null;
+  };
+}
+
+/** Вызов синхронизатора истории диалога Telegram */
+export function resolveTelegramHistorySyncer(): TelegramHistorySyncer | null {
+  return telegramHistorySyncer;
+}
+
+/** Транспорт Telegram регистрирует резолвер поиска по номеру телефона */
 
 /** Транспорт Telegram регистрирует резолвер поиска по номеру телефона */
 export function registerTelegramPhoneResolver(resolver: TelegramPhoneResolver): () => void {
@@ -130,4 +158,5 @@ export function clearOutboundSenders(): void {
   senders.clear();
   storyPublishers.clear();
   telegramPhoneResolver = null;
+  telegramHistorySyncer = null;
 }

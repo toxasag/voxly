@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import path from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
@@ -220,6 +223,44 @@ export async function buildApp(): Promise<FastifyInstance> {
       .header("Cross-Origin-Resource-Policy", "cross-origin")
       .header("Cross-Origin-Embedder-Policy", "unsafe-none")
       .send(WIDGET_SCRIPT);
+  });
+
+  // Раздача медиафайлов (фотографий и документов) чата CRM
+  app.get("/uploads/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        return reply.status(404).send({ error: "File not found" });
+      }
+
+      const ext = path.extname(safeFilename).toLowerCase();
+      const mimeMap: Record<string, string> = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".mp3": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".pdf": "application/pdf",
+      };
+      const contentType = mimeMap[ext] ?? "application/octet-stream";
+
+      return reply
+        .type(contentType)
+        .header("Cache-Control", "public, max-age=86400")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .header("Cross-Origin-Embedder-Policy", "unsafe-none")
+        .send(createReadStream(filePath));
+    } catch {
+      return reply.status(404).send({ error: "File not found" });
+    }
   });
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
