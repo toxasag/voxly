@@ -573,6 +573,53 @@ export class AuthService {
     }
   }
 
+  // -- impersonation --------------------------------------------------------
+
+  /**
+   * Вход суперадминистратора платформы под учётной записью арендатора (Impersonation).
+   *
+   * Используется для диагностики ошибок, отладки обращений в поддержку и помощи клиентам.
+   * Находит владельца (owner) или первого активного сотрудника организации и выпускает
+   * для него полноценный JWT-токен, записывая действие в аудит-лог платформы.
+   */
+  async impersonateTenant(tenantId: string, actorUserId: string): Promise<AuthTokens> {
+    const user = await queryOne<AuthUserRow>(
+      `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
+              u.password_hash, u.permissions,
+              t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+       WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+       ORDER BY (CASE WHEN u.role = 'owner' THEN 0 ELSE 1 END), u.created_at ASC
+       LIMIT 1`,
+      [tenantId],
+    );
+
+    if (user === null) {
+      throw new AppError(404, "USER_NOT_FOUND", "В компании нет активных пользователей для входа");
+    }
+
+    const tokens = await this.issueTokens(user);
+
+    await query(
+      `INSERT INTO tenant_audit_log
+         (tenant_id, actor_user_id, action, entity_type, entity_id, details)
+       VALUES ($1, $2, 'tenant.impersonate', 'user', $3, $4::jsonb)`,
+      [
+        tenantId,
+        actorUserId,
+        user.id,
+        JSON.stringify({
+          impersonated_user_id: user.id,
+          impersonated_user_email: user.email,
+          impersonated_user_role: user.role,
+        }),
+      ],
+    );
+
+    return tokens;
+  }
+
   // -- registration ---------------------------------------------------------
 
   /**

@@ -9,7 +9,7 @@ import { ReferralTab } from "@/components/admin/ReferralTab";
 import { Guard } from "@/components/shared/Guard";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import type { PlatformTenant } from "@/lib/admin/admin.types";
-import { useAdminTenants, useDeleteTenant, useUpdateTenant } from "@/lib/api/use-admin";
+import { useAdminTenants, useDeleteTenant, type AdminTenantDTO } from "@/lib/api/use-admin";
 import { cn } from "@/lib/utils";
 
 type AdminTab = "tenants" | "referrals";
@@ -49,12 +49,11 @@ function mapAdminTenantToPlatform(dto: {
 
 export default function TenantsPage() {
   const { data: adminTenants = [], isLoading, isError, error, refetch } = useAdminTenants();
-  const updateTenant = useUpdateTenant();
   const deleteTenant = useDeleteTenant();
   const [activeTab, setActiveTab] = useState<AdminTab>("tenants");
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "trial" | "expired" | "suspended">("all");
-  const [manageTarget, setManageTarget] = useState<PlatformTenant | null>(null);
+  const [manageTarget, setManageTarget] = useState<AdminTenantDTO | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PlatformTenant | null>(null);
 
@@ -76,10 +75,14 @@ export default function TenantsPage() {
     });
   }, [tenants, filterStatus, searchQuery]);
 
-  const handleManage = useCallback((t: PlatformTenant) => {
-    setManageTarget(t);
-    setManageOpen(true);
-  }, []);
+  const handleManage = useCallback(
+    (t: PlatformTenant) => {
+      const found = adminTenants.find((item) => item.id === t.id) ?? null;
+      setManageTarget(found);
+      setManageOpen(true);
+    },
+    [adminTenants],
+  );
 
   const handleDeleteTenant = useCallback(async () => {
     if (!deleteTarget) return;
@@ -92,18 +95,6 @@ export default function TenantsPage() {
       toast.error(err instanceof Error ? err.message : "Не удалось удалить компанию");
     }
   }, [deleteTarget, deleteTenant, refetch]);
-
-  const handleSaveTenant = useCallback(async (updated: PlatformTenant) => {
-    await updateTenant.mutateAsync({
-      id: updated.id,
-      status: updated.status === "expired" ? "past_due" : updated.status,
-      plan: updated.plan === "starter" ? "start" : updated.plan === "professional" ? "business" : updated.plan,
-      subscription_expires_at: updated.subscription_ends_at || null,
-      ai_tokens_balance: updated.ai_tokens_deepseek,
-    });
-    setManageTarget(null);
-    setManageOpen(false);
-  }, [updateTenant]);
 
   const totalTenants = tenants.length;
   const activeTenants = tenants.filter((t) => t.status === "active" || t.status === "trial").length;
@@ -198,8 +189,7 @@ export default function TenantsPage() {
         open={manageOpen}
         tenant={manageTarget}
         onClose={() => setManageOpen(false)}
-        onSave={handleSaveTenant}
-        isSubmitting={updateTenant.isPending}
+        onSaved={() => void refetch()}
       />
 
       {/* Delete Confirmation */}

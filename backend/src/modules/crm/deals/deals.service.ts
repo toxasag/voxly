@@ -44,6 +44,7 @@ const DEAL_COLUMNS_WITH_LABELS = `
   ct.phone AS contact_phone,
   ct.email AS contact_email,
   ct.job_title AS contact_job_title,
+  ct.is_personal AS contact_is_personal,
   ow.name AS owner_name,
   ln.body AS latest_note_body,
   COALESCE(tk.total_tasks_count, 0) AS tasks_count,
@@ -962,5 +963,154 @@ export class DealsService {
       budgetTotal: deals.reduce((sum, deal) => sum + deal.budget, 0),
       deals,
     };
+  }
+
+  /**
+   * Помечает контакт по сделке как личный контакт:
+   * 1. Устанавливает contacts.is_personal = true и contacts.suppress_deal_creation = true.
+   * 2. Переводит сделку в этап с is_lost = true (Отказ / Закрыто и не реализовано).
+   * 3. Устанавливает closed_at = now() и ai_paused_until = '2099-01-01'.
+   * 4. Добавляет системное сообщение в deal_messages.
+   */
+  async markPersonal(
+    tenantId: string,
+    dealId: string,
+    changedBy: string,
+  ): Promise<{ dealId: string; contactId: string | null; stageId: string }> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{
+        id: string;
+        stage_id: string;
+        pipeline_id: string;
+        contact_id: string | null;
+      }>(
+        `SELECT id, stage_id, pipeline_id, contact_id
+         FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, dealId],
+      );
+
+      if (deal === null) {
+        throw new NotFoundError("Deal not found");
+      }
+
+      let lostStage = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM stages
+         WHERE pipeline_id = $1 AND is_lost = true
+         ORDER BY sort_order DESC
+         LIMIT 1`,
+        [deal.pipeline_id],
+      );
+
+      if (!lostStage) {
+        lostStage = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM stages
+           WHERE pipeline_id = $1
+           ORDER BY sort_order DESC
+           LIMIT 1`,
+          [deal.pipeline_id],
+        );
+      }
+
+      if (!lostStage) {
+        throw new ValidationError("No stages found for pipeline", {});
+      }
+
+      if (deal.contact_id) {
+        await tx.query(
+          `UPDATE contacts
+           SET is_personal = true,
+               suppress_deal_creation = true,
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, deal.contact_id],
+        );
+      }
+
+      await tx.query(
+        `UPDATE deals
+         SET stage_id = $1,
+             closed_at = COALESCE(closed_at, now()),
+             ai_paused_until = '2099-01-01'::timestamptz,
+             updated_at = now()
+         WHERE tenant_id = $2 AND id = $3`,
+        [lostStage.id, tenantId, deal.id],
+      );
+
+      if (deal.stage_id !== lostStage.id) {
+        await tx.query(
+          `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, deal.id, deal.stage_id, lostStage.id, changedBy],
+        );
+      }
+
+      // Системное уведомление в переписке сделки
+      await tx.query(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral')`,
+        [
+          tenantId,
+          deal.id,
+          `Контакт помечен как личный. Сделка переведена в «${lostStage.name}», новые сделки не создаются, а сообщения больше не читаются и не сохраняются в CRM.`,
+        ],
+      );
+
+      return {
+        dealId: deal.id,
+        contactId: deal.contact_id,
+        stageId: lostStage.id,
+      };
+    });
+  }
+
+  /**
+   * Снимает пометку личного контакта (возврат в рабочие).
+   */
+  async unmarkPersonal(
+    tenantId: string,
+    dealId: string,
+    _changedBy: string,
+  ): Promise<{ dealId: string; contactId: string | null }> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ id: string; contact_id: string | null }>(
+        `SELECT id, contact_id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, dealId],
+      );
+
+      if (deal === null) throw new NotFoundError("Deal not found");
+
+      if (deal.contact_id) {
+        await tx.query(
+          `UPDATE contacts
+           SET is_personal = false,
+               suppress_deal_creation = false,
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, deal.contact_id],
+        );
+      }
+
+      await tx.query(
+        `UPDATE deals
+         SET ai_paused_until = NULL,
+             updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, deal.id],
+      );
+
+      await tx.query(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, 'system', 'neutral', 'Система', 'Контакт возвращён в категорию рабочих.', 'system', 'neutral')`,
+        [tenantId, deal.id],
+      );
+
+      return { dealId: deal.id, contactId: deal.contact_id };
+    });
   }
 }

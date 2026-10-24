@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS tenants (
   -- тот считается для каждого модуля, и «осталось X дней» по аккаунту из него не
   -- выводится.
   trial_ends_at TIMESTAMPTZ,
+  custom_price_rubles INTEGER DEFAULT NULL,
+  custom_plan_name TEXT DEFAULT NULL,
+  business_niche TEXT DEFAULT NULL,
+  custom_notes TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT tenants_slug_format CHECK (
@@ -527,6 +531,7 @@ CREATE INDEX IF NOT EXISTS idx_page_layout_tabs_object_active
 -- Soft-delete columns (see .cursorrules §10: queries filter deleted_at IS NULL)
 ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS suppress_deal_creation BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE companies  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE deals      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE crm_tasks  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;

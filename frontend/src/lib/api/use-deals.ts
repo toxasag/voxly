@@ -36,6 +36,7 @@ export interface DealDTO {
   contactPhone?: string | null;
   contactEmail?: string | null;
   contactJobTitle?: string | null;
+  contactIsPersonal?: boolean;
   ownerName: string | null;
   latestNote?: string | null;
   tasksCount?: number;
@@ -237,5 +238,47 @@ export function useDeleteDeal(): UseMutationResult<null, ApiClientError, string>
   return useMutation({
     mutationFn: async (id) => { await apiClient.delete<null>(`${BASE}/${id}`); return null; },
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: dealKeys.all }); },
+  });
+}
+
+export function useMarkDealPersonal(): UseMutationResult<
+  { dealId: string; contactId: string | null; stageId: string },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (dealId) =>
+      (await apiClient.post<{ dealId: string; contactId: string | null; stageId: string }>(
+        `${BASE}/${dealId}/mark-personal`,
+        {},
+      )).data,
+    onSuccess: (_, dealId) => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId, "messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+}
+
+export function useUnmarkDealPersonal(): UseMutationResult<
+  { dealId: string; contactId: string | null },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (dealId) =>
+      (await apiClient.post<{ dealId: string; contactId: string | null }>(
+        `${BASE}/${dealId}/unmark-personal`,
+        {},
+      )).data,
+    onSuccess: (_, dealId) => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId, "messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
   });
 }

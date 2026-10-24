@@ -474,6 +474,16 @@ export class WebchatService {
       }),
     );
 
+    // Если контакт помечен как личный — CRM не обрабатывает переписку
+    if (crmResult.isPersonal) {
+      return {
+        dealId: "",
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "queued",
+      };
+    }
+
     // Если это неотправленный черновик (lead salvage) — фиксируем в CRM, но не шлем автоответ клиенту
     if (input.isDraft) {
       return {
