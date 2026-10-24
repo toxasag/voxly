@@ -11,13 +11,7 @@ export type BotMode = "suggester" | "autoreply" | "disabled";
 
 export type LlmProvider = "openai" | "anthropic" | "deepseek" | "google";
 
-export type BotModel =
-  | "gpt-4o"
-  | "gpt-4o-mini"
-  | "claude-sonnet-4"
-  | "claude-opus-4"
-  | "deepseek-v3"
-  | "gemini-1.5-pro";
+export type BotModel = string;
 
 /** CRM entities whose data may be injected into the bot context at runtime. */
 export type BotContextEntity =
@@ -58,16 +52,31 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.11, price_out_per_1k: 0.45 },
 ];
 
-const MODEL_INDEX: Record<BotModel, ModelInfo> = MODEL_CATALOG.reduce(
+const MODEL_INDEX: Record<string, ModelInfo> = MODEL_CATALOG.reduce(
   (acc, model) => {
     acc[model.id] = model;
     return acc;
   },
-  {} as Record<BotModel, ModelInfo>,
+  {} as Record<string, ModelInfo>,
 );
 
-export function getModelInfo(model: BotModel): ModelInfo {
-  return MODEL_INDEX[model];
+export function getModelInfo(model: string): ModelInfo {
+  return (
+    MODEL_INDEX[model] ?? {
+      id: model,
+      label: model,
+      provider: model.includes("gemini")
+        ? "google"
+        : model.includes("claude")
+          ? "anthropic"
+          : model.includes("deepseek")
+            ? "deepseek"
+            : "openai",
+      context_window: 128_000,
+      price_in_per_1k: 0.05,
+      price_out_per_1k: 0.15,
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
