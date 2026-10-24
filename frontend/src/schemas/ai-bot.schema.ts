@@ -73,6 +73,8 @@ export const createBotSchema = z.object({
   wizard_config: wizardConfigSchema,
   website_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
   map_reviews_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
+  sync_crm: z.boolean().optional(),
+  whatsapp_chat_text: z.string().optional(),
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

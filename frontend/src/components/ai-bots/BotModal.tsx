@@ -11,6 +11,7 @@ import {
   FileText,
   Globe,
   Loader2,
+  MessageSquare,
   RefreshCw,
   Save,
   Sliders,
@@ -28,6 +29,7 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels } from "@/lib/api/use-ai-agents";
+import { useCrmKnowledgeStats } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -69,6 +71,8 @@ const DEFAULT_VALUES: CreateBotPayload = {
   context_entities: ["contacts", "deals"],
   website_url: "",
   map_reviews_url: "",
+  sync_crm: true,
+  whatsapp_chat_text: "",
   wizard_config: {
     presetId: "tpl-universal-closer",
     consultantName: "Алексей",
@@ -94,6 +98,8 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     context_entities: [...bot.context_entities],
     website_url: "",
     map_reviews_url: "",
+    sync_crm: false,
+    whatsapp_chat_text: "",
     wizard_config: bot.wizard_config ?? {
       presetId: "tpl-universal-closer",
       consultantName: "Алексей",
@@ -144,6 +150,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const wizardConfig = form.watch("wizard_config");
 
   const { data: modelsData } = useAiModels();
+  const { data: crmStats } = useCrmKnowledgeStats();
   const activeProvider = modelsData?.activeProvider;
   const modelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
 
@@ -518,6 +525,60 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     Парсер выгрузит оценку компании и реальные отзывы клиентов для использования в аргументации при продажах.
                   </p>
                 </div>
+
+                {/* Опыт из CRM */}
+                {!isEdit && (
+                  <div className="flex items-start gap-2.5 rounded-[8px] border border-[#e5e5e5] bg-white p-3">
+                    <input
+                      id="bot-sync-crm"
+                      type="checkbox"
+                      {...form.register("sync_crm")}
+                      className="mt-0.5 h-4 w-4 rounded border-[#cccccc] text-[#4a38f5] focus:ring-[#4a38f5]"
+                    />
+                    <label htmlFor="bot-sync-crm" className="text-xs cursor-pointer select-none">
+                      <span className="font-semibold text-[#111111] flex items-center gap-1.5">
+                        <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                        Синтезировать опыт из CRM (сделки и чаты)
+                      </span>
+                      <span className="block text-[#666666] mt-0.5">
+                        {crmStats?.wonDeals
+                          ? `В CRM найдено ${crmStats.wonDeals} успешных сделок и ${crmStats.totalMessages} сообщений. AI выделит прайс и частые вопросы.`
+                          : "AI проанализирует сделки и переписки в вашей CRM и создаст структурированную базу знаний."}
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                {/* Выгрузка переписки WhatsApp */}
+                {!isEdit && (
+                  <div className="space-y-1">
+                    <label htmlFor="bot-whatsapp-file" className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                      <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                      Выгрузка переписки из WhatsApp (_chat.txt)
+                    </label>
+                    <input
+                      id="bot-whatsapp-file"
+                      type="file"
+                      accept=".txt"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const content = ev.target?.result;
+                          if (typeof content === "string") {
+                            form.setValue("whatsapp_chat_text", content);
+                          }
+                        };
+                        reader.readAsText(file);
+                      }}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] file:mr-2 file:rounded-[4px] file:border-0 file:bg-emerald-50 file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-emerald-700 hover:file:bg-emerald-100"
+                    />
+                    <p className="text-[11px] text-[#888888]">
+                      Прикрепите текстовый файл экспорта чата WhatsApp (Экспорт чата → Без медиафайлов) для обучения агента на живом стиле компании.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 

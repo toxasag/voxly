@@ -39,6 +39,30 @@ export interface KnowledgeDocument {
   createdAt: string;
 }
 
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  contentText: string;
+}
+
+export interface CrmKnowledgeStats {
+  totalDeals: number;
+  wonDeals: number;
+  totalMessages: number;
+  dealsWithMessages: number;
+  isAvailable: boolean;
+}
+
+export interface SyncCrmResult {
+  documentsCreated: number;
+  dealsAnalyzed: number;
+  messagesAnalyzed: number;
+}
+
+export interface ImportWhatsAppResult {
+  documentsCreated: number;
+  participants: string[];
+  messagesAnalyzed: number;
+}
+
 /**
  * Метаданные раздела: приходят вместе со списком, а не отдельным запросом.
  *
@@ -361,3 +385,101 @@ export function useSalesExamples(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Просмотр и редактирование документов (актуализация цен и регламентов)
+// ---------------------------------------------------------------------------
+
+export function useKnowledgeDocumentDetail(
+  agentId: string,
+  docId: string | null,
+): UseQueryResult<KnowledgeDocumentDetail, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", docId],
+    queryFn: async () => {
+      if (!docId) throw new Error("No docId");
+      const res = await apiClient.get<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId && docId),
+  });
+}
+
+export function useUpdateKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string; text: string; filename?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId, text, filename }) => {
+      const res = await apiClient.put<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}`,
+        { text, filename },
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Синтез базы знаний из CRM и WhatsApp
+// ---------------------------------------------------------------------------
+
+export function useCrmKnowledgeStats(): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "knowledge", "crm-stats"],
+    queryFn: async () => {
+      const res = await apiClient.get<CrmKnowledgeStats>(`${BASE_PATH}/knowledge/crm-stats`);
+      return res.data;
+    },
+  });
+}
+
+export function useSyncCrmKnowledge(
+  agentId: string,
+): UseMutationResult<SyncCrmResult, ApiClientError, void> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<SyncCrmResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/sync-crm`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+export function useImportWhatsAppKnowledge(
+  agentId: string,
+): UseMutationResult<ImportWhatsAppResult, ApiClientError, { text: string; filename?: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ text, filename }) => {
+      const res = await apiClient.post<ImportWhatsAppResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/import-whatsapp`,
+        { text, filename },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+

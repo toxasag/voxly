@@ -53,6 +53,8 @@ export const createAgentSchema = z.object({
   wizard_config: wizardConfigSchema,
   website_url: z.string().url().optional().or(z.literal("")),
   map_reviews_url: z.string().url().optional().or(z.literal("")),
+  sync_crm: z.boolean().optional(),
+  whatsapp_chat_text: z.string().optional(),
 });
 
 export type CreateAgentPayload = z.infer<typeof createAgentSchema>;

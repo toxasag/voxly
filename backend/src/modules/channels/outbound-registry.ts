@@ -76,6 +76,8 @@ export interface TelegramHistorySyncParams {
   dealId: string;
   channelAccountId: string;
   peerId: string;
+  username?: string;
+  phone?: string;
   limit?: number;
 }
 

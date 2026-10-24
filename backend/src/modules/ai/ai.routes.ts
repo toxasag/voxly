@@ -17,6 +17,7 @@ import {
 import { AI_MODEL_CATALOG } from "./ai-pricing.js";
 import { crawlWebsite } from "./site-crawler.js";
 import { crawlMapReviews } from "./map-reviews-crawler.js";
+import { knowledgeSynthesizerService } from "./knowledge-synthesizer.service.js";
 import {
   extensionOf,
   extractText,
@@ -89,6 +90,16 @@ const mapReviewsSchema = z.object({
  */
 const channelBindingsSchema = z.object({
   channel_account_ids: z.array(z.string().uuid()).max(50),
+});
+
+const whatsappImportSchema = z.object({
+  text: z.string().min(10, "Переписка должна содержать текст").max(1_000_000, "Превышен максимальный объём текста (1 МБ)"),
+  filename: z.string().optional(),
+});
+
+const updateDocumentSchema = z.object({
+  text: z.string().min(1, "Текст документа не может быть пустым"),
+  filename: z.string().optional(),
 });
 
 export default async function aiRoutes(app: FastifyInstance): Promise<void> {
@@ -252,6 +263,27 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       } catch (err) {
         request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при создании агента");
       }
+    }
+
+    // Если включен автосбор опыта из CRM (сделки и переписки)
+    if (body.sync_crm === true) {
+      void knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, agent.id).catch((err) => {
+        request.log.warn({ err }, "Не удалось автоматически синтезировать опыт из CRM");
+      });
+    }
+
+    // Если передана выгрузка переписки WhatsApp
+    if (body.whatsapp_chat_text && body.whatsapp_chat_text.trim().length > 20) {
+      void knowledgeSynthesizerService
+        .synthesizeFromWhatsApp(
+          request.tenant_id,
+          agent.id,
+          body.whatsapp_chat_text.trim(),
+          "WhatsApp-чат.txt",
+        )
+        .catch((err) => {
+          request.log.warn({ err }, "Не удалось автоматически синтезировать переписку WhatsApp");
+        });
     }
 
     return reply.status(201).send({ data: agent });
@@ -532,6 +564,48 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
         total: examples.length,
       },
     });
+  });
+
+  app.get("/knowledge/crm-stats", { onRequest: readAgents }, async (request, reply) => {
+    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id);
+    return reply.send({ data: stats });
+  });
+
+  app.post("/agents/:id/knowledge/sync-crm", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const result = await knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, id);
+    return reply.status(201).send({ data: result });
+  });
+
+  app.post("/agents/:id/knowledge/import-whatsapp", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = whatsappImportSchema.parse(request.body);
+    const result = await knowledgeSynthesizerService.synthesizeFromWhatsApp(
+      request.tenant_id,
+      id,
+      body.text,
+      body.filename,
+    );
+    return reply.status(201).send({ data: result });
+  });
+
+  app.get("/agents/:id/knowledge/:docId", { onRequest: readAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const doc = await knowledge.getDocument(request.tenant_id, id, docId);
+    return reply.send({ data: doc });
+  });
+
+  app.put("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const body = updateDocumentSchema.parse(request.body);
+    const doc = await knowledge.updateDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      text: body.text,
+      filename: body.filename,
+    });
+    return reply.send({ data: doc });
   });
 
   app.delete("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {

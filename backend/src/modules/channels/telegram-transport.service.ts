@@ -1090,6 +1090,144 @@ export class TelegramTransportService {
   }
 
   /**
+   * Синхронизация предшествующих сообщений и медиа из диалога Telegram в сделку CRM.
+   */
+  async syncDialogHistory(params: TelegramHistorySyncParams): Promise<number> {
+    const connection = this.connections.get(params.channelAccountId);
+    if (!connection) {
+      this.log.warn(
+        { channelAccountId: params.channelAccountId },
+        "Cannot sync Telegram history: account not connected",
+      );
+      return 0;
+    }
+
+    try {
+      // GramJS требует наличия access_hash для личных диалогов в кэше сессии.
+      // Пытаемся получить сообщения по peerId / username, прогревая кэш диалогов при необходимости.
+      let messages: Api.Message[] = [];
+      try {
+        const res = await connection.client.getMessages(params.peerId, {
+          limit: params.limit ?? 50,
+        });
+        messages = [...res];
+      } catch (err) {
+        this.log.info(
+          { err, peerId: params.peerId, username: params.username },
+          "Telegram entity not found in cache, warming dialogs for sync",
+        );
+        if (params.username) {
+          try {
+            const res = await connection.client.getMessages(params.username.replace(/^@/, ""), {
+              limit: params.limit ?? 50,
+            });
+            messages = [...res];
+          } catch {
+            // fallback
+          }
+        }
+        if (messages.length === 0) {
+          try {
+            await connection.client.getDialogs({ limit: 100 });
+            const res = await connection.client.getMessages(params.peerId, {
+              limit: params.limit ?? 50,
+            });
+            messages = [...res];
+          } catch {
+            if (params.username) {
+              const res = await connection.client.getMessages(params.username.replace(/^@/, ""), {
+                limit: params.limit ?? 50,
+              });
+              messages = [...res];
+            }
+          }
+        }
+      }
+
+      if (!messages || messages.length === 0) return 0;
+
+      let importedCount = 0;
+      const list = [...messages].reverse();
+
+      await runWithTenantContext(params.tenantId, async () => {
+        for (const msg of list) {
+          if (typeof msg.id !== "number") continue;
+          const text = typeof msg.message === "string" ? msg.message.trim() : "";
+          const isOutbound = msg.out === true;
+          const date = new Date(msg.date * 1000);
+
+          let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
+          if (msg.media) {
+            mediaAttachment = await this.extractAndStoreMedia(
+              connection.client,
+              msg,
+              params.tenantId,
+            );
+          }
+
+          if (text.length === 0 && !mediaAttachment) continue;
+
+          const contentText =
+            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+
+          // Проверяем наличие сообщения в сделке (дедупликация)
+          const existing = await queryOne<{ id: string }>(
+            `SELECT id FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2
+               AND channel = 'telegram'
+               AND (
+                 (attachment IS NOT NULL AND attachment = $3)
+                 OR (content = $4 AND created_at BETWEEN $5::timestamptz - interval '5 seconds' AND $5::timestamptz + interval '5 seconds')
+               )
+             LIMIT 1`,
+            [
+              params.tenantId,
+              params.dealId,
+              mediaAttachment?.url ?? null,
+              contentText,
+              date.toISOString(),
+            ],
+          );
+
+          if (!existing) {
+            await query(
+              `INSERT INTO deal_messages
+                 (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type, delivery_status, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)`,
+              [
+                params.tenantId,
+                params.dealId,
+                params.channelAccountId,
+                isOutbound ? "manager" : "client",
+                isOutbound ? "outbound" : "inbound",
+                isOutbound ? "Менеджер" : params.peerId,
+                contentText,
+                mediaAttachment?.url ?? null,
+                mediaAttachment?.mimeType ?? null,
+                isOutbound ? "sent" : "neutral",
+                date.toISOString(),
+              ],
+            );
+            importedCount++;
+          }
+        }
+      });
+
+      this.log.info(
+        { dealId: params.dealId, peerId: params.peerId, count: importedCount },
+        "Synced Telegram dialog history to CRM",
+      );
+      return importedCount;
+    } catch (error) {
+      this.log.error(
+        { err: error, dealId: params.dealId, peerId: params.peerId },
+        "Failed to sync Telegram dialog history",
+      );
+      return 0;
+    }
+  }
+
+  /**
    * Отправляет набор сообщений с имитацией печати.
    *
    * Порядок по заданию: «печатает» → первое сообщение → пауза 2.5–4.5 с со
