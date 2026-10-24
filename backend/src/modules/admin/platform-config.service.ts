@@ -747,12 +747,19 @@ export class PlatformConfigService {
 
     const url = (override?.baseUrl?.trim() || provider?.baseUrl || effective.llm.baseUrl)?.replace(/\/+$/, "");
 
-    let key = override?.apiKey?.trim();
-    if (!key || key.includes("•")) {
-      key = provider?.apiKeys[0] || effective.llm.apiKey || undefined;
+    const candidateKeys: string[] = [];
+    if (override?.apiKey && !override.apiKey.includes("•")) {
+      candidateKeys.push(override.apiKey.trim());
+    } else {
+      if (provider?.apiKeys && provider.apiKeys.length > 0) {
+        candidateKeys.push(...provider.apiKeys);
+      }
+      if (effective.llm.apiKey && !candidateKeys.includes(effective.llm.apiKey)) {
+        candidateKeys.push(effective.llm.apiKey);
+      }
     }
 
-    if (!url || !key) {
+    if (!url || candidateKeys.length === 0) {
       return { success: false, models: [], message: "Не указан базовый URL или API-ключ провайдера" };
     }
 
@@ -768,39 +775,45 @@ export class PlatformConfigService {
       return { success: false, models: [], message: "Указан некорректный URL провайдера" };
     }
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
+    let lastErrorMsg = "";
+    for (const key of candidateKeys) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
 
-      const res = await fetch(`${url}/models`, {
-        headers: {
-          Authorization: `Bearer ${key}`,
-        },
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
+        const res = await fetch(`${url}/models`, {
+          headers: {
+            Authorization: `Bearer ${key}`,
+          },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          lastErrorMsg = `HTTP ${res.status}: ${text.slice(0, 150) || res.statusText}`;
+          continue;
+        }
+
+        const data = (await res.json().catch(() => ({}))) as { data?: unknown[] };
+        const rawList = Array.isArray(data?.data) ? data.data : [];
+        const models = this.parseModelsList(rawList);
+
         return {
-          success: false,
-          models: [],
-          message: `Провайдер вернул HTTP ${res.status}: ${text.slice(0, 150) || res.statusText}`,
+          success: true,
+          models,
         };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        lastErrorMsg = `Ошибка сети при запросе к ${url}: ${msg}`;
       }
-
-      const data = (await res.json().catch(() => ({}))) as { data?: unknown[] };
-      const rawList = Array.isArray(data?.data) ? data.data : [];
-      const models = this.parseModelsList(rawList);
-
-      return {
-        success: true,
-        models,
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, models: [], message: `Ошибка сети при запросе к ${url}: ${msg}` };
     }
+
+    return {
+      success: false,
+      models: [],
+      message: `Не удалось загрузить модели (проверено ${candidateKeys.length} ключей): ${lastErrorMsg}`,
+    };
   }
 
   /**

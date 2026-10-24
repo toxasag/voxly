@@ -39,8 +39,7 @@ export type WizardConfig = z.infer<typeof wizardConfigSchema>;
 export const createAgentSchema = z.object({
   name: z.string().trim().min(2, "Название минимум 2 символа").max(80),
   description: z.string().trim().max(300).optional(),
-  // z.enum требует непустой кортеж, поэтому список моделей приводится явно.
-  model: z.enum(AI_MODEL_IDS as unknown as [string, ...string[]]),
+  model: z.string().trim().min(1, "Укажите модель").max(100),
   mode: z.enum(agentModeValues),
   status: z.enum(agentStatusValues),
   accent: z.enum(agentAccentValues),
@@ -53,6 +52,8 @@ export const createAgentSchema = z.object({
     .max(8000, "Системный промпт до 8000 символов"),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
   wizard_config: wizardConfigSchema,
+  website_url: z.string().url().optional().or(z.literal("")),
+  map_reviews_url: z.string().url().optional().or(z.literal("")),
 });
 
 export type CreateAgentPayload = z.infer<typeof createAgentSchema>;

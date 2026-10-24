@@ -109,6 +109,16 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       isConfigured: boolean;
     } | null = null;
 
+    let dynamicModels: Array<{
+      id: string;
+      label: string;
+      provider: string;
+      contextWindow: number;
+      costInPer1k: number;
+      costOutPer1k: number;
+      isConfigured: boolean;
+    }> = [];
+
     try {
       const effective = await platformConfigService.getEffectiveIntegrations();
       const activeItem = effective.llmProviders.find(
@@ -129,9 +139,56 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
           isConfigured: true,
         };
       }
+
+      // Запрашиваем РЕАЛЬНО доступные чат-модели у провайдера
+      const available = await platformConfigService.fetchAvailableModels();
+      if (available.success && available.models.length > 0) {
+        const chatOnly = available.models.filter((m) => m.type === "chat");
+        dynamicModels = chatOnly.map((m) => ({
+          id: m.id,
+          label: m.name,
+          provider: activeProvider?.providerType || "google",
+          contextWindow: 128_000,
+          costInPer1k: 5,
+          costOutPer1k: 15,
+          isConfigured: true,
+        }));
+      }
     } catch {
-      // Игнорируем ошибку чтения интеграций, возвращая каталог по умолчанию
+      // Игнорируем ошибку чтения интеграций
     }
+
+    // Если у активного провайдера задана chatModel, гарантируем её присутствие на первом месте
+    if (activeProvider?.chatModel) {
+      const idx = dynamicModels.findIndex((m) => m.id === activeProvider?.chatModel);
+      if (idx > -1) {
+        const [target] = dynamicModels.splice(idx, 1);
+        if (target) dynamicModels.unshift(target);
+      } else {
+        dynamicModels.unshift({
+          id: activeProvider.chatModel,
+          label: activeProvider.chatModel,
+          provider: activeProvider.providerType || "google",
+          contextWindow: 128_000,
+          costInPer1k: 5,
+          costOutPer1k: 15,
+          isConfigured: true,
+        });
+      }
+    }
+
+    // Если динамические модели от провайдера не вернулись, используем базовый каталог
+    const finalModels = dynamicModels.length > 0
+      ? dynamicModels
+      : Object.values(AI_MODEL_CATALOG).map((model) => ({
+          id: model.id,
+          label: model.label,
+          provider: model.provider,
+          contextWindow: model.contextWindow,
+          costInPer1k: model.costInPer1k,
+          costOutPer1k: model.costOutPer1k,
+          isConfigured: activeProvider?.isConfigured ?? false,
+        }));
 
     const defaultProvider = activeProvider ?? {
       name: "Провайдер платформы",
@@ -141,26 +198,7 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       activeProvider: defaultProvider,
-      data: Object.values(AI_MODEL_CATALOG).map((model) => {
-        // Проверяем, соответствует ли модель активному провайдеру
-        const isProviderMatch = defaultProvider.isConfigured
-          ? (defaultProvider.providerType === "gemini" && model.provider === "google") ||
-            (defaultProvider.providerType === "openai" && model.provider === "openai") ||
-            (defaultProvider.providerType === "anthropic" && model.provider === "anthropic") ||
-            (defaultProvider.providerType === "deepseek" && model.provider === "deepseek") ||
-            defaultProvider.providerType === "custom"
-          : true;
-
-        return {
-          id: model.id,
-          label: model.label,
-          provider: model.provider,
-          contextWindow: model.contextWindow,
-          costInPer1k: model.costInPer1k,
-          costOutPer1k: model.costOutPer1k,
-          isConfigured: isProviderMatch,
-        };
-      }),
+      data: finalModels,
     });
   });
 
@@ -177,6 +215,45 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/agents", { onRequest: writeAgents }, async (request, reply) => {
     const body = createAgentSchema.parse(request.body);
     const agent = await service.createAgent(request.tenant_id, body);
+
+    // Если при создании передан URL сайта, запускаем сканирование страниц сайта в базу знаний
+    if (body.website_url && body.website_url.trim()) {
+      try {
+        const pages = await crawlWebsite(body.website_url.trim(), { maxPages: 20 });
+        for (const page of pages) {
+          try {
+            await knowledge.addDocument({
+              tenantId: request.tenant_id,
+              agentId: agent.id,
+              filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
+              mimeType: "text/html",
+              text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
+            });
+          } catch {
+            // Продолжаем индексацию остальных страниц
+          }
+        }
+      } catch (err) {
+        request.log.warn({ err }, "Не удалось автоматически просканировать сайт при создании агента");
+      }
+    }
+
+    // Если при создании передан URL на отзывы/карты, извлекаем рейтинг и отзывы
+    if (body.map_reviews_url && body.map_reviews_url.trim()) {
+      try {
+        const reviewsResult = await crawlMapReviews(body.map_reviews_url.trim());
+        await knowledge.addDocument({
+          tenantId: request.tenant_id,
+          agentId: agent.id,
+          filename: `Отзывы (${reviewsResult.platform}): ${reviewsResult.orgName.slice(0, 50)}`,
+          mimeType: "text/markdown",
+          text: reviewsResult.markdownContent,
+        });
+      } catch (err) {
+        request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при создании агента");
+      }
+    }
+
     return reply.status(201).send({ data: agent });
   });
 
