@@ -70,22 +70,26 @@ export type UpdateTenantPayload = {
 };
 
 export interface ImpersonateResponse {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
-  user: {
+  access_token?: string;
+  refresh_token?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expires_in?: number;
+  user?: {
     id: string;
     email: string;
-    phone: string | null;
+    phone?: string | null;
+    name?: string;
+    role?: string;
+    platform_role?: string | null;
+    permissions?: string[];
+  };
+  tenant?: {
+    id: string;
     name: string;
-    role: string;
-    platform_role: string | null;
-    tenant_id: string;
-    tenant_name: string;
-    tenant_slug: string;
-    tenant_plan: string;
-    tenant_status: string;
-    permissions: string[];
+    slug: string;
+    plan: string;
+    status: string;
   };
 }
 

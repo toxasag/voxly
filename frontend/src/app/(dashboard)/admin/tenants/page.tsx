@@ -365,23 +365,32 @@ export default function AdminTenantsPage() {
 
         const res = await impersonate.mutateAsync(tenant.id);
 
+        const newAccessToken = res.accessToken ?? res.access_token;
+        const newRefreshToken = res.refreshToken ?? res.refresh_token;
+
+        if (!newAccessToken || !newRefreshToken) {
+          throw new Error("Сервер не вернул токены авторизации для арендатора");
+        }
+
+        const userEmail = res.user?.email ?? tenant.owner_email ?? "";
+
         // Сохраняем исходную сессию суперадминистратора в бэкап
         const backup = {
           accessToken: currentAccessToken,
           refreshToken: currentRefreshToken,
           impersonatedTenantName: tenant.name,
-          impersonatedUserEmail: res.user.email,
+          impersonatedUserEmail: userEmail,
           enteredAt: new Date().toISOString(),
         };
         localStorage.setItem("voxly_impersonator_backup", JSON.stringify(backup));
 
         // Применяем токен клиента
         writeTokens({
-          accessToken: res.accessToken,
-          refreshToken: res.refreshToken,
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
         });
 
-        toast.success(`Вход выполнен под организацией «${tenant.name}» (${res.user.email})`);
+        toast.success(`Вход выполнен под организацией «${tenant.name}» ${userEmail ? `(${userEmail})` : ""}`);
         window.location.href = "/crm/deals";
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось выполнить вход под аккаунтом клиента");
