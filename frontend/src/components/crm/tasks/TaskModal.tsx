@@ -51,11 +51,11 @@ const STATUSES = [
 ];
 
 const REMINDER_OPTIONS = [
-  { value: 15, label: "За 15 минут" },
-  { value: 30, label: "За 30 минут" },
-  { value: 60, label: "За 1 час" },
-  { value: 120, label: "За 2 часа" },
-  { value: 1440, label: "За 24 часа" },
+  { value: 15, label: "15 мин", fullLabel: "За 15 минут" },
+  { value: 30, label: "30 мин", fullLabel: "За 30 минут" },
+  { value: 60, label: "1 час", fullLabel: "За 1 час" },
+  { value: 120, label: "2 часа", fullLabel: "За 2 часа" },
+  { value: 1440, label: "24 часа", fullLabel: "За 24 часа" },
 ];
 
 const EMPTY: CreateTaskPayload = {
@@ -346,36 +346,48 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                   aria-checked={Boolean(form.watch("notify_telegram"))}
                   onClick={() => form.setValue("notify_telegram", !form.watch("notify_telegram"), { shouldValidate: true })}
                   className={cn(
-                    "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/40 cursor-pointer",
+                    "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
                     form.watch("notify_telegram") ? "bg-[#4a38f5]" : "bg-[#d4d4d4]",
                   )}
                 >
                   <span
+                    aria-hidden="true"
                     className={cn(
-                      "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-xs transition-transform",
-                      form.watch("notify_telegram") ? "translate-x-[18px]" : "translate-x-0.5",
+                      "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out",
+                      form.watch("notify_telegram") ? "translate-x-4" : "translate-x-0",
                     )}
                   />
                 </button>
               </div>
 
               {form.watch("notify_telegram") && (
-                <div className="pt-2 border-t border-[#e5e5e5]/80 flex items-center justify-between gap-3">
-                  <label htmlFor="task-remind-before" className="text-xs text-[#666666] shrink-0">
-                    Напомнить:
-                  </label>
-                  <select
-                    id="task-remind-before"
-                    value={form.watch("remind_before_minutes") ?? 30}
-                    onChange={(e) => form.setValue("remind_before_minutes", Number(e.target.value), { shouldValidate: true })}
-                    className={cn(INPUT_CLASS, "h-7 py-1 text-xs w-auto flex-1")}
-                  >
-                    {REMINDER_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                <div className="pt-2.5 border-t border-[#e5e5e5] space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-[#666666]">
+                    <span>За сколько до срока напомнить:</span>
+                    <span className="font-medium text-[#111111]">
+                      {REMINDER_OPTIONS.find((opt) => opt.value === (form.watch("remind_before_minutes") ?? 30))?.fullLabel ?? "За 30 минут"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {REMINDER_OPTIONS.map((opt) => {
+                      const isSelected = (form.watch("remind_before_minutes") ?? 30) === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => form.setValue("remind_before_minutes", opt.value, { shouldValidate: true })}
+                          className={cn(
+                            "h-7 rounded-[6px] border text-[11px] font-medium transition-all cursor-pointer flex items-center justify-center",
+                            isSelected
+                              ? "border-[#4a38f5] bg-[#4a38f5] text-white shadow-xs"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

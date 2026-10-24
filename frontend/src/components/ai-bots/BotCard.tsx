@@ -91,14 +91,15 @@ export const BotCard = memo(function BotCard({
           aria-label={isActive ? `Поставить на паузу: ${bot.name}` : `Активировать: ${bot.name}`}
           onClick={handleToggle}
           className={cn(
-            "relative h-5 w-9 shrink-0 rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/40",
+            "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
             isActive ? "bg-[#4a38f5]" : "bg-[#e5e5e5]",
           )}
         >
           <span
+            aria-hidden="true"
             className={cn(
-              "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-xs transition-transform",
-              isActive ? "translate-x-[18px]" : "translate-x-0.5",
+              "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out",
+              isActive ? "translate-x-4" : "translate-x-0",
             )}
           />
         </button>
