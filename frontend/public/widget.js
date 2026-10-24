@@ -292,7 +292,6 @@
       -webkit-user-drag: none !important;
       pointer-events: none !important;
       border-radius: 50% !important;
-      transition: background-position 0.05s ease-out !important;
     }
     @keyframes getvoxly-squash {
       0% { transform: scale(1, 1); }
@@ -540,15 +539,23 @@
       overflow: hidden !important;
       text-overflow: ellipsis !important;
     }
-    .getvoxly-msg-banner-handle {
-      font-family: monospace, -apple-system, sans-serif !important;
+    .getvoxly-msg-banner-action {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
       font-size: 11px !important;
-      text-decoration: underline !important;
+      font-weight: 600 !important;
+      padding: 3px 9px !important;
+      border-radius: 4px !important;
       white-space: nowrap !important;
-      overflow: hidden !important;
-      text-overflow: ellipsis !important;
-      max-width: 140px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 3px !important;
+      color: #ffffff !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      letter-spacing: 0.01em !important;
     }
+    .getvoxly-msg-banner-single.is-telegram .getvoxly-msg-banner-action { background: #0284c7 !important; }
+    .getvoxly-msg-banner-single.is-whatsapp .getvoxly-msg-banner-action { background: #16a34a !important; }
+    .getvoxly-msg-banner-single.is-max .getvoxly-msg-banner-action { background: #6366f1 !important; }
 
     .getvoxly-msg-bar-multi {
       padding: 7px 12px !important;
@@ -785,6 +792,7 @@
 
     var ymUid = getCookie('_ym_uid') || null;
     var gaId = getCookie('_ga') || null;
+    var fbId = getCookie('_fbp') || getCookie('_fbc') || null;
 
     // UTM-метки
     var STORAGE_KEY_UTM = 'getvoxly_utm_tags';
@@ -956,10 +964,11 @@
         return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
       }
       if (currentConfig.avatarType === 'photo' && currentConfig.consultantAvatar) {
-        return '<img src="' + currentConfig.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;">';
+        return '<img src="' + currentConfig.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">';
       }
-      if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
-        return '<div style="width:28px;height:28px;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+      var isMascot = currentConfig.avatarType === 'mascot' || (!currentConfig.avatarType && (currentConfig.customMascotDirections || currentConfig.mascotId === 'custom' || currentConfig.mascotId));
+      if (isMascot && currentConfig._directionsUrl) {
+        return '<div style="width:28px;height:28px;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
       }
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
@@ -1056,14 +1065,6 @@
     // Фоновая инициализация сессии на сервере
     initSession();
 
-    if (proactiveEnabled && existingHistory.length === 0) {
-      setTimeout(function () {
-        if (!isOpen && getLocalHistory().length === 0) {
-          openWidget();
-        }
-      }, proactiveDelay);
-    }
-
     async function initSession() {
       if (sessionInitialized) return;
       try {
@@ -1145,6 +1146,27 @@
           }
           data._directionsUrl = directionsUrl;
           data._reactionsUrl = reactionsUrl;
+          currentConfig = data;
+
+          // Обновление мини-аватаров и имен во всех уже отрисованных сообщениях бота
+          if (messagesContainer) {
+            var botAvatars = messagesContainer.querySelectorAll('.getvoxly-msg-bot-avatar');
+            var newAvatarHtml = createMiniAvatarHtml();
+            for (var a = 0; a < botAvatars.length; a++) {
+              botAvatars[a].innerHTML = newAvatarHtml;
+            }
+            if (data.consultantName) {
+              var botContents = messagesContainer.querySelectorAll('.getvoxly-msg-bot-content');
+              for (var c = 0; c < botContents.length; c++) {
+                if (!botContents[c].querySelector('.getvoxly-msg-bot-author')) {
+                  var authorEl = document.createElement('div');
+                  authorEl.className = 'getvoxly-msg-bot-author';
+                  authorEl.textContent = data.consultantName;
+                  botContents[c].insertBefore(authorEl, botContents[c].firstChild);
+                }
+              }
+            }
+          }
 
           // Обновление аватара в шапке
           if (headerAvatarInner) {
@@ -1237,14 +1259,21 @@
               spriteEl.style.setProperty('background-position', pos, 'important');
             }
 
-            // Слушаем и pointermove, и mousemove для надёжности на всех ОС и экранах
-            window.addEventListener('pointermove', function (e) {
-              updateMascotAim(e.clientX, e.clientY);
-            }, { passive: true });
+            // Плавное отслеживание направления взгляда маскота без двойного срабатывания и рывков
+            var rAF = null;
+            var lastClientX = 0, lastClientY = 0;
+            function onPointerMove(e) {
+              lastClientX = e.clientX;
+              lastClientY = e.clientY;
+              if (rAF) return;
+              rAF = window.requestAnimationFrame(function () {
+                rAF = null;
+                updateMascotAim(lastClientX, lastClientY);
+              });
+            }
 
-            window.addEventListener('mousemove', function (e) {
-              updateMascotAim(e.clientX, e.clientY);
-            }, { passive: true });
+            var moveEvent = window.PointerEvent ? 'pointermove' : 'mousemove';
+            window.addEventListener(moveEvent, onPointerMove, { passive: true });
 
             if (bubble) {
               bubble.addEventListener('pointerdown', function (e) {
@@ -1292,7 +1321,13 @@
 
             if (buttons.length === 1) {
               var b = buttons[0];
-              var linkHref = b.url + (b.type === 'telegram' ? '?start=site_' + visitorId : '');
+              var linkHref = b.url;
+              if (b.type === 'telegram') {
+                linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+              } else if (b.type === 'whatsapp') {
+                var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
+                linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+              }
               var iconSvg = '';
 
               if (b.type === 'telegram') {
@@ -1303,18 +1338,25 @@
                 iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
               }
 
+              var actionText = 'Перейти \u2192';
               msgContainer.innerHTML = '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-banner-single is-' + b.type + '">' +
                 '<div class="getvoxly-msg-banner-left">' +
                   iconSvg +
                   '<span class="getvoxly-msg-banner-title">Продолжить в ' + b.label + '</span>' +
                 '</div>' +
-                '<span class="getvoxly-msg-banner-handle">' + (b.handle || 'Открыть') + '</span>' +
+                '<span class="getvoxly-msg-banner-action">' + actionText + '</span>' +
               '</a>';
             } else {
               var buttonsHtml = '';
               for (var j = 0; j < buttons.length; j++) {
                 var btn = buttons[j];
-                var href = btn.url + (btn.type === 'telegram' ? '?start=site_' + visitorId : '');
+                var href = btn.url;
+                if (btn.type === 'telegram') {
+                  href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                } else if (btn.type === 'whatsapp') {
+                  var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
+                  href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+                }
                 var icon = '';
                 if (btn.type === 'telegram') {
                   icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
@@ -1335,6 +1377,25 @@
             }
           } else if (msgContainer) {
             msgContainer.style.display = 'none';
+          }
+
+          // Проактивное приглашение в диалог
+          var isProactive = data.proactiveEnabled !== undefined ? Boolean(data.proactiveEnabled) : proactiveEnabled;
+          var delaySec = (data.proactiveDelaySeconds !== undefined ? data.proactiveDelaySeconds : Math.round(proactiveDelay / 1000)) || 10;
+          var proKey = 'getvoxly_proactive_shown_' + channelAccountId;
+
+          if (isProactive && !safeSessionStorage.getItem(proKey)) {
+            setTimeout(function () {
+              if (!isOpen && !safeSessionStorage.getItem(proKey)) {
+                safeSessionStorage.setItem(proKey, 'true');
+                openWidget();
+                var proMsg = data.proactiveMessage || 'Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.';
+                var hist = getLocalHistory();
+                if (hist.length === 0) {
+                  saveAndRenderMessage(proMsg, false);
+                }
+              }
+            }, delaySec * 1000);
           }
         } else {
           sendTelemetry('init_failed_status', res.status);
@@ -1380,6 +1441,7 @@
           utmTags: utmTags,
           ymUid: ymUid || undefined,
           gaId: gaId || undefined,
+          fbId: fbId || undefined,
           visitCount: visitCount,
           pageHistory: pageHistory,
           isDraft: Boolean(isDraft),
@@ -1462,6 +1524,7 @@
             utmTags: utmTags,
             ymUid: ymUid || undefined,
             gaId: gaId || undefined,
+            fbId: fbId || undefined,
             visitCount: visitCount,
             pageHistory: pageHistory,
             isDraft: true,

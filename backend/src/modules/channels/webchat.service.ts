@@ -47,6 +47,9 @@ export interface WebchatAccountInfo {
   mascotId?: string;
   customMascotDirections?: string;
   customMascotReactions?: string;
+  proactiveEnabled?: boolean;
+  proactiveDelaySeconds?: number;
+  proactiveMessage?: string;
 }
 
 interface ChannelAccountRow {
@@ -79,6 +82,7 @@ export interface WebchatMessageInput {
   utmTags?: Record<string, string>;
   ymUid?: string;
   gaId?: string;
+  fbId?: string;
   visitCount?: number;
   pageHistory?: Array<{ step: number; time: string; url: string }>;
   isDraft?: boolean;
@@ -192,26 +196,53 @@ export class WebchatService {
       });
     }
 
-    if (rawWa && (messengerBannerMode === "multi" ? waEnabled : singleTarget === "whatsapp")) {
-      let waUrl = rawWa;
-      if (!waUrl.startsWith("http")) {
-        let digits = waUrl.replace(/\D/g, "");
-        if (digits.length === 11 && digits.startsWith("8")) digits = "7" + digits.slice(1);
-        waUrl = `https://wa.me/${digits}`;
+    let resolvedWaPhone = rawWa;
+    const waAccId = typeof creds.whatsappAccountId === "string" ? creds.whatsappAccountId : "";
+    if (waAccId || (rawWa && rawWa.replace(/\D/g, "").length < 10)) {
+      const waAccount = await runWithPlatformScope(() =>
+        queryOne<ChannelAccountRow>(
+          `SELECT id, tenant_id, label, status, external_id, credentials
+           FROM channel_accounts
+           WHERE tenant_id = $1
+             AND channel = 'whatsapp'
+             AND deleted_at IS NULL
+             AND (
+               id = $2::uuid
+               OR external_id = $3
+               OR credentials->>'instanceName' = $3
+             )
+           LIMIT 1`,
+          [account.tenant_id, waAccId && waAccId.length === 36 ? waAccId : "00000000-0000-0000-0000-000000000000", rawWa],
+        ),
+      );
+      if (waAccount) {
+        const waCreds = (waAccount.credentials ?? {}) as Record<string, unknown>;
+        const cand = String(waCreds.phone || waCreds.ownerJid || waAccount.external_id || "");
+        if (cand.replace(/\D/g, "").length >= 10) {
+          resolvedWaPhone = cand;
+        }
       }
-      messengerButtons.push({
-        type: "whatsapp",
-        label: "WhatsApp",
-        url: waUrl,
-        handle: rawWa,
-      });
+    }
+
+    if (resolvedWaPhone && (messengerBannerMode === "multi" ? waEnabled : singleTarget === "whatsapp")) {
+      let waDigits = resolvedWaPhone.replace(/\D/g, "");
+      if (waDigits.length === 11 && waDigits.startsWith("8")) waDigits = "7" + waDigits.slice(1);
+      if (waDigits.length >= 10) {
+        const waUrl = `https://wa.me/${waDigits}`;
+        messengerButtons.push({
+          type: "whatsapp",
+          label: "WhatsApp",
+          url: waUrl,
+          handle: resolvedWaPhone.startsWith("+") ? resolvedWaPhone : `+${waDigits}`,
+        });
+      }
     }
 
     if (rawMax && (messengerBannerMode === "multi" ? maxEnabled : singleTarget === "max")) {
       let maxUrl = rawMax;
       if (!maxUrl.startsWith("http")) {
         const clean = maxUrl.replace(/^@/, "");
-        maxUrl = `https://max.me/${clean}`;
+        maxUrl = `https://max.ru/${clean}`;
       }
       messengerButtons.push({
         type: "max",
@@ -220,6 +251,18 @@ export class WebchatService {
         handle: rawMax,
       });
     }
+
+    const proactiveEnabled = Boolean(creds.proactiveEnabled);
+    const proactiveDelaySeconds =
+      typeof creds.proactiveDelaySeconds === "number" && creds.proactiveDelaySeconds > 0
+        ? creds.proactiveDelaySeconds
+        : (typeof creds.proactiveDelaySeconds === "string" && parseInt(creds.proactiveDelaySeconds, 10) > 0
+            ? parseInt(creds.proactiveDelaySeconds, 10)
+            : 10);
+    const proactiveMessage =
+      typeof creds.proactiveMessage === "string" && creds.proactiveMessage.trim().length > 0
+        ? creds.proactiveMessage.trim()
+        : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.";
 
     return {
       id: account.id,
@@ -257,6 +300,9 @@ export class WebchatService {
           : (creds.customMascotDirections ? "custom" : "drone"),
       customMascotDirections: typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0 ? creds.customMascotDirections.trim() : undefined,
       customMascotReactions: typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0 ? creds.customMascotReactions.trim() : undefined,
+      proactiveEnabled,
+      proactiveDelaySeconds,
+      proactiveMessage,
     };
   }
 
@@ -328,6 +374,14 @@ export class WebchatService {
         text: crmInboundText,
         senderName: senderDisplayName,
         senderPhone: detectedPhone || undefined,
+        visitorId: input.visitorId,
+        ymUid: input.ymUid,
+        gaId: input.gaId,
+        fbId: input.fbId,
+        pageUrl: input.pageUrl,
+        pageHistory: input.pageHistory,
+        visitCount: input.visitCount,
+        utmTags: input.utmTags,
       }),
     );
 
