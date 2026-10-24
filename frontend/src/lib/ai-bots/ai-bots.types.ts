@@ -274,8 +274,11 @@ export function getBotModeDescription(mode: BotMode): string {
   return MODE_DESCRIPTIONS[mode];
 }
 
-export function getProviderLabel(provider: LlmProvider): string {
-  return PROVIDER_LABELS[provider];
+export function getProviderLabel(provider: LlmProvider | string): string {
+  if (provider in PROVIDER_LABELS) {
+    return PROVIDER_LABELS[provider as LlmProvider];
+  }
+  return provider;
 }
 
 export function getAccentClasses(accent: AiBot["accent"]): string {

@@ -161,6 +161,22 @@ export class GatewayChatProvider implements ChatProvider {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+      let modelToSend = input.model;
+      const isGoogle =
+        activeBaseUrl.includes("generativelanguage.googleapis.com") ||
+        (config?.providerId?.includes("gemini") ?? false);
+      if (isGoogle) {
+        if (config?.chatModel && config.chatModel.trim().length > 0) {
+          modelToSend = config.chatModel;
+        } else if (modelToSend.startsWith("gemini/")) {
+          modelToSend = modelToSend.replace(/^gemini\//, "");
+        } else {
+          modelToSend = "gemini-1.5-flash";
+        }
+      } else if (modelToSend.startsWith("openrouter/") && !activeBaseUrl.includes("openrouter")) {
+        modelToSend = modelToSend.replace(/^openrouter\/[^/]+\//, "");
+      }
+
       try {
         const response = await fetch(`${activeBaseUrl}/chat/completions`, {
           method: "POST",
@@ -169,7 +185,7 @@ export class GatewayChatProvider implements ChatProvider {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: input.model,
+            model: modelToSend,
             messages: input.messages,
             temperature: input.temperature ?? 0.7,
             max_tokens: input.maxTokens ?? 1024,

@@ -4,8 +4,11 @@ import { useCallback, useRef, useState } from "react";
 import {
   AlertTriangle,
   FileText,
+  Globe,
   Loader2,
   Plus,
+  Sparkles,
+  Star,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -13,8 +16,12 @@ import { toast } from "sonner";
 
 import {
   useAddKnowledgeText,
+  useCrawlSite,
   useDeleteKnowledgeDocument,
+  useImportKnowledgeUrl,
+  useImportMapReviews,
   useKnowledgeDocuments,
+  useSalesExamples,
   useUploadKnowledgeFile,
   type KnowledgeDocument,
 } from "@/lib/api/use-agent-knowledge";
@@ -79,12 +86,31 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const { data, isLoading, error } = useKnowledgeDocuments(agentId);
   const addText = useAddKnowledgeText(agentId);
   const uploadFile = useUploadKnowledgeFile(agentId);
+  const importUrl = useImportKnowledgeUrl(agentId);
+  const crawlSite = useCrawlSite(agentId);
+  const importMapReviews = useImportMapReviews(agentId);
   const remove = useDeleteKnowledgeDocument(agentId);
+  const { data: salesExamplesData, isLoading: isLoadingSales } = useSalesExamples(agentId);
+
+  const [activeSubTab, setActiveSubTab] = useState<"documents" | "sales">("documents");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [textOpen, setTextOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
+
+  const [urlOpen, setUrlOpen] = useState(false);
+  const [urlValue, setUrlValue] = useState("");
+  const [urlTitle, setUrlTitle] = useState("");
+  const [isCrawlAll, setIsCrawlAll] = useState(true);
+  const [crawlMaxPages, setCrawlMaxPages] = useState(25);
+
+  const [reviewsOpen, setReviewsOpen] = useState(false);
+  const [reviewsUrl, setReviewsUrl] = useState("");
+  const [manualReviewMode, setManualReviewMode] = useState(false);
+  const [reviewsSource, setReviewsSource] = useState("Яндекс Карты");
+  const [reviewsText, setReviewsText] = useState("");
+
   const [pendingDelete, setPendingDelete] = useState<KnowledgeDocument | null>(null);
 
   const meta = data?.meta;
@@ -133,6 +159,85 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       });
   }, [addText, title, text]);
 
+  const handleImportUrl = useCallback(() => {
+    const raw = urlValue.trim();
+    if (raw.length === 0) {
+      toast.error("Укажите адрес веб-сайта (например, https://mysite.ru)");
+      return;
+    }
+
+    if (isCrawlAll) {
+      void crawlSite
+        .mutateAsync({ url: raw, maxPages: crawlMaxPages })
+        .then((res) => {
+          toast.success(
+            `Сайт успешно просканирован! Обработано страниц: ${res.scannedCount}, добавлено в базу знаний: ${res.indexedCount}`,
+          );
+          setUrlValue("");
+          setUrlTitle("");
+          setUrlOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось просканировать сайт");
+        });
+    } else {
+      void importUrl
+        .mutateAsync({ url: raw, title: urlTitle.trim() || undefined })
+        .then((doc) => {
+          toast.success(`Страница «${doc.filename}» успешно импортирована: ${pluralChunks(doc.chunksCount)}`);
+          setUrlValue("");
+          setUrlTitle("");
+          setUrlOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось импортировать страницу");
+        });
+    }
+  }, [crawlSite, importUrl, isCrawlAll, crawlMaxPages, urlValue, urlTitle]);
+
+  const handleImportMapReviews = useCallback(() => {
+    if (manualReviewMode) {
+      if (reviewsText.trim().length === 0) {
+        toast.error("Вставьте текст отзывов или описание справочника");
+        return;
+      }
+
+      const docTitle = `Отзывы и репутация (${reviewsSource})`;
+      void addText
+        .mutateAsync({ title: docTitle, text: reviewsText.trim() })
+        .then((doc) => {
+          toast.success(`Отзывы успешно добавлены в базу знаний: ${pluralChunks(doc.chunksCount)}`);
+          setReviewsText("");
+          setReviewsOpen(false);
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Не удалось сохранить отзывы");
+        });
+      return;
+    }
+
+    const raw = reviewsUrl.trim();
+    if (raw.length === 0) {
+      toast.error("Укажите ссылку на карточку компании на картах (Яндекс Карты, 2ГИС, Google Maps, Zoon)");
+      return;
+    }
+
+    void importMapReviews
+      .mutateAsync({ url: raw })
+      .then((res) => {
+        const ratingInfo = res.details.rating ? `Рейтинг: ${res.details.rating}★` : "Профиль загружен";
+        const reviewsInfo = res.details.reviewsCount ? ` (${res.details.reviewsCount} отзывов)` : "";
+        toast.success(
+          `«${res.details.orgName}» успешно импортирован с ${res.details.platform}! ${ratingInfo}${reviewsInfo}`,
+        );
+        setReviewsUrl("");
+        setReviewsOpen(false);
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Не удалось загрузить данные с карт");
+      });
+  }, [addText, importMapReviews, manualReviewMode, reviewsSource, reviewsText, reviewsUrl]);
+
   const handleDelete = useCallback(() => {
     if (pendingDelete === null) return;
     const target = pendingDelete;
@@ -146,13 +251,47 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       .finally(() => setPendingDelete(null));
   }, [pendingDelete, remove]);
 
-  const isBusy = uploadFile.isPending || addText.isPending;
+  const isBusy =
+    uploadFile.isPending ||
+    addText.isPending ||
+    importUrl.isPending ||
+    crawlSite.isPending ||
+    importMapReviews.isPending;
   const accept = (meta?.supportedExtensions ?? []).map((ext) => `.${ext}`).join(",");
 
   return (
     <div className="space-y-4">
-      {/* Предупреждение о неготовности платформы: показывается до попытки
-          загрузки, иначе пользователь узнаёт о ней только по ошибке. */}
+      {/* Sub-tab switcher */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("documents")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "documents"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          Документы и материалы ({documents.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("sales")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "sales"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Опыт успешных сделок (Closed-Won) ({salesExamplesData?.length ?? 0})
+        </button>
+      </div>
+
+      {/* Предупреждение о неготовности платформы */}
       {!isLoading && !vectorisationAvailable && (
         <div className="flex items-start gap-3 rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
@@ -166,173 +305,512 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         </div>
       )}
 
-      <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-        <div className="flex items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
-          <div>
-            <h3 className="text-sm font-semibold text-[#111111]">База знаний</h3>
-            <p className="text-xs text-[#666666]">
-              Документы, по которым агент отвечает. Загруженный текст разбивается на фрагменты и
-              переводится в векторы для поиска по смыслу.
-            </p>
-          </div>
-
-          {canEdit && (
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setTextOpen((open) => !open)}
-                disabled={!vectorisationAvailable || isBusy}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#111111] transition-colors",
-                  "hover:bg-[#f5f5f5]",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Текстом
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={!vectorisationAvailable || isBusy}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors",
-                  "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
-                )}
-              >
-                {uploadFile.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Upload className="h-3.5 w-3.5" />
-                )}
-                Загрузить файл
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={accept}
-                onChange={handleFileChange}
-                className="hidden"
-              />
+      {/* Вкладка 1: ДОКУМЕНТЫ И МАТЕРИАЛЫ */}
+      {activeSubTab === "documents" && (
+        <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+            <div>
+              <h3 className="text-sm font-semibold text-[#111111]">База знаний и регламенты</h3>
+              <p className="text-xs text-[#666666]">
+                Файлы, тексты регламентов, сайт компании и отзывы. Текст индексируется в векторы для поиска по смыслу.
+              </p>
             </div>
-          )}
-        </div>
 
-        {/* Форма ввода текстом */}
-        {textOpen && canEdit && (
-          <div className="space-y-3 border-b border-[#e5e5e5] bg-[#fafafa] px-6 py-4">
-            <input
-              type="text"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Название документа, например «Регламент сервисного центра»"
-              className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-            />
-            <textarea
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              rows={8}
-              placeholder="Вставьте текст: регламент, прайс, ответы на частые вопросы..."
-              className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2.5 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-[#666666]">{text.length} символов</span>
-              <div className="flex items-center gap-2">
+            {canEdit && (
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setTextOpen(false)}
-                  className="rounded-[8px] px-3 py-2 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  onClick={() => {
+                    setTextOpen((open) => !open);
+                    setUrlOpen(false);
+                    setReviewsOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors",
+                    "hover:bg-[#f5f5f5]",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Текстом
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors",
+                    "hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  {uploadFile.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="h-3.5 w-3.5" />
+                  )}
+                  Файлом
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUrlOpen((open) => !open);
+                    setTextOpen(false);
+                    setReviewsOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#4a38f5] transition-colors",
+                    "hover:bg-[#4a38f5]/5 disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Globe className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  Ссылка на сайт
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReviewsOpen((open) => !open);
+                    setTextOpen(false);
+                    setUrlOpen(false);
+                  }}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-semibold text-white transition-colors",
+                    "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Star className="h-3.5 w-3.5" />
+                  Отзывы (Карты)
+                </button>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={accept}
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Форма: Текстом */}
+          {textOpen && canEdit && (
+            <div className="space-y-3 border-b border-[#e5e5e5] bg-[#fafafa] px-6 py-4">
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Название документа, например «Прайс-лист на ремонт и ТО 2026»"
+                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+              <textarea
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                rows={6}
+                placeholder="Вставьте регламент, ответы на частые вопросы или правила обслуживания..."
+                className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#666666]">{text.length} символов</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTextOpen(false)}
+                    className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111]"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddText}
+                    disabled={addText.isPending}
+                    className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50"
+                  >
+                    {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Добавить в базу знаний
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Форма: Импорт и сканирование сайта (Краулер / Страница) */}
+          {urlOpen && canEdit && (
+            <div className="space-y-4 border-b border-[#e5e5e5] bg-blue-50/30 px-6 py-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#111111]">
+                  <Globe className="h-4 w-4 text-[#4a38f5]" />
+                  Импорт и сканирование сайта компании
+                </div>
+                <div className="flex items-center gap-1.5 rounded-[6px] border border-[#e5e5e5] bg-white p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsCrawlAll(true)}
+                    className={cn(
+                      "px-2.5 py-1 text-[11px] font-medium rounded-[4px] transition-colors cursor-pointer",
+                      isCrawlAll
+                        ? "bg-[#4a38f5] text-white shadow-2xs"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    Весь сайт (краулер)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCrawlAll(false)}
+                    className={cn(
+                      "px-2.5 py-1 text-[11px] font-medium rounded-[4px] transition-colors cursor-pointer",
+                      !isCrawlAll
+                        ? "bg-[#4a38f5] text-white shadow-2xs"
+                        : "text-[#666666] hover:text-[#111111]",
+                    )}
+                  >
+                    Одна страница
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#666666]">
+                {isCrawlAll
+                  ? "Краулер автоматически найдёт все страницы через sitemap.xml и внутренние ссылки (услуги, прайсы, контакты, условия), очистит разметку и проиндексирует базу знаний."
+                  : "Загрузить текст только одной конкретной страницы сайта по прямому адресу."}
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className={cn(isCrawlAll ? "sm:col-span-2" : "sm:col-span-1")}>
+                  <input
+                    type="url"
+                    value={urlValue}
+                    onChange={(e) => setUrlValue(e.target.value)}
+                    placeholder={isCrawlAll ? "https://mysite.ru" : "https://mysite.ru/services/prices"}
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+
+                {isCrawlAll ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#666666] whitespace-nowrap">Лимит:</span>
+                    <select
+                      value={crawlMaxPages}
+                      onChange={(e) => setCrawlMaxPages(Number(e.target.value))}
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 cursor-pointer"
+                    >
+                      <option value={10}>до 10 страниц</option>
+                      <option value={25}>до 25 страниц (рекомендуется)</option>
+                      <option value={50}>до 50 страниц (полный охват)</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="sm:col-span-2">
+                    <input
+                      type="text"
+                      value={urlTitle}
+                      onChange={(e) => setUrlTitle(e.target.value)}
+                      placeholder="Название (например «Услуги и цены»)"
+                      className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setUrlOpen(false)}
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111] cursor-pointer"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddText}
-                  disabled={addText.isPending}
-                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={handleImportUrl}
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
                 >
-                  {addText.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Добавить в базу знаний
+                  {(crawlSite.isPending || importUrl.isPending) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  {isCrawlAll
+                    ? crawlSite.isPending
+                      ? "Сканируем сайт..."
+                      : "Запустить сканирование сайта"
+                    : importUrl.isPending
+                      ? "Импортируем..."
+                      : "Импортировать страницу"}
                 </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Список */}
-        <div className="p-6">
-          {isLoading && (
-            <div className="space-y-2">
-              {Array.from({ length: 3 }, (_, index) => (
-                <Skeleton key={index} className="h-14 w-full" />
-              ))}
-            </div>
           )}
 
-          {error !== null && !isLoading && (
-            <p className="text-sm text-rose-500">
-              Не удалось загрузить документы: {error.message}
-            </p>
-          )}
-
-          {!isLoading && error === null && documents.length === 0 && (
-            <EmptyState
-              icon={FileText}
-              title="База знаний пуста"
-              description="Загрузите регламент, прайс или ответы на частые вопросы — агент будет опираться на них при ответах."
-            />
-          )}
-
-          {!isLoading && documents.length > 0 && (
-            <div className="space-y-2">
-              {documents.map((document) => (
-                <div
-                  key={document.id}
-                  className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
+          {/* Форма: Отзывы и профиль из справочников по ссылке */}
+          {reviewsOpen && canEdit && (
+            <div className="space-y-4 border-b border-[#e5e5e5] bg-amber-50/30 px-6 py-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#854d0e]">
+                  <Star className="h-4 w-4 text-amber-500 fill-amber-500" />
+                  Импорт отзывов и рейтинга с карт по ссылке
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setManualReviewMode((m) => !m)}
+                  className="text-xs text-[#4a38f5] hover:underline cursor-pointer text-left"
                 >
-                  <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
+                  {manualReviewMode ? "← Импортировать по ссылке на карты" : "Вставить текст отзывов вручную"}
+                </button>
+              </div>
 
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-[#111111]">
-                      {document.filename}
-                    </p>
-                    <p className="text-xs text-[#666666]">
-                      {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
-                      {formatDate(document.createdAt)}
-                      {document.agentId === null && " · общий для всех агентов"}
-                    </p>
-                    {document.status === "failed" && document.errorMessage.length > 0 && (
-                      <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
-                    )}
+              <p className="text-xs text-[#666666]">
+                {manualReviewMode
+                  ? "Скопируйте текст реальных отзывов клиентов и вставьте сюда. Агент будет использовать цитаты и высокий рейтинг компании для снятия сомнений и закрытия сделок."
+                  : "Вставьте прямую ссылку на карточку компании на картах. Система извлечёт название, общий рейтинг (например, 4.9★), адрес и реальные цитаты клиентов для использования в диалогах."}
+              </p>
+
+              {!manualReviewMode ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-[#111111] mr-1">Поддерживаемые сервисы:</span>
+                    {[
+                      { name: "Яндекс Карты", sample: "https://yandex.ru/maps/org/..." },
+                      { name: "2ГИС", sample: "https://2gis.ru/moscow/firm/..." },
+                      { name: "Google Maps", sample: "https://maps.google.com/..." },
+                      { name: "Zoon", sample: "https://zoon.ru/..." },
+                      { name: "Flamp", sample: "https://flamp.ru/..." },
+                    ].map((svc) => (
+                      <button
+                        key={svc.name}
+                        type="button"
+                        onClick={() => {
+                          if (!reviewsUrl) setReviewsUrl(svc.sample);
+                        }}
+                        className="rounded-[4px] border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] text-[#666666] hover:border-[#4a38f5] hover:text-[#4a38f5] transition-colors cursor-pointer"
+                      >
+                        {svc.name}
+                      </button>
+                    ))}
                   </div>
 
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                      STATUS_CLASS[document.status],
-                    )}
-                  >
-                    {STATUS_LABEL[document.status]}
-                  </span>
-
-                  {canEdit && (
-                    <button
-                      type="button"
-                      onClick={() => setPendingDelete(document)}
-                      aria-label={`Удалить ${document.filename}`}
-                      className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
+                  <input
+                    type="url"
+                    value={reviewsUrl}
+                    onChange={(e) => setReviewsUrl(e.target.value)}
+                    placeholder="https://yandex.ru/maps/org/remont_i_servis/123456789/ или https://2gis.ru/..."
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
                 </div>
-              ))}
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-[#111111]">Источник:</span>
+                    {["Яндекс Карты", "2ГИС", "Google Карты", "Zoon"].map((source) => (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() => setReviewsSource(source)}
+                        className={cn(
+                          "px-2.5 py-1 text-xs rounded-[6px] border font-medium transition-colors cursor-pointer",
+                          reviewsSource === source
+                            ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                        )}
+                      >
+                        {source}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={reviewsText}
+                    onChange={(e) => setReviewsText(e.target.value)}
+                    rows={5}
+                    placeholder="Вставьте скопированные отзывы (например: «Отличный сервис, починили за 2 часа, дали гарантию на год. Мастер Дмитрий все объяснил... Рейтинг 4.9 из 5»)..."
+                    className="w-full resize-y rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setReviewsOpen(false)}
+                  className="rounded-[8px] px-3 py-1.5 text-xs font-medium text-[#666666] transition-colors hover:text-[#111111] cursor-pointer"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImportMapReviews}
+                  disabled={isBusy}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer"
+                >
+                  {(importMapReviews.isPending || addText.isPending) && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  {importMapReviews.isPending
+                    ? "Загружаем отзывы..."
+                    : !manualReviewMode
+                      ? "Импортировать отзывы по ссылке"
+                      : "Сохранить отзывы в базу"}
+                </button>
+              </div>
             </div>
           )}
+
+          {/* Список документов */}
+          <div className="p-6">
+            {isLoading && (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }, (_, index) => (
+                  <Skeleton key={index} className="h-14 w-full" />
+                ))}
+              </div>
+            )}
+
+            {error !== null && !isLoading && (
+              <p className="text-sm text-rose-500">
+                Не удалось загрузить документы: {error.message}
+              </p>
+            )}
+
+            {!isLoading && error === null && documents.length === 0 && (
+              <EmptyState
+                icon={FileText}
+                title="База знаний пока пуста"
+                description="Загрузите регламент, прайс, добавьте ссылку на сайт или вставьте отзывы — агент будет опираться на них при диалогах."
+              />
+            )}
+
+            {!isLoading && documents.length > 0 && (
+              <div className="space-y-2">
+                {documents.map((document) => (
+                  <div
+                    key={document.id}
+                    className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
+                  >
+                    <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
+
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-[#111111]">
+                        {document.filename}
+                      </p>
+                      <p className="text-xs text-[#666666]">
+                        {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
+                        {formatDate(document.createdAt)}
+                        {document.agentId === null && " · общий для всех агентов"}
+                      </p>
+                      {document.status === "failed" && document.errorMessage.length > 0 && (
+                        <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
+                      )}
+                    </div>
+
+                    <span
+                      className={cn(
+                        "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                        STATUS_CLASS[document.status],
+                      )}
+                    >
+                      {STATUS_LABEL[document.status]}
+                    </span>
+
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(document)}
+                        aria-label={`Удалить ${document.filename}`}
+                        className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Вкладка 2: ОБУЧЕНИЕ НА СДЕЛКАХ (CLOSED-WON RAG) */}
+      {activeSubTab === "sales" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3.5 rounded-[8px] border border-blue-200 bg-blue-50/70 p-4">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#4a38f5]" />
+            <div className="space-y-1.5 text-xs">
+              <p className="font-semibold text-[#111111]">
+                Автоматическое обучение на закрытых сделках (Closed-Won Sales Learning)
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                Когда любая сделка в CRM переходит на этап <strong>«Успешно реализовано» (closed_won)</strong>, система автоматически анализирует переписку менеджеров с клиентом, находит связки «вопрос клиента → победный ответ менеджера», векторизует их через ИИ и сохраняет в память агента.
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                При последующих диалогах с новыми клиентами бот выполняет векторный поиск по этому опыту и применяет реальные победные формулировки вашей команды.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <div className="border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+              <h3 className="text-sm font-semibold text-[#111111]">
+                Извлеченные диалоги победных сделок
+              </h3>
+              <p className="text-xs text-[#666666]">
+                Список вопросов клиентов и ответов операторов, сохраненных как золотой эталон продаж.
+              </p>
+            </div>
+
+            <div className="p-6">
+              {isLoadingSales && (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <Skeleton key={index} className="h-16 w-full" />
+                  ))}
+                </div>
+              )}
+
+              {!isLoadingSales && (!salesExamplesData || salesExamplesData.length === 0) && (
+                <EmptyState
+                  icon={Sparkles}
+                  title="Пока нет данных обучения"
+                  description="Как только менеджеры переведут сделки с историей диалогов в статус «Успешно реализовано», система автоматически извлечет эффективные ответы и отобразит их здесь."
+                />
+              )}
+
+              {!isLoadingSales && salesExamplesData && salesExamplesData.length > 0 && (
+                <div className="space-y-3">
+                  {salesExamplesData.map((example) => (
+                    <div
+                      key={example.id}
+                      className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-2 hover:border-[#cccccc] transition-colors shadow-2xs"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-[#111111]">
+                          Сделка: {example.dealTitle}
+                        </span>
+                        <span className="text-[#888888] font-mono text-[11px]">
+                          {formatDate(example.createdAt)}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5 text-xs bg-[#fafafa] p-3 rounded-[6px] border border-[#f0f0f0]">
+                        <div>
+                          <span className="font-medium text-[#666666]">Клиент: </span>
+                          <span className="text-[#111111]">{example.customerQuery}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-[#4a38f5]">Менеджер (эталон): </span>
+                          <span className="text-[#111111]">{example.agentReply}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={pendingDelete !== null}
