@@ -557,7 +557,7 @@ export class TelegramTransportService {
         const contentText =
           text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
 
-        await runWithTenantContext(account.tenant_id, () =>
+        const crmResult = await runWithTenantContext(account.tenant_id, () =>
           this.crm.processIncoming({
             tenantId: account.tenant_id,
             channel: "telegram",
@@ -575,7 +575,13 @@ export class TelegramTransportService {
             { error, accountId: account.id, chatId },
             "Failed to process incoming Telegram media message",
           );
+          return null;
         });
+
+        if (crmResult?.isPersonal) {
+          this.log.info({ senderId }, "Personal Telegram contact media ignored by CRM");
+          return;
+        }
 
         // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
         if (text.length > 0) {
@@ -638,6 +644,11 @@ export class TelegramTransportService {
           profile: profile ?? undefined,
         }),
       );
+
+      if (crmResult.isPersonal) {
+        this.log.info({ peerId: batch.peerId }, "Personal Telegram contact message ignored by CRM");
+        return;
+      }
 
       dealId = crmResult.dealId;
     } catch (error) {

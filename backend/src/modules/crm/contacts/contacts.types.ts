@@ -149,6 +149,8 @@ export interface ContactRow {
   linkedin_link: string;
   custom_fields: Record<string, unknown>;
   notes: string;
+  is_personal?: boolean;
+  suppress_deal_creation?: boolean;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -194,6 +196,8 @@ export interface ContactDTO {
   linkedinLink: string;
   customFields: Record<string, unknown>;
   notes: string;
+  isPersonal?: boolean;
+  suppressDealCreation?: boolean;
   createdBy: string | null;
   /** Отображаемое имя создателя для группы «Система» на карточке. */
   createdByName: string | null;
@@ -276,6 +280,8 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     linkedinLink: row.linkedin_link,
     customFields: row.custom_fields,
     notes: row.notes,
+    isPersonal: Boolean(row.is_personal),
+    suppressDealCreation: Boolean(row.suppress_deal_creation),
     createdBy: row.created_by,
     createdByName: row.created_by_name ?? null,
     createdAt: toIso(row.created_at),

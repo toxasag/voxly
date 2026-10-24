@@ -121,6 +121,11 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
       }),
     );
 
+    if (crmResult.isPersonal) {
+      request.log.info({ phoneE164 }, "Personal WhatsApp contact message ignored by CRM");
+      continue;
+    }
+
     // AI-автоответ
     try {
       const agentService = new AgentPipelineService(request.log);

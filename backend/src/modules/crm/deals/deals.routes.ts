@@ -182,6 +182,18 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
+  app.post("/:id/mark-personal", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.markPersonal(request.tenant_id, id, request.authUser.id);
+    return reply.send({ data: result });
+  });
+
+  app.post("/:id/unmark-personal", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.unmarkPersonal(request.tenant_id, id, request.authUser.id);
+    return reply.send({ data: result });
+  });
+
   // ---------------------------------------------------------------------------
   // Timeline (M1.6.6)
   // ---------------------------------------------------------------------------

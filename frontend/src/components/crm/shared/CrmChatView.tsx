@@ -20,12 +20,17 @@ import {
   PowerOff,
   RefreshCw,
   Send,
+  ShieldAlert,
   Sparkles,
+  UserX,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { useDeal, useMarkDealPersonal, useUnmarkDealPersonal } from "@/lib/api/use-deals";
+import { useContact, useSetContactPersonal } from "@/lib/api/use-contacts";
 import {
   useCrmChat,
   type ChatMessageDTO,
@@ -339,6 +344,52 @@ export function CrmChatView({
     syncHistoryMutation,
   } = useCrmChat({ entityType, entityId, live: true });
 
+  const isDeal = entityType === "deal";
+  const dealQuery = useDeal(isDeal && entityId ? entityId : null);
+  const contactQuery = useContact(!isDeal && entityId ? entityId : null);
+
+  const markDealPersonalMutation = useMarkDealPersonal();
+  const unmarkDealPersonalMutation = useUnmarkDealPersonal();
+  const setContactPersonalMutation = useSetContactPersonal();
+
+  const isPersonal = isDeal
+    ? Boolean(dealQuery.data?.contactIsPersonal)
+    : Boolean(contactQuery.data?.isPersonal);
+
+  const [showPersonalConfirm, setShowPersonalConfirm] = useState(false);
+
+  const isTogglingPersonal =
+    markDealPersonalMutation.isPending ||
+    unmarkDealPersonalMutation.isPending ||
+    setContactPersonalMutation.isPending;
+
+  const handleMarkPersonal = useCallback(async () => {
+    try {
+      if (isDeal) {
+        await markDealPersonalMutation.mutateAsync(entityId);
+      } else {
+        await setContactPersonalMutation.mutateAsync({ id: entityId, is_personal: true });
+      }
+      setShowPersonalConfirm(false);
+      toast.success("Контакт помечен как личный. Сделка переведена в отказ, переписка не попадает в CRM.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось пометить контакт как личный");
+    }
+  }, [isDeal, entityId, markDealPersonalMutation, setContactPersonalMutation]);
+
+  const handleUnmarkPersonal = useCallback(async () => {
+    try {
+      if (isDeal) {
+        await unmarkDealPersonalMutation.mutateAsync(entityId);
+      } else {
+        await setContactPersonalMutation.mutateAsync({ id: entityId, is_personal: false });
+      }
+      toast.success("Контакт возвращён в категорию рабочих");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Не удалось вернуть контакт в рабочие");
+    }
+  }, [isDeal, entityId, unmarkDealPersonalMutation, setContactPersonalMutation]);
+
   const [input, setInput] = useState("");
   const [selectedChannelAccountId, setSelectedChannelAccountId] = useState<string>("");
   const [activeChannel, setActiveChannel] = useState<string>("all");
@@ -609,44 +660,98 @@ export function CrmChatView({
           </div>
         </div>
 
-        {/* Кнопки переключения режима AI */}
-        <div className="flex items-center gap-1.5">
-          {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
-            <>
+        {/* Кнопки переключения режима AI и пометки личного контакта */}
+        <div className="flex items-center gap-2">
+          {isPersonal ? (
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[11px] font-medium text-[#854d0e]">
+                <ShieldAlert className="h-3 w-3 text-[#854d0e]" />
+                <span>Личный контакт</span>
+              </span>
               <button
                 type="button"
-                onClick={() => handleAiAction("pause")}
-                disabled={aiControlMutation.isPending}
-                title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+                onClick={handleUnmarkPersonal}
+                disabled={isTogglingPersonal}
+                title="Снять пометку личного контакта и вернуть в категорию рабочих"
+                className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50 cursor-pointer"
               >
-                <Pause className="h-3 w-3 text-amber-600" />
-                <span>Пауза на 1 ч</span>
+                <span>Вернуть в рабочие</span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleAiAction("disable")}
-                disabled={aiControlMutation.isPending}
-                title="Полностью отключить автоответчик по этой сделке/контакту"
-                className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
-              >
-                <PowerOff className="h-3.5 w-3.5" />
-              </button>
-            </>
+            </div>
           ) : (
             <button
               type="button"
-              onClick={() => handleAiAction("enable")}
-              disabled={aiControlMutation.isPending}
-              title="Включить AI-автопилот"
-              className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+              onClick={() => setShowPersonalConfirm(true)}
+              disabled={isTogglingPersonal}
+              title="Пометить контакт как личный (семья, друзья): перевести сделку в отказ, не создавать сделки и не читать сообщения в CRM"
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
             >
-              <Play className="h-3 w-3 fill-current" />
-              <span>Включить AI</span>
+              <UserX className="h-3 w-3 text-[#888888]" />
+              <span>Личный контакт</span>
             </button>
           )}
+
+          <div className="h-4 w-px bg-[#e5e5e5]" />
+
+          {/* Кнопки переключения режима AI */}
+          <div className="flex items-center gap-1.5">
+            {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleAiAction("pause")}
+                  disabled={aiControlMutation.isPending}
+                  title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+                >
+                  <Pause className="h-3 w-3 text-amber-600" />
+                  <span>Пауза на 1 ч</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAiAction("disable")}
+                  disabled={aiControlMutation.isPending}
+                  title="Полностью отключить автоответчик по этой сделке/контакту"
+                  className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                >
+                  <PowerOff className="h-3.5 w-3.5" />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleAiAction("enable")}
+                disabled={aiControlMutation.isPending}
+                title="Включить AI-автопилот"
+                className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <Play className="h-3 w-3 fill-current" />
+                <span>Включить AI</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Баннер личного контакта */}
+      {isPersonal && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#fef08a] bg-[#fefce8] px-4 py-2 text-xs text-[#854d0e]">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-[#854d0e]" />
+            <span>
+              <strong>Личный контакт.</strong> CRM игнорирует сообщения и не создает сделки. Уведомления поступают только на ваш телефон (сообщения не помечаются прочитанными).
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleUnmarkPersonal}
+            disabled={isTogglingPersonal}
+            className="shrink-0 font-medium underline underline-offset-2 hover:text-[#111111] transition-colors cursor-pointer"
+          >
+            Сделать рабочим
+          </button>
+        </div>
+      )}
 
       {/* Выбор активного чата / канала переписки (выпадающий список как в «Пишем от:») */}
       <div className="flex shrink-0 items-center justify-between border-b border-[#e5e5e5] bg-[#fafafa] px-4 py-1.5">
@@ -928,6 +1033,18 @@ className="flex items-center gap-1 font-medium text-rose-600"
           />
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showPersonalConfirm}
+        onClose={() => setShowPersonalConfirm(false)}
+        onConfirm={handleMarkPersonal}
+        title="Пометить как личный контакт?"
+        description="Сделка сразу перейдет в статус «Закрыто и не реализовано», новые сделки создаваться не будут. Входящие сообщения перестанут поступать в CRM (не сохраняются в историю, AI не отвечает). Уведомления продолжат приходить на ваш телефон, сообщения НЕ отмечаются прочитанными платформой — вы спокойно общаетесь с телефона как обычно."
+        confirmLabel="Пометить как личный"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={isTogglingPersonal}
+      />
     </div>
   );
 }
