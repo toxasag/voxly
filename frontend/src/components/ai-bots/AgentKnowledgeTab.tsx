@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Database,
+  Edit3,
+  Eye,
   FileText,
   Globe,
   Loader2,
+  MessageSquare,
   Plus,
   Sparkles,
   Star,
@@ -17,6 +21,7 @@ import { toast } from "sonner";
 import {
   useAddKnowledgeText,
   useCrawlSite,
+  useCrmKnowledgeStats,
   useDeleteKnowledgeDocument,
   useImportKnowledgeUrl,
   useImportMapReviews,
@@ -29,6 +34,9 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import { EditDocumentSheet } from "./EditDocumentSheet";
+import { WhatsAppImportModal } from "./WhatsAppImportModal";
+import { CrmSyncModal } from "./CrmSyncModal";
 
 // ---------------------------------------------------------------------------
 // Вкладка «База знаний» на странице агента.
@@ -112,10 +120,46 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const [reviewsText, setReviewsText] = useState("");
 
   const [pendingDelete, setPendingDelete] = useState<KnowledgeDocument | null>(null);
+  const [editingDocId, setEditingDocId] = useState<string | null>(null);
+  const [whatsappOpen, setWhatsappOpen] = useState(false);
+  const [crmSyncOpen, setCrmSyncOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<
+    "all" | "prices" | "crm" | "whatsapp" | "site" | "reviews"
+  >("all");
+
+  const { data: crmStats } = useCrmKnowledgeStats();
 
   const meta = data?.meta;
   const documents = data?.documents ?? [];
   const vectorisationAvailable = meta?.vectorisationAvailable ?? false;
+
+  const filteredDocuments = useMemo(() => {
+    if (categoryFilter === "all") return documents;
+    return documents.filter((doc) => {
+      const lower = doc.filename.toLowerCase();
+      if (categoryFilter === "prices") {
+        return (
+          lower.includes("прайс") ||
+          lower.includes("цена") ||
+          lower.includes("price") ||
+          lower.includes("услуг")
+        );
+      }
+      if (categoryFilter === "crm") {
+        return doc.filename.startsWith("[CRM]");
+      }
+      if (categoryFilter === "whatsapp") {
+        return doc.filename.startsWith("[WhatsApp]");
+      }
+      if (categoryFilter === "site") {
+        return doc.filename.startsWith("[Сайт]") || lower.includes("http");
+      }
+      if (categoryFilter === "reviews") {
+        return doc.filename.startsWith("[Отзывы]") || doc.filename.startsWith("Отзывы");
+      }
+      return true;
+    });
+  }, [documents, categoryFilter]);
 
   const handleFileChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -379,12 +423,43 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                   }}
                   disabled={!vectorisationAvailable || isBusy}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-1.5 text-xs font-semibold text-white transition-colors",
-                    "hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50",
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-semibold text-[#111111] transition-colors",
+                    "hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-50",
                   )}
                 >
-                  <Star className="h-3.5 w-3.5" />
+                  <Star className="h-3.5 w-3.5 text-amber-500" />
                   Отзывы (Карты)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCrmSyncOpen(true)}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-3 py-1.5 text-xs font-semibold text-[#4a38f5] transition-colors",
+                    "hover:bg-[#4a38f5]/10 disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-[#4a38f5]" />
+                  Опыт из CRM
+                  {crmStats?.wonDeals ? (
+                    <span className="ml-0.5 rounded-full bg-[#4a38f5] px-1.5 py-0.2 text-[10px] text-white font-mono">
+                      {crmStats.wonDeals}
+                    </span>
+                  ) : null}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setWhatsappOpen(true)}
+                  disabled={!vectorisationAvailable || isBusy}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-[8px] border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition-colors",
+                    "hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50",
+                  )}
+                >
+                  <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
+                  Архив WhatsApp (.txt)
                 </button>
 
                 <input
@@ -659,6 +734,69 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
             </div>
           )}
 
+          {/* Фильтры категорий базы знаний */}
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-[#e5e5e5] px-6 py-2.5 bg-white">
+            <span className="text-xs text-[#888888] mr-1">Категория:</span>
+            {[
+              { id: "all", label: "Все", count: documents.length },
+              {
+                id: "prices",
+                label: "💰 Прайс и услуги",
+                count: documents.filter((d) => {
+                  const l = d.filename.toLowerCase();
+                  return (
+                    l.includes("прайс") ||
+                    l.includes("цена") ||
+                    l.includes("price") ||
+                    l.includes("услуг")
+                  );
+                }).length,
+              },
+              {
+                id: "crm",
+                label: "⚡ Из CRM",
+                count: documents.filter((d) => d.filename.startsWith("[CRM]")).length,
+              },
+              {
+                id: "whatsapp",
+                label: "💬 WhatsApp",
+                count: documents.filter((d) => d.filename.startsWith("[WhatsApp]")).length,
+              },
+              {
+                id: "site",
+                label: "🌐 Сайт",
+                count: documents.filter(
+                  (d) => d.filename.startsWith("[Сайт]") || d.filename.toLowerCase().includes("http"),
+                ).length,
+              },
+              {
+                id: "reviews",
+                label: "⭐ Отзывы",
+                count: documents.filter(
+                  (d) => d.filename.startsWith("[Отзывы]") || d.filename.startsWith("Отзывы"),
+                ).length,
+              },
+            ].map((cat) => (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() =>
+                  setCategoryFilter(
+                    cat.id as "all" | "prices" | "crm" | "whatsapp" | "site" | "reviews",
+                  )
+                }
+                className={cn(
+                  "px-2.5 py-1 text-xs rounded-[6px] transition-colors cursor-pointer border",
+                  categoryFilter === cat.id
+                    ? "bg-[#111111] text-white border-[#111111] font-medium"
+                    : "bg-white text-[#666666] border-[#e5e5e5] hover:bg-[#f5f5f5] hover:text-[#111111]",
+                )}
+              >
+                {cat.label} ({cat.count})
+              </button>
+            ))}
+          </div>
+
           {/* Список документов */}
           <div className="p-6">
             {isLoading && (
@@ -675,58 +813,96 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
               </p>
             )}
 
-            {!isLoading && error === null && documents.length === 0 && (
+            {!isLoading && error === null && filteredDocuments.length === 0 && (
               <EmptyState
                 icon={FileText}
-                title="База знаний пока пуста"
-                description="Загрузите регламент, прайс, добавьте ссылку на сайт или вставьте отзывы — агент будет опираться на них при диалогах."
+                title={
+                  categoryFilter === "all"
+                    ? "База знаний пока пуста"
+                    : "В этой категории пока нет документов"
+                }
+                description={
+                  categoryFilter === "all"
+                    ? "Загрузите регламент, прайс, добавьте ссылку на сайт или синхронизируйте опыт из CRM / WhatsApp — агент будет опираться на них при диалогах."
+                    : "Выберите другую категорию или добавьте материалы с соответствующим типом."
+                }
               />
             )}
 
-            {!isLoading && documents.length > 0 && (
+            {!isLoading && filteredDocuments.length > 0 && (
               <div className="space-y-2">
-                {documents.map((document) => (
-                  <div
-                    key={document.id}
-                    className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#f5f5f5]"
-                  >
-                    <FileText className="h-4 w-4 shrink-0 text-[#888888]" />
+                {filteredDocuments.map((document) => {
+                  const isPrice =
+                    document.filename.toLowerCase().includes("прайс") ||
+                    document.filename.toLowerCase().includes("price") ||
+                    document.filename.toLowerCase().includes("цена");
 
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-[#111111]">
-                        {document.filename}
-                      </p>
-                      <p className="text-xs text-[#666666]">
-                        {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
-                        {formatDate(document.createdAt)}
-                        {document.agentId === null && " · общий для всех агентов"}
-                      </p>
-                      {document.status === "failed" && document.errorMessage.length > 0 && (
-                        <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
-                      )}
-                    </div>
-
-                    <span
-                      className={cn(
-                        "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                        STATUS_CLASS[document.status],
-                      )}
+                  return (
+                    <div
+                      key={document.id}
+                      onClick={() => setEditingDocId(document.id)}
+                      className="flex items-center gap-4 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-3 transition-colors hover:bg-[#fafafa] hover:border-[#cccccc] cursor-pointer group"
                     >
-                      {STATUS_LABEL[document.status]}
-                    </span>
+                      <FileText className="h-4 w-4 shrink-0 text-[#888888] group-hover:text-[#4a38f5] transition-colors" />
 
-                    {canEdit && (
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium text-[#111111] group-hover:text-[#4a38f5] transition-colors">
+                            {document.filename}
+                          </p>
+                          {isPrice && (
+                            <span className="shrink-0 rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-1.5 py-0.5 text-[10px] font-semibold text-[#854d0e]">
+                              Приоритет цен
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-[#666666]">
+                          {pluralChunks(document.chunksCount)} · {formatSize(document.fileSize)} ·{" "}
+                          {formatDate(document.createdAt)}
+                          {document.agentId === null && " · общий для всех агентов"}
+                        </p>
+                        {document.status === "failed" && document.errorMessage.length > 0 && (
+                          <p className="mt-1 text-xs text-rose-400">{document.errorMessage}</p>
+                        )}
+                      </div>
+
+                      <span
+                        className={cn(
+                          "inline-flex shrink-0 items-center rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                          STATUS_CLASS[document.status],
+                        )}
+                      >
+                        {STATUS_LABEL[document.status]}
+                      </span>
+
                       <button
                         type="button"
-                        onClick={() => setPendingDelete(document)}
-                        aria-label={`Удалить ${document.filename}`}
-                        className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingDocId(document.id);
+                        }}
+                        title="Просмотреть и редактировать"
+                        className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-[#4a38f5]/10 hover:text-[#4a38f5]"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Edit3 className="h-4 w-4" />
                       </button>
-                    )}
-                  </div>
-                ))}
+
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDelete(document);
+                          }}
+                          aria-label={`Удалить ${document.filename}`}
+                          className="shrink-0 rounded-md p-1.5 text-slate-500 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -825,6 +1001,29 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         isPending={remove.isPending}
         onConfirm={handleDelete}
         onClose={() => setPendingDelete(null)}
+      />
+
+      {/* Шторка просмотра и редактирования документа */}
+      <EditDocumentSheet
+        agentId={agentId}
+        documentId={editingDocId}
+        open={editingDocId !== null}
+        onClose={() => setEditingDocId(null)}
+        canEdit={canEdit}
+      />
+
+      {/* Модалка импорта переписки из WhatsApp */}
+      <WhatsAppImportModal
+        agentId={agentId}
+        open={whatsappOpen}
+        onClose={() => setWhatsappOpen(false)}
+      />
+
+      {/* Модалка синхронизации опыта из CRM */}
+      <CrmSyncModal
+        agentId={agentId}
+        open={crmSyncOpen}
+        onClose={() => setCrmSyncOpen(false)}
       />
     </div>
   );

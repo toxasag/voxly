@@ -114,12 +114,20 @@ export interface AiChargeBreakdown {
  * бы бесплатным для арендатора при реальных затратах платформы.
  */
 export function calculateAiCharge(input: {
-  model: AiModelId;
+  model: AiModelId | string;
   tokensIn: number;
   tokensOut: number;
   markupPercent: number;
 }): AiChargeBreakdown {
-  const pricing = AI_MODEL_CATALOG[input.model];
+  const pricing =
+    (AI_MODEL_CATALOG as Record<string, AiModelPricing>)[input.model] ?? {
+      id: input.model as AiModelId,
+      label: input.model,
+      provider: "google" as const,
+      contextWindow: 128_000,
+      costInPer1k: 5,
+      costOutPer1k: 15,
+    };
 
   const providerCost =
     (input.tokensIn / 1000) * pricing.costInPer1k +
@@ -144,10 +152,18 @@ export function calculateAiCharge(input: {
  */
 export function estimateRemainingTokens(input: {
   balanceKopecks: number;
-  model: AiModelId;
+  model: AiModelId | string;
   markupPercent: number;
 }): number {
-  const pricing = AI_MODEL_CATALOG[input.model];
+  const pricing =
+    (AI_MODEL_CATALOG as Record<string, AiModelPricing>)[input.model] ?? {
+      id: input.model as AiModelId,
+      label: input.model,
+      provider: "google" as const,
+      contextWindow: 128_000,
+      costInPer1k: 5,
+      costOutPer1k: 15,
+    };
   const per1k = (pricing.costInPer1k + pricing.costOutPer1k) * (1 + input.markupPercent / 100);
 
   if (per1k <= 0) return 0;

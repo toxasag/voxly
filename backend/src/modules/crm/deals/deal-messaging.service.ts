@@ -2,6 +2,7 @@ import { query, queryOne } from "../../../db/client.js";
 import { DealsService } from "./deals.service.js";
 import {
   resolveOutboundSender,
+  resolveTelegramHistorySyncer,
   type OutboundSendResult,
 } from "../../channels/outbound-registry.js";
 import type { CreateDealMessagePayload, DealMessageDTO } from "./deals.types.js";
@@ -825,6 +826,51 @@ export class DealMessagingService {
           senderName: `${contact.first_name} ${contact.last_name}`.trim(),
         });
         totalSynced += count;
+      }
+    }
+
+    // Синхронизация истории диалогов Telegram
+    const telegramAccount = await queryOne<{ id: string }>(
+      `SELECT id FROM channel_accounts
+       WHERE tenant_id = $1 AND channel = 'telegram' AND status = 'connected' AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId],
+    );
+
+    if (telegramAccount && deal.contact_id) {
+      const contact = await queryOne<{
+        first_name: string;
+        last_name: string;
+        phone: string;
+        telegram_chat_id?: string | number | null;
+        socials?: ContactSocialJson[];
+      }>(
+        `SELECT first_name, last_name, phone, telegram_chat_id, socials FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+
+      if (contact) {
+        const tgChatId = contact.telegram_chat_id ? String(contact.telegram_chat_id) : null;
+        const tgSocial = contact.socials?.find((s) => s.kind === "telegram")?.value?.replace(/^@/, "");
+        const cleanPhone = contact.phone ? contact.phone.replace(/\D/g, "") : null;
+        const peer = tgChatId || tgSocial || cleanPhone;
+
+        if (peer) {
+          const syncer = resolveTelegramHistorySyncer();
+          if (syncer) {
+            const count = await syncer({
+              tenantId,
+              dealId,
+              channelAccountId: telegramAccount.id,
+              peerId: peer,
+              username: tgSocial ?? undefined,
+              phone: contact.phone ?? undefined,
+              limit: 50,
+            });
+            totalSynced += count;
+          }
+        }
       }
     }
 

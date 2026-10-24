@@ -484,14 +484,24 @@ export class CrmPipelineService {
         }
       }
 
+      const contentText =
+        input.text.trim() ||
+        (input.attachment
+          ? input.attachmentType?.startsWith("image/")
+            ? "Фотография"
+            : "Вложение"
+          : "");
+
       // Защита от дублирования сообщений при параллельной доставке вебхуков
       const existingMsg = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
-           AND direction = 'inbound' AND content = $3 AND channel = $4
+           AND direction = 'inbound'
+           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
+           AND channel = $5
            AND created_at > now() - interval '15 seconds'
          LIMIT 1`,
-        [input.tenantId, dealId, input.text, input.channel],
+        [input.tenantId, dealId, contentText, input.attachment ?? null, input.channel],
       );
 
       if (!existingMsg) {
@@ -506,7 +516,7 @@ export class CrmPipelineService {
             "client",
             "inbound",
             input.senderName,
-            input.text,
+            contentText,
             input.channel,
             input.attachment ?? null,
             input.attachmentType ?? null,
@@ -725,16 +735,24 @@ export class CrmPipelineService {
         return { dealId: null, messageId: null, pausedUntil: null };
       }
 
+      const contentText =
+        input.text.trim() ||
+        (input.attachment
+          ? input.attachmentType?.startsWith("image/")
+            ? "Фотография"
+            : "Вложение"
+          : "");
+
       // Дедупликация исходящих сообщений в пределах 20 секунд (исключает дублирование при отправке из веб-CRM)
       const existingOutbound = await tx.queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
            AND direction = 'outbound'
-           AND content = $3
-           AND channel = $4
+           AND (content = $3 OR (attachment IS NOT NULL AND attachment = $4))
+           AND channel = $5
            AND created_at >= now() - interval '20 seconds'
          ORDER BY created_at DESC LIMIT 1`,
-        [input.tenantId, activeDeal.id, input.text, input.channel],
+        [input.tenantId, activeDeal.id, contentText, input.attachment ?? null, input.channel],
       );
 
       if (existingOutbound) {
@@ -765,7 +783,7 @@ export class CrmPipelineService {
           activeDeal.id,
           nullIfBlank(input.channelAccountId),
           input.senderName ?? "Менеджер",
-          input.text,
+          contentText,
           input.channel,
           input.attachment ?? null,
           input.attachmentType ?? null,

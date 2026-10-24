@@ -143,6 +143,21 @@ function getChannelBadge(channel: string) {
   }
 }
 
+function resolveAttachmentUrl(attachment: string): string {
+  if (attachment.startsWith("http://") || attachment.startsWith("https://")) {
+    return attachment;
+  }
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://api.getvoxly.ru";
+  const cleanBase = apiBase.replace(/\/+$/, "");
+  const cleanPath = attachment.startsWith("/") ? attachment : `/${attachment}`;
+  return `${cleanBase}${cleanPath}`;
+}
+
+function isImageAttachment(attachment: string, attachmentType?: string | null): boolean {
+  if (attachmentType && attachmentType.startsWith("image/")) return true;
+  return /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment);
+}
+
 function renderChatMessageContent(content: string): React.ReactNode {
   if (!content) return null;
 
@@ -790,9 +805,33 @@ export function CrmChatView({
 
                       {/* Вложение сообщения, если есть */}
                       {message.attachment && (
-                        <div className="mt-2 flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-white/90 px-2.5 py-1.5 text-xs shadow-2xs">
-                          <Paperclip className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                          <span className="font-medium text-[#111111] truncate">{message.attachment}</span>
+                        <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+                          {isImageAttachment(message.attachment, message.attachmentType) ? (
+                            <a
+                              href={resolveAttachmentUrl(message.attachment)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="group block overflow-hidden rounded-[8px]"
+                              title="Нажмите, чтобы открыть фото в полном размере"
+                            >
+                              <img
+                                src={resolveAttachmentUrl(message.attachment)}
+                                alt="Фотография"
+                                className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
+                                loading="lazy"
+                              />
+                            </a>
+                          ) : (
+                            <a
+                              href={resolveAttachmentUrl(message.attachment)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-[#fafafa] transition-colors"
+                            >
+                              <Paperclip className="h-3.5 w-3.5 text-[#888888] shrink-0" />
+                              <span className="font-medium text-[#111111] truncate">{message.attachment}</span>
+                            </a>
+                          )}
                         </div>
                       )}
 
