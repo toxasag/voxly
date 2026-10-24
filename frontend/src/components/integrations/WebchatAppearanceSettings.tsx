@@ -296,6 +296,21 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       : "manual",
   );
 
+  // 4. Проактивное авто-открытие чата
+  const [proactiveEnabled, setProactiveEnabled] = useState<boolean>(
+    Boolean(initialCreds.proactiveEnabled),
+  );
+  const [proactiveDelaySeconds, setProactiveDelaySeconds] = useState<number>(
+    typeof initialCreds.proactiveDelaySeconds === "number" && initialCreds.proactiveDelaySeconds > 0
+      ? initialCreds.proactiveDelaySeconds
+      : 10,
+  );
+  const [proactiveMessage, setProactiveMessage] = useState<string>(
+    typeof initialCreds.proactiveMessage === "string" && initialCreds.proactiveMessage.trim().length > 0
+      ? initialCreds.proactiveMessage.trim()
+      : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.",
+  );
+
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(true);
@@ -365,6 +380,10 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           mascotId,
           customMascotDirections: customDirections,
           customMascotReactions: customReactions,
+          // Проактивное авто-открытие
+          proactiveEnabled,
+          proactiveDelaySeconds,
+          proactiveMessage: proactiveMessage.trim(),
         },
       },
       {
@@ -1465,13 +1484,70 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                           type="text"
                           value={maxLink}
                           onChange={(e) => setMaxLink(e.target.value)}
-                          placeholder="@company_bot или https://max.me/company"
+                          placeholder="@company_bot или https://max.ru/company"
                           className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 font-mono"
                         />
                       )}
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Автоматическое приглашение в чат (проактивный чат) */}
+          <div className="rounded-2xl border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[#111111]">
+                  Автоматическое приглашение в чат
+                </h3>
+                <p className="text-xs text-[#666666]">
+                  Автоматически открывать окно чата с приглашением через заданное время
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={proactiveEnabled}
+                  onChange={(e) => setProactiveEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-[#e5e5e5] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[#cccccc] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4a38f5]"></div>
+              </label>
+            </div>
+
+            {proactiveEnabled && (
+              <div className="space-y-4 pt-1">
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-[#111111]">
+                    Задержка перед открытием (секунд)
+                  </label>
+                  <input
+                    type="number"
+                    min={2}
+                    max={300}
+                    value={proactiveDelaySeconds}
+                    onChange={(e) => setProactiveDelaySeconds(Math.max(1, parseInt(e.target.value, 10) || 10))}
+                    className="w-32 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-mono"
+                  />
+                  <p className="mt-1 text-[11px] text-[#888888]">
+                    Рекомендуется от 7 до 15 секунд, чтобы посетитель успел осмотреться на сайте.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold text-[#111111]">
+                    Текст приглашения в чат
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={proactiveMessage}
+                    onChange={(e) => setProactiveMessage(e.target.value)}
+                    placeholder="Здравствуйте! Я онлайн, спрашивайте — готов вам помочь."
+                    className="w-full rounded-lg border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -1598,8 +1674,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                                 <TelegramIcon className="h-3.5 w-3.5 text-sky-500 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в Telegram</span>
                               </div>
-                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
-                                {telegramBot || "@bot"}
+                              <span className="inline-flex items-center gap-1 rounded bg-[#0284c7] px-2 py-0.5 text-[10px] font-semibold text-white shadow-2xs">
+                                Перейти &rarr;
                               </span>
                             </div>
                           ) : singleTarget === "whatsapp" && (whatsappPhone || whatsappAccountId) ? (
@@ -1608,8 +1684,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                                 <WhatsAppIcon className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в WhatsApp</span>
                               </div>
-                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
-                                {whatsappPhone || "Написать"}
+                              <span className="inline-flex items-center gap-1 rounded bg-[#16a34a] px-2 py-0.5 text-[10px] font-semibold text-white shadow-2xs">
+                                Перейти &rarr;
                               </span>
                             </div>
                           ) : singleTarget === "max" && (maxLink || maxAccountId) ? (
@@ -1618,8 +1694,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                                 <MaxIcon className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
                                 <span className="truncate font-medium">Продолжить в MAX</span>
                               </div>
-                              <span className="text-[10px] underline font-mono truncate max-w-[120px]">
-                                {maxLink || "@bot"}
+                              <span className="inline-flex items-center gap-1 rounded bg-[#6366f1] px-2 py-0.5 text-[10px] font-semibold text-white shadow-2xs">
+                                Перейти &rarr;
                               </span>
                             </div>
                           ) : null

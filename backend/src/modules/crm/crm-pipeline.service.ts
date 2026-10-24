@@ -41,6 +41,15 @@ export interface InboundMessageInput {
   senderTelegramChatId?: string;
   /** Профиль из канала; без него имя контакта станет «Клиент». */
   profile?: ChannelProfile;
+  /** Идентификатор и аналитика посетителя сайта */
+  visitorId?: string;
+  ymUid?: string;
+  gaId?: string;
+  fbId?: string;
+  pageUrl?: string;
+  pageHistory?: Array<{ step: number; time: string; url: string }>;
+  visitCount?: number;
+  utmTags?: Record<string, string>;
 }
 
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
@@ -130,6 +139,72 @@ export class CrmPipelineService {
           );
         }
 
+        // 1.6. Обогащаем данными посетителя сайта (webchat_visitor_id, ym_uid, ga_id, fb_id, utm, page)
+        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        if (siteVisitorId) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(
+               COALESCE(custom_fields, '{}'::jsonb),
+               '{webchat_visitor_id}',
+               to_jsonb($1::text),
+               true
+             )
+             WHERE id = $2 AND tenant_id = $3
+               AND (custom_fields->>'webchat_visitor_id' IS NULL OR custom_fields->>'webchat_visitor_id' = '')`,
+            [siteVisitorId, contact.id, input.tenantId],
+          );
+        }
+
+        if (input.ymUid) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ym_uid}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3 AND (custom_fields->>'ym_uid' IS NULL OR custom_fields->>'ym_uid' = '')`,
+            [input.ymUid, contact.id, input.tenantId],
+          );
+        }
+        if (input.gaId) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{ga_id}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3 AND (custom_fields->>'ga_id' IS NULL OR custom_fields->>'ga_id' = '')`,
+            [input.gaId, contact.id, input.tenantId],
+          );
+        }
+        if (input.fbId) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{fb_id}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3 AND (custom_fields->>'fb_id' IS NULL OR custom_fields->>'fb_id' = '')`,
+            [input.fbId, contact.id, input.tenantId],
+          );
+        }
+        if (input.utmTags && Object.keys(input.utmTags).length > 0) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{utm_tags}', $1::jsonb, true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.utmTags), contact.id, input.tenantId],
+          );
+        }
+        if (input.pageUrl) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{last_page_url}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.pageUrl, contact.id, input.tenantId],
+          );
+        }
+        if (input.visitCount) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{visit_count}', to_jsonb($1::int), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.visitCount, contact.id, input.tenantId],
+          );
+        }
+
         // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
         const newName = contactNameFrom(input);
         if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
@@ -145,6 +220,17 @@ export class CrmPipelineService {
         if (input.channel === "max" && input.chatId) {
           customFields.max_chat_id = input.chatId;
         }
+        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        if (siteVisitorId) {
+          customFields.webchat_visitor_id = siteVisitorId;
+        }
+        if (input.ymUid) customFields.ym_uid = input.ymUid;
+        if (input.gaId) customFields.ga_id = input.gaId;
+        if (input.fbId) customFields.fb_id = input.fbId;
+        if (input.utmTags) customFields.utm_tags = input.utmTags;
+        if (input.pageUrl) customFields.page_url = input.pageUrl;
+        if (input.visitCount) customFields.visit_count = input.visitCount;
+        if (input.pageHistory) customFields.page_history = input.pageHistory;
 
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
         // ещё нет, а строка-заглушка создавала бы фиктивную организацию.
@@ -523,6 +609,72 @@ export class CrmPipelineService {
     if (input.channel === "whatsapp" || input.chatId.startsWith("+")) {
       const byChatIdAsPhone = await this.findContactByPhone(tx, tenantId, input.chatId);
       if (byChatIdAsPhone !== null) return byChatIdAsPhone;
+    }
+
+    // Идентификация посетителя веб-чата и связывание сессий при переходе в Telegram/WhatsApp
+    let siteVisitorIdFromText: string | undefined;
+    if (input.text) {
+      const match = input.text.match(/site_([a-zA-Z0-9_-]+)/);
+      if (match) {
+        siteVisitorIdFromText = match[1];
+      }
+    }
+
+    const effectiveVisitorId =
+      input.visitorId ||
+      (input.channel === "webchat" ? input.chatId : undefined) ||
+      siteVisitorIdFromText;
+
+    if (effectiveVisitorId !== undefined && effectiveVisitorId.length > 0) {
+      const byVisitorId = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (
+             custom_fields->>'webchat_visitor_id' = $2
+             OR socials @> $3::jsonb
+           )
+         LIMIT 1`,
+        [tenantId, effectiveVisitorId, JSON.stringify([{ kind: "other", value: effectiveVisitorId }])],
+      );
+      if (byVisitorId !== null) return byVisitorId;
+    }
+
+    // Поиск по сквозным идентификаторам веб-аналитики (Яндекс.Метрика, GA4, Meta)
+    if (input.ymUid !== undefined && input.ymUid.length > 0) {
+      const byYm = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND custom_fields->>'ym_uid' = $2
+         LIMIT 1`,
+        [tenantId, input.ymUid],
+      );
+      if (byYm !== null) return byYm;
+    }
+
+    if (input.gaId !== undefined && input.gaId.length > 0) {
+      const byGa = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND custom_fields->>'ga_id' = $2
+         LIMIT 1`,
+        [tenantId, input.gaId],
+      );
+      if (byGa !== null) return byGa;
+    }
+
+    if (input.fbId !== undefined && input.fbId.length > 0) {
+      const byFb = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND custom_fields->>'fb_id' = $2
+         LIMIT 1`,
+        [tenantId, input.fbId],
+      );
+      if (byFb !== null) return byFb;
     }
 
     return null;

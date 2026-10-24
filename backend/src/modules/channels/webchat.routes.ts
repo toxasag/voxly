@@ -19,6 +19,7 @@ const messageBodySchema = z.object({
   utmTags: z.record(z.string()).optional(),
   ymUid: z.string().trim().max(100).optional(),
   gaId: z.string().trim().max(100).optional(),
+  fbId: z.string().trim().max(100).optional(),
   visitCount: z.number().int().min(0).optional(),
   pageHistory: z
     .array(
@@ -106,6 +107,7 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         utmTags: body.utmTags,
         ymUid: body.ymUid,
         gaId: body.gaId,
+        fbId: body.fbId,
         visitCount: body.visitCount,
         pageHistory: body.pageHistory,
         isDraft: body.isDraft,
