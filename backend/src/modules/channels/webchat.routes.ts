@@ -16,7 +16,12 @@ const messageBodySchema = z.object({
   senderName: z.string().trim().max(100).optional(),
   senderPhone: z.string().trim().max(30).optional(),
   pageUrl: z.string().trim().max(500).optional(),
+  referrer: z.string().trim().max(500).optional(),
   utmTags: z.record(z.string()).optional(),
+  clickIds: z.record(z.string().nullable().optional()).optional(),
+  analytics: z.record(z.string().nullable().optional()).optional(),
+  deviceFingerprint: z.string().trim().max(100).optional(),
+  deviceInfo: z.record(z.unknown()).optional(),
   ymUid: z.string().trim().max(100).optional(),
   gaId: z.string().trim().max(100).optional(),
   fbId: z.string().trim().max(100).optional(),
@@ -97,6 +102,13 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       const { channelAccountId } = request.params;
       const body = messageBodySchema.parse(request.body);
 
+      const forwarded = request.headers["x-forwarded-for"];
+      const clientIp =
+        (typeof forwarded === "string" ? forwarded.split(",")[0]?.trim() : Array.isArray(forwarded) ? forwarded[0] : null) ||
+        (request.headers["x-real-ip"] as string) ||
+        request.ip;
+      const userAgent = (request.headers["user-agent"] as string) || "";
+
       const result = await service.processIncomingMessage({
         channelAccountId,
         visitorId: body.visitorId,
@@ -104,7 +116,14 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         senderName: body.senderName,
         senderPhone: body.senderPhone,
         pageUrl: body.pageUrl,
+        referrer: body.referrer,
         utmTags: body.utmTags,
+        clickIds: body.clickIds as Record<string, string> | undefined,
+        analytics: body.analytics as Record<string, string | null> | undefined,
+        deviceFingerprint: body.deviceFingerprint,
+        deviceInfo: body.deviceInfo,
+        clientIp,
+        userAgent,
         ymUid: body.ymUid,
         gaId: body.gaId,
         fbId: body.fbId,

@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  Activity,
   Bot,
   Briefcase,
   Building2,
@@ -10,9 +11,12 @@ import {
   CheckCircle2,
   ChevronUp,
   CircleSlash,
+  Compass,
   DollarSign,
   Globe,
   Handshake,
+  History,
+  Laptop,
   Linkedin,
   ListChecks,
   Mail,
@@ -22,7 +26,11 @@ import {
   Pencil,
   Phone,
   Plus,
+  Search,
+  Share2,
+  Smartphone,
   Star,
+  Target,
   User,
   UserCircle2,
   UserRound,
@@ -171,6 +179,7 @@ function HomeTab({
   onRequestCreateContact?: () => void;
 }) {
   const [dealOpen, setDealOpen] = useState(true);
+  const [analyticsOpen, setAnalyticsOpen] = useState(true);
   const [relationsOpen, setRelationsOpen] = useState(false);
   const [systemOpen, setSystemOpen] = useState(false);
   const [contactCardOpen, setContactCardOpen] = useState(true);
@@ -1017,6 +1026,165 @@ function HomeTab({
           </div>
         )}
       </div>
+
+      {/* Accordion Group: Данные визита и аналитика (Twenty CRM Light Canvas) */}
+      {(() => {
+        const customFields = (deal.customFields ?? {}) as Record<string, unknown>;
+        const deviceInfo = (customFields.device_info ?? {}) as Record<string, string | number | undefined>;
+        const clickIds = (customFields.click_ids ?? {}) as Record<string, string | undefined>;
+        const utmTags = (customFields.utm_tags ?? {}) as Record<string, string | undefined>;
+        const pageHistory = (Array.isArray(customFields.page_history) ? customFields.page_history : []) as Array<{ step: number; time: string; url: string }>;
+
+        const hasVisitorData = Boolean(
+          customFields.webchat_visitor_id ||
+          customFields.device_fingerprint ||
+          customFields.ym_uid ||
+          customFields.yandexuid ||
+          customFields.ga_id ||
+          customFields.tmr_lvid ||
+          customFields.page_url ||
+          Object.keys(deviceInfo).length > 0 ||
+          Object.keys(utmTags).length > 0 ||
+          Object.keys(clickIds).length > 0
+        );
+
+        if (!hasVisitorData) return null;
+
+        const hasDevice = Boolean(deviceInfo.os || deviceInfo.browser || deviceInfo.deviceType);
+        const hasNetwork = Boolean(deviceInfo.ip || deviceInfo.timezone);
+        const hasYandex = Boolean(customFields.yandexuid || customFields.ym_uid);
+        const hasGoogle = Boolean(customFields.ga_id);
+        const hasTmr = Boolean(customFields.tmr_lvid);
+        const hasClickIds = Object.keys(clickIds).length > 0;
+        const hasUtm = Object.keys(utmTags).length > 0;
+        const hasVisits = Boolean(customFields.page_url || customFields.visit_count);
+
+        return (
+          <div className="mt-2">
+            <button
+              type="button"
+              title="Свернуть / развернуть секцию «Данные визита и аналитика»"
+              onClick={() => setAnalyticsOpen((prev) => !prev)}
+              className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5 text-[#4a38f5]" />
+                <span>Данные визита и аналитика</span>
+              </span>
+              <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !analyticsOpen && "rotate-180")} />
+            </button>
+            {analyticsOpen && (
+              <div className="space-y-0.5 py-0.5">
+                {/* Устройство */}
+                {hasDevice && (
+                  <FieldRow icon={deviceInfo.deviceType === "mobile" ? Smartphone : Laptop} label="Устройство">
+                    <span className="text-[#111111] text-xs">
+                      {deviceInfo.deviceType === "mobile" ? "Мобильный" : deviceInfo.deviceType === "tablet" ? "Планшет" : "Десктоп"} • {String(deviceInfo.os || "")} {deviceInfo.browser ? `• ${String(deviceInfo.browser)}` : ""}
+                      {deviceInfo.screen ? <span className="text-[#888888] ml-1">({String(deviceInfo.screen)})</span> : null}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* Сеть и регион */}
+                {hasNetwork && (
+                  <FieldRow icon={Globe} label="IP / Регион">
+                    <span className="text-[#111111] text-xs font-mono">
+                      {deviceInfo.ip ? String(deviceInfo.ip) : ""}
+                      {deviceInfo.timezone ? <span className="text-[#666666] font-sans ml-1">({String(deviceInfo.timezone)})</span> : null}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* Яндекс ID и Яндекс.Метрика */}
+                {hasYandex && (
+                  <FieldRow icon={Activity} label="Яндекс">
+                    <div className="flex flex-wrap items-center gap-1 text-xs">
+                      {customFields.yandexuid ? (
+                        <span title="Идентификатор авторизованного пользователя в экосистеме Яндекса">
+                          <TagPill color="emerald">
+                            {`Яндекс ID: ${String(customFields.yandexuid).slice(-8)}`}
+                          </TagPill>
+                        </span>
+                      ) : null}
+                      {customFields.ym_uid ? (
+                        <span className="text-[#666666] font-mono text-[11px]" title="ID посетителя Яндекс.Метрики">
+                          YM: {String(customFields.ym_uid)}
+                        </span>
+                      ) : null}
+                    </div>
+                  </FieldRow>
+                )}
+
+                {/* Google Analytics */}
+                {hasGoogle && (
+                  <FieldRow icon={Search} label="Google">
+                    <span className="text-[#666666] font-mono text-[11px]" title="Google Analytics Client ID">
+                      GA: {String(customFields.ga_id)}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* Top.Mail.ru / VK */}
+                {hasTmr && (
+                  <FieldRow icon={Activity} label="VK / Mail">
+                    <span className="text-[#666666] font-mono text-[11px]">
+                      TMR: {String(customFields.tmr_lvid)}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* Рекламные клики (Click IDs) */}
+                {hasClickIds && (
+                  <FieldRow icon={Target} label="Реклама">
+                    <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono text-[#4a38f5]">
+                      {Object.entries(clickIds).map(([k, v]) => v ? (
+                        <span key={k} className="rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5">
+                          {k}: {String(v).slice(0, 14)}…
+                        </span>
+                      ) : null)}
+                    </div>
+                  </FieldRow>
+                )}
+
+                {/* Источник (UTM) */}
+                {hasUtm && (
+                  <FieldRow icon={Share2} label="Источник">
+                    <span className="text-[#111111] text-xs">
+                      {utmTags.utm_source ? <strong className="font-medium text-[#4a38f5]">{String(utmTags.utm_source)}</strong> : null}
+                      {utmTags.utm_medium ? ` / ${String(utmTags.utm_medium)}` : ""}
+                      {utmTags.utm_campaign ? <span className="text-[#666666] ml-1">({String(utmTags.utm_campaign)})</span> : null}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* Страница и визиты */}
+                {hasVisits && (
+                  <FieldRow icon={Compass} label="Визиты">
+                    <span className="text-[#111111] text-xs truncate max-w-[280px]" title={String(customFields.page_url || "")}>
+                      {customFields.visit_count ? <TagPill color="sky">{`Визит №${String(customFields.visit_count)}`}</TagPill> : null}
+                      {customFields.page_url ? <span className="text-[#666666] ml-1">{String(customFields.page_url).replace(/^https?:\/\/[^/]+/, "") || "/"}</span> : null}
+                    </span>
+                  </FieldRow>
+                )}
+
+                {/* История переходов */}
+                {pageHistory.length > 1 && (
+                  <FieldRow icon={History} label="Переходы">
+                    <div className="flex flex-col gap-0.5 text-[11px] text-[#666666] max-h-24 overflow-y-auto">
+                      {pageHistory.map((p, idx) => (
+                        <div key={idx} className="flex items-center gap-1 truncate">
+                          <span className="font-mono text-[#888888]">{p.time}</span>
+                          <span className="truncate">{p.url.replace(/^https?:\/\/[^/]+/, "") || "/"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </FieldRow>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Accordion Group 2: Связи */}
       <div className="mt-2">
