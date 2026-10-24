@@ -361,15 +361,22 @@ export class CrmPipelineService {
     reply: { messages: string[]; handoff_required?: boolean; session_pause?: boolean };
     channel: string;
     channelAccountId: string;
+    senderName?: string;
   }): Promise<void> {
     for (const message of input.reply.messages) {
-      await this.deals.createMessage(input.tenantId, input.dealId, "AI Agent", {
-        source: "ai",
-        direction: "outbound",
-        content: message,
-        channel: input.channel,
-        channel_account_id: input.channelAccountId,
-      });
+      await this.deals.createMessage(
+        input.tenantId,
+        input.dealId,
+        input.senderName ?? "AI-ассистент",
+        {
+          source: "ai",
+          direction: "outbound",
+          content: message,
+          channel: input.channel,
+          channel_account_id: input.channelAccountId,
+        },
+        "sent",
+      );
     }
 
     // Если запрошена пауза сессии (троллинг / спам) — замораживаем бота на 60 минут
