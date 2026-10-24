@@ -383,18 +383,57 @@
       box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45) !important;
     }
 
-    @media (max-width: 480px) {
+    @media (max-width: 640px) {
       .getvoxly-chat-badge {
         display: none !important;
       }
+      /* На мобильных при открытом чате скрываем плавающую круглую кнопку вызова */
+      .getvoxly-widget-wrapper.is-chat-open {
+        display: none !important;
+      }
       .getvoxly-widget-window {
-        right: 10px !important;
-        left: 10px !important;
-        width: calc(100vw - 20px) !important;
-        max-width: calc(100vw - 20px) !important;
-        bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
-        height: calc(100vh - 110px) !important;
-        max-height: calc(100vh - 110px) !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100% !important;
+        height: 100dvh !important;
+        max-height: 100% !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+      }
+      .getvoxly-header {
+        border-radius: 0 !important;
+        padding-top: calc(12px + env(safe-area-inset-top, 0px)) !important;
+        padding-bottom: 12px !important;
+        padding-left: calc(14px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(14px + env(safe-area-inset-right, 0px)) !important;
+      }
+      .getvoxly-header-close {
+        width: 36px !important;
+        height: 36px !important;
+        padding: 0 !important;
+        background: rgba(0, 0, 0, 0.15) !important;
+        border-radius: 8px !important;
+      }
+      .getvoxly-messages {
+        padding: 12px !important;
+      }
+      .getvoxly-textarea {
+        font-size: 16px !important; /* Предотвращает нежелательный зум страницы в iOS Safari */
+      }
+      .getvoxly-input-area {
+        padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(12px + env(safe-area-inset-right, 0px)) !important;
+      }
+      .getvoxly-consent {
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
       }
     }
 
@@ -606,9 +645,12 @@
 
     /* Область сообщений */
     .getvoxly-messages {
-      flex: 1 !important;
+      flex: 1 1 0% !important;
+      min-height: 0 !important;
       padding: 14px !important;
       overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      overscroll-behavior: contain !important;
       display: flex !important;
       flex-direction: column !important;
       gap: 12px !important;
@@ -1028,14 +1070,97 @@
       });
     }
 
+    function isMobileScreen() {
+      return (typeof window !== 'undefined') && (
+        window.innerWidth <= 640 ||
+        (window.matchMedia && window.matchMedia('(max-width: 640px)').matches)
+      );
+    }
+
+    var isScrollLocked = false;
+    var prevBodyOverflow = '';
+    var prevHtmlOverflow = '';
+    var prevTouchAction = '';
+
+    function lockMobileScroll() {
+      if (!isMobileScreen() || isScrollLocked) return;
+      isScrollLocked = true;
+      try {
+        prevBodyOverflow = document.body.style.overflow;
+        prevHtmlOverflow = document.documentElement.style.overflow;
+        prevTouchAction = document.body.style.touchAction;
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.touchAction = 'none';
+      } catch (e) {}
+    }
+
+    function unlockMobileScroll() {
+      if (!isScrollLocked) return;
+      isScrollLocked = false;
+      try {
+        document.body.style.overflow = prevBodyOverflow;
+        document.documentElement.style.overflow = prevHtmlOverflow;
+        document.body.style.touchAction = prevTouchAction;
+      } catch (e) {}
+      prevBodyOverflow = '';
+      prevHtmlOverflow = '';
+      prevTouchAction = '';
+    }
+
+    function updateMobileViewport() {
+      if (!isMobileScreen()) {
+        win.style.top = '';
+        win.style.left = '';
+        win.style.width = '';
+        win.style.height = '';
+        win.style.bottom = '';
+        win.style.maxHeight = '';
+        return;
+      }
+      if (!isOpen) return;
+
+      if (window.visualViewport) {
+        var vv = window.visualViewport;
+        var topPx = Math.max(0, Math.round(vv.offsetTop));
+        var leftPx = Math.max(0, Math.round(vv.offsetLeft));
+        var heightPx = Math.round(vv.height);
+        var widthPx = Math.round(vv.width);
+
+        win.style.setProperty('position', 'fixed', 'important');
+        win.style.setProperty('top', topPx + 'px', 'important');
+        win.style.setProperty('left', leftPx + 'px', 'important');
+        win.style.setProperty('width', widthPx + 'px', 'important');
+        win.style.setProperty('height', heightPx + 'px', 'important');
+        win.style.setProperty('max-height', heightPx + 'px', 'important');
+        win.style.setProperty('bottom', 'auto', 'important');
+      } else {
+        win.style.setProperty('position', 'fixed', 'important');
+        win.style.setProperty('top', '0px', 'important');
+        win.style.setProperty('left', '0px', 'important');
+        win.style.setProperty('width', '100vw', 'important');
+        win.style.setProperty('height', '100%', 'important');
+        win.style.setProperty('max-height', '100%', 'important');
+        win.style.setProperty('bottom', '0px', 'important');
+      }
+
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    }
+
     function openWidget() {
       isOpen = true;
       win.style.display = 'flex';
       wrapper.classList.add('is-chat-open');
+      if (isMobileScreen()) {
+        lockMobileScroll();
+        updateMobileViewport();
+      }
       if (messagesContainer) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
-      if (inputEl && typeof inputEl.focus === 'function') {
+      if (!isMobileScreen() && inputEl && typeof inputEl.focus === 'function') {
         setTimeout(function () { inputEl.focus(); }, 100);
       }
       initSession();
@@ -1045,6 +1170,13 @@
       isOpen = false;
       win.style.display = 'none';
       wrapper.classList.remove('is-chat-open');
+      unlockMobileScroll();
+      win.style.top = '';
+      win.style.left = '';
+      win.style.width = '';
+      win.style.height = '';
+      win.style.bottom = '';
+      win.style.maxHeight = '';
       if (badge) {
         badge.style.display = '';
       }
@@ -1061,6 +1193,30 @@
     if (bubble) bubble.addEventListener('click', toggleWidget);
     if (badge) badge.addEventListener('click', openWidget);
     if (closeBtn) closeBtn.addEventListener('click', closeWidget);
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateMobileViewport);
+      window.visualViewport.addEventListener('scroll', updateMobileViewport);
+    }
+    window.addEventListener('resize', updateMobileViewport);
+    window.addEventListener('orientationchange', function () {
+      setTimeout(updateMobileViewport, 200);
+    });
+
+    if (inputEl) {
+      inputEl.addEventListener('focus', function () {
+        if (isMobileScreen()) {
+          setTimeout(updateMobileViewport, 60);
+          setTimeout(updateMobileViewport, 180);
+          setTimeout(updateMobileViewport, 320);
+        }
+      });
+      inputEl.addEventListener('blur', function () {
+        if (isMobileScreen()) {
+          setTimeout(updateMobileViewport, 80);
+        }
+      });
+    }
 
     // Фоновая инициализация сессии на сервере
     initSession();
