@@ -1070,6 +1070,48 @@
       });
     }
 
+    var syncInProgress = false;
+    var historyPollTimer = null;
+
+    async function syncHistoryFromServer() {
+      if (!channelAccountId || !visitorId || syncInProgress) return;
+      try {
+        syncInProgress = true;
+        var res = await fetch(apiUrl + '/api/v1/public/chat/history/' + channelAccountId + '?visitorId=' + encodeURIComponent(visitorId));
+        if (res.ok) {
+          var json = await res.json();
+          var items = json && json.data;
+          if (Array.isArray(items) && items.length > 0) {
+            var currentRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg') : [];
+            var lastCurrentText = currentRows.length > 0 ? currentRows[currentRows.length - 1].textContent : '';
+            var lastServerText = items[items.length - 1].content;
+
+            if (currentRows.length !== items.length || lastCurrentText !== lastServerText) {
+              if (messagesContainer) {
+                messagesContainer.innerHTML = '';
+              }
+              var localHist = [];
+              for (var k = 0; k < items.length; k++) {
+                var m = items[k];
+                var isUser = m.direction === 'inbound';
+                appendMessageToUI(m.content, isUser);
+                localHist.push({ text: m.content, isUser: isUser, timestamp: m.createdAt });
+              }
+              try {
+                safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(localHist));
+              } catch (e) {}
+              if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              }
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        syncInProgress = false;
+      }
+    }
+
     function isMobileScreen() {
       return (typeof window !== 'undefined') && (
         window.innerWidth <= 640 ||
@@ -1164,6 +1206,10 @@
         setTimeout(function () { inputEl.focus(); }, 100);
       }
       initSession();
+      syncHistoryFromServer();
+      if (!historyPollTimer) {
+        historyPollTimer = setInterval(syncHistoryFromServer, 4000);
+      }
     }
 
     function closeWidget() {
@@ -1171,6 +1217,10 @@
       win.style.display = 'none';
       wrapper.classList.remove('is-chat-open');
       unlockMobileScroll();
+      if (historyPollTimer) {
+        clearInterval(historyPollTimer);
+        historyPollTimer = null;
+      }
       win.style.top = '';
       win.style.left = '';
       win.style.width = '';
@@ -1242,6 +1292,7 @@
             visitorId = data.visitorId;
             safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
           }
+          syncHistoryFromServer();
 
           // Установка акцентного цвета
           var accent = data.accentColor || '#6366F1';

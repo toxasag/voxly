@@ -98,7 +98,7 @@ export class AgentPipelineService {
     tenantId: string;
     channelAccountId: string;
   }): Promise<AgentRow | null> {
-    return queryOne<AgentRow>(
+    const bound = await queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.wizard_config
        FROM ai_agent_channel_bindings b
@@ -110,6 +110,22 @@ export class AgentPipelineService {
        ORDER BY a.created_at
        LIMIT 1`,
       [input.tenantId, input.channelAccountId],
+    );
+
+    if (bound !== null) return bound;
+
+    // Fallback: если нет персональной привязки к каналу, но в тенанте есть активный бот
+    return queryOne<AgentRow>(
+      `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
+              a.max_tokens, a.system_prompt, a.wizard_config
+       FROM ai_agents a
+       WHERE a.tenant_id = $1
+         AND a.status = 'active'
+         AND a.mode = 'autoreply'
+         AND a.deleted_at IS NULL
+       ORDER BY a.created_at ASC
+       LIMIT 1`,
+      [input.tenantId],
     );
   }
 

@@ -375,6 +375,12 @@ export class DealMessagingService {
       return contact.phone && contact.phone.length > 0 ? contact.phone : null;
     }
 
+    if (channel === "webchat") {
+      const visitorSocial = contact.socials?.find((s) => s.kind === "other")?.value;
+      if (visitorSocial && visitorSocial.length > 0) return visitorSocial;
+      return "webchat_visitor";
+    }
+
     return contact.phone && contact.phone.length > 0 ? contact.phone : null;
   }
 
