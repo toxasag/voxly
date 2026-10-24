@@ -27,6 +27,16 @@ export function initBackgroundWorker(): void {
   queueManager.registerHandler<{ tenantId: string }>("task-reminders", async (job: QueueJob<{ tenantId: string }>) => {
     await remindersService.checkAndDispatchReminders(job.data.tenantId);
   });
+
+  // 5. Очередь knowledge-indexing (асинхронная векторизация базы знаний агента)
+  queueManager.registerHandler<{ tenantId: string; documentId: string }>(
+    "knowledge-indexing",
+    async (job: QueueJob<{ tenantId: string; documentId: string }>) => {
+      const { KnowledgeBaseService } = await import("./modules/ai/knowledge.service.js");
+      const kb = new KnowledgeBaseService();
+      await kb.indexDocument(job.data.tenantId, job.data.documentId);
+    },
+  );
 }
 
 // Graceful shutdown

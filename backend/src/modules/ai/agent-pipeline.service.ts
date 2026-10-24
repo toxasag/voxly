@@ -42,13 +42,17 @@ const FALLBACK_MODEL: AiModelId = "gpt-4o-mini";
  * каталоге сразу идентификаторы шлюза нельзя: смена шлюза тогда меняла бы и цены,
  * и историю расхода в журнале.
  */
-const GATEWAY_MODEL: Record<AiModelId, string> = {
+const GATEWAY_MODEL: Record<string, string> = {
   "gpt-4o": "openrouter/openai/gpt-4o",
   "gpt-4o-mini": "openrouter/openai/gpt-4o-mini",
   "claude-sonnet-4": "openrouter/anthropic/claude-sonnet-4",
   "claude-opus-4": "openrouter/anthropic/claude-opus-4",
   "deepseek-v3": "openrouter/deepseek/deepseek-chat",
   "gemini-1.5-pro": "gemini/gemini-1.5-pro",
+  "gemini-3.5-flash": "gemini/gemini-3.5-flash",
+  "gemini-3.5-flash-lite": "gemini/gemini-3.5-flash-lite",
+  "gemini-2.5-flash": "gemini/gemini-2.5-flash",
+  "gemini-2.5-pro": "gemini/gemini-2.5-pro",
 };
 
 export type PipelineOutcome =
@@ -236,7 +240,7 @@ export class AgentPipelineService {
 
     try {
       const completion = await this.chat.complete({
-        model: GATEWAY_MODEL[model],
+        model: GATEWAY_MODEL[model] ?? model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: input.text },

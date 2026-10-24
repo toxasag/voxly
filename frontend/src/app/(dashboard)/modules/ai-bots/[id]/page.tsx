@@ -95,8 +95,9 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
 
   const handleConfigSubmit = useCallback(
     async (payload: CreateBotPayload) => {
-      await update.mutateAsync({ id: bot.id, payload });
+      const updated = await update.mutateAsync({ id: bot.id, payload });
       toast.success("Настройки агента сохранены");
+      return updated;
     },
     [bot.id, update],
   );

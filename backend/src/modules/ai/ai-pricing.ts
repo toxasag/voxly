@@ -16,9 +16,18 @@ export type AiModelId =
   | "claude-sonnet-4"
   | "claude-opus-4"
   | "deepseek-v3"
-  | "gemini-1.5-pro";
+  | "gemini-1.5-pro"
+  | "gemini-3.5-flash"
+  | "gemini-3.5-flash-lite"
+  | "gemini-2.5-flash"
+  | "gemini-2.5-pro"
+  | (string & {});
 
-export const AI_MODEL_IDS: readonly AiModelId[] = [
+export const AI_MODEL_IDS: readonly string[] = [
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
   "gpt-4o",
   "gpt-4o-mini",
   "claude-sonnet-4",
@@ -93,10 +102,45 @@ export const AI_MODEL_CATALOG: Record<AiModelId, AiModelPricing> = {
     costInPer1k: 11,
     costOutPer1k: 45,
   },
+  "gemini-3.5-flash": {
+    id: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash",
+    provider: "google",
+    contextWindow: 128_000,
+    costInPer1k: 5,
+    costOutPer1k: 15,
+  },
+  "gemini-3.5-flash-lite": {
+    id: "gemini-3.5-flash-lite",
+    label: "Gemini 3.5 Flash Lite",
+    provider: "google",
+    contextWindow: 128_000,
+    costInPer1k: 3,
+    costOutPer1k: 10,
+  },
+  "gemini-2.5-flash": {
+    id: "gemini-2.5-flash",
+    label: "Gemini 2.5 Flash",
+    provider: "google",
+    contextWindow: 128_000,
+    costInPer1k: 5,
+    costOutPer1k: 15,
+  },
+  "gemini-2.5-pro": {
+    id: "gemini-2.5-pro",
+    label: "Gemini 2.5 Pro",
+    provider: "google",
+    contextWindow: 128_000,
+    costInPer1k: 11,
+    costOutPer1k: 45,
+  },
 };
 
 export function isAiModelId(value: string): value is AiModelId {
-  return Object.prototype.hasOwnProperty.call(AI_MODEL_CATALOG, value);
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 100) return false;
+  return /^[a-zA-Z0-9._-]+$/.test(trimmed);
 }
 
 export interface AiChargeBreakdown {

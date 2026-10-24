@@ -26,6 +26,7 @@ import {
   SUPPORTED_EXTENSIONS,
   UnsupportedDocumentError,
 } from "./knowledge-text.js";
+import { queueManager } from "../../infrastructure/queue.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ, смонтировано в app.ts под /api/v1/ai.
@@ -56,6 +57,7 @@ const documentParams = z.object({
 const knowledgeTextSchema = z.object({
   title: z.string().trim().min(1, "Укажите название").max(200),
   text: z.string().trim().min(1, "Текст не может быть пустым").max(500_000),
+  category: z.string().trim().optional(),
 });
 
 /**
@@ -130,11 +132,29 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       isConfigured: boolean;
     }> = [];
 
+    let isProviderConfigured = (_provider: string) => false;
+
     try {
       const effective = await platformConfigService.getEffectiveIntegrations();
-      const activeItem = effective.llmProviders.find(
+      const activeProviders = effective.llmProviders.filter(
         (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
       );
+
+      isProviderConfigured = (targetProvider: string) => {
+        const lower = targetProvider.toLowerCase();
+        return activeProviders.some((p) => {
+          const pType = p.providerType.toLowerCase();
+          const pName = p.name.toLowerCase();
+          if (pType === lower) return true;
+          if (lower === "google" && (pType === "gemini" || pName.includes("gemini") || pName.includes("google"))) return true;
+          if (lower === "openai" && (pType === "openai" || pName.includes("openai"))) return true;
+          if (lower === "anthropic" && (pType === "anthropic" || pName.includes("claude") || pName.includes("anthropic"))) return true;
+          if (lower === "deepseek" && (pType === "deepseek" || pName.includes("deepseek"))) return true;
+          return false;
+        });
+      };
+
+      const activeItem = activeProviders.find((p) => p.isDefault) || activeProviders[0];
       if (activeItem) {
         activeProvider = {
           name: activeItem.name,
@@ -151,10 +171,18 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
         };
       }
 
-      // Запрашиваем РЕАЛЬНО доступные чат-модели у провайдера
+      // Запрашиваем РЕАЛЬНО доступные чат-модели у активного провайдера
       const available = await platformConfigService.fetchAvailableModels();
       if (available.success && available.models.length > 0) {
-        const chatOnly = available.models.filter((m) => m.type === "chat");
+        const chatOnly = available.models.filter((m) => {
+          if (m.type !== "chat") return false;
+          const id = m.id.toLowerCase();
+          if (id.includes("tts") || id.includes("audio") || id.includes("transcribe")) return false;
+          if (id.includes("banana") || id.includes("robotics") || id.includes("lyria") || id.includes("clip")) return false;
+          if (id === "aqa") return false;
+          return true;
+        });
+
         dynamicModels = chatOnly.map((m) => ({
           id: m.id,
           label: m.name,
@@ -188,18 +216,19 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    // Если динамические модели от провайдера не вернулись, используем базовый каталог
-    const finalModels = dynamicModels.length > 0
-      ? dynamicModels
-      : Object.values(AI_MODEL_CATALOG).map((model) => ({
-          id: model.id,
-          label: model.label,
-          provider: model.provider,
-          contextWindow: model.contextWindow,
-          costInPer1k: model.costInPer1k,
-          costOutPer1k: model.costOutPer1k,
-          isConfigured: activeProvider?.isConfigured ?? false,
-        }));
+    // Формируем список моделей каталога с честным статусом подключения
+    const catalogWithRealStatus = Object.values(AI_MODEL_CATALOG).map((model) => ({
+      id: model.id,
+      label: model.label,
+      provider: model.provider,
+      contextWindow: model.contextWindow,
+      costInPer1k: model.costInPer1k,
+      costOutPer1k: model.costOutPer1k,
+      isConfigured: isProviderConfigured(model.provider),
+    }));
+
+    // Если провайдер вернул реальные модели, используем их; иначе базовый каталог с честными статусами
+    const finalModels = dynamicModels.length > 0 ? dynamicModels : catalogWithRealStatus;
 
     const defaultProvider = activeProvider ?? {
       name: "Провайдер платформы",
@@ -362,13 +391,31 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
       const text = await extractText({ filename: file.filename, extension, buffer });
 
+      let category = "general";
+      if (file.fields && typeof file.fields === "object") {
+        const catField = (file.fields as Record<string, { value?: unknown }>).category;
+        if (typeof catField?.value === "string" && catField.value.trim()) {
+          category = catField.value.trim();
+        }
+      }
+
       const document = await knowledge.addDocument({
         tenantId: request.tenant_id,
         agentId: id,
         filename: file.filename,
         mimeType: file.mimetype,
         text,
+        category,
       });
+
+      void queueManager
+        .enqueue({
+          queue: "knowledge-indexing",
+          tenantId: request.tenant_id,
+          name: `index-doc-${document.id}`,
+          data: { tenantId: request.tenant_id, documentId: document.id },
+        })
+        .catch(() => {});
 
       return reply.status(201).send({ data: document });
     }
@@ -381,7 +428,17 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       filename: body.title,
       mimeType: "text/plain",
       text: body.text,
+      category: body.category || "general",
     });
+
+    void queueManager
+      .enqueue({
+        queue: "knowledge-indexing",
+        tenantId: request.tenant_id,
+        name: `index-doc-${document.id}`,
+        data: { tenantId: request.tenant_id, documentId: document.id },
+      })
+      .catch(() => {});
 
     return reply.status(201).send({ data: document });
   });
