@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { WebchatService } from "./webchat.service.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
 
 // ---------------------------------------------------------------------------
 // Публичные маршруты для виджета онлайн-чата на сайте клиента.
@@ -10,33 +11,40 @@ import { WebchatService } from "./webchat.service.js";
 // Изоляция данных тенанта гарантируется привязкой к конкретному `channelAccountId`.
 // ---------------------------------------------------------------------------
 
-const messageBodySchema = z.object({
-  visitorId: z.string().trim().min(1, "visitorId is required").max(100),
-  text: z.string().trim().min(1, "text is required").max(4000),
-  senderName: z.string().trim().max(100).optional(),
-  senderPhone: z.string().trim().max(30).optional(),
-  pageUrl: z.string().trim().max(500).optional(),
-  referrer: z.string().trim().max(500).optional(),
-  utmTags: z.record(z.string()).optional(),
-  clickIds: z.record(z.string().nullable().optional()).optional(),
-  analytics: z.record(z.string().nullable().optional()).optional(),
-  deviceFingerprint: z.string().trim().max(100).optional(),
-  deviceInfo: z.record(z.unknown()).optional(),
-  ymUid: z.string().trim().max(100).optional(),
-  gaId: z.string().trim().max(100).optional(),
-  fbId: z.string().trim().max(100).optional(),
-  visitCount: z.number().int().min(0).optional(),
-  pageHistory: z
-    .array(
-      z.object({
-        step: z.number(),
-        time: z.string(),
-        url: z.string(),
-      }),
-    )
-    .optional(),
-  isDraft: z.boolean().optional(),
-});
+const messageBodySchema = z
+  .object({
+    visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+    text: z.string().trim().max(4000).default(""),
+    senderName: z.string().trim().max(100).optional(),
+    senderPhone: z.string().trim().max(30).optional(),
+    senderEmail: z.string().trim().max(100).optional(),
+    attachment: z.string().trim().max(1000).optional(),
+    attachmentType: z.string().trim().max(100).optional(),
+    pageUrl: z.string().trim().max(500).optional(),
+    referrer: z.string().trim().max(500).optional(),
+    utmTags: z.record(z.string()).optional(),
+    clickIds: z.record(z.string().nullable().optional()).optional(),
+    analytics: z.record(z.string().nullable().optional()).optional(),
+    deviceFingerprint: z.string().trim().max(100).optional(),
+    deviceInfo: z.record(z.unknown()).optional(),
+    ymUid: z.string().trim().max(100).optional(),
+    gaId: z.string().trim().max(100).optional(),
+    fbId: z.string().trim().max(100).optional(),
+    visitCount: z.number().int().min(0).optional(),
+    pageHistory: z
+      .array(
+        z.object({
+          step: z.number(),
+          time: z.string(),
+          url: z.string(),
+        }),
+      )
+      .optional(),
+    isDraft: z.boolean().optional(),
+  })
+  .refine((data) => data.text.length > 0 || Boolean(data.attachment), {
+    message: "Либо текст сообщения, либо файл должны быть указаны",
+  });
 
 const historyQuerySchema = z.object({
   visitorId: z.string().trim().min(1, "visitorId is required").max(100),
@@ -95,6 +103,45 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     },
   );
 
+  // Загрузка вложения (фото, видео, документ) от посетителя сайта
+  app.post<{ Params: { channelAccountId: string } }>(
+    "/upload/:channelAccountId",
+    async (request, reply) => {
+      const { channelAccountId } = request.params;
+      const account = await service.resolveAccount(channelAccountId);
+      if (!account) {
+        return reply.status(404).send({ error: "Канал веб-чата не найден" });
+      }
+
+      const file = await request.file();
+      if (!file) {
+        return reply.status(400).send({ error: "Файл не прикреплен" });
+      }
+
+      const buffer = await file.toBuffer();
+      if (buffer.length === 0) {
+        return reply.status(400).send({ error: "Пустой файл" });
+      }
+
+      const mediaService = new ChatMediaService();
+      const stored = await mediaService.storeBuffer({
+        buffer,
+        originalName: file.filename || `upload_${Date.now()}`,
+        mimeType: file.mimetype || "application/octet-stream",
+        tenantId: account.tenantId,
+      });
+
+      return reply.send({
+        data: {
+          url: stored.url,
+          filename: stored.filename,
+          mimeType: stored.mimeType,
+          sizeBytes: stored.sizeBytes,
+        },
+      });
+    },
+  );
+
   // Отправка сообщения посетителем сайта
   app.post<{ Params: { channelAccountId: string } }>(
     "/message/:channelAccountId",
@@ -115,6 +162,9 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         text: body.text,
         senderName: body.senderName,
         senderPhone: body.senderPhone,
+        senderEmail: body.senderEmail,
+        attachment: body.attachment,
+        attachmentType: body.attachmentType,
         pageUrl: body.pageUrl,
         referrer: body.referrer,
         utmTags: body.utmTags,
