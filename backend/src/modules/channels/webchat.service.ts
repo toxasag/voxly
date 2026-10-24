@@ -80,7 +80,14 @@ export interface WebchatMessageInput {
   senderName?: string;
   senderPhone?: string;
   pageUrl?: string;
+  referrer?: string;
   utmTags?: Record<string, string>;
+  clickIds?: Record<string, string>;
+  analytics?: Record<string, string | null>;
+  deviceFingerprint?: string;
+  deviceInfo?: Record<string, unknown>;
+  clientIp?: string;
+  userAgent?: string;
   ymUid?: string;
   gaId?: string;
   fbId?: string;
@@ -103,6 +110,29 @@ export interface WebchatHistoryMessage {
   senderName: string;
   content: string;
   createdAt: string;
+}
+
+function parseUserAgent(ua: string) {
+  let os = "Неизвестно";
+  if (/windows/i.test(ua)) os = "Windows";
+  else if (/macintosh|mac os x/i.test(ua)) os = "macOS";
+  else if (/iphone|ipad|ipod/i.test(ua)) os = "iOS";
+  else if (/android/i.test(ua)) os = "Android";
+  else if (/linux/i.test(ua)) os = "Linux";
+
+  let browser = "Неизвестно";
+  if (/yabrowser/i.test(ua)) browser = "Яндекс.Браузер";
+  else if (/edg/i.test(ua)) browser = "Microsoft Edge";
+  else if (/chrome|crios/i.test(ua)) browser = "Google Chrome";
+  else if (/firefox|fxios/i.test(ua)) browser = "Firefox";
+  else if (/safari/i.test(ua)) browser = "Safari";
+  else if (/opera|opr/i.test(ua)) browser = "Opera";
+
+  let deviceType: "desktop" | "mobile" | "tablet" = "desktop";
+  if (/mobile|iphone|ipod|android.*mobile/i.test(ua)) deviceType = "mobile";
+  else if (/ipad|tablet|android(?!.*mobile)/i.test(ua)) deviceType = "tablet";
+
+  return { os, browser, deviceType };
 }
 
 export class WebchatService {
@@ -352,10 +382,27 @@ export class WebchatService {
       }
     }
 
+    const ymUid = input.ymUid || input.analytics?.ymUid || undefined;
+    const yandexuid = input.analytics?.yandexuid || undefined;
+    const gaId = input.gaId || input.analytics?.gaId || undefined;
+    const fbId = input.fbId || input.analytics?.fbId || undefined;
+    const tmrLvid = input.analytics?.tmrLvid || undefined;
+
+    const parsedUa = input.userAgent ? parseUserAgent(input.userAgent) : null;
+    const enrichedDeviceInfo = {
+      ...(input.deviceInfo || {}),
+      ...(parsedUa ? { os: parsedUa.os, browser: parsedUa.browser, deviceType: parsedUa.deviceType } : {}),
+      ...(input.clientIp ? { ip: input.clientIp } : {}),
+    };
+
     // Формируем структурированный контекст для CRM и менеджеров
     const contextLines: string[] = [];
     if (input.isDraft) {
       contextLines.push("[Черновик / Неотправленное обращение]");
+    }
+    if (parsedUa || enrichedDeviceInfo.deviceType) {
+      const devType = enrichedDeviceInfo.deviceType === "mobile" ? "Мобильный" : enrichedDeviceInfo.deviceType === "tablet" ? "Планшет" : "Десктоп";
+      contextLines.push(`[Устройство: ${devType} (${enrichedDeviceInfo.os || "OS"} / ${enrichedDeviceInfo.browser || "Браузер"})]`);
     }
     if (input.pageUrl) {
       contextLines.push(`[Страница: ${input.pageUrl}]`);
@@ -369,11 +416,24 @@ export class WebchatService {
         .join(", ");
       contextLines.push(`[UTM: ${utmStr}]`);
     }
-    if (input.ymUid) {
-      contextLines.push(`[YM ClientID: ${input.ymUid}]`);
+    if (input.clickIds && Object.keys(input.clickIds).length > 0) {
+      const clickStr = Object.entries(input.clickIds)
+        .filter(([_, v]) => Boolean(v))
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ");
+      if (clickStr) contextLines.push(`[Реклама ClickID: ${clickStr}]`);
     }
-    if (input.gaId) {
-      contextLines.push(`[GA ClientID: ${input.gaId}]`);
+    if (yandexuid) {
+      contextLines.push(`[Яндекс ID: ${yandexuid}]`);
+    }
+    if (ymUid) {
+      contextLines.push(`[YM ClientID: ${ymUid}]`);
+    }
+    if (gaId) {
+      contextLines.push(`[GA ClientID: ${gaId}]`);
+    }
+    if (tmrLvid) {
+      contextLines.push(`[Top.Mail.ru: ${tmrLvid}]`);
     }
     if (input.pageHistory && input.pageHistory.length > 1) {
       const historyStr = input.pageHistory.map((h) => h.url).join(" -> ");
@@ -398,9 +458,15 @@ export class WebchatService {
         senderName: senderDisplayName,
         senderPhone: detectedPhone || undefined,
         visitorId: input.visitorId,
-        ymUid: input.ymUid,
-        gaId: input.gaId,
-        fbId: input.fbId,
+        deviceFingerprint: input.deviceFingerprint,
+        deviceInfo: enrichedDeviceInfo,
+        ymUid: ymUid,
+        yandexuid: yandexuid,
+        gaId: gaId,
+        fbId: fbId,
+        tmrLvid: tmrLvid,
+        clickIds: input.clickIds,
+        referrer: input.referrer,
         pageUrl: input.pageUrl,
         pageHistory: input.pageHistory,
         visitCount: input.visitCount,

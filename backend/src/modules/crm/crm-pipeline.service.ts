@@ -39,10 +39,18 @@ export interface InboundMessageInput {
   senderName: string;
   senderPhone?: string;
   senderTelegramChatId?: string;
+  attachment?: string | null;
+  attachmentType?: string | null;
   /** Профиль из канала; без него имя контакта станет «Клиент». */
   profile?: ChannelProfile;
   /** Идентификатор и аналитика посетителя сайта */
   visitorId?: string;
+  deviceFingerprint?: string;
+  deviceInfo?: Record<string, unknown>;
+  yandexuid?: string;
+  tmrLvid?: string;
+  clickIds?: Record<string, string>;
+  referrer?: string;
   ymUid?: string;
   gaId?: string;
   fbId?: string;
@@ -158,17 +166,73 @@ export class CrmPipelineService {
           await tx.query(
             `UPDATE contacts
              SET custom_fields = jsonb_set(
-               COALESCE(custom_fields, '{}'::jsonb),
-               '{webchat_visitor_id}',
-               to_jsonb($1::text),
+               jsonb_set(
+                 COALESCE(custom_fields, '{}'::jsonb),
+                 '{webchat_visitor_id}',
+                 to_jsonb($1::text),
+                 true
+               ),
+               '{visitor_ids}',
+               CASE 
+                 WHEN jsonb_typeof(COALESCE(custom_fields->'visitor_ids', '[]'::jsonb)) = 'array'
+                 THEN (COALESCE(custom_fields->'visitor_ids', '[]'::jsonb) || to_jsonb($1::text))
+                 ELSE jsonb_build_array($1::text)
+               END,
                true
              )
-             WHERE id = $2 AND tenant_id = $3
-               AND (custom_fields->>'webchat_visitor_id' IS NULL OR custom_fields->>'webchat_visitor_id' = '')`,
+             WHERE id = $2 AND tenant_id = $3`,
             [siteVisitorId, contact.id, input.tenantId],
           );
         }
 
+        if (input.deviceFingerprint) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{device_fingerprint}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.deviceFingerprint, contact.id, input.tenantId],
+          );
+        }
+        if (input.deviceInfo && Object.keys(input.deviceInfo).length > 0) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{device_info}', $1::jsonb, true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.deviceInfo), contact.id, input.tenantId],
+          );
+        }
+        if (input.yandexuid) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{yandexuid}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.yandexuid, contact.id, input.tenantId],
+          );
+        }
+        if (input.tmrLvid) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{tmr_lvid}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.tmrLvid, contact.id, input.tenantId],
+          );
+        }
+        if (input.clickIds && Object.keys(input.clickIds).length > 0) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{click_ids}', $1::jsonb, true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.clickIds), contact.id, input.tenantId],
+          );
+        }
+        if (input.referrer) {
+          await tx.query(
+            `UPDATE contacts
+             SET custom_fields = jsonb_set(COALESCE(custom_fields, '{}'::jsonb), '{referrer}', to_jsonb($1::text), true)
+             WHERE id = $2 AND tenant_id = $3`,
+            [input.referrer, contact.id, input.tenantId],
+          );
+        }
         if (input.ymUid) {
           await tx.query(
             `UPDATE contacts
@@ -236,7 +300,14 @@ export class CrmPipelineService {
         const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
         if (siteVisitorId) {
           customFields.webchat_visitor_id = siteVisitorId;
+          customFields.visitor_ids = [siteVisitorId];
         }
+        if (input.deviceFingerprint) customFields.device_fingerprint = input.deviceFingerprint;
+        if (input.deviceInfo) customFields.device_info = input.deviceInfo;
+        if (input.yandexuid) customFields.yandexuid = input.yandexuid;
+        if (input.tmrLvid) customFields.tmr_lvid = input.tmrLvid;
+        if (input.clickIds) customFields.click_ids = input.clickIds;
+        if (input.referrer) customFields.referrer = input.referrer;
         if (input.ymUid) customFields.ym_uid = input.ymUid;
         if (input.gaId) customFields.ga_id = input.gaId;
         if (input.fbId) customFields.fb_id = input.fbId;
@@ -263,8 +334,35 @@ export class CrmPipelineService {
       let dealId: string;
       let isNewDeal = false;
 
+      const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+      const dealCustomFields: Record<string, unknown> = {};
+      if (siteVisitorId) dealCustomFields.webchat_visitor_id = siteVisitorId;
+      if (input.deviceFingerprint) dealCustomFields.device_fingerprint = input.deviceFingerprint;
+      if (input.deviceInfo) dealCustomFields.device_info = input.deviceInfo;
+      if (input.yandexuid) dealCustomFields.yandexuid = input.yandexuid;
+      if (input.ymUid) dealCustomFields.ym_uid = input.ymUid;
+      if (input.gaId) dealCustomFields.ga_id = input.gaId;
+      if (input.fbId) dealCustomFields.fb_id = input.fbId;
+      if (input.tmrLvid) dealCustomFields.tmr_lvid = input.tmrLvid;
+      if (input.utmTags) dealCustomFields.utm_tags = input.utmTags;
+      if (input.clickIds) dealCustomFields.click_ids = input.clickIds;
+      if (input.pageUrl) dealCustomFields.page_url = input.pageUrl;
+      if (input.referrer) dealCustomFields.referrer = input.referrer;
+      if (input.visitCount) dealCustomFields.visit_count = input.visitCount;
+      if (input.pageHistory) dealCustomFields.page_history = input.pageHistory;
+
       if (activeDeal !== null) {
         dealId = activeDeal.id;
+
+        if (Object.keys(dealCustomFields).length > 0) {
+          await tx.query(
+            `UPDATE deals
+             SET custom_fields = COALESCE(custom_fields, '{}'::jsonb) || $1::jsonb,
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(dealCustomFields), activeDeal.id, input.tenantId],
+          );
+        }
 
         // Эскалация «Первый контакт» -> «Новый лид», если у контакта появились контактные данные
         const hasRealContact = Boolean(
@@ -378,7 +476,7 @@ export class CrmPipelineService {
             // не находится, и каждое следующее сообщение клиента создавало
             // новую — канал плодил дубли.
             contact_id: contactId,
-            custom_fields: {},
+            custom_fields: dealCustomFields,
           });
 
           dealId = deal.id;
@@ -399,8 +497,8 @@ export class CrmPipelineService {
       if (!existingMsg) {
         await tx.query(
           `INSERT INTO deal_messages
-             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             input.tenantId,
             dealId,
@@ -410,6 +508,8 @@ export class CrmPipelineService {
             input.senderName,
             input.text,
             input.channel,
+            input.attachment ?? null,
+            input.attachmentType ?? null,
           ],
         );
       }
@@ -523,6 +623,8 @@ export class CrmPipelineService {
     peerUserId?: string | null;
     username?: string | null;
     pauseMinutes?: number;
+    attachment?: string | null;
+    attachmentType?: string | null;
   }): Promise<{ dealId: string | null; messageId: string | null; pausedUntil: string | null }> {
     return transaction(async (tx) => {
       let contact = await this.findContact(tx, input.tenantId, {
@@ -655,8 +757,8 @@ export class CrmPipelineService {
 
       const msgRes = await tx.queryOne<{ id: string }>(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status)
-         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent')
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
+         VALUES ($1, $2, $3, 'manager', 'outbound', $4, $5, $6, 'sent', $7, $8)
          RETURNING id`,
         [
           input.tenantId,
@@ -665,6 +767,8 @@ export class CrmPipelineService {
           input.senderName ?? "Менеджер",
           input.text,
           input.channel,
+          input.attachment ?? null,
+          input.attachmentType ?? null,
         ],
       );
 
@@ -746,15 +850,32 @@ export class CrmPipelineService {
            AND deleted_at IS NULL
            AND (
              custom_fields->>'webchat_visitor_id' = $2
+             OR (jsonb_typeof(custom_fields->'visitor_ids') = 'array' AND custom_fields->'visitor_ids' @> $4::jsonb)
              OR socials @> $3::jsonb
            )
          LIMIT 1`,
-        [tenantId, effectiveVisitorId, JSON.stringify([{ kind: "other", value: effectiveVisitorId }])],
+        [tenantId, effectiveVisitorId, JSON.stringify([{ kind: "other", value: effectiveVisitorId }]), JSON.stringify([effectiveVisitorId])],
       );
       if (byVisitorId !== null) return byVisitorId;
     }
 
-    // Поиск по сквозным идентификаторам веб-аналитики (Яндекс.Метрика, GA4, Meta)
+    // Поиск по Яндекс ID (yandexuid — общая авторизационная кука сервисов Яндекса)
+    if (input.yandexuid !== undefined && input.yandexuid.length > 0) {
+      const byYandex = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (
+             custom_fields->>'yandexuid' = $2
+             OR custom_fields->'analytics'->>'yandexuid' = $2
+           )
+         LIMIT 1`,
+        [tenantId, input.yandexuid],
+      );
+      if (byYandex !== null) return byYandex;
+    }
+
+    // Поиск по сквозным идентификаторам веб-аналитики (Яндекс.Метрика, GA4, Meta, Top.Mail.ru)
     if (input.ymUid !== undefined && input.ymUid.length > 0) {
       const byYm = await tx.queryOne<ExistingContact>(
         `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
@@ -789,6 +910,54 @@ export class CrmPipelineService {
         [tenantId, input.fbId],
       );
       if (byFb !== null) return byFb;
+    }
+
+    if (input.tmrLvid !== undefined && input.tmrLvid.length > 0) {
+      const byTmr = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND (
+             custom_fields->>'tmr_lvid' = $2
+             OR custom_fields->'analytics'->>'tmr_lvid' = $2
+           )
+         LIMIT 1`,
+        [tenantId, input.tmrLvid],
+      );
+      if (byTmr !== null) return byTmr;
+    }
+
+    // Поиск по рекламным Click ID (yclid, gclid, vkclid)
+    if (input.clickIds && Object.keys(input.clickIds).length > 0) {
+      for (const [key, val] of Object.entries(input.clickIds)) {
+        if (val && typeof val === "string" && val.length > 0) {
+          const byClick = await tx.queryOne<ExistingContact>(
+            `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+             WHERE tenant_id = $1
+               AND deleted_at IS NULL
+               AND (
+                 custom_fields->'click_ids'->>$2 = $3
+                 OR custom_fields->>$2 = $3
+               )
+             LIMIT 1`,
+            [tenantId, key, val],
+          );
+          if (byClick !== null) return byClick;
+        }
+      }
+    }
+
+    // Поиск по аппаратному цифровому отпечатку устройства (device_fingerprint)
+    if (input.deviceFingerprint !== undefined && input.deviceFingerprint.length > 0 && input.deviceFingerprint !== "dfp_fallback") {
+      const byFp = await tx.queryOne<ExistingContact>(
+        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+         WHERE tenant_id = $1
+           AND deleted_at IS NULL
+           AND custom_fields->>'device_fingerprint' = $2
+         LIMIT 1`,
+        [tenantId, input.deviceFingerprint],
+      );
+      if (byFp !== null) return byFp;
     }
 
     return null;
@@ -853,8 +1022,15 @@ export class CrmPipelineService {
     tenantId: string,
     contactId: string,
   ): Promise<{ id: string } | null> {
-    const row = await tx.queryOne<{ id: string }>(
-      `SELECT d.id FROM deals d
+    const row = await tx.queryOne<{
+      id: string;
+      stage_name: string;
+      pipeline_id: string;
+      is_stale_first_contact: boolean;
+    }>(
+      `SELECT d.id, s.name as stage_name, d.pipeline_id,
+              (s.name = 'Первый контакт' AND d.updated_at < now() - INTERVAL '5 days') as is_stale_first_contact
+       FROM deals d
        JOIN stages s ON s.id = d.stage_id
        WHERE d.tenant_id = $1
          AND d.contact_id = $2
@@ -865,7 +1041,52 @@ export class CrmPipelineService {
        LIMIT 1`,
       [tenantId, contactId],
     );
-    return row;
+
+    if (row && row.is_stale_first_contact) {
+      // Истёк 5-дневный срок ожидания контакта для анонимной сделки веб-чата:
+      // закрываем сделку как нереализованную и не возвращаем её как активную.
+      const lostStage = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM stages
+         WHERE pipeline_id = $1 AND is_lost = true
+         ORDER BY sort_order DESC
+         LIMIT 1`,
+        [row.pipeline_id],
+      );
+
+      if (lostStage) {
+        await tx.query(
+          `UPDATE deals
+           SET stage_id = $1, closed_at = now(), updated_at = now()
+           WHERE id = $2 AND tenant_id = $3`,
+          [lostStage.id, row.id, tenantId],
+        );
+
+        await this.deals.createMessage(
+          tenantId,
+          row.id,
+          "Система",
+          {
+            source: "system",
+            direction: "neutral",
+            content: "Сделка автоматически закрыта: истёк срок ожидания контакта (5 суток без активности).",
+            channel: "system",
+          },
+          "neutral",
+        );
+      }
+
+      return null;
+    }
+
+    if (row) {
+      // Продлеваем активность сделки при любом повторном обращении
+      await tx.query(
+        `UPDATE deals SET updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [row.id, tenantId],
+      );
+    }
+
+    return row ? { id: row.id } : null;
   }
 
   /**

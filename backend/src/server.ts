@@ -6,6 +6,7 @@ import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
 import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js";
 import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
+import { scheduleDealMaintenance } from "./modules/crm/deals/deal-maintenance.service.js";
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
@@ -139,6 +140,9 @@ async function main(): Promise<void> {
   // Периодическая проверка напоминаний по задачам (Twenty CRM Parity).
   const stopReminders = scheduleTaskReminders(app.log);
 
+  // Периодическое обслуживание сделок (автозакрытие просроченных анонимных сделок «Первый контакт» через 5 суток).
+  const stopDealMaintenance = scheduleDealMaintenance(app.log);
+
   // Транспорт входящих сообщений Telegram (M7.5.16).
   //
   // Тоже здесь, а не в buildApp: слушатель держит постоянные MTProto-сокеты по
@@ -216,6 +220,7 @@ async function main(): Promise<void> {
       // остановки, обращался бы к уже закрытому пулу.
       stopMaintenance();
       stopReminders();
+      stopDealMaintenance();
       await shutdownWorker();
       stopTransport();
       unregisterMaxOutbound();
