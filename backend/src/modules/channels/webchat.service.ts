@@ -149,7 +149,7 @@ export class WebchatService {
       ),
     );
 
-    const agent = await runWithPlatformScope(() =>
+    let agent = await runWithPlatformScope(() =>
       queryOne<AgentRow>(
         `SELECT a.id, a.name, a.status
          FROM ai_agent_channel_bindings b
@@ -163,6 +163,23 @@ export class WebchatService {
         [account.tenant_id, account.id],
       ),
     );
+
+    // Fallback: если нет привязки в ai_agent_channel_bindings, но в тенанте есть активный бот
+    if (!agent) {
+      agent = await runWithPlatformScope(() =>
+        queryOne<AgentRow>(
+          `SELECT a.id, a.name, a.status
+           FROM ai_agents a
+           WHERE a.tenant_id = $1
+             AND a.status = 'active'
+             AND a.mode = 'autoreply'
+             AND a.deleted_at IS NULL
+           ORDER BY a.created_at ASC
+           LIMIT 1`,
+          [account.tenant_id],
+        ),
+      );
+    }
 
     const creds = (account.credentials ?? {}) as Record<string, unknown>;
 
@@ -436,6 +453,8 @@ export class WebchatService {
       }),
     );
 
+    const botSenderName = account.consultantName || account.botName || "Онлайн-консультант";
+
     // 3. Если агент сформировал ответ — сохраняем его в deal_messages.
     if (outcome.kind === "replied" && crmResult.dealId) {
       await runWithTenantContext(account.tenantId, () =>
@@ -445,6 +464,7 @@ export class WebchatService {
           reply: outcome.reply,
           channel: "webchat",
           channelAccountId: account.id,
+          senderName: account.consultantName || account.botName || "AI-ассистент",
         }),
       );
 
@@ -453,6 +473,43 @@ export class WebchatService {
         contactId: crmResult.contactId,
         replies: outcome.reply.messages,
         status: "replied",
+      };
+    }
+
+    // 4. Если AI-агент не ответил (нет агента, агент на паузе, ошибка модели) —
+    // отправляем автоответ виджета и ОБЯЗАТЕЛЬНО фиксируем его в CRM в deal_messages.
+    if (crmResult.dealId) {
+      const hasRecentOutbound = await runWithTenantContext(account.tenantId, async () => {
+        const row = await queryOne<{ id: string }>(
+          `SELECT id FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = $2 AND direction = 'outbound'
+             AND created_at > now() - interval '15 minutes'
+           LIMIT 1`,
+          [account.tenantId, crmResult.dealId],
+        );
+        return row !== null;
+      }).catch(() => false);
+
+      const autoReplyText = hasRecentOutbound
+        ? "Ваш вопрос передан специалисту. Он ответит вам здесь в ближайшее время."
+        : "Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.";
+
+      await runWithTenantContext(account.tenantId, () =>
+        this.crm.saveAgentReply({
+          tenantId: account.tenantId,
+          dealId: crmResult.dealId,
+          reply: { messages: [autoReplyText] },
+          channel: "webchat",
+          channelAccountId: account.id,
+          senderName: botSenderName,
+        }),
+      );
+
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [autoReplyText],
+        status: "operator_needed",
       };
     }
 
@@ -470,7 +527,7 @@ export class WebchatService {
   async getHistory(channelAccountId: string, visitorId: string): Promise<WebchatHistoryMessage[]> {
     const account = await this.resolveAccount(channelAccountId);
 
-    const rows = await runWithTenantContext(account.tenantId, () =>
+    const rows = await runWithPlatformScope(() =>
       query<{
         id: string;
         source: string;
@@ -486,21 +543,39 @@ export class WebchatService {
          WHERE m.tenant_id = $1
            AND m.channel_account_id = $2
            AND m.channel = 'webchat'
-           AND c.socials @> $3::jsonb
+           AND (
+             c.socials @> $3::jsonb
+             OR c.custom_fields->>'webchat_visitor_id' = $4
+             OR c.socials @> $5::jsonb
+             OR c.socials @> $6::jsonb
+           )
            AND d.deleted_at IS NULL
          ORDER BY m.created_at ASC
          LIMIT 100`,
-        [account.tenantId, account.id, JSON.stringify([{ kind: "other", value: visitorId }])],
+        [
+          account.tenantId,
+          account.id,
+          JSON.stringify([{ kind: "other", value: visitorId }]),
+          visitorId,
+          JSON.stringify([{ kind: "other", value: visitorId.slice(-4) }]),
+          JSON.stringify([{ kind: "other", value: `site_${visitorId}` }]),
+        ],
       ),
     );
 
-    return rows.map((r) => ({
-      id: r.id,
-      source: r.source,
-      direction: r.direction,
-      senderName: r.sender_name,
-      content: r.content,
-      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
-    }));
+    return rows.map((r) => {
+      let content = r.content;
+      if (r.direction === "inbound") {
+        content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();
+      }
+      return {
+        id: r.id,
+        source: r.source,
+        direction: r.direction,
+        senderName: r.sender_name,
+        content,
+        createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      };
+    });
   }
 }

@@ -104,6 +104,11 @@ export function registerOutboundSender(channel: ChannelSlug, sender: OutboundSen
 
 /** `null` — канал не умеет отправлять в этом процессе; это не ошибка. */
 export function resolveOutboundSender(channel: string): OutboundSender | null {
+  if (channel === "webchat") {
+    // Веб-чат на сайте клиента: сообщение менеджера сохранено в deal_messages,
+    // а посетитель сайта забирает его через /history при активной сессии.
+    return async () => ({ ok: true });
+  }
   return senders.get(channel as ChannelSlug) ?? null;
 }
 
