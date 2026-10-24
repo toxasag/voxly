@@ -318,10 +318,14 @@
       display: flex !important;
       align-items: center !important;
       gap: 6px !important;
-      transition: opacity 0.25s, transform 0.25s !important;
+      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
       line-height: 1.3 !important;
       visibility: visible !important;
       opacity: 1 !important;
+    }
+    .getvoxly-chat-badge.is-animating {
+      opacity: 0 !important;
+      transform: translateY(-68%) scale(0.92) !important;
     }
     .position-left .getvoxly-chat-badge {
       right: auto !important;
@@ -374,6 +378,12 @@
       right: auto !important;
       left: calc(20px + env(safe-area-inset-left, 0px)) !important;
     }
+    .getvoxly-widget-window.is-expanded {
+      width: 680px !important;
+      max-width: calc(100vw - 40px) !important;
+      height: 720px !important;
+      max-height: calc(100vh - 100px) !important;
+    }
 
     /* Тёмная тема (если явно задана в настройках) */
     .getvoxly-widget-window.is-dark-theme {
@@ -384,6 +394,9 @@
     }
 
     @media (max-width: 640px) {
+      .getvoxly-header-expand {
+        display: none !important;
+      }
       .getvoxly-chat-badge {
         display: none !important;
       }
@@ -509,6 +522,29 @@
       white-space: nowrap !important;
       overflow: hidden !important;
       text-overflow: ellipsis !important;
+    }
+    .getvoxly-header-actions {
+      display: flex !important;
+      align-items: center !important;
+      gap: 2px !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-header-btn {
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 6px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 6px !important;
+      transition: background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
+    }
+    .getvoxly-header-btn:hover {
+      background: rgba(0, 0, 0, 0.15) !important;
     }
     .getvoxly-header-close {
       background: transparent !important;
@@ -722,6 +758,292 @@
       font-weight: 500 !important;
       border-radius: 16px !important;
       border-top-right-radius: 4px !important;
+    }
+
+    /* Прикрепление файлов и превью */
+    .getvoxly-attach-btn {
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 6px !important;
+      transition: color 0.15s, background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
+    }
+    .getvoxly-attach-btn:hover {
+      color: var(--accent-color, #4a38f5) !important;
+      background: rgba(0, 0, 0, 0.04) !important;
+    }
+    .is-dark-theme .getvoxly-attach-btn:hover {
+      background: rgba(255, 255, 255, 0.08) !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-attachment-preview {
+      margin-bottom: 8px !important;
+    }
+    .getvoxly-preview-card {
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      padding: 6px 10px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 8px !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+    }
+    .is-dark-theme .getvoxly-preview-card {
+      background: #18181b !important;
+      border-color: #27272a !important;
+    }
+    .getvoxly-preview-thumb {
+      width: 32px !important;
+      height: 32px !important;
+      border-radius: 4px !important;
+      object-fit: cover !important;
+      flex-shrink: 0 !important;
+      background: #f5f5f5 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      color: #666666 !important;
+      overflow: hidden !important;
+    }
+    .getvoxly-preview-info {
+      flex: 1 !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-preview-name {
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      color: #111111 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      line-height: 1.3 !important;
+    }
+    .is-dark-theme .getvoxly-preview-name {
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-preview-size {
+      font-size: 10px !important;
+      color: #888888 !important;
+    }
+    .getvoxly-preview-remove {
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 4px !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-preview-remove:hover {
+      color: #e11d48 !important;
+      background: rgba(225, 29, 72, 0.08) !important;
+    }
+
+    /* Отображение вложений в сообщении */
+    .getvoxly-msg-attachment {
+      margin-bottom: 6px !important;
+    }
+    .getvoxly-msg-img {
+      max-width: 100% !important;
+      max-height: 220px !important;
+      border-radius: 10px !important;
+      display: block !important;
+      cursor: pointer !important;
+      transition: opacity 0.15s !important;
+    }
+    .getvoxly-msg-img:hover {
+      opacity: 0.95 !important;
+    }
+    .getvoxly-msg-video {
+      max-width: 100% !important;
+      max-height: 240px !important;
+      border-radius: 10px !important;
+      display: block !important;
+    }
+    .getvoxly-msg-file-link {
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      padding: 6px 10px !important;
+      background: rgba(0, 0, 0, 0.06) !important;
+      border-radius: 8px !important;
+      text-decoration: none !important;
+      color: inherit !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      word-break: break-all !important;
+    }
+    .getvoxly-msg-user .getvoxly-msg-file-link {
+      background: rgba(255, 255, 255, 0.2) !important;
+      color: #ffffff !important;
+    }
+
+    /* Lead Gate Overlay */
+    .getvoxly-gate-overlay {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      background: rgba(0, 0, 0, 0.45) !important;
+      backdrop-filter: blur(4px) !important;
+      -webkit-backdrop-filter: blur(4px) !important;
+      z-index: 100 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      padding: 16px !important;
+    }
+    .getvoxly-gate-card {
+      background: #ffffff !important;
+      border-radius: 14px !important;
+      padding: 20px !important;
+      width: 100% !important;
+      max-width: 330px !important;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22) !important;
+      border: 1px solid #e5e5e5 !important;
+      position: relative !important;
+      color: #111111 !important;
+      text-align: center !important;
+    }
+    .is-dark-theme .getvoxly-gate-card {
+      background: #18181b !important;
+      border-color: #27272a !important;
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-gate-close {
+      position: absolute !important;
+      top: 12px !important;
+      right: 12px !important;
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      border-radius: 6px !important;
+      line-height: 1 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-gate-close:hover {
+      color: #111111 !important;
+      background: #f5f5f5 !important;
+    }
+    .is-dark-theme .getvoxly-gate-close:hover {
+      color: #ffffff !important;
+      background: #27272a !important;
+    }
+    .getvoxly-gate-badge {
+      width: 44px !important;
+      height: 44px !important;
+      border-radius: 50% !important;
+      background: rgba(74, 56, 245, 0.1) !important;
+      color: var(--accent-color, #4a38f5) !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin-bottom: 12px !important;
+    }
+    .getvoxly-gate-title {
+      font-size: 15px !important;
+      font-weight: 700 !important;
+      line-height: 1.3 !important;
+      margin-bottom: 6px !important;
+    }
+    .getvoxly-gate-desc {
+      font-size: 12px !important;
+      color: #666666 !important;
+      line-height: 1.4 !important;
+      margin-bottom: 14px !important;
+    }
+    .is-dark-theme .getvoxly-gate-desc {
+      color: #a1a1aa !important;
+    }
+    .getvoxly-gate-form {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 10px !important;
+      text-align: left !important;
+    }
+    .getvoxly-gate-field {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 4px !important;
+    }
+    .getvoxly-gate-label {
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #444444 !important;
+    }
+    .is-dark-theme .getvoxly-gate-label {
+      color: #d4d4d8 !important;
+    }
+    .getvoxly-gate-req {
+      color: #ef4444 !important;
+    }
+    .getvoxly-gate-input {
+      width: 100% !important;
+      height: 34px !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 8px !important;
+      padding: 0 10px !important;
+      font-size: 13px !important;
+      color: #111111 !important;
+      background: #ffffff !important;
+      outline: none !important;
+      transition: border-color 0.15s, box-shadow 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-gate-input {
+      background: #111111 !important;
+      border-color: #27272a !important;
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-gate-input:focus {
+      border-color: var(--accent-color, #4a38f5) !important;
+      box-shadow: 0 0 0 2px rgba(74, 56, 245, 0.15) !important;
+    }
+    .getvoxly-gate-error {
+      font-size: 11px !important;
+      color: #e11d48 !important;
+      background: #fff1f2 !important;
+      border: 1px solid #fecdd3 !important;
+      border-radius: 6px !important;
+      padding: 6px 8px !important;
+      line-height: 1.3 !important;
+    }
+    .getvoxly-gate-submit {
+      width: 100% !important;
+      height: 36px !important;
+      background: var(--accent-color, #4a38f5) !important;
+      color: #ffffff !important;
+      border: none !important;
+      border-radius: 8px !important;
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      transition: opacity 0.15s, transform 0.1s !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin-top: 4px !important;
+    }
+    .getvoxly-gate-submit:hover {
+      opacity: 0.92 !important;
+    }
+    .getvoxly-gate-submit:active {
+      transform: scale(0.98) !important;
     }
 
     /* Поле ввода */
@@ -1083,19 +1405,36 @@
             <div class="getvoxly-header-sub" id="getvoxly-header-sub">В сети · Консультант онлайн</div>
           </div>
         </div>
-        <button class="getvoxly-header-close" id="getvoxly-close" title="Закрыть окно">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-          </svg>
-        </button>
+        <div class="getvoxly-header-actions">
+          <button class="getvoxly-header-btn getvoxly-header-expand" id="getvoxly-expand" title="Развернуть окно" type="button">
+            <svg class="getvoxly-icon-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+            </svg>
+            <svg class="getvoxly-icon-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M10 14l-7 7"/>
+            </svg>
+          </button>
+          <button class="getvoxly-header-btn getvoxly-header-close" id="getvoxly-close" title="Закрыть окно" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
       <div class="getvoxly-messages" id="getvoxly-messages"></div>
       <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
       <div class="getvoxly-input-area">
+        <div class="getvoxly-attachment-preview" id="getvoxly-attachment-preview" style="display: none;"></div>
         <div class="getvoxly-input-wrapper">
+          <button class="getvoxly-attach-btn" id="getvoxly-attach" title="Прикрепить фото или документ" type="button">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.88-7.88"/>
+            </svg>
+          </button>
+          <input type="file" id="getvoxly-file-input" style="display: none;" accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" />
           <textarea class="getvoxly-textarea" id="getvoxly-input" placeholder="Введите ваш вопрос..."></textarea>
-          <button class="getvoxly-send-btn" id="getvoxly-send" title="Отправить">
+          <button class="getvoxly-send-btn" id="getvoxly-send" title="Отправить" type="button">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
             </svg>
@@ -1104,6 +1443,38 @@
       </div>
       <div class="getvoxly-consent">
         Нажимая «Отправить», вы даете согласие на обработку персональных данных.
+      </div>
+      <div class="getvoxly-gate-overlay" id="getvoxly-gate-overlay" style="display: none;">
+        <div class="getvoxly-gate-card">
+          <button class="getvoxly-gate-close" id="getvoxly-gate-close" title="Отмена" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+            </svg>
+          </button>
+          <div class="getvoxly-gate-badge">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+            </svg>
+          </div>
+          <div class="getvoxly-gate-title">Укажите контакт для связи</div>
+          <div class="getvoxly-gate-desc">Чтобы специалист мог изучить ваши файлы, подготовить расчёт и ответить вам, оставьте номер телефона или email.</div>
+          <div class="getvoxly-gate-form">
+            <div class="getvoxly-gate-field">
+              <label class="getvoxly-gate-label">Телефон или Telegram <span class="getvoxly-gate-req">*</span></label>
+              <input class="getvoxly-gate-input" id="getvoxly-gate-phone" placeholder="+7 (999) 000-00-00" type="tel" autocomplete="tel" />
+            </div>
+            <div class="getvoxly-gate-field">
+              <label class="getvoxly-gate-label">Электронная почта (email)</label>
+              <input class="getvoxly-gate-input" id="getvoxly-gate-email" placeholder="client@example.com" type="email" autocomplete="email" />
+            </div>
+            <div class="getvoxly-gate-field">
+              <label class="getvoxly-gate-label">Как к вам обращаться</label>
+              <input class="getvoxly-gate-input" id="getvoxly-gate-name" placeholder="Ваше имя" type="text" autocomplete="name" />
+            </div>
+            <div class="getvoxly-gate-error" id="getvoxly-gate-error" style="display: none;"></div>
+            <button class="getvoxly-gate-submit" id="getvoxly-gate-submit" type="button">Подтвердить и выбрать файл</button>
+          </div>
+        </div>
       </div>
     `;
 
@@ -1119,11 +1490,235 @@
     var inputEl = document.getElementById('getvoxly-input');
     var sendBtn = document.getElementById('getvoxly-send');
     var closeBtn = document.getElementById('getvoxly-close');
+    var expandBtn = document.getElementById('getvoxly-expand');
     var typingIndicator = document.getElementById('getvoxly-typing');
     var headerName = document.getElementById('getvoxly-header-name');
     var headerSub = document.getElementById('getvoxly-header-sub');
     var headerAvatarInner = document.getElementById('getvoxly-header-avatar-inner');
     var msgContainer = document.getElementById('getvoxly-messenger-container');
+
+    var attachBtn = document.getElementById('getvoxly-attach');
+    var fileInput = document.getElementById('getvoxly-file-input');
+    var attachmentPreview = document.getElementById('getvoxly-attachment-preview');
+    var gateOverlay = document.getElementById('getvoxly-gate-overlay');
+    var gateCloseBtn = document.getElementById('getvoxly-gate-close');
+    var gateSubmitBtn = document.getElementById('getvoxly-gate-submit');
+    var gatePhoneInput = document.getElementById('getvoxly-gate-phone');
+    var gateEmailInput = document.getElementById('getvoxly-gate-email');
+    var gateNameInput = document.getElementById('getvoxly-gate-name');
+    var gateError = document.getElementById('getvoxly-gate-error');
+
+    var isExpanded = false;
+    var pendingAttachment = null;
+
+    var STORAGE_KEY_LEAD_PHONE = 'getvoxly_lead_phone_' + channelAccountId;
+    var STORAGE_KEY_LEAD_EMAIL = 'getvoxly_lead_email_' + channelAccountId;
+    var STORAGE_KEY_LEAD_NAME = 'getvoxly_lead_name_' + channelAccountId;
+
+    function hasKnownLeadContact() {
+      var p = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE);
+      var e = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL);
+      var cleanP = p ? p.replace(/\D/g, '') : '';
+      return Boolean(cleanP.length >= 6 || (e && e.indexOf('@') > 0));
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      var k = 1024;
+      var sizes = ['B', 'KB', 'MB', 'GB'];
+      var i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function renderAttachmentPreview(att) {
+      if (!attachmentPreview) return;
+      if (!att) {
+        attachmentPreview.innerHTML = '';
+        attachmentPreview.style.display = 'none';
+        return;
+      }
+
+      var isImg = att.mimeType && att.mimeType.startsWith('image/');
+      var thumbHtml = isImg
+        ? '<img src="' + att.url + '" class="getvoxly-preview-thumb" alt="Превью" />'
+        : '<div class="getvoxly-preview-thumb"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>';
+
+      attachmentPreview.innerHTML =
+        '<div class="getvoxly-preview-card">' +
+          thumbHtml +
+          '<div class="getvoxly-preview-info">' +
+            '<div class="getvoxly-preview-name" title="' + (att.filename || 'Файл') + '">' + (att.filename || 'Файл') + '</div>' +
+            '<div class="getvoxly-preview-size">' + formatBytes(att.sizeBytes) + '</div>' +
+          '</div>' +
+          '<button class="getvoxly-preview-remove" id="getvoxly-preview-remove" title="Удалить файл" type="button">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>' +
+          '</button>' +
+        '</div>';
+      attachmentPreview.style.display = 'block';
+
+      var removeBtn = document.getElementById('getvoxly-preview-remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', function () {
+          pendingAttachment = null;
+          if (fileInput) fileInput.value = '';
+          renderAttachmentPreview(null);
+        });
+      }
+    }
+
+    function openGateModal() {
+      if (!gateOverlay) return;
+      if (gateError) {
+        gateError.style.display = 'none';
+        gateError.textContent = '';
+      }
+      if (gatePhoneInput) gatePhoneInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || '';
+      if (gateEmailInput) gateEmailInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || '';
+      if (gateNameInput) gateNameInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || '';
+      gateOverlay.style.display = 'flex';
+      if (gatePhoneInput) {
+        setTimeout(function () { gatePhoneInput.focus(); }, 80);
+      }
+    }
+
+    function closeGateModal() {
+      if (gateOverlay) gateOverlay.style.display = 'none';
+    }
+
+    if (gateCloseBtn) {
+      gateCloseBtn.addEventListener('click', closeGateModal);
+    }
+
+    function submitGate() {
+      var phone = gatePhoneInput ? gatePhoneInput.value.trim() : '';
+      var email = gateEmailInput ? gateEmailInput.value.trim() : '';
+      var name = gateNameInput ? gateNameInput.value.trim() : '';
+
+      var cleanDigits = phone.replace(/\D/g, '');
+      var hasValidPhone = cleanDigits.length >= 6;
+      var hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+      if (!hasValidPhone && !hasValidEmail) {
+        if (gateError) {
+          gateError.textContent = 'Пожалуйста, укажите телефон или email для связи.';
+          gateError.style.display = 'block';
+        }
+        return;
+      }
+
+      if (phone) safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phone);
+      if (email) safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, email);
+      if (name) safeStorage.setItem(STORAGE_KEY_LEAD_NAME, name);
+
+      closeGateModal();
+      if (fileInput) {
+        fileInput.click();
+      }
+    }
+
+    if (gateSubmitBtn) {
+      gateSubmitBtn.addEventListener('click', submitGate);
+    }
+
+    [gatePhoneInput, gateEmailInput, gateNameInput].forEach(function (inp) {
+      if (inp) {
+        inp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            submitGate();
+          }
+        });
+      }
+    });
+
+    if (expandBtn) {
+      expandBtn.addEventListener('click', function () {
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+          win.classList.add('is-expanded');
+          expandBtn.title = 'Свернуть окно';
+          var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
+          var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
+          if (expIcon) expIcon.style.display = 'none';
+          if (compIcon) compIcon.style.display = 'block';
+        } else {
+          win.classList.remove('is-expanded');
+          expandBtn.title = 'Развернуть окно';
+          var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
+          var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
+          if (expIcon) expIcon.style.display = 'block';
+          if (compIcon) compIcon.style.display = 'none';
+        }
+        if (messagesContainer) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      });
+    }
+
+    if (attachBtn && fileInput) {
+      attachBtn.addEventListener('click', function () {
+        if (hasKnownLeadContact()) {
+          fileInput.click();
+        } else {
+          openGateModal();
+        }
+      });
+
+      fileInput.addEventListener('change', async function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+
+        if (file.size > 20 * 1024 * 1024) {
+          alert('Размер файла не должен превышать 20 МБ');
+          fileInput.value = '';
+          return;
+        }
+
+        if (attachmentPreview) {
+          attachmentPreview.innerHTML =
+            '<div class="getvoxly-preview-card">' +
+              '<div class="getvoxly-preview-thumb"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>' +
+              '<div class="getvoxly-preview-info"><div class="getvoxly-preview-name">Загрузка ' + file.name + '...</div></div>' +
+            '</div>';
+          attachmentPreview.style.display = 'block';
+        }
+
+        try {
+          var formData = new FormData();
+          formData.append('file', file);
+
+          var res = await fetch(apiUrl + '/api/v1/public/chat/upload/' + channelAccountId, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (res.ok) {
+            var uploadJson = await res.json();
+            var data = uploadJson && uploadJson.data;
+            if (data && data.url) {
+              pendingAttachment = {
+                url: data.url,
+                filename: data.filename || file.name,
+                mimeType: data.mimeType || file.type || 'application/octet-stream',
+                sizeBytes: data.sizeBytes || file.size,
+              };
+              renderAttachmentPreview(pendingAttachment);
+            } else {
+              throw new Error('Пустой ответ сервера');
+            }
+          } else {
+            var errData = await res.json().catch(function () { return {}; });
+            alert('Ошибка загрузки: ' + (errData.error || 'не удалось загрузить файл'));
+            renderAttachmentPreview(null);
+            fileInput.value = '';
+          }
+        } catch (err) {
+          alert('Не удалось загрузить файл. Проверьте соединение с интернетом.');
+          renderAttachmentPreview(null);
+          fileInput.value = '';
+        }
+      });
+    }
 
     // Локальная история сообщений
     var STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
@@ -1149,17 +1744,69 @@
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
 
-    function appendMessageToUI(text, isUser) {
+    function appendMessageToUI(text, isUser, attachment, attachmentType) {
       if (!messagesContainer) return;
 
       var row = document.createElement('div');
       row.className = 'getvoxly-msg-row ' + (isUser ? 'getvoxly-msg-row-user' : 'getvoxly-msg-row-bot');
 
+      var bubble = document.createElement('div');
+      bubble.className = 'getvoxly-msg ' + (isUser ? 'getvoxly-msg-user' : 'getvoxly-msg-bot');
+
+      if (attachment) {
+        var attContainer = document.createElement('div');
+        attContainer.className = 'getvoxly-msg-attachment';
+
+        var isImg = attachmentType && attachmentType.startsWith('image/');
+        var isVideo = attachmentType && attachmentType.startsWith('video/');
+
+        if (isImg) {
+          var link = document.createElement('a');
+          link.href = attachment;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          var img = document.createElement('img');
+          img.className = 'getvoxly-msg-img';
+          img.src = attachment;
+          img.alt = 'Фотография';
+          img.loading = 'lazy';
+          link.appendChild(img);
+          attContainer.appendChild(link);
+        } else if (isVideo) {
+          var video = document.createElement('video');
+          video.className = 'getvoxly-msg-video';
+          video.src = attachment;
+          video.controls = true;
+          attContainer.appendChild(video);
+        } else {
+          var docLink = document.createElement('a');
+          docLink.className = 'getvoxly-msg-file-link';
+          docLink.href = attachment;
+          docLink.target = '_blank';
+          docLink.rel = 'noopener noreferrer';
+          docLink.download = '';
+          var rawName = (attachment.split('/').pop() || 'Документ').split('?')[0];
+          docLink.innerHTML =
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+            '<span>' + rawName + '</span>';
+          attContainer.appendChild(docLink);
+        }
+        bubble.appendChild(attContainer);
+      }
+
+      var isTextPlaceholder = Boolean(
+        attachment && (!text || text === 'Фотография' || text === 'Видео' || text === 'Вложение')
+      );
+
+      if (text && !isTextPlaceholder) {
+        var textEl = document.createElement('div');
+        textEl.className = 'getvoxly-msg-text';
+        textEl.textContent = text;
+        bubble.appendChild(textEl);
+      }
+
       if (isUser) {
-        var userBubble = document.createElement('div');
-        userBubble.className = 'getvoxly-msg getvoxly-msg-user';
-        userBubble.textContent = text;
-        row.appendChild(userBubble);
+        row.appendChild(bubble);
       } else {
         var avatarEl = document.createElement('div');
         avatarEl.className = 'getvoxly-msg-bot-avatar';
@@ -1175,11 +1822,7 @@
           contentEl.appendChild(authorEl);
         }
 
-        var botBubble = document.createElement('div');
-        botBubble.className = 'getvoxly-msg getvoxly-msg-bot';
-        botBubble.textContent = text;
-        contentEl.appendChild(botBubble);
-
+        contentEl.appendChild(bubble);
         row.appendChild(avatarEl);
         row.appendChild(contentEl);
       }
@@ -1188,10 +1831,16 @@
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    function saveAndRenderMessage(text, isUser) {
-      appendMessageToUI(text, isUser);
+    function saveAndRenderMessage(text, isUser, attachment, attachmentType) {
+      appendMessageToUI(text, isUser, attachment, attachmentType);
       var hist = getLocalHistory();
-      hist.push({ text: text, isUser: isUser, timestamp: Date.now() });
+      hist.push({
+        text: text,
+        isUser: isUser,
+        attachment: attachment || null,
+        attachmentType: attachmentType || null,
+        timestamp: Date.now()
+      });
       try {
         safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(hist));
       } catch (e) {}
@@ -1200,7 +1849,7 @@
     var existingHistory = getLocalHistory();
     if (existingHistory.length > 0) {
       existingHistory.forEach(function (m) {
-        appendMessageToUI(m.text, m.isUser);
+        appendMessageToUI(m.text, m.isUser, m.attachment, m.attachmentType);
       });
     }
 
@@ -1228,8 +1877,14 @@
               for (var k = 0; k < items.length; k++) {
                 var m = items[k];
                 var isUser = m.direction === 'inbound';
-                appendMessageToUI(m.content, isUser);
-                localHist.push({ text: m.content, isUser: isUser, timestamp: m.createdAt });
+                appendMessageToUI(m.content, isUser, m.attachment, m.attachmentType);
+                localHist.push({
+                  text: m.content,
+                  isUser: isUser,
+                  attachment: m.attachment || null,
+                  attachmentType: m.attachmentType || null,
+                  timestamp: m.createdAt
+                });
               }
               try {
                 safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(localHist));
@@ -1362,7 +2017,7 @@
       win.style.bottom = '';
       win.style.maxHeight = '';
       if (badge) {
-        badge.style.display = '';
+        badge.style.display = (currentConfig && currentConfig.badgeEnabled === false) ? 'none' : '';
       }
     }
 
@@ -1433,6 +2088,55 @@
           wrapper.style.setProperty('--accent-color', accent);
           wrapper.style.setProperty('--badge-color', accent);
           win.style.setProperty('--accent-color', accent);
+
+          // Настройка всплывающего бейджа и динамической смены фраз
+          var badgeEl = document.getElementById('getvoxly-badge');
+          if (badgeEl) {
+            if (data.badgeEnabled === false) {
+              badgeEl.style.display = 'none';
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+            } else {
+              var badgePhrases = [];
+              if (Array.isArray(data.badgeTexts) && data.badgeTexts.length > 0) {
+                badgePhrases = data.badgeTexts.map(function (s) { return String(s).trim(); }).filter(Boolean);
+              } else if (typeof data.badgeTexts === 'string' && data.badgeTexts.trim()) {
+                badgePhrases = data.badgeTexts.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+              } else if (typeof data.badgeText === 'string' && data.badgeText.trim()) {
+                badgePhrases = [data.badgeText.trim()];
+              }
+
+              if (badgePhrases.length === 0) {
+                badgePhrases = ['Задайте вопрос'];
+              }
+
+              var badgeCurrentIdx = 0;
+              badgeEl.textContent = badgePhrases[0];
+              if (!isOpen) {
+                badgeEl.style.display = '';
+              }
+
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+
+              if (badgePhrases.length > 1) {
+                var intervalSec = Math.max(2, (data.badgeRotateIntervalSec || 5));
+                window.__gvx_badge_timer = setInterval(function () {
+                  if (isOpen) return;
+                  badgeEl.classList.add('is-animating');
+                  setTimeout(function () {
+                    badgeCurrentIdx = (badgeCurrentIdx + 1) % badgePhrases.length;
+                    badgeEl.textContent = badgePhrases[badgeCurrentIdx];
+                    badgeEl.classList.remove('is-animating');
+                  }, 250);
+                }, intervalSec * 1000);
+              }
+            }
+          }
 
           // Тема (светлая / тёмная)
           if (data.theme === 'dark') {
@@ -1770,25 +2474,61 @@
 
     function handleUserSubmit() {
       var text = inputEl.value.trim();
-      if (!text) return;
+      if (!text && !pendingAttachment) return;
+
+      var currentAttachment = pendingAttachment ? pendingAttachment.url : undefined;
+      var currentAttachmentType = pendingAttachment ? pendingAttachment.mimeType : undefined;
+
+      pendingAttachment = null;
+      if (fileInput) fileInput.value = '';
+      renderAttachmentPreview(null);
 
       inputEl.value = '';
       inputEl.style.height = '24px';
       lastDraft = '';
 
-      saveAndRenderMessage(text, true);
-      messageBuffer.push(text);
+      if (text) {
+        var phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
+        if (phoneMatch) {
+          var digits = phoneMatch[0].replace(/\D/g, '');
+          if (digits.length >= 10) {
+            safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phoneMatch[0]);
+          }
+        }
+        var emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        if (emailMatch) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, emailMatch[0]);
+        }
+      }
 
-      clearTimeout(sendTimer);
-      typingIndicator.style.display = 'block';
-      sendTimer = setTimeout(flushMessageBuffer, 2500);
+      saveAndRenderMessage(text, true, currentAttachment, currentAttachmentType);
+
+      if (currentAttachment) {
+        clearTimeout(sendTimer);
+        typingIndicator.style.display = 'block';
+        executeSendMessage(text, false, currentAttachment, currentAttachmentType);
+      } else {
+        messageBuffer.push(text);
+        clearTimeout(sendTimer);
+        typingIndicator.style.display = 'block';
+        sendTimer = setTimeout(flushMessageBuffer, 2500);
+      }
     }
 
-    async function executeSendMessage(fullText, isDraft) {
+    async function executeSendMessage(fullText, isDraft, attachment, attachmentType) {
       try {
+        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || undefined;
+        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || undefined;
+        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
+
         var payload = {
           visitorId: visitorId,
-          text: fullText,
+          text: fullText || '',
+          senderPhone: storedPhone,
+          senderEmail: storedEmail,
+          senderName: storedName,
+          attachment: attachment || undefined,
+          attachmentType: attachmentType || undefined,
           pageUrl: window.location.href,
           referrer: document.referrer || undefined,
           utmTags: utmTags,

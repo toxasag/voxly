@@ -34,6 +34,11 @@ export interface WebchatAccountInfo {
   greeting?: string;
   placeholder?: string;
   position?: "bottom-right" | "bottom-left";
+  badgeEnabled?: boolean;
+  badgeText?: string;
+  badgeTexts?: string[];
+  badgeRotateIntervalSec?: number;
+  badgeIntervalSeconds?: number;
   showMessengerBanner?: boolean;
   messengerBannerMode?: "single" | "multi";
   singleTarget?: "telegram" | "whatsapp" | "max";
@@ -79,6 +84,9 @@ export interface WebchatMessageInput {
   text: string;
   senderName?: string;
   senderPhone?: string;
+  senderEmail?: string;
+  attachment?: string;
+  attachmentType?: string;
   pageUrl?: string;
   referrer?: string;
   utmTags?: Record<string, string>;
@@ -109,6 +117,8 @@ export interface WebchatHistoryMessage {
   direction: string;
   senderName: string;
   content: string;
+  attachment?: string | null;
+  attachmentType?: string | null;
   createdAt: string;
 }
 
@@ -317,6 +327,33 @@ export class WebchatService {
         ? creds.proactiveMessage.trim()
         : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.";
 
+    const badgeEnabled = creds.badgeEnabled !== undefined ? Boolean(creds.badgeEnabled) : true;
+
+    let badgeTexts: string[] = [];
+    if (Array.isArray(creds.badgeTexts)) {
+      badgeTexts = creds.badgeTexts
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter((s) => s.length > 0);
+    } else if (typeof creds.badgeTexts === "string" && creds.badgeTexts.trim().length > 0) {
+      badgeTexts = creds.badgeTexts
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    } else if (typeof creds.badgeText === "string" && creds.badgeText.trim().length > 0) {
+      badgeTexts = [creds.badgeText.trim()];
+    }
+
+    if (badgeTexts.length === 0) {
+      badgeTexts = ["Задайте вопрос"];
+    }
+
+    const badgeRotateIntervalSec =
+      typeof creds.badgeRotateIntervalSec === "number" && creds.badgeRotateIntervalSec >= 2
+        ? creds.badgeRotateIntervalSec
+        : (typeof creds.badgeRotateIntervalSec === "string" && parseInt(creds.badgeRotateIntervalSec, 10) >= 2
+            ? parseInt(creds.badgeRotateIntervalSec, 10)
+            : 5);
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -356,6 +393,11 @@ export class WebchatService {
       proactiveEnabled,
       proactiveDelaySeconds,
       proactiveMessage,
+      badgeEnabled,
+      badgeText: badgeTexts[0] || "Задайте вопрос",
+      badgeTexts,
+      badgeRotateIntervalSec,
+      badgeIntervalSeconds: badgeRotateIntervalSec,
     };
   }
 
@@ -365,14 +407,14 @@ export class WebchatService {
   async processIncomingMessage(input: WebchatMessageInput): Promise<WebchatMessageResult> {
     const account = await this.resolveAccount(input.channelAccountId);
 
-    const text = input.text.trim();
-    if (text.length === 0) {
-      throw new AppError(400, "EMPTY_MESSAGE", "Текст сообщения не может быть пустым");
+    const text = input.text ? input.text.trim() : "";
+    if (text.length === 0 && !input.attachment) {
+      throw new AppError(400, "EMPTY_MESSAGE", "Текст сообщения или вложение не могут быть пустыми");
     }
 
     // Автоматическое определение номера телефона из текста, если не был передан явно
     let detectedPhone = input.senderPhone?.trim();
-    if (!detectedPhone) {
+    if (!detectedPhone && text) {
       const phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
       if (phoneMatch) {
         const digits = phoneMatch[0].replace(/\D/g, "");
@@ -381,6 +423,24 @@ export class WebchatService {
         }
       }
     }
+
+    // Автоматическое определение email из текста, если не был передан явно
+    let detectedEmail = input.senderEmail?.trim();
+    if (!detectedEmail && text) {
+      const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      if (emailMatch) {
+        detectedEmail = emailMatch[0];
+      }
+    }
+
+    const fallbackText = input.attachment
+      ? input.attachmentType?.startsWith("image/")
+        ? "Фотография"
+        : input.attachmentType?.startsWith("video/")
+          ? "Видео"
+          : "Вложение"
+      : "";
+    const effectiveText = text || fallbackText;
 
     const ymUid = input.ymUid || input.analytics?.ymUid || undefined;
     const yandexuid = input.analytics?.yandexuid || undefined;
@@ -440,7 +500,7 @@ export class WebchatService {
       contextLines.push(`[История переходов: ${historyStr}]`);
     }
 
-    const crmInboundText = contextLines.length > 0 ? `${contextLines.join("\n")}\n\n${text}` : text;
+    const crmInboundText = contextLines.length > 0 ? `${contextLines.join("\n")}\n\n${effectiveText}` : effectiveText;
 
     const senderDisplayName =
       input.senderName && input.senderName.trim().length > 0
@@ -457,6 +517,9 @@ export class WebchatService {
         text: crmInboundText,
         senderName: senderDisplayName,
         senderPhone: detectedPhone || undefined,
+        senderEmail: detectedEmail || undefined,
+        attachment: input.attachment || null,
+        attachmentType: input.attachmentType || null,
         visitorId: input.visitorId,
         deviceFingerprint: input.deviceFingerprint,
         deviceInfo: enrichedDeviceInfo,
@@ -610,9 +673,11 @@ export class WebchatService {
         direction: string;
         sender_name: string;
         content: string;
+        attachment?: string | null;
+        attachment_type?: string | null;
         created_at: Date | string;
       }>(
-        `SELECT m.id, m.source, m.direction, m.sender_name, m.content, m.created_at
+        `SELECT m.id, m.source, m.direction, m.sender_name, m.content, m.attachment, m.attachment_type, m.created_at
          FROM deal_messages m
          JOIN deals d ON d.id = m.deal_id
          JOIN contacts c ON c.id = d.contact_id
@@ -650,6 +715,8 @@ export class WebchatService {
         direction: r.direction,
         senderName: r.sender_name,
         content,
+        attachment: r.attachment ?? null,
+        attachmentType: r.attachment_type ?? null,
         createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
       };
     });
