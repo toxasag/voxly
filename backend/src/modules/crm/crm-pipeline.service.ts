@@ -903,7 +903,7 @@ export class CrmPipelineService {
     // Поиск по Яндекс ID (yandexuid — общая авторизационная кука сервисов Яндекса)
     if (input.yandexuid !== undefined && input.yandexuid.length > 0) {
       const byYandex = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+        `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND (
@@ -955,7 +955,7 @@ export class CrmPipelineService {
 
     if (input.tmrLvid !== undefined && input.tmrLvid.length > 0) {
       const byTmr = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+        `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND (
@@ -973,7 +973,7 @@ export class CrmPipelineService {
       for (const [key, val] of Object.entries(input.clickIds)) {
         if (val && typeof val === "string" && val.length > 0) {
           const byClick = await tx.queryOne<ExistingContact>(
-            `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+            `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
              WHERE tenant_id = $1
                AND deleted_at IS NULL
                AND (
@@ -991,7 +991,7 @@ export class CrmPipelineService {
     // Поиск по аппаратному цифровому отпечатку устройства (device_fingerprint)
     if (input.deviceFingerprint !== undefined && input.deviceFingerprint.length > 0 && input.deviceFingerprint !== "dfp_fallback") {
       const byFp = await tx.queryOne<ExistingContact>(
-        `SELECT id, first_name, last_name, phone, telegram_chat_id FROM contacts
+        `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
          WHERE tenant_id = $1
            AND deleted_at IS NULL
            AND custom_fields->>'device_fingerprint' = $2
