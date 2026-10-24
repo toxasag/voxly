@@ -14,10 +14,13 @@ import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { nextTypingPauseMs } from "../ai/agent-reply.js";
 import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
 import {
   registerOutboundSender,
   registerStoryPublisher,
   registerTelegramPhoneResolver,
+  registerTelegramHistorySyncer,
+  type TelegramHistorySyncParams,
   type TelegramPhoneResolveResult,
   type StoryPublishPayload,
   type StoryPublishResult,
@@ -102,6 +105,8 @@ export class TelegramTransportService {
   private unregisterStory: (() => void) | null = null;
   /** Снятие регистрации резолвера поиска по номеру телефона */
   private unregisterPhoneResolver: (() => void) | null = null;
+  /** Снятие регистрации синхронизатора истории диалога */
+  private unregisterHistorySyncer: (() => void) | null = null;
 
   constructor(
     private readonly log: Logger,
@@ -155,6 +160,9 @@ export class TelegramTransportService {
     this.unregisterPhoneResolver = registerTelegramPhoneResolver((tenantId, phoneDigits) =>
       this.resolveUserByPhone(tenantId, phoneDigits),
     );
+    this.unregisterHistorySyncer = registerTelegramHistorySyncer((params) =>
+      this.syncDialogHistory(params),
+    );
 
     this.startupTimer = setTimeout(() => {
       void this.resync();
@@ -186,6 +194,11 @@ export class TelegramTransportService {
     if (this.unregisterPhoneResolver !== null) {
       this.unregisterPhoneResolver();
       this.unregisterPhoneResolver = null;
+    }
+
+    if (this.unregisterHistorySyncer !== null) {
+      this.unregisterHistorySyncer();
+      this.unregisterHistorySyncer = null;
     }
 
     if (this.startupTimer !== null) clearTimeout(this.startupTimer);
@@ -390,8 +403,84 @@ export class TelegramTransportService {
   }
 
   // -------------------------------------------------------------------------
-  // Входящие
+  // Медиавложения и входящие
   // -------------------------------------------------------------------------
+
+  /**
+   * Извлечение и сохранение медиавложения (фото, документ) из сообщения Telegram.
+   */
+  private async extractAndStoreMedia(
+    client: TelegramClient,
+    message: Api.Message,
+    tenantId: string,
+  ): Promise<{ url: string; mimeType: string; filename: string } | null> {
+    if (!message.media) return null;
+
+    try {
+      const isPhoto = Boolean(
+        message.photo ||
+        message.media instanceof Api.MessageMediaPhoto ||
+        (typeof message.media === "object" && "photo" in message.media && (message.media as { photo?: unknown }).photo),
+      );
+
+      const isDocument = Boolean(
+        message.document ||
+        message.media instanceof Api.MessageMediaDocument ||
+        (typeof message.media === "object" && "document" in message.media && (message.media as { document?: unknown }).document),
+      );
+
+      if (!isPhoto && !isDocument) return null;
+
+      const buffer = await client.downloadMedia(message, {});
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0) return null;
+
+      let mime = "application/octet-stream";
+      let filename = `telegram_${Date.now()}`;
+
+      if (isPhoto) {
+        mime = "image/jpeg";
+        filename = `photo_${Date.now()}.jpg`;
+      } else if (isDocument) {
+        const doc =
+          message.document ||
+          (message.media && "document" in message.media ? (message.media.document as Api.Document) : null);
+        if (doc && "mimeType" in doc && typeof doc.mimeType === "string") {
+          mime = doc.mimeType;
+        }
+        if (doc && "attributes" in doc && Array.isArray(doc.attributes)) {
+          for (const attr of doc.attributes) {
+            if (attr instanceof Api.DocumentAttributeFilename && attr.fileName) {
+              filename = attr.fileName;
+              break;
+            }
+          }
+        }
+        if (!filename.includes(".")) {
+          if (mime.includes("pdf")) filename += ".pdf";
+          else if (mime.includes("png")) filename += ".png";
+          else if (mime.includes("jpeg") || mime.includes("jpg")) filename += ".jpg";
+          else if (mime.includes("webp")) filename += ".webp";
+        }
+      }
+
+      const mediaService = new ChatMediaService();
+      const stored = await mediaService.storeBuffer({
+        buffer,
+        originalName: filename,
+        mimeType: mime,
+        tenantId,
+      });
+
+      return {
+        url: stored.url,
+        mimeType: stored.mimeType,
+        filename: stored.filename,
+      };
+    } catch (error) {
+      this.log.warn({ error }, "Failed to download and store Telegram media");
+      return null;
+    }
+  }
 
   /**
    * Обработчик `NewMessage`.
@@ -414,18 +503,33 @@ export class TelegramTransportService {
 
       const text = typeof message.message === "string" ? message.message.trim() : "";
 
+      // Проверяем наличие медиавложения (фотография, документ)
+      let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
+      const connection = this.connections.get(account.id);
+      if (connection && message.media) {
+        mediaAttachment = await this.extractAndStoreMedia(
+          connection.client,
+          message,
+          account.tenant_id,
+        );
+      }
+
       // M5.3: Зеркалирование нативных исходящих от оператора (fromMe)
       if (message.out === true) {
-        if (text.length > 0) {
+        if (text.length > 0 || mediaAttachment !== null) {
+          const contentText =
+            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
           await runWithTenantContext(account.tenant_id, () =>
             this.crm.processNativeOutbound({
               tenantId: account.tenant_id,
               channel: "telegram",
               channelAccountId: account.id,
               chatId,
-              text,
+              text: contentText,
               senderName: "Менеджер",
               pauseMinutes: 30,
+              attachment: mediaAttachment?.url ?? null,
+              attachmentType: mediaAttachment?.mimeType ?? null,
             }),
           ).catch((error) => {
             this.log.error(
@@ -437,16 +541,56 @@ export class TelegramTransportService {
         return;
       }
 
-      // Медиа без подписи пропускаем: распознавание голоса и изображений не
-      // реализовано, а ответ «не понял» на голосовое хуже молчания оператора.
-      if (text.length === 0) {
+      // Если ни текста, ни медиа — пропускаем
+      if (text.length === 0 && mediaAttachment === null) {
         this.log.info(
           { accountId: account.id },
-          "Incoming message without text (media/voice) — ignored",
+          "Incoming message without text or media — ignored",
         );
         return;
       }
 
+      // Если получено медиа (фотография или документ)
+      if (mediaAttachment !== null) {
+        const profile = connection ? await this.fetchProfile(connection, senderId) : null;
+        const senderName = profile?.firstName || senderId;
+        const contentText =
+          text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+
+        await runWithTenantContext(account.tenant_id, () =>
+          this.crm.processIncoming({
+            tenantId: account.tenant_id,
+            channel: "telegram",
+            channelAccountId: account.id,
+            chatId,
+            text: contentText,
+            senderName,
+            senderTelegramChatId: senderId,
+            profile: profile ?? undefined,
+            attachment: mediaAttachment.url,
+            attachmentType: mediaAttachment.mimeType,
+          }),
+        ).catch((error) => {
+          this.log.error(
+            { error, accountId: account.id, chatId },
+            "Failed to process incoming Telegram media message",
+          );
+        });
+
+        // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
+        if (text.length > 0) {
+          this.buffer.add({
+            tenantId: account.tenant_id,
+            channelAccountId: account.id,
+            chatId,
+            peerId: senderId,
+            text,
+          });
+        }
+        return;
+      }
+
+      // Обычное текстовое входящее сообщение передаем в дебаунс-буфер
       this.buffer.add({
         tenantId: account.tenant_id,
         channelAccountId: account.id,
