@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Header } from "@/components/layout/Header";
 import { MobileNavigationBar } from "@/components/layout/MobileNavigationBar";
+import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import { cn } from "@/lib/utils";
 
 /**
@@ -60,6 +61,7 @@ export function DashboardShell({
           collapsed ? "md:pl-16" : "md:pl-60",
         )}
       >
+        <ImpersonationBanner />
         <Header />
         {/*
           `pb-20` на мобильном — место под нижний бар: он `fixed`, то есть выпадает

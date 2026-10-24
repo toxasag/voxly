@@ -134,6 +134,7 @@ export interface DealRow {
   contact_phone?: string | null;
   contact_email?: string | null;
   contact_job_title?: string | null;
+  contact_is_personal?: boolean | null;
   owner_name?: string | null;
   latest_note_body?: string | null;
   tasks_count?: string | number | null;
@@ -170,6 +171,7 @@ export interface DealDTO {
   contactPhone?: string | null;
   contactEmail?: string | null;
   contactJobTitle?: string | null;
+  contactIsPersonal?: boolean;
   ownerName: string | null;
   latestNote: string | null;
   tasksCount?: number;
@@ -226,6 +228,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     contactPhone: row.contact_phone || null,
     contactEmail: row.contact_email || null,
     contactJobTitle: row.contact_job_title || null,
+    contactIsPersonal: Boolean(row.contact_is_personal),
     ownerName: row.owner_name ?? null,
     latestNote: row.latest_note_body ?? null,
     tasksCount: Number(row.tasks_count ?? 0),

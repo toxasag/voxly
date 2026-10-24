@@ -4,7 +4,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
   GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
-  Phone, Plus, Star, Tag, UserCircle2, UserRound, AlertTriangle,
+  Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
 import { contactFullName, useUpdateContact, useFindDuplicateContacts } from "@/lib/api/use-contacts";
@@ -355,6 +355,17 @@ export const ContactCard = memo(function ContactCard({
 
   const homeTab = (
     <div className="py-2">
+      {contact.isPersonal && (
+        <div className="mx-4 mb-3 rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-[#854d0e]" />
+            <span>
+              <strong>Личный контакт.</strong> Переписка игнорируется CRM, новые сделки не создаются, уведомления приходят на телефон.
+            </span>
+          </div>
+        </div>
+      )}
+
       {duplicates.length > 0 && (
         <div className="mx-4 mb-3 rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-2.5 text-xs text-[#854d0e] flex items-center justify-between shadow-2xs">
           <div className="flex items-center gap-2">

@@ -31,7 +31,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.custom_fields, c.notes, c.created_by, c.created_at, c.updated_at,
+  c.linkedin_link, c.custom_fields, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -441,5 +441,26 @@ export class ContactsService {
     );
 
     return row !== null;
+  }
+
+  /**
+   * Устанавливает или снимает пометку личного контакта.
+   * При установке isPersonal = true автоматически выставляет suppress_deal_creation = true.
+   */
+  async setPersonal(
+    tenantId: string,
+    id: string,
+    isPersonal: boolean,
+  ): Promise<ContactDTO | null> {
+    await query(
+      `UPDATE contacts
+       SET is_personal = $3,
+           suppress_deal_creation = CASE WHEN $3 THEN true ELSE suppress_deal_creation END,
+           updated_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [tenantId, id, isPersonal],
+    );
+
+    return this.get(tenantId, id);
   }
 }

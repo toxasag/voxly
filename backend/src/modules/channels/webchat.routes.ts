@@ -59,21 +59,27 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     reply.header("Cross-Origin-Resource-Policy", "cross-origin");
   });
 
-  // Телеметрия и диагностика подключения виджета
-  app.get("/debug", async (request, reply) => {
-    app.log.info(
-      {
-        query: request.query,
-        ip: request.ip,
-        ua: request.headers["user-agent"],
-      },
-      "[WIDGET_TELEMETRY]",
-    );
-    return reply
-      .header("Access-Control-Allow-Origin", "*")
-      .header("Cache-Control", "no-cache, no-store")
-      .type("image/gif")
-      .send(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+  // Телеметрия и диагностика подключения виджета (поддерживаем GET и POST для sendBeacon)
+  app.route({
+    method: ["GET", "POST"],
+    url: "/debug",
+    handler: async (request, reply) => {
+      app.log.info(
+        {
+          query: request.query,
+          ip: request.ip,
+          ua: request.headers["user-agent"],
+        },
+        "[WIDGET_TELEMETRY]",
+      );
+      return reply
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .header("Access-Control-Allow-Headers", "*")
+        .header("Cache-Control", "no-cache, no-store")
+        .type("image/gif")
+        .send(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+    },
   });
 
   // Получение настроек чата для виджета (название компании, имя агента)

@@ -147,11 +147,23 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     suppress: z.boolean(),
   });
 
+  const personalSchema = z.object({
+    is_personal: z.boolean(),
+  });
+
   app.patch("/:id/suppress-deals", { onRequest: canWrite }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const { suppress } = suppressDealsSchema.parse(request.body);
     await dedupeService.setSuppressDealCreation(request.tenant_id, id, suppress);
     return reply.send({ data: { id, suppress_deal_creation: suppress } });
+  });
+
+  app.patch("/:id/personal", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { is_personal } = personalSchema.parse(request.body);
+    const updated = await service.setPersonal(request.tenant_id, id, is_personal);
+    if (!updated) throw new NotFoundError("Contact not found");
+    return reply.send({ data: updated });
   });
 
   // ---------------------------------------------------------------------------

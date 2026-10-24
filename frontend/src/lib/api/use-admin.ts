@@ -9,6 +9,14 @@ import {
 } from "@tanstack/react-query";
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
+export interface AdminTenantChecklist {
+  has_channels: boolean;
+  has_deals: boolean;
+  has_ai: boolean;
+  has_knowledge: boolean;
+  has_team: boolean;
+}
+
 // Зеркалит backend/src/modules/admin/admin-tenants.routes.ts (AdminTenantDTO).
 export interface AdminTenantDTO {
   id: string;
@@ -16,6 +24,10 @@ export interface AdminTenantDTO {
   slug?: string;
   plan: string;
   status: string;
+  custom_price_rubles: number | null;
+  custom_plan_name: string | null;
+  business_niche: string | null;
+  custom_notes: string | null;
   /** УСТАРЕЛО: остаток в штуках токенов. Актуален ai_balance_kopecks. */
   ai_tokens_balance: number;
   /** Баланс ИИ в копейках. */
@@ -28,18 +40,58 @@ export interface AdminTenantDTO {
   created_at: string;
   users_count: number;
   modules_count: number;
+  channels_count: number;
+  ai_agents_count: number;
+  ai_active_agents_count: number;
+  knowledge_docs_count: number;
+  deals_count: number;
+  messages_count: number;
+  owner_email: string | null;
+  owner_name: string | null;
+  owner_phone: string | null;
+  adoption_score: number;
+  adoption_checklist: AdminTenantChecklist;
+  ai_status: "not_configured" | "paused" | "active";
 }
 
 export type UpdateTenantPayload = {
   status?: "trial" | "active" | "past_due" | "suspended";
-  plan?: "trial" | "start" | "business" | "enterprise";
+  plan?: string;
   subscription_expires_at?: string | null;
   ai_tokens_balance?: number;
   /** Наценка на токены, % от цены провайдера. Допустима отрицательная (скидка). */
   ai_markup_percent?: number;
   /** Баланс ИИ в рублях: сервер сам переводит в копейки. */
   ai_balance_rubles?: number;
+  custom_price_rubles?: number | null;
+  custom_plan_name?: string | null;
+  business_niche?: string | null;
+  custom_notes?: string | null;
 };
+
+export interface ImpersonateResponse {
+  access_token?: string;
+  refresh_token?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expires_in?: number;
+  user?: {
+    id: string;
+    email: string;
+    phone?: string | null;
+    name?: string;
+    role?: string;
+    platform_role?: string | null;
+    permissions?: string[];
+  };
+  tenant?: {
+    id: string;
+    name: string;
+    slug: string;
+    plan: string;
+    status: string;
+  };
+}
 
 // Зеркалит backend/src/modules/admin/admin-metrics.routes.ts.
 export interface AdminMetricsDTO {
@@ -159,6 +211,18 @@ export function useDeleteTenant(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
       void queryClient.invalidateQueries({ queryKey: adminKeys.billing });
     },
+  });
+}
+
+/** Вход суперадминистратора под аккаунтом компании (Impersonation). */
+export function useImpersonateTenant(): UseMutationResult<
+  ImpersonateResponse,
+  ApiClientError,
+  string
+> {
+  return useMutation<ImpersonateResponse, ApiClientError, string>({
+    mutationFn: async (tenantId: string) =>
+      (await apiClient.post<ImpersonateResponse>(`/api/v1/admin/tenants/${tenantId}/impersonate`)).data,
   });
 }
 

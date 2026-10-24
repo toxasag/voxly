@@ -294,6 +294,11 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     }),
   );
 
+  if (crmResult.isPersonal) {
+    request.log.info({ peerId }, "Personal MAX contact message ignored by CRM");
+    return reply.send({ ok: true });
+  }
+
   // AI-автоответ при наличии привязанного ассистента
   try {
     const agentService = new AgentPipelineService(request.log);
