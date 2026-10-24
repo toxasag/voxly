@@ -889,161 +889,113 @@
       color: #ffffff !important;
     }
 
-    /* Lead Gate Overlay */
-    .getvoxly-gate-overlay {
-      position: absolute !important;
-      top: 0 !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      background: rgba(0, 0, 0, 0.45) !important;
-      backdrop-filter: blur(4px) !important;
-      -webkit-backdrop-filter: blur(4px) !important;
-      z-index: 100 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      padding: 16px !important;
-    }
-    .getvoxly-gate-card {
+    /* Inline Attach Gate */
+    .getvoxly-attach-gate {
+      padding: 8px 10px !important;
+      margin-bottom: 8px !important;
       background: #ffffff !important;
-      border-radius: 14px !important;
-      padding: 20px !important;
-      width: 100% !important;
-      max-width: 330px !important;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22) !important;
       border: 1px solid #e5e5e5 !important;
-      position: relative !important;
-      color: #111111 !important;
-      text-align: center !important;
+      border-radius: 10px !important;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
     }
-    .is-dark-theme .getvoxly-gate-card {
+    .is-dark-theme .getvoxly-attach-gate {
       background: #18181b !important;
       border-color: #27272a !important;
       color: #f1f5f9 !important;
     }
-    .getvoxly-gate-close {
-      position: absolute !important;
-      top: 12px !important;
-      right: 12px !important;
+    .getvoxly-attach-gate-header {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      margin-bottom: 6px !important;
+    }
+    .getvoxly-attach-gate-text {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      font-size: 11.5px !important;
+      font-weight: 600 !important;
+      color: #334155 !important;
+    }
+    .is-dark-theme .getvoxly-attach-gate-text {
+      color: #cbd5e1 !important;
+    }
+    .getvoxly-attach-gate-text svg {
+      color: var(--accent-color, #4a38f5) !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-attach-cancel-btn {
+      width: 20px !important;
+      height: 20px !important;
       background: transparent !important;
       border: none !important;
       color: #888888 !important;
       cursor: pointer !important;
-      padding: 4px !important;
-      border-radius: 6px !important;
-      line-height: 1 !important;
+      border-radius: 4px !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
+      flex-shrink: 0 !important;
+      padding: 0 !important;
+      transition: color 0.15s, background-color 0.15s !important;
     }
-    .getvoxly-gate-close:hover {
+    .getvoxly-attach-cancel-btn:hover {
       color: #111111 !important;
-      background: #f5f5f5 !important;
+      background: #f1f5f9 !important;
     }
-    .is-dark-theme .getvoxly-gate-close:hover {
+    .is-dark-theme .getvoxly-attach-cancel-btn:hover {
       color: #ffffff !important;
       background: #27272a !important;
     }
-    .getvoxly-gate-badge {
-      width: 44px !important;
-      height: 44px !important;
-      border-radius: 50% !important;
-      background: rgba(74, 56, 245, 0.1) !important;
-      color: var(--accent-color, #4a38f5) !important;
-      display: inline-flex !important;
+    .getvoxly-attach-gate-row {
+      display: flex !important;
       align-items: center !important;
-      justify-content: center !important;
-      margin-bottom: 12px !important;
+      gap: 6px !important;
     }
-    .getvoxly-gate-title {
-      font-size: 15px !important;
-      font-weight: 700 !important;
-      line-height: 1.3 !important;
-      margin-bottom: 6px !important;
-    }
-    .getvoxly-gate-desc {
-      font-size: 12px !important;
-      color: #666666 !important;
-      line-height: 1.4 !important;
-      margin-bottom: 14px !important;
-    }
-    .is-dark-theme .getvoxly-gate-desc {
-      color: #a1a1aa !important;
-    }
-    .getvoxly-gate-form {
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 10px !important;
-      text-align: left !important;
-    }
-    .getvoxly-gate-field {
-      display: flex !important;
-      flex-direction: column !important;
-      gap: 4px !important;
-    }
-    .getvoxly-gate-label {
-      font-size: 11px !important;
-      font-weight: 600 !important;
-      color: #444444 !important;
-    }
-    .is-dark-theme .getvoxly-gate-label {
-      color: #d4d4d8 !important;
-    }
-    .getvoxly-gate-req {
-      color: #ef4444 !important;
-    }
-    .getvoxly-gate-input {
-      width: 100% !important;
-      height: 34px !important;
-      border: 1px solid #e5e5e5 !important;
-      border-radius: 8px !important;
+    .getvoxly-attach-phone-input {
+      flex: 1 1 auto !important;
+      min-width: 0 !important;
+      height: 32px !important;
       padding: 0 10px !important;
-      font-size: 13px !important;
-      color: #111111 !important;
+      font-size: 12.5px !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 6px !important;
       background: #ffffff !important;
+      color: #111111 !important;
       outline: none !important;
       transition: border-color 0.15s, box-shadow 0.15s !important;
     }
-    .is-dark-theme .getvoxly-gate-input {
+    .is-dark-theme .getvoxly-attach-phone-input {
       background: #111111 !important;
       border-color: #27272a !important;
       color: #f1f5f9 !important;
     }
-    .getvoxly-gate-input:focus {
+    .getvoxly-attach-phone-input:focus {
       border-color: var(--accent-color, #4a38f5) !important;
       box-shadow: 0 0 0 2px rgba(74, 56, 245, 0.15) !important;
     }
-    .getvoxly-gate-error {
-      font-size: 11px !important;
-      color: #e11d48 !important;
-      background: #fff1f2 !important;
-      border: 1px solid #fecdd3 !important;
-      border-radius: 6px !important;
-      padding: 6px 8px !important;
-      line-height: 1.3 !important;
-    }
-    .getvoxly-gate-submit {
-      width: 100% !important;
-      height: 36px !important;
+    .getvoxly-attach-submit-btn {
+      height: 32px !important;
+      padding: 0 12px !important;
       background: var(--accent-color, #4a38f5) !important;
       color: #ffffff !important;
       border: none !important;
-      border-radius: 8px !important;
-      font-size: 13px !important;
+      border-radius: 6px !important;
+      font-size: 12px !important;
       font-weight: 600 !important;
       cursor: pointer !important;
-      transition: opacity 0.15s, transform 0.1s !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      margin-top: 4px !important;
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+      transition: opacity 0.15s !important;
     }
-    .getvoxly-gate-submit:hover {
+    .getvoxly-attach-submit-btn:hover {
       opacity: 0.92 !important;
     }
-    .getvoxly-gate-submit:active {
-      transform: scale(0.98) !important;
+    .getvoxly-attach-gate-error {
+      margin-top: 5px !important;
+      font-size: 11px !important;
+      color: #e11d48 !important;
+      font-weight: 500 !important;
     }
 
     /* Поле ввода */
@@ -1426,6 +1378,26 @@
       <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
       <div class="getvoxly-input-area">
         <div class="getvoxly-attachment-preview" id="getvoxly-attachment-preview" style="display: none;"></div>
+        <div class="getvoxly-attach-gate" id="getvoxly-attach-gate" style="display: none;">
+          <div class="getvoxly-attach-gate-header">
+            <div class="getvoxly-attach-gate-text">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              <span>Укажите телефон для прикрепления файла:</span>
+            </div>
+            <button class="getvoxly-attach-cancel-btn" id="getvoxly-attach-cancel" title="Отмена" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="getvoxly-attach-gate-row">
+            <input class="getvoxly-attach-phone-input" id="getvoxly-attach-phone" placeholder="+7 (999) 000-00-00" type="tel" autocomplete="tel" />
+            <button class="getvoxly-attach-submit-btn" id="getvoxly-attach-submit" type="button">Выбрать файл</button>
+          </div>
+          <div class="getvoxly-attach-gate-error" id="getvoxly-attach-error" style="display: none;"></div>
+        </div>
         <div class="getvoxly-input-wrapper">
           <button class="getvoxly-attach-btn" id="getvoxly-attach" title="Прикрепить фото или документ" type="button">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1443,38 +1415,6 @@
       </div>
       <div class="getvoxly-consent">
         Нажимая «Отправить», вы даете согласие на обработку персональных данных.
-      </div>
-      <div class="getvoxly-gate-overlay" id="getvoxly-gate-overlay" style="display: none;">
-        <div class="getvoxly-gate-card">
-          <button class="getvoxly-gate-close" id="getvoxly-gate-close" title="Отмена" type="button">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
-            </svg>
-          </button>
-          <div class="getvoxly-gate-badge">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-            </svg>
-          </div>
-          <div class="getvoxly-gate-title">Укажите контакт для связи</div>
-          <div class="getvoxly-gate-desc">Чтобы специалист мог изучить ваши файлы, подготовить расчёт и ответить вам, оставьте номер телефона или email.</div>
-          <div class="getvoxly-gate-form">
-            <div class="getvoxly-gate-field">
-              <label class="getvoxly-gate-label">Телефон или Telegram <span class="getvoxly-gate-req">*</span></label>
-              <input class="getvoxly-gate-input" id="getvoxly-gate-phone" placeholder="+7 (999) 000-00-00" type="tel" autocomplete="tel" />
-            </div>
-            <div class="getvoxly-gate-field">
-              <label class="getvoxly-gate-label">Электронная почта (email)</label>
-              <input class="getvoxly-gate-input" id="getvoxly-gate-email" placeholder="client@example.com" type="email" autocomplete="email" />
-            </div>
-            <div class="getvoxly-gate-field">
-              <label class="getvoxly-gate-label">Как к вам обращаться</label>
-              <input class="getvoxly-gate-input" id="getvoxly-gate-name" placeholder="Ваше имя" type="text" autocomplete="name" />
-            </div>
-            <div class="getvoxly-gate-error" id="getvoxly-gate-error" style="display: none;"></div>
-            <button class="getvoxly-gate-submit" id="getvoxly-gate-submit" type="button">Подтвердить и выбрать файл</button>
-          </div>
-        </div>
       </div>
     `;
 
@@ -1500,13 +1440,11 @@
     var attachBtn = document.getElementById('getvoxly-attach');
     var fileInput = document.getElementById('getvoxly-file-input');
     var attachmentPreview = document.getElementById('getvoxly-attachment-preview');
-    var gateOverlay = document.getElementById('getvoxly-gate-overlay');
-    var gateCloseBtn = document.getElementById('getvoxly-gate-close');
-    var gateSubmitBtn = document.getElementById('getvoxly-gate-submit');
-    var gatePhoneInput = document.getElementById('getvoxly-gate-phone');
-    var gateEmailInput = document.getElementById('getvoxly-gate-email');
-    var gateNameInput = document.getElementById('getvoxly-gate-name');
-    var gateError = document.getElementById('getvoxly-gate-error');
+    var attachGate = document.getElementById('getvoxly-attach-gate');
+    var attachCloseBtn = document.getElementById('getvoxly-attach-cancel');
+    var attachSubmitBtn = document.getElementById('getvoxly-attach-submit');
+    var attachPhoneInput = document.getElementById('getvoxly-attach-phone');
+    var attachGateError = document.getElementById('getvoxly-attach-error');
 
     var isExpanded = false;
     var pendingAttachment = null;
@@ -1517,9 +1455,8 @@
 
     function hasKnownLeadContact() {
       var p = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE);
-      var e = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL);
       var cleanP = p ? p.replace(/\D/g, '') : '';
-      return Boolean(cleanP.length >= 6 || (e && e.indexOf('@') > 0));
+      return Boolean(cleanP.length >= 10);
     }
 
     function formatBytes(bytes) {
@@ -1566,70 +1503,67 @@
       }
     }
 
-    function openGateModal() {
-      if (!gateOverlay) return;
-      if (gateError) {
-        gateError.style.display = 'none';
-        gateError.textContent = '';
+    function showAttachGate() {
+      if (!attachGate) return;
+      if (attachGateError) {
+        attachGateError.style.display = 'none';
+        attachGateError.textContent = '';
       }
-      if (gatePhoneInput) gatePhoneInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || '';
-      if (gateEmailInput) gateEmailInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || '';
-      if (gateNameInput) gateNameInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || '';
-      gateOverlay.style.display = 'flex';
-      if (gatePhoneInput) {
-        setTimeout(function () { gatePhoneInput.focus(); }, 80);
+      if (attachPhoneInput) {
+        attachPhoneInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || '';
+      }
+      attachGate.style.display = 'block';
+      if (attachPhoneInput) {
+        setTimeout(function () { attachPhoneInput.focus(); }, 60);
       }
     }
 
-    function closeGateModal() {
-      if (gateOverlay) gateOverlay.style.display = 'none';
+    function hideAttachGate() {
+      if (attachGate) attachGate.style.display = 'none';
+      if (attachGateError) {
+        attachGateError.style.display = 'none';
+        attachGateError.textContent = '';
+      }
     }
 
-    if (gateCloseBtn) {
-      gateCloseBtn.addEventListener('click', closeGateModal);
+    if (attachCloseBtn) {
+      attachCloseBtn.addEventListener('click', hideAttachGate);
     }
 
-    function submitGate() {
-      var phone = gatePhoneInput ? gatePhoneInput.value.trim() : '';
-      var email = gateEmailInput ? gateEmailInput.value.trim() : '';
-      var name = gateNameInput ? gateNameInput.value.trim() : '';
-
+    function submitAttachGate() {
+      var phone = attachPhoneInput ? attachPhoneInput.value.trim() : '';
       var cleanDigits = phone.replace(/\D/g, '');
-      var hasValidPhone = cleanDigits.length >= 6;
-      var hasValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-      if (!hasValidPhone && !hasValidEmail) {
-        if (gateError) {
-          gateError.textContent = 'Пожалуйста, укажите телефон или email для связи.';
-          gateError.style.display = 'block';
+      if (cleanDigits.length < 10) {
+        if (attachGateError) {
+          attachGateError.textContent = 'Пожалуйста, укажите действующий номер телефона.';
+          attachGateError.style.display = 'block';
         }
+        if (attachPhoneInput) attachPhoneInput.focus();
         return;
       }
 
-      if (phone) safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phone);
-      if (email) safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, email);
-      if (name) safeStorage.setItem(STORAGE_KEY_LEAD_NAME, name);
-
-      closeGateModal();
+      safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phone);
+      hideAttachGate();
       if (fileInput) {
         fileInput.click();
       }
     }
 
-    if (gateSubmitBtn) {
-      gateSubmitBtn.addEventListener('click', submitGate);
+    if (attachSubmitBtn) {
+      attachSubmitBtn.addEventListener('click', submitAttachGate);
     }
 
-    [gatePhoneInput, gateEmailInput, gateNameInput].forEach(function (inp) {
-      if (inp) {
-        inp.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            submitGate();
-          }
-        });
-      }
-    });
+    if (attachPhoneInput) {
+      attachPhoneInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submitAttachGate();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          hideAttachGate();
+        }
+      });
+    }
 
     if (expandBtn) {
       expandBtn.addEventListener('click', function () {
@@ -1660,7 +1594,7 @@
         if (hasKnownLeadContact()) {
           fileInput.click();
         } else {
-          openGateModal();
+          showAttachGate();
         }
       });
 
@@ -2373,7 +2307,9 @@
                 var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
                 linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
               } else if (b.type === 'max') {
-                linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                if (linkHref.indexOf('/u/') === -1) {
+                  linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                }
               }
               var iconSvg = '';
 
@@ -2404,7 +2340,9 @@
                   var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
                   href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
                 } else if (btn.type === 'max') {
-                  href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  if (href.indexOf('/u/') === -1) {
+                    href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  }
                 }
                 var icon = '';
                 if (btn.type === 'telegram') {
