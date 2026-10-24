@@ -1,4 +1,4 @@
-import { transaction, type TransactionClient } from "../../db/client.js";
+import { query, transaction, type TransactionClient } from "../../db/client.js";
 import { DealsService } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
 import {
@@ -353,12 +353,12 @@ export class CrmPipelineService {
   }
 
   /**
-   * Saves AI agent reply messages to the deal timeline.
+   * Saves AI agent reply messages to the deal timeline and sets pause if requested.
    */
   async saveAgentReply(input: {
     tenantId: string;
     dealId: string;
-    reply: { messages: string[] };
+    reply: { messages: string[]; handoff_required?: boolean; session_pause?: boolean };
     channel: string;
     channelAccountId: string;
   }): Promise<void> {
@@ -370,6 +370,24 @@ export class CrmPipelineService {
         channel: input.channel,
         channel_account_id: input.channelAccountId,
       });
+    }
+
+    // Если запрошена пауза сессии (троллинг / спам) — замораживаем бота на 60 минут
+    if (input.reply.session_pause) {
+      await query(
+        `UPDATE deals
+         SET ai_paused_until = now() + INTERVAL '60 minutes'
+         WHERE tenant_id = $1 AND id = $2`,
+        [input.tenantId, input.dealId],
+      );
+    } else if (input.reply.handoff_required) {
+      // При эскалации на человека замораживаем бота на 24 часа для работы оператора
+      await query(
+        `UPDATE deals
+         SET ai_paused_until = now() + INTERVAL '24 hours'
+         WHERE tenant_id = $1 AND id = $2`,
+        [input.tenantId, input.dealId],
+      );
     }
   }
 
