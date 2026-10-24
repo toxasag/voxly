@@ -318,10 +318,14 @@
       display: flex !important;
       align-items: center !important;
       gap: 6px !important;
-      transition: opacity 0.25s, transform 0.25s !important;
+      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
       line-height: 1.3 !important;
       visibility: visible !important;
       opacity: 1 !important;
+    }
+    .getvoxly-chat-badge.is-animating {
+      opacity: 0 !important;
+      transform: translateY(-68%) scale(0.92) !important;
     }
     .position-left .getvoxly-chat-badge {
       right: auto !important;
@@ -2013,7 +2017,7 @@
       win.style.bottom = '';
       win.style.maxHeight = '';
       if (badge) {
-        badge.style.display = '';
+        badge.style.display = (currentConfig && currentConfig.badgeEnabled === false) ? 'none' : '';
       }
     }
 
@@ -2084,6 +2088,55 @@
           wrapper.style.setProperty('--accent-color', accent);
           wrapper.style.setProperty('--badge-color', accent);
           win.style.setProperty('--accent-color', accent);
+
+          // Настройка всплывающего бейджа и динамической смены фраз
+          var badgeEl = document.getElementById('getvoxly-badge');
+          if (badgeEl) {
+            if (data.badgeEnabled === false) {
+              badgeEl.style.display = 'none';
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+            } else {
+              var badgePhrases = [];
+              if (Array.isArray(data.badgeTexts) && data.badgeTexts.length > 0) {
+                badgePhrases = data.badgeTexts.map(function (s) { return String(s).trim(); }).filter(Boolean);
+              } else if (typeof data.badgeTexts === 'string' && data.badgeTexts.trim()) {
+                badgePhrases = data.badgeTexts.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+              } else if (typeof data.badgeText === 'string' && data.badgeText.trim()) {
+                badgePhrases = [data.badgeText.trim()];
+              }
+
+              if (badgePhrases.length === 0) {
+                badgePhrases = ['Задайте вопрос'];
+              }
+
+              var badgeCurrentIdx = 0;
+              badgeEl.textContent = badgePhrases[0];
+              if (!isOpen) {
+                badgeEl.style.display = '';
+              }
+
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+
+              if (badgePhrases.length > 1) {
+                var intervalSec = Math.max(2, (data.badgeRotateIntervalSec || 5));
+                window.__gvx_badge_timer = setInterval(function () {
+                  if (isOpen) return;
+                  badgeEl.classList.add('is-animating');
+                  setTimeout(function () {
+                    badgeCurrentIdx = (badgeCurrentIdx + 1) % badgePhrases.length;
+                    badgeEl.textContent = badgePhrases[badgeCurrentIdx];
+                    badgeEl.classList.remove('is-animating');
+                  }, 250);
+                }, intervalSec * 1000);
+              }
+            }
+          }
 
           // Тема (светлая / тёмная)
           if (data.theme === 'dark') {

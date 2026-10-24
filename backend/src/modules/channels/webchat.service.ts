@@ -34,6 +34,11 @@ export interface WebchatAccountInfo {
   greeting?: string;
   placeholder?: string;
   position?: "bottom-right" | "bottom-left";
+  badgeEnabled?: boolean;
+  badgeText?: string;
+  badgeTexts?: string[];
+  badgeRotateIntervalSec?: number;
+  badgeIntervalSeconds?: number;
   showMessengerBanner?: boolean;
   messengerBannerMode?: "single" | "multi";
   singleTarget?: "telegram" | "whatsapp" | "max";
@@ -322,6 +327,33 @@ export class WebchatService {
         ? creds.proactiveMessage.trim()
         : "Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.";
 
+    const badgeEnabled = creds.badgeEnabled !== undefined ? Boolean(creds.badgeEnabled) : true;
+
+    let badgeTexts: string[] = [];
+    if (Array.isArray(creds.badgeTexts)) {
+      badgeTexts = creds.badgeTexts
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter((s) => s.length > 0);
+    } else if (typeof creds.badgeTexts === "string" && creds.badgeTexts.trim().length > 0) {
+      badgeTexts = creds.badgeTexts
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    } else if (typeof creds.badgeText === "string" && creds.badgeText.trim().length > 0) {
+      badgeTexts = [creds.badgeText.trim()];
+    }
+
+    if (badgeTexts.length === 0) {
+      badgeTexts = ["Задайте вопрос"];
+    }
+
+    const badgeRotateIntervalSec =
+      typeof creds.badgeRotateIntervalSec === "number" && creds.badgeRotateIntervalSec >= 2
+        ? creds.badgeRotateIntervalSec
+        : (typeof creds.badgeRotateIntervalSec === "string" && parseInt(creds.badgeRotateIntervalSec, 10) >= 2
+            ? parseInt(creds.badgeRotateIntervalSec, 10)
+            : 5);
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -361,6 +393,11 @@ export class WebchatService {
       proactiveEnabled,
       proactiveDelaySeconds,
       proactiveMessage,
+      badgeEnabled,
+      badgeText: badgeTexts[0] || "Задайте вопрос",
+      badgeTexts,
+      badgeRotateIntervalSec,
+      badgeIntervalSeconds: badgeRotateIntervalSec,
     };
   }
 
