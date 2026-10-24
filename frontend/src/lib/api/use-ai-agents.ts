@@ -224,3 +224,33 @@ export function formatKopecks(kopecks: number): string {
     maximumFractionDigits: kopecks % 100 === 0 ? 0 : 2,
   }).format(kopecks / 100);
 }
+
+export interface ActiveProviderInfo {
+  name: string;
+  providerType: string;
+  chatModel?: string;
+  isConfigured: boolean;
+}
+
+export interface AiModelItem {
+  id: string;
+  label: string;
+  provider: string;
+  contextWindow: number;
+  costInPer1k: number;
+  costOutPer1k: number;
+  isConfigured?: boolean;
+}
+
+export interface AiModelsResponse {
+  activeProvider: ActiveProviderInfo;
+  data: AiModelItem[];
+}
+
+export function useAiModels(): UseQueryResult<AiModelsResponse, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "models"],
+    queryFn: async () => (await apiClient.get<AiModelsResponse>(`${BASE_PATH}/models`)).data,
+    staleTime: 60_000,
+  });
+}

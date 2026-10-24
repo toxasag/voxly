@@ -248,3 +248,116 @@ export function useSaveAgentChannels(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Импорт веб-страниц по ссылке (URL)
+// ---------------------------------------------------------------------------
+
+export function useImportKnowledgeUrl(
+  agentId: string,
+): UseMutationResult<KnowledgeDocument, ApiClientError, { url: string; title?: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url, title }) => {
+      const res = await apiClient.post<KnowledgeDocument>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/url`,
+        { url, title },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Сканирование сайта (Краулер по sitemap.xml и внутренним ссылкам)
+// ---------------------------------------------------------------------------
+
+export interface CrawlSiteResult {
+  scannedCount: number;
+  indexedCount: number;
+  documents: KnowledgeDocument[];
+}
+
+export function useCrawlSite(
+  agentId: string,
+): UseMutationResult<CrawlSiteResult, ApiClientError, { url: string; maxPages?: number }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url, maxPages }) => {
+      const res = await apiClient.post<CrawlSiteResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/crawl-site`,
+        { url, maxPages },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Импорт отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon)
+// ---------------------------------------------------------------------------
+
+export interface MapReviewsImportResult {
+  document: KnowledgeDocument;
+  details: {
+    platform: string;
+    orgName: string;
+    rating?: string;
+    reviewsCount?: string;
+    reviewsFound: number;
+  };
+}
+
+export function useImportMapReviews(
+  agentId: string,
+): UseMutationResult<MapReviewsImportResult, ApiClientError, { url: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url }) => {
+      const res = await apiClient.post<MapReviewsImportResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/map-reviews`,
+        { url },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Обучение на успешных сделках (Closed-Won RAG)
+// ---------------------------------------------------------------------------
+
+export interface SalesExample {
+  id: string;
+  dealId: string;
+  dealTitle: string;
+  customerQuery: string;
+  agentReply: string;
+  createdAt: string;
+}
+
+export function useSalesExamples(
+  agentId: string,
+): UseQueryResult<SalesExample[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "sales-examples"],
+    queryFn: async () => {
+      const res = await apiClient.get<SalesExample[]>(
+        `${BASE_PATH}/agents/${agentId}/sales-examples`,
+      );
+      return res.data;
+    },
+  });
+}
