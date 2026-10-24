@@ -1455,39 +1455,69 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
 
                       {maxMode === "system" ? (
                         hasSystemMaxAccounts ? (
-                          <select
-                            value={maxAccountId}
-                            onChange={(e) => {
-                              const selectedId = e.target.value;
-                              setMaxAccountId(selectedId);
-                              const foundAcc = maxAccounts.find((a) => a.id === selectedId);
-                              if (foundAcc) {
-                                const isNumeric = /^\d+$/.test(foundAcc.externalId || "");
-                                setMaxLink(isNumeric ? "id505030516451_bot" : (foundAcc.externalId || ""));
-                              }
-                            }}
-                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 cursor-pointer"
-                          >
-                            <option value="">-- Выберите подключение MAX --</option>
-                            {maxAccounts.map((acc) => (
-                              <option key={acc.id} value={acc.id}>
-                                ⚡ {acc.label} ({acc.externalId})
-                              </option>
-                            ))}
-                          </select>
+                          <div className="space-y-2">
+                            <select
+                              value={maxAccountId}
+                              onChange={(e) => {
+                                const selectedId = e.target.value;
+                                setMaxAccountId(selectedId);
+                                const foundAcc = maxAccounts.find((a) => a.id === selectedId);
+                                if (foundAcc) {
+                                  const accCreds = (foundAcc.credentials ?? {}) as Record<string, unknown>;
+                                  if (typeof accCreds.maxLink === "string" && accCreds.maxLink.trim()) {
+                                    setMaxLink(accCreds.maxLink.trim());
+                                  }
+                                }
+                              }}
+                              className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-xs text-[#111111] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 cursor-pointer"
+                            >
+                              <option value="">-- Выберите подключение MAX --</option>
+                              {maxAccounts.map((acc) => (
+                                <option key={acc.id} value={acc.id}>
+                                  ⚡ {acc.label} ({acc.externalId})
+                                </option>
+                              ))}
+                            </select>
+
+                            <div className="rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs text-[#666666] space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-[#111111]">Ссылка на диалог в MAX:</span>
+                                {maxLink.includes("/u/") && (
+                                  <span className="text-[11px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                    ✓ Ссылка на профиль MAX
+                                  </span>
+                                )}
+                              </div>
+                              <input
+                                type="text"
+                                value={maxLink}
+                                onChange={(e) => setMaxLink(e.target.value)}
+                                placeholder="https://max.ru/u/f9LHodD0cOJ1..."
+                                className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 font-mono"
+                              />
+                              <p className="text-[11px] text-[#888888]">
+                                В приложении MAX откройте свой профиль → «Поделиться профилем» → скопируйте ссылку (вид: <code className="font-mono text-[#6366f1]">https://max.ru/u/...</code>) и вставьте сюда. По ней клиенты с сайта будут сразу переходить в личный диалог.
+                              </p>
+                            </div>
+                          </div>
                         ) : (
                           <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 text-xs text-amber-800">
                             <p>В системе пока нет MAX-подключений. <Link href="/integrations/max" className="underline font-semibold hover:text-amber-900">Подключить</Link> или укажите юзернейм/ссылку вручную.</p>
                           </div>
                         )
                       ) : (
-                        <input
-                          type="text"
-                          value={maxLink}
-                          onChange={(e) => setMaxLink(e.target.value)}
-                          placeholder="@company_bot или https://max.ru/company"
-                          className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 font-mono"
-                        />
+                        <div className="space-y-1.5">
+                          <input
+                            type="text"
+                            value={maxLink}
+                            onChange={(e) => setMaxLink(e.target.value)}
+                            placeholder="https://max.ru/u/... или @bot_username"
+                            className="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#6366f1] focus:outline-none focus:ring-1 focus:ring-[#6366f1]/20 font-mono"
+                          />
+                          <p className="text-[11px] text-[#888888]">
+                            Для личных аккаунтов укажите ссылку на профиль из приложения (<code className="font-mono text-[#6366f1]">https://max.ru/u/...</code>), для чат-ботов — <code className="font-mono text-[#6366f1]">@username</code>.
+                          </p>
+                        </div>
                       )}
                     </div>
                   </div>

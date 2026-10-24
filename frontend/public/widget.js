@@ -1669,7 +1669,9 @@
                 var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
                 linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
               } else if (b.type === 'max') {
-                linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                if (linkHref.indexOf('/u/') === -1) {
+                  linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                }
               }
               var iconSvg = '';
 
@@ -1700,7 +1702,9 @@
                   var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
                   href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
                 } else if (btn.type === 'max') {
-                  href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  if (href.indexOf('/u/') === -1) {
+                    href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  }
                 }
                 var icon = '';
                 if (btn.type === 'telegram') {
