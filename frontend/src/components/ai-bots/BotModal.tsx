@@ -1,9 +1,19 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Bot, Loader2, Save, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  Check,
+  FileCode,
+  Loader2,
+  RefreshCw,
+  Save,
+  Sliders,
+  Sparkles,
+} from "lucide-react";
 import type { AiBot, BotContextEntity, BotMode, BotModel } from "@/lib/ai-bots/ai-bots.types";
 import {
   CONTEXT_ENTITIES,
@@ -16,6 +26,11 @@ import {
 } from "@/lib/ai-bots/ai-bots.types";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
+import {
+  DIRECTOR_PROMPT_TEMPLATE,
+  INDUSTRY_PRESETS,
+  type IndustryPreset,
+} from "@/lib/ai-bots/prompt-templates";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
@@ -46,8 +61,17 @@ const DEFAULT_VALUES: CreateBotPayload = {
   accent: "amber",
   temperature: 0.6,
   max_tokens: 1024,
-  system_prompt: "",
+  system_prompt: DIRECTOR_PROMPT_TEMPLATE,
   context_entities: ["contacts", "deals"],
+  wizard_config: {
+    presetId: "tpl-universal-closer",
+    consultantName: "Алексей",
+    consultantRole: "ведущий специалист",
+    businessNiche: "оказание профильных услуг и консультация клиентов",
+    targetAction: "согласование деталей заказа и обмен прямыми контактами",
+    handoffSpecialist: "старший специалист профильного отдела",
+    isCustomEdited: false,
+  },
 };
 
 function toFormValues(bot: AiBot): CreateBotPayload {
@@ -62,11 +86,22 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     max_tokens: bot.max_tokens,
     system_prompt: bot.system_prompt,
     context_entities: [...bot.context_entities],
+    wizard_config: bot.wizard_config ?? {
+      presetId: "tpl-universal-closer",
+      consultantName: "Алексей",
+      consultantRole: "ведущий специалист",
+      businessNiche: "оказание профильных услуг и консультация клиентов",
+      targetAction: "согласование деталей заказа и обмен прямыми контактами",
+      handoffSpecialist: "старший специалист профильного отдела",
+      isCustomEdited: true,
+    },
   };
 }
 
 export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps) {
   const isEdit = bot !== null;
+  const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
+  const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
 
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
@@ -80,6 +115,8 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   useEffect(() => {
     if (!open) return;
     form.reset(bot !== null ? toFormValues(bot) : DEFAULT_VALUES);
+    setPromptTab(bot?.wizard_config ? "wizard" : "wizard");
+    setPendingPreset(null);
   }, [open, bot, form]);
 
   const submit = useCallback(
@@ -94,9 +131,9 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const selectedMode: BotMode = form.watch("mode");
   const selectedAccent = form.watch("accent");
   const temperature = form.watch("temperature");
-  const contextEntities = form.watch("context_entities");
   const systemPrompt = form.watch("system_prompt");
   const isPaused = form.watch("status") === "paused";
+  const wizardConfig = form.watch("wizard_config");
 
   const toggleEntity = useCallback(
     (entity: BotContextEntity) => {
@@ -109,12 +146,48 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
     [form],
   );
 
+  const applyPreset = useCallback(
+    (preset: IndustryPreset) => {
+      form.setValue(
+        "wizard_config",
+        {
+          presetId: preset.id,
+          consultantName: preset.defaultConfig.consultantName,
+          consultantRole: preset.defaultConfig.consultantRole,
+          businessNiche: preset.defaultConfig.businessNiche,
+          targetAction: preset.defaultConfig.targetAction,
+          handoffSpecialist: preset.defaultConfig.handoffSpecialist,
+          isCustomEdited: false,
+        },
+        { shouldValidate: true, shouldDirty: true },
+      );
+      form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+      setPendingPreset(null);
+    },
+    [form],
+  );
+
+  const handleSelectPreset = useCallback(
+    (preset: IndustryPreset) => {
+      const isCustom = form.getValues("wizard_config.isCustomEdited");
+      if (isCustom) {
+        setPendingPreset(preset);
+        return;
+      }
+      applyPreset(preset);
+    },
+    [applyPreset, form],
+  );
+
   if (!open) return null;
 
   const modelInfo = getModelInfo(selectedModel);
 
   return (
-    <Sheet open={open} onClose={onClose} width="w-[620px]" resizable>
+    <Sheet open={open} onClose={onClose} width="w-[660px]" resizable>
       <SheetHeader onClose={onClose}>
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#4a38f5]/10">
@@ -125,7 +198,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               {isEdit ? "Настройка бота" : "Новый AI-бот"}
             </h2>
             <p className="text-xs text-[#666666]">
-              {isEdit ? bot.name : "Модель, поведение и промпт"}
+              {isEdit ? bot.name : "Модель, отраслевая роль и поведение"}
             </p>
           </div>
         </div>
@@ -186,7 +259,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                 id="bot-description"
                 type="text"
                 {...form.register("description")}
-                placeholder="Готовит черновики ответов на входящие запросы по сделкам"
+                placeholder="Консультирует клиентов по услугам, отвечает на вопросы и квалифицирует лиды"
                 className={cn(
                   "w-full rounded-lg border border-[#e5e5e5] bg-white px-3.5 py-2 text-sm text-[#111111] placeholder:text-slate-400 focus:outline-none focus:border-[#4a38f5] focus:ring-2 focus:ring-[#4a38f5]/20",
                   errors.description && "border-rose-500",
@@ -223,22 +296,17 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     >
                       {model.label}
                     </span>
-                    <span className="mt-0.5 block text-xs text-slate-500">
+                    <span className="block text-[11px] text-[#666666]">
                       {getProviderLabel(model.provider)}
                     </span>
                   </button>
                 ))}
               </div>
-              {errors.model && <p className="text-xs text-rose-500">{errors.model.message}</p>}
-              <p className="text-xs text-slate-500">
-                Контекст {new Intl.NumberFormat("en-US", { notation: "compact" }).format(modelInfo.context_window)}{" "}
-                токенов · {modelInfo.price_in_per_1k} ₽ вход / {modelInfo.price_out_per_1k} ₽ выход за 1 тыс.
-              </p>
             </div>
 
             {/* Mode */}
             <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-slate-700">Режим</span>
+              <span className="block text-xs font-medium text-slate-700">Режим работы</span>
               <div className="grid grid-cols-3 gap-2">
                 {MODES.map((mode) => (
                   <button
@@ -248,56 +316,43 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                       form.setValue("mode", mode, { shouldValidate: true, shouldDirty: true })
                     }
                     className={cn(
-                      "rounded-lg border p-3 text-left transition-colors cursor-pointer",
+                      "rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
                       selectedMode === mode
-                        ? "border-[#4a38f5] bg-[#4a38f5]/5"
+                        ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
                         : "border-[#e5e5e5] bg-white hover:bg-slate-50",
                     )}
                   >
-                    <span className="mb-1 flex items-center gap-1.5">
-                      <span
-                        className={cn(
-                          "h-2 w-2 rounded-full",
-                          selectedMode === mode ? "bg-[#4a38f5]" : "bg-slate-300",
-                        )}
-                      />
-                      <span
-                        className={cn(
-                          "text-xs font-semibold",
-                          selectedMode === mode ? "text-[#4a38f5]" : "text-[#111111]",
-                        )}
-                      >
-                        {getBotModeLabel(mode)}
-                      </span>
+                    <span
+                      className={cn(
+                        "block text-xs font-semibold",
+                        selectedMode === mode ? "text-[#4a38f5]" : "text-[#111111]",
+                      )}
+                    >
+                      {getBotModeLabel(mode)}
                     </span>
-                    <span className="block text-xs leading-snug text-slate-500">
+                    <span className="block text-[11px] text-[#666666]">
                       {getBotModeDescription(mode)}
                     </span>
                   </button>
                 ))}
               </div>
-              {errors.mode && <p className="text-xs text-rose-500">{errors.mode.message}</p>}
             </div>
 
             {/* Context entities */}
             <div className="space-y-1.5">
               <span className="block text-xs font-medium text-slate-700">
-                Сущности контекста
-                <span className="ml-1.5 text-xs font-normal text-slate-500">
-                  подставляются на сервере для каждого запроса
-                </span>
+                Контекст CRM (сущности)
               </span>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="grid grid-cols-3 gap-2">
                 {CONTEXT_ENTITIES.map((entity) => {
-                  const selected = contextEntities.includes(entity);
+                  const selected = form.watch("context_entities").includes(entity);
                   return (
                     <button
                       key={entity}
                       type="button"
-                      aria-pressed={selected}
                       onClick={() => toggleEntity(entity)}
                       className={cn(
-                        "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                        "rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer",
                         selected
                           ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
                           : "border-[#e5e5e5] bg-white text-slate-600 hover:bg-slate-50",
@@ -335,9 +390,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                   }
                   className="w-full accent-[#4a38f5]"
                 />
-                <p className="text-xs text-slate-500">
-                  Меньше — предсказуемее, больше — креативнее.
-                </p>
+                <p className="text-xs text-slate-500">Меньше — предсказуемее, больше — свободнее.</p>
               </div>
 
               <div className="space-y-1.5">
@@ -362,15 +415,257 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               </div>
             </div>
 
-            {/* System prompt */}
-            <PromptTemplateEditor
-              value={systemPrompt}
-              onChange={(next) =>
-                form.setValue("system_prompt", next, { shouldValidate: true, shouldDirty: true })
-              }
-              contextWindow={modelInfo.context_window}
-              error={errors.system_prompt?.message}
-            />
+            {/* PROMPT SECTION: TABS (WIZARD vs DIRECT EDITOR) */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between border-b border-[#e5e5e5] pb-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPromptTab("wizard")}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                      promptTab === "wizard"
+                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                    )}
+                  >
+                    <Sliders className="h-3.5 w-3.5" />
+                    Конструктор роли (Без кода)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPromptTab("editor")}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer",
+                      promptTab === "editor"
+                        ? "bg-[#4a38f5]/10 text-[#4a38f5]"
+                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                    )}
+                  >
+                    <FileCode className="h-3.5 w-3.5" />
+                    Прямой редактор системного промпта
+                    {wizardConfig?.isCustomEdited && (
+                      <span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-[#854d0e] border border-[#fef08a]">
+                        кастом
+                      </span>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* OVERWRITE WARNING DIALOG */}
+              {pendingPreset && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3.5 text-xs space-y-2">
+                  <div className="flex items-start gap-2 text-[#854d0e]">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+                    <div>
+                      <p className="font-semibold">
+                        Применение отраслевого пресета «{pendingPreset.name}»
+                      </p>
+                      <p className="mt-0.5 text-slate-700">
+                        Вы вносили ручные изменения в системный промпт. Применение нового пресета
+                        обновит поля конструктора и сбросит ручные правки к чистому эталонному шаблону.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPendingPreset(null)}
+                      className="px-2.5 py-1 text-xs rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    >
+                      Отмена
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset(pendingPreset)}
+                      className="px-2.5 py-1 text-xs rounded bg-[#4a38f5] text-white hover:bg-[#3d2ee0] font-medium"
+                    >
+                      Применить и сбросить
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 1: VISUAL WIZARD */}
+              {promptTab === "wizard" && (
+                <div className="space-y-4 rounded-lg border border-[#e5e5e5] bg-[#fafafa]/50 p-4">
+                  {/* Preset Selector */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-slate-700">
+                      Отраслевой шаблон (Метод Станиславского v2.0)
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {INDUSTRY_PRESETS.map((preset) => {
+                        const isSelected = wizardConfig?.presetId === preset.id;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => handleSelectPreset(preset)}
+                            className={cn(
+                              "rounded-lg border p-2.5 text-left transition-all cursor-pointer",
+                              isSelected
+                                ? "border-[#4a38f5] bg-white ring-1 ring-[#4a38f5] shadow-2xs"
+                                : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-[#111111] truncate">
+                                {preset.name}
+                              </span>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5]" />}
+                            </div>
+                            <p className="mt-1 text-[11px] text-[#666666] line-clamp-2 leading-relaxed">
+                              {preset.description}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 5 Core Consultant Parameters */}
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Ниша / профиль компании (в именительном падеже)
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardConfig?.businessNiche ?? ""}
+                        onChange={(e) =>
+                          form.setValue("wizard_config.businessNiche", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="сервис технического обслуживания автомобилей"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Имя консультанта
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardConfig?.consultantName ?? ""}
+                        onChange={(e) =>
+                          form.setValue("wizard_config.consultantName", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="Дмитрий"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Должность / роль консультанта
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardConfig?.consultantRole ?? ""}
+                        onChange={(e) =>
+                          form.setValue("wizard_config.consultantRole", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="старший мастер-приёмщик"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Целевой шаг диалога (целевое действие)
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardConfig?.targetAction ?? ""}
+                        onChange={(e) =>
+                          form.setValue("wizard_config.targetAction", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="согласование времени для бесплатной диагностики на подъёмнике"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Специалист для эскалации (handoff)
+                      </label>
+                      <input
+                        type="text"
+                        value={wizardConfig?.handoffSpecialist ?? ""}
+                        onChange={(e) =>
+                          form.setValue("wizard_config.handoffSpecialist", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="руководитель сервисного участка"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Overwrite Protection Info */}
+                  <div className="flex items-center justify-between pt-2 border-t border-[#e5e5e5]">
+                    <span className="text-[11px] text-[#666666]">
+                      {wizardConfig?.isCustomEdited ? (
+                        <span className="text-amber-600 font-medium">
+                          В промпт внесены ручные правки. Чтобы синхронизировать форму с промптом:
+                        </span>
+                      ) : (
+                        "Параметры подставляются в промпт автоматически на сервере."
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        form.setValue("system_prompt", DIRECTOR_PROMPT_TEMPLATE, {
+                          shouldValidate: true,
+                          shouldDirty: true,
+                        });
+                        form.setValue("wizard_config.isCustomEdited", false, {
+                          shouldDirty: true,
+                        });
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs text-[#4a38f5] hover:text-[#3d2ee0] font-medium"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Сбросить к эталону Мета-Промпта v2.0
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: DIRECT PROMPT EDITOR */}
+              {promptTab === "editor" && (
+                <div className="space-y-2">
+                  <PromptTemplateEditor
+                    value={systemPrompt}
+                    onChange={(next) => {
+                      form.setValue("system_prompt", next, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      });
+                      if (!form.getValues("wizard_config.isCustomEdited")) {
+                        form.setValue("wizard_config.isCustomEdited", true, {
+                          shouldDirty: true,
+                        });
+                      }
+                    }}
+                    contextWindow={modelInfo.context_window}
+                    error={errors.system_prompt?.message}
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Status */}
             <label className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-[#e5e5e5] bg-slate-50 px-3.5 py-3">
@@ -388,7 +683,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
               <span className="text-xs text-[#111111]">
                 Активировать сразу
                 <span className="ml-1.5 text-slate-500">
-                  боты на паузе сохраняют настройки, но не работают
+                  боты на паузе сохраняют настройки, но не работают в каналах
                 </span>
               </span>
             </label>
@@ -406,7 +701,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
             <button
               type="submit"
               disabled={!isValid || isSubmitting}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isSubmitting ? (
                 <>

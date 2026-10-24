@@ -3,6 +3,8 @@
 // Module slug: ai_bots
 // ---------------------------------------------------------------------------
 
+import type { WizardConfig } from "@/schemas/ai-bot.schema";
+
 export type BotStatus = "active" | "paused";
 
 export type BotMode = "suggester" | "autoreply" | "disabled";
@@ -85,6 +87,7 @@ export interface AiBot {
   max_tokens: number;
   system_prompt: string;
   context_entities: BotContextEntity[];
+  wizard_config?: WizardConfig | null;
   tokens_used: number;
   tokens_limit: number;
   requests_count: number;
@@ -118,6 +121,17 @@ export interface PromptVariable {
 
 export const PROMPT_VARIABLES: PromptVariable[] = [
   { token: "tenant.name", label: "Название компании", example: "ООО Ромашка" },
+  { token: "consultant.name", label: "Имя консультанта", example: "Алексей" },
+  { token: "consultant.role", label: "Должность / роль консультанта", example: "старший мастер-приёмщик" },
+  { token: "business.niche", label: "Ниша / профиль компании", example: "сервис технического обслуживания автомобилей" },
+  { token: "target.action", label: "Целевое действие", example: "согласование времени для бесплатной диагностики" },
+  { token: "handoff.specialist", label: "Специалист для эскалации", example: "руководитель сервисного отдела" },
+  { token: "channel_type", label: "Канал связи", example: "онлайн-чат на сайте" },
+  { token: "current_time", label: "Текущее время", example: "14:30 МСК" },
+  { token: "knowledge_base_context", label: "Контекст базы знаний", example: "Выдержки из актуального прайса" },
+  { token: "website_context", label: "Материалы сайта", example: "Информация о гарантиях и услугах с сайта" },
+  { token: "reviews_and_reputation", label: "Отзывы клиентов", example: "Рейтинг 4.9 на Яндекс.Картах (более 200 отзывов)" },
+  { token: "successful_crm_patterns", label: "Успешный опыт CRM", example: "Примеры выигранных диалогов менеджеров" },
   { token: "user.name", label: "Текущий пользователь", example: "Иван Петров" },
   { token: "contact.name", label: "Имя контакта", example: "Сергей Волков" },
   { token: "contact.phone", label: "Телефон контакта", example: "+7 999 123 45 67" },

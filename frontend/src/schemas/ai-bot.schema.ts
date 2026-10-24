@@ -28,6 +28,21 @@ export const botContextEntityValues = [
 
 export const botAccentValues = ["amber", "sky", "emerald", "orange", "rose"] as const;
 
+export const wizardConfigSchema = z
+  .object({
+    presetId: z.string().optional(),
+    consultantName: z.string().optional(),
+    consultantRole: z.string().optional(),
+    businessNiche: z.string().optional(),
+    targetAction: z.string().optional(),
+    handoffSpecialist: z.string().optional(),
+    isCustomEdited: z.boolean().optional(),
+  })
+  .optional()
+  .nullable();
+
+export type WizardConfig = z.infer<typeof wizardConfigSchema>;
+
 // ---------------------------------------------------------------------------
 // Create / update bot
 // ---------------------------------------------------------------------------
@@ -55,6 +70,7 @@ export const createBotSchema = z.object({
   context_entities: z
     .array(z.enum(botContextEntityValues))
     .min(1, "Select at least one context entity"),
+  wizard_config: wizardConfigSchema,
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

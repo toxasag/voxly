@@ -432,6 +432,7 @@ export class WebchatService {
         channelAccountId: account.id,
         chatId: input.visitorId,
         text: promptText,
+        channelType: "онлайн-чат на сайте",
       }),
     );
 

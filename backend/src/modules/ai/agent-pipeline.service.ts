@@ -6,6 +6,8 @@ import {
 import { calculateAiCharge, isAiModelId, type AiModelId } from "./ai-pricing.js";
 import { buildSystemPrompt, parseAgentReply, type AgentReply } from "./agent-reply.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
+import { SalesLearnService } from "./sales-learn.service.js";
+import type { WizardConfig } from "./ai.types.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -67,6 +69,7 @@ interface AgentRow {
   temperature: string;
   max_tokens: number;
   system_prompt: string;
+  wizard_config: WizardConfig | null;
 }
 
 interface Logger {
@@ -80,6 +83,7 @@ export class AgentPipelineService {
     private readonly log: Logger,
     private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
     private readonly chat: ChatProvider = new GatewayChatProvider(),
+    private readonly salesLearn: SalesLearnService = new SalesLearnService(),
   ) {}
 
   /**
@@ -96,7 +100,7 @@ export class AgentPipelineService {
   }): Promise<AgentRow | null> {
     return queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt
+              a.max_tokens, a.system_prompt, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
@@ -121,6 +125,7 @@ export class AgentPipelineService {
     channelAccountId: string;
     chatId: string;
     text: string;
+    channelType?: string;
   }): Promise<PipelineOutcome> {
     const agent = await this.resolveAgent(input);
 
@@ -142,21 +147,39 @@ export class AgentPipelineService {
       return { kind: "insufficient_balance", balanceKopecks: balance.balanceKopecks };
     }
 
-    // Поиск не должен ронять ответ: при недоступных эмбеддингах агент отвечает
-    // без контекста, а не молчит.
-    const contextChunks = await this.knowledge
-      .search({
-        tenantId: input.tenantId,
-        agentId: agent.id,
-        question: input.text,
-      })
-      .catch((error: unknown) => {
-        this.log.warn(
-          { error, agentId: agent.id },
-          "Knowledge search failed, answering without context",
-        );
-        return [];
-      });
+    // Параллельный 4-слойный поиск: база знаний + закрытые сделки CRM + имя компании
+    const [contextChunks, salesExamples, tenantRow] = await Promise.all([
+      this.knowledge
+        .search({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          question: input.text,
+        })
+        .catch((error: unknown) => {
+          this.log.warn(
+            { error, agentId: agent.id },
+            "Knowledge search failed, answering without context",
+          );
+          return [];
+        }),
+      this.salesLearn
+        .findRelevantSalesExamples({
+          tenantId: input.tenantId,
+          query: input.text,
+          limit: 2,
+        })
+        .catch((error: unknown) => {
+          this.log.warn(
+            { error, agentId: agent.id },
+            "Sales learn search failed, continuing without crm patterns",
+          );
+          return [];
+        }),
+      queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [input.tenantId],
+      ).catch(() => null),
+    ]);
 
     const model = isAiModelId(agent.model) ? agent.model : FALLBACK_MODEL;
 
@@ -167,11 +190,31 @@ export class AgentPipelineService {
       );
     }
 
+    const wc = agent.wizard_config;
+    const variables: Record<string, string> = {
+      "tenant.name": tenantRow?.name ?? "Компания",
+      "channel_type": input.channelType ?? "онлайн-чат",
+      "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    if (wc) {
+      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
+      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
+      if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
     const systemPrompt = buildSystemPrompt({
       agentPrompt: agent.system_prompt,
       contextChunks: contextChunks.map((hit) => ({
         content: hit.content,
         filename: hit.filename,
+      })),
+      variables,
+      crmPatterns: salesExamples.map((ex) => ({
+        customerQuery: ex.customerQuery,
+        agentReply: ex.agentReply,
       })),
     });
 

@@ -531,6 +531,7 @@ export class TelegramTransportService {
         channelAccountId: batch.channelAccountId,
         chatId: batch.chatId,
         text: batch.text,
+        channelType: "Telegram",
       }),
     );
 
