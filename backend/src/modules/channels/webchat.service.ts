@@ -1,3 +1,4 @@
+import { getEnv } from "../../config/env.js";
 import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
@@ -242,7 +243,12 @@ export class WebchatService {
       let maxUrl = rawMax;
       if (!maxUrl.startsWith("http")) {
         const clean = maxUrl.replace(/^@/, "");
-        maxUrl = `https://max.ru/${clean}`;
+        if (/^\d+$/.test(clean)) {
+          const defaultBot = getEnv().MAX_BOT_USERNAME || "id505030516451_bot";
+          maxUrl = `https://max.ru/${defaultBot}`;
+        } else {
+          maxUrl = `https://max.ru/${clean}`;
+        }
       }
       messengerButtons.push({
         type: "max",

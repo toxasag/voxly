@@ -1327,6 +1327,8 @@
               } else if (b.type === 'whatsapp') {
                 var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
                 linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+              } else if (b.type === 'max') {
+                linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
               }
               var iconSvg = '';
 
@@ -1356,6 +1358,8 @@
                 } else if (btn.type === 'whatsapp') {
                   var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
                   href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+                } else if (btn.type === 'max') {
+                  href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
                 }
                 var icon = '';
                 if (btn.type === 'telegram') {
@@ -1386,13 +1390,20 @@
 
           if (isProactive && !safeSessionStorage.getItem(proKey)) {
             setTimeout(function () {
-              if (!isOpen && !safeSessionStorage.getItem(proKey)) {
+              var alreadyShown = safeSessionStorage.getItem(proKey);
+              if (!alreadyShown) {
                 safeSessionStorage.setItem(proKey, 'true');
-                openWidget();
-                var proMsg = data.proactiveMessage || 'Здравствуйте! Я онлайн, спрашивайте — готов вам помочь.';
                 var hist = getLocalHistory();
-                if (hist.length === 0) {
-                  saveAndRenderMessage(proMsg, false);
+                var userHasSpoken = hist.some(function (m) { return m.isUser; });
+                if (!userHasSpoken) {
+                  if (!isOpen) {
+                    openWidget();
+                  }
+                  var proMsg = data.proactiveMessage || 'Я онлайн, спрашивайте, готов вам помочь';
+                  var lastMsg = hist.length > 0 ? hist[hist.length - 1] : null;
+                  if (!lastMsg || lastMsg.text !== proMsg) {
+                    saveAndRenderMessage(proMsg, false);
+                  }
                 }
               }
             }, delaySec * 1000);
