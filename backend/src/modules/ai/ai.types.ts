@@ -21,6 +21,21 @@ export const agentContextEntityValues = [
 export type AgentStatus = (typeof agentStatusValues)[number];
 export type AgentMode = (typeof agentModeValues)[number];
 
+export const wizardConfigSchema = z
+  .object({
+    presetId: z.string().optional(),
+    consultantName: z.string().optional(),
+    consultantRole: z.string().optional(),
+    businessNiche: z.string().optional(),
+    targetAction: z.string().optional(),
+    handoffSpecialist: z.string().optional(),
+    isCustomEdited: z.boolean().optional(),
+  })
+  .optional()
+  .nullable();
+
+export type WizardConfig = z.infer<typeof wizardConfigSchema>;
+
 export const createAgentSchema = z.object({
   name: z.string().trim().min(2, "Название минимум 2 символа").max(80),
   description: z.string().trim().max(300).optional(),
@@ -37,6 +52,7 @@ export const createAgentSchema = z.object({
     .min(20, "Системный промпт минимум 20 символов")
     .max(8000, "Системный промпт до 8000 символов"),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
+  wizard_config: wizardConfigSchema,
 });
 
 export type CreateAgentPayload = z.infer<typeof createAgentSchema>;
@@ -77,6 +93,7 @@ export interface AiAgentDTO {
   maxTokens: number;
   systemPrompt: string;
   contextEntities: string[];
+  wizardConfig?: WizardConfig | null;
   /** Агрегаты из ai_usage_log: список агентов показывает расход по каждому. */
   tokensUsed: number;
   requestsCount: number;

@@ -37,6 +37,7 @@ interface AgentRow {
   max_tokens: number;
   system_prompt: string;
   context_entities: string[];
+  wizard_config: AiAgentDTO["wizardConfig"];
   tokens_used: string;
   requests_count: string;
   avg_latency_ms: string;
@@ -66,6 +67,7 @@ function toDTO(row: AgentRow): AiAgentDTO {
     maxTokens: row.max_tokens,
     systemPrompt: row.system_prompt,
     contextEntities: row.context_entities,
+    wizardConfig: row.wizard_config ?? null,
     tokensUsed: Number(row.tokens_used),
     requestsCount: Number(row.requests_count),
     avgLatencyMs: Math.round(Number(row.avg_latency_ms)),
@@ -85,6 +87,7 @@ function toDTO(row: AgentRow): AiAgentDTO {
 const AGENT_SELECT = `
   SELECT a.id, a.name, a.description, a.accent, a.model, a.status, a.mode,
          a.temperature, a.max_tokens, a.system_prompt, a.context_entities,
+         a.wizard_config,
          COALESCE(u.tokens_used, 0)::text AS tokens_used,
          COALESCE(u.requests_count, 0)::text AS requests_count,
          COALESCE(u.avg_latency_ms, 0)::text AS avg_latency_ms,
@@ -150,8 +153,8 @@ export class AiService {
       return tx.queryOneOrThrow<{ id: string }>(
         `INSERT INTO ai_agents
            (tenant_id, name, description, accent, model, status, mode,
-            temperature, max_tokens, system_prompt, context_entities)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            temperature, max_tokens, system_prompt, context_entities, wizard_config)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
          RETURNING id`,
         [
           tenantId,
@@ -165,6 +168,7 @@ export class AiService {
           payload.max_tokens,
           payload.system_prompt,
           payload.context_entities,
+          payload.wizard_config ? JSON.stringify(payload.wizard_config) : null,
         ],
       );
     });
@@ -197,7 +201,8 @@ export class AiService {
          temperature = COALESCE($9, temperature),
          max_tokens = COALESCE($10, max_tokens),
          system_prompt = COALESCE($11, system_prompt),
-         context_entities = COALESCE($12, context_entities)
+         context_entities = COALESCE($12, context_entities),
+         wizard_config = CASE WHEN $13::text IS NOT NULL THEN $13::jsonb ELSE wizard_config END
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
        RETURNING id`,
       [
@@ -213,6 +218,7 @@ export class AiService {
         payload.max_tokens ?? null,
         payload.system_prompt ?? null,
         payload.context_entities ?? null,
+        payload.wizard_config !== undefined ? (payload.wizard_config ? JSON.stringify(payload.wizard_config) : null) : null,
       ],
     );
 
