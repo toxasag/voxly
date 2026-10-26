@@ -174,9 +174,35 @@ export function findUnknownVariables(body: string): string[] {
   return extractPromptVariables(body).filter((token) => !supported.has(token));
 }
 
-/** Substitutes every known variable with its example value (preview only). */
-export function renderPromptPreview(body: string): string {
+/** Substitutes every known variable with its example value or bot-specific value (preview only). */
+export function renderPromptPreview(
+  body: string,
+  bot?: { name?: string; wizard_config?: WizardConfig },
+  tenantName?: string,
+): string {
   const examples = new Map(PROMPT_VARIABLES.map((v) => [v.token, v.example]));
+  const wc = bot?.wizard_config;
+
+  if (tenantName) {
+    examples.set("tenant.name", tenantName);
+    examples.set("company.name", tenantName);
+  }
+  if (wc?.consultantName || bot?.name) {
+    examples.set("consultant.name", wc?.consultantName || bot?.name || "Консультант");
+  }
+  if (wc?.consultantRole) {
+    examples.set("consultant.role", wc.consultantRole);
+  }
+  if (wc?.businessNiche) {
+    examples.set("business.niche", wc.businessNiche);
+  }
+  if (wc?.targetAction) {
+    examples.set("target.action", wc.targetAction);
+  }
+  if (wc?.handoffSpecialist) {
+    examples.set("handoff.specialist", wc.handoffSpecialist);
+  }
+
   return body.replace(VARIABLE_PATTERN, (whole, token: string) => examples.get(token) ?? whole);
 }
 

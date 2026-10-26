@@ -90,6 +90,64 @@ function pluralChunks(count: number): string {
   return `${count} фрагментов`;
 }
 
+function isDocInCategory(
+  filename: string,
+  category: "prices" | "crm" | "whatsapp" | "site" | "reviews",
+): boolean {
+  const lower = filename.toLowerCase();
+  if (category === "prices") {
+    return (
+      lower.includes("прайс") ||
+      lower.includes("цена") ||
+      lower.includes("цен") ||
+      lower.includes("price") ||
+      lower.includes("услуг") ||
+      lower.includes("кп") ||
+      lower.includes("коммерческ") ||
+      lower.includes("тариф") ||
+      lower.includes("смет") ||
+      lower.includes("стоимост") ||
+      lower.includes("расчет") ||
+      lower.includes("расчёт") ||
+      filename.endsWith(".docx") ||
+      filename.endsWith(".pdf") ||
+      filename.endsWith(".xlsx")
+    );
+  }
+  if (category === "crm") {
+    return filename.startsWith("[CRM]") || filename.startsWith("CRM") || lower.includes("сделка");
+  }
+  if (category === "whatsapp") {
+    return (
+      filename.startsWith("[WhatsApp]") ||
+      filename.startsWith("WhatsApp") ||
+      lower.includes("whatsapp") ||
+      lower.includes("ватсап")
+    );
+  }
+  if (category === "site") {
+    return (
+      filename.startsWith("Сайт") ||
+      filename.startsWith("[Сайт]") ||
+      lower.includes("http") ||
+      lower.includes(".ru") ||
+      lower.includes(".com")
+    );
+  }
+  if (category === "reviews") {
+    return (
+      filename.startsWith("[Отзывы]") ||
+      filename.startsWith("Отзывы") ||
+      lower.includes("отзыв") ||
+      lower.includes("карты") ||
+      lower.includes("карт") ||
+      lower.includes("яндекс") ||
+      lower.includes("2gis")
+    );
+  }
+  return false;
+}
+
 export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) {
   const { data, isLoading, error } = useKnowledgeDocuments(agentId);
   const addText = useAddKnowledgeText(agentId);
@@ -135,30 +193,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
 
   const filteredDocuments = useMemo(() => {
     if (categoryFilter === "all") return documents;
-    return documents.filter((doc) => {
-      const lower = doc.filename.toLowerCase();
-      if (categoryFilter === "prices") {
-        return (
-          lower.includes("прайс") ||
-          lower.includes("цена") ||
-          lower.includes("price") ||
-          lower.includes("услуг")
-        );
-      }
-      if (categoryFilter === "crm") {
-        return doc.filename.startsWith("[CRM]");
-      }
-      if (categoryFilter === "whatsapp") {
-        return doc.filename.startsWith("[WhatsApp]");
-      }
-      if (categoryFilter === "site") {
-        return doc.filename.startsWith("[Сайт]") || lower.includes("http");
-      }
-      if (categoryFilter === "reviews") {
-        return doc.filename.startsWith("[Отзывы]") || doc.filename.startsWith("Отзывы");
-      }
-      return true;
-    });
+    return documents.filter((doc) => isDocInCategory(doc.filename, categoryFilter));
   }, [documents, categoryFilter]);
 
   const handleFileChange = useCallback(
@@ -742,39 +777,27 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
               {
                 id: "prices",
                 label: "💰 Прайс и услуги",
-                count: documents.filter((d) => {
-                  const l = d.filename.toLowerCase();
-                  return (
-                    l.includes("прайс") ||
-                    l.includes("цена") ||
-                    l.includes("price") ||
-                    l.includes("услуг")
-                  );
-                }).length,
+                count: documents.filter((d) => isDocInCategory(d.filename, "prices")).length,
               },
               {
                 id: "crm",
                 label: "⚡ Из CRM",
-                count: documents.filter((d) => d.filename.startsWith("[CRM]")).length,
+                count: documents.filter((d) => isDocInCategory(d.filename, "crm")).length,
               },
               {
                 id: "whatsapp",
                 label: "💬 WhatsApp",
-                count: documents.filter((d) => d.filename.startsWith("[WhatsApp]")).length,
+                count: documents.filter((d) => isDocInCategory(d.filename, "whatsapp")).length,
               },
               {
                 id: "site",
                 label: "🌐 Сайт",
-                count: documents.filter(
-                  (d) => d.filename.startsWith("[Сайт]") || d.filename.toLowerCase().includes("http"),
-                ).length,
+                count: documents.filter((d) => isDocInCategory(d.filename, "site")).length,
               },
               {
                 id: "reviews",
                 label: "⭐ Отзывы",
-                count: documents.filter(
-                  (d) => d.filename.startsWith("[Отзывы]") || d.filename.startsWith("Отзывы"),
-                ).length,
+                count: documents.filter((d) => isDocInCategory(d.filename, "reviews")).length,
               },
             ].map((cat) => (
               <button
@@ -832,10 +855,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
             {!isLoading && filteredDocuments.length > 0 && (
               <div className="space-y-2">
                 {filteredDocuments.map((document) => {
-                  const isPrice =
-                    document.filename.toLowerCase().includes("прайс") ||
-                    document.filename.toLowerCase().includes("price") ||
-                    document.filename.toLowerCase().includes("цена");
+                  const isPrice = isDocInCategory(document.filename, "prices");
 
                   return (
                     <div
