@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { platformConfigService } from "../admin/platform-config.service.js";
+import { geminiKeyPoolService } from "./gemini-key-pool.service.js";
 
 const verifyKeySchema = z.object({
   apiKey: z.string().trim().min(1, "API-ключ обязателен"),
@@ -136,6 +137,17 @@ export default async function geminiIntegrationRoutes(app: FastifyInstance): Pro
         details: cleanErrorMsg,
         statusCode,
       },
+    });
+  });
+
+  /**
+   * Получение статистики утилизации квот пула ключей Google Gemini (RPM/TPM/RPD, кулдауны).
+   */
+  app.get("/pool-stats", async (_request, reply) => {
+    const stats = await geminiKeyPoolService.getPoolStats();
+    return reply.status(200).send({
+      success: true,
+      data: stats,
     });
   });
 }

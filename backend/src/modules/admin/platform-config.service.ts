@@ -179,6 +179,11 @@ export class PlatformConfigService {
     }
   }
 
+  isKeyInvalid(key: string): boolean {
+    const trimmed = key?.trim();
+    return trimmed ? this.invalidKeysSet.has(trimmed) : true;
+  }
+
   isLlmConfiguredSync(): boolean {
     if (this.cachedEffective) {
       if (

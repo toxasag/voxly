@@ -161,6 +161,15 @@ const baseSchema = z.object({
    */
   LLM_API_BASE_URL: optionalNonEmpty(z.string().url("LLM_API_BASE_URL must be a URL")),
   LLM_API_KEY: optionalNonEmpty(z.string().min(8)),
+  /**
+   * Дополнительный список API-ключей Google Gemini через env (разделитель: запятая или перенос строки).
+   */
+  GEMINI_API_KEYS: optionalNonEmpty(z.string()),
+  /**
+   * Подключение к Redis (M7.2 Quotas, Rate Limiting & BullMQ Queues).
+   * Опционально: при отсутствии работает через надёжный in-memory rate limiter.
+   */
+  REDIS_URL: optionalNonEmpty(z.string()),
 
   /**
     * Модель эмбеддингов. Значение по умолчанию проверено живым вызовом шлюза:
