@@ -18,6 +18,7 @@ import type { ModuleSlug } from "@/types";
 import { useTheme } from "@/lib/hooks/use-theme";
 import { CommandMenu } from "@/components/shared/CommandMenu";
 import { NotificationDropdown } from "@/components/layout/NotificationDropdown";
+import { Logo } from "@/components/brand";
 
 interface QuickAction {
   label: string;
@@ -63,7 +64,7 @@ export function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 md:gap-3 md:px-5">
+      <header className="sticky top-0 z-30 flex h-11 items-center gap-2 border-b border-[#e5e5e5] bg-white px-4 md:gap-3 md:px-5 dark:border-[#27272a] dark:bg-[#111111] transition-colors">
         {/* Search / Command Palette Trigger */}
         <div className="relative hidden min-w-0 flex-1 max-w-sm md:block">
           <button
@@ -81,7 +82,8 @@ export function Header() {
 
         {/* Mobile brand text */}
         <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
-          <span className="truncate text-[13px] font-semibold text-[#111111]">
+          <Logo variant="mark" size="xs" href="/dashboard" />
+          <span className="truncate text-[13px] font-semibold text-[#111111] dark:text-white">
             {displayTenant.tenantName}
           </span>
         </div>
