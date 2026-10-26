@@ -1,4 +1,4 @@
-import { queryOne, transaction } from "../../db/client.js";
+import { query, queryOne, transaction } from "../../db/client.js";
 import {
   GatewayChatProvider,
   type ChatProvider,
@@ -146,6 +146,7 @@ export class AgentPipelineService {
     chatId: string;
     text: string;
     channelType?: string;
+    dealId?: string;
   }): Promise<PipelineOutcome> {
     const agent = await this.resolveAgent(input);
 
@@ -167,13 +168,63 @@ export class AgentPipelineService {
       return { kind: "insufficient_balance", balanceKopecks: balance.balanceKopecks };
     }
 
+    // Загружаем предыдущую историю сообщений диалога для поддержания целостного контекста
+    let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    if (input.dealId) {
+      try {
+        interface HistoryMessageRow {
+          direction: string;
+          content: string;
+        }
+        const rows = await query<HistoryMessageRow>(
+          `SELECT direction, content
+           FROM deal_messages
+           WHERE tenant_id = $1 AND deal_id = $2
+           ORDER BY created_at DESC
+           LIMIT 12`,
+          [input.tenantId, input.dealId],
+        );
+
+        const chronological: HistoryMessageRow[] = [...rows].reverse();
+        // Убираем последнее сообщение, если оно дублирует текущий входящий input.text
+        if (
+          chronological.length > 0 &&
+          chronological[chronological.length - 1]?.direction === "inbound"
+        ) {
+          chronological.pop();
+        }
+
+        conversationHistory = chronological
+          .map((m: HistoryMessageRow) => {
+            let content = m.content.trim();
+            if (m.direction === "inbound") {
+              content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();
+            }
+            return {
+              role: (m.direction === "inbound" ? "user" : "assistant") as "user" | "assistant",
+              content,
+            };
+          })
+          .filter((m: { role: "user" | "assistant"; content: string }) => m.content.length > 0);
+      } catch (err) {
+        this.log.warn({ err, dealId: input.dealId }, "Failed to fetch deal message history for agent");
+      }
+    }
+
+    const recentUserContext = conversationHistory
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .slice(-2)
+      .join(" ");
+    const searchQuestion = recentUserContext ? `${recentUserContext} ${input.text}` : input.text;
+
     // Параллельный 4-слойный поиск: база знаний + закрытые сделки CRM + имя компании
     const [contextChunks, salesExamples, tenantRow] = await Promise.all([
       this.knowledge
         .search({
           tenantId: input.tenantId,
           agentId: agent.id,
-          question: input.text,
+          question: searchQuestion,
         })
         .catch((error: unknown) => {
           this.log.warn(
@@ -185,7 +236,7 @@ export class AgentPipelineService {
       this.salesLearn
         .findRelevantSalesExamples({
           tenantId: input.tenantId,
-          query: input.text,
+          query: searchQuestion,
           limit: 2,
         })
         .catch((error: unknown) => {
@@ -243,6 +294,7 @@ export class AgentPipelineService {
         model: GATEWAY_MODEL[model] ?? model,
         messages: [
           { role: "system", content: systemPrompt },
+          ...conversationHistory,
           { role: "user", content: input.text },
         ],
         temperature: Number(agent.temperature),
