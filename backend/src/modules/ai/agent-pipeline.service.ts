@@ -170,20 +170,73 @@ export class AgentPipelineService {
 
     // Загружаем предыдущую историю сообщений диалога для поддержания целостного контекста
     let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let contactProfileContext = "";
     if (input.dealId) {
       try {
         interface HistoryMessageRow {
           direction: string;
           content: string;
+          channel?: string;
         }
-        const rows = await query<HistoryMessageRow>(
-          `SELECT direction, content
-           FROM deal_messages
-           WHERE tenant_id = $1 AND deal_id = $2
-           ORDER BY created_at DESC
-           LIMIT 12`,
-          [input.tenantId, input.dealId],
+
+        // 1. Находим contact_id сделки для сквозной памяти по всем каналам (Webchat -> Telegram -> WhatsApp)
+        const dealInfo = await queryOne<{ contact_id: string | null }>(
+          `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+          [input.dealId, input.tenantId],
         );
+        const contactId = dealInfo?.contact_id;
+
+        let rows: HistoryMessageRow[] = [];
+        if (contactId) {
+          // Сквозная выборка истории: все сообщения контакта по всем каналам и сделкам
+          rows = await query<HistoryMessageRow>(
+            `SELECT m.direction, m.content, m.channel
+             FROM deal_messages m
+             JOIN deals d ON d.id = m.deal_id
+             WHERE d.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+             ORDER BY m.created_at DESC
+             LIMIT 16`,
+            [input.tenantId, contactId],
+          );
+
+          // Профиль контакта (имя, телефон, ниша, заметки) для постоянной памяти агента
+          const contactRow = await queryOne<{
+            first_name: string;
+            last_name: string;
+            phone: string;
+            notes: string;
+            custom_fields: Record<string, unknown> | null;
+          }>(
+            `SELECT first_name, last_name, phone, notes, custom_fields
+             FROM contacts
+             WHERE id = $1 AND tenant_id = $2`,
+            [contactId, input.tenantId],
+          );
+
+          if (contactRow) {
+            const profileParts: string[] = [];
+            const fullName = `${contactRow.first_name || ""} ${contactRow.last_name || ""}`.trim();
+            if (fullName && !fullName.startsWith("Посетитель сайта")) profileParts.push(`Имя клиента: ${fullName}`);
+            if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
+            if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
+            if (contactRow.custom_fields && typeof contactRow.custom_fields === "object") {
+              const cf = contactRow.custom_fields;
+              if (cf.business_niche) profileParts.push(`Сфера деятельности клиента: ${cf.business_niche}`);
+            }
+            if (profileParts.length > 0) {
+              contactProfileContext = `ПРОФИЛЬ И КОНТЕКСТ КЛИЕНТА В CRM:\n${profileParts.join("\n")}`;
+            }
+          }
+        } else {
+          rows = await query<HistoryMessageRow>(
+            `SELECT direction, content, channel
+             FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2
+             ORDER BY created_at DESC
+             LIMIT 16`,
+            [input.tenantId, input.dealId],
+          );
+        }
 
         const chronological: HistoryMessageRow[] = [...rows].reverse();
         // Убираем последнее сообщение, если оно дублирует текущий входящий input.text
@@ -287,6 +340,7 @@ export class AgentPipelineService {
         customerQuery: ex.customerQuery,
         agentReply: ex.agentReply,
       })),
+      contactProfile: contactProfileContext,
     });
 
     try {
