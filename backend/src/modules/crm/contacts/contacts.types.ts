@@ -382,3 +382,42 @@ export function normalizeSocials(socials: ContactSocialPayload[]): ContactSocial
 export function socialValue(socials: ContactSocialJson[], kind: SocialKind): string | null {
   return socials.find((entry) => entry.kind === kind)?.value ?? null;
 }
+
+export interface ContactDealItemDTO {
+  id: string;
+  title: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColorKey: string;
+  isWon: boolean;
+  isLost: boolean;
+  pipelineId: string;
+  pipelineName: string;
+  ownerId: string | null;
+  ownerName: string | null;
+  createdAt: string;
+  closedAt: string | null;
+  daysInPipeline: number;
+}
+
+export interface ContactDealsHistoryDTO {
+  deals: ContactDealItemDTO[];
+  metrics: {
+    totalDeals: number;
+    wonDeals: number;
+    lostDeals: number;
+    openDeals: number;
+    totalBudget: number;
+    wonRevenue: number;
+    ltv: number;
+    avgCheck: number;
+    firstDealAt: string | null;
+    lastDealAt: string | null;
+    repeatCustomer: boolean;
+  };
+  total: number;
+  limit: number;
+  offset: number;
+}

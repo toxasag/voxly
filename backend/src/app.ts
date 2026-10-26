@@ -32,6 +32,7 @@ import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
+import { conversionDispatcher } from "./modules/analytics/conversion-dispatcher.service.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
 import { SalesLearnService } from "./modules/ai/sales-learn.service.js";
 import { StageRulesService } from "./modules/crm/deals/stage-rules.service.js";
@@ -179,6 +180,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Core CRM — authenticate + authorize are registered inside the group.
   await app.register(crmRoutes, { prefix: "/api/v1/crm" });
+  await app.register(crmRoutes, { prefix: "/api/crm" });
+  await app.register(crmRoutes, { prefix: "/api" });
   await app.register(stageRulesRoutes, { prefix: "/api/v1/crm/stage-rules" });
 
   // Service Center — additionally gated on the `service_center` module being
@@ -190,6 +193,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
+  await app.register(analyticsRoutes, { prefix: "/api/analytics" });
 
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
@@ -289,6 +293,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Автоворонки по этапам сделок
   const stageRulesService = new StageRulesService();
   onDealStageChanged((payload) => void stageRulesService.fireStageRules(payload));
+
+  // Серверные конверсии и трекеры аналитики (Server-Side Conversion Tracking)
+  onDealStageChanged((payload) => void conversionDispatcher.handleDealStageChanged(payload));
 
   app.get("/health", async (_request, reply) => {
     const dbReachable = await checkConnection();

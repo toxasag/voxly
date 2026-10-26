@@ -61,6 +61,7 @@ import { formatPhone, telHref } from "@/lib/utils/phone";
 import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
+import { DealContactHistoryTab } from "./DealContactHistoryTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -2374,7 +2375,15 @@ function FilesTab() {
 
 
 /** Идентификаторы вкладок — ключи реестра и строк `page_layout_tabs`. */
-export const DEAL_TAB_IDS = ["home", "chat", "timeline", "tasks", "notes", "files"] as const;
+export const DEAL_TAB_IDS = [
+  "home",
+  "chat",
+  "timeline",
+  "contact-history",
+  "tasks",
+  "notes",
+  "files",
+] as const;
 export type DealTabId = (typeof DEAL_TAB_IDS)[number];
 
 /**
@@ -2408,6 +2417,7 @@ export function dealTabContents(
       </Guard>
     ),
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
+    "contact-history": <DealContactHistoryTab dealId={deal.id} />,
     tasks: (
       <RecordTasksTab
         targetType="deal"

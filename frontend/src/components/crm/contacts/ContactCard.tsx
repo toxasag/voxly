@@ -26,6 +26,7 @@ import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { RecordRepairsTab } from "@/components/crm/shared/RecordRepairsTab";
 import { RecordDealsSection } from "@/components/crm/shared/RecordDealsSection";
+import { ContactDealsHistoryTab } from "./ContactDealsHistoryTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
@@ -880,6 +881,7 @@ export const ContactCard = memo(function ContactCard({
           />
         </div>
       ),
+      "deals-history": <ContactDealsHistoryTab contactId={contact.id} />,
       repairs: <RecordRepairsTab customerId={contact.id} />,
       timeline: <RecordTimelineTab recordType="contact" recordId={contact.id} />,
       tasks: <RecordTasksTab targetType="contact" targetId={contact.id} />,

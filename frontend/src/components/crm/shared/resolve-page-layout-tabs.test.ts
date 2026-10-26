@@ -107,6 +107,8 @@ describe("resolvePageLayoutTabs", () => {
     expect(FALLBACK_PAGE_LAYOUT_TABS.deal.map((tab) => [tab.tabKey, tab.position, tab.isActive])).toEqual([
       ["home", 10, true],
       ["chat", 15, true],
+      ["timeline", 20, true],
+      ["contact-history", 25, true],
       ["tasks", 30, true],
       ["notes", 40, true],
       ["files", 50, false],

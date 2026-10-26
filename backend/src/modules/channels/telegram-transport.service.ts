@@ -687,6 +687,7 @@ export class TelegramTransportService {
         chatId: batch.chatId,
         text: batch.text,
         channelType: "Telegram",
+        dealId: dealId ?? undefined,
       }),
     );
 

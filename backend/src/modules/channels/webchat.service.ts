@@ -145,6 +145,7 @@ function parseUserAgent(ua: string) {
 }
 
 export class WebchatService {
+  private static readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly crm = new CrmPipelineService();
   private readonly agentPipeline: AgentPipelineService;
 
@@ -436,9 +437,32 @@ export class WebchatService {
   }
 
   /**
-   * Обработка входящего сообщения от посетителя сайта.
+   * Обработка входящего сообщения от посетителя сайта с гарантией очередности (Session Lock).
    */
   async processIncomingMessage(input: WebchatMessageInput): Promise<WebchatMessageResult> {
+    const sessionKey = `${input.channelAccountId}:${input.visitorId}`;
+    const previousLock = WebchatService.sessionLocks.get(sessionKey) || Promise.resolve();
+
+    let releaseLock!: () => void;
+    const currentLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    WebchatService.sessionLocks.set(sessionKey, currentLock);
+
+    // Ожидаем завершения предыдущего обращения по этой же сессии
+    await previousLock;
+
+    try {
+      return await this.executeProcessIncomingMessage(input);
+    } finally {
+      releaseLock();
+      if (WebchatService.sessionLocks.get(sessionKey) === currentLock) {
+        WebchatService.sessionLocks.delete(sessionKey);
+      }
+    }
+  }
+
+  private async executeProcessIncomingMessage(input: WebchatMessageInput): Promise<WebchatMessageResult> {
     const account = await this.resolveAccount(input.channelAccountId);
 
     const text = input.text ? input.text.trim() : "";
@@ -623,6 +647,7 @@ export class WebchatService {
         chatId: input.visitorId,
         text: promptText,
         channelType: "онлайн-чат на сайте",
+        dealId: crmResult.dealId,
       }),
     );
 
