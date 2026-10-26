@@ -456,6 +456,10 @@ export function useUpdateAdminIntegrationsConfig(): UseMutationResult<
       void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "config"] });
       void queryClient.invalidateQueries({ queryKey: ["admin", "billing"] });
       void queryClient.invalidateQueries({ queryKey: ["marketplace", "billing"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-bots"] });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", "integrations"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-agent", "providers"] });
     },
   });
 }
@@ -521,4 +525,54 @@ export function useVerifyLlmKeys(): UseMutationResult<
       (await apiClient.post<VerifyLlmKeysResponse>("/api/v1/admin/integrations/llm/verify-keys", payload)).data,
   });
 }
+
+export function useVerifySingleGeminiKey(): UseMutationResult<
+  { success: boolean; is_active: boolean; message: string; modelsCount?: number },
+  ApiClientError,
+  { apiKey: string; baseUrl?: string; save?: boolean }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) =>
+      (
+        await apiClient.post<{
+          success: boolean;
+          is_active: boolean;
+          message: string;
+          modelsCount?: number;
+        }>("/api/integrations/gemini/verify", payload)
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "config"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-bots"] });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", "integrations"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-agent", "providers"] });
+    },
+  });
+}
+
+export function useRemoveInvalidLlmKeys(): UseMutationResult<
+  { success: boolean; removedCount: number },
+  ApiClientError,
+  { providerId: string; invalidKeys: string[] }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload) =>
+      (
+        await apiClient.post<{ success: boolean; removedCount: number }>(
+          "/api/v1/admin/integrations/llm/remove-invalid-keys",
+          payload,
+        )
+      ).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "integrations", "config"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai", "models"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-bots"] });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", "integrations"] });
+    },
+  });
+}
+
 

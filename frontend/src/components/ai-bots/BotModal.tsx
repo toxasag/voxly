@@ -300,16 +300,28 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const isPaused = form.watch("status") === "paused";
   const wizardConfig = form.watch("wizard_config");
 
-  const { data: modelsData, isLoading: modelsLoading } = useAiModels();
+  const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useAiModels();
   const { data: crmStats } = useCrmKnowledgeStats();
   const activeProvider = modelsData?.activeProvider;
   const rawModelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
+
+  // При открытии окна принудительно запрашиваем актуальный статус моделей и интеграций
+  useEffect(() => {
+    if (open) {
+      void refetchModels();
+    }
+  }, [open, refetchModels]);
 
   // Оставляем только РЕАЛЬНО настроенные модели, если у нас есть данные от бэкенда
   const modelsList = modelsData?.data && modelsData.data.length > 0
     ? modelsData.data.filter((m) => m.isConfigured !== false)
     : activeProvider?.isConfigured
-      ? rawModelsList
+      ? rawModelsList.filter(
+          (m) =>
+            ("isConfigured" in m && Boolean(m.isConfigured)) ||
+            m.provider === activeProvider.providerType ||
+            (activeProvider.providerType === "gemini" && m.provider === "google"),
+        )
       : [];
 
   // Автоматически синхронизируем выбранную модель с активной моделью провайдера
@@ -486,7 +498,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <div key={i} className="h-14 rounded-lg border border-[#e5e5e5] bg-slate-50 animate-pulse" />
                   ))}
                 </div>
-              ) : !activeProvider?.isConfigured || modelsList.length === 0 ? (
+              ) : !activeProvider?.isConfigured && modelsList.length === 0 ? (
                 <div className="rounded-[8px] border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-start gap-2.5">
                   <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>

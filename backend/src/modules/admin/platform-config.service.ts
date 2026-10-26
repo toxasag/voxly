@@ -1,5 +1,5 @@
 import { getEnv } from "../../config/env.js";
-import { queryOne, runWithPlatformScope } from "../../db/client.js";
+import { query, queryOne, runWithPlatformScope } from "../../db/client.js";
 
 export type LlmProviderType = "gemini" | "openai" | "openrouter" | "deepseek" | "custom";
 
@@ -163,6 +163,26 @@ export class PlatformConfigService {
   private cachedEffective: EffectiveIntegrations | null = null;
   private cacheExpiresAt = 0;
   private roundRobinIndex = 0;
+  private invalidKeysSet = new Set<string>();
+
+  markKeyInvalid(key: string): void {
+    const trimmed = key?.trim();
+    if (trimmed) {
+      this.invalidKeysSet.add(trimmed);
+    }
+  }
+
+  markKeyValid(key: string): void {
+    const trimmed = key?.trim();
+    if (trimmed) {
+      this.invalidKeysSet.delete(trimmed);
+    }
+  }
+
+  isKeyInvalid(key: string): boolean {
+    const trimmed = key?.trim();
+    return trimmed ? this.invalidKeysSet.has(trimmed) : true;
+  }
 
   isLlmConfiguredSync(): boolean {
     if (this.cachedEffective) {
@@ -369,13 +389,18 @@ export class PlatformConfigService {
     }
 
     if (target && target.apiKeys.length > 0) {
-      const keys = target.apiKeys;
+      const allTargetKeys = target.apiKeys;
+      const validKeys = allTargetKeys.filter((k) => !this.invalidKeysSet.has(k.trim()));
+      // Если есть заведомо проверенные/не отклонённые ключи, ротируем их в первую очередь
+      const keys = validKeys.length > 0 ? validKeys : allTargetKeys;
+
       const pickedIndex = this.roundRobinIndex % keys.length;
       this.roundRobinIndex = (this.roundRobinIndex + 1) % keys.length;
       const selectedKey = keys[pickedIndex] ?? keys[0] ?? "";
 
-      // Составляем упорядоченный список ключей для failover, начиная со следующего
-      const allKeys = [...keys.slice(pickedIndex), ...keys.slice(0, pickedIndex)];
+      // Составляем упорядоченный список ключей для failover, помещая оставшиеся ключи в конец
+      const otherKeys = allTargetKeys.filter((k) => k !== selectedKey);
+      const allKeys = [selectedKey, ...otherKeys];
 
       return {
         baseUrl: target.baseUrl,
@@ -1007,6 +1032,125 @@ export class PlatformConfigService {
       results,
       models: fetchedModels,
     };
+  }
+
+  /**
+   * Быстрое сохранение одиночного валидного ключа с немедленной активацией провайдера.
+   */
+  async saveSingleWorkingKey(providerType: LlmProviderType, key: string, baseUrl?: string): Promise<void> {
+    this.cachedEffective = null;
+    this.cacheExpiresAt = 0;
+    this.markKeyValid(key);
+
+    await runWithPlatformScope(async () => {
+      const current = await queryOne<PlatformIntegrationsRow>(
+        `SELECT * FROM platform_integrations_config WHERE id = 'default'`,
+      );
+
+      let providers: LlmProviderStoredItem[] = [];
+      if (Array.isArray(current?.llm_providers)) {
+        providers = [...(current.llm_providers as LlmProviderStoredItem[])];
+      }
+
+      const existingIdx = providers.findIndex(
+        (p) => p.providerType === providerType || p.id === `prov-${providerType}`,
+      );
+      const cleanKey = key.trim();
+
+      if (existingIdx >= 0) {
+        const target = providers[existingIdx]!;
+        const keys = target.apiKeys ? [...target.apiKeys] : [];
+        if (!keys.includes(cleanKey)) {
+          keys.unshift(cleanKey);
+        }
+        providers[existingIdx] = {
+          ...target,
+          apiKeys: keys,
+          isActive: true,
+          isDefault: true,
+          baseUrl: baseUrl || target.baseUrl,
+        };
+      } else {
+        providers.unshift({
+          id: `prov-${providerType}`,
+          name: providerType === "gemini" ? "Google Gemini" : providerType,
+          providerType,
+          baseUrl: baseUrl || "https://generativelanguage.googleapis.com/v1beta/openai",
+          apiKeys: [cleanKey],
+          chatModel: "gemini-3.5-flash",
+          embeddingModel: "gemini-embedding-001",
+          isActive: true,
+          isDefault: true,
+        });
+      }
+
+      await query(
+        `UPDATE platform_integrations_config
+         SET llm_providers = $1,
+             llm_api_key = $2,
+             llm_api_base_url = COALESCE($3, llm_api_base_url),
+             updated_at = now()
+         WHERE id = 'default'`,
+        [JSON.stringify(providers), cleanKey, baseUrl ?? null],
+      );
+    });
+
+    this.cachedEffective = null;
+    this.cacheExpiresAt = 0;
+  }
+
+  /**
+   * Удаление неработающих/битых ключей из пула.
+   */
+  async removeInvalidKeys(providerId: string, invalidKeys: string[]): Promise<number> {
+    this.cachedEffective = null;
+    this.cacheExpiresAt = 0;
+
+    const invalidSet = new Set(invalidKeys.map((k) => k.trim()));
+    for (const k of invalidKeys) {
+      this.markKeyInvalid(k);
+    }
+
+    let removedCount = 0;
+    await runWithPlatformScope(async () => {
+      const current = await queryOne<PlatformIntegrationsRow>(
+        `SELECT * FROM platform_integrations_config WHERE id = 'default'`,
+      );
+
+      let providers: LlmProviderStoredItem[] = [];
+      if (Array.isArray(current?.llm_providers)) {
+        providers = [...(current.llm_providers as LlmProviderStoredItem[])];
+      }
+
+      const idx = providers.findIndex(
+        (p) => p.id === providerId || (providerId === "gemini" && p.providerType === "gemini"),
+      );
+      if (idx >= 0) {
+        const target = providers[idx]!;
+        const initialLen = target.apiKeys.length;
+        const remainingKeys = target.apiKeys.filter(
+          (k) => !invalidSet.has(k.trim()) && !invalidSet.has(maskApiKey(k)),
+        );
+        removedCount = initialLen - remainingKeys.length;
+
+        providers[idx] = {
+          ...target,
+          apiKeys: remainingKeys,
+        };
+
+        await query(
+          `UPDATE platform_integrations_config
+           SET llm_providers = $1,
+               updated_at = now()
+           WHERE id = 'default'`,
+          [JSON.stringify(providers)],
+        );
+      }
+    });
+
+    this.cachedEffective = null;
+    this.cacheExpiresAt = 0;
+    return removedCount;
   }
 }
 

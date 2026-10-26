@@ -170,31 +170,37 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
           isConfigured: true,
         };
       }
+    } catch (err) {
+      _request.log.warn({ err }, "Не удалось прочитать конфигурацию интеграций для каталога моделей");
+    }
 
-      // Запрашиваем РЕАЛЬНО доступные чат-модели у активного провайдера
-      const available = await platformConfigService.fetchAvailableModels();
-      if (available.success && available.models.length > 0) {
-        const chatOnly = available.models.filter((m) => {
-          if (m.type !== "chat") return false;
-          const id = m.id.toLowerCase();
-          if (id.includes("tts") || id.includes("audio") || id.includes("transcribe")) return false;
-          if (id.includes("banana") || id.includes("robotics") || id.includes("lyria") || id.includes("clip")) return false;
-          if (id === "aqa") return false;
-          return true;
-        });
+    // Запрашиваем РЕАЛЬНО доступные чат-модели у активного провайдера отдельным изолированным вызовом
+    if (activeProvider && activeProvider.isConfigured) {
+      try {
+        const available = await platformConfigService.fetchAvailableModels();
+        if (available.success && available.models.length > 0) {
+          const chatOnly = available.models.filter((m) => {
+            if (m.type !== "chat") return false;
+            const id = m.id.toLowerCase();
+            if (id.includes("tts") || id.includes("audio") || id.includes("transcribe")) return false;
+            if (id.includes("banana") || id.includes("robotics") || id.includes("lyria") || id.includes("clip")) return false;
+            if (id === "aqa") return false;
+            return true;
+          });
 
-        dynamicModels = chatOnly.map((m) => ({
-          id: m.id,
-          label: m.name,
-          provider: activeProvider?.providerType || "google",
-          contextWindow: 128_000,
-          costInPer1k: 5,
-          costOutPer1k: 15,
-          isConfigured: true,
-        }));
+          dynamicModels = chatOnly.map((m) => ({
+            id: m.id,
+            label: m.name,
+            provider: activeProvider?.providerType || "google",
+            contextWindow: 128_000,
+            costInPer1k: 5,
+            costOutPer1k: 15,
+            isConfigured: true,
+          }));
+        }
+      } catch (err) {
+        _request.log.warn({ err }, "Не удалось запросить динамический список моделей от внешнего API");
       }
-    } catch {
-      // Игнорируем ошибку чтения интеграций
     }
 
     // Если у активного провайдера задана chatModel, гарантируем её присутствие на первом месте
@@ -217,15 +223,22 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Формируем список моделей каталога с честным статусом подключения
-    const catalogWithRealStatus = Object.values(AI_MODEL_CATALOG).map((model) => ({
-      id: model.id,
-      label: model.label,
-      provider: model.provider,
-      contextWindow: model.contextWindow,
-      costInPer1k: model.costInPer1k,
-      costOutPer1k: model.costOutPer1k,
-      isConfigured: isProviderConfigured(model.provider),
-    }));
+    const catalogWithRealStatus = Object.values(AI_MODEL_CATALOG).map((model) => {
+      const isConfig =
+        isProviderConfigured(model.provider) ||
+        (Boolean(activeProvider?.isConfigured) &&
+          (model.provider === "google" || model.provider === activeProvider?.providerType));
+
+      return {
+        id: model.id,
+        label: model.label,
+        provider: model.provider,
+        contextWindow: model.contextWindow,
+        costInPer1k: model.costInPer1k,
+        costOutPer1k: model.costOutPer1k,
+        isConfigured: isConfig,
+      };
+    });
 
     // Если провайдер вернул реальные модели, используем их; иначе базовый каталог с честными статусами
     const finalModels = dynamicModels.length > 0 ? dynamicModels : catalogWithRealStatus;

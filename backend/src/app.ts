@@ -28,6 +28,7 @@ import aiRoutes from "./modules/ai/ai.routes.js";
 import adminTenantRoutes from "./modules/admin/admin-tenants.routes.js";
 import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
+import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
@@ -209,6 +210,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Внутренние эндпоинты для сервиса max-bridge (upsert, active bots, delete, inbound/outbound)
   await app.register(maxInternalRoutes, { prefix: "/api/internal/max" });
+
+  // Верификация и диагностика провайдера Google Gemini
+  await app.register(geminiIntegrationRoutes, { prefix: "/api/integrations/gemini" });
+  await app.register(geminiIntegrationRoutes, { prefix: "/api/v1/integrations/gemini" });
 
   // Раздача клиентского JS-виджета для внешних сайтов (WordPress, Tilda и др.)
   app.get("/widget.js", async (request, reply) => {

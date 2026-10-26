@@ -1,6 +1,7 @@
 import { getEnv } from "../config/env.js";
 import { AppError } from "../plugins/errorHandler.js";
 import { platformConfigService } from "../modules/admin/platform-config.service.js";
+import { geminiKeyPoolService, type AcquiredKeyResult } from "../modules/ai/gemini-key-pool.service.js";
 
 // ---------------------------------------------------------------------------
 // Слой абстракции чат-вызовов LLM (`.cursorrules` §1: без прямого `fetch` к
@@ -129,9 +130,14 @@ export class GatewayChatProvider implements ChatProvider {
   private readonly apiKey: string | undefined;
 
   constructor() {
-    const env = getEnv();
-    this.baseUrl = env.LLM_API_BASE_URL?.replace(/\/+$/, "");
-    this.apiKey = env.LLM_API_KEY;
+    try {
+      const env = getEnv();
+      this.baseUrl = env.LLM_API_BASE_URL?.replace(/\/+$/, "");
+      this.apiKey = env.LLM_API_KEY;
+    } catch {
+      this.baseUrl = process.env.LLM_API_BASE_URL?.replace(/\/+$/, "");
+      this.apiKey = process.env.LLM_API_KEY;
+    }
   }
 
   get isConfigured(): boolean {
@@ -147,33 +153,164 @@ export class GatewayChatProvider implements ChatProvider {
   }): Promise<ChatCompletionResult> {
     const config = await platformConfigService.getRotatedLlmConfig();
     const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
-    const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
 
-    if (!activeBaseUrl || keysToTry.length === 0) {
+    if (!activeBaseUrl) {
       throw new ChatUnavailableError();
     }
 
+    const isGoogle =
+      activeBaseUrl.includes("generativelanguage.googleapis.com") ||
+      (config?.providerId?.includes("gemini") ?? false);
+
     const startedAt = Date.now();
+
+    // -------------------------------------------------------------------------
+    // Специализированный умный роутер для Google Gemini (Key Pool & Quota Manager)
+    // -------------------------------------------------------------------------
+    if (isGoogle) {
+      let targetModel = input.model;
+      if (config?.chatModel && config.chatModel.trim().length > 0) {
+        targetModel = config.chatModel;
+      }
+      if (targetModel.startsWith("gemini/")) {
+        targetModel = targetModel.replace(/^gemini\//, "");
+      }
+
+      const promptChars = input.messages.reduce((acc, m) => acc + (m.content?.length || 0), 0);
+      const estimatedTokens = Math.ceil(promptChars / 4) + (input.maxTokens ?? 1024);
+
+      const allKeys = await geminiKeyPoolService.getAllPoolKeys();
+      const maxAttempts = Math.min(Math.max(allKeys.length * 2, 4), 8);
+      const excludedKeyIds: string[] = [];
+
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        let acquisition: AcquiredKeyResult;
+        try {
+          acquisition = await geminiKeyPoolService.acquireKey(targetModel, {
+            estimatedTokens,
+            excludeKeyIds: excludedKeyIds,
+          });
+        } catch (err) {
+          throw err instanceof AppError ? err : new ChatFailedError(err instanceof Error ? err.message : String(err));
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        try {
+          const response = await fetch(`${activeBaseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${acquisition.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: acquisition.model,
+              messages: input.messages,
+              temperature: input.temperature ?? 0.7,
+              max_tokens: input.maxTokens ?? 1024,
+              stream: false,
+              ...(input.jsonMode === true && { response_format: { type: "json_object" } }),
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const text = await response.text().catch(() => "");
+            const isAuthError =
+              response.status === 401 ||
+              response.status === 403 ||
+              text.includes("deleted or disabled") ||
+              text.includes("API key not valid");
+
+            if (isAuthError) {
+              platformConfigService.markKeyInvalid(acquisition.apiKey);
+              excludedKeyIds.push(acquisition.keyId);
+              continue;
+            }
+
+            if (response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit")) {
+              const retryAfterHeader = response.headers.get("retry-after");
+              const parsedRetryAfter = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+              const isDailyLimit =
+                text.toLowerCase().includes("day") ||
+                text.toLowerCase().includes("rpd") ||
+                text.includes("Requests per day");
+              const limitType = isDailyLimit ? "RPD" : "RPM";
+
+              await geminiKeyPoolService.markRateLimited(
+                acquisition.keyId,
+                acquisition.model,
+                parsedRetryAfter,
+                limitType,
+              );
+              excludedKeyIds.push(acquisition.keyId);
+              lastError = new ChatFailedError(`Ключ ${acquisition.maskedKey} достиг лимита ${limitType} (HTTP 429)`);
+              continue;
+            }
+
+            if (response.status >= 500 && attempt < maxAttempts - 1) {
+              excludedKeyIds.push(acquisition.keyId);
+              lastError = new ChatFailedError(`Google Gemini вернул HTTP ${response.status}`);
+              continue;
+            }
+
+            throw new ChatFailedError(`HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`);
+          }
+
+          const parsed = parseCompletion(await response.json());
+
+          // Фиксируем фактический расход токенов
+          await geminiKeyPoolService.reportUsage(
+            acquisition.keyId,
+            acquisition.model,
+            parsed.tokensIn + parsed.tokensOut,
+          );
+
+          return {
+            content: parsed.content,
+            tokensIn: parsed.tokensIn,
+            tokensOut: parsed.tokensOut,
+            model: parsed.model.length > 0 ? parsed.model : acquisition.model,
+            latencyMs: Date.now() - startedAt,
+          };
+        } catch (error) {
+          if (attempt < maxAttempts - 1) {
+            excludedKeyIds.push(acquisition.keyId);
+            lastError = error instanceof Error ? error : new Error(String(error));
+            continue;
+          }
+          if (error instanceof AppError) throw error;
+          const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+          throw new ChatFailedError(reason);
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      throw lastError || new ChatFailedError("Все попытки вызова Google Gemini завершились ошибкой");
+    }
+
+    // -------------------------------------------------------------------------
+    // Роутер по умолчанию для OpenAI, DeepSeek, OpenRouter и прочих провайдеров
+    // -------------------------------------------------------------------------
+    const keysToTry = config?.allKeys?.length ? config.allKeys : this.apiKey ? [this.apiKey] : [];
+    if (keysToTry.length === 0) {
+      throw new ChatUnavailableError();
+    }
+
     let lastError: Error | null = null;
 
     for (let i = 0; i < keysToTry.length; i++) {
       const activeApiKey = keysToTry[i];
+      if (!activeApiKey) continue;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       let modelToSend = input.model;
-      const isGoogle =
-        activeBaseUrl.includes("generativelanguage.googleapis.com") ||
-        (config?.providerId?.includes("gemini") ?? false);
-      if (isGoogle) {
-        if (config?.chatModel && config.chatModel.trim().length > 0) {
-          modelToSend = config.chatModel;
-        } else if (modelToSend.startsWith("gemini/")) {
-          modelToSend = modelToSend.replace(/^gemini\//, "");
-        } else {
-          modelToSend = "gemini-1.5-flash";
-        }
-      } else if (modelToSend.startsWith("openrouter/") && !activeBaseUrl.includes("openrouter")) {
+      if (modelToSend.startsWith("openrouter/") && !activeBaseUrl.includes("openrouter")) {
         modelToSend = modelToSend.replace(/^openrouter\/[^/]+\//, "");
       }
 
@@ -197,11 +334,24 @@ export class GatewayChatProvider implements ChatProvider {
 
         if (!response.ok) {
           const text = await response.text().catch(() => "");
-          const isRateLimit = response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit");
+          const isAuthError =
+            response.status === 401 ||
+            response.status === 403 ||
+            text.includes("deleted or disabled") ||
+            text.includes("API key not valid");
+          if (isAuthError && activeApiKey) {
+            platformConfigService.markKeyInvalid(activeApiKey);
+          }
 
-          // Если превышена квота или rate limit (429) и в пуле ещё есть запасные ключи — пробуем следующий
-          if (isRateLimit && i < keysToTry.length - 1) {
-            lastError = new ChatFailedError(`HTTP 429 на ключе #${i + 1}`);
+          const isRetryable =
+            isAuthError ||
+            response.status === 429 ||
+            response.status >= 500 ||
+            text.includes("RESOURCE_EXHAUSTED") ||
+            text.includes("Rate limit");
+
+          if (isRetryable && i < keysToTry.length - 1) {
+            lastError = new ChatFailedError(`Ключ #${i + 1} вернул HTTP ${response.status}: ${text.slice(0, 100)}`);
             continue;
           }
 
@@ -220,8 +370,8 @@ export class GatewayChatProvider implements ChatProvider {
           latencyMs: Date.now() - startedAt,
         };
       } catch (error) {
-        if (error instanceof AppError && error.code === "LLM_FAILED" && error.message.includes("429") && i < keysToTry.length - 1) {
-          lastError = error;
+        if (i < keysToTry.length - 1) {
+          lastError = error instanceof Error ? error : new Error(String(error));
           continue;
         }
         if (error instanceof AppError) throw error;
