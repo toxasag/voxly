@@ -40,9 +40,11 @@ describe("extensionOf / isSupportedExtension", () => {
     expect(extensionOf("no-extension")).toBe("");
   });
 
-  it("допускает только txt, md, docx и pdf", () => {
+  it("допускает только txt, md, docx, pdf, xlsx и csv", () => {
     expect(isSupportedExtension("docx")).toBe(true);
     expect(isSupportedExtension("md")).toBe(true);
+    expect(isSupportedExtension("xlsx")).toBe(true);
+    expect(isSupportedExtension("csv")).toBe(true);
     // Исполняемые и архивы отклоняются: текст из них не извлекается, а приём
     // произвольных файлов означал бы хранение чужих бинарников в БД.
     expect(isSupportedExtension("exe")).toBe(false);

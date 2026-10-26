@@ -250,7 +250,45 @@ export interface AiModelsResponse {
 export function useAiModels(): UseQueryResult<AiModelsResponse, ApiClientError> {
   return useQuery({
     queryKey: ["ai", "models"],
-    queryFn: async () => (await apiClient.get<AiModelsResponse>(`${BASE_PATH}/models`)).data,
+    queryFn: async () => {
+      const res = await apiClient.get<unknown>(`${BASE_PATH}/models`);
+      const body = res.data;
+
+      // Формат 1: body это { activeProvider, data: [...] }
+      if (body && typeof body === "object" && !Array.isArray(body) && "activeProvider" in body) {
+        const casted = body as { activeProvider?: ActiveProviderInfo; data?: AiModelItem[] };
+        return {
+          activeProvider: casted.activeProvider ?? {
+            name: "Google Gemini",
+            providerType: "gemini",
+            isConfigured: true,
+          },
+          data: Array.isArray(casted.data) ? casted.data : [],
+        };
+      }
+
+      // Формат 2: body это сразу массив моделей data: AiModelItem[]
+      if (Array.isArray(body)) {
+        const envelope = res as unknown as { activeProvider?: ActiveProviderInfo };
+        return {
+          activeProvider: envelope.activeProvider ?? {
+            name: "Google Gemini",
+            providerType: "gemini",
+            isConfigured: true,
+          },
+          data: body as AiModelItem[],
+        };
+      }
+
+      return {
+        activeProvider: {
+          name: "Google Gemini",
+          providerType: "gemini",
+          isConfigured: true,
+        },
+        data: [],
+      };
+    },
     staleTime: 60_000,
   });
 }

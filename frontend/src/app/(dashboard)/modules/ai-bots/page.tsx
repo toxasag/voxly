@@ -74,13 +74,14 @@ function AiBotsContent() {
   const handleSubmit = useCallback(
     async (payload: CreateBotPayload) => {
       if (editTarget !== null) {
-        await update.mutateAsync({ id: editTarget.id, payload });
+        const updated = await update.mutateAsync({ id: editTarget.id, payload });
         toast.success(`Агент «${payload.name}» обновлён`);
-        return;
+        return updated;
       }
 
-      await create.mutateAsync(payload);
+      const created = await create.mutateAsync(payload);
       toast.success(`Агент «${payload.name}» создан`);
+      return created;
     },
     [create, editTarget, update],
   );

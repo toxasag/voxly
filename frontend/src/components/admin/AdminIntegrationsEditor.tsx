@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -32,6 +33,8 @@ import {
   useTestAdminLlm,
   useUpdateAdminIntegrationsConfig,
   useVerifyLlmKeys,
+  useVerifySingleGeminiKey,
+  useRemoveInvalidLlmKeys,
 } from "@/lib/api/use-admin";
 import { cn } from "@/lib/utils";
 
@@ -166,6 +169,13 @@ export function AdminIntegrationsEditor() {
   const testLlmMutation = useTestAdminLlm();
   const fetchModelsMutation = useFetchLlmModels();
   const verifyKeysMutation = useVerifyLlmKeys();
+  const verifySingleGeminiMutation = useVerifySingleGeminiKey();
+  const removeInvalidKeysMutation = useRemoveInvalidLlmKeys();
+
+  const [singleKeyInputMap, setSingleKeyInputMap] = useState<Record<string, string>>({});
+  const [singleKeyErrorMap, setSingleKeyErrorMap] = useState<Record<string, string | null>>({});
+  const [singleKeyValidating, setSingleKeyValidating] = useState<Record<string, boolean>>({});
+  const [isRemovingInvalidMap, setIsRemovingInvalidMap] = useState<Record<string, boolean>>({});
 
   // Robokassa state
   const [merchantLogin, setMerchantLogin] = useState("");
@@ -619,6 +629,158 @@ export function AdminIntegrationsEditor() {
         ? `Пул ключей заменен: добавлено ${lines.length} шт.`
         : `В пул добавлено ${lines.length} новых ключей`,
     );
+  };
+
+  const handleVerifyAndAddSingleKey = async (providerId: string) => {
+    const provider = providers.find((p) => p.id === providerId);
+    if (!provider) return;
+    const inputVal = (singleKeyInputMap[providerId] || "").trim();
+    if (!inputVal) {
+      toast.error("Введите API-ключ для проверки");
+      return;
+    }
+
+    setSingleKeyValidating((prev) => ({ ...prev, [providerId]: true }));
+    setSingleKeyErrorMap((prev) => ({ ...prev, [providerId]: null }));
+
+    try {
+      if (provider.providerType === "gemini") {
+        const res = await verifySingleGeminiMutation.mutateAsync({
+          apiKey: inputVal,
+          baseUrl: provider.baseUrl,
+          save: false,
+        });
+
+        if (res.success && res.is_active) {
+          toast.success(
+            `Ключ Google Gemini успешно проверен (${res.modelsCount ?? 0} моделей) и добавлен в пул`,
+          );
+          const nextIndex = provider.keys.length;
+          setProviders((prev) =>
+            prev.map((p) => {
+              if (p.id !== providerId) return p;
+              const updatedStatuses = { ...(p.keyStatuses || {}) };
+              updatedStatuses[nextIndex] = {
+                status: "valid",
+                message: `Работает (${res.modelsCount ?? 0} моделей)`,
+                statusCode: 200,
+              };
+              return {
+                ...p,
+                keys: [...p.keys, inputVal],
+                keyStatuses: updatedStatuses,
+              };
+            }),
+          );
+          setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
+        }
+      } else {
+        const res = await verifyKeysMutation.mutateAsync({
+          baseUrl: provider.baseUrl,
+          providerId: provider.id,
+          keys: [inputVal],
+        });
+        const single = res.results[0];
+        if (single?.status === "valid") {
+          toast.success(`Ключ проверен и добавлен в пул`);
+          const nextIndex = provider.keys.length;
+          setProviders((prev) =>
+            prev.map((p) => {
+              if (p.id !== providerId) return p;
+              const updatedStatuses = { ...(p.keyStatuses || {}) };
+              updatedStatuses[nextIndex] = {
+                status: "valid",
+                message: single.message,
+                statusCode: 200,
+              };
+              return {
+                ...p,
+                keys: [...p.keys, inputVal],
+                keyStatuses: updatedStatuses,
+              };
+            }),
+          );
+          setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
+        } else {
+          const errorText = single?.message || "Неверный API-ключ";
+          setSingleKeyErrorMap((prev) => ({ ...prev, [providerId]: errorText }));
+          toast.error(`Ошибка проверки ключа: ${errorText}`);
+        }
+      }
+    } catch (err: unknown) {
+      let errorMsg = "Ошибка проверки API-ключа";
+      if (typeof err === "object" && err !== null) {
+        const maybeApiErr = err as {
+          response?: { data?: { error?: { message?: string; details?: string } } };
+          message?: string;
+        };
+        errorMsg =
+          maybeApiErr.response?.data?.error?.message ||
+          maybeApiErr.response?.data?.error?.details ||
+          maybeApiErr.message ||
+          errorMsg;
+      }
+      setSingleKeyErrorMap((prev) => ({ ...prev, [providerId]: errorMsg }));
+      toast.error(errorMsg);
+    } finally {
+      setSingleKeyValidating((prev) => ({ ...prev, [providerId]: false }));
+    }
+  };
+
+  const handleDirectAddSingleKey = (providerId: string) => {
+    const inputVal = (singleKeyInputMap[providerId] || "").trim();
+    if (!inputVal) return;
+    handleAddSingleKey(providerId, inputVal);
+    setSingleKeyInputMap((prev) => ({ ...prev, [providerId]: "" }));
+    setSingleKeyErrorMap((prev) => ({ ...prev, [providerId]: null }));
+  };
+
+  const handleRemoveAllInvalidKeys = async (
+    providerId: string,
+    invalidKeysList: string[],
+  ) => {
+    if (invalidKeysList.length === 0) return;
+    setIsRemovingInvalidMap((prev) => ({ ...prev, [providerId]: true }));
+    try {
+      await removeInvalidKeysMutation.mutateAsync({
+        providerId,
+        invalidKeys: invalidKeysList,
+      });
+
+      setProviders((prev) =>
+        prev.map((p) => {
+          if (p.id !== providerId) return p;
+          const invalidSet = new Set(invalidKeysList);
+          const nextKeys = p.keys.filter((k) => !invalidSet.has(k));
+          const nextStatuses: Record<
+            number,
+            { status: "valid" | "invalid"; message: string; statusCode?: number }
+          > = {};
+          let newIdx = 0;
+          for (let i = 0; i < p.keys.length; i++) {
+            const k = p.keys[i];
+            if (k && !invalidSet.has(k)) {
+              if (p.keyStatuses?.[i]) {
+                nextStatuses[newIdx] = p.keyStatuses[i]!;
+              }
+              newIdx++;
+            }
+          }
+          return {
+            ...p,
+            keys: nextKeys,
+            keyStatuses: nextStatuses,
+          };
+        }),
+      );
+      toast.success(`Неработающие ключи (${invalidKeysList.length} шт.) успешно удалены из пула`);
+    } catch (err: unknown) {
+      toast.error(
+        err instanceof Error ? err.message : "Не удалось удалить неработающие ключи",
+      );
+    } finally {
+      setIsRemovingInvalidMap((prev) => ({ ...prev, [providerId]: false }));
+    }
   };
 
   if (isLoading) {
@@ -1369,6 +1531,48 @@ export function AdminIntegrationsEditor() {
                   </div>
                 </div>
 
+                {/* Баннер обнаруженных неработающих ключей */}
+                {(() => {
+                  const statuses = provider.keyStatuses || {};
+                  const invalidIndices = Object.entries(statuses)
+                    .filter(([_, s]) => s.status === "invalid")
+                    .map(([idx]) => Number(idx));
+                  const invalidKeysList = invalidIndices
+                    .map((idx) => provider.keys[idx])
+                    .filter((k): k is string => Boolean(k));
+
+                  if (invalidKeysList.length === 0) return null;
+
+                  return (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle className="h-4 w-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold text-rose-900">
+                            Обнаружены неработающие ключи ({invalidKeysList.length} шт.):
+                          </span>
+                          <p className="mt-0.5 text-[11px] text-rose-700 leading-normal">
+                            Ключи возвращают ошибки аутентификации (401/403) или удаленный сервисный аккаунт Google. Удалите их в один клик, чтобы запросы шли только через работающие ключи пула.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleRemoveAllInvalidKeys(provider.id, invalidKeysList)}
+                        disabled={isRemovingInvalidMap[provider.id]}
+                        className="flex items-center gap-1.5 rounded-[6px] border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 shadow-2xs hover:bg-rose-100 transition-colors disabled:opacity-50"
+                      >
+                        {isRemovingInvalidMap[provider.id] ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-rose-600" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                        )}
+                        Удалить неработающие ({invalidKeysList.length} шт.)
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* Форма массовой вставки 20 ключей */}
                 {provider.showBatchInput && (
                   <div className="mt-3 rounded-[8px] border border-[#4a38f5]/20 bg-white p-4 shadow-xs space-y-3">
@@ -1493,7 +1697,7 @@ export function AdminIntegrationsEditor() {
                             </div>
 
                             {/* Нижняя строчка: статус ключа */}
-                            <div className="mt-1 flex items-center justify-between gap-1 text-[10px]">
+                            <div className="mt-1.5 flex flex-col gap-1 text-[10px]">
                               {kStatus ? (
                                 kStatus.status === "valid" ? (
                                   <span className="inline-flex items-center gap-1 text-emerald-700 font-medium">
@@ -1501,13 +1705,18 @@ export function AdminIntegrationsEditor() {
                                     {kStatus.message || "Работает"}
                                   </span>
                                 ) : (
-                                  <span
-                                    className="inline-flex items-center gap-1 text-rose-600 font-medium truncate"
-                                    title={kStatus.message}
-                                  >
-                                    <span className="h-1.5 w-1.5 rounded-full bg-rose-500 flex-shrink-0" />
-                                    <span className="truncate">{kStatus.message}</span>
-                                  </span>
+                                  <div className="flex flex-col gap-1 w-full text-left">
+                                    <span className="inline-flex items-center gap-1 text-rose-600 font-medium">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500 flex-shrink-0" />
+                                      {kStatus.statusCode ? `HTTP ${kStatus.statusCode}` : "Ошибка ключа"}
+                                    </span>
+                                    <span
+                                      className="block rounded bg-rose-50/80 px-1.5 py-1 text-[10px] text-rose-700 border border-rose-200/60 break-words font-mono select-text leading-tight max-h-20 overflow-y-auto"
+                                      title={kStatus.message}
+                                    >
+                                      {kStatus.message}
+                                    </span>
+                                  </div>
                                 )
                               ) : isSingleVerifying ? (
                                 <span className="inline-flex items-center gap-1 text-[#666666]">
@@ -1526,37 +1735,69 @@ export function AdminIntegrationsEditor() {
                 </div>
 
                 {/* Одиночное добавление ключа внизу */}
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    type="text"
-                    id={`single-key-${provider.id}`}
-                    placeholder="Быстрое добавление одного ключа: AIzaSy..."
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const target = e.currentTarget;
-                        handleAddSingleKey(provider.id, target.value);
-                        target.value = "";
-                      }
-                    }}
-                    className="h-8 flex-1 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const el = document.getElementById(
-                        `single-key-${provider.id}`,
-                      ) as HTMLInputElement | null;
-                      if (el && el.value.trim()) {
-                        handleAddSingleKey(provider.id, el.value.trim());
-                        el.value = "";
-                      }
-                    }}
-                    className="flex h-8 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#111111] hover:bg-[#fafafa] transition-colors"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Добавить
-                  </button>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={singleKeyInputMap[provider.id] || ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSingleKeyInputMap((prev) => ({ ...prev, [provider.id]: val }));
+                        if (singleKeyErrorMap[provider.id]) {
+                          setSingleKeyErrorMap((prev) => ({ ...prev, [provider.id]: null }));
+                        }
+                      }}
+                      placeholder="Быстрое добавление одного ключа: AIzaSy..."
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleVerifyAndAddSingleKey(provider.id);
+                        }
+                      }}
+                      className="h-8 flex-1 rounded-[6px] border border-[#e5e5e5] bg-white px-3 text-xs font-mono text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleVerifyAndAddSingleKey(provider.id)}
+                      disabled={singleKeyValidating[provider.id]}
+                      className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50 transition-colors shadow-2xs"
+                      title="Проверить ключ в Google API и добавить только если он рабочий"
+                    >
+                      {singleKeyValidating[provider.id] ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      )}
+                      Проверить и добавить
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDirectAddSingleKey(provider.id)}
+                      className="flex h-8 items-center gap-1 rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-[#666666] hover:bg-[#fafafa] hover:text-[#111111] transition-colors"
+                      title="Добавить без немедленной проверки"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Добавить
+                    </button>
+                  </div>
+
+                  {/* Сообщение об ошибке валидации ключа */}
+                  {singleKeyErrorMap[provider.id] && (
+                    <div className="rounded-[6px] border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-800 flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-rose-900">
+                          {provider.providerType === "gemini"
+                            ? "Ошибка Google Gemini API"
+                            : "Ошибка проверки ключа"}
+                          :
+                        </div>
+                        <div className="mt-1 break-words font-mono text-[11px] text-rose-700 bg-white/70 p-2 rounded border border-rose-200 select-text leading-relaxed">
+                          {singleKeyErrorMap[provider.id]}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

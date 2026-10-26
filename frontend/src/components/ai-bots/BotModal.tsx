@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   Bot,
   Check,
   FileCode,
+  FileSpreadsheet,
   FileText,
+  FileUp,
   Globe,
   Loader2,
   MessageSquare,
@@ -17,8 +20,10 @@ import {
   Sliders,
   Sparkles,
   Star,
+  Trash2,
+  UploadCloud,
 } from "lucide-react";
-import type { AiBot, BotContextEntity, BotMode, BotModel } from "@/lib/ai-bots/ai-bots.types";
+import type { AiBot, BotContextEntity, BotMode, BotModel, ModelInfo } from "@/lib/ai-bots/ai-bots.types";
 import {
   CONTEXT_ENTITIES,
   MODEL_CATALOG,
@@ -28,7 +33,7 @@ import {
   getModelInfo,
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
-import { useAiModels } from "@/lib/api/use-ai-agents";
+import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
 import { useCrmKnowledgeStats } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
@@ -45,7 +50,30 @@ interface BotModalProps {
   /** Pass a bot to edit it; omit to create a new one. */
   bot?: AiBot | null;
   onClose: () => void;
-  onSubmit: (payload: CreateBotPayload) => Promise<void> | void;
+  onSubmit: (payload: CreateBotPayload) => Promise<unknown> | unknown;
+}
+
+export type KnowledgeCategory = "price_list" | "commercial_offer" | "manual" | "general";
+
+export const KNOWLEDGE_CATEGORIES: { id: KnowledgeCategory; label: string; badgeColor: string }[] = [
+  { id: "price_list", label: "Прайс-лист / Каталог", badgeColor: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  { id: "commercial_offer", label: "Коммерческое предложение", badgeColor: "bg-blue-50 text-blue-700 border-blue-200" },
+  { id: "manual", label: "Регламент / Инструкция", badgeColor: "bg-purple-50 text-purple-700 border-purple-200" },
+  { id: "general", label: "Общие сведения / FAQ", badgeColor: "bg-slate-50 text-slate-700 border-slate-200" },
+];
+
+function detectCategoryFromFilename(filename: string): KnowledgeCategory {
+  const name = filename.toLowerCase();
+  if (name.includes("прайс") || name.includes("price") || name.includes("тариф") || name.includes("цен")) return "price_list";
+  if (name.includes("кп") || name.includes("offer") || name.includes("предложен") || name.includes("коммерческ")) return "commercial_offer";
+  if (name.includes("регламент") || name.includes("инструкц") || name.includes("стандарт") || name.includes("manual") || name.includes("правил")) return "manual";
+  return "general";
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
 const MODES: BotMode[] = ["suggester", "autoreply", "disabled"];
@@ -59,8 +87,8 @@ const ACCENTS: { value: CreateBotPayload["accent"]; swatch: string }[] = [
 ];
 
 const DEFAULT_VALUES: CreateBotPayload = {
-  name: "",
-  description: "",
+  name: "Ассистент",
+  description: "Консультирует клиентов по услугам, отвечает на вопросы и квалифицирует лиды",
   model: "gemini-3.5-flash",
   mode: "suggester",
   status: "active",
@@ -69,8 +97,8 @@ const DEFAULT_VALUES: CreateBotPayload = {
   max_tokens: 1024,
   system_prompt: DIRECTOR_PROMPT_TEMPLATE,
   context_entities: ["contacts", "deals"],
-  website_url: "",
-  map_reviews_url: "",
+  website_url: "https://team-big.ru/",
+  map_reviews_url: "https://yandex.ru/maps/org/team_big/2489543575/",
   sync_crm: true,
   whatsapp_chat_text: "",
   wizard_config: {
@@ -78,7 +106,7 @@ const DEFAULT_VALUES: CreateBotPayload = {
     consultantName: "Алексей",
     consultantRole: "ведущий специалист",
     businessNiche: "оказание профильных услуг и консультация клиентов",
-    targetAction: "согласование деталей заказа и обмен прямыми контактами",
+    targetAction: "Получение контактов и назначение созвона со специалистом",
     handoffSpecialist: "старший специалист профильного отдела",
     isCustomEdited: false,
   },
@@ -117,6 +145,20 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
 
+  // Multi-file drag & drop state
+  const [queuedFiles, setQueuedFiles] = useState<
+    Array<{
+      id: string;
+      file: File;
+      category: KnowledgeCategory;
+      sizeFormatted: string;
+    }>
+  >([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
     defaultValues: DEFAULT_VALUES,
@@ -131,14 +173,123 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
     form.reset(bot !== null ? toFormValues(bot) : DEFAULT_VALUES);
     setPromptTab(bot?.wizard_config ? "wizard" : "wizard");
     setPendingPreset(null);
+    setQueuedFiles([]);
   }, [open, bot, form]);
+
+  const handleAddFiles = useCallback((files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const validExtensions = ["pdf", "docx", "xlsx", "csv", "txt", "md"];
+    const maxSizeBytes = 10 * 1024 * 1024; // 10 MB
+
+    const nextFiles: Array<{
+      id: string;
+      file: File;
+      category: KnowledgeCategory;
+      sizeFormatted: string;
+    }> = [];
+
+    for (const f of fileArray) {
+      const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!validExtensions.includes(ext)) {
+        toast.error(`Файл «${f.name}» не поддерживается. Разрешены: PDF, DOCX, XLSX, CSV, TXT, MD`);
+        continue;
+      }
+      if (f.size > maxSizeBytes) {
+        toast.error(`Файл «${f.name}» превышает лимит 10 МБ`);
+        continue;
+      }
+
+      nextFiles.push({
+        id: `kb-file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        file: f,
+        category: detectCategoryFromFilename(f.name),
+        sizeFormatted: formatFileSize(f.size),
+      });
+    }
+
+    if (nextFiles.length > 0) {
+      setQueuedFiles((prev) => [...prev, ...nextFiles]);
+      toast.success(`Добавлено файлов для базы знаний: ${nextFiles.length}`);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleAddFiles(e.dataTransfer.files);
+    }
+  }, [handleAddFiles]);
+
+  const handleRemoveQueuedFile = useCallback((id: string) => {
+    setQueuedFiles((prev) => prev.filter((f) => f.id !== id));
+  }, []);
+
+  const handleUpdateFileCategory = useCallback((id: string, category: KnowledgeCategory) => {
+    setQueuedFiles((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, category } : f)),
+    );
+  }, []);
 
   const submit = useCallback(
     async (values: CreateBotPayload) => {
-      await onSubmit(values);
-      onClose();
+      try {
+        const result = await onSubmit(values);
+        const targetId =
+          (result && typeof result === "object" && "id" in result
+            ? (result as { id: string }).id
+            : bot?.id) ?? null;
+
+        if (targetId && queuedFiles.length > 0) {
+          setIsUploadingDocs(true);
+          const { API_BASE_URL } = await import("@/lib/api/apiClient");
+          const { readAccessToken } = await import("@/lib/auth/session");
+          const token = readAccessToken();
+
+          let uploadedCount = 0;
+          for (const item of queuedFiles) {
+            try {
+              const fd = new FormData();
+              fd.append("file", item.file);
+              fd.append("category", item.category);
+
+              const res = await fetch(`${API_BASE_URL}/api/v1/ai/agents/${targetId}/knowledge`, {
+                method: "POST",
+                body: fd,
+                credentials: "include",
+                ...(token !== null && { headers: { Authorization: `Bearer ${token}` } }),
+              });
+              if (res.ok) uploadedCount++;
+            } catch {
+              // ignore individual failure
+            }
+          }
+
+          if (uploadedCount > 0) {
+            toast.success(`Загружено ${uploadedCount} документов в базу знаний. Векторизация запущена!`);
+          }
+        }
+        onClose();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось сохранить бота");
+      } finally {
+        setIsUploadingDocs(false);
+      }
     },
-    [onClose, onSubmit],
+    [bot?.id, onClose, onSubmit, queuedFiles],
   );
 
   const selectedModel: BotModel = form.watch("model");
@@ -149,10 +300,36 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const isPaused = form.watch("status") === "paused";
   const wizardConfig = form.watch("wizard_config");
 
-  const { data: modelsData } = useAiModels();
+  const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useAiModels();
   const { data: crmStats } = useCrmKnowledgeStats();
-  const activeProvider = modelsData?.activeProvider;
-  const modelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
+
+  const activeProvider =
+    modelsData?.activeProvider ??
+    (Array.isArray(modelsData)
+      ? { name: "Google Gemini", providerType: "gemini", isConfigured: true }
+      : undefined);
+
+  const modelsArray: (AiModelItem | ModelInfo)[] = Array.isArray(modelsData?.data)
+    ? modelsData.data
+    : Array.isArray(modelsData)
+      ? (modelsData as unknown as ModelInfo[])
+      : [];
+
+  const rawModelsList: (AiModelItem | ModelInfo)[] =
+    modelsArray.length > 0 ? modelsArray : MODEL_CATALOG;
+
+  // Оставляем только РЕАЛЬНО настроенные модели, если у нас есть данные от бэкенда
+  const modelsList =
+    modelsArray.length > 0
+      ? modelsArray.filter((m) => m.isConfigured !== false)
+      : activeProvider?.isConfigured
+        ? rawModelsList.filter(
+            (m) =>
+              Boolean(m.isConfigured) ||
+              m.provider === activeProvider.providerType ||
+              (activeProvider.providerType === "gemini" && (m.provider === "google" || m.provider === "gemini")),
+          )
+        : rawModelsList;
 
   // Автоматически синхронизируем выбранную модель с активной моделью провайдера
   useEffect(() => {
@@ -160,10 +337,9 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
     if (modelsList.length > 0) {
       const currentModel = form.getValues("model");
       const isKnown = modelsList.some((m) => m.id === currentModel);
-      if (!isKnown || currentModel === "gpt-4o-mini" || currentModel === "gemini-3.5-flash") {
+      if (!isKnown || currentModel === "gpt-4o-mini") {
         const preferred =
-          modelsList.find((m) => "isConfigured" in m ? m.isConfigured !== false : true)?.id ??
-          activeProvider?.chatModel ??
+          modelsList.find((m) => m.id === activeProvider?.chatModel)?.id ??
           modelsList[0]?.id;
         if (preferred && preferred !== currentModel) {
           form.setValue("model", preferred as BotModel, { shouldValidate: true });
@@ -311,56 +487,102 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="block text-xs font-medium text-slate-700">Модель</span>
-                {activeProvider && activeProvider.isConfigured && (
+                {activeProvider && activeProvider.isConfigured ? (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     Провайдер платформы: {activeProvider.name} {activeProvider.chatModel ? `(${activeProvider.chatModel})` : ""}
                   </span>
+                ) : modelsList.length > 0 ? (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Подключено моделей: {modelsList.length}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
+                    Провайдер не настроен
+                  </span>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                {modelsList.map((model) => {
-                  const isSelected = selectedModel === model.id;
-                  const isConfigured = "isConfigured" in model ? model.isConfigured !== false : true;
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      onClick={() =>
-                        form.setValue("model", model.id as BotModel, {
-                          shouldValidate: true,
-                          shouldDirty: true,
-                        })
-                      }
-                      className={cn(
-                        "rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer",
-                        isSelected
-                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5]"
-                          : "border-[#e5e5e5] bg-white hover:bg-slate-50",
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span
+
+              {modelsLoading ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-14 rounded-lg border border-[#e5e5e5] bg-slate-50 animate-pulse" />
+                  ))}
+                </div>
+              ) : modelsList.length === 0 ? (
+                <div className="rounded-[8px] border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-amber-900">Провайдер ИИ не настроен</p>
+                    <p className="mt-0.5 text-amber-700 leading-relaxed text-[11px]">
+                      В панели администратора платформы не подключены валидные API-ключи. Перейдите в раздел «Настройки платформы → Провайдеры ИИ», чтобы подключить Google Gemini, OpenAI или Anthropic.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(showAllModels ? modelsList : modelsList.slice(0, 6)).map((model) => {
+                      const isSelected = selectedModel === model.id;
+                      const isDefault = model.id === activeProvider?.chatModel;
+                      return (
+                        <button
+                          key={model.id}
+                          type="button"
+                          onClick={() =>
+                            form.setValue("model", model.id as BotModel, {
+                              shouldValidate: true,
+                              shouldDirty: true,
+                            })
+                          }
                           className={cn(
-                            "block text-xs font-semibold leading-tight",
-                            isSelected ? "text-[#4a38f5]" : "text-[#111111]",
+                            "rounded-lg border px-3 py-2 text-left transition-all cursor-pointer flex flex-col justify-between",
+                            isSelected
+                              ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]/30 shadow-2xs"
+                              : "border-[#e5e5e5] bg-white hover:border-[#cccccc] hover:bg-slate-50",
                           )}
                         >
-                          {model.label}
-                        </span>
-                        {isConfigured && (
-                          <span className="text-[9px] font-medium px-1 py-0.2 rounded bg-emerald-50 text-emerald-600 border border-emerald-200">
-                            Подключена
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className={cn(
+                                "block text-xs font-semibold leading-tight truncate",
+                                isSelected ? "text-[#4a38f5]" : "text-[#111111]",
+                              )}
+                              title={model.label}
+                            >
+                              {model.label}
+                            </span>
+                            {isDefault ? (
+                              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                                Основная
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                                Подключена
+                              </span>
+                            )}
+                          </div>
+                          <span className="block text-[11px] text-[#666666] mt-1 truncate">
+                            {getProviderLabel(model.provider)}
                           </span>
-                        )}
-                      </div>
-                      <span className="block text-[11px] text-[#666666] mt-0.5">
-                        {getProviderLabel(model.provider)}
-                      </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {modelsList.length > 6 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllModels((prev) => !prev)}
+                      className="text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors inline-flex items-center gap-1 mt-1 cursor-pointer"
+                    >
+                      {showAllModels
+                        ? "Свернуть список моделей"
+                        : `Показать все доступные модели (${modelsList.length})`}
                     </button>
-                  );
-                })}
-              </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Mode */}
@@ -579,6 +801,138 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     </p>
                   </div>
                 )}
+
+                {/* Мульти-загрузка документов базы знаний (.pdf, .docx, .xlsx, .csv, .txt) */}
+                <div className="space-y-2 pt-2 border-t border-[#e5e5e5]">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-[#111111]">
+                      <UploadCloud className="h-4 w-4 text-[#4a38f5]" />
+                      Документы базы знаний (прайс-листы, КП, регламенты)
+                    </label>
+                    <span className="text-[11px] text-[#666666]">
+                      {queuedFiles.length > 0 ? `Файлов к загрузке: ${queuedFiles.length}` : "PDF, DOCX, XLSX, CSV, TXT (до 10 МБ)"}
+                    </span>
+                  </div>
+
+                  {/* Dropzone */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={cn(
+                      "group relative flex flex-col items-center justify-center rounded-[8px] border-2 border-dashed p-4 text-center transition-all cursor-pointer",
+                      isDragOver
+                        ? "border-[#4a38f5] bg-[#4a38f5]/5"
+                        : "border-[#e5e5e5] bg-white hover:border-[#4a38f5]/50 hover:bg-slate-50/50",
+                    )}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.xlsx,.csv,.txt,.md"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleAddFiles(e.target.files);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#4a38f5]/10 text-[#4a38f5] transition-transform group-hover:scale-105">
+                      <FileUp className="h-4 w-4" />
+                    </div>
+                    <p className="mt-2 text-xs font-medium text-[#111111]">
+                      Перетащите файлы сюда или <span className="text-[#4a38f5] underline underline-offset-2">выберите на диске</span>
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[#666666]">
+                      Поддерживаются прайс-листы Excel (.xlsx, .csv), договоры и КП (.docx, .pdf), регламенты (.txt)
+                    </p>
+                  </div>
+
+                  {/* List of Queued Files */}
+                  {queuedFiles.length > 0 && (
+                    <div className="space-y-2 pt-1">
+                      {queuedFiles.map((item) => {
+                        const ext = item.file.name.split(".").pop()?.toLowerCase() ?? "";
+                        const isSpreadsheet = ext === "xlsx" || ext === "csv";
+                        const isPdf = ext === "pdf";
+                        const isDocx = ext === "docx";
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="flex flex-col gap-2 rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 shadow-2xs hover:border-[#cccccc] transition-colors"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div
+                                  className={cn(
+                                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px]",
+                                    isSpreadsheet
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      : isPdf
+                                        ? "bg-rose-50 text-rose-700 border border-rose-200"
+                                        : isDocx
+                                          ? "bg-blue-50 text-blue-700 border border-blue-200"
+                                          : "bg-slate-50 text-slate-700 border border-slate-200",
+                                  )}
+                                >
+                                  {isSpreadsheet ? (
+                                    <FileSpreadsheet className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <FileText className="h-3.5 w-3.5" />
+                                  )}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="truncate text-xs font-medium text-[#111111]" title={item.file.name}>
+                                    {item.file.name}
+                                  </p>
+                                  <p className="font-mono text-[10px] text-[#666666]">{item.sizeFormatted}</p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveQueuedFile(item.id)}
+                                className="rounded p-1 text-[#888888] hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
+                                title="Удалить файл"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+
+                            {/* Category Selector */}
+                            <div className="flex items-center gap-1.5 pt-1 border-t border-[#f0f0f0]">
+                              <span className="text-[11px] text-[#666666] shrink-0">Категория:</span>
+                              <div className="flex flex-wrap gap-1">
+                                {KNOWLEDGE_CATEGORIES.map((cat) => {
+                                  const isCatSelected = item.category === cat.id;
+                                  return (
+                                    <button
+                                      key={cat.id}
+                                      type="button"
+                                      onClick={() => handleUpdateFileCategory(item.id, cat.id)}
+                                      className={cn(
+                                        "rounded-[4px] px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer border",
+                                        isCatSelected
+                                          ? "bg-[#4a38f5] text-white border-[#4a38f5]"
+                                          : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100",
+                                      )}
+                                    >
+                                      {cat.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -789,10 +1143,10 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <FileText className="h-4 w-4 text-[#4a38f5] shrink-0 mt-0.5" />
                     <div className="space-y-1">
                       <p className="font-medium text-[#111111]">
-                        База знаний, материалы сайта и отзывы
+                        База знаний и фактологическая точность
                       </p>
                       <p className="text-[11px] text-[#555555] leading-relaxed">
-                        Конструктор роли задаёт характер и скрипт продаж консультанта. Факты о ценах, гарантиях, адресах и отзывы с Яндекс Карт загружаются во вкладке <strong>«База знаний»</strong> внутри карточки бота после сохранения (поддерживаются файлы, вставка текстов и импорт страниц по ссылке).
+                        Конструктор роли задаёт характер и скрипт продаж консультанта. Документы (прайс-листы, КП, регламенты) и ссылки компании можно прикрепить прямо в блоке выше — они автоматически индексируются в фоне. Детальное управление фрагментами и ручное добавление фактов также доступно во вкладке <strong>«База знаний»</strong> после создания бота.
                       </p>
                     </div>
                   </div>
@@ -884,13 +1238,13 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
             </button>
             <button
               type="submit"
-              disabled={!isValid || isSubmitting}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!isValid || isSubmitting || isUploadingDocs}
+              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
             >
-              {isSubmitting ? (
+              {isSubmitting || isUploadingDocs ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Сохраняем...
+                  {isUploadingDocs ? "Загружаем документы..." : "Сохраняем..."}
                 </>
               ) : isEdit ? (
                 <>

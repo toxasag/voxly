@@ -578,5 +578,18 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
     const result = await platformConfigService.verifyProviderKeys(parsed);
     return reply.send({ data: result });
   });
+
+  /**
+   * Удаление неработающих/битых ключей из пула.
+   */
+  app.post("/integrations/llm/remove-invalid-keys", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      providerId: z.string(),
+      invalidKeys: z.array(z.string()),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const removedCount = await platformConfigService.removeInvalidKeys(parsed.providerId, parsed.invalidKeys);
+    return reply.send({ data: { success: true, removedCount } });
+  });
 }
 
