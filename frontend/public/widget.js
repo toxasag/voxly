@@ -997,6 +997,56 @@
       color: #e11d48 !important;
       font-weight: 500 !important;
     }
+    .getvoxly-network-status {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      margin: 0 12px 6px 12px;
+      background: #fffbeb !important;
+      border: 1px solid #fef08a !important;
+      border-radius: 6px !important;
+      font-size: 11px !important;
+      color: #92400e !important;
+      line-height: 1.3 !important;
+      animation: getvoxly-fade-in 0.2s ease-out;
+    }
+    .is-dark-theme .getvoxly-network-status {
+      background: #2a2010 !important;
+      border-color: #854d0e !important;
+      color: #fde047 !important;
+    }
+    .getvoxly-network-icon {
+      display: inline-flex;
+      align-items: center;
+      color: #d97706;
+      flex-shrink: 0;
+    }
+    .getvoxly-network-text {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .getvoxly-network-retry-btn {
+      background: #fef3c7 !important;
+      border: 1px solid #fde68a !important;
+      border-radius: 4px !important;
+      padding: 2px 8px !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #78350f !important;
+      cursor: pointer !important;
+      flex-shrink: 0 !important;
+      transition: background-color 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-network-retry-btn {
+      background: #451a03 !important;
+      border-color: #78350f !important;
+      color: #fef08a !important;
+    }
+    .getvoxly-network-retry-btn:hover {
+      background: #fde68a !important;
+    }
+
 
     /* Поле ввода */
     .getvoxly-input-area {
@@ -1308,8 +1358,11 @@
     var currentConfig = null;
     var lastDraft = '';
     var sentDrafts = {};
+    var isBotResponding = false;
     var messageBuffer = [];
+    var pendingQueueWhileReplying = [];
     var sendTimer = null;
+    var BUFFER_WAIT_MS = 3500;
 
     if (!document.getElementById('getvoxly-styles')) {
       var styleEl = document.createElement('style');
@@ -1398,6 +1451,11 @@
           </div>
           <div class="getvoxly-attach-gate-error" id="getvoxly-attach-error" style="display: none;"></div>
         </div>
+        <div class="getvoxly-network-status" id="getvoxly-network-status" style="display: none;">
+          <span class="getvoxly-network-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+          <span class="getvoxly-network-text" id="getvoxly-network-text">Проблема со связью. Повторное подключение...</span>
+          <button type="button" class="getvoxly-network-retry-btn" id="getvoxly-network-retry" style="display: none;">Повторить</button>
+        </div>
         <div class="getvoxly-input-wrapper">
           <button class="getvoxly-attach-btn" id="getvoxly-attach" title="Прикрепить фото или документ" type="button">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1445,6 +1503,30 @@
     var attachSubmitBtn = document.getElementById('getvoxly-attach-submit');
     var attachPhoneInput = document.getElementById('getvoxly-attach-phone');
     var attachGateError = document.getElementById('getvoxly-attach-error');
+    var networkStatusEl = document.getElementById('getvoxly-network-status');
+    var networkTextEl = document.getElementById('getvoxly-network-text');
+    var networkRetryBtn = document.getElementById('getvoxly-network-retry');
+
+    function showNetworkStatus(text, showRetry, onRetry) {
+      if (!networkStatusEl) return;
+      if (networkTextEl) networkTextEl.textContent = text;
+      if (networkRetryBtn) {
+        if (showRetry && typeof onRetry === 'function') {
+          networkRetryBtn.style.display = 'inline-block';
+          networkRetryBtn.onclick = function() {
+            networkRetryBtn.style.display = 'none';
+            onRetry();
+          };
+        } else {
+          networkRetryBtn.style.display = 'none';
+        }
+      }
+      networkStatusEl.style.display = 'flex';
+    }
+
+    function hideNetworkStatus() {
+      if (networkStatusEl) networkStatusEl.style.display = 'none';
+    }
 
     var isExpanded = false;
     var pendingAttachment = null;
@@ -1658,7 +1740,13 @@
     var STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
     function getLocalHistory() {
       try {
-        return JSON.parse(safeStorage.getItem(STORAGE_KEY_CHAT_HISTORY) || '[]');
+        var rawItems = JSON.parse(safeStorage.getItem(STORAGE_KEY_CHAT_HISTORY) || '[]');
+        if (!Array.isArray(rawItems)) return [];
+        return rawItems.filter(function (it) {
+          if (!it || !it.text) return false;
+          return it.text !== 'Ошибка связи с сервером. Проверьте интернет-соединение.' &&
+                 it.text !== 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.';
+        });
       } catch (e) {
         return [];
       }
@@ -1766,6 +1854,9 @@
     }
 
     function saveAndRenderMessage(text, isUser, attachment, attachmentType) {
+      if (!isUser && (text === 'Ошибка связи с сервером. Проверьте интернет-соединение.' || text === 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.')) {
+        return;
+      }
       appendMessageToUI(text, isUser, attachment, attachmentType);
       var hist = getLocalHistory();
       hist.push({
@@ -1791,7 +1882,8 @@
     var historyPollTimer = null;
 
     async function syncHistoryFromServer() {
-      if (!channelAccountId || !visitorId || syncInProgress) return;
+      // КРИТИЧЕСКИ ВАЖНО: никогда не синхронизировать историю, пока бот отвечает, идет таймер буфера или есть очередь
+      if (!channelAccountId || !visitorId || syncInProgress || isBotResponding || messageBuffer.length > 0 || pendingQueueWhileReplying.length > 0) return;
       try {
         syncInProgress = true;
         var res = await fetch(apiUrl + '/api/v1/public/chat/history/' + channelAccountId + '?visitorId=' + encodeURIComponent(visitorId));
@@ -1800,32 +1892,35 @@
           var items = json && json.data;
           if (Array.isArray(items) && items.length > 0) {
             var currentRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg') : [];
-            var lastCurrentText = currentRows.length > 0 ? currentRows[currentRows.length - 1].textContent : '';
-            var lastServerText = items[items.length - 1].content;
-
-            if (currentRows.length !== items.length || lastCurrentText !== lastServerText) {
-              if (messagesContainer) {
-                messagesContainer.innerHTML = '';
-              }
-              var localHist = [];
+            // Если в DOM вообще ничего нет (первая загрузка при чистом кеше)
+            if (currentRows.length === 0) {
               for (var k = 0; k < items.length; k++) {
                 var m = items[k];
-                var isUser = m.direction === 'inbound';
-                appendMessageToUI(m.content, isUser, m.attachment, m.attachmentType);
-                localHist.push({
-                  text: m.content,
-                  isUser: isUser,
-                  attachment: m.attachment || null,
-                  attachmentType: m.attachmentType || null,
-                  timestamp: m.createdAt
-                });
+                appendMessageToUI(m.content, m.direction === 'inbound', m.attachment, m.attachmentType);
               }
-              try {
-                safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(localHist));
-              } catch (e) {}
               if (messagesContainer) {
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
               }
+              return;
+            }
+
+            // Инкрементально добавляем только сообщения оператора из CRM, которых еще нет в чате
+            // НИ В КОЕМ СЛУЧАЕ НЕ ОЧИЩАЕМ messagesContainer.innerHTML = '' !
+            var localHist = getLocalHistory();
+            var addedAny = false;
+            for (var i = 0; i < items.length; i++) {
+              var srvItem = items[i];
+              var srvIsUser = srvItem.direction === 'inbound';
+              var alreadyExists = localHist.some(function (loc) {
+                return loc.text === srvItem.content && loc.isUser === srvIsUser;
+              });
+              if (!alreadyExists) {
+                saveAndRenderMessage(srvItem.content, srvIsUser, srvItem.attachment, srvItem.attachmentType);
+                addedAny = true;
+              }
+            }
+            if (addedAny && messagesContainer) {
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
           }
         }
@@ -1966,6 +2061,39 @@
     if (bubble) bubble.addEventListener('click', toggleWidget);
     if (badge) badge.addEventListener('click', openWidget);
     if (closeBtn) closeBtn.addEventListener('click', closeWidget);
+
+    function trackMessengerClick(mType) {
+      try {
+        if (typeof window.ym === 'function') {
+          var cId = null;
+          if (window.Ya && window.Ya.Metrika2 && window.Ya.Metrika2.counters && window.Ya.Metrika2.counters()[0]) {
+            cId = window.Ya.Metrika2.counters()[0].id;
+          }
+          if (cId) {
+            window.ym(cId, 'reachGoal', 'getvoxly_click_' + mType);
+            window.ym(cId, 'reachGoal', 'getvoxly_messenger_click');
+          }
+        }
+      } catch (err) {}
+      try {
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'getvoxly_click_' + mType, { event_category: 'messenger', event_label: mType });
+          window.gtag('event', 'getvoxly_messenger_click', { event_category: 'messenger', event_label: mType });
+        }
+      } catch (err) {}
+    }
+
+    if (msgContainer) {
+      msgContainer.addEventListener('click', function (e) {
+        var a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        var isTg = a.classList.contains('btn-telegram') || a.classList.contains('is-telegram');
+        var isWa = a.classList.contains('btn-whatsapp') || a.classList.contains('is-whatsapp');
+        var isMax = a.classList.contains('btn-max') || a.classList.contains('is-max');
+        var mType = isTg ? 'telegram' : isWa ? 'whatsapp' : isMax ? 'max' : 'generic';
+        trackMessengerClick(mType);
+      });
+    }
 
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', updateMobileViewport);
@@ -2403,11 +2531,12 @@
     messageBuffer = [];
     sendTimer = null;
 
-    function flushMessageBuffer() {
+    async function flushMessageBuffer() {
       if (messageBuffer.length === 0) return;
-      var combinedText = messageBuffer.join('\n\n');
+      if (isBotResponding) return;
+      var combinedText = messageBuffer.join(String.fromCharCode(10));
       messageBuffer = [];
-      executeSendMessage(combinedText);
+      await executeSendMessage(combinedText);
     }
 
     function handleUserSubmit() {
@@ -2426,7 +2555,7 @@
       lastDraft = '';
 
       if (text) {
-        var phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
+        var phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2} /);
         if (phoneMatch) {
           var digits = phoneMatch[0].replace(/\D/g, '');
           if (digits.length >= 10) {
@@ -2443,17 +2572,31 @@
 
       if (currentAttachment) {
         clearTimeout(sendTimer);
+        typingIndicator.textContent = 'печатает...';
         typingIndicator.style.display = 'block';
-        executeSendMessage(text, false, currentAttachment, currentAttachmentType);
+        executeSendMessage(text, false, currentAttachment, currentAttachmentType, 0);
       } else {
-        messageBuffer.push(text);
-        clearTimeout(sendTimer);
-        typingIndicator.style.display = 'block';
-        sendTimer = setTimeout(flushMessageBuffer, 2500);
+        if (isBotResponding) {
+          pendingQueueWhileReplying.push(text);
+        } else {
+          messageBuffer.push(text);
+          clearTimeout(sendTimer);
+          typingIndicator.textContent = 'печатает...';
+          typingIndicator.style.display = 'block';
+          sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
+        }
       }
     }
 
-    async function executeSendMessage(fullText, isDraft, attachment, attachmentType) {
+    async function executeSendMessage(fullText, isDraft, attachment, attachmentType, retryCount) {
+      retryCount = retryCount || 0;
+      var MAX_RETRIES = 3;
+
+      if (!isDraft) {
+        isBotResponding = true;
+        typingIndicator.textContent = 'печатает...';
+        typingIndicator.style.display = 'block';
+      }
       try {
         var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || undefined;
         var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || undefined;
@@ -2511,28 +2654,62 @@
         if (isDraft) return;
 
         if (res.ok) {
-          var result = (await res.json()).data;
-          if (result.replies && result.replies.length > 0) {
+          hideNetworkStatus();
+          var json = await res.json();
+          var result = json && json.data;
+          if (result && Array.isArray(result.replies) && result.replies.length > 0) {
             for (var i = 0; i < result.replies.length; i++) {
               var replyText = result.replies[i];
-              var typingDelay = Math.min(Math.max(replyText.length * 25, 700), 2200);
+              var typingDelay = Math.min(Math.max(replyText.length * 35, 1200), 4500);
 
+              typingIndicator.textContent = 'печатает...';
               typingIndicator.style.display = 'block';
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
               typingIndicator.style.display = 'none';
 
               saveAndRenderMessage(replyText, false);
+              if (i < result.replies.length - 1) {
+                await new Promise(function (resolve) { setTimeout(resolve, 900); });
+              }
             }
-          } else if (result.status === 'operator_needed') {
+          } else if (result && result.status === 'operator_needed') {
             saveAndRenderMessage('Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.', false);
           }
         } else {
-          saveAndRenderMessage('Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.', false);
+          throw new Error('HTTP ' + res.status);
         }
       } catch (e) {
         typingIndicator.style.display = 'none';
         if (!isDraft) {
-          saveAndRenderMessage('Ошибка связи с сервером. Проверьте интернет-соединение.', false);
+          if (retryCount < MAX_RETRIES) {
+            var delays = [3000, 6000, 10000];
+            var delayMs = delays[retryCount] || 5000;
+            var seconds = Math.round(delayMs / 1000);
+            showNetworkStatus('Проблема со связью. Повтор через ' + seconds + ' сек...', false);
+            setTimeout(function () {
+              executeSendMessage(fullText, isDraft, attachment, attachmentType, retryCount + 1);
+            }, delayMs);
+            return;
+          } else {
+            showNetworkStatus('Не удалось связаться с сервером.', true, function () {
+              showNetworkStatus('Отправка...', false);
+              executeSendMessage(fullText, false, attachment, attachmentType, 0);
+            });
+          }
+        }
+      } finally {
+        if (!isDraft && (retryCount === 0 || retryCount >= MAX_RETRIES)) {
+          isBotResponding = false;
+          typingIndicator.style.display = 'none';
+
+          if (pendingQueueWhileReplying.length > 0) {
+            messageBuffer = pendingQueueWhileReplying.slice();
+            pendingQueueWhileReplying = [];
+            clearTimeout(sendTimer);
+            typingIndicator.textContent = 'печатает...';
+            typingIndicator.style.display = 'block';
+            sendTimer = setTimeout(flushMessageBuffer, 3000);
+          }
         }
       }
     }
@@ -2553,6 +2730,13 @@
       });
 
       inputEl.addEventListener('input', function (e) {
+        if (messageBuffer.length > 0 && !isBotResponding) {
+          clearTimeout(sendTimer);
+          typingIndicator.textContent = 'печатает...';
+          typingIndicator.style.display = 'block';
+          sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
+        }
+
         var current = e.target.value.trim();
         if (current === '' && lastDraft.length > 3 && !sentDrafts[lastDraft]) {
           sentDrafts[lastDraft] = true;
