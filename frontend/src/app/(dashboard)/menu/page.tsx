@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth/use-auth";
 import { useTenantModules } from "@/lib/api/use-tenant-modules";
 import { useProfile } from "@/lib/api/use-profile";
 import { userInitials } from "@/lib/api/use-tenant-users";
+import { Logo } from "@/components/brand";
 import {
   PLATFORM_NAV,
   TENANT_MENU,
@@ -83,6 +84,11 @@ export default function MenuPage() {
 
   return (
     <div className="space-y-5 pb-4">
+      {/* Brand Header */}
+      <div className="flex items-center justify-between px-1 pt-1">
+        <Logo size="sm" href="/dashboard" />
+      </div>
+
       {/* Блок пользователя: на десктопе он живёт в нижней части сайдбара. */}
       <Link
         href="/settings/profile"
