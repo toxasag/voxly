@@ -250,8 +250,12 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     };
 
     return reply.send({
+      data: {
+        activeProvider: defaultProvider,
+        data: finalModels,
+      },
       activeProvider: defaultProvider,
-      data: finalModels,
+      dataList: finalModels,
     });
   });
 

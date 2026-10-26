@@ -41,9 +41,15 @@ export interface ModelInfo {
   price_in_per_1k: number;
   /** Price in RUB per 1 000 output tokens. */
   price_out_per_1k: number;
+  isConfigured?: boolean;
 }
 
 export const MODEL_CATALOG: ModelInfo[] = [
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "google", context_window: 2_000_000, price_in_per_1k: 1.25, price_out_per_1k: 5.00 },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
   { id: "gpt-4o", label: "GPT-4o", provider: "openai", context_window: 128_000, price_in_per_1k: 0.45, price_out_per_1k: 1.35 },
   { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "openai", context_window: 128_000, price_in_per_1k: 0.03, price_out_per_1k: 0.11 },
   { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 0.27, price_out_per_1k: 1.35 },

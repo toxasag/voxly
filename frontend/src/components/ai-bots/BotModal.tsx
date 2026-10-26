@@ -23,7 +23,7 @@ import {
   Trash2,
   UploadCloud,
 } from "lucide-react";
-import type { AiBot, BotContextEntity, BotMode, BotModel } from "@/lib/ai-bots/ai-bots.types";
+import type { AiBot, BotContextEntity, BotMode, BotModel, ModelInfo } from "@/lib/ai-bots/ai-bots.types";
 import {
   CONTEXT_ENTITIES,
   MODEL_CATALOG,
@@ -33,7 +33,7 @@ import {
   getModelInfo,
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
-import { useAiModels } from "@/lib/api/use-ai-agents";
+import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
 import { useCrmKnowledgeStats } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
@@ -302,27 +302,34 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
 
   const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useAiModels();
   const { data: crmStats } = useCrmKnowledgeStats();
-  const activeProvider = modelsData?.activeProvider;
-  const rawModelsList = modelsData?.data && modelsData.data.length > 0 ? modelsData.data : MODEL_CATALOG;
 
-  // При открытии окна принудительно запрашиваем актуальный статус моделей и интеграций
-  useEffect(() => {
-    if (open) {
-      void refetchModels();
-    }
-  }, [open, refetchModels]);
+  const activeProvider =
+    modelsData?.activeProvider ??
+    (Array.isArray(modelsData)
+      ? { name: "Google Gemini", providerType: "gemini", isConfigured: true }
+      : undefined);
+
+  const modelsArray: (AiModelItem | ModelInfo)[] = Array.isArray(modelsData?.data)
+    ? modelsData.data
+    : Array.isArray(modelsData)
+      ? (modelsData as unknown as ModelInfo[])
+      : [];
+
+  const rawModelsList: (AiModelItem | ModelInfo)[] =
+    modelsArray.length > 0 ? modelsArray : MODEL_CATALOG;
 
   // Оставляем только РЕАЛЬНО настроенные модели, если у нас есть данные от бэкенда
-  const modelsList = modelsData?.data && modelsData.data.length > 0
-    ? modelsData.data.filter((m) => m.isConfigured !== false)
-    : activeProvider?.isConfigured
-      ? rawModelsList.filter(
-          (m) =>
-            ("isConfigured" in m && Boolean(m.isConfigured)) ||
-            m.provider === activeProvider.providerType ||
-            (activeProvider.providerType === "gemini" && m.provider === "google"),
-        )
-      : [];
+  const modelsList =
+    modelsArray.length > 0
+      ? modelsArray.filter((m) => m.isConfigured !== false)
+      : activeProvider?.isConfigured
+        ? rawModelsList.filter(
+            (m) =>
+              Boolean(m.isConfigured) ||
+              m.provider === activeProvider.providerType ||
+              (activeProvider.providerType === "gemini" && (m.provider === "google" || m.provider === "gemini")),
+          )
+        : rawModelsList;
 
   // Автоматически синхронизируем выбранную модель с активной моделью провайдера
   useEffect(() => {
@@ -485,6 +492,11 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     Провайдер платформы: {activeProvider.name} {activeProvider.chatModel ? `(${activeProvider.chatModel})` : ""}
                   </span>
+                ) : modelsList.length > 0 ? (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Подключено моделей: {modelsList.length}
+                  </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full font-medium">
                     Провайдер не настроен
@@ -498,7 +510,7 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     <div key={i} className="h-14 rounded-lg border border-[#e5e5e5] bg-slate-50 animate-pulse" />
                   ))}
                 </div>
-              ) : !activeProvider?.isConfigured && modelsList.length === 0 ? (
+              ) : modelsList.length === 0 ? (
                 <div className="rounded-[8px] border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 flex items-start gap-2.5">
                   <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
