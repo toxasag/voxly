@@ -219,14 +219,6 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       */}
       {tab === "chat" && (
         <div className="space-y-3">
-          <div className="flex items-start gap-2.5 rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3">
-            <Braces className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-            <p className="text-xs leading-relaxed text-amber-800">
-              Демонстрационный режим: ответы формируются локально в браузере, модель не
-              вызывается и баланс ИИ не расходуется. Реальные ответы появятся после
-              подключения провайдера.
-            </p>
-          </div>
           <BotChat bot={bot} />
         </div>
       )}
@@ -274,7 +266,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
                 </span>
               </h3>
               <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm leading-relaxed text-[#111111]">
-                {renderPromptPreview(promptDraft)}
+                {renderPromptPreview(promptDraft, bot)}
               </p>
             </div>
           </div>
