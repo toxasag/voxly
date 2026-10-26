@@ -189,6 +189,18 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(201).send({ data: message });
   });
 
+  app.get("/:id/deals-history", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const query = z
+      .object({
+        limit: z.coerce.number().int().positive().max(100).default(50),
+        offset: z.coerce.number().int().nonnegative().default(0),
+      })
+      .parse(request.query);
+    const result = await service.getDealsHistory(request.tenant_id, id, query);
+    return reply.send({ data: result });
+  });
+
   app.get("/:id/send-from-options", { onRequest: canRead }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const options = await messaging.getContactSendFromOptions(request.tenant_id, id);

@@ -213,6 +213,14 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ data: messages, meta: { total: messages.length } });
   });
 
+  // GET /deals/:id/contact-history — сквозная история контакта и LTV для карточки сделки
+  app.get("/:id/contact-history", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const history = await service.getContactHistory(request.tenant_id, id);
+
+    return reply.send({ data: history });
+  });
+
   /**
    * Ответ менеджера: запись в таймлайн **и** отправка в канал клиента.
    *

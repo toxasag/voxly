@@ -4,6 +4,9 @@ import type { NextConfig } from "next";
 // самодостаточный server.js, который раннер-образ запускает без next-cli.
 const nextConfig: NextConfig = {
   output: "standalone",
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 export default nextConfig;

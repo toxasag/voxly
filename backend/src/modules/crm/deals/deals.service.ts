@@ -2,20 +2,26 @@ import type {
   CreateDealMessagePayload,
   CreateDealPayload,
   CreateStagePayload,
+  DealContactHistoryDTO,
+  DealContactSummaryDTO,
+  DealContactTimelineItemDTO,
   DealDTO,
   DealMessageDTO,
   DealMessageRow,
+  DealOtherDealItemDTO,
   DealRow,
   DeliveryStatus,
   KanbanColumn,
   PipelineDTO,
+  StageColor,
   StageRow,
   UpdateDealPayload,
   UpdateStagePayload,
 } from "./deals.types.js";
-import { toDealDTO, toDealMessageDTO } from "./deals.types.js";
+import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+import { TimelineService } from "../timeline/timeline.service.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
@@ -1112,5 +1118,228 @@ export class DealsService {
 
       return { dealId: deal.id, contactId: deal.contact_id };
     });
+  }
+
+  /**
+   * Сквозная история контакта для карточки сделки (1 контакт : N сделок).
+   *
+   * Возвращает профиль контакта, агрегированные LTV-метрики, список других
+   * сделок этого контакта и объединённый таймлайн активности.
+   */
+  async getContactHistory(tenantId: string, dealId: string): Promise<DealContactHistoryDTO> {
+    const deal = await queryOne<{
+      id: string;
+      contact_id: string | null;
+      budget: string;
+      currency: string;
+      is_won: boolean;
+      is_lost: boolean;
+    }>(
+      `SELECT d.id, d.contact_id, d.budget::text, d.currency, s.is_won, s.is_lost
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    if (!deal) {
+      throw new NotFoundError("Сделка не найдена");
+    }
+
+    if (!deal.contact_id) {
+      const b = Number(deal.budget || 0);
+      return {
+        dealId,
+        contact: null,
+        metrics: {
+          totalDeals: 1,
+          wonDeals: deal.is_won ? 1 : 0,
+          lostDeals: deal.is_lost ? 1 : 0,
+          activeDeals: (!deal.is_won && !deal.is_lost) ? 1 : 0,
+          totalLtv: deal.is_won ? b : 0,
+          avgCheck: b,
+          isRepeatClient: false,
+        },
+        otherDeals: [],
+        timeline: [],
+      };
+    }
+
+    // 1. Профиль контакта
+    interface ContactRow {
+      id: string;
+      first_name: string;
+      last_name: string;
+      email: string | null;
+      phone: string | null;
+      company_id: string | null;
+      company_name: string | null;
+      custom_fields: Record<string, unknown> | null;
+      created_at: Date | string;
+    }
+
+    const contactRow = await queryOne<ContactRow>(
+      `SELECT c.id, c.first_name, c.last_name, c.email, c.phone, c.company_id,
+              co.name AS company_name, c.custom_fields, c.created_at
+       FROM contacts c
+       LEFT JOIN companies co ON co.id = c.company_id AND co.tenant_id = c.tenant_id
+       WHERE c.tenant_id = $1 AND c.id = $2 AND c.deleted_at IS NULL`,
+      [tenantId, deal.contact_id],
+    );
+
+    const contactSummary: DealContactSummaryDTO | null = contactRow
+      ? {
+          id: contactRow.id,
+          firstName: contactRow.first_name,
+          lastName: contactRow.last_name,
+          email: contactRow.email,
+          phone: contactRow.phone,
+          companyId: contactRow.company_id,
+          companyName: contactRow.company_name,
+          customFields: (contactRow.custom_fields as Record<string, unknown>) || {},
+          createdAt:
+            contactRow.created_at instanceof Date
+              ? contactRow.created_at.toISOString()
+              : String(contactRow.created_at),
+        }
+      : null;
+
+    // 2. Все сделки контакта
+    interface DealRowItem {
+      id: string;
+      title: string;
+      budget: string;
+      currency: string;
+      stage_id: string;
+      stage_name: string;
+      stage_color: string;
+      is_won: boolean;
+      is_lost: boolean;
+      created_at: Date | string;
+      closed_at: Date | string | null;
+    }
+
+    const contactDeals = await query<DealRowItem>(
+      `SELECT d.id, d.title, d.budget::text, d.currency, d.stage_id,
+              s.name AS stage_name, COALESCE(s.color, 'slate') AS stage_color, s.is_won, s.is_lost,
+              d.created_at, d.closed_at
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.created_at DESC`,
+      [tenantId, deal.contact_id],
+    );
+
+    const totalDeals = contactDeals.length;
+    let wonDeals = 0;
+    let lostDeals = 0;
+    let totalLtv = 0;
+    let totalBudget = 0;
+
+    for (const d of contactDeals) {
+      const b = Number(d.budget || 0);
+      totalBudget += b;
+      if (d.is_won) {
+        wonDeals++;
+        totalLtv += b;
+      } else if (d.is_lost) {
+        lostDeals++;
+      }
+    }
+
+    const activeDeals = Math.max(0, totalDeals - (wonDeals + lostDeals));
+    const avgCheck =
+      wonDeals > 0
+        ? Math.round(totalLtv / wonDeals)
+        : totalDeals > 0
+          ? Math.round(totalBudget / totalDeals)
+          : 0;
+
+    const otherDeals: DealOtherDealItemDTO[] = contactDeals
+      .filter((d) => d.id !== dealId)
+      .map((d) => {
+        const colorParsed = stageColorSchema.safeParse(d.stage_color);
+        const stageColor: StageColor = colorParsed.success ? colorParsed.data : "slate";
+
+        return {
+          id: d.id,
+          title: d.title,
+          budget: Number(d.budget || 0),
+          currency: d.currency,
+          stageId: d.stage_id,
+          stageName: d.stage_name,
+          stageColor,
+          isWon: d.is_won,
+          isLost: d.is_lost,
+          createdAt:
+            d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          closedAt: d.closed_at
+            ? d.closed_at instanceof Date
+              ? d.closed_at.toISOString()
+              : String(d.closed_at)
+            : null,
+        };
+      });
+
+    // 3. Сквозной таймлайн
+    const timelineService = new TimelineService();
+    const timelineResponse = await timelineService.getTimeline(
+      tenantId,
+      "contact",
+      deal.contact_id,
+      50,
+      0,
+    );
+
+    const timeline: DealContactTimelineItemDTO[] = timelineResponse.items.map((ev) => {
+      let title = "Событие";
+      let description: string | undefined = undefined;
+      const dId = ev.data?.dealId as string | undefined;
+      const dTitle = ev.data?.dealTitle as string | undefined;
+
+      if (ev.type === "note") {
+        title = (ev.data?.title as string) || "Заметка";
+        description = ev.data?.body as string | undefined;
+      } else if (ev.type === "message") {
+        title =
+          ev.data?.channel === "webchat"
+            ? "Онлайн-чат"
+            : (ev.data?.channel as string) || "Сообщение";
+        description = (ev.data?.content || ev.data?.text) as string | undefined;
+      } else if (ev.type === "stage_change") {
+        title = `Смена этапа${dTitle ? ` в «${dTitle}»` : ""}: ${ev.data?.toStageName || ""}`;
+      } else if (ev.type === "task") {
+        title = (ev.data?.title as string) || "Задача";
+        description = ev.data?.description as string | undefined;
+      }
+
+      return {
+        id: ev.id,
+        type: ev.type,
+        dealId: dId,
+        dealTitle: dTitle,
+        timestamp: ev.createdAt,
+        title,
+        description,
+        authorName: ev.authorName || undefined,
+        metadata: ev.data,
+      };
+    });
+
+    return {
+      dealId,
+      contact: contactSummary,
+      metrics: {
+        totalDeals,
+        wonDeals,
+        lostDeals,
+        activeDeals,
+        totalLtv,
+        avgCheck,
+        isRepeatClient: totalDeals > 1,
+      },
+      otherDeals,
+      timeline,
+    };
   }
 }

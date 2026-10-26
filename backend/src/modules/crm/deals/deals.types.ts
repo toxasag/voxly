@@ -341,3 +341,62 @@ export interface StageRow {
   is_system: boolean;
   color: StageColor;
 }
+
+// ---------------------------------------------------------------------------
+// Deal Contact History (1:N Contact to Deals & Unified Timeline)
+// ---------------------------------------------------------------------------
+
+export interface DealContactSummaryDTO {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  companyId: string | null;
+  companyName: string | null;
+  customFields: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DealOtherDealItemDTO {
+  id: string;
+  title: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColor: StageColor;
+  isWon: boolean;
+  isLost: boolean;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+export interface DealContactTimelineItemDTO {
+  id: string;
+  type: "note" | "task" | "message" | "stage_change" | "deal_created";
+  dealId?: string;
+  dealTitle?: string;
+  timestamp: string;
+  title: string;
+  description?: string;
+  authorName?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DealContactHistoryDTO {
+  dealId: string;
+  contact: DealContactSummaryDTO | null;
+  metrics: {
+    totalDeals: number;
+    wonDeals: number;
+    lostDeals: number;
+    activeDeals: number;
+    totalLtv: number;
+    avgCheck: number;
+    isRepeatClient: boolean;
+  };
+  otherDeals: DealOtherDealItemDTO[];
+  timeline: DealContactTimelineItemDTO[];
+}
+
