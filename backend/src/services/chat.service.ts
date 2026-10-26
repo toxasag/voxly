@@ -158,6 +158,7 @@ export class GatewayChatProvider implements ChatProvider {
 
     for (let i = 0; i < keysToTry.length; i++) {
       const activeApiKey = keysToTry[i];
+      if (!activeApiKey) continue;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -197,11 +198,21 @@ export class GatewayChatProvider implements ChatProvider {
 
         if (!response.ok) {
           const text = await response.text().catch(() => "");
-          const isRateLimit = response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit");
+          const isAuthError = response.status === 401 || response.status === 403 || text.includes("deleted or disabled") || text.includes("API key not valid");
+          if (isAuthError && activeApiKey) {
+            platformConfigService.markKeyInvalid(activeApiKey);
+          }
 
-          // Если превышена квота или rate limit (429) и в пуле ещё есть запасные ключи — пробуем следующий
-          if (isRateLimit && i < keysToTry.length - 1) {
-            lastError = new ChatFailedError(`HTTP 429 на ключе #${i + 1}`);
+          const isRetryable =
+            isAuthError ||
+            response.status === 429 ||
+            response.status >= 500 ||
+            text.includes("RESOURCE_EXHAUSTED") ||
+            text.includes("Rate limit");
+
+          // Если ключ не сработал (401/403/429/5xx) и в пуле ещё есть запасные ключи — пробуем следующий
+          if (isRetryable && i < keysToTry.length - 1) {
+            lastError = new ChatFailedError(`Ключ #${i + 1} вернул HTTP ${response.status}: ${text.slice(0, 100)}`);
             continue;
           }
 
@@ -220,8 +231,8 @@ export class GatewayChatProvider implements ChatProvider {
           latencyMs: Date.now() - startedAt,
         };
       } catch (error) {
-        if (error instanceof AppError && error.code === "LLM_FAILED" && error.message.includes("429") && i < keysToTry.length - 1) {
-          lastError = error;
+        if (i < keysToTry.length - 1) {
+          lastError = error instanceof Error ? error : new Error(String(error));
           continue;
         }
         if (error instanceof AppError) throw error;

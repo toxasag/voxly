@@ -192,6 +192,7 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
 
     for (let i = 0; i < keysToTry.length; i++) {
       const activeApiKey = keysToTry[i];
+      if (!activeApiKey) continue;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -212,10 +213,20 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
 
         if (!response.ok) {
           const text = await response.text().catch(() => "");
-          const isRateLimit = response.status === 429 || text.includes("RESOURCE_EXHAUSTED") || text.includes("Rate limit");
+          const isAuthError = response.status === 401 || response.status === 403 || text.includes("deleted or disabled") || text.includes("API key not valid");
+          if (isAuthError && activeApiKey) {
+            platformConfigService.markKeyInvalid(activeApiKey);
+          }
 
-          if (isRateLimit && i < keysToTry.length - 1) {
-            lastError = new EmbeddingsFailedError(`HTTP 429 на ключе #${i + 1}`);
+          const isRetryable =
+            isAuthError ||
+            response.status === 429 ||
+            response.status >= 500 ||
+            text.includes("RESOURCE_EXHAUSTED") ||
+            text.includes("Rate limit");
+
+          if (isRetryable && i < keysToTry.length - 1) {
+            lastError = new EmbeddingsFailedError(`Ключ #${i + 1} вернул HTTP ${response.status}: ${text.slice(0, 100)}`);
             continue;
           }
 
@@ -232,8 +243,8 @@ export class GatewayEmbeddingProvider implements EmbeddingProvider {
           model: parsed.model.length > 0 ? parsed.model : this.model,
         };
       } catch (error) {
-        if (error instanceof AppError && error.code === "EMBEDDINGS_FAILED" && error.message.includes("429") && i < keysToTry.length - 1) {
-          lastError = error;
+        if (i < keysToTry.length - 1) {
+          lastError = error instanceof Error ? error : new Error(String(error));
           continue;
         }
         if (error instanceof AppError) throw error;
