@@ -383,4 +383,133 @@ export class AgentPipelineService {
     });
   }
 
+  /**
+   * Тестовый чат с агентом прямо из кабинета платформы.
+   *
+   * Использует боевой RAG базы знаний агента, подстановку переменных и LLM-провайдер,
+   * чтобы администратор видел точный ответ, который получит реальный клиент.
+   */
+  async generateTestReply(input: {
+    tenantId: string;
+    agentId: string;
+    message: string;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
+  }): Promise<{ reply: string; messages: string[]; tokens: number; latencyMs: number }> {
+    const agent = await queryOne<AgentRow>(
+      `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
+              a.max_tokens, a.system_prompt, a.wizard_config
+       FROM ai_agents a
+       WHERE a.tenant_id = $1
+         AND a.id = $2
+         AND a.deleted_at IS NULL
+       LIMIT 1`,
+      [input.tenantId, input.agentId],
+    );
+
+    if (agent === null) {
+      throw new Error("Агент не найден или удалён");
+    }
+
+    const [contextChunks, salesExamples, tenantRow] = await Promise.all([
+      this.knowledge
+        .search({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          question: input.message,
+        })
+        .catch((error: unknown) => {
+          this.log.warn({ error, agentId: agent.id }, "Knowledge search failed in test chat");
+          return [];
+        }),
+      this.salesLearn
+        .findRelevantSalesExamples({
+          tenantId: input.tenantId,
+          query: input.message,
+          limit: 2,
+        })
+        .catch(() => []),
+      queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [input.tenantId],
+      ).catch(() => null),
+    ]);
+
+    const wc = agent.wizard_config;
+    const variables: Record<string, string> = {
+      "tenant.name": tenantRow?.name || "Компания",
+      "channel_type": "тестовый чат",
+      "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    if (wc) {
+      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
+      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
+      if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
+    const systemPrompt = buildSystemPrompt({
+      agentPrompt: agent.system_prompt,
+      contextChunks: contextChunks.map((hit) => ({
+        content: hit.content,
+        filename: hit.filename,
+      })),
+      variables,
+      crmPatterns: salesExamples.map((ex) => ({
+        customerQuery: ex.customerQuery,
+        agentReply: ex.agentReply,
+      })),
+    });
+
+    const model = isAiModelId(agent.model) ? agent.model : FALLBACK_MODEL;
+
+    const chatMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+    ];
+
+    if (input.history && Array.isArray(input.history)) {
+      for (const h of input.history.slice(-6)) {
+        if (h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string") {
+          chatMessages.push({ role: h.role, content: h.content });
+        }
+      }
+    }
+
+    chatMessages.push({ role: "user", content: input.message });
+
+    const completion = await this.chat.complete({
+      model: GATEWAY_MODEL[model] ?? model,
+      messages: chatMessages,
+      temperature: Number(agent.temperature),
+      maxTokens: agent.max_tokens,
+      jsonMode: true,
+    });
+
+    const parsed = parseAgentReply(completion.content);
+    const messages = parsed ? parsed.messages : [completion.content];
+    const replyText = messages.join("\n\n");
+
+    // Фиксируем использование в журнале
+    void this.chargeUsage({
+      tenantId: input.tenantId,
+      agentId: agent.id,
+      model,
+      tokensIn: completion.tokensIn ?? 0,
+      tokensOut: completion.tokensOut ?? 0,
+      latencyMs: completion.latencyMs ?? 0,
+      status: "success",
+      errorMessage: "",
+    }).catch((err) => {
+      this.log.warn({ err }, "Не удалось зафиксировать статистику тестового чата");
+    });
+
+    return {
+      reply: replyText,
+      messages,
+      tokens: (completion.tokensIn ?? 0) + (completion.tokensOut ?? 0),
+      latencyMs: completion.latencyMs ?? 0,
+    };
+  }
+
 }

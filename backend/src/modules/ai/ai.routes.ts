@@ -27,6 +27,7 @@ import {
   UnsupportedDocumentError,
 } from "./knowledge-text.js";
 import { queueManager } from "../../infrastructure/queue.js";
+import { AgentPipelineService } from "./agent-pipeline.service.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ, смонтировано в app.ts под /api/v1/ai.
@@ -104,11 +105,24 @@ const updateDocumentSchema = z.object({
   filename: z.string().optional(),
 });
 
+const testChatSchema = z.object({
+  message: z.string().trim().min(1, "Сообщение не может быть пустым").max(2000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(2000),
+      }),
+    )
+    .optional(),
+});
+
 export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
 
   const service = new AiService();
   const knowledge = new KnowledgeBaseService();
+  const pipeline = new AgentPipelineService(app.log);
 
   const readAgents = [app.requirePermission("ai_bots:read"), app.requireModule("ai_bots")];
   const writeAgents = [app.requirePermission("ai_bots:configure"), app.requireModule("ai_bots")];
@@ -338,7 +352,86 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
     const body = updateAgentSchema.parse(request.body);
-    return reply.send({ data: await service.updateAgent(request.tenant_id, id, body) });
+    const agent = await service.updateAgent(request.tenant_id, id, body);
+
+    // Если передан URL сайта, запускаем сканирование страниц сайта в базу знаний
+    if (body.website_url && body.website_url.trim()) {
+      void (async () => {
+        try {
+          const pages = await crawlWebsite(body.website_url!.trim(), { maxPages: 25 });
+          for (const page of pages) {
+            try {
+              await knowledge.addDocument({
+                tenantId: request.tenant_id,
+                agentId: agent.id,
+                filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
+                mimeType: "text/html",
+                text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
+              });
+            } catch {
+              // Продолжаем индексацию остальных страниц
+            }
+          }
+        } catch (err) {
+          request.log.warn({ err }, "Не удалось автоматически просканировать сайт при обновлении агента");
+        }
+      })();
+    }
+
+    // Если передан URL на отзывы/карты, извлекаем рейтинг и отзывы
+    if (body.map_reviews_url && body.map_reviews_url.trim()) {
+      void (async () => {
+        try {
+          const reviewsResult = await crawlMapReviews(body.map_reviews_url!.trim());
+          await knowledge.addDocument({
+            tenantId: request.tenant_id,
+            agentId: agent.id,
+            filename: `Отзывы (${reviewsResult.platform}): ${reviewsResult.orgName.slice(0, 50)}`,
+            mimeType: "text/markdown",
+            text: reviewsResult.markdownContent,
+          });
+        } catch (err) {
+          request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при обновлении агента");
+        }
+      })();
+    }
+
+    // Если включен автосбор опыта из CRM (сделки и переписки)
+    if (body.sync_crm === true) {
+      void knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, agent.id).catch((err) => {
+        request.log.warn({ err }, "Не удалось автоматически синтезировать опыт из CRM");
+      });
+    }
+
+    // Если передана выгрузка переписки WhatsApp
+    if (body.whatsapp_chat_text && body.whatsapp_chat_text.trim().length > 20) {
+      void knowledgeSynthesizerService
+        .synthesizeFromWhatsApp(
+          request.tenant_id,
+          agent.id,
+          body.whatsapp_chat_text.trim(),
+          "WhatsApp-чат.txt",
+        )
+        .catch((err) => {
+          request.log.warn({ err }, "Не удалось автоматически синтезировать переписку WhatsApp");
+        });
+    }
+
+    return reply.send({ data: agent });
+  });
+
+  app.post("/agents/:id/test-chat", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = testChatSchema.parse(request.body);
+
+    const result = await pipeline.generateTestReply({
+      tenantId: request.tenant_id,
+      agentId: id,
+      message: body.message,
+      history: body.history,
+    });
+
+    return reply.send({ data: result });
   });
 
   app.delete("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {

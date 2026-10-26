@@ -3,51 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiBot, BotChatMessage } from "@/lib/ai-bots/ai-bots.types";
 import { estimateTokens } from "@/lib/ai-bots/ai-bots.types";
+import { apiClient } from "@/lib/api/apiClient";
+
 // ---------------------------------------------------------------------------
-// Демонстрационный поток пробного чата.
+// Пробный чат с реальным вызовом AI-агента и базы знаний RAG.
 //
-// Рабочая реализация подпишется на SSE `POST /ai-bots/:id/chat` (M4.2.4) и будет
-// дописывать каждый `chunk` в последнее сообщение ассистента. Пока ключа
-// LLM-провайдера на платформе нет, тот же конечный автомат управляется таймером —
-// это позволяет проверить индикатор набора, остановку и повтор при ошибке.
-//
-// Интерфейс прямо предупреждает, что режим демонстрационный (см. страницу
-// агента): показывать выдуманные ответы как настоящие было бы обманом.
-//
-// Заготовки ответов лежат здесь, а не в `lib/ai-bots/`: это фикстуры одного
-// экрана, и в домене агентов, который теперь работает на реальных данных, им
-// места нет. Прежний `mock-ai-bots.ts` удалён вместе с захардкоженными ботами.
-//
-// `/fail` в начале сообщения обрывает поток — проверка пути «соединение
-// потеряно» (M4.1.13).
+// Запрос уходит на backend `POST /api/v1/ai/agents/:id/test-chat`, где
+// контекст ищется в реальной базе знаний агента (pgvector), подставляются
+// переменные из настроек мастера, и ответ формируется подключенной LLM-моделью.
 // ---------------------------------------------------------------------------
-
-/** Пустая история: переписка появится вместе с реальным чатом. */
-function getBotChatHistory(botId?: string): BotChatMessage[] {
-  void botId;
-  return [];
-}
-
-const DEMO_REPLIES: string[] = [
-  "Понял задачу. Судя по истории сделки, клиента беспокоит окно миграции. Я бы уточнил, что переключение проходит в выходные, а старая система две недели остаётся доступной для чтения. Подготовить такой ответ?",
-  "Предлагаю ответить так:\n\nДобрый день! Описанный объём укладывается в стандартный пакет. Срок — 3–4 недели с даты договора, первые две недели поддержки после запуска входят в стоимость. Могу прислать подробную смету сегодня — оформить на бухгалтерию?",
-  "Сводка по запросу:\n• Клиенту нужна интеграция со складской системой\n• Ожидаемый срок — конец квартала\n• Лицо, принимающее решение, не выявлено\n\nСледующий шаг: выяснить, кто утверждает бюджет, до отправки сметы.",
-  "Заказ-наряд в диагностике. Мастер обнаружил окисление на плате питания — этим объясняются самопроизвольные отключения. Замена платы стоит 8 400 ₽ и занимает два рабочих дня после поступления детали. Сообщить клиенту и запросить согласование?",
-];
-
-const FIRST_CHUNK_DELAY_MS = 420;
-const CHUNK_INTERVAL_MS = 28;
-const CHUNK_SIZE = 3;
-const FAIL_TRIGGER = "/fail";
-const STREAM_ERROR_MESSAGE = "Connection lost while streaming the response.";
-
-function pickReply(seed: number): string {
-  const reply = DEMO_REPLIES[seed % DEMO_REPLIES.length];
-  return reply ?? DEMO_REPLIES[0] ?? "";
-}
 
 function makeId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const CHUNK_INTERVAL_MS = 22;
+const CHUNK_SIZE = 4;
+const FAIL_TRIGGER = "/fail";
+const STREAM_ERROR_MESSAGE = "Ошибка соединения при получении ответа модели.";
+
+interface TestChatResponse {
+  reply: string;
+  messages?: string[];
+  tokens?: number;
+  latencyMs?: number;
 }
 
 interface UseBotChatResult {
@@ -63,13 +42,12 @@ interface UseBotChatResult {
 }
 
 export function useBotChat(bot: AiBot): UseBotChatResult {
-  const [messages, setMessages] = useState<BotChatMessage[]>(() => getBotChatHistory(bot.id));
+  const [messages, setMessages] = useState<BotChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const replySeedRef = useRef(0);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -81,7 +59,7 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
   // Reset the transcript whenever the caller switches bot.
   useEffect(() => {
     clearTimer();
-    setMessages(getBotChatHistory(bot.id));
+    setMessages([]);
     setIsStreaming(false);
     setError(null);
     setLastPrompt(null);
@@ -90,14 +68,14 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
   // Stop any in-flight stream on unmount.
   useEffect(() => clearTimer, [clearTimer]);
 
-  const finalizeMessage = useCallback((messageId: string, latencyMs: number) => {
+  const finalizeMessage = useCallback((messageId: string, tokens: number, latencyMs: number) => {
     setMessages((prev) =>
       prev.map((message) =>
         message.id === messageId
           ? {
               ...message,
               streaming: false,
-              tokens: estimateTokens(message.content),
+              tokens,
               latency_ms: latencyMs,
             }
           : message,
@@ -106,31 +84,25 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
     setIsStreaming(false);
   }, []);
 
-  const failMessage = useCallback((messageId: string) => {
+  const failMessage = useCallback((messageId: string, errorText?: string) => {
+    const msg = errorText || STREAM_ERROR_MESSAGE;
     setMessages((prev) =>
       prev.map((message) =>
         message.id === messageId
-          ? { ...message, streaming: false, error: STREAM_ERROR_MESSAGE }
+          ? { ...message, streaming: false, error: msg }
           : message,
       ),
     );
-    setError(STREAM_ERROR_MESSAGE);
+    setError(msg);
     setIsStreaming(false);
   }, []);
 
   /** Streams `reply` into an existing assistant message, chunk by chunk. */
   const runStream = useCallback(
-    (messageId: string, reply: string, shouldFail: boolean) => {
-      const startedAt = Date.now();
-      const failAt = shouldFail ? Math.floor(reply.length * 0.4) : -1;
+    (messageId: string, reply: string, tokens: number, latencyMs: number) => {
       let cursor = 0;
 
       const pushChunk = () => {
-        if (shouldFail && cursor >= failAt) {
-          failMessage(messageId);
-          return;
-        }
-
         const next = reply.slice(cursor, cursor + CHUNK_SIZE);
         cursor += CHUNK_SIZE;
 
@@ -143,21 +115,21 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
         );
 
         if (cursor >= reply.length) {
-          finalizeMessage(messageId, Date.now() - startedAt);
+          finalizeMessage(messageId, tokens, latencyMs);
           return;
         }
 
         timerRef.current = setTimeout(pushChunk, CHUNK_INTERVAL_MS);
       };
 
-      timerRef.current = setTimeout(pushChunk, FIRST_CHUNK_DELAY_MS);
+      timerRef.current = setTimeout(pushChunk, 40);
     },
-    [failMessage, finalizeMessage],
+    [finalizeMessage],
   );
 
-  /** Appends an empty assistant message and starts streaming into it. */
+  /** Appends an empty assistant message and sends query to real backend test-chat. */
   const startAssistantReply = useCallback(
-    (shouldFail: boolean) => {
+    (promptText: string, shouldFail: boolean) => {
       const assistantMessage: BotChatMessage = {
         id: makeId("msg-ai"),
         bot_id: bot.id,
@@ -174,11 +146,36 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
       setIsStreaming(true);
       setError(null);
 
-      const reply = pickReply(replySeedRef.current);
-      replySeedRef.current += 1;
-      runStream(assistantMessage.id, reply, shouldFail);
+      if (shouldFail) {
+        setTimeout(() => {
+          failMessage(assistantMessage.id, "Искусственный сбой по команде /fail");
+        }, 500);
+        return;
+      }
+
+      // Подготавливаем историю последних сообщений
+      const historyPayload = messages.slice(-6).map((m) => ({
+        role: (m.source === "human" ? "user" : "assistant") as "user" | "assistant",
+        content: m.content,
+      }));
+
+      apiClient
+        .post<TestChatResponse>(`/api/v1/ai/agents/${bot.id}/test-chat`, {
+          message: promptText,
+          history: historyPayload,
+        })
+        .then((res) => {
+          const reply = res.data?.reply || "Агент не сформировал текстовый ответ.";
+          const tokens = res.data?.tokens ?? estimateTokens(reply);
+          const latency = res.data?.latencyMs ?? 450;
+          runStream(assistantMessage.id, reply, tokens, latency);
+        })
+        .catch((err: unknown) => {
+          const errMsg = err instanceof Error ? err.message : "Не удалось получить ответ от агента";
+          failMessage(assistantMessage.id, errMsg);
+        });
     },
-    [bot.id, runStream],
+    [bot.id, messages, failMessage, runStream],
   );
 
   const sendMessage = useCallback(
@@ -202,7 +199,7 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
 
       setMessages((prev) => [...prev, userMessage]);
       setLastPrompt(trimmed);
-      startAssistantReply(trimmed.startsWith(FAIL_TRIGGER));
+      startAssistantReply(trimmed, trimmed.startsWith(FAIL_TRIGGER));
     },
     [bot.id, clearTimer, isStreaming, startAssistantReply],
   );
@@ -216,7 +213,7 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
               ...message,
               streaming: false,
               tokens: estimateTokens(message.content),
-              content: message.content.length > 0 ? message.content : "(generation stopped)",
+              content: message.content.length > 0 ? message.content : "(генерация остановлена)",
             }
           : message,
       ),
@@ -238,7 +235,7 @@ export function useBotChat(bot: AiBot): UseBotChatResult {
       return prev;
     });
     setError(null);
-    startAssistantReply(false);
+    startAssistantReply(lastPrompt, false);
   }, [clearTimer, isStreaming, lastPrompt, startAssistantReply]);
 
   const clearChat = useCallback(() => {
