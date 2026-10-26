@@ -1375,7 +1375,7 @@
       </div>
       <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
       <div class="getvoxly-messages" id="getvoxly-messages"></div>
-      <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
+      <div class="getvoxly-typing" id="getvoxly-typing">печатает...</div>
       <div class="getvoxly-input-area">
         <div class="getvoxly-attachment-preview" id="getvoxly-attachment-preview" style="display: none;"></div>
         <div class="getvoxly-attach-gate" id="getvoxly-attach-gate" style="display: none;">
