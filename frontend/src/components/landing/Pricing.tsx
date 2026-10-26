@@ -58,7 +58,7 @@ const plans: Plan[] = [
 
 export function Pricing() {
   return (
-    <section className="px-6 py-24 border-t border-[#e5e5e5] bg-white">
+    <section id="pricing" className="px-6 py-24 border-t border-[#e5e5e5] bg-white">
       <div className="mx-auto max-w-6xl">
         <div className="text-center">
           <h2 className="text-3xl font-bold tracking-tight text-[#111111] sm:text-4xl">

@@ -25,6 +25,7 @@ import { useTenantModules } from "@/lib/api/use-tenant-modules";
 import { useProfile } from "@/lib/api/use-profile";
 import { userInitials } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { Logo } from "@/components/brand";
 import {
   MARKETPLACE_NAV,
   PLATFORM_NAV,
@@ -147,10 +148,24 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] text-[#111111] transition-all duration-200 ease-in-out md:flex",
+        "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-[#e5e5e5] bg-[#fbfbfb] text-[#111111] transition-all duration-200 ease-in-out md:flex dark:border-[#27272a] dark:bg-[#111111]",
         collapsed ? "w-16" : "w-60",
       )}
     >
+      {/* Platform Brand Anchor */}
+      <div
+        className={cn(
+          "flex h-11 items-center border-b border-[#e5e5e5] dark:border-[#27272a] px-3.5 transition-colors",
+          collapsed ? "justify-center px-1" : "justify-between",
+        )}
+      >
+        <Logo
+          variant={collapsed ? "mark" : "full"}
+          size="xs"
+          href="/dashboard"
+        />
+      </div>
+
       {/* Workspace Header & Switcher */}
       <div className="relative border-b border-[#e5e5e5] px-2.5 py-2.5">
         <button

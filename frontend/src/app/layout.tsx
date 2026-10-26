@@ -7,6 +7,18 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "GETVOXLY — платформа для бизнеса",
   description: "Модульная CRM-платформа: продажи, сервис, финансы и AI-боты",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
+      { url: "/favicon-16x16.png", type: "image/png", sizes: "16x16" },
+    ],
+    apple: [
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
+  manifest: "/site.webmanifest",
 };
 
 /**
@@ -38,8 +50,14 @@ export const viewport: Viewport = {
  */
 const THEME_INIT_SCRIPT = `
 try {
-  document.documentElement.classList.add('light');
-  document.documentElement.classList.remove('dark');
+  var stored = localStorage.getItem('getvoxly_theme');
+  if (stored === 'dark') {
+    document.documentElement.classList.add('dark');
+    document.documentElement.classList.remove('light');
+  } else {
+    document.documentElement.classList.add('light');
+    document.documentElement.classList.remove('dark');
+  }
 } catch (e) {}
 `;
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, LogIn } from "lucide-react";
+import { Logo } from "@/components/brand";
 
 export function Hero() {
   return (
@@ -9,6 +10,7 @@ export function Hero() {
 
       <div className="relative z-10 mx-auto max-w-3xl text-center">
         <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#4a38f5]/20 bg-[#4a38f5]/5 px-4 py-1.5 text-sm font-medium text-[#4a38f5]">
+          <Logo variant="mark" size="xs" markClassName="h-3.5 w-3.5" />
           CRM нового поколения
         </span>
 

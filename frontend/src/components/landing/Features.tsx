@@ -54,7 +54,7 @@ const features: Feature[] = [
 
 export function Features() {
   return (
-    <section className="px-6 py-24 border-t border-[#e5e5e5] bg-[#fafafa]">
+    <section id="features" className="px-6 py-24 border-t border-[#e5e5e5] bg-[#fafafa]">
       <div className="mx-auto max-w-6xl">
         <div className="text-center">
           <h2 className="text-3xl font-bold tracking-tight text-[#111111] sm:text-4xl">
