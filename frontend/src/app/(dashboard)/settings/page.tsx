@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  Bell,
   Bot,
   ChevronRight,
   CreditCard,
@@ -11,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Guard } from "@/components/shared/Guard";
+import { LeadNotificationChannels } from "@/components/settings/LeadNotificationChannels";
 import { pluralDays, useTenantInfo } from "@/lib/api/use-team";
 import type { Permission } from "@/types";
 
@@ -61,6 +63,13 @@ const SECTIONS: SettingsLink[] = [
     description: "Модель, промпт и привязка к каналам",
     href: "/modules/ai-bots",
     icon: Bot,
+  },
+  {
+    label: "Каналы уведомлений",
+    description: "Email, Telegram и WhatsApp для входящих заявок",
+    href: "/settings/notifications",
+    icon: Bell,
+    permission: "tenant:admin",
   },
   {
     label: "Партнёрская программа",
@@ -131,6 +140,12 @@ export default function SettingsIndexPage() {
           ),
         )}
       </div>
+
+      <Guard requiredPermission="tenant:admin">
+        <div className="pt-6 border-t border-[#e5e5e5]">
+          <LeadNotificationChannels />
+        </div>
+      </Guard>
     </div>
   );
 }

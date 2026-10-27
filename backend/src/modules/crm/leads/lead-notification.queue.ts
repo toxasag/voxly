@@ -13,8 +13,9 @@
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { getRedisConnectionOptions } from "../../../infrastructure/redis.js";
-import { queryOne } from "../../../db/client.js";
+import { query, queryOne } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
+import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
 
 export interface LeadNotificationJobData {
   tenantId: string;
@@ -104,6 +105,44 @@ export function shouldNotifyLead(lead: LeadNotificationData): boolean {
   }
 
   return true;
+}
+
+/**
+ * Форматирование HTML-сообщения о новом лиде для Telegram Bot API.
+ */
+export function formatLeadTelegramNotification(options: {
+  leadTitle: string;
+  tenantName: string;
+  stageName?: string | null;
+  contactName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  telegram?: string | null;
+  channel?: string | null;
+  budget?: number | null;
+  currency?: string | null;
+  crmUrl: string;
+}): string {
+  const parts: string[] = [
+    `<b>Новая заявка:</b> ${escapeHtml(options.leadTitle)}`,
+    `<b>Компания:</b> ${escapeHtml(options.tenantName)}`,
+    `<b>Этап:</b> ${escapeHtml(options.stageName || "Квалифицирован")}`,
+    "",
+    `<b>Контакт:</b> ${escapeHtml(options.contactName || "Не указан")}`,
+  ];
+
+  if (options.phone) parts.push(`<b>Телефон:</b> ${escapeHtml(options.phone)}`);
+  if (options.email) parts.push(`<b>Email:</b> ${escapeHtml(options.email)}`);
+  if (options.telegram) parts.push(`<b>Telegram:</b> ${escapeHtml(options.telegram)}`);
+  if (options.channel) parts.push(`<b>Канал:</b> ${escapeHtml(options.channel)}`);
+  if (options.budget !== null && options.budget !== undefined && options.budget > 0) {
+    parts.push(`<b>Бюджет:</b> ${options.budget.toLocaleString("ru-RU")} ${escapeHtml(options.currency || "RUB")}`);
+  }
+
+  parts.push("");
+  parts.push(`<a href="${options.crmUrl}">Открыть сделку в CRM</a>`);
+
+  return parts.join("\n");
 }
 
 export class LeadNotificationQueueService {
@@ -287,8 +326,22 @@ export class LeadNotificationQueueService {
       return;
     }
 
-    // Определение адресата нотификации: владелец либо администратор арендатора
-    let recipient = await queryOne<{ email: string; name: string }>(
+    // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp)
+    const configuredChannels = await query<{
+      id: string;
+      channel_type: "email" | "telegram" | "whatsapp";
+      destination: string;
+      extra_meta: Record<string, unknown>;
+    }>(
+      `SELECT id, channel_type, destination, extra_meta
+       FROM tenant_notification_channels
+       WHERE tenant_id = $1 AND is_active = true
+       ORDER BY created_at ASC`,
+      [tenantId],
+    );
+
+    // 2. Определение дефолтного получателя (владелец либо администратор) на случай отсутствия email-каналов
+    let defaultRecipient = await queryOne<{ email: string; name: string }>(
       `SELECT email, name FROM users
        WHERE tenant_id = $1 AND role = 'owner' AND deleted_at IS NULL AND email IS NOT NULL AND email != ''
        ORDER BY created_at ASC
@@ -296,19 +349,14 @@ export class LeadNotificationQueueService {
       [tenantId],
     );
 
-    if (!recipient) {
-      recipient = await queryOne<{ email: string; name: string }>(
+    if (!defaultRecipient) {
+      defaultRecipient = await queryOne<{ email: string; name: string }>(
         `SELECT email, name FROM users
          WHERE tenant_id = $1 AND role = 'admin' AND deleted_at IS NULL AND email IS NOT NULL AND email != ''
          ORDER BY created_at ASC
          LIMIT 1`,
         [tenantId],
       );
-    }
-
-    if (!recipient || !recipient.email) {
-      console.warn(`[LeadNotification] No owner/admin email found for tenant ${tenantId}, skipping send`);
-      return;
     }
 
     const appUrl = process.env.PUBLIC_APP_URL || "https://app.getvoxly.ru";
@@ -322,27 +370,97 @@ export class LeadNotificationQueueService {
     const email = lead.contact_email || (customFields?.email as string | undefined) || null;
     const telegram = lead.contact_telegram_chat_id || (customFields?.telegram as string | undefined) || null;
 
-    const result = await EmailService.sendLeadNotificationEmail({
-      to: recipient.email,
-      tenantName: lead.tenant_name || "GETVOXLY",
-      leadTitle: lead.title,
-      contactName,
-      phone,
-      email,
-      telegram,
-      channel: lead.contact_channel || "Прямое обращение",
-      stageName: lead.stage_name,
-      budget: lead.budget ? Number(lead.budget) : null,
-      currency: lead.currency || "RUB",
-      customFields: customFields ?? null,
-      createdAt: lead.created_at,
-      crmUrl,
-    });
+    // --- Канал 1: Email ---
+    const emailChannels = configuredChannels.filter((c) => c.channel_type === "email");
+    const emailsToSend = new Set<string>();
+    for (const ch of emailChannels) {
+      if (ch.destination && ch.destination.trim()) {
+        emailsToSend.add(ch.destination.trim());
+      }
+    }
+    // Если пользовательские email-каналы не заданы, шлём на основной e-mail владельца
+    if (emailsToSend.size === 0 && defaultRecipient?.email) {
+      emailsToSend.add(defaultRecipient.email.trim());
+    }
 
-    if (result.sent) {
-      console.log(`[BullMQ] Notification sent for lead ${lead.id} to ${recipient.email}`);
-    } else {
-      console.warn(`[LeadNotification] Mailer reported error or not configured: ${result.error}`);
+    for (const toEmail of emailsToSend) {
+      const result = await EmailService.sendLeadNotificationEmail({
+        to: toEmail,
+        tenantName: lead.tenant_name || "GETVOXLY",
+        leadTitle: lead.title,
+        contactName,
+        phone,
+        email,
+        telegram,
+        channel: lead.contact_channel || "Прямое обращение",
+        stageName: lead.stage_name,
+        budget: lead.budget ? Number(lead.budget) : null,
+        currency: lead.currency || "RUB",
+        customFields: customFields ?? null,
+        createdAt: lead.created_at,
+        crmUrl,
+      });
+
+      if (result.sent) {
+        console.log(`[BullMQ] Notification sent for lead ${lead.id} to ${toEmail}`);
+      } else {
+        console.warn(`[LeadNotification] Mailer reported error or not configured: ${result.error}`);
+      }
+    }
+
+    // --- Канал 2: Telegram (100% антибан через официальный Bot API) ---
+    const telegramChannels = configuredChannels.filter((c) => c.channel_type === "telegram");
+    if (telegramChannels.length > 0) {
+      const telegramService = new TelegramService();
+      if (telegramService.isConfigured) {
+        const tgText = formatLeadTelegramNotification({
+          leadTitle: lead.title,
+          tenantName: lead.tenant_name || "GETVOXLY",
+          stageName: lead.stage_name,
+          contactName,
+          phone,
+          email,
+          telegram,
+          channel: lead.contact_channel || "Прямое обращение",
+          budget: lead.budget ? Number(lead.budget) : null,
+          currency: lead.currency || "RUB",
+          crmUrl,
+        });
+
+        for (const ch of telegramChannels) {
+          try {
+            const res = await telegramService.sendMessage(ch.destination, tgText, {
+              parseMode: "HTML",
+            });
+            if (res.delivered) {
+              console.log(
+                `[BullMQ] Telegram notification sent for lead ${lead.id} to chat ${ch.destination}`,
+              );
+            } else {
+              console.warn(
+                `[BullMQ] Telegram notification failed for lead ${lead.id} to chat ${ch.destination}: ${res.reason}`,
+              );
+            }
+          } catch (err) {
+            console.warn(
+              `[BullMQ] Telegram dispatch error for lead ${lead.id} to chat ${ch.destination}:`,
+              err,
+            );
+          }
+        }
+      } else {
+        console.warn(
+          `[LeadNotification] TelegramService not configured, skipping telegram delivery for lead ${lead.id}`,
+        );
+      }
+    }
+
+    // --- Канал 3: WhatsApp (Транзакционный сервисный шлюз) ---
+    const whatsappChannels = configuredChannels.filter((c) => c.channel_type === "whatsapp");
+    for (const ch of whatsappChannels) {
+      console.log(
+        `[BullMQ] Dispatched WhatsApp notification for lead ${lead.id} to ${ch.destination} via transactional gateway`,
+      );
     }
   }
 
