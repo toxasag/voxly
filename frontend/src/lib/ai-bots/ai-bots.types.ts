@@ -103,6 +103,11 @@ export interface AiBot {
   system_prompt: string;
   context_entities: BotContextEntity[];
   wizard_config?: WizardConfig | null;
+  website_url?: string;
+  crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
+  crawl_pages_scanned?: number;
+  crawl_pages_indexed?: number;
+  crawl_error?: string;
   tokens_used: number;
   tokens_limit: number;
   requests_count: number;

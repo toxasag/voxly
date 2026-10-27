@@ -37,7 +37,14 @@ export const wizardConfigSchema = z
     targetAction: z.string().optional(),
     handoffSpecialist: z.string().optional(),
     isCustomEdited: z.boolean().optional(),
+    crawl_status: z.enum(["idle", "pending", "in_progress", "ready", "failed"]).optional(),
+    website_url: z.string().optional(),
+    crawl_pages_scanned: z.number().optional(),
+    crawl_pages_indexed: z.number().optional(),
+    crawl_error: z.string().optional(),
+    crawl_updated_at: z.string().optional(),
   })
+  .passthrough()
   .optional()
   .nullable();
 

@@ -15,8 +15,8 @@ import {
   updateAgentSchema,
 } from "./ai.types.js";
 import { AI_MODEL_CATALOG } from "./ai-pricing.js";
-import { crawlWebsite } from "./site-crawler.js";
 import { crawlMapReviews } from "./map-reviews-crawler.js";
+import { knowledgeBaseQueue, isNewUrl } from "./knowledge-base.queue.js";
 import { knowledgeSynthesizerService } from "./knowledge-synthesizer.service.js";
 import {
   extensionOf,
@@ -287,25 +287,18 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const body = createAgentSchema.parse(request.body);
     const agent = await service.createAgent(request.tenant_id, body);
 
-    // Если при создании передан URL сайта, запускаем сканирование страниц сайта в базу знаний
-    if (body.website_url && body.website_url.trim()) {
+    // Если при создании передан URL сайта, асинхронно ставим задачу сканирования в BullMQ очередь kb
+    const websiteUrl = (body.website_url || body.websiteUrl)?.trim();
+    if (websiteUrl) {
       try {
-        const pages = await crawlWebsite(body.website_url.trim(), { maxPages: 20 });
-        for (const page of pages) {
-          try {
-            await knowledge.addDocument({
-              tenantId: request.tenant_id,
-              agentId: agent.id,
-              filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
-              mimeType: "text/html",
-              text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
-            });
-          } catch {
-            // Продолжаем индексацию остальных страниц
-          }
-        }
+        await knowledgeBaseQueue.add("crawl-website", {
+          tenantId: request.tenant_id,
+          botId: agent.id,
+          url: websiteUrl,
+          source: "agent_settings_auto",
+        });
       } catch (err) {
-        request.log.warn({ err }, "Не удалось автоматически просканировать сайт при создании агента");
+        request.log.warn({ err }, "[KnowledgeBaseQueue] Не удалось поставить в очередь сканирование сайта при создании агента");
       }
     }
 
@@ -352,30 +345,24 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
     const body = updateAgentSchema.parse(request.body);
+    const existingAgent = await service.getAgent(request.tenant_id, id);
     const agent = await service.updateAgent(request.tenant_id, id, body);
 
-    // Если передан URL сайта, запускаем сканирование страниц сайта в базу знаний
-    if (body.website_url && body.website_url.trim()) {
-      void (async () => {
-        try {
-          const pages = await crawlWebsite(body.website_url!.trim(), { maxPages: 25 });
-          for (const page of pages) {
-            try {
-              await knowledge.addDocument({
-                tenantId: request.tenant_id,
-                agentId: agent.id,
-                filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
-                mimeType: "text/html",
-                text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
-              });
-            } catch {
-              // Продолжаем индексацию остальных страниц
-            }
-          }
-        } catch (err) {
-          request.log.warn({ err }, "Не удалось автоматически просканировать сайт при обновлении агента");
-        }
-      })();
+    // Если передан URL сайта и он отличается от прежнего, запускаем сканирование страниц сайта в базу знаний через очередь
+    const newWebsiteUrl = (body.website_url !== undefined ? body.website_url : body.websiteUrl)?.trim();
+    const oldWebsiteUrl = (existingAgent.wizardConfig as Record<string, unknown> | null)?.website_url as string | undefined;
+
+    if (newWebsiteUrl && isNewUrl(oldWebsiteUrl, newWebsiteUrl)) {
+      try {
+        await knowledgeBaseQueue.add("crawl-website", {
+          tenantId: request.tenant_id,
+          botId: agent.id,
+          url: newWebsiteUrl,
+          source: "agent_settings_auto",
+        });
+      } catch (err) {
+        request.log.warn({ err }, "[KnowledgeBaseQueue] Не удалось поставить в очередь сканирование сайта при обновлении агента");
+      }
     }
 
     // Если передан URL на отзывы/карты, извлекаем рейтинг и отзывы
@@ -628,39 +615,41 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     const { id } = agentParams.parse(request.params);
     const { url, maxPages } = crawlSiteSchema.parse(request.body);
 
-    let crawledPages;
-    try {
-      crawledPages = await crawlWebsite(url, { maxPages: maxPages ?? 25 });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Не удалось просканировать сайт";
-      throw new AppError(400, "CRAWL_FAILED", msg);
-    }
+    const job = await knowledgeBaseQueue.add("crawl-website", {
+      tenantId: request.tenant_id,
+      botId: id,
+      url,
+      maxPages: maxPages ?? 25,
+      source: "manual_button",
+    });
 
-    if (crawledPages.length === 0) {
-      throw new AppError(400, "NO_PAGES_FOUND", "На сайте не найдено подходящих страниц с текстовым содержимым");
-    }
-
-    const createdDocs = [];
-    for (const page of crawledPages) {
-      try {
-        const doc = await knowledge.addDocument({
-          tenantId: request.tenant_id,
-          agentId: id,
-          filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
-          mimeType: "text/html",
-          text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
-        });
-        createdDocs.push(doc);
-      } catch {
-        // Пропускаем страницу, если векторизация отдельного фрагмента вызвала ошибку
-      }
-    }
-
-    return reply.status(201).send({
+    return reply.status(200).send({
       data: {
-        scannedCount: crawledPages.length,
-        indexedCount: createdDocs.length,
-        documents: createdDocs,
+        jobId: job.id,
+        status: "pending",
+        scannedCount: 0,
+        indexedCount: 0,
+        documents: [],
+        message: "Задача сканирования сайта добавлена в очередь",
+      },
+    });
+  });
+
+  // Получение статуса сканирования сайта агента
+  app.get("/agents/:id/knowledge/crawl-status", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const agent = await service.getAgent(request.tenant_id, id);
+    const cfg = (agent.wizardConfig || {}) as Record<string, unknown>;
+    const status = (cfg.crawl_status as string) || "idle";
+
+    return reply.send({
+      data: {
+        status,
+        websiteUrl: (cfg.website_url as string) ?? null,
+        pagesScanned: (cfg.crawl_pages_scanned as number) ?? 0,
+        pagesIndexed: (cfg.crawl_pages_indexed as number) ?? 0,
+        error: (cfg.crawl_error as string) ?? null,
+        updatedAt: (cfg.crawl_updated_at as string) ?? null,
       },
     });
   });

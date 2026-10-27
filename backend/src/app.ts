@@ -25,6 +25,7 @@ import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
+import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
 import adminTenantRoutes from "./modules/admin/admin-tenants.routes.js";
 import adminMetricsRoutes from "./modules/admin/admin-metrics.routes.js";
 import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
@@ -280,6 +281,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // AI-агенты и баланс ИИ.
   await app.register(aiRoutes, { prefix: "/api/v1/ai" });
+  await app.register(aiRoutes, { prefix: "/api/ai" });
+  await app.register(botAliasRoutes, { prefix: "/api/bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/v1/bots" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });
