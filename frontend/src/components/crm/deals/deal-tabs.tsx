@@ -63,6 +63,7 @@ import { RecordNotesTab } from "@/components/crm/shared/RecordNotesTab";
 import { RecordTimelineTab } from "@/components/crm/shared/RecordTimelineTab";
 import { RecordTasksTab } from "@/components/crm/shared/RecordTasksTab";
 import { DealContactHistoryTab } from "./DealContactHistoryTab";
+import { DealAnalyticsTab } from "./DealAnalyticsTab";
 import { CrmChatView } from "@/components/crm/shared/CrmChatView";
 import type { DealDTO, PipelineDTO } from "@/lib/api/use-deals";
 import type { TenantUserDTO } from "@/lib/api/use-tenant-users";
@@ -2399,6 +2400,7 @@ export const DEAL_TAB_IDS = [
   "home",
   "chat",
   "timeline",
+  "analytics",
   "contact-history",
   "tasks",
   "notes",
@@ -2437,6 +2439,7 @@ export function dealTabContents(
       </Guard>
     ),
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
+    analytics: <DealAnalyticsTab deal={deal} />,
     "contact-history": <DealContactHistoryTab dealId={deal.id} />,
     tasks: (
       <RecordTasksTab

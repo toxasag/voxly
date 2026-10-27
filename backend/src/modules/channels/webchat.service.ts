@@ -145,6 +145,59 @@ function parseUserAgent(ua: string) {
   return { os, browser, deviceType };
 }
 
+function extractUtmAndClickIdsFromUrl(urlStr?: string | null): {
+  utmTags: Record<string, string>;
+  clickIds: Record<string, string>;
+} {
+  const utmTags: Record<string, string> = {};
+  const clickIds: Record<string, string> = {};
+  if (!urlStr || typeof urlStr !== "string") return { utmTags, clickIds };
+
+  try {
+    const url = new URL(urlStr);
+    const searchParams = url.searchParams;
+
+    const utmKeys = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "utm_id",
+      "utm_creative_format",
+      "utm_marketing_tactic",
+    ];
+    for (const key of utmKeys) {
+      const val = searchParams.get(key) || searchParams.get(key.toUpperCase());
+      if (val) utmTags[key] = val;
+    }
+
+    const clickKeys = ["yclid", "gclid", "fbclid", "vkclid", "ttclid", "msclkid", "_openstat", "wbraid", "gbraid"];
+    for (const key of clickKeys) {
+      const val = searchParams.get(key) || searchParams.get(key.toUpperCase());
+      if (val) clickIds[key] = val;
+    }
+
+    if (url.hash && url.hash.includes("?")) {
+      const hashParams = new URLSearchParams(url.hash.substring(url.hash.indexOf("?")));
+      for (const key of utmKeys) {
+        if (!utmTags[key]) {
+          const val = hashParams.get(key) || hashParams.get(key.toUpperCase());
+          if (val) utmTags[key] = val;
+        }
+      }
+      for (const key of clickKeys) {
+        if (!clickIds[key]) {
+          const val = hashParams.get(key) || hashParams.get(key.toUpperCase());
+          if (val) clickIds[key] = val;
+        }
+      }
+    }
+  } catch {}
+
+  return { utmTags, clickIds };
+}
+
 export class WebchatService {
   private static readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly crm = new CrmPipelineService();
@@ -507,6 +560,20 @@ export class WebchatService {
       ...(input.clientIp ? { ip: input.clientIp } : {}),
     };
 
+    // Извлекаем UTM и рекламные Click ID (с поддержкой URL страницы и реферера)
+    const fromPage = extractUtmAndClickIdsFromUrl(input.pageUrl);
+    const fromReferrer = extractUtmAndClickIdsFromUrl(input.referrer);
+    const effectiveUtmTags: Record<string, string> = {
+      ...fromReferrer.utmTags,
+      ...fromPage.utmTags,
+      ...(input.utmTags || {}),
+    };
+    const effectiveClickIds: Record<string, string> = {
+      ...fromReferrer.clickIds,
+      ...fromPage.clickIds,
+      ...(input.clickIds || {}),
+    };
+
     // Формируем структурированный контекст для CRM и менеджеров
     const contextLines: string[] = [];
     if (input.isDraft) {
@@ -522,14 +589,14 @@ export class WebchatService {
     if (input.visitCount && input.visitCount > 1) {
       contextLines.push(`[Визит №${input.visitCount}]`);
     }
-    if (input.utmTags && Object.keys(input.utmTags).length > 0) {
-      const utmStr = Object.entries(input.utmTags)
+    if (Object.keys(effectiveUtmTags).length > 0) {
+      const utmStr = Object.entries(effectiveUtmTags)
         .map(([k, v]) => `${k}=${v}`)
         .join(", ");
       contextLines.push(`[UTM: ${utmStr}]`);
     }
-    if (input.clickIds && Object.keys(input.clickIds).length > 0) {
-      const clickStr = Object.entries(input.clickIds)
+    if (Object.keys(effectiveClickIds).length > 0) {
+      const clickStr = Object.entries(effectiveClickIds)
         .filter(([_, v]) => Boolean(v))
         .map(([k, v]) => `${k}=${v}`)
         .join(", ");
@@ -580,12 +647,12 @@ export class WebchatService {
         gaId: gaId,
         fbId: fbId,
         tmrLvid: tmrLvid,
-        clickIds: input.clickIds,
+        clickIds: effectiveClickIds,
         referrer: input.referrer,
         pageUrl: input.pageUrl,
         pageHistory: input.pageHistory,
         visitCount: input.visitCount,
-        utmTags: input.utmTags,
+        utmTags: effectiveUtmTags,
       }),
     );
 

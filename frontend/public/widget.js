@@ -1285,14 +1285,16 @@
 
     var dfp = getDeviceFingerprint();
 
-    // UTM-метки и рекламные Click ID
+    // UTM-метки и рекламные Click ID (с поддержкой localStorage, sessionStorage, cookie, search и hash SPA)
     var STORAGE_KEY_UTM = 'getvoxly_utm_tags';
     var STORAGE_KEY_CLICKS = 'getvoxly_click_ids';
     var utmTags = {};
     var clickIds = {};
     try {
-      utmTags = JSON.parse(safeStorage.getItem(STORAGE_KEY_UTM) || '{}');
-      clickIds = JSON.parse(safeStorage.getItem(STORAGE_KEY_CLICKS) || '{}');
+      var rawUtm = safeStorage.getItem(STORAGE_KEY_UTM) || safeSessionStorage.getItem(STORAGE_KEY_UTM) || getCookie('getvoxly_utm');
+      if (rawUtm) utmTags = JSON.parse(rawUtm);
+      var rawClicks = safeStorage.getItem(STORAGE_KEY_CLICKS) || safeSessionStorage.getItem(STORAGE_KEY_CLICKS) || getCookie('getvoxly_clicks');
+      if (rawClicks) clickIds = JSON.parse(rawClicks);
     } catch (e) {
       utmTags = {};
       clickIds = {};
@@ -1300,26 +1302,41 @@
 
     try {
       var searchParams = new URLSearchParams(window.location.search);
+      var hashParams = null;
+      if (window.location.hash && window.location.hash.indexOf('?') !== -1) {
+        try {
+          hashParams = new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf('?')));
+        } catch (e) {}
+      }
+
       var detectedUtm = {};
-      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(function (param) {
-        if (searchParams.has(param)) {
-          detectedUtm[param] = searchParams.get(param);
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_creative_format', 'utm_marketing_tactic'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedUtm[param] = val;
         }
       });
       if (Object.keys(detectedUtm).length > 0) {
         utmTags = Object.assign({}, utmTags, detectedUtm);
         safeStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        safeSessionStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        setPersistentCookie('getvoxly_utm', JSON.stringify(utmTags), 30);
       }
 
       var detectedClicks = {};
-      ['yclid', 'gclid', 'fbclid', 'vkclid', '_openstat'].forEach(function (param) {
-        if (searchParams.has(param)) {
-          detectedClicks[param] = searchParams.get(param);
+      ['yclid', 'gclid', 'fbclid', 'vkclid', 'ttclid', 'msclkid', '_openstat', 'wbraid', 'gbraid'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedClicks[param] = val;
         }
       });
       if (Object.keys(detectedClicks).length > 0) {
         clickIds = Object.assign({}, clickIds, detectedClicks);
         safeStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        safeSessionStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        setPersistentCookie('getvoxly_clicks', JSON.stringify(clickIds), 30);
       }
     } catch (e) {}
 

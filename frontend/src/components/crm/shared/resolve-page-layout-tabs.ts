@@ -76,6 +76,7 @@ export const FALLBACK_PAGE_LAYOUT_TABS: Record<
     { tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, moduleSlug: null, requiredPermission: "deals:write", updatedAt: "" },
     { tabKey: "timeline", title: "Таймлайн", icon: "Activity", position: 20, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
+    { tabKey: "analytics", title: "Аналитика", icon: "BarChart3", position: 22, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "contact-history", title: "История контакта", icon: "History", position: 25, isActive: true, moduleSlug: null, requiredPermission: "contacts:read", updatedAt: "" },
     { tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
