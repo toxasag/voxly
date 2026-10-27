@@ -13,6 +13,7 @@ import {
 import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
+import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
 // реэкспортируется здесь: транспорт получает его вместе с типом входящего
@@ -566,6 +567,9 @@ export class CrmPipelineService {
 
       return { contactId, dealId, isNewContact, isNewDeal };
     });
+
+    // Асинхронное уведомление о новом лиде (при наличии контактов и этапе не «Первый контакт»)
+    void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
 
     // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
     const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];

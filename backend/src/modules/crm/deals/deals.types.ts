@@ -115,6 +115,7 @@ export interface DealRow {
   /** DOUBLE PRECISION приходит числом. */
   position: number;
   closed_at: Date | string | null;
+  lead_notified_at?: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
   /**
@@ -159,6 +160,7 @@ export interface DealDTO {
   closeDate: string | null;
   position: number;
   closedAt: string | null;
+  leadNotifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
@@ -217,6 +219,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     closeDate: toDateOrNull(row.close_date),
     position: Number(row.position),
     closedAt: toIsoOrNull(row.closed_at),
+    leadNotifiedAt: toIsoOrNull(row.lead_notified_at ?? null),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,
