@@ -34,7 +34,7 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
-import { useCrmKnowledgeStats } from "@/lib/api/use-agent-knowledge";
+import { useCrmKnowledgeStats, useCrawlStatus } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -113,6 +113,9 @@ const DEFAULT_VALUES: CreateBotPayload = {
 };
 
 function toFormValues(bot: AiBot): CreateBotPayload {
+  const wizardConfig = bot.wizard_config as Record<string, unknown> | null | undefined;
+  const websiteUrl = bot.website_url ?? (wizardConfig?.website_url as string | undefined) ?? "";
+
   return {
     name: bot.name,
     description: bot.description,
@@ -124,7 +127,7 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     max_tokens: bot.max_tokens,
     system_prompt: bot.system_prompt,
     context_entities: [...bot.context_entities],
-    website_url: "",
+    website_url: websiteUrl,
     map_reviews_url: "",
     sync_crm: false,
     whatsapp_chat_text: "",
@@ -142,6 +145,7 @@ function toFormValues(bot: AiBot): CreateBotPayload {
 
 export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps) {
   const isEdit = bot !== null;
+  const { data: crawlStatusData } = useCrawlStatus(bot?.id);
   const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
 
@@ -729,6 +733,52 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                   <p className="text-[11px] text-[#888888]">
                     Краулер обойдёт sitemap.xml и внутренние ссылки (услуги, прайсы, контакты) и проиндексирует базу знаний.
                   </p>
+
+                  {(() => {
+                    const status = crawlStatusData?.status ?? bot?.crawl_status;
+                    const indexed = crawlStatusData?.pagesIndexed ?? bot?.crawl_pages_indexed ?? 0;
+                    const scanned = crawlStatusData?.pagesScanned ?? bot?.crawl_pages_scanned ?? 0;
+                    const error = crawlStatusData?.error ?? bot?.crawl_error;
+
+                    if (!status || status === "idle") return null;
+
+                    if (status === "pending" || status === "in_progress") {
+                      return (
+                        <div className="flex items-center gap-2 rounded-[6px] border border-blue-200 bg-blue-50/70 px-2.5 py-1.5 text-[11px] text-blue-700">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+                          <span>
+                            {status === "pending"
+                              ? "Сканирование сайта поставлено в очередь..."
+                              : "Идёт фоновое сканирование страниц сайта в базу знаний..."}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    if (status === "ready") {
+                      return (
+                        <div className="flex items-center gap-2 rounded-[6px] border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[11px] text-emerald-700">
+                          <Check className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                          <span>
+                            Сайт успешно проиндексирован: {indexed} {indexed === 1 ? "страница добавлена" : "страниц добавлено"} в базу знаний (обработано {scanned}).
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    if (status === "failed") {
+                      return (
+                        <div className="flex items-center gap-2 rounded-[6px] border border-rose-200 bg-rose-50/70 px-2.5 py-1.5 text-[11px] text-rose-700">
+                          <AlertTriangle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                          <span>
+                            {error ? `Ошибка индексации: ${error}` : "Не удалось просканировать сайт. Проверьте адрес."}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    return null;
+                  })()}
                 </div>
 
                 <div className="space-y-1">

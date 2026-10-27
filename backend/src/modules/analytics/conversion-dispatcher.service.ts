@@ -98,13 +98,13 @@ export class ConversionDispatcherService {
 
         this.bullWorker = new Worker<ConversionEventPayload>(
           QUEUE_NAME,
-          async (job) => {
+          async (job: { data: ConversionEventPayload }) => {
             await this.processEvent(job.data);
           },
           { connection, concurrency: 5 },
         );
 
-        this.bullWorker.on("failed", (job, err) => {
+        this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
           // Логгер сбоев при отправке конверсий
           console.warn(`[ConversionDispatcher] Job ${job?.id} failed:`, err.message);
         });
