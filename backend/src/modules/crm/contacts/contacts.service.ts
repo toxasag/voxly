@@ -1,5 +1,7 @@
 import type {
   ContactDTO,
+  ContactDealItemDTO,
+  ContactDealsHistoryDTO,
   ContactRow,
   ContactSocialJson,
   CreateContactPayload,
@@ -462,5 +464,123 @@ export class ContactsService {
     );
 
     return this.get(tenantId, id);
+  }
+
+  /**
+   * История обращений и сделок контакта с расчетом метрик LTV и повторных продаж.
+   */
+  async getDealsHistory(
+    tenantId: string,
+    contactId: string,
+    options: { limit?: number; offset?: number } = {},
+  ): Promise<ContactDealsHistoryDTO> {
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+
+    interface DealHistoryRow {
+      id: string;
+      title: string;
+      budget: string;
+      currency: string;
+      stage_id: string;
+      stage_name: string;
+      stage_color: string;
+      is_won: boolean;
+      is_lost: boolean;
+      pipeline_id: string;
+      pipeline_name: string;
+      owner_id: string | null;
+      owner_name: string | null;
+      created_at: Date | string;
+      closed_at: Date | string | null;
+    }
+
+    const rows = await query<DealHistoryRow>(
+      `SELECT d.id, d.title, d.budget::text, d.currency, d.stage_id, d.pipeline_id,
+              d.owner_id, d.created_at, d.closed_at,
+              s.name AS stage_name, COALESCE(s.color, 'slate') AS stage_color, s.is_won, s.is_lost,
+              p.name AS pipeline_name,
+              u.name AS owner_name
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       JOIN pipelines p ON p.id = d.pipeline_id
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       WHERE d.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.created_at DESC`,
+      [tenantId, contactId],
+    );
+
+    const total = rows.length;
+    let wonDeals = 0;
+    let lostDeals = 0;
+    let totalBudget = 0;
+    let wonRevenue = 0;
+    let firstDealAt: string | null = null;
+    let lastDealAt: string | null = null;
+
+    const deals: ContactDealItemDTO[] = rows.slice(offset, offset + limit).map((r) => {
+      const budgetNum = Number(r.budget || 0);
+      const createdAtDate = new Date(r.created_at);
+      const closedAtDate = r.closed_at ? new Date(r.closed_at) : null;
+      const daysInPipeline = closedAtDate
+        ? Math.max(0, Math.round((closedAtDate.getTime() - createdAtDate.getTime()) / (1000 * 60 * 60 * 24)))
+        : Math.max(0, Math.round((Date.now() - createdAtDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+      return {
+        id: r.id,
+        title: r.title,
+        budget: budgetNum,
+        currency: r.currency,
+        stageId: r.stage_id,
+        stageName: r.stage_name,
+        stageColorKey: r.stage_color,
+        isWon: r.is_won,
+        isLost: r.is_lost,
+        pipelineId: r.pipeline_id,
+        pipelineName: r.pipeline_name,
+        ownerId: r.owner_id,
+        ownerName: r.owner_name,
+        createdAt: createdAtDate.toISOString(),
+        closedAt: closedAtDate ? closedAtDate.toISOString() : null,
+        daysInPipeline,
+      };
+    });
+
+    for (const r of rows) {
+      const b = Number(r.budget || 0);
+      totalBudget += b;
+      if (r.is_won) {
+        wonDeals += 1;
+        wonRevenue += b;
+      } else if (r.is_lost) {
+        lostDeals += 1;
+      }
+      const cAt = new Date(r.created_at).toISOString();
+      if (!lastDealAt) lastDealAt = cAt;
+      firstDealAt = cAt;
+    }
+
+    const openDeals = Math.max(0, total - (wonDeals + lostDeals));
+    const avgCheck = wonDeals > 0 ? Math.round(wonRevenue / wonDeals) : (total > 0 ? Math.round(totalBudget / total) : 0);
+
+    return {
+      deals,
+      metrics: {
+        totalDeals: total,
+        wonDeals,
+        lostDeals,
+        openDeals,
+        totalBudget,
+        wonRevenue,
+        ltv: wonRevenue,
+        avgCheck,
+        firstDealAt,
+        lastDealAt,
+        repeatCustomer: total > 1,
+      },
+      total,
+      limit,
+      offset,
+    };
   }
 }

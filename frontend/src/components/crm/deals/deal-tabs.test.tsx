@@ -60,7 +60,7 @@ describe("dealTabContents", () => {
     expect(Object.keys(contents).sort()).toEqual([...DEAL_TAB_IDS].sort());
   });
 
-  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → Задачи → Заметки", () => {
+  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → История контакта → Задачи → Заметки", () => {
     // files в сиде is_active=false — на телефоне не занимает место в ряду.
     const tabs = resolvePageLayoutTabs(
       FALLBACK_PAGE_LAYOUT_TABS.deal,
@@ -68,18 +68,38 @@ describe("dealTabContents", () => {
       { installedModules: [], hasPermission: () => true },
     );
 
-    expect(tabs.map((tab) => tab.id)).toEqual(["home", "chat", "timeline", "tasks", "notes"]);
-    expect(tabs.map((tab) => tab.label)).toEqual(["Главная", "Чат", "Таймлайн", "Задачи", "Заметки"]);
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "home",
+      "chat",
+      "timeline",
+      "contact-history",
+      "tasks",
+      "notes",
+    ]);
+    expect(tabs.map((tab) => tab.label)).toEqual([
+      "Главная",
+      "Чат",
+      "Таймлайн",
+      "История контакта",
+      "Задачи",
+      "Заметки",
+    ]);
   });
 
   it("прячет чат без deals:write", () => {
     const tabs = resolvePageLayoutTabs(
       FALLBACK_PAGE_LAYOUT_TABS.deal,
       dealTabContents(deal(), context()),
-      { installedModules: [], hasPermission: () => false },
+      { installedModules: [], hasPermission: (p) => p !== "deals:write" },
     );
 
-    expect(tabs.map((tab) => tab.id)).toEqual(["home", "timeline", "tasks", "notes"]);
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "home",
+      "timeline",
+      "contact-history",
+      "tasks",
+      "notes",
+    ]);
   });
 
   it("не зависит от наличия справочника этапов", () => {

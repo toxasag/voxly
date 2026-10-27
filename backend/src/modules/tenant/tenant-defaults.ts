@@ -54,6 +54,7 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
 }> = [
   { objectType: "contact", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
   { objectType: "contact", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "contacts:write" },
+  { objectType: "contact", tabKey: "deals-history", title: "История обращений / Сделки", icon: "Briefcase", position: 18, isActive: true, requiredPermission: "deals:read" },
   { objectType: "contact", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "contact", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "company", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
@@ -61,6 +62,7 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
   { objectType: "company", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "deals:write" },
+  { objectType: "deal", tabKey: "contact-history", title: "История контакта", icon: "History", position: 25, isActive: true, requiredPermission: "contacts:read" },
   { objectType: "deal", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "files", title: "Файлы", icon: "Paperclip", position: 50, isActive: false, requiredPermission: null },
