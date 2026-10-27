@@ -16,6 +16,7 @@ import { getRedisConnectionOptions } from "../../../infrastructure/redis.js";
 import { query, queryOne } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
+import { getDealConversationSummary } from "./lead-summary.service.js";
 
 export interface LeadNotificationJobData {
   tenantId: string;
@@ -121,15 +122,22 @@ export function formatLeadTelegramNotification(options: {
   channel?: string | null;
   budget?: number | null;
   currency?: string | null;
+  conversationSummary?: string | null;
   crmUrl: string;
 }): string {
   const parts: string[] = [
     `<b>Новая заявка:</b> ${escapeHtml(options.leadTitle)}`,
     `<b>Компания:</b> ${escapeHtml(options.tenantName)}`,
     `<b>Этап:</b> ${escapeHtml(options.stageName || "Квалифицирован")}`,
-    "",
-    `<b>Контакт:</b> ${escapeHtml(options.contactName || "Не указан")}`,
   ];
+
+  if (options.conversationSummary) {
+    parts.push("");
+    parts.push(`<b>Суть обращения:</b>\n${escapeHtml(options.conversationSummary)}`);
+  }
+
+  parts.push("");
+  parts.push(`<b>Контакт:</b> ${escapeHtml(options.contactName || "Не указан")}`);
 
   if (options.phone) parts.push(`<b>Телефон:</b> ${escapeHtml(options.phone)}`);
   if (options.email) parts.push(`<b>Email:</b> ${escapeHtml(options.email)}`);
@@ -370,6 +378,9 @@ export class LeadNotificationQueueService {
     const email = lead.contact_email || (customFields?.email as string | undefined) || null;
     const telegram = lead.contact_telegram_chat_id || (customFields?.telegram as string | undefined) || null;
 
+    // Извлечение краткого резюме переписки с клиентом (AI-саммари / детерминированный fallback)
+    const conversationSummary = await getDealConversationSummary(tenantId, lead.id);
+
     // --- Канал 1: Email ---
     const emailChannels = configuredChannels.filter((c) => c.channel_type === "email");
     const emailsToSend = new Set<string>();
@@ -396,6 +407,7 @@ export class LeadNotificationQueueService {
         stageName: lead.stage_name,
         budget: lead.budget ? Number(lead.budget) : null,
         currency: lead.currency || "RUB",
+        conversationSummary,
         customFields: customFields ?? null,
         createdAt: lead.created_at,
         crmUrl,
@@ -424,6 +436,7 @@ export class LeadNotificationQueueService {
           channel: lead.contact_channel || "Прямое обращение",
           budget: lead.budget ? Number(lead.budget) : null,
           currency: lead.currency || "RUB",
+          conversationSummary,
           crmUrl,
         });
 

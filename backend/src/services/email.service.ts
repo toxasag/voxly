@@ -401,6 +401,7 @@ export class EmailService {
     stageName?: string | null;
     budget?: number | string | null;
     currency?: string | null;
+    conversationSummary?: string | null;
     customFields?: Record<string, unknown> | null;
     createdAt?: Date | string | null;
     crmUrl: string;
@@ -516,11 +517,21 @@ export class EmailService {
         <td style="padding:10px 14px;font-size:13px;color:#64748b;">${escapeHtml(formattedDate)}</td>
       </tr>`);
 
+    const summaryBlockHtml = options.conversationSummary
+      ? `
+      <div style="background:#f8fafc;border-left:4px solid #3b82f6;padding:12px 16px;margin:16px 0;border-radius:0 8px 8px 0;">
+        <strong style="display:block;font-size:13px;color:#1e293b;margin-bottom:6px;">Краткая суть обращения:</strong>
+        <div style="font-size:13px;color:#334155;line-height:20px;white-space:pre-line;">${escapeHtml(options.conversationSummary)}</div>
+      </div>`
+      : "";
+
     const body = `
       <h1 style="margin:16px 0 6px 0;font-size:20px;font-weight:700;color:#0f172a;">Новая заявка в CRM</h1>
       <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
         В рабочем пространстве «${escapeHtml(options.tenantName)}» зарегистрирована новая заявка с контактными данными.
       </p>
+
+      ${summaryBlockHtml}
 
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 24px 0;border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;overflow:hidden;">
         ${rowsHtml.join("")}
@@ -539,6 +550,12 @@ export class EmailService {
       `Название: ${options.leadTitle || "Новая заявка"}`,
       `Контакт: ${options.contactName || "Не указано"}`,
     ];
+    if (options.conversationSummary) {
+      textLines.push(``);
+      textLines.push(`Краткая суть обращения:`);
+      textLines.push(options.conversationSummary);
+      textLines.push(``);
+    }
     if (options.phone) textLines.push(`Телефон: ${options.phone}`);
     if (options.email) textLines.push(`E-mail: ${options.email}`);
     if (options.telegram) textLines.push(`Telegram: ${options.telegram}`);
@@ -579,6 +596,7 @@ export class EmailService {
     stageName?: string | null;
     budget?: number | string | null;
     currency?: string | null;
+    conversationSummary?: string | null;
     customFields?: Record<string, unknown> | null;
     createdAt?: Date | string | null;
     crmUrl: string;
