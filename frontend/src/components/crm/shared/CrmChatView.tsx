@@ -628,6 +628,12 @@ export function CrmChatView({
     return groups;
   }, [displayedMessages]);
 
+  const isAiActive =
+    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
+    !aiStatus?.isPaused &&
+    aiStatus?.status !== "paused";
+  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
+
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
@@ -635,23 +641,23 @@ export function CrmChatView({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
-              {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+              {isAiActive ? (
                 <>
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-600" />
                 </>
-              ) : aiStatus?.isPaused ? (
+              ) : isAiPaused ? (
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
               ) : (
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#888888]" />
               )}
             </span>
             <span className="text-xs font-medium text-[#111111]">
-              {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+              {isAiActive ? (
                 <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
-              ) : aiStatus?.isPaused ? (
-                <span className="text-amber-700">
-                  AI на паузе {aiStatus.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
+              ) : isAiPaused ? (
+                <span className="text-amber-700 font-medium">
+                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
                 </span>
               ) : (
                 <span className="text-[#666666]">AI Автопилот выключен</span>
@@ -695,14 +701,14 @@ export function CrmChatView({
 
           {/* Кнопки переключения режима AI */}
           <div className="flex items-center gap-1.5">
-            {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+            {isAiActive ? (
               <>
                 <button
                   type="button"
                   onClick={() => handleAiAction("pause")}
                   disabled={aiControlMutation.isPending}
                   title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
-                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50 cursor-pointer"
                 >
                   <Pause className="h-3 w-3 text-amber-600" />
                   <span>Пауза на 1 ч</span>
@@ -712,7 +718,7 @@ export function CrmChatView({
                   onClick={() => handleAiAction("disable")}
                   disabled={aiControlMutation.isPending}
                   title="Полностью отключить автоответчик по этой сделке/контакту"
-                  className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                  className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
                 >
                   <PowerOff className="h-3.5 w-3.5" />
                 </button>
@@ -723,10 +729,10 @@ export function CrmChatView({
                 onClick={() => handleAiAction("enable")}
                 disabled={aiControlMutation.isPending}
                 title="Включить AI-автопилот"
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
               >
-                <Play className="h-3 w-3 fill-current" />
-                <span>Включить AI</span>
+                <Play className="h-3 w-3 text-emerald-700" />
+                <span>{isAiPaused ? "Снять с паузы" : "Включить AI"}</span>
               </button>
             )}
           </div>
