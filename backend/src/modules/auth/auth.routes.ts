@@ -4,10 +4,11 @@ import { AuthService } from "./auth.service.js";
 import { AuthSessionService } from "./auth-session.service.js";
 import { PasswordResetService } from "./password-reset.service.js";
 import { InviteService } from "../tenant/invite.service.js";
-import { TelegramService } from "./telegram.service.js";
+import { TelegramService, escapeHtml } from "./telegram.service.js";
 import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
+import { query, queryOne } from "../../db/client.js";
 
 const phoneField = z
   .string()
@@ -144,8 +145,18 @@ const loginWithCodeBody = z.object({
 const telegramUpdate = z.object({
   message: z
     .object({
-      chat: z.object({ id: z.number() }),
-      from: z.object({ username: z.string().optional() }).optional(),
+      chat: z.object({
+        id: z.number(),
+        title: z.string().optional(),
+        type: z.string().optional(),
+      }),
+      from: z
+        .object({
+          username: z.string().optional(),
+          first_name: z.string().optional(),
+          last_name: z.string().optional(),
+        })
+        .optional(),
       text: z.string().optional(),
     })
     .optional(),
@@ -282,7 +293,7 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     const message = parsed.data.message;
     const chatId = message.chat.id;
     const text = message.text ?? "";
-    const startMatch = /^\/start(?:\s+auth_([A-Za-z0-9_-]+))?/.exec(text);
+    const startMatch = /^\/start(?:\s+([A-Za-z0-9_-]+))?/.exec(text);
 
     if (startMatch === null) {
       return reply.status(200).send({ ok: true });
@@ -295,8 +306,55 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
       return reply.status(200).send({ ok: true });
     }
 
+    // Привязка канала уведомлений о лидах: bind_<tenantId> или tenant_<tenantId>
+    if (token.startsWith("bind_") || token.startsWith("tenant_")) {
+      const rawTenantId = token.replace(/^(?:bind_|tenant_)/, "");
+      const tenant = await queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM tenants WHERE id = $1 AND deleted_at IS NULL`,
+        [rawTenantId],
+      );
+
+      if (tenant) {
+        await query(
+          `INSERT INTO tenant_notification_channels (
+             tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+           )
+           VALUES ($1, 'telegram', $2, $3, true, true)
+           ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+           SET is_active = true,
+               is_verified = true,
+               extra_meta = $3,
+               updated_at = NOW()`,
+          [
+            tenant.id,
+            String(chatId),
+            JSON.stringify({
+              username: message.from?.username ?? null,
+              first_name: message.from?.first_name ?? null,
+              last_name: message.from?.last_name ?? null,
+              title: message.chat.title ?? null,
+              chat_type: message.chat.type,
+            }),
+          ],
+        );
+
+        await telegram.sendMessage(
+          chatId,
+          `<b>GETVOXLY — Уведомления о заявках</b>\n\n` +
+            `Канал успешно подключен к компании <b>${escapeHtml(tenant.name)}</b>!\n\n` +
+            `Сюда будут мгновенно поступать уведомления о новых лидах и заявках с контактными данными клиентов. Антибан-защита активна: бот работает через официальный Bot API платформы без риска блокировок.`,
+        );
+
+        return reply.status(200).send({ ok: true });
+      } else {
+        await telegram.sendLinkExpired(chatId);
+        return reply.status(200).send({ ok: true });
+      }
+    }
+
+    const authToken = token.startsWith("auth_") ? token.slice(5) : token;
     const bound = await sessions.bindTelegramChat({
-      token,
+      token: authToken,
       chatId,
       ...(message.from?.username !== undefined && { username: message.from.username }),
     });
