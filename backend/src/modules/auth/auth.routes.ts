@@ -663,6 +663,7 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
 
     const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
     if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
+      clearAuthCookies(request, reply);
       throw new UnauthorizedError("Refresh token is required");
     }
 
@@ -670,9 +671,14 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
       userAgent: request.headers["user-agent"],
       ip: request.ip,
     };
-    const result = await service.refreshToken(refreshToken.trim(), meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
+    try {
+      const result = await service.refreshToken(refreshToken.trim(), meta);
+      setAuthCookies(request, reply, result);
+      return reply.status(200).send({ data: result });
+    } catch (err) {
+      clearAuthCookies(request, reply);
+      throw err;
+    }
   });
 
   app.post("/logout", async (request, reply) => {

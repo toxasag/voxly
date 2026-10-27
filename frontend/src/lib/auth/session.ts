@@ -117,14 +117,15 @@ function clearCookie(name: string): void {
   if (!isBrowser()) return;
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const domain = cookieDomainAttribute();
 
-  // Cleared with the same Domain and Path it was written with — a mismatch
-  // leaves the original cookie in place and the user appears signed in forever.
-  document.cookie =
-    `${name}=; Path=/; Max-Age=0; SameSite=Lax${cookieDomainAttribute()}${secure}`;
+  if (domain) {
+    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${domain}${secure}`;
+    const rawDomain = domain.replace(/^;\s*Domain=\./i, "; Domain=");
+    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${rawDomain}${secure}`;
+  }
 
-  // Also drop a host-only cookie from before Domain scoping existed; otherwise
-  // it shadows the domain cookie and survives sign-out.
+  // Also drop a host-only cookie
   document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
 }
 
@@ -148,14 +149,36 @@ function readCookie(name: string): string | null {
 
 export function readAccessToken(): string | null {
   if (!isBrowser()) return null;
-  // Cookie is the fallback, and on a freshly-entered subdomain it is the only
-  // copy: localStorage did not travel with the redirect.
-  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? readCookie(AUTH_COOKIE_NAME);
+  // Cookie is domain-scoped (.getvoxly.ru) and travels across subdomains,
+  // making it the authoritative cross-subdomain source of truth.
+  const cookieToken = readCookie(AUTH_COOKIE_NAME);
+  if (cookieToken) {
+    try {
+      if (localStorage.getItem(ACCESS_TOKEN_KEY) !== cookieToken) {
+        localStorage.setItem(ACCESS_TOKEN_KEY, cookieToken);
+      }
+    } catch {
+      // Ignore localStorage write failures
+    }
+    return cookieToken;
+  }
+  return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
 export function readRefreshToken(): string | null {
   if (!isBrowser()) return null;
-  return localStorage.getItem(REFRESH_TOKEN_KEY) ?? readCookie(REFRESH_COOKIE_NAME);
+  const cookieRefresh = readCookie(REFRESH_COOKIE_NAME);
+  if (cookieRefresh) {
+    try {
+      if (localStorage.getItem(REFRESH_TOKEN_KEY) !== cookieRefresh) {
+        localStorage.setItem(REFRESH_TOKEN_KEY, cookieRefresh);
+      }
+    } catch {
+      // Ignore localStorage write failures
+    }
+    return cookieRefresh;
+  }
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function writeTokens({ accessToken, refreshToken }: SessionTokens): void {

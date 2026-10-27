@@ -242,6 +242,21 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     return reply.send({ success: true, data: tokens });
   });
 
+  app.post("/tenants/by-slug/:slug/impersonate", { onRequest: platformOwner }, async (request, reply) => {
+    const { slug } = z.object({ slug: z.string().min(1) }).parse(request.params);
+    const tenant = await queryOne<{ id: string; name: string; slug: string }>(
+      "SELECT id, name, slug FROM tenants WHERE slug = $1",
+      [slug.toLowerCase()],
+    );
+    if (!tenant) {
+      throw new NotFoundError("Компания не найдена");
+    }
+    const authService = new AuthService(app);
+    const tokens = await authService.impersonateTenant(tenant.id, request.authUser.id);
+    setAuthCookies(request, reply, tokens);
+    return reply.send({ success: true, data: tokens });
+  });
+
   app.delete("/tenants/:id", { onRequest: platformOwner }, async (request, reply) => {
     const tenantId = tenantParams.parse(request.params).id;
 
