@@ -62,6 +62,7 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
   { objectType: "company", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "deals:write" },
+  { objectType: "deal", tabKey: "analytics", title: "Аналитика", icon: "BarChart3", position: 22, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "contact-history", title: "История контакта", icon: "History", position: 25, isActive: true, requiredPermission: "contacts:read" },
   { objectType: "deal", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },

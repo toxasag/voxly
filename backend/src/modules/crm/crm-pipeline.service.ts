@@ -76,6 +76,7 @@ interface ExistingContact {
   telegram_username?: string | null;
   whatsapp?: string | null;
   is_personal?: boolean | null;
+  custom_fields?: Record<string, unknown> | null;
 }
 
 export interface CrmPipelineResult {
@@ -86,7 +87,7 @@ export interface CrmPipelineResult {
   isPersonal?: boolean;
 }
 
-const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, is_personal";
+const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, is_personal, custom_fields";
 
 const DEFAULT_STAGES: ReadonlyArray<{
   name: string;
@@ -195,13 +196,26 @@ export class CrmPipelineService {
         }
 
         // 1.3. Если имя контакта было заглушкой «Посетитель сайта ...» или «Клиент» — обновляем с номером
-        if (effectiveSenderPhone && (contact.first_name.startsWith("Посетитель сайта") || contact.first_name === UNKNOWN_CONTACT_NAME)) {
+        if (
+          effectiveSenderPhone &&
+          (contact.first_name.startsWith("Посетитель") ||
+            contact.first_name === UNKNOWN_CONTACT_NAME ||
+            contact.first_name.startsWith("Клиент") ||
+            contact.last_name.toLowerCase().includes("сайта"))
+        ) {
           const newClientName = `Клиент ${effectiveSenderPhone}`;
           await tx.query(
-            `UPDATE contacts SET first_name = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+            `UPDATE contacts
+             SET first_name = $1,
+                 last_name = CASE WHEN last_name ILIKE '%сайта%' THEN '' ELSE last_name END,
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
             [newClientName, contact.id, input.tenantId],
           );
           contact.first_name = newClientName;
+          if (contact.last_name.toLowerCase().includes("сайта")) {
+            contact.last_name = "";
+          }
         }
 
         // 1.5. Привязываем max_chat_id для MAX, если его ещё не было
@@ -405,10 +419,27 @@ export class CrmPipelineService {
       if (input.gaId) dealCustomFields.ga_id = input.gaId;
       if (input.fbId) dealCustomFields.fb_id = input.fbId;
       if (input.tmrLvid) dealCustomFields.tmr_lvid = input.tmrLvid;
-      if (input.utmTags) dealCustomFields.utm_tags = input.utmTags;
-      if (input.clickIds) dealCustomFields.click_ids = input.clickIds;
-      if (input.pageUrl) dealCustomFields.page_url = input.pageUrl;
-      if (input.referrer) dealCustomFields.referrer = input.referrer;
+      const contactCf = (contact?.custom_fields ?? {}) as Record<string, unknown>;
+      if (input.utmTags && Object.keys(input.utmTags).length > 0) {
+        dealCustomFields.utm_tags = input.utmTags;
+      } else if (contactCf.utm_tags && typeof contactCf.utm_tags === "object" && Object.keys(contactCf.utm_tags as object).length > 0) {
+        dealCustomFields.utm_tags = contactCf.utm_tags;
+      }
+      if (input.clickIds && Object.keys(input.clickIds).length > 0) {
+        dealCustomFields.click_ids = input.clickIds;
+      } else if (contactCf.click_ids && typeof contactCf.click_ids === "object" && Object.keys(contactCf.click_ids as object).length > 0) {
+        dealCustomFields.click_ids = contactCf.click_ids;
+      }
+      if (input.pageUrl) {
+        dealCustomFields.page_url = input.pageUrl;
+      } else if (contactCf.page_url || contactCf.last_page_url) {
+        dealCustomFields.page_url = contactCf.page_url || contactCf.last_page_url;
+      }
+      if (input.referrer) {
+        dealCustomFields.referrer = input.referrer;
+      } else if (contactCf.referrer) {
+        dealCustomFields.referrer = contactCf.referrer;
+      }
       if (input.visitCount) dealCustomFields.visit_count = input.visitCount;
       if (input.pageHistory) dealCustomFields.page_history = input.pageHistory;
 
@@ -479,7 +510,10 @@ export class CrmPipelineService {
               await tx.query(
                 `UPDATE deals
                  SET stage_id = $1,
-                     title = CASE WHEN title ILIKE 'Заявка от Посетитель сайта%' AND $4::text IS NOT NULL THEN $4 ELSE title END,
+                     title = CASE 
+                       WHEN (title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от Клиент%сайта%' OR title ILIKE 'Заявка от Клиент +%') AND $4::text IS NOT NULL THEN $4 
+                       ELSE title 
+                     END,
                      updated_at = now()
                  WHERE id = $2 AND tenant_id = $3`,
                 [newLeadStage.id, activeDeal.id, input.tenantId, updatedTitle ?? null],
@@ -566,9 +600,12 @@ export class CrmPipelineService {
           const createdBy = await this.findFallbackUserId(tx, input.tenantId);
 
           const phoneLabel = effectiveSenderPhone || (contact && contact.phone) || "";
-          const dealTitle = phoneLabel && displayName.startsWith("Посетитель сайта")
-            ? `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)})`
-            : `Заявка от ${displayName} (${this.channelLabel(input.channel)})`;
+          let dealTitle: string;
+          if (phoneLabel && (displayName.startsWith("Посетитель") || displayName.startsWith("Клиент") || displayName.includes("сайта ("))) {
+            dealTitle = `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)})`;
+          } else {
+            dealTitle = `Заявка от ${displayName} (${this.channelLabel(input.channel)})`;
+          }
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
             title: dealTitle,
@@ -1332,6 +1369,7 @@ export class CrmPipelineService {
       whatsapp: "WhatsApp",
       max: "MAX",
       avito: "Avito",
+      webchat: "Онлайн-чат",
       instagram: "Instagram",
       phone: "Телефон",
       email: "Email",

@@ -123,6 +123,14 @@ function nameFromSender(senderName: string): { first_name: string; last_name: st
   // peerId, у MAX числовой профиль. Именем такое быть не может.
   if (trimmed === "" || /^@?\d+$/.test(trimmed)) return null;
 
+  // Системные заглушки сайта вида «Посетитель сайта (...)» или «Клиент ...» не режем по пробелу
+  if (/^Посетитель\s+сайта/i.test(trimmed) || /^Клиент(?:\s+.*)?$/i.test(trimmed)) {
+    return {
+      first_name: trimmed,
+      last_name: "",
+    };
+  }
+
   const parts = trimmed.split(/\s+/);
 
   return {
@@ -169,8 +177,10 @@ export function contactSocialsFrom(
   const kind = SOCIAL_KIND_BY_SLUG[identity.channel];
   if (kind === undefined) return [];
 
-  if (identity.channel === "webchat" && identity.chatId) {
-    return [{ kind: "other", value: identity.chatId }];
+  if (identity.channel === "webchat") {
+    // В веб-чате идентификатор сессии (chatId) — это visitor_id / ym_uid, а не соцсеть.
+    // Сохраняется в custom_fields.webchat_visitor_id и custom_fields.ym_uid, но не в socials.
+    return [];
   }
 
   if (kind === "whatsapp") {

@@ -255,6 +255,10 @@ export function isDisplayableSocial(
   const val = social.value.trim();
   if (!val) return false;
 
+  // Технические ID систем веб-аналитики и трекинга (Яндекс.Метрика, Google Analytics, отпечатки устройств):
+  if (/^(ym_|ya_|ga_|dfp_|usr_|site_|tmr_|v_)/i.test(val)) return false;
+  if (social.kind === "other" && /^\d{10,25}$/.test(val)) return false;
+
   // Технический ID MAX (например, 461879064, max://...):
   if (social.kind === "max") {
     if (val.startsWith("max://")) return false;

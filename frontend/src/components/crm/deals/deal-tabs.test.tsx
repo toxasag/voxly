@@ -60,7 +60,7 @@ describe("dealTabContents", () => {
     expect(Object.keys(contents).sort()).toEqual([...DEAL_TAB_IDS].sort());
   });
 
-  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → История контакта → Задачи → Заметки", () => {
+  it("с запасным сидом даёт порядок Главная → Чат → Таймлайн → Аналитика → История контакта → Задачи → Заметки", () => {
     // files в сиде is_active=false — на телефоне не занимает место в ряду.
     const tabs = resolvePageLayoutTabs(
       FALLBACK_PAGE_LAYOUT_TABS.deal,
@@ -72,6 +72,7 @@ describe("dealTabContents", () => {
       "home",
       "chat",
       "timeline",
+      "analytics",
       "contact-history",
       "tasks",
       "notes",
@@ -80,6 +81,7 @@ describe("dealTabContents", () => {
       "Главная",
       "Чат",
       "Таймлайн",
+      "Аналитика",
       "История контакта",
       "Задачи",
       "Заметки",
@@ -96,6 +98,7 @@ describe("dealTabContents", () => {
     expect(tabs.map((tab) => tab.id)).toEqual([
       "home",
       "timeline",
+      "analytics",
       "contact-history",
       "tasks",
       "notes",
