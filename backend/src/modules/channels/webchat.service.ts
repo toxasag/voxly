@@ -609,16 +609,28 @@ export class WebchatService {
       };
     }
 
-    // 2. Проверяем AI Handoff (если оператор перехватил диалог, бот временно на паузе)
-    if (crmResult.dealId) {
+    // 2. Проверяем AI Handoff (если оператор перехватил диалог, бот временно на паузе или выключен)
+    if (crmResult.dealId || crmResult.contactId) {
       const isAiPaused = await runWithTenantContext(account.tenantId, async () => {
-        const row = await queryOne<{ id: string }>(
-          `SELECT id FROM deals
-           WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
-           LIMIT 1`,
-          [account.tenantId, crmResult.dealId],
-        );
-        return row !== null;
+        if (crmResult.dealId) {
+          const row = await queryOne<{ id: string }>(
+            `SELECT id FROM deals
+             WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+             LIMIT 1`,
+            [account.tenantId, crmResult.dealId],
+          );
+          if (row !== null) return true;
+        }
+        if (crmResult.contactId) {
+          const contactDeal = await queryOne<{ id: string }>(
+            `SELECT id FROM deals
+             WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+             LIMIT 1`,
+            [account.tenantId, crmResult.contactId],
+          );
+          if (contactDeal !== null) return true;
+        }
+        return false;
       }).catch(() => false);
 
       if (isAiPaused) {

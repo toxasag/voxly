@@ -630,6 +630,7 @@ export class TelegramTransportService {
 
     // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
     let dealId: string | null = null;
+    let contactId: string | null = null;
 
     try {
       const crmResult = await runWithTenantContext(batch.tenantId, () =>
@@ -651,6 +652,7 @@ export class TelegramTransportService {
       }
 
       dealId = crmResult.dealId;
+      contactId = crmResult.contactId;
     } catch (error) {
       this.log.error(
         { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
@@ -658,25 +660,35 @@ export class TelegramTransportService {
       );
     }
 
-    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора).
-    if (dealId !== null) {
-      const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора или выключенном AI).
+    const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+      if (dealId !== null) {
         const row = await queryOne<{ id: string }>(
           `SELECT id FROM deals
            WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
            LIMIT 1`,
           [batch.tenantId, dealId],
         );
-        return row !== null;
-      }).catch(() => false);
-
-      if (isPaused) {
-        this.log.info(
-          { dealId, channelAccountId: batch.channelAccountId },
-          "AI bot paused due to active operator handoff",
-        );
-        return;
+        if (row !== null) return true;
       }
+      if (contactId !== null) {
+        const contactDeal = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+           LIMIT 1`,
+          [batch.tenantId, contactId],
+        );
+        if (contactDeal !== null) return true;
+      }
+      return false;
+    }).catch(() => false);
+
+    if (isPaused) {
+      this.log.info(
+        { dealId, contactId, channelAccountId: batch.channelAccountId },
+        "AI bot paused due to active operator handoff or disabled AI",
+      );
+      return;
     }
 
     // 4. Спрашиваем агента (в контексте арендатора, как раньше).

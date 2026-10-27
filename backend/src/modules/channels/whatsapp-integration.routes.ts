@@ -197,6 +197,38 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
       continue;
     }
 
+    // Проверяем, не отключен ли или приостановлен AI-автопилот
+    const dealIdToCheck = crmResult.dealId;
+    const isAiPaused = await runWithTenantContext(account.tenant_id, async () => {
+      if (dealIdToCheck) {
+        const row = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+           LIMIT 1`,
+          [account.tenant_id, dealIdToCheck],
+        );
+        if (row !== null) return true;
+      }
+      if (crmResult.contactId) {
+        const contactDeal = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+           LIMIT 1`,
+          [account.tenant_id, crmResult.contactId],
+        );
+        if (contactDeal !== null) return true;
+      }
+      return false;
+    }).catch(() => false);
+
+    if (isAiPaused) {
+      request.log.info(
+        { dealId: dealIdToCheck, contactId: crmResult.contactId, phoneE164 },
+        "AI auto-reply skipped: AI is disabled or paused for this deal/contact",
+      );
+      continue;
+    }
+
     // AI-автоответ
     try {
       const agentService = new AgentPipelineService(request.log);
@@ -206,6 +238,8 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           channelAccountId: account.id,
           chatId: phoneE164,
           text,
+          channelType: "WhatsApp",
+          dealId: dealIdToCheck || undefined,
         }),
       );
 

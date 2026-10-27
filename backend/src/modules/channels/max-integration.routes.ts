@@ -299,6 +299,38 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     return reply.send({ ok: true });
   }
 
+  // Проверяем, не отключен ли или приостановлен AI-автопилот
+  const dealIdToCheck = crmResult.dealId;
+  const isAiPaused = await runWithTenantContext(tenantId, async () => {
+    if (dealIdToCheck) {
+      const row = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+         LIMIT 1`,
+        [tenantId, dealIdToCheck],
+      );
+      if (row !== null) return true;
+    }
+    if (crmResult.contactId) {
+      const contactDeal = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+         LIMIT 1`,
+        [tenantId, crmResult.contactId],
+      );
+      if (contactDeal !== null) return true;
+    }
+    return false;
+  }).catch(() => false);
+
+  if (isAiPaused) {
+    request.log.info(
+      { dealId: dealIdToCheck, contactId: crmResult.contactId, peerId },
+      "AI auto-reply skipped: AI is disabled or paused for this deal/contact",
+    );
+    return reply.send({ ok: true });
+  }
+
   // AI-автоответ при наличии привязанного ассистента
   try {
     const agentService = new AgentPipelineService(request.log);
@@ -308,6 +340,8 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
         channelAccountId,
         chatId: peerId,
         text: body.text,
+        channelType: "MAX",
+        dealId: dealIdToCheck || undefined,
       }),
     );
 

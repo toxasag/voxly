@@ -148,6 +148,41 @@ export class AgentPipelineService {
     channelType?: string;
     dealId?: string;
   }): Promise<PipelineOutcome> {
+    // 0. Защита от автоответов личным контактам и при выключенном/приостановленном AI
+    if (input.dealId) {
+      const dealRow = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND ai_paused_until IS NOT NULL AND ai_paused_until > now()
+         LIMIT 1`,
+        [input.tenantId, input.dealId],
+      );
+      if (dealRow !== null) {
+        return { kind: "agent_paused" };
+      }
+    }
+
+    const cleanDigits = input.chatId.replace(/\D/g, "");
+    if (cleanDigits.length >= 10 || /^\d+$/.test(input.chatId)) {
+      const contactCheck = await queryOne<{ id: string; is_personal: boolean; paused_deals: number }>(
+        `SELECT c.id, c.is_personal,
+                (SELECT COUNT(*)::int FROM deals d WHERE d.contact_id = c.id AND d.tenant_id = c.tenant_id AND d.deleted_at IS NULL AND d.ai_paused_until > now()) AS paused_deals
+         FROM contacts c
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             c.phone = $2
+             OR c.phone = '+' || $2
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', $2::text))
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', ('+' || $2)::text))
+             OR c.telegram_chat_id = CASE WHEN $2 ~ '^\\d+$' THEN $2::bigint ELSE NULL END
+           )
+         LIMIT 1`,
+        [input.tenantId, cleanDigits],
+      );
+      if (contactCheck !== null && (contactCheck.is_personal || contactCheck.paused_deals > 0)) {
+        return { kind: "agent_paused" };
+      }
+    }
+
     const agent = await this.resolveAgent(input);
 
     if (agent === null) return { kind: "no_agent" };

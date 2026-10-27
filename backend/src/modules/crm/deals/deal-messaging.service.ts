@@ -413,7 +413,7 @@ export class DealMessagingService {
     }
     const pausedUntilDate = new Date(row.ai_paused_until);
     const now = new Date();
-    if (pausedUntilDate.getFullYear() >= 9999) {
+    if (pausedUntilDate.getFullYear() >= 2090) {
       return {
         aiControl: "disabled",
         isPaused: false,
@@ -454,13 +454,32 @@ export class DealMessagingService {
     pausedReason: string | null;
     status: "enabled" | "paused" | "disabled";
   }> {
-    let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND id = $2`;
+    const deal = await queryOne<{ contact_id: string | null }>(
+      `SELECT contact_id FROM deals WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, dealId],
+    );
+
+    let targetDate: string | null = null;
     if (action === "pause") {
-      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND id = $2`;
+      targetDate = "now() + interval '1 hour'";
     } else if (action === "disable") {
-      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND id = $2`;
+      targetDate = "'9999-12-31 23:59:59+00'::timestamptz";
     }
-    await query(updateSql, [tenantId, dealId]);
+
+    if (targetDate) {
+      await query(
+        `UPDATE deals SET ai_paused_until = ${targetDate}
+         WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
+        [tenantId, dealId, deal?.contact_id ?? null],
+      );
+    } else {
+      await query(
+        `UPDATE deals SET ai_paused_until = NULL
+         WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
+        [tenantId, dealId, deal?.contact_id ?? null],
+      );
+    }
+
     return this.getAiStatus(tenantId, dealId);
   }
 
