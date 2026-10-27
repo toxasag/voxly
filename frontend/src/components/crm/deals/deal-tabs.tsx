@@ -12,6 +12,7 @@ import {
   ChevronUp,
   CircleSlash,
   Compass,
+  Copy,
   DollarSign,
   Globe,
   Handshake,
@@ -54,7 +55,7 @@ import { CompanyModal } from "@/components/crm/companies/CompanyModal";
 import { PhonesInput } from "@/components/crm/shared/PhonesInput";
 import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
-import { isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
+import { formatSocialDisplay, isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
 import type { ContactChannel, ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
 import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
 import { formatPhone, telHref } from "@/lib/utils/phone";
@@ -1762,35 +1763,54 @@ function HomeTab({
                               <>
                                 {displayableSocials.map((social, idx) => {
                                   const Icon = socialIcon(social.kind);
-                                  const href = socialHref(social.kind, social.value);
+                                  const formatted = formatSocialDisplay(social.kind, social.value);
                                   return (
                                     <FieldRow key={`${social.kind}-${idx}-${social.value}`} icon={Icon} label={socialLabel(social.kind)}>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setContactSocialsDraft(displayableSocials.map((s) => ({ kind: s.kind, value: s.value })));
-                                          setEditingContactField("socials");
-                                        }}
-                                        title={`Нажмите для редактирования ${socialLabel(social.kind)}`}
-                                        className="group/btn flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors cursor-pointer w-full"
-                                      >
-                                        <div className="min-w-0 flex-1">
-                                          {href ? (
+                                      <div className="flex flex-1 items-center justify-between rounded px-1.5 py-0.5 -mx-1.5 text-left text-xs hover:bg-[#f5f5f5] transition-colors w-full min-w-0">
+                                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                          {formatted.href ? (
                                             <a
-                                              href={href}
+                                              href={formatted.href}
                                               target="_blank"
                                               rel="noreferrer noopener"
                                               onClick={(e) => e.stopPropagation()}
-                                              className="text-[#4a38f5] hover:underline truncate inline-block max-w-full"
+                                              title={formatted.tooltip}
+                                              className="text-[#4a38f5] hover:underline truncate inline-block max-w-full text-xs"
                                             >
-                                              {social.value}
+                                              {formatted.displayText}
                                             </a>
                                           ) : (
-                                            <span className="truncate text-[#111111]">{social.value}</span>
+                                            <span className="truncate text-[#111111] text-xs" title={formatted.tooltip}>
+                                              {formatted.displayText}
+                                            </span>
+                                          )}
+                                          {formatted.isNumericId && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                navigator.clipboard.writeText(formatted.copyValue);
+                                                toast.success("ID скопирован");
+                                              }}
+                                              title="Скопировать ID"
+                                              className="inline-flex items-center justify-center rounded p-0.5 text-[#888888] hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors cursor-pointer shrink-0"
+                                            >
+                                              <Copy className="h-3 w-3" />
+                                            </button>
                                           )}
                                         </div>
-                                        <Pencil className="h-3 w-3 text-[#888888] opacity-0 group-hover/btn:opacity-100 transition-opacity shrink-0 ml-1" />
-                                      </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setContactSocialsDraft(displayableSocials.map((s) => ({ kind: s.kind, value: s.value })));
+                                            setEditingContactField("socials");
+                                          }}
+                                          title={`Нажмите для редактирования ${socialLabel(social.kind)}`}
+                                          className="p-1 text-[#888888] hover:text-[#111111] transition-colors cursor-pointer shrink-0 ml-1"
+                                        >
+                                          <Pencil className="h-3 w-3" />
+                                        </button>
+                                      </div>
                                     </FieldRow>
                                   );
                                 })}

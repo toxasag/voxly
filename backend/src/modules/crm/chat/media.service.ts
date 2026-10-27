@@ -70,6 +70,12 @@ export class ChatMediaService {
         return ".mp3";
       case "application/pdf":
         return ".pdf";
+      case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      case "application/msword":
+        return ".docx";
+      case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      case "application/vnd.ms-excel":
+        return ".xlsx";
       default:
         return ".bin";
     }

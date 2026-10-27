@@ -424,7 +424,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   delivery_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT deal_messages_delivery_status_valid
-    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed'))
+    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed', 'received'))
 );
 
 CREATE TABLE IF NOT EXISTS crm_tasks (

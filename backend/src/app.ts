@@ -261,6 +261,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         ".mp3": "audio/mpeg",
         ".ogg": "audio/ogg",
         ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
+        ".txt": "text/plain",
+        ".zip": "application/zip",
       };
       const contentType = mimeMap[ext] ?? "application/octet-stream";
 

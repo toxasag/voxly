@@ -1157,6 +1157,26 @@ export class DealsService {
     }
 
     if (!deal.contact_id) {
+      const contactCandidate = await queryOne<{ id: string }>(
+        `SELECT c.id FROM contacts c
+         JOIN deal_messages m ON m.deal_id = $2 AND m.tenant_id = $1
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             (c.phone IS NOT NULL AND c.phone != '' AND (m.sender_name ILIKE '%' || c.phone || '%' OR m.content ILIKE '%' || c.phone || '%'))
+             OR (m.channel_account_id IS NOT NULL AND c.custom_fields->>'chat_id' = m.sender_name)
+           )
+         LIMIT 1`,
+        [tenantId, dealId],
+      );
+      if (contactCandidate) {
+        deal.contact_id = contactCandidate.id;
+        await withTenant(tenantId, async (tx) => {
+          await tx.query(`UPDATE deals SET contact_id = $1 WHERE id = $2 AND tenant_id = $3`, [contactCandidate.id, dealId, tenantId]);
+        }).catch(() => {});
+      }
+    }
+
+    if (!deal.contact_id) {
       const b = Number(deal.budget || 0);
       return {
         dealId,

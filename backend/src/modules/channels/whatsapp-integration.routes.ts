@@ -6,6 +6,7 @@ import { WhatsappEvolutionService } from "./whatsapp-evolution.service.js";
 import { queryOne, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
 
 const startQrSchema = z.object({
   label: z.string().min(1).default("Основной"),
@@ -63,6 +64,7 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
   const data = payload?.data;
   const messages = Array.isArray(data) ? data : data ? [data] : [];
   const crm = new CrmPipelineService();
+  const evolutionService = new WhatsappEvolutionService();
 
   for (const item of messages) {
     const fromMe = Boolean(item?.key?.fromMe);
@@ -83,8 +85,72 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
     if (!phoneDigits || phoneDigits.length < 10) continue;
     const phoneE164 = `+${phoneDigits}`;
 
-    const text = extractWaMessageText(item?.message);
-    if (!text) continue;
+    const msg = item?.message;
+    const isDocument = Boolean(msg?.documentMessage || msg?.documentWithCaptionMessage);
+    const isImage = Boolean(msg?.imageMessage);
+    const isVideo = Boolean(msg?.videoMessage);
+    const isAudio = Boolean(msg?.audioMessage);
+    const isMedia = isDocument || isImage || isVideo || isAudio;
+
+    let attachmentUrl: string | null = null;
+    let attachmentType: string | null = null;
+    let text = extractWaMessageText(msg);
+
+    if (isMedia) {
+      try {
+        const downloaded = await evolutionService.downloadMedia(instanceName, item);
+        if (downloaded?.base64) {
+          const buffer = Buffer.from(downloaded.base64, "base64");
+          const mime =
+            downloaded.mimetype ||
+            (isDocument
+              ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              : isImage
+                ? "image/jpeg"
+                : isVideo
+                  ? "video/mp4"
+                  : isAudio
+                    ? "audio/ogg"
+                    : "application/octet-stream");
+
+          const originalName =
+            downloaded.fileName ||
+            msg?.documentMessage?.fileName ||
+            msg?.documentMessage?.title ||
+            (isDocument ? "Документ.docx" : isImage ? "Изображение.jpg" : isVideo ? "Видео.mp4" : "Аудио.ogg");
+
+          const mediaService = new ChatMediaService();
+          const stored = await mediaService.storeBuffer({
+            buffer,
+            originalName,
+            mimeType: mime,
+            tenantId: account.tenant_id,
+          });
+
+          attachmentUrl = stored.url;
+          attachmentType = stored.mimeType;
+
+          const rawCaption = (
+            msg?.documentMessage?.caption ||
+            msg?.imageMessage?.caption ||
+            msg?.videoMessage?.caption ||
+            ""
+          ).trim();
+          if (!rawCaption || rawCaption === ".") {
+            text = originalName;
+          } else {
+            text = rawCaption;
+          }
+        }
+      } catch (mediaErr) {
+        request.log.error({ mediaErr, itemKey: item?.key }, "Failed to download and store WhatsApp media");
+      }
+    }
+
+    if (!text && !attachmentUrl) continue;
+    if (!text && attachmentUrl) {
+      text = isDocument ? "Документ" : isImage ? "Изображение" : "Вложение";
+    }
 
     if (fromMe) {
       await runWithTenantContext(account.tenant_id, () =>
@@ -96,6 +162,8 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           senderPhone: phoneE164,
           text,
           senderName: "Менеджер",
+          attachment: attachmentUrl,
+          attachmentType: attachmentType,
           pauseMinutes: 30,
         }),
       );
@@ -114,6 +182,9 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
         text,
         senderName,
         senderPhone: phoneE164,
+        attachment: attachmentUrl,
+        attachmentType: attachmentType,
+        deliveryStatus: attachmentUrl ? "received" : "neutral",
         profile: {
           firstName: pushName || undefined,
           phone: phoneE164,

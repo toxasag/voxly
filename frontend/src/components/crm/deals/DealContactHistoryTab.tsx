@@ -119,8 +119,9 @@ export function DealContactHistoryTab({ dealId }: DealContactHistoryTabProps) {
                   onClick={() => router.push(`/crm/contacts?record=${contact.id}`)}
                   className="cursor-pointer text-[14px] font-semibold text-[#111111] hover:text-[#4a38f5] hover:underline"
                 >
-                  {contact.firstName} {contact.lastName}
+                  {contact.firstName || contact.lastName ? `${contact.firstName} ${contact.lastName}`.trim() : "Max"}
                 </span>
+                <TagPill color="emerald">Привязан</TagPill>
                 {metrics.isRepeatClient ? (
                   <TagPill color="emerald">Повторный клиент</TagPill>
                 ) : (

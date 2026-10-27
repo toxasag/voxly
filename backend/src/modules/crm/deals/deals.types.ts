@@ -249,7 +249,7 @@ export function toDealDTO(row: DealRow): DealDTO {
  * причину в `delivery_error`: неотправленное сообщение обязано отличаться в
  * таймлайне от отправленного, иначе менеджер ждёт ответа на то, что не ушло.
  */
-export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed"]);
+export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed", "received"]);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 
 export interface DealMessageRow {
