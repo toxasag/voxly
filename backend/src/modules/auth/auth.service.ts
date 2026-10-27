@@ -6,6 +6,7 @@ import { AppError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
 import { OWNER_PERMISSIONS, toPermissions } from "../../config/permissions.js";
 import type { Permission, PlatformRole, Role } from "../../types/index.js";
+import { getRedisClient } from "../../infrastructure/redis.js";
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -245,6 +246,7 @@ export class AuthService {
     user: AuthUserRow,
     tx?: TransactionClient,
     replacesId?: string,
+    metadata?: { userAgent?: string; ip?: string },
   ): Promise<AuthTokens> {
     const env = getEnv();
 
@@ -257,11 +259,19 @@ export class AuthService {
 
     const refresh_token = randomBytes(48).toString("base64url");
     const expiresAt = new Date(Date.now() + env.REFRESH_TOKEN_TTL_DAYS * 86_400_000);
+    const tokenHash = hashToken(refresh_token);
 
-    const insert = `INSERT INTO refresh_tokens (tenant_id, user_id, token_hash, expires_at)
-       VALUES ($1, $2, $3, $4)
+    const insert = `INSERT INTO refresh_tokens (tenant_id, user_id, token_hash, expires_at, user_agent, ip)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`;
-    const params = [user.tenant_id, user.id, hashToken(refresh_token), expiresAt];
+    const params = [
+      user.tenant_id,
+      user.id,
+      tokenHash,
+      expiresAt,
+      metadata?.userAgent ?? null,
+      metadata?.ip ?? null,
+    ];
 
     const created =
       tx === undefined
@@ -277,6 +287,23 @@ export class AuthService {
         replacesId,
         created.id,
       ]);
+    }
+
+    // Сохранение сессии в Redis для быстрого доступа и отзыва
+    const redis = getRedisClient();
+    if (redis) {
+      const sessionKey = `session:${tokenHash}`;
+      const sessionData = JSON.stringify({
+        userId: user.id,
+        tenantId: user.tenant_id,
+        role: user.role,
+        userAgent: metadata?.userAgent ?? null,
+        ip: metadata?.ip ?? null,
+        createdAt: new Date().toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      });
+      const ttlSeconds = Math.max(1, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+      redis.set(sessionKey, sessionData, "EX", ttlSeconds).catch(() => {});
     }
 
     return {
@@ -354,7 +381,11 @@ export class AuthService {
    * limit did not hold at all and a code could be brute-forced indefinitely.
    * Same defect and same fix as `AuthSessionService.verifyCode`.
    */
-  async verifyOtp(phone: string, code: string): Promise<AuthTokens> {
+  async verifyOtp(
+    phone: string,
+    code: string,
+    metadata?: { userAgent?: string; ip?: string },
+  ): Promise<AuthTokens> {
     const env = getEnv();
     const user = await this.findByPhone(phone);
 
@@ -394,7 +425,7 @@ export class AuthService {
       // Single use: consumed inside the same transaction as the token issue.
       await tx.query(`UPDATE otp_codes SET consumed_at = now() WHERE id = $1`, [otp.id]);
 
-      return { kind: "ok", tokens: await this.issueTokens(user, tx) };
+      return { kind: "ok", tokens: await this.issueTokens(user, tx, undefined, metadata) };
     });
 
     switch (outcome.kind) {
@@ -416,7 +447,11 @@ export class AuthService {
    * Verifies the password with argon2. A dummy verify runs when the e-mail is
    * unknown so response timing does not disclose which addresses exist.
    */
-  async loginWithPassword(email: string, password: string): Promise<AuthTokens> {
+  async loginWithPassword(
+    email: string,
+    password: string,
+    metadata?: { userAgent?: string; ip?: string },
+  ): Promise<AuthTokens> {
     const user = await this.findByEmail(email);
 
     if (user === null) {
@@ -439,7 +474,7 @@ export class AuthService {
 
     assertTenantActive(user.tenant_status);
 
-    return this.issueTokens(user);
+    return this.issueTokens(user, undefined, undefined, metadata);
   }
 
   /**
@@ -467,6 +502,7 @@ export class AuthService {
       linkVerifiedRecipient: (input: { sessionId: string; userId: string }) => Promise<unknown>;
     },
     input: { email: string; password: string; session_id: string; code: string },
+    metadata?: { userAgent?: string; ip?: string },
   ): Promise<AuthTokens> {
     const user = await this.findByEmail(input.email);
 
@@ -511,7 +547,7 @@ export class AuthService {
     // боте) означало бы привязку по неподтверждённому телефону.
     await sessions.linkVerifiedRecipient({ sessionId: input.session_id, userId: user.id });
 
-    return this.issueTokens(user);
+    return this.issueTokens(user, undefined, undefined, metadata);
   }
 
   // -- refresh --------------------------------------------------------------
@@ -521,7 +557,10 @@ export class AuthService {
    * issued in the same transaction. Presenting an already-revoked token revokes
    * the whole family, since reuse indicates the token leaked.
    */
-  async refreshToken(refreshToken: string): Promise<AuthTokens> {
+  async refreshToken(
+    refreshToken: string,
+    metadata?: { userAgent?: string; ip?: string },
+  ): Promise<AuthTokens> {
     const outcome = await transaction<RefreshOutcome>(async (tx) => {
       const row = await tx.queryOne<RefreshRow>(
         `SELECT id, user_id, tenant_id, revoked_at, expires_at
@@ -560,7 +599,7 @@ export class AuthService {
 
       await tx.query(`UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1`, [row.id]);
 
-      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id) };
+      return { kind: "ok", tokens: await this.issueTokens(user, tx, row.id, metadata) };
     });
 
     switch (outcome.kind) {
@@ -808,26 +847,80 @@ export class AuthService {
     }
   }
 
+  // -- session restoration (getMe) -------------------------------------------
+
+  /**
+   * Возвращает профиль текущего пользователя и данные арендатора без ротации refresh-токена.
+   * Позволяет восстанавливать сессию при открытии вкладки или перезагрузке без лишней
+   * ротации и race conditions между вкладками.
+   */
+  async getMe(userId: string, tenantId: string): Promise<{
+    user: AuthTokens["user"];
+    tenant: AuthTokens["tenant"];
+  }> {
+    const user = await this.findById(userId, tenantId);
+    if (user === null) {
+      throw new UnauthorizedError("User not found");
+    }
+    assertTenantActive(user.tenant_status);
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        platform_role: user.platform_role,
+        permissions: toPermissions(user.permissions),
+      },
+      tenant: {
+        id: user.tenant_id,
+        name: user.tenant_name,
+        slug: user.tenant_slug,
+        plan: user.tenant_plan,
+        status: user.tenant_status,
+        custom_price_rubles:
+          user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
+            ? Number(user.tenant_custom_price_rubles)
+            : null,
+        custom_plan_name: user.tenant_custom_plan_name ?? null,
+      },
+    };
+  }
+
   // -- logout ---------------------------------------------------------------
 
   /** Idempotent: an unknown or already-revoked token still reports success. */
   async logout(refreshToken: string): Promise<{ message: string }> {
+    const tokenHash = hashToken(refreshToken);
     await query(
       `UPDATE refresh_tokens SET revoked_at = now()
        WHERE token_hash = $1 AND revoked_at IS NULL`,
-      [hashToken(refreshToken)],
+      [tokenHash],
     );
+
+    const redis = getRedisClient();
+    if (redis) {
+      redis.del(`session:${tokenHash}`).catch(() => {});
+    }
 
     return { message: "Logged out" };
   }
 
   /** Revokes every active session of a user (password change, admin action). */
   async revokeAllSessions(userId: string): Promise<void> {
-    await query(
+    const rows = await query<{ token_hash: string }>(
       `UPDATE refresh_tokens SET revoked_at = now()
-       WHERE user_id = $1 AND revoked_at IS NULL`,
+       WHERE user_id = $1 AND revoked_at IS NULL
+       RETURNING token_hash`,
       [userId],
     );
+
+    const redis = getRedisClient();
+    if (redis && rows.length > 0) {
+      const keys = rows.map((r) => `session:${r.token_hash}`);
+      redis.del(...keys).catch(() => {});
+    }
   }
 
   // -- password helpers -----------------------------------------------------

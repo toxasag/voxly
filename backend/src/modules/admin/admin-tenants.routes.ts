@@ -9,6 +9,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { getEnv } from "../../config/env.js";
 import { AuthService } from "../auth/auth.service.js";
+import { setAuthCookies } from "../auth/auth-cookie.js";
 
 const tenantParams = z.object({ id: z.string().uuid() });
 
@@ -237,6 +238,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     const tenantId = tenantParams.parse(request.params).id;
     const authService = new AuthService(app);
     const tokens = await authService.impersonateTenant(tenantId, request.authUser.id);
+    setAuthCookies(request, reply, tokens);
     return reply.send({ success: true, data: tokens });
   });
 

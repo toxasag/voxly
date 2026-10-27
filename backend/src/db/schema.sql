@@ -254,6 +254,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   expires_at TIMESTAMPTZ NOT NULL,
   revoked_at TIMESTAMPTZ,
   replaced_by UUID REFERENCES refresh_tokens(id),
+  user_agent TEXT,
+  ip TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

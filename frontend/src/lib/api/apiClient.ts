@@ -130,13 +130,13 @@ let refreshInFlight: Promise<string | null> | null = null;
 
 async function performRefresh(): Promise<string | null> {
   const refreshToken = readRefreshToken();
-  if (refreshToken === null) return null;
 
   try {
     const res = await fetch(buildUrl("/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
+      credentials: "include",
     });
 
     if (!res.ok) return null;
@@ -169,7 +169,7 @@ async function performRefresh(): Promise<string | null> {
   }
 }
 
-function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(): Promise<string | null> {
   const pending = refreshInFlight;
   if (pending !== null) return pending;
 

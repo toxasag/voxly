@@ -47,11 +47,12 @@ export const REFRESH_TOKEN_KEY = "getvoxly_refresh_token";
 export const REFRESH_COOKIE_NAME = "getvoxly_refresh";
 
 /**
- * Cookie lifetime. Deliberately longer than the 15-minute access token: the
- * cookie only tells the middleware "a session exists", and a still-valid
+ * Cookie lifetime: 60 days (5,184,000 seconds) for persistent session (Remember Me).
+ * Deliberately longer than the 15-minute access token: the
+ * cookie tells the middleware and client "a valid session exists", and a still-valid
  * refresh token must not be discarded just because the access token aged out.
  */
-const AUTH_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 24 * 60 * 60;
 
 /**
  * Parent domain the cookie is scoped to, so every {slug}.getvoxly.ru portal
@@ -98,11 +99,18 @@ function writeCookie(name: string, value: string): void {
   if (!isBrowser()) return;
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  const domain = cookieDomainAttribute();
 
   document.cookie =
     `${name}=${encodeURIComponent(value)}` +
     `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax` +
-    `${cookieDomainAttribute()}${secure}`;
+    `${domain}${secure}`;
+
+  if (domain) {
+    document.cookie =
+      `${name}=${encodeURIComponent(value)}` +
+      `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+  }
 }
 
 function clearCookie(name: string): void {
@@ -171,6 +179,30 @@ export function clearSession(): void {
   clearCookie(REFRESH_COOKIE_NAME);
 }
 
+export function getTokenRemainingSeconds(token: string | null): number {
+  if (!token) return 0;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return 0;
+    const base64Url = parts[1];
+    if (!base64Url) return 0;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(""),
+    );
+    const payload = JSON.parse(jsonPayload) as { exp?: unknown };
+    if (typeof payload.exp === "number") {
+      return Math.max(0, payload.exp - Math.floor(Date.now() / 1000));
+    }
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
 export function hasSession(): boolean {
-  return readAccessToken() !== null;
+  return readAccessToken() !== null || readRefreshToken() !== null;
 }
