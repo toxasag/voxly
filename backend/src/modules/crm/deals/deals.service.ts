@@ -22,11 +22,12 @@ import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js"
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
 import { TimelineService } from "../timeline/timeline.service.js";
+import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
   budget, currency, custom_fields, created_by, owner_id, close_date, position,
-  closed_at, created_at, updated_at
+  closed_at, lead_notified_at, created_at, updated_at
 `;
 
 /**
@@ -39,7 +40,7 @@ const DEAL_COLUMNS = `
 const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
-  d.close_date, d.position, d.closed_at, d.created_at, d.updated_at,
+  d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -320,9 +321,12 @@ export class DealsService {
     createdBy: string,
     payload: CreateDealPayload,
   ): Promise<DealDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const created = await withTenant(tenantId, async (tx) => {
       return this.createInTx(tx, tenantId, createdBy, payload);
     });
+
+    void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
+    return created;
   }
 
   async createInTx(
@@ -449,7 +453,11 @@ export class DealsService {
 
     // Перечитываем через get: RETURNING не отдаёт подписи связей (они приходят
     // JOIN'ами), и ответ на inline-правку обнулял бы чипы в таблице.
-    return this.get(tenantId, id);
+    const updated = await this.get(tenantId, id);
+    if (updated) {
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
+    }
+    return updated;
   }
 
   /**
@@ -609,6 +617,8 @@ export class DealsService {
          WHERE d.tenant_id = $1 AND d.id = $2`,
         [tenantId, id],
       );
+
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
 
       return toDealDTO(row);
     });

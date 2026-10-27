@@ -1,6 +1,7 @@
 import { queueManager, type QueueJob } from "./infrastructure/queue.js";
 import { chargeAiUsage, type ChargeAiUsageParams } from "./modules/ai/ai-usage-queue.js";
 import { TaskRemindersService } from "./modules/crm/tasks/task-reminders.service.js";
+import { leadNotificationQueue } from "./modules/crm/leads/lead-notification.queue.js";
 
 // ---------------------------------------------------------------------------
 // Background Worker (M7.2): обработчики задач очередей.
@@ -42,4 +43,5 @@ export function initBackgroundWorker(): void {
 // Graceful shutdown
 export async function shutdownWorker(): Promise<void> {
   await queueManager.shutdown();
+  await leadNotificationQueue.shutdown();
 }
