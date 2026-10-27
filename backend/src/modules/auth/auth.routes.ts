@@ -9,6 +9,14 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
+import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import {
+  setAuthCookies,
+  clearAuthCookies,
+  parseCookies,
+  REFRESH_COOKIE_NAME,
+  AUTH_COOKIE_NAME,
+} from "./auth-cookie.js";
 
 const phoneField = z
   .string()
@@ -434,7 +442,12 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    */
   app.post("/login/verify", async (request, reply) => {
     const body = loginWithCodeBody.parse(request.body);
-    const result = await service.loginWithPasswordAndCode(sessions, body);
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+    const result = await service.loginWithPasswordAndCode(sessions, body, meta);
+    setAuthCookies(request, reply, result);
     return reply.status(200).send({ data: result });
   });
 
@@ -446,13 +459,23 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
 
   app.post("/otp/verify", async (request, reply) => {
     const body = verifyOtpBody.parse(request.body);
-    const result = await service.verifyOtp(body.phone, body.code);
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+    const result = await service.verifyOtp(body.phone, body.code, meta);
+    setAuthCookies(request, reply, result);
     return reply.status(200).send({ data: result });
   });
 
   app.post("/login", async (request, reply) => {
     const body = loginBody.parse(request.body);
-    const result = await service.loginWithPassword(body.email, body.password);
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+    const result = await service.loginWithPassword(body.email, body.password, meta);
+    setAuthCookies(request, reply, result);
     return reply.status(200).send({ data: result });
   });
 
@@ -500,6 +523,7 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
       }
     });
 
+    setAuthCookies(request, reply, result);
     return reply.status(201).send({ data: result });
   });
 
@@ -592,15 +616,83 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     },
   );
 
+  /**
+   * Получение данных текущей сессии без ротации refresh-токена.
+   * Позволяет Next.js восстанавливать профиль на старте без гонок и сброса сессий.
+   */
+  app.get("/me", async (request, reply) => {
+    const authHeader = request.headers.authorization;
+    const cookies = parseCookies(request.headers.cookie);
+    let token: string | null = null;
+
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.slice("Bearer ".length);
+    } else if (cookies[AUTH_COOKIE_NAME]) {
+      token = cookies[AUTH_COOKIE_NAME];
+    }
+
+    if (!token) {
+      throw new UnauthorizedError("Missing bearer token");
+    }
+
+    let payload: { sub: string; tenant_id: string; typ?: string };
+    try {
+      payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string };
+    } catch {
+      throw new UnauthorizedError("Invalid or expired token");
+    }
+
+    if (payload.typ !== undefined && payload.typ !== "access") {
+      throw new UnauthorizedError("Invalid token type");
+    }
+
+    const data = await service.getMe(payload.sub, payload.tenant_id);
+    return reply.status(200).send({ data });
+  });
+
   app.post("/refresh", async (request, reply) => {
-    const body = refreshBody.parse(request.body);
-    const result = await service.refreshToken(body.refresh_token);
+    const cookies = parseCookies(request.headers.cookie);
+    let candidateToken: string | undefined;
+
+    if (request.body && typeof request.body === "object") {
+      const parsed = refreshBody.safeParse(request.body);
+      if (parsed.success) {
+        candidateToken = parsed.data.refresh_token;
+      }
+    }
+
+    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
+      throw new UnauthorizedError("Refresh token is required");
+    }
+
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+    const result = await service.refreshToken(refreshToken.trim(), meta);
+    setAuthCookies(request, reply, result);
     return reply.status(200).send({ data: result });
   });
 
   app.post("/logout", async (request, reply) => {
-    const body = refreshBody.parse(request.body);
-    const result = await service.logout(body.refresh_token);
+    const cookies = parseCookies(request.headers.cookie);
+    let candidateToken: string | undefined;
+
+    if (request.body && typeof request.body === "object") {
+      const parsed = refreshBody.safeParse(request.body);
+      if (parsed.success) {
+        candidateToken = parsed.data.refresh_token;
+      }
+    }
+
+    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    let result = { message: "Logged out" };
+    if (refreshToken && typeof refreshToken === "string" && refreshToken.trim().length > 0) {
+      result = await service.logout(refreshToken.trim());
+    }
+
+    clearAuthCookies(request, reply);
     return reply.status(200).send({ data: result });
   });
 };

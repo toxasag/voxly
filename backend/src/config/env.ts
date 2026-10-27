@@ -44,7 +44,7 @@ const baseSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   ACCESS_TOKEN_TTL: z.string().min(1).default("15m"),
-  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(30),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(60),
   OTP_TTL_MINUTES: z.coerce.number().int().positive().max(60).default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().max(20).default(5),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),

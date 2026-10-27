@@ -126,8 +126,15 @@ export function middleware(request: NextRequest) {
   // Presence only. Signature and expiry are verified by the backend on every
   // request; duplicating that here would mean shipping the JWT secret to the
   // edge for no added safety.
+  // Check both access token and refresh token: if refresh token is present,
+  // the user has an active persistent session (60 days) and client will silently refresh.
   const token = request.cookies.get(AUTH_COOKIE)?.value;
-  const hasSession = token !== undefined && token.length > 0;
+  const refreshToken =
+    request.cookies.get("getvoxly_refresh")?.value ||
+    request.cookies.get("getvoxly_refresh_token")?.value;
+  const hasSession =
+    (token !== undefined && token.length > 0) ||
+    (refreshToken !== undefined && refreshToken.length > 0);
 
   // Already signed in and sitting on /login or /register → move on. Without
   // this the visitor is stuck: the page renders, the client sees a session and
