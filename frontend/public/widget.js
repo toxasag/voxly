@@ -440,6 +440,7 @@
       }
       .getvoxly-textarea {
         font-size: 16px !important; /* Предотвращает нежелательный зум страницы в iOS Safari */
+        line-height: 20px !important;
       }
       .getvoxly-input-area {
         padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
@@ -766,7 +767,9 @@
       border: none !important;
       color: #888888 !important;
       cursor: pointer !important;
-      padding: 4px !important;
+      padding: 0 !important;
+      width: 30px !important;
+      height: 30px !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -1061,12 +1064,12 @@
     }
     .getvoxly-input-wrapper {
       display: flex !important;
-      align-items: center !important;
+      align-items: flex-end !important;
       gap: 8px !important;
       background: #ffffff !important;
       border: 1px solid #e5e5e5 !important;
       border-radius: 12px !important;
-      padding: 6px 8px 6px 12px !important;
+      padding: 6px 8px 6px 10px !important;
       transition: border-color 0.15s !important;
     }
     .is-dark-theme .getvoxly-input-wrapper {
@@ -1081,14 +1084,30 @@
       background: transparent !important;
       border: none !important;
       color: #111111 !important;
-      padding: 0 !important;
+      padding: 5px 0 !important;
       font-size: 13px !important;
       font-family: inherit !important;
       resize: none !important;
-      height: 24px !important;
-      max-height: 80px !important;
+      min-height: 20px !important;
+      max-height: 120px !important;
       outline: none !important;
-      line-height: 24px !important;
+      line-height: 20px !important;
+      box-sizing: border-box !important;
+      overflow-y: hidden;
+      margin: 0 !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar {
+      width: 4px !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-track {
+      background: transparent !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #d4d4d8 !important;
+      border-radius: 4px !important;
+    }
+    .is-dark-theme .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #3f3f46 !important;
     }
     .is-dark-theme .getvoxly-textarea {
       color: #f1f5f9 !important;
@@ -1526,6 +1545,23 @@
 
     function hideNetworkStatus() {
       if (networkStatusEl) networkStatusEl.style.display = 'none';
+    }
+
+    function adjustInputHeight() {
+      if (!inputEl) return;
+      inputEl.style.setProperty('height', 'auto', 'important');
+      var scrollH = inputEl.scrollHeight;
+      var minH = 30;
+      var maxH = 120;
+      var newH = Math.max(minH, Math.min(scrollH, maxH));
+      inputEl.style.setProperty('height', newH + 'px', 'important');
+      inputEl.style.setProperty('overflow-y', scrollH > maxH ? 'auto' : 'hidden', 'important');
+      if (messagesContainer) {
+        var isNearBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 50;
+        if (isNearBottom) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }
     }
 
     var isExpanded = false;
@@ -2020,8 +2056,14 @@
       if (messagesContainer) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
+      if (inputEl) {
+        adjustInputHeight();
+      }
       if (!isMobileScreen() && inputEl && typeof inputEl.focus === 'function') {
-        setTimeout(function () { inputEl.focus(); }, 100);
+        setTimeout(function () {
+          inputEl.focus();
+          adjustInputHeight();
+        }, 100);
       }
       initSession();
       syncHistoryFromServer();
@@ -2551,7 +2593,7 @@
       renderAttachmentPreview(null);
 
       inputEl.value = '';
-      inputEl.style.height = '24px';
+      adjustInputHeight();
       lastDraft = '';
 
       function extractClientPhone(val) {
@@ -2749,6 +2791,8 @@
     sentDrafts = {};
 
     if (inputEl) {
+      adjustInputHeight();
+
       inputEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
@@ -2757,6 +2801,8 @@
       });
 
       inputEl.addEventListener('input', function (e) {
+        adjustInputHeight();
+
         if (messageBuffer.length > 0 && !isBotResponding) {
           clearTimeout(sendTimer);
           typingIndicator.textContent = 'печатает...';
@@ -2774,6 +2820,10 @@
         if (current.length > 3) {
           lastDraft = current;
         }
+      });
+
+      inputEl.addEventListener('paste', function () {
+        setTimeout(adjustInputHeight, 0);
       });
     }
 
