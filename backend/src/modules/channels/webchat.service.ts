@@ -2,6 +2,7 @@ import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
+import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публичного онлайн-чата на сайте (WebChat).
@@ -472,23 +473,16 @@ export class WebchatService {
 
     // Автоматическое определение номера телефона из текста, если не был передан явно
     let detectedPhone = input.senderPhone?.trim();
-    if (!detectedPhone && text) {
-      const phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
-      if (phoneMatch) {
-        const digits = phoneMatch[0].replace(/\D/g, "");
-        if (digits.length === 11) {
-          detectedPhone = `+7${digits.slice(1)}`;
-        }
-      }
+    if (detectedPhone) {
+      detectedPhone = extractPhoneNumber(detectedPhone) ?? detectedPhone;
+    } else if (text) {
+      detectedPhone = extractPhoneNumber(text) ?? undefined;
     }
 
     // Автоматическое определение email из текста, если не был передан явно
     let detectedEmail = input.senderEmail?.trim();
     if (!detectedEmail && text) {
-      const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-      if (emailMatch) {
-        detectedEmail = emailMatch[0];
-      }
+      detectedEmail = extractEmailAddress(text) ?? undefined;
     }
 
     const fallbackText = input.attachment

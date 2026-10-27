@@ -2554,17 +2554,44 @@
       inputEl.style.height = '24px';
       lastDraft = '';
 
-      if (text) {
-        var phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2} /);
-        if (phoneMatch) {
-          var digits = phoneMatch[0].replace(/\D/g, '');
-          if (digits.length >= 10) {
-            safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phoneMatch[0]);
+      function extractClientPhone(val) {
+        if (!val || typeof val !== 'string') return null;
+        var cl = val.trim();
+        var m = cl.match(/(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/) ||
+                cl.match(/(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/) ||
+                cl.match(/(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/);
+        if (m) {
+          var raw = m[0].trim();
+          var dig = raw.replace(/\D/g, '');
+          if (raw.charAt(0) === '+' && dig.length >= 10 && dig.length <= 15) {
+            if (dig.charAt(0) === '7' && dig.length === 11) return '+7' + dig.slice(1);
+            return '+' + dig;
           }
+          if (dig.length === 11 && (dig.charAt(0) === '7' || dig.charAt(0) === '8')) {
+            return '+7' + dig.slice(1);
+          }
+          if (dig.length === 10 && dig.charAt(0) === '9') {
+            return '+7' + dig;
+          }
+        }
+        var onlyDig = cl.replace(/\D/g, '');
+        if (onlyDig.length === 11 && (onlyDig.charAt(0) === '7' || onlyDig.charAt(0) === '8')) {
+          return '+7' + onlyDig.slice(1);
+        }
+        if (onlyDig.length === 10 && onlyDig.charAt(0) === '9') {
+          return '+7' + onlyDig;
+        }
+        return null;
+      }
+
+      if (text) {
+        var parsedPhone = extractClientPhone(text);
+        if (parsedPhone) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, parsedPhone);
         }
         var emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
         if (emailMatch) {
-          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, emailMatch[0]);
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, emailMatch[0].toLowerCase());
         }
       }
 
@@ -2598,7 +2625,7 @@
         typingIndicator.style.display = 'block';
       }
       try {
-        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || undefined;
+        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || extractClientPhone(fullText) || undefined;
         var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || undefined;
         var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
 

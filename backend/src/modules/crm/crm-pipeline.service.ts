@@ -7,6 +7,8 @@ import {
   contactPhonesFrom,
   contactSocialsFrom,
   displayNameFrom,
+  extractPhoneNumber,
+  extractEmailAddress,
   UNKNOWN_CONTACT_NAME,
   type ChannelProfile,
 } from "./channel-identity.js";
@@ -118,8 +120,20 @@ export class CrmPipelineService {
    * - saves the inbound message to deal_messages
    */
   async processIncoming(input: InboundMessageInput): Promise<CrmPipelineResult> {
+    const rawText = input.text ? input.text.trim() : "";
+    const extractedPhone = extractPhoneNumber(rawText);
+    const effectiveSenderPhone = input.senderPhone?.trim() || extractedPhone || undefined;
+    const extractedEmail = extractEmailAddress(rawText);
+    const effectiveSenderEmail = input.senderEmail?.trim() || extractedEmail || undefined;
+
+    const enrichedInput: InboundMessageInput = {
+      ...input,
+      senderPhone: effectiveSenderPhone,
+      senderEmail: effectiveSenderEmail,
+    };
+
     const result = await transaction(async (tx) => {
-      const contact = await this.findContact(tx, input.tenantId, input);
+      const contact = await this.findContact(tx, input.tenantId, enrichedInput);
 
       // Если контакт помечен как личный — полностью игнорируем входящее сообщение:
       // не создаём сделку, не пишем в deal_messages, не отвечаем AI-ботом.
@@ -157,21 +171,36 @@ export class CrmPipelineService {
         }
 
         // 1.1. Привязываем телефон, если он появился
-        if (input.senderPhone && (!contact.phone || contact.phone.trim().length === 0)) {
+        if (effectiveSenderPhone && (!contact.phone || contact.phone.trim().length === 0)) {
           await tx.query(
-            `UPDATE contacts SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = '')`,
-            [input.senderPhone, contact.id],
+            `UPDATE contacts
+             SET phone = $1,
+                 phone_calling_code = COALESCE(NULLIF(phone_calling_code, ''), '+7'),
+                 phone_country_code = COALESCE(NULLIF(phone_country_code, ''), 'RU'),
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3 AND (phone IS NULL OR phone = '')`,
+            [effectiveSenderPhone, contact.id, input.tenantId],
           );
-          contact.phone = input.senderPhone;
+          contact.phone = effectiveSenderPhone;
         }
 
         // 1.2. Привязываем email, если он появился
-        if (input.senderEmail && (!contact.email || contact.email.trim().length === 0)) {
+        if (effectiveSenderEmail && (!contact.email || contact.email.trim().length === 0)) {
           await tx.query(
-            `UPDATE contacts SET email = $1 WHERE id = $2 AND (email IS NULL OR email = '')`,
-            [input.senderEmail.trim(), contact.id],
+            `UPDATE contacts SET email = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3 AND (email IS NULL OR email = '')`,
+            [effectiveSenderEmail.trim(), contact.id, input.tenantId],
           );
-          contact.email = input.senderEmail.trim();
+          contact.email = effectiveSenderEmail.trim();
+        }
+
+        // 1.3. Если имя контакта было заглушкой «Посетитель сайта ...» или «Клиент» — обновляем с номером
+        if (effectiveSenderPhone && (contact.first_name.startsWith("Посетитель сайта") || contact.first_name === UNKNOWN_CONTACT_NAME)) {
+          const newClientName = `Клиент ${effectiveSenderPhone}`;
+          await tx.query(
+            `UPDATE contacts SET first_name = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+            [newClientName, contact.id, input.tenantId],
+          );
+          contact.first_name = newClientName;
         }
 
         // 1.5. Привязываем max_chat_id для MAX, если его ещё не было
@@ -397,6 +426,8 @@ export class CrmPipelineService {
 
         // Эскалация «Первый контакт» -> «Новый лид», если у контакта появились контактные данные
         const hasRealContact = Boolean(
+          effectiveSenderPhone ||
+          effectiveSenderEmail ||
           input.senderPhone ||
           input.senderEmail ||
           (contact && contact.phone && contact.phone.trim().length > 0) ||
@@ -414,22 +445,54 @@ export class CrmPipelineService {
             [activeDeal.id, input.tenantId],
           );
 
-          if (currentStage && currentStage.name === "Первый контакт") {
-            const newLeadStage = await tx.queryOne<{ id: string }>(
+          const isFirstContact = currentStage && (
+            currentStage.name === "Первый контакт" ||
+            currentStage.name === "first_contact" ||
+            currentStage.name.toLowerCase().startsWith("первый контакт")
+          );
+
+          if (isFirstContact) {
+            let newLeadStage = await tx.queryOne<{ id: string }>(
               `SELECT id FROM stages
-               WHERE pipeline_id = (SELECT pipeline_id FROM deals WHERE id = $1)
-                 AND name = 'Новый лид'
+               WHERE pipeline_id = (SELECT pipeline_id FROM deals WHERE id = $1 AND tenant_id = $2)
+                 AND (name = 'Новый лид' OR name ILIKE '%лид%' OR name = 'new_lead')
                LIMIT 1`,
-              [activeDeal.id],
+              [activeDeal.id, input.tenantId],
             );
 
+            if (!newLeadStage) {
+              newLeadStage = await tx.queryOne<{ id: string }>(
+                `SELECT id FROM stages
+                 WHERE pipeline_id = (SELECT pipeline_id FROM deals WHERE id = $1 AND tenant_id = $2)
+                   AND is_won = false AND is_lost = false AND name NOT ILIKE '%первый контакт%' AND name != 'first_contact'
+                 ORDER BY sort_order ASC
+                 LIMIT 1`,
+                [activeDeal.id, input.tenantId],
+              );
+            }
+
             if (newLeadStage) {
+              const phoneLabel = effectiveSenderPhone || (contact && contact.phone) || "";
+              const updatedTitle = phoneLabel ? `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)})` : undefined;
+
               await tx.query(
-                `UPDATE deals SET stage_id = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
-                [newLeadStage.id, activeDeal.id, input.tenantId],
+                `UPDATE deals
+                 SET stage_id = $1,
+                     title = CASE WHEN title ILIKE 'Заявка от Посетитель сайта%' AND $4::text IS NOT NULL THEN $4 ELSE title END,
+                     updated_at = now()
+                 WHERE id = $2 AND tenant_id = $3`,
+                [newLeadStage.id, activeDeal.id, input.tenantId, updatedTitle ?? null],
+              );
+
+              await tx.query(
+                `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+                 VALUES ($1, $2, $3, $4, NULL)`,
+                [input.tenantId, activeDeal.id, currentStage.id, newLeadStage.id],
               );
 
               const contactIdentifier =
+                effectiveSenderPhone ||
+                effectiveSenderEmail ||
                 input.senderPhone ||
                 input.senderEmail ||
                 (contact && (contact.phone || contact.email)) ||
@@ -469,6 +532,8 @@ export class CrmPipelineService {
           // заявки с подтвержденными контактами (мессенджеры, телефон, email) — в «Новый лид»
           const isAnonymousWebchat =
             input.channel === "webchat" &&
+            !effectiveSenderPhone &&
+            !effectiveSenderEmail &&
             !input.senderPhone &&
             !input.senderEmail &&
             (!contact || ((!contact.phone || contact.phone.trim().length === 0) && (!contact.email || contact.email.trim().length === 0)));
@@ -499,8 +564,13 @@ export class CrmPipelineService {
 
           const createdBy = await this.findFallbackUserId(tx, input.tenantId);
 
+          const phoneLabel = effectiveSenderPhone || (contact && contact.phone) || "";
+          const dealTitle = phoneLabel && displayName.startsWith("Посетитель сайта")
+            ? `Заявка от ${phoneLabel} (${this.channelLabel(input.channel)})`
+            : `Заявка от ${displayName} (${this.channelLabel(input.channel)})`;
+
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
-            title: `Заявка от ${displayName} (${this.channelLabel(input.channel)})`,
+            title: dealTitle,
             description: "",
             budget: 0,
             currency: "RUB",
@@ -879,13 +949,15 @@ export class CrmPipelineService {
       if (byUsername !== null) return byUsername;
     }
 
-    if (input.senderPhone !== undefined && input.senderPhone.length > 0) {
-      const byPhone = await this.findContactByPhone(tx, tenantId, input.senderPhone);
+    const phoneToSearch = input.senderPhone || extractPhoneNumber(input.text);
+    if (phoneToSearch !== undefined && phoneToSearch !== null && phoneToSearch.length > 0) {
+      const byPhone = await this.findContactByPhone(tx, tenantId, phoneToSearch);
       if (byPhone !== null) return byPhone;
     }
 
-    if (input.senderEmail !== undefined && input.senderEmail.trim().length > 0) {
-      const cleanEmail = input.senderEmail.trim().toLowerCase();
+    const emailToSearch = input.senderEmail || extractEmailAddress(input.text);
+    if (emailToSearch !== undefined && emailToSearch !== null && emailToSearch.trim().length > 0) {
+      const cleanEmail = emailToSearch.trim().toLowerCase();
       const byEmail = await tx.queryOne<ExistingContact>(
         `SELECT ${EXISTING_CONTACT_COLUMNS} FROM contacts
          WHERE tenant_id = $1 AND deleted_at IS NULL AND lower(email) = $2
