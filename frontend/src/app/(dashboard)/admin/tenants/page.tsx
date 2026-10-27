@@ -27,6 +27,7 @@ import {
   type AdminTenantDTO,
 } from "@/lib/api/use-admin";
 import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
+import { writeImpersonationBackup } from "@/lib/auth/impersonation";
 import { TenantManageModal } from "@/components/admin/TenantManageModal";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
@@ -374,7 +375,7 @@ export default function AdminTenantsPage() {
 
         const userEmail = res.user?.email ?? tenant.owner_email ?? "";
 
-        // Сохраняем исходную сессию суперадминистратора в бэкап
+        // Сохраняем исходную сессию суперадминистратора в бэкап (domain-scoped cookie + localStorage)
         const backup = {
           accessToken: currentAccessToken,
           refreshToken: currentRefreshToken,
@@ -382,7 +383,7 @@ export default function AdminTenantsPage() {
           impersonatedUserEmail: userEmail,
           enteredAt: new Date().toISOString(),
         };
-        localStorage.setItem("voxly_impersonator_backup", JSON.stringify(backup));
+        writeImpersonationBackup(backup);
 
         // Применяем токен клиента
         writeTokens({

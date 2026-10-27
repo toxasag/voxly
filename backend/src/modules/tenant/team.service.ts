@@ -150,7 +150,26 @@ export class TeamService {
   }
 
   private async seatUsage(tenantId: string): Promise<SeatUsageDTO> {
+    const tenant = await queryOne<{ custom_price_rubles: number | null; plan: string }>(
+      `SELECT custom_price_rubles, plan FROM tenants WHERE id = $1`,
+      [tenantId],
+    );
+    const isFreeCustom =
+      (tenant?.custom_price_rubles !== null && Number(tenant?.custom_price_rubles) === 0) ||
+      tenant?.plan === "custom_free";
+
     const [used, pricing] = await Promise.all([this.countSeats(tenantId), this.seatPricing()]);
+
+    if (isFreeCustom) {
+      return {
+        used,
+        included: 999999,
+        extra: 0,
+        extraSeatPrice: 0,
+        nextSeatPrice: 0,
+      };
+    }
+
     const extra = Math.max(0, used - pricing.included);
 
     return {

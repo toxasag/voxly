@@ -71,6 +71,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 /** Подпись тарифа: модель расчёта различается, одной строкой не описать. */
 function priceCaption(module: MarketplaceModuleDTO): string {
+  if (module.isFreeCustomPlan || (module.basePrice === 0 && module.unitPrice === 0)) {
+    if (module.billingKind === "per_seat") {
+      return "0 ₽/мес — все пользователи включены";
+    }
+    if (module.isMulti) {
+      return "0 ₽/мес — без ограничений";
+    }
+    return "0 ₽/мес — включено в ваш тариф";
+  }
+
   switch (module.billingKind) {
     case "per_seat":
       return `${formatRub(module.basePrice)}/мес за ${module.includedUnits} пользователей, далее +${formatRub(module.unitPrice)} за каждого`;
@@ -226,9 +236,14 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         <h3 className="text-sm font-semibold text-[#111111]">{module.name}</h3>
 
         {/* Бейдж тарифа / пробного периода.
-            Если единицы модуля включены в тариф навсегда (includedUnits > 0) —
+            Если единицы модуля включены в тариф навсегда (includedUnits > 0) или кастомный тариф —
             показываем постоянную отметку «Включено в тариф», а не временный триал. */}
-        {module.includedUnits > 0 ? (
+        {module.isFreeCustomPlan ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <Check className="h-3 w-3" />
+            Включено в ваш тариф
+          </span>
+        ) : module.includedUnits > 0 ? (
           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             <Check className="h-3 w-3" />
             {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} в тарифе бесплатно
@@ -254,7 +269,14 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         <p className="text-sm font-bold text-[#111111] tabular-nums font-mono">{priceCaption(module)}</p>
         {module.isMulti && (
           <p className="mt-0.5 text-xs text-[#666666]">
-            {module.includedUnits > 0 ? (
+            {module.isFreeCustomPlan || module.unitPrice === 0 ? (
+              <>
+                {quantity} {pluralUnit(quantity, module.unitLabel)} ={" "}
+                <span className="font-semibold text-emerald-700 tabular-nums font-mono">
+                  0 ₽/мес (в тарифе без ограничений)
+                </span>
+              </>
+            ) : module.includedUnits > 0 ? (
               quantity <= module.includedUnits ? (
                 <>
                   {quantity} из {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} ={" "}
@@ -356,6 +378,94 @@ function BillingBar() {
 
   if (isLoading) return <Skeleton className="h-20 w-full rounded-[8px]" />;
   if (data === undefined || data.items.length === 0) return null;
+
+  const isFreePlan =
+    data.isFreeCustomPlan ||
+    (data.isCustomPlan && data.customPriceRubles === 0);
+
+  if (isFreePlan) {
+    return (
+      <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/50 p-5 shadow-2xs">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                <Check className="h-3.5 w-3.5" />
+                {data.customPlanName || "Индивидуальный тариф"}
+              </span>
+              <span className="text-xs font-medium text-emerald-700">Безлимитный доступ</span>
+            </div>
+            <p className="mt-1.5 text-2xl font-bold text-emerald-800 tabular-nums font-mono">
+              0 ₽/мес
+            </p>
+            <p className="mt-1 text-xs text-emerald-700 font-medium">
+              Все модули, каналы коммуникаций и пользователи включены в ваш тариф бесплатно
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="text-right">
+              <p className="text-xs text-[#666666]">Пользователей в портале</p>
+              <Link
+                href="/settings/team"
+                className="text-sm font-semibold text-[#111111] tabular-nums underline-offset-2 hover:text-[#4a38f5] hover:underline"
+              >
+                {data.usersCount}
+              </Link>
+            </div>
+
+            <div className="flex items-center gap-1.5 rounded-[8px] border border-emerald-300 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-700 shadow-2xs">
+              <Check className="h-4 w-4 text-emerald-600" />
+              Тариф активен
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.isCustomPlan && typeof data.customPriceRubles === "number" && data.customPriceRubles > 0) {
+    return (
+      <div className="rounded-[8px] border border-violet-200 bg-violet-50/50 p-5 shadow-2xs">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-violet-300 bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">
+                <Check className="h-3.5 w-3.5" />
+                {data.customPlanName || "Индивидуальный тариф"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-2xl font-bold text-[#111111] tabular-nums font-mono">
+              {formatRub(data.customPriceRubles)}/мес
+            </p>
+            <p className="mt-1 text-xs text-[#666666]">
+              Индивидуальная фиксированная стоимость пакета
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="text-right">
+              <p className="text-xs text-[#666666]">Пользователей в портале</p>
+              <Link
+                href="/settings/team"
+                className="text-sm font-semibold text-[#111111] tabular-nums underline-offset-2 hover:text-[#4a38f5] hover:underline"
+              >
+                {data.usersCount}
+              </Link>
+            </div>
+
+            <Link
+              href="/settings/billing"
+              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2.5 text-sm font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+            >
+              <CreditCard className="h-4 w-4" />
+              Управление подпиской
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const hasTrials = data.items.some((item) => item.trialActive);
 
