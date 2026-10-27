@@ -45,6 +45,7 @@ export interface AiStatusDTO {
   isPaused: boolean;
   pausedUntil: string | null;
   pausedReason: string | null;
+  status?: "enabled" | "paused" | "disabled";
 }
 
 export type AiControlAction = "enable" | "pause" | "disable";

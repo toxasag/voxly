@@ -20,6 +20,7 @@ export interface ImpersonationBackup {
   refreshToken: string;
   adminUserEmail?: string;
   adminUserName?: string;
+  impersonatedTenantSlug?: string;
   impersonatedTenantName?: string;
   impersonatedUserEmail?: string;
   enteredAt?: string;
@@ -64,8 +65,10 @@ export function writeImpersonationBackup(backup: ImpersonationBackup): void {
   }
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  // 1-day validity for admin impersonation session
+  // 1-day validity for admin impersonation session across all subdomains
   document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${cookieDomainAttribute()}${secure}`;
+  // Also write host-level fallback
+  document.cookie = `${BACKUP_COOKIE_NAME}=${encodeURIComponent(raw)}; Path=/; Max-Age=86400; SameSite=Lax${secure}`;
 }
 
 /**
@@ -75,16 +78,19 @@ export function writeImpersonationBackup(backup: ImpersonationBackup): void {
 export function readImpersonationBackup(): ImpersonationBackup | null {
   if (!isBrowser()) return null;
 
-  // 1. Try reading from cookie
+  // 1. Try reading from cookie using split-trim (immune to whitespace irregularities)
   try {
-    const match = document.cookie.match(
-      new RegExp(`(?:^|; )${BACKUP_COOKIE_NAME}=([^;]*)`),
-    );
-    if (match?.[1]) {
-      const decoded = decodeURIComponent(match[1]);
-      const parsed = JSON.parse(decoded) as ImpersonationBackup;
-      if (parsed.accessToken && parsed.refreshToken) {
-        return parsed;
+    for (const part of document.cookie.split(";")) {
+      const [rawName, ...rest] = part.trim().split("=");
+      if (rawName === BACKUP_COOKIE_NAME) {
+        const value = rest.join("=");
+        if (value.length > 0) {
+          const decoded = decodeURIComponent(value);
+          const parsed = JSON.parse(decoded) as ImpersonationBackup;
+          if (parsed.accessToken && parsed.refreshToken) {
+            return parsed;
+          }
+        }
       }
     }
   } catch {

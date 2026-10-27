@@ -555,7 +555,7 @@ CREATE TABLE IF NOT EXISTS deal_stage_history (
   deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
   from_stage_id UUID,
   to_stage_id UUID NOT NULL,
-  changed_by UUID NOT NULL REFERENCES users(id),
+  changed_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
