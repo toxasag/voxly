@@ -1048,7 +1048,7 @@ export class DealsService {
         `UPDATE deals
          SET stage_id = $1,
              closed_at = COALESCE(closed_at, now()),
-             ai_paused_until = '2099-01-01'::timestamptz,
+             ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
              updated_at = now()
          WHERE tenant_id = $2 AND id = $3`,
         [lostStage.id, tenantId, deal.id],

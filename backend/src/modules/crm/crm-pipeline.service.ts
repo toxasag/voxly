@@ -689,19 +689,25 @@ export class CrmPipelineService {
       );
     }
 
-    // Если запрошена пауза сессии (троллинг / спам) — замораживаем бота на 60 минут
+    // Если запрошена пауза сессии (троллинг / спам) — замораживаем бота на 60 минут (если не выключен навсегда)
     if (input.reply.session_pause) {
       await query(
         `UPDATE deals
-         SET ai_paused_until = now() + INTERVAL '60 minutes'
+         SET ai_paused_until = CASE
+               WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '2090-01-01'::timestamptz THEN ai_paused_until
+               ELSE now() + INTERVAL '60 minutes'
+             END
          WHERE tenant_id = $1 AND id = $2`,
         [input.tenantId, input.dealId],
       );
     } else if (input.reply.handoff_required) {
-      // При эскалации на человека замораживаем бота на 24 часа для работы оператора
+      // При эскалации на человека замораживаем бота на 24 часа для работы оператора (если не выключен навсегда)
       await query(
         `UPDATE deals
-         SET ai_paused_until = now() + INTERVAL '24 hours'
+         SET ai_paused_until = CASE
+               WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '2090-01-01'::timestamptz THEN ai_paused_until
+               ELSE now() + INTERVAL '24 hours'
+             END
          WHERE tenant_id = $1 AND id = $2`,
         [input.tenantId, input.dealId],
       );
@@ -882,7 +888,10 @@ export class CrmPipelineService {
       const pauseMins = input.pauseMinutes ?? 30;
       const pauseRes = await tx.queryOne<{ paused_until: string }>(
         `UPDATE deals
-         SET ai_paused_until = now() + ($1 || ' minutes')::interval,
+         SET ai_paused_until = CASE
+               WHEN ai_paused_until IS NOT NULL AND ai_paused_until > '2090-01-01'::timestamptz THEN ai_paused_until
+               ELSE now() + ($1 || ' minutes')::interval
+             END,
              updated_at = now()
          WHERE id = $2 AND tenant_id = $3
          RETURNING ai_paused_until::text AS paused_until`,
