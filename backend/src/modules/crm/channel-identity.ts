@@ -214,3 +214,65 @@ export function displayNameFrom(identity: SenderIdentity): string {
   const { first_name, last_name } = contactNameFrom(identity);
   return last_name === "" ? first_name : `${first_name} ${last_name}`;
 }
+
+/**
+ * Извлекает валидный номер телефона из произвольного текста (в формате E.164: +7XXXXXXXXXX или +XXXXXXXXXXX).
+ * Корректно распознаёт:
+ * - 11 цифр: 79150946944, +79150946944, 89150946944
+ * - 10 цифр (мобильные РФ): 9150946944, (915) 094-69-44, 915-094-69-44
+ * - форматы с разделителями: +7 (915) 094-69-44, 8-915-094-69-44, 7 915 094 69 44
+ * - международные номера: +375XXXXXXXXX, +77XXXXXXXXX и др.
+ */
+export function extractPhoneNumber(text?: string | null): string | null {
+  if (!text || typeof text !== "string") return null;
+  const cleaned = text.trim();
+  if (cleaned.length === 0) return null;
+
+  // 1. Ищем номера с явными разделителями или префиксами
+  const patterns = [
+    // 11 цифр с префиксом +7, 7 или 8 (включая слитные: 79150946944, +79150946944, 89150946944)
+    /(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/,
+    // 10 цифр начиная с 9 (9150946944, (915) 094-69-44, 915-094-69-44)
+    /(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/,
+    // Международные (+375..., +77..., etc. от 10 до 15 цифр)
+    /(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/,
+  ];
+
+  for (const p of patterns) {
+    const m = cleaned.match(p);
+    if (m) {
+      const raw = m[0].trim();
+      const digits = raw.replace(/\D/g, "");
+      if (raw.startsWith("+") && digits.length >= 10 && digits.length <= 15) {
+        if (digits.startsWith("7") && digits.length === 11) return `+7${digits.slice(1)}`;
+        return `+${digits}`;
+      }
+      if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+        return `+7${digits.slice(1)}`;
+      }
+      if (digits.length === 10 && digits.startsWith("9")) {
+        return `+7${digits}`;
+      }
+    }
+  }
+
+  // Запасной: весь текст состоит из 10 или 11 цифр (возможно с дефисами/пробелами)
+  const onlyDigits = cleaned.replace(/\D/g, "");
+  if (onlyDigits.length === 11 && (onlyDigits.startsWith("7") || onlyDigits.startsWith("8"))) {
+    return `+7${onlyDigits.slice(1)}`;
+  }
+  if (onlyDigits.length === 10 && onlyDigits.startsWith("9")) {
+    return `+7${onlyDigits}`;
+  }
+
+  return null;
+}
+
+/**
+ * Извлекает валидный email из произвольного текста.
+ */
+export function extractEmailAddress(text?: string | null): string | null {
+  if (!text || typeof text !== "string") return null;
+  const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return match ? match[0].toLowerCase() : null;
+}

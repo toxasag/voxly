@@ -7,6 +7,7 @@ import {
   LeadNotificationQueueService,
 } from "../modules/crm/leads/lead-notification.queue.js";
 import { EmailService } from "../services/email.service.js";
+import { extractPhoneNumber, extractEmailAddress } from "../modules/crm/channel-identity.js";
 
 describe("Lead Notification Queue & Business Rules (Anti-Spam & Idempotency)", () => {
   it("Test 1: shouldNotifyLead returns false for stage 'Первый контакт' without contacts", () => {
@@ -180,5 +181,67 @@ describe("Lead Notification Queue & Business Rules (Anti-Spam & Idempotency)", (
     assert.ok(html.includes("BMW X5"));
     assert.ok(html.includes("https://app.getvoxly.ru/crm/deals/deal-004"));
     assert.ok(html.includes("(МСК)"));
+  });
+
+  describe("Phone & Email Entity Extraction (Incident Resolution: 79150946944)", () => {
+    it("extracts phone starting with 7 without plus (exact user incident case)", () => {
+      assert.equal(extractPhoneNumber("79150946944"), "+79150946944");
+      assert.equal(extractPhoneNumber("Мой номер 79150946944, наберите"), "+79150946944");
+    });
+
+    it("extracts phone starting with 8", () => {
+      assert.equal(extractPhoneNumber("89150946944"), "+79150946944");
+      assert.equal(extractPhoneNumber("Звоните: 8 (915) 094-69-44"), "+79150946944");
+    });
+
+    it("extracts 10-digit mobile phone starting with 9", () => {
+      assert.equal(extractPhoneNumber("9150946944"), "+79150946944");
+      assert.equal(extractPhoneNumber("контакт (915) 094-69-44"), "+79150946944");
+    });
+
+    it("extracts phone with international prefix +7", () => {
+      assert.equal(extractPhoneNumber("+79150946944"), "+79150946944");
+      assert.equal(extractPhoneNumber("+7 (915) 094-69-44"), "+79150946944");
+      assert.equal(extractPhoneNumber("+7 915 094 69 44"), "+79150946944");
+    });
+
+    it("extracts other international numbers", () => {
+      assert.equal(extractPhoneNumber("+375291234567"), "+375291234567");
+      assert.equal(extractPhoneNumber("+77012345678"), "+77012345678");
+    });
+
+    it("returns null for non-phone text", () => {
+      assert.equal(extractPhoneNumber("Привет, как дела?"), null);
+      assert.equal(extractPhoneNumber(""), null);
+      assert.equal(extractPhoneNumber(null), null);
+      assert.equal(extractPhoneNumber("123"), null);
+    });
+
+    it("extracts email addresses correctly", () => {
+      assert.equal(extractEmailAddress("user@example.com"), "user@example.com");
+      assert.equal(extractEmailAddress("Почта: info.dev@company.ru для связи"), "info.dev@company.ru");
+      assert.equal(extractEmailAddress("нет почты"), null);
+    });
+
+    it("qualifies lead when phone 79150946944 is extracted and lead moves to 'Новый лид'", () => {
+      const extractedPhone = extractPhoneNumber("79150946944");
+      assert.equal(extractedPhone, "+79150946944");
+
+      const lead: LeadNotificationData = {
+        id: "deal-incident-001",
+        tenant_id: "tenant-001",
+        stage_id: "stage-new-lead",
+        stage_name: "Новый лид",
+        title: "Заявка от +79150946944 (Онлайн-чат)",
+        created_at: new Date(),
+        contact_first_name: "Клиент +79150946944",
+        contact_phone: extractedPhone,
+        contact_email: null,
+        lead_notified_at: null,
+      };
+
+      assert.equal(isFirstContactStage(lead.stage_name), false);
+      assert.equal(shouldNotifyLead(lead), true);
+    });
   });
 });
