@@ -32,6 +32,8 @@ export interface AuthTokens {
     slug: string;
     plan: string;
     status: string;
+    custom_price_rubles?: number | null;
+    custom_plan_name?: string | null;
   };
 }
 
@@ -49,6 +51,8 @@ interface AuthUserRow {
   tenant_slug: string;
   tenant_plan: string;
   tenant_status: string;
+  tenant_custom_price_rubles?: number | null;
+  tenant_custom_plan_name?: string | null;
 }
 
 interface OtpRow {
@@ -116,7 +120,7 @@ type RefreshOutcome =
 
 const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
     u.password_hash, t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan,
-    t.status AS tenant_status`;
+    t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name`;
 
 /**
  * Условие «учётная запись пригодна для входа» одной строкой SQL.
@@ -295,6 +299,11 @@ export class AuthService {
         slug: user.tenant_slug,
         plan: user.tenant_plan,
         status: user.tenant_status,
+        custom_price_rubles:
+          user.tenant_custom_price_rubles !== null && user.tenant_custom_price_rubles !== undefined
+            ? Number(user.tenant_custom_price_rubles)
+            : null,
+        custom_plan_name: user.tenant_custom_plan_name ?? null,
       },
     };
   }
@@ -586,7 +595,8 @@ export class AuthService {
     const user = await queryOne<AuthUserRow>(
       `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
               u.password_hash, u.permissions,
-              t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status
+              t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status,
+              t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name
        FROM users u
        JOIN tenants t ON t.id = u.tenant_id
        WHERE u.tenant_id = $1 AND u.deleted_at IS NULL

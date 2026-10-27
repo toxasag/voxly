@@ -65,6 +65,10 @@ export interface TenantInfoDTO {
   trialDaysLeft: number;
   trialActive: boolean;
   createdAt: string | null;
+  customPriceRubles?: number | null;
+  customPlanName?: string | null;
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
 }
 
 export const teamKeys = {
