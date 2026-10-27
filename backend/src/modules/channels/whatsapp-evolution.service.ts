@@ -307,4 +307,53 @@ export class WhatsappEvolutionService {
       // Игнорируем ошибку при удалении
     }
   }
+
+  /**
+   * Скачивает медиа-вложение сообщения через Evolution API в base64
+   */
+  async downloadMedia(
+    instanceName: string,
+    messageItem: Record<string, any>,
+  ): Promise<{ base64: string; mimetype?: string; fileName?: string } | null> {
+    try {
+      const messageId = messageItem?.key?.id;
+
+      // Вариант 1: передаём messageItem целиком
+      let res = await this.evoFetch(`/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          message: messageItem,
+          convertToMp4: false,
+        }),
+      });
+
+      // Вариант 2: если ошибка или нет base64, пробуем передать { key: { id } }
+      if ((!res.ok || !res.json?.base64) && messageId) {
+        res = await this.evoFetch(`/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`, {
+          method: "POST",
+          body: JSON.stringify({
+            message: { key: { id: messageId } },
+            convertToMp4: false,
+          }),
+        });
+      }
+
+      if (!res.ok || !res.json) {
+        return null;
+      }
+
+      const base64 = res.json.base64 || res.json.data?.base64;
+      if (!base64 || typeof base64 !== "string") {
+        return null;
+      }
+
+      return {
+        base64,
+        mimetype: res.json.mimetype || res.json.data?.mimetype,
+        fileName: res.json.fileName || res.json.data?.fileName,
+      };
+    } catch {
+      return null;
+    }
+  }
 }

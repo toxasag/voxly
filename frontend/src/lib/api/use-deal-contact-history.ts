@@ -83,10 +83,11 @@ export function useDealContactHistory(dealId: string | null | undefined) {
           timeline: [],
         };
       }
-      const res = await apiClient.get<{ data: DealContactHistoryDTO }>(
+      const res = await apiClient.get<DealContactHistoryDTO>(
         `/api/v1/crm/deals/${dealId}/contact-history`,
       );
-      return res.data.data;
+      const payload = (res.data as any)?.data ?? res.data;
+      return payload;
     },
     enabled: Boolean(dealId),
   });

@@ -12,6 +12,8 @@ import {
   Bot,
   CheckCheck,
   Clock,
+  Download,
+  FileText,
   Loader2,
   MessageCircle,
   Paperclip,
@@ -161,6 +163,39 @@ function resolveAttachmentUrl(attachment: string): string {
 function isImageAttachment(attachment: string, attachmentType?: string | null): boolean {
   if (attachmentType && attachmentType.startsWith("image/")) return true;
   return /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment);
+}
+
+function getAttachmentInfo(attachment: string, attachmentType?: string | null, content?: string) {
+  const url = resolveAttachmentUrl(attachment);
+  const isImage = isImageAttachment(attachment, attachmentType);
+
+  const extMatch = attachment.match(/\.([a-zA-Z0-9]+)(?:\?|#|$)/) || (content ? content.match(/\.([a-zA-Z0-9]+)$/) : null);
+  const ext = extMatch ? extMatch[1].toUpperCase() : (attachmentType?.split("/")[1] || "FILE").toUpperCase();
+
+  let fileName = "";
+  if (content && content.trim() !== "." && content.trim() !== "[документ]" && !content.startsWith("/uploads/")) {
+    fileName = content.trim();
+  } else {
+    const rawBase = attachment.split("/").pop() || "Документ";
+    fileName = decodeURIComponent(rawBase);
+  }
+
+  let typeLabel = `${ext} документ`;
+  if (["DOC", "DOCX"].includes(ext) || attachmentType?.includes("word")) {
+    typeLabel = `Документ Word (${ext})`;
+  } else if (["XLS", "XLSX"].includes(ext) || attachmentType?.includes("sheet") || attachmentType?.includes("excel")) {
+    typeLabel = `Таблица Excel (${ext})`;
+  } else if (ext === "PDF" || attachmentType?.includes("pdf")) {
+    typeLabel = `Документ PDF`;
+  }
+
+  return {
+    url,
+    isImage,
+    fileName,
+    ext,
+    typeLabel,
+  };
 }
 
 function renderChatMessageContent(content: string): React.ReactNode {
@@ -910,47 +945,83 @@ export function CrmChatView({
                       </div>
 
                       {/* Текст сообщения */}
-                      <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                        {renderChatMessageContent(message.content)}
-                      </div>
+                      {(() => {
+                        const trimmedContent = (message.content || "").trim();
+                        const isDummyContent =
+                          trimmedContent === "." ||
+                          trimmedContent === "[документ]" ||
+                          (message.attachment && trimmedContent === message.attachment);
+                        if (!trimmedContent || (message.attachment && isDummyContent)) {
+                          return null;
+                        }
+                        return (
+                          <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
+                            {renderChatMessageContent(message.content)}
+                          </div>
+                        );
+                      })()}
 
                       {/* Вложение сообщения, если есть */}
-                      {message.attachment && (
-                        <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-                          {isImageAttachment(message.attachment, message.attachmentType) ? (
-                            <a
-                              href={resolveAttachmentUrl(message.attachment)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="group block overflow-hidden rounded-[8px]"
-                              title="Нажмите, чтобы открыть фото в полном размере"
-                            >
-                              <img
-                                src={resolveAttachmentUrl(message.attachment)}
-                                alt="Фотография"
-                                className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
-                                loading="lazy"
-                              />
-                            </a>
-                          ) : (
-                            <a
-                              href={resolveAttachmentUrl(message.attachment)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-[#fafafa] transition-colors"
-                            >
-                              <Paperclip className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                              <span className="font-medium text-[#111111] truncate">{message.attachment}</span>
-                            </a>
-                          )}
-                        </div>
-                      )}
+                      {message.attachment && (() => {
+                        const info = getAttachmentInfo(message.attachment, message.attachmentType, message.content);
+                        if (info.isImage) {
+                          return (
+                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+                              <a
+                                href={info.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group block overflow-hidden rounded-[8px]"
+                                title="Нажмите, чтобы открыть фото в полном размере"
+                              >
+                                <img
+                                  src={info.url}
+                                  alt="Фотография"
+                                  className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
+                                  loading="lazy"
+                                />
+                              </a>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 transition-colors hover:border-[#cccccc]">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-white border border-[#e5e5e5] text-[#4a38f5] shadow-2xs">
+                                <FileText className="h-5 w-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
+                                  {info.fileName}
+                                </div>
+                                <div className="text-[11px] text-[#666666]">
+                                  {info.typeLabel}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <a
+                                href={info.url}
+                                download
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
+                                title="Скачать файл"
+                              >
+                                <Download className="h-3 w-3 text-[#666666]" />
+                                <span>Скачать</span>
+                              </a>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Подвал пузыря: время и статус доставки */}
                       <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] text-[#888888]">
                         <span>{formatTime(message.createdAt)}</span>
 
-                        {isOutbound && (
+                        {isOutbound ? (
                           <span className="inline-flex items-center">
                             {message.deliveryStatus === "pending" && (
                               <span title="Отправляется в канал..." className="flex items-center gap-0.5 text-amber-600">
@@ -965,10 +1036,18 @@ export function CrmChatView({
                             {message.deliveryStatus === "failed" && (
                               <span
                                 title={`Ошибка доставки: ${message.deliveryError || "неизвестная ошибка"}`}
-className="flex items-center gap-1 font-medium text-rose-600"
+                                className="flex items-center gap-1 font-medium text-rose-600"
                               >
                                 <AlertCircle className="h-3 w-3" />
                                 <span>Сбой</span>
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center">
+                            {message.deliveryStatus === "received" && (
+                              <span title="Получено от клиента" className="flex items-center text-emerald-600">
+                                <CheckCheck className="h-3.5 w-3.5" />
                               </span>
                             )}
                           </span>

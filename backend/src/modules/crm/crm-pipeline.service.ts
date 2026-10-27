@@ -45,6 +45,7 @@ export interface InboundMessageInput {
   senderTelegramChatId?: string;
   attachment?: string | null;
   attachmentType?: string | null;
+  deliveryStatus?: "neutral" | "pending" | "sent" | "failed" | "received";
   /** Профиль из канала; без него имя контакта станет «Клиент». */
   profile?: ChannelProfile;
   /** Идентификатор и аналитика посетителя сайта */
@@ -610,10 +611,11 @@ export class CrmPipelineService {
       );
 
       if (!existingMsg) {
+        const deliveryStatus = input.deliveryStatus ?? (input.attachment ? "received" : "neutral");
         await tx.query(
           `INSERT INTO deal_messages
-             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             input.tenantId,
             dealId,
@@ -623,6 +625,7 @@ export class CrmPipelineService {
             input.senderName,
             contentText,
             input.channel,
+            deliveryStatus,
             input.attachment ?? null,
             input.attachmentType ?? null,
           ],

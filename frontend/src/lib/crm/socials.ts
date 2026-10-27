@@ -46,12 +46,124 @@ function asUrl(value: string): string | null {
   return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
+export function parseTelegramValue(value: string): {
+  isNumericId: boolean;
+  id?: string;
+  username?: string;
+  href: string | null;
+} {
+  const trimmed = value.trim();
+  if (!trimmed) return { isNumericId: false, href: null };
+
+  // 1. Ссылка вида tg://user?id=123 или tg://openmessage?user_id=123
+  const tgProtocolMatch = trimmed.match(/^tg:\/\/(?:user\?id=|openmessage\?user_id=)(\d+)/i);
+  if (tgProtocolMatch) {
+    const id = tgProtocolMatch[1];
+    return {
+      isNumericId: true,
+      id,
+      href: `tg://user?id=${id}`,
+    };
+  }
+
+  // 2. Чистый числовой ID (например, 1942059756)
+  if (/^\d{5,15}$/.test(trimmed)) {
+    return {
+      isNumericId: true,
+      id: trimmed,
+      href: `tg://user?id=${trimmed}`,
+    };
+  }
+
+  // 3. Ссылка вида https://t.me/username или t.me/username
+  const tmeMatch = trimmed.match(/^(?:https?:\/\/)?t\.me\/([a-zA-Z0-9_]+)/i);
+  if (tmeMatch) {
+    const user = tmeMatch[1];
+    // Если в t.me передали числовой id (например t.me/1942059756) — трансформируем в tg://
+    if (/^\d+$/.test(user)) {
+      return {
+        isNumericId: true,
+        id: user,
+        href: `tg://user?id=${user}`,
+      };
+    }
+    return {
+      isNumericId: false,
+      username: user,
+      href: `https://t.me/${user}`,
+    };
+  }
+
+  // 4. Обычный @username или username
+  const cleanUser = trimmed.replace(/^@/, "");
+  if (/^[a-zA-Z0-9_]{3,32}$/.test(cleanUser)) {
+    return {
+      isNumericId: false,
+      username: cleanUser,
+      href: `https://t.me/${cleanUser}`,
+    };
+  }
+
+  // Если это произвольный URL (например, прокси или кастомный домен)
+  if (/^https?:\/\//i.test(trimmed)) {
+    return {
+      isNumericId: false,
+      href: trimmed,
+    };
+  }
+
+  return {
+    isNumericId: false,
+    username: cleanUser,
+    href: cleanUser ? `https://t.me/${cleanUser}` : null,
+  };
+}
+
+export interface FormattedSocialDisplay {
+  displayText: string;
+  copyValue: string;
+  isNumericId: boolean;
+  tooltip?: string;
+  href: string | null;
+}
+
+export function formatSocialDisplay(kind: SocialKind, value: string): FormattedSocialDisplay {
+  if (kind === "telegram") {
+    const parsed = parseTelegramValue(value);
+    if (parsed.isNumericId && parsed.id) {
+      return {
+        displayText: `ID: ${parsed.id}`,
+        copyValue: parsed.id,
+        isNumericId: true,
+        tooltip: "ID пользователя Telegram. Прямой переход работает в десктопном приложении Telegram",
+        href: parsed.href,
+      };
+    }
+    const displayUser = parsed.username ? `@${parsed.username}` : value;
+    return {
+      displayText: displayUser,
+      copyValue: parsed.username ? `@${parsed.username}` : value,
+      isNumericId: false,
+      tooltip: undefined,
+      href: parsed.href,
+    };
+  }
+
+  return {
+    displayText: value,
+    copyValue: value,
+    isNumericId: false,
+    tooltip: undefined,
+    href: socialHref(kind, value),
+  };
+}
+
 export const SOCIAL_DEFINITIONS: readonly SocialDefinition[] = [
   {
     kind: "telegram",
     label: "Telegram",
-    placeholder: "@username",
-    href: (value) => asUrl(value) ?? (username(value) === "" ? null : `https://t.me/${username(value)}`),
+    placeholder: "@username или ID",
+    href: (value) => parseTelegramValue(value).href,
   },
   {
     kind: "whatsapp",
@@ -131,7 +243,7 @@ export function socialIcon(kind: SocialKind): LucideIcon {
 }
 
 /**
- * Проверяет, является ли значение соцсети пользовательским (телефон, юзернейм, URL),
+ * Проверяет, является ли значение соцсети пользовательским (телефон, юзернейм, URL, числовой Telegram ID),
  * а не внутренним техническим идентификатором (например, чат-ID или ID пользователя MAX).
  * Технические ID хранятся в custom_fields (max_chat_id, max_user_id), а пользователю
  * в UI не показываются, так как с ними человек ничего сделать не может.
@@ -150,11 +262,6 @@ export function isDisplayableSocial(
     if (/^\d{1,10}$/.test(val)) return false;
     // Если это id с плюсом вроде +461879064 (менее 11 цифр):
     if (/^\+\d{1,10}$/.test(val)) return false;
-  }
-
-  // Также для telegram: числовой ID без @ (например, "123456789")
-  if (social.kind === "telegram") {
-    if (/^\d+$/.test(val)) return false;
   }
 
   return true;

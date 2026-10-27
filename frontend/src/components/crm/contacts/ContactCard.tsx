@@ -3,7 +3,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import {
   Briefcase, Building2, CalendarClock, Check, ChevronUp, CircleSlash,
-  GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
+  Copy, GitMerge, Globe, Linkedin, Mail, MessageCircle, Pencil,
   Phone, Plus, ShieldAlert, Star, Tag, UserCircle2, UserRound, AlertTriangle,
 } from "lucide-react";
 import type { ContactDTO } from "@/lib/api/use-contacts";
@@ -34,7 +34,7 @@ import { EmailsInput } from "@/components/crm/shared/EmailsInput";
 import { SocialsInput } from "@/components/crm/shared/SocialsInput";
 import type { ContactPhoneInput, ContactSocialInput } from "@/schemas/contact.schema";
 import { extractContactEmails, prepareEmailsPayload } from "@/lib/crm/emails";
-import { isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
+import { formatSocialDisplay, isDisplayableSocial, socialHref, socialIcon, socialLabel } from "@/lib/crm/socials";
 import { formatPhone, telHref } from "@/lib/utils/phone";
 import { cn, timeAgo } from "@/lib/utils";
 import { toast } from "sonner";
@@ -91,6 +91,27 @@ function normalizeUrl(value: string): string {
   const trimmed = value.trim();
   if (trimmed === "") return "";
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function CopySocialBtn({ value, tooltip }: { value: string; tooltip?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={copied ? "Скопировано!" : (tooltip ?? "Скопировать")}
+      className="inline-flex items-center justify-center rounded p-0.5 text-[#888888] hover:bg-[#f0f0f0] hover:text-[#111111] transition-colors cursor-pointer shrink-0"
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
 }
 
 export const ContactCard = memo(function ContactCard({
@@ -518,7 +539,7 @@ export const ContactCard = memo(function ContactCard({
             ) : (
               displayableSocials.map((social, idx) => {
                 const Icon = socialIcon(social.kind);
-                const href = socialHref(social.kind, social.value);
+                const formatted = formatSocialDisplay(social.kind, social.value);
                 return (
                   <RecordField
                     key={`${social.kind}-${idx}-${social.value}`}
@@ -526,11 +547,16 @@ export const ContactCard = memo(function ContactCard({
                     label={socialLabel(social.kind)}
                     value={social.value}
                     display={
-                      href !== null ? (
-                        <RecordFieldLink href={href} label={social.value} />
-                      ) : (
-                        <span className="truncate text-[#111111]">{social.value}</span>
-                      )
+                      <div className="flex items-center gap-1.5 min-w-0" title={formatted.tooltip}>
+                        {formatted.href !== null ? (
+                          <RecordFieldLink href={formatted.href} label={formatted.displayText} />
+                        ) : (
+                          <span className="truncate text-[#111111]">{formatted.displayText}</span>
+                        )}
+                        {formatted.isNumericId && (
+                          <CopySocialBtn value={formatted.copyValue} tooltip="Скопировать ID" />
+                        )}
+                      </div>
                     }
                     onStartEdit={startSocialEdit}
                   />

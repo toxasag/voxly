@@ -11,7 +11,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
 export type ChatMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type ChatMessageDirection = "inbound" | "outbound" | "neutral";
-export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed";
+export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 
 export interface ChatMessageDTO {
   id: string;
