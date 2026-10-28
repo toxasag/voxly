@@ -14,7 +14,7 @@
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { getRedisConnectionOptions, requireDurableQueue } from "../../../infrastructure/redis.js";
 import { registerBullQueue } from "../../../infrastructure/queue-metrics.js";
-import { query, queryOne } from "../../../db/client.js";
+import { query, queryOne, runWithTenantContext } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
 import { getDealConversationSummary } from "./lead-summary.service.js";
@@ -298,8 +298,9 @@ export class LeadNotificationQueueService {
     const { tenantId, leadId } = data;
     console.log(`[BullMQ] Worker processing job sendLeadNotificationJob for lead ${leadId}`);
 
-    // Извлечение лида со строгой проверкой tenant_id
-    const lead = await queryOne<LeadNotificationData>(
+    return runWithTenantContext(tenantId, async () => {
+      // Извлечение лида со строгой проверкой tenant_id
+      const lead = await queryOne<LeadNotificationData>(
       `SELECT d.id, d.tenant_id, d.stage_id, d.title, d.description, d.budget, d.currency,
               d.custom_fields, d.lead_notified_at, d.created_at,
               s.name AS stage_name,
@@ -552,6 +553,7 @@ export class LeadNotificationQueueService {
     if (!claimed) {
       console.log(`[LeadNotification] Lead ${leadId} was claimed by another worker`);
     }
+    });
   }
 
   /**
@@ -559,34 +561,36 @@ export class LeadNotificationQueueService {
    * Безопасный вызов из бизнес-сервисов (deals.service, crm-pipeline.service, leads.routes).
    */
   async checkAndTriggerNotification(tenantId: string, leadId: string): Promise<boolean> {
-    try {
-      const lead = await queryOne<LeadNotificationData>(
-        `SELECT d.id, d.tenant_id, d.stage_id, d.title, d.description, d.budget, d.currency,
-                d.custom_fields, d.lead_notified_at, d.created_at,
-                s.name AS stage_name,
-                c.id AS contact_id, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
-                c.phone AS contact_phone, c.email AS contact_email, c.telegram_chat_id AS contact_telegram_chat_id,
-                c.channel AS contact_channel
-         FROM deals d
-         JOIN stages s ON s.id = d.stage_id
-         LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id
-         WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
-        [tenantId, leadId],
-      );
+    return runWithTenantContext(tenantId, async () => {
+      try {
+        const lead = await queryOne<LeadNotificationData>(
+          `SELECT d.id, d.tenant_id, d.stage_id, d.title, d.description, d.budget, d.currency,
+                  d.custom_fields, d.lead_notified_at, d.created_at,
+                  s.name AS stage_name,
+                  c.id AS contact_id, c.first_name AS contact_first_name, c.last_name AS contact_last_name,
+                  c.phone AS contact_phone, c.email AS contact_email, c.telegram_chat_id AS contact_telegram_chat_id,
+                  c.channel AS contact_channel
+           FROM deals d
+           JOIN stages s ON s.id = d.stage_id
+           LEFT JOIN contacts c ON c.id = d.contact_id AND c.tenant_id = d.tenant_id
+           WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+          [tenantId, leadId],
+        );
 
-      if (!lead) return false;
+        if (!lead) return false;
 
-      if (!shouldNotifyLead(lead)) {
-        console.log(`[LeadNotification] Lead ${leadId} skipped: stage is First Contact or missing contacts`);
+        if (!shouldNotifyLead(lead)) {
+          console.log(`[LeadNotification] Lead ${leadId} skipped: stage is First Contact or missing contacts`);
+          return false;
+        }
+
+        await this.add("sendLeadNotificationJob", { tenantId, leadId });
+        return true;
+      } catch (err) {
+        console.warn(`[LeadNotification] Failed to check and trigger notification for lead ${leadId}:`, err);
         return false;
       }
-
-      await this.add("sendLeadNotificationJob", { tenantId, leadId });
-      return true;
-    } catch (err) {
-      console.warn(`[LeadNotification] Failed to check and trigger notification for lead ${leadId}:`, err);
-      return false;
-    }
+    });
   }
 
   async shutdown(): Promise<void> {
