@@ -13,6 +13,7 @@
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { getRedisConnectionOptions, requireDurableQueue } from "../../../infrastructure/redis.js";
+import { registerBullQueue } from "../../../infrastructure/queue-metrics.js";
 import { query, queryOne } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
@@ -194,6 +195,7 @@ export class LeadNotificationQueueService {
           removeOnComplete: true,
         },
       });
+      registerBullQueue(LEAD_NOTIFICATIONS_QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
       this.bullQueue.on("error", (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
