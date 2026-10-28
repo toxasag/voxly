@@ -1,6 +1,15 @@
 # CHANGELOG
 
-### Added · Observability — request correlation and Redis health (2026-10-28)
+### Added · Observability — BullMQ queue metrics (2026-10-28)
+
+Добавлен безопасный metrics collector для зарегистрированных BullMQ queues:
+waiting, active, completed, failed, delayed и возраст старшей ожидающей/активной
+задачи. `/health` возвращает эти агрегаты без URL, паролей и payload jobs.
+Ошибки отдельной очереди попадают в её `error`, не ломая health response целиком.
+
+Подключены очереди knowledge base, lead notifications и conversion dispatch.
+Добавлен contract test для стабильной формы metrics.
+
 
 Ошибочный API envelope теперь содержит `requestId` из Fastify для сопоставления
 с логами. `/health` возвращает состояние `redis.configured/connected`; в

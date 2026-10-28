@@ -1,4 +1,5 @@
 import { Queue, Worker } from "bullmq";
+import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
 import { createHash } from "node:crypto";
 import { getEnv } from "../../config/env.js";
 import { requireDurableQueue } from "../../infrastructure/redis.js";
@@ -105,7 +106,8 @@ export class ConversionDispatcherService {
             },
             removeOnComplete: true,
           },
-        });
+      });
+      registerBullQueue(QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
         this.bullWorker = new Worker<ConversionEventPayload>(
           QUEUE_NAME,

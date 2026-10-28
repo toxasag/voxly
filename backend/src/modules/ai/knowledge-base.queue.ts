@@ -9,6 +9,7 @@
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { getRedisConnectionOptions, requireDurableQueue } from "../../infrastructure/redis.js";
+import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
 import { query } from "../../db/client.js";
 import { crawlWebsite } from "./site-crawler.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
@@ -82,6 +83,7 @@ export class KnowledgeBaseQueueService {
           removeOnComplete: true,
         },
       });
+      registerBullQueue(KB_QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
       this.bullQueue.on("error", (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
