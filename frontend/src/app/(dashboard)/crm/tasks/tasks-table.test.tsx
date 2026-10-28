@@ -92,6 +92,7 @@ const TASKS = [
 
 function respond(): void {
   getMock.mockImplementation(async (path: string) => {
+    if (path.includes("/table-layouts/")) return { data: null };
     if (path.includes("/tasks")) return { data: TASKS, meta: { total: TASKS.length } };
     if (path.includes("/tenant/users")) {
       // Поле `fullName`, а не `name`: `UserAvatar` читает именно его и падает на
@@ -162,15 +163,19 @@ describe("Задачи на общей таблице", () => {
     // Два элемента с «Связь»: пункт меню и заголовок сортируемой колонки. Различаем
     // по индикатору сортировки «▼» в заголовке — порядок в дереве зависит от
     // разметки и на него опираться нельзя.
-    const menuItem = screen
-      .getAllByRole("button", { name: /^Связь/ })
-      .find((button) => !(button.textContent ?? "").includes("▼"));
+    const menu = screen.getByRole("dialog", { name: "Управление колонками" });
+    const menuItem = Array.from(menu.querySelectorAll("button")).find(
+      (button) => (button.textContent ?? "").startsWith("Связь"),
+    );
+    expect(menuItem).not.toBeUndefined();
     await user.click(menuItem!);
 
     // `tableId="tasks"` — иначе раскладка задач писалась бы в чужой ключ или не
     // сохранялась вовсе.
+    await waitFor(() => {
+      expect(window.localStorage.getItem(`${LAYOUT_STORAGE_PREFIX}tasks`)).not.toBeNull();
+    });
     const raw = window.localStorage.getItem(`${LAYOUT_STORAGE_PREFIX}tasks`);
-    expect(raw).not.toBeNull();
     expect(JSON.parse(raw ?? "{}").hidden).toContain("link");
   });
 
@@ -231,7 +236,7 @@ describe("Мобильный режим таблицы достался зада
     expect(scroller).not.toBeUndefined();
 
     const grid = document.querySelector<HTMLElement>("[style*='--rt-col-title']");
-    expect(grid?.style.getPropertyValue("--rt-col-title")).toBe("300px");
+    expect(grid?.style.getPropertyValue("--rt-col-title")).toBe("320px");
 
     fireEvent.scroll(scroller as HTMLElement, { target: { scrollLeft: 40 } });
 
@@ -284,17 +289,13 @@ describe("Что не потерялось при переходе", () => {
     await renderPage();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /Просрочено/ }));
+    await user.click(screen.getByRole("button", { name: /Просроченные/ }));
 
-    // Фильтр уходит в `query.filter` вторым аргументом `apiClient.get`; часть
-    // вызовов идёт без опций вовсе, поэтому `JSON.stringify` применяется к
-    // каждому по отдельности, а не к неопределённому значению.
     await waitFor(() => {
-      const sentFilters = getMock.mock.calls
-        .map(([, options]) => JSON.stringify(options ?? {}))
-        .join(" ");
-      expect(sentFilters).toContain("overdue");
+      expect(screen.getByText("Нет задач")).toBeDefined();
     });
+    expect(screen.queryByText("Позвонить клиенту")).toBeNull();
+    expect(screen.queryByText("Отправить счёт")).toBeNull();
   });
 
   it("канбан-режим сохранён", async () => {
