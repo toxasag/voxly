@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
-import { getRedisConnectionOptions } from "../../../infrastructure/redis.js";
+import { getRedisConnectionOptions, requireDurableQueue } from "../../../infrastructure/redis.js";
 import { query, queryOne } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
@@ -178,6 +178,7 @@ export class LeadNotificationQueueService {
   private initBullMQ(): void {
     const connOptions = getRedisConnectionOptions();
     if (!connOptions) {
+      requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
       return;
     }
 
@@ -224,7 +225,8 @@ export class LeadNotificationQueueService {
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[LeadNotificationQueue] Failed to connect BullMQ to Redis (${msg}), using in-memory queue`);
+      requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
+      console.warn(`[LeadNotificationQueue] Failed to connect BullMQ to Redis (${msg})`);
       this.bullQueue = null;
       this.bullWorker = null;
     }
@@ -251,11 +253,13 @@ export class LeadNotificationQueueService {
         });
         return { id: String(job.id || jobId) };
       } catch (err) {
-        console.warn(`[LeadNotificationQueue] BullMQ enqueue failed, falling back to in-memory:`, err);
+        requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
+        console.warn(`[LeadNotificationQueue] BullMQ enqueue failed:`, err);
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback is intentionally limited to development and tests.
+    requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
     this.inMemoryQueue.push({ id: jobId, name, data });
     void this.processNextInMemory();
     return { id: jobId };

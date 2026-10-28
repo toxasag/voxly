@@ -7,7 +7,7 @@
 // бизнес-критичные jobs должны быть durable либо явно отклонены.
 // ---------------------------------------------------------------------------
 
-import { getRedisConnectionOptions } from "./redis.js";
+import { requireDurableQueue } from "./redis.js";
 
 export type QueueName =
   | "ai-usage"
@@ -53,9 +53,7 @@ class QueueManager {
     maxAttempts?: number;
     backoffMs?: number;
   }): Promise<QueueJob<T>> {
-    if (process.env.NODE_ENV === "production" && !getRedisConnectionOptions()) {
-      throw new Error("DURABLE_QUEUE_UNAVAILABLE: REDIS_URL is required in production");
-    }
+    requireDurableQueue("queue-manager");
 
     const job: QueueJob<T> = {
       id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,

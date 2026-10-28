@@ -6,8 +6,8 @@
 production build, RLS classifier и полный Vitest suite выполняются на PR и push
 в `master`.
 
-`QueueManager` больше не принимает новые in-memory jobs при
-`NODE_ENV=production`, если отсутствует валидный `REDIS_URL`: вместо тихой потери
+`QueueManager`, lead notifications, knowledge indexing и conversion dispatch больше
+не принимают новые in-memory jobs в production без Redis: вместо тихой потери
 критичной задачи выбрасывается `DURABLE_QUEUE_UNAVAILABLE`. Development/test
 поведение сохранено для локальных unit-тестов.
 
