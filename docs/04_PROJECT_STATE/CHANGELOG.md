@@ -1,5 +1,14 @@
 # CHANGELOG
 
+### Added · Reliability — WhatsApp lead provider result persistence (2026-10-28)
+
+Lead notifications now send configured WhatsApp destinations through the existing
+Evolution API adapter instead of log-only dispatch. Successful delivery persists
+`delivered_channel`, provider message id and sanitized provider response in the
+new migration `0056_lead_notification_provider_result.sql`; failed delivery keeps
+the durable lease retryable and records the error.
+
+
 ### Added · Observability — BullMQ queue metrics (2026-10-28)
 
 Добавлен безопасный metrics collector для зарегистрированных BullMQ queues:
