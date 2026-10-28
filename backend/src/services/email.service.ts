@@ -628,6 +628,28 @@ export class EmailService {
     });
   }
 
+  /** Напоминание о просроченном счёте. */
+  static async sendInvoiceReminderEmail(options: {
+    to: string;
+    invoiceNumber: string;
+    companyName: string;
+    total: number;
+    currency: string;
+    dueDate: Date | string;
+  }): Promise<SendResult> {
+    const due = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeZone: "Europe/Moscow" }).format(new Date(options.dueDate));
+    const amount = `${options.total.toLocaleString("ru-RU")} ${options.currency}`;
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Просрочен счёт ${escapeHtml(options.invoiceNumber)}</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">Срок оплаты счёта для компании «${escapeHtml(options.companyName)}» истёк ${escapeHtml(due)}.</p>
+      <p style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">К оплате: ${escapeHtml(amount)}</p>`;
+    return EmailService.send({
+      to: options.to,
+      subject: `Voxly: просрочен счёт ${options.invoiceNumber}`,
+      html: layout({ title: "Просрочен счёт Voxly", preheader: `Счёт ${options.invoiceNumber} требует внимания.`, body }),
+      text: `Просрочен счёт ${options.invoiceNumber}\nКомпания: ${options.companyName}\nК оплате: ${amount}\nСрок оплаты: ${due}\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
   /** Проверка соединения и авторизации без отправки письма. */
   static async verifyConnection(): Promise<SendResult> {
     if (!EmailService.isConfigured) {

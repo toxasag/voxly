@@ -901,7 +901,7 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS repair_order_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deal_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_account_id UUID;
-ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_transactions_deal_id ON transactions(deal_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_repair_order_id ON transactions(repair_order_id);
