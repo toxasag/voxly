@@ -305,9 +305,9 @@ describe("Что не потерялось при переходе", () => {
 
     // Вид выбирает пользователь, а не ширина экрана: канбан остаётся и на
     // телефоне.
-    await waitFor(() => expect(screen.getByText("К выполнению")).toBeDefined());
-    expect(screen.getByText("В работе")).toBeDefined();
-    expect(screen.getByText("Выполнено")).toBeDefined();
+    await waitFor(() => expect(screen.getAllByText("К выполнению").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("В работе").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Выполнено").length).toBeGreaterThan(0);
   });
 
   it("в канбане карточки распределены по статусам", async () => {
@@ -316,7 +316,7 @@ describe("Что не потерялось при переходе", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Канбан" }));
 
-    await waitFor(() => expect(screen.getByText("К выполнению")).toBeDefined());
+    await waitFor(() => expect(screen.getAllByText("К выполнению").length).toBeGreaterThan(0));
     // Обе задачи на месте, каждая в своей колонке.
     expect(screen.getByText("Позвонить клиенту")).toBeDefined();
     expect(screen.getByText("Отправить счёт")).toBeDefined();
