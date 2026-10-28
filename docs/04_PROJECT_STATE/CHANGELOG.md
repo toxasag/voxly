@@ -1,6 +1,17 @@
 # CHANGELOG
 
-### Added · CI / Reliability — backend quality gate and production queue fail-closed (2026-10-28)
+### Added · Reliability — durable conversion delivery attempts (2026-10-28)
+
+Добавлена миграция `0055_conversion_delivery_attempts`: tenant/deal/provider
+ledger с уникальным `event_key`, статусами `pending/sent/failed`, lease,
+счётчиком попыток, HTTP-статусом, ошибкой, сокращённым ответом провайдера и
+сохранённым payload. Conversion dispatcher теперь захватывает запись до
+сетевого вызова и переводит её в `sent` только после успеха; повторный worker
+не отправляет уже успешно доставленное событие.
+
+Добавлен unit-тест детерминированности ключа события. DB-интеграционный прогон
+ожидает CI PostgreSQL smoke.
+
 
 Добавлен `.github/workflows/backend-ci.yml`: `npm ci`, backend typecheck,
 production build, RLS classifier и полный Vitest suite выполняются на PR и push

@@ -104,3 +104,19 @@ export interface ConversionResult {
   responseSnippet?: string;
   error?: string;
 }
+
+export interface ConversionDeliveryAttemptRow {
+  id: string;
+  tenant_id: string;
+  deal_id: string;
+  provider: AnalyticsProvider;
+  event_key: string;
+  event_name: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  last_status: number | null;
+  last_error: string | null;
+  response_snippet: string | null;
+  delivered_at: Date | string | null;
+  locked_until: Date | string | null;
+}
