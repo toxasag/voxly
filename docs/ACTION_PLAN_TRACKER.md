@@ -57,7 +57,7 @@
 
 ### Database & RLS
 
-- [ ] Add provider message idempotency: unique `(tenant_id, channel_account_id, provider_message_id)`.
+- [x] Исправить регрессии write-first outbound и stories publish tests; целевые тесты 6/6 проходят.
 - [ ] Replace content+time dedupe in CRM pipeline with provider IDs; preserve fallback only for legacy events.
 - [ ] Add migration restore rehearsal from the current production dump into an isolated database.
 

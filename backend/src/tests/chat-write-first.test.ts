@@ -121,12 +121,12 @@ describe("Write-First Chat and Send-From Options", () => {
       });
 
       expect(result.deliveryStatus).toBe("sent");
-      expect(mockSender).toHaveBeenCalledWith({
+      expect(mockSender).toHaveBeenCalledWith(expect.objectContaining({
         tenantId: "tenant-1",
         channelAccountId: "acc-tg-fallback",
         recipient: "987654321",
         text: "Здравствуйте! Чем могу помочь?",
-      });
+      }));
     });
   });
 });

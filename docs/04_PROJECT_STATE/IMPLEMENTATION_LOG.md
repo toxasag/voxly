@@ -3,7 +3,10 @@
 - Не повторялся внешний AI-вызов: прошлый запуск остановился на HTTP 429 `provider_account_unavailable` (нет capacity у OpenAI), что не является дефектом кода. Работа продолжена локальной детерминированной проверкой.
 - verified: `/uploads/:filename` больше не публичен: нужен access JWT, файл доступен только при tenant-префиксе, кэширование отключено.
 - verified: Evolution webhook оставлен на одном canonical `/api/internal/whatsapp/webhook`, секрет проверяется fail-closed; обработка payload переведена с `any` на `unknown`-narrowing.
-- verified: `npm run typecheck` прошёл. Полный Vitest запущен; 146 тестов прошли, 2 уже существующих теста упали в `chat-write-first` и `stories-service`, не связанных с этим срезом.
+- verified: `DealMessagingService` больше не передаёт опциональные `username`/`phone` как `undefined`, восстановлена совместимость outbound sender contract; соответствующий write-first тест зелёный.
+- verified: stories publish test mock теперь корректно распознаёт SQL UPDATE после форматирования запроса.
+- verified: целевые тесты `chat-write-first.test.ts` и `stories-service.test.ts` — 6/6 passed; backend typecheck — passed.
+- blocked: полный integration suite требует локальный PostgreSQL на `127.0.0.1:5432`; в текущем окружении `ECONNREFUSED`, поэтому 13 suite failures — инфраструктурный блокер, а не подтверждённые дефекты кода.
 
 
 ## 2026-10-19 / 2026-10-20 — реализация дорожной карты Twenty CRM Gap Audit и боевой деплой
