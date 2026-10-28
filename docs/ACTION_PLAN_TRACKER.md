@@ -38,7 +38,7 @@
 
 ### Fastify / Channels / Security
 
-- [x] Harden WhatsApp webhook ingestion: one canonical internal endpoint, fail-closed Evolution secret validation, and strict unknown-payload narrowing.
+- [!] Production deploy blocked by missing `EVOLUTION_WEBHOOK_SECRET`: new fail-closed backend correctly refuses to boot while Evolution is configured without its secret. Previous backend image restored and health verified. Provision secret on VPS before retry.
 - [x] Replace public `/uploads/:filename` access with tenant-bound authorization or short-lived signed URLs.
   - Acceptance: tenant A cannot fetch tenant B media; CRM media is not publicly cacheable. Реализована авторизация access-token, проверка tenant-префикса имени файла и `private, no-store`.
 - [ ] Remove any production default secret fallback from `docker-compose.yml`, especially Evolution API credentials.
@@ -121,4 +121,4 @@
 
 - [ ] A tenant can register, authenticate, configure a channel and AI agent, receive a lead, see contact/deal attribution, get a reliable notification, reply from CRM, pause AI after human response, close the deal, and deliver a verified conversion event.
 - [ ] A platform owner can inspect tenant health, queue health, delivery failures, conversion status and audit trail without accessing another tenant's data outside explicit platform scope.
-- [ ] Production release has a source SHA/image digest/migration manifest and a passing smoke report.
+- [!] Production release currently remains on the pre-change backend image after safe rollback; health gate passed, but local webhook hardening is not live.

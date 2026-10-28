@@ -53,7 +53,6 @@ const WEBHOOK_PATHS: ReadonlySet<string> = new Set([
   "/auth/max/webhook",
   "/api/v1/billing/robokassa/result",
   "/api/internal/whatsapp/webhook",
-  "/api/v1/integrations/whatsapp/webhook",
   "/api/internal/max/inbound",
   "/api/internal/max/outbound",
 ]);
