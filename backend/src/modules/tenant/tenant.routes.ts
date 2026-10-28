@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { VALID_PERMISSIONS } from "../../config/permissions.js";
+import { ALL_PERMISSIONS } from "../../config/permissions.js";
+import type { Permission } from "../../types/index.js";
 import { queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
@@ -28,9 +29,11 @@ const inviteBody = z.object({
   confirm_extra_seat: z.boolean().default(false),
 });
 
+const permissionSchema = z.enum([...ALL_PERMISSIONS] as [Permission, ...Permission[]]);
+
 const changeRoleBody = z.object({
   role: roleSchema,
-  permissions: z.array(z.string()).optional(),
+  permissions: z.array(permissionSchema).optional(),
 });
 const userParams = z.object({ id: z.string().uuid() });
 
