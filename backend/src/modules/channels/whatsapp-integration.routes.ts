@@ -7,6 +7,8 @@ import { queryOne, runWithTenantContext, runWithPlatformScope } from "../../db/c
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { getEnv } from "../../config/env.js";
+import { safeEqual } from "../../services/credentials-cipher.js";
 
 const startQrSchema = z.object({
   label: z.string().min(1).default("Основной"),
@@ -34,6 +36,16 @@ function extractWaMessageText(message: Record<string, unknown> | null | undefine
 }
 
 async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyReply) {
+  const expectedSecret = getEnv().EVOLUTION_WEBHOOK_SECRET;
+  const providedSecret = request.headers["x-evolution-webhook-secret"];
+  if (
+    expectedSecret === undefined ||
+    typeof providedSecret !== "string" ||
+    !safeEqual(providedSecret, expectedSecret)
+  ) {
+    return reply.status(401).send({ error: "Invalid webhook secret" });
+  }
+
   const payload = request.body as Record<string, any> | undefined;
   const event = String(payload?.event || "").toLowerCase();
 
@@ -274,8 +286,9 @@ export async function whatsappInternalRoutes(app: FastifyInstance): Promise<void
 }
 
 export default async function whatsappIntegrationRoutes(app: FastifyInstance): Promise<void> {
-  // Публичный маршрут для webhook от Evolution API (без JWT авторизации)
-  app.post("/webhook", handleWhatsappWebhook);
+  // The internal route above is the single canonical Evolution ingress.
+  // Do not expose a second public alias: it bypasses deployment allowlists and
+  // makes provider replay/deduplication harder to reason about.
 
   const protectedRoutes = async (subApp: FastifyInstance) => {
     await subApp.register(authenticatePlugin);

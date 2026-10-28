@@ -79,6 +79,7 @@ const baseSchema = z.object({
    */
   EVOLUTION_API_URL: z.string().default("http://evolution-api:8080"),
   EVOLUTION_API_KEY: optionalNonEmpty(z.string()),
+  EVOLUTION_WEBHOOK_SECRET: optionalNonEmpty(z.string().min(16)),
 
   /**
    * MAX bridge for personal MAX accounts (PyMax).
@@ -226,7 +227,16 @@ const envSchema = baseSchema.superRefine((env, ctx) => {
     });
   }
 
-  // Ключи MTProto имеют смысл только в паре: с одним из двух GramJS не
+  // WhatsApp webhook is public by design, but it must be authenticated by the
+  // Evolution shared secret. Fail closed when the channel is enabled.
+  if (env.EVOLUTION_API_URL !== undefined && env.EVOLUTION_API_KEY !== undefined && env.EVOLUTION_WEBHOOK_SECRET === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["EVOLUTION_WEBHOOK_SECRET"],
+      message: "EVOLUTION_WEBHOOK_SECRET is required when Evolution API is configured",
+    });
+  }
+
   // подключится, и канал молча не работал бы вместо честного отказа на старте.
   const hasApiId = env.TELEGRAM_API_ID !== undefined;
   const hasApiHash = env.TELEGRAM_API_HASH !== undefined;
