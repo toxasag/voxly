@@ -36,6 +36,13 @@ npm run audit:smoke
 локальный runtime; `audit:rls` принимает только URL этой базы. Production URL
 нельзя передавать в audit-инструменты.
 
+Для CI добавлен `.github/workflows/rls-audit.yml`: GitHub Actions поднимает
+PostgreSQL 16 + pgvector, задаёт admin-параметры через переменные окружения,
+создаёт отдельную audit-БД/роль и выполняет typecheck, классификатор, статический
+RLS-аудит и runtime smoke. Локальный `audit-db.mjs` теперь поддерживает
+`PGHOST`, `PGPORT`, `PGDATABASE`, `AUDIT_ADMIN_USER` и `AUDIT_ADMIN_PASSWORD`,
+но сохраняет запрет на production URL.
+
 
 ### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
 
