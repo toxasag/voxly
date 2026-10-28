@@ -39,7 +39,7 @@ try {
   // applied explicitly so runtime smoke covers tables that are not part of the
   // bootstrap file. They run as the admin connection, then the app role receives
   // only DML rights and is used for all isolation assertions.
-  for (const migration of ['0054_lead_notification_deliveries.sql', '0055_conversion_delivery_attempts.sql', '0056_lead_notification_provider_result.sql']) {
+  for (const migration of ['0054_lead_notification_deliveries.sql', '0055_conversion_delivery_attempts.sql', '0056_lead_notification_provider_result.sql', '0058_force_notification_channels_rls.sql']) {
     await db.query(await readFile(new URL(`src/db/migrations/${migration}`, root), 'utf8'));
   }
   await db.query(`GRANT CONNECT ON DATABASE "${name}" TO "${name}"`);
