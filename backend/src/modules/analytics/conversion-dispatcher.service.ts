@@ -1,4 +1,5 @@
 import { Queue, Worker } from "bullmq";
+import { createHash } from "node:crypto";
 import { getEnv } from "../../config/env.js";
 import { requireDurableQueue } from "../../infrastructure/redis.js";
 import { query } from "../../db/client.js";
@@ -43,6 +44,12 @@ export function maskToken(val: unknown): string {
   }
   if (val.length <= 6) return "***";
   return val.slice(0, 3) + "***" + val.slice(-3);
+}
+
+function conversionEventKey(payload: ConversionEventPayload, provider: AnalyticsProvider): string {
+  return createHash("sha256")
+    .update(`${payload.tenantId}:${payload.dealId}:${provider}:${payload.stageId}:${payload.eventName}`)
+    .digest("hex");
 }
 
 export class ConversionDispatcherService {
@@ -287,19 +294,53 @@ export class ConversionDispatcherService {
         eventName: mappedEventName,
       };
 
+      const eventKey = conversionEventKey(eventPayloadWithMappedName, integration.provider);
+      const claimed = await query<{ id: string }>(
+        `INSERT INTO conversion_delivery_attempts
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload)
+         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb)
+         ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
+         SET status = 'pending', attempts = conversion_delivery_attempts.attempts + 1,
+             locked_until = now() + interval '5 minutes', last_error = NULL,
+             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name
+         WHERE conversion_delivery_attempts.status <> 'sent'
+           AND (conversion_delivery_attempts.locked_until IS NULL OR conversion_delivery_attempts.locked_until < now())
+         RETURNING id`,
+        [payload.tenantId, payload.dealId, integration.provider, eventKey, mappedEventName, JSON.stringify(eventPayloadWithMappedName)],
+      );
+      if (claimed.length === 0) continue;
+
+      let result: ConversionResult;
       try {
-        const res = await provider.sendEvent(eventPayloadWithMappedName, decryptedConfig);
-        results.push(res);
+        result = await provider.sendEvent(eventPayloadWithMappedName, decryptedConfig);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        results.push({
+        result = {
           provider: integration.provider,
           success: false,
           eventName: mappedEventName,
           status: 500,
           error: message,
-        });
+        };
       }
+      results.push(result);
+      await query(
+        `UPDATE conversion_delivery_attempts
+         SET status = $3, last_status = $4, last_error = $5, response_snippet = $6,
+             delivered_at = CASE WHEN $3 = 'sent' THEN now() ELSE NULL END,
+             locked_until = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND deal_id = $2 AND provider = $7 AND event_key = $8`,
+        [
+          payload.tenantId,
+          payload.dealId,
+          result.success ? "sent" : "failed",
+          result.status,
+          result.error ?? null,
+          result.responseSnippet ?? null,
+          integration.provider,
+          eventKey,
+        ],
+      );
     }
 
     return results;
