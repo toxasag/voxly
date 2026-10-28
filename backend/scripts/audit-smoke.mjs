@@ -68,6 +68,8 @@ try {
   assert.equal(alphaInvoices.rowCount,1);assertions++;
   const alphaItems=await db.query('SELECT invoice_id FROM invoice_items');
   assert.equal(alphaItems.rowCount,1);assertions++;
+  const alphaDeliveries=await db.query('SELECT deal_id,status FROM lead_notification_deliveries');
+  assert.equal(alphaDeliveries.rowCount,1);assert.equal(alphaDeliveries.rows[0].status,'failed');assertions+=2;
   await assert.rejects(()=>db.query("INSERT INTO contacts(tenant_id,first_name) VALUES($1,'forbidden')",['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']),{code:'42501'});assertions++;
   await db.query('ROLLBACK');
   await db.query('BEGIN');
@@ -76,6 +78,8 @@ try {
   assert.equal(betaInvoices.rowCount,1);assertions++;
   const betaItems=await db.query('SELECT invoice_id FROM invoice_items');
   assert.equal(betaItems.rowCount,1);assertions++;
+  const betaDeliveries=await db.query('SELECT deal_id FROM lead_notification_deliveries');
+  assert.equal(betaDeliveries.rowCount,1);assertions++;
   await db.query('ROLLBACK');
  } finally {await db.end();}
  console.log(JSON.stringify({auditDatabase:runtime.database, assertions, result:'passed', externalProviders:false}));

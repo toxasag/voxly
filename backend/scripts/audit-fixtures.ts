@@ -18,10 +18,6 @@ try {
          ON CONFLICT(id) DO UPDATE SET first_name=EXCLUDED.first_name RETURNING id`,
         [`${prefix}-000000000001`, tenant, `isolation-${index}@audit.test`, user.id],
       );
-      await tx.query(
-        `UPDATE contacts c SET company_name=co.name FROM companies co
-         WHERE c.tenant_id=$1 AND co.tenant_id=$1 AND co.id=c.company_id AND c.company_name=''`, [tenant],
-      );
       if (index === 0) {
         await tx.query(
           `INSERT INTO repair_orders(id,tenant_id,ticket_number,customer_id,customer_name,customer_phone,
@@ -41,7 +37,17 @@ try {
          VALUES($1,$2,'Audit item',1,1000,1000) ON CONFLICT(id) DO NOTHING`,
         [`${prefix}-000000000004`, `${prefix}-000000000003`],
       );
+      const deal = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM deals WHERE tenant_id=$1 ORDER BY created_at LIMIT 1`, [tenant],
+      );
+      if (deal) {
+        await tx.query(
+          `INSERT INTO lead_notification_deliveries(tenant_id,deal_id,status,attempts,last_error)
+           VALUES($1,$2,'failed',1,'audit retry') ON CONFLICT(tenant_id,deal_id) DO NOTHING`,
+          [tenant, deal.id],
+        );
+      }
     });
   }
-  console.log('Tenant defaults, isolation contacts, repair and invoice ensured without external calls.');
+  console.log('Tenant defaults, isolation contacts, repair, invoice and delivery fixtures ensured without external calls.');
 } finally { await closePool(); }
