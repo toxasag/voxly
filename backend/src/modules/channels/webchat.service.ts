@@ -503,8 +503,11 @@ export class WebchatService {
     });
     WebchatService.sessionLocks.set(sessionKey, currentLock);
 
-    // Ожидаем завершения предыдущего обращения по этой же сессии
-    await previousLock;
+    // Ожидаем завершения предыдущего обращения по этой же сессии (с защитой от зависания и ошибок)
+    await Promise.race([
+      previousLock.catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 20000)),
+    ]);
 
     try {
       return await this.executeProcessIncomingMessage(input);

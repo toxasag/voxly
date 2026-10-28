@@ -2598,6 +2598,42 @@
       await executeSendMessage(combinedText);
     }
 
+    function extractClientPhone(val) {
+      if (!val || typeof val !== 'string') return null;
+      var cl = val.trim();
+      var m = cl.match(/(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/);
+      if (m) {
+        var raw = m[0].trim();
+        var dig = raw.replace(/\D/g, '');
+        if (raw.charAt(0) === '+' && dig.length >= 10 && dig.length <= 15) {
+          if (dig.charAt(0) === '7' && dig.length === 11) return '+7' + dig.slice(1);
+          return '+' + dig;
+        }
+        if (dig.length === 11 && (dig.charAt(0) === '7' || dig.charAt(0) === '8')) {
+          return '+7' + dig.slice(1);
+        }
+        if (dig.length === 10 && dig.charAt(0) === '9') {
+          return '+7' + dig;
+        }
+      }
+      var onlyDig = cl.replace(/\D/g, '');
+      if (onlyDig.length === 11 && (onlyDig.charAt(0) === '7' || onlyDig.charAt(0) === '8')) {
+        return '+7' + onlyDig.slice(1);
+      }
+      if (onlyDig.length === 10 && onlyDig.charAt(0) === '9') {
+        return '+7' + onlyDig;
+      }
+      return null;
+    }
+
+    function extractClientEmail(val) {
+      if (!val || typeof val !== 'string') return null;
+      var m = val.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      return m ? m[0].toLowerCase() : null;
+    }
+
     function handleUserSubmit() {
       var text = inputEl.value.trim();
       if (!text && !pendingAttachment) return;
@@ -2613,44 +2649,14 @@
       adjustInputHeight();
       lastDraft = '';
 
-      function extractClientPhone(val) {
-        if (!val || typeof val !== 'string') return null;
-        var cl = val.trim();
-        var m = cl.match(/(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/) ||
-                cl.match(/(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/) ||
-                cl.match(/(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/);
-        if (m) {
-          var raw = m[0].trim();
-          var dig = raw.replace(/\D/g, '');
-          if (raw.charAt(0) === '+' && dig.length >= 10 && dig.length <= 15) {
-            if (dig.charAt(0) === '7' && dig.length === 11) return '+7' + dig.slice(1);
-            return '+' + dig;
-          }
-          if (dig.length === 11 && (dig.charAt(0) === '7' || dig.charAt(0) === '8')) {
-            return '+7' + dig.slice(1);
-          }
-          if (dig.length === 10 && dig.charAt(0) === '9') {
-            return '+7' + dig;
-          }
-        }
-        var onlyDig = cl.replace(/\D/g, '');
-        if (onlyDig.length === 11 && (onlyDig.charAt(0) === '7' || onlyDig.charAt(0) === '8')) {
-          return '+7' + onlyDig.slice(1);
-        }
-        if (onlyDig.length === 10 && onlyDig.charAt(0) === '9') {
-          return '+7' + onlyDig;
-        }
-        return null;
-      }
-
       if (text) {
         var parsedPhone = extractClientPhone(text);
         if (parsedPhone) {
           safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, parsedPhone);
         }
-        var emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) {
-          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, emailMatch[0].toLowerCase());
+        var parsedEmail = extractClientEmail(text);
+        if (parsedEmail) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, parsedEmail);
         }
       }
 
@@ -2684,8 +2690,17 @@
         typingIndicator.style.display = 'block';
       }
       try {
-        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || extractClientPhone(fullText) || undefined;
-        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || undefined;
+        var detectedPhone = extractClientPhone(fullText);
+        var detectedEmail = extractClientEmail(fullText);
+        if (detectedPhone && !safeStorage.getItem(STORAGE_KEY_LEAD_PHONE)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, detectedPhone);
+        }
+        if (detectedEmail && !safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, detectedEmail);
+        }
+
+        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || detectedPhone || undefined;
+        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
         var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
 
         var payload = {
@@ -2729,11 +2744,17 @@
           isDraft: Boolean(isDraft),
         };
 
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timeoutId = controller ? setTimeout(function () { controller.abort(); }, 45000) : null;
+
         var res = await fetch(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
+          signal: controller ? controller.signal : undefined,
         });
+
+        if (timeoutId) clearTimeout(timeoutId);
 
         typingIndicator.style.display = 'none';
 
@@ -2765,6 +2786,8 @@
           throw new Error('HTTP ' + res.status);
         }
       } catch (e) {
+        console.error('[GetVoxly] Message delivery failed:', e);
+        sendTelemetry('message_send_failed', e && (e.message || String(e)));
         typingIndicator.style.display = 'none';
         if (!isDraft) {
           if (retryCount < MAX_RETRIES) {
