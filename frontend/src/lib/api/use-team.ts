@@ -10,7 +10,7 @@ import {
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 import { tenantUserKeys } from "@/lib/api/use-tenant-users";
 import { marketplaceKeys } from "@/lib/api/use-marketplace";
-import type { Role } from "@/types";
+import type { Permission, Role } from "@/types";
 
 // Зеркалит backend/src/modules/tenant/team.service.ts.
 
@@ -22,7 +22,9 @@ export interface TeamMemberDTO {
   email: string;
   phone: string | null;
   role: Role;
+  permissions: Permission[];
   status: TeamMemberStatus;
+  /** Base64 data-URI либо null; при null интерфейс показывает инициалы. */
   isOwner: boolean;
   isSelf: boolean;
   invitedAt: string | null;
@@ -52,6 +54,7 @@ export interface TeamListDTO {
   members: TeamMemberDTO[];
   seats: SeatUsageDTO;
   assignableRoles: AssignableRole[];
+  availablePermissions: Permission[];
 }
 
 export interface TenantInfoDTO {
@@ -154,13 +157,13 @@ export function useInviteMember(): UseMutationResult<InviteResultDTO, ApiClientE
 export function useChangeMemberRole(): UseMutationResult<
   TeamMemberDTO,
   ApiClientError,
-  { id: string; role: AssignableRole }
+  { id: string; role: AssignableRole; permissions?: Permission[] }
 > {
   const invalidate = useTeamMutationInvalidation();
 
   return useMutation({
-    mutationFn: async ({ id, role }) =>
-      (await apiClient.patch<TeamMemberDTO>(`/api/v1/tenant/team/${id}`, { role })).data,
+    mutationFn: async ({ id, role, permissions }) =>
+      (await apiClient.patch<TeamMemberDTO>(`/api/v1/tenant/team/${id}`, { role, permissions })).data,
     onSuccess: invalidate,
   });
 }

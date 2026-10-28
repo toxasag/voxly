@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { VALID_PERMISSIONS } from "../../config/permissions.js";
 import { queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
@@ -27,7 +28,10 @@ const inviteBody = z.object({
   confirm_extra_seat: z.boolean().default(false),
 });
 
-const changeRoleBody = z.object({ role: roleSchema });
+const changeRoleBody = z.object({
+  role: roleSchema,
+  permissions: z.array(z.string()).optional(),
+});
 const userParams = z.object({ id: z.string().uuid() });
 
 export default async function tenantRoutes(app: FastifyInstance): Promise<void> {
@@ -156,6 +160,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       actorId: request.authUser.id,
       userId: id,
       role: body.role,
+      permissions: body.permissions,
     });
 
     return reply.send({ data: member });
