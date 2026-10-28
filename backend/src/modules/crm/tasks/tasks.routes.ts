@@ -11,6 +11,8 @@ import {
   updateTaskSchema,
 } from "./tasks.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
+import { queueManager } from "../../../infrastructure/queue.js";
+import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
 
 const listQuerySchema = z
   .object({
@@ -89,6 +91,20 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
   app.post("", { onRequest: canWrite }, async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
     const task = await service.create(request.tenant_id, body);
+
+    if (task.assigneeId !== null) {
+      const job: TaskAssignmentNotificationJob = {
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        assigneeId: task.assigneeId,
+      };
+      await queueManager.enqueue({
+        queue: "notifications",
+        tenantId: request.tenant_id,
+        name: "task-assigned",
+        data: job,
+      });
+    }
 
     return reply.status(201).send({ data: task });
   });

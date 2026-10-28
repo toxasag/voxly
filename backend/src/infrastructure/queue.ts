@@ -14,6 +14,7 @@ export type QueueName =
   | "timeline-sync"
   | "broadcasts"
   | "task-reminders"
+  | "notifications"
   | "knowledge-indexing";
 
 export interface QueueJob<T = unknown> {
