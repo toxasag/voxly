@@ -173,7 +173,17 @@ Audit runtime проверяет точный local target и очищает cre
 
 Проверки: frontend 265, backend 225, audit runtime 9, deploy mocks 5, API/SQL smoke 37 assertions; типизация основного кода и audit entry points. Детали и блокеры: `BROWSER_VERIFICATION.md`, `IMPLEMENTATION_LOG.md`. Откат локальных изменений: backup manifest `~/.claude/backups/getvoxly/20260921-130930`. Production не менялся.
 
-### Added · CRM — уведомления о назначении задач (2026-10-28)
+### Added · Roadmap sync & production hardening (2026-10-28)
+
+Зафиксированы исключения текущего этапа: реальный биллинг, Service Center и Finance не изменялись. Roadmap сверён с кодом: отмечены реализованные Query hooks/табличный вид CRM, ConfirmDialog, recovery boundaries, AI usage/context/log API и существующий CI.
+
+Добавлены практические улучшения вне исключённых блоков:
+- backend structured `onResponse` logging с request id, status, duration и tenant/user context без credentials/body;
+- root `not-found.tsx` для frontend;
+- security workflow с high-severity dependency audit, typecheck, запретом unsafe TypeScript patterns и `git diff --check`.
+
+Проверено: backend typecheck/build и 26 тестов; frontend typecheck и 6 тестов; diff hygiene.
+
 
 Закрыт `M1.6.8`: добавлена очередь `notifications` в backend queue manager и обработчик `task-assigned`. При создании задачи с исполнителем сервер ставит tenant-scoped job; worker получает актуальные данные задачи и сотрудника, проверяет `tenant_id`, и отправляет уведомление в Telegram при наличии привязанного чата. Ошибка доставки возвращает job в retry-механику очереди, отсутствие Telegram-конфигурации не создаёт ложное успешное уведомление. Production остаётся fail-closed без Redis через `requireDurableQueue`.
 
