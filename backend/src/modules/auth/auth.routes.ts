@@ -9,7 +9,7 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import { UnauthorizedError, AppError } from "../../plugins/errorHandler.js";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -468,15 +468,9 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.status(200).send({ data: result });
   });
 
-  app.post("/login", async (request, reply) => {
-    const body = loginBody.parse(request.body);
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    const result = await service.loginWithPassword(body.email, body.password, meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
+  app.post("/login", async (request) => {
+    loginBody.parse(request.body);
+    throw new AppError(401, "SECOND_FACTOR_REQUIRED", "Введите код подтверждения из Telegram или MAX");
   });
 
   /**

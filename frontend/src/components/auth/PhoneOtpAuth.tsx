@@ -141,6 +141,8 @@ export function PhoneOtpAuth() {
       }
 
       switch (error.code) {
+        case "SECOND_FACTOR_REQUIRED":
+          return "Сначала получите и введите код из Telegram или MAX";
         case "UNAUTHORIZED":
           return "Неверный e-mail или пароль";
         case "OTP_ATTEMPTS_EXCEEDED":

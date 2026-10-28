@@ -1,4 +1,10 @@
-### Fixed · Auth code flow — delivery errors and timeout recovery (2026-10-28)
+### Security · Auth — обязательный второй фактор (2026-10-28)
+
+Legacy `POST /auth/login` больше не выдаёт токены без подтверждения: endpoint
+возвращает `401 SECOND_FACTOR_REQUIRED`. Рабочий поток использует отдельные
+`/auth/code/request` и `/auth/login/verify`; silent session restoration через
+`/auth/me`/`/auth/refresh` не затронут.
+
 
 Код авторизации теперь явно переводит `CODE_NOT_DELIVERED` и `TENANT_INACTIVE`,
 показывает ошибку на форме, а таймаут `awaiting_bot` завершает polling, очищает
