@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
-import { query } from "../../db/client.js";
+import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { AppError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AiService } from "./ai.service.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
 import { BillingService } from "../finance/billing/billing.service.js";
@@ -420,6 +420,160 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({ data: result });
   });
+
+  const handlePromptPreview = async (
+    request: { tenant_id: string; params: unknown; body?: unknown },
+    reply: { send: (payload: unknown) => unknown },
+  ) => {
+    const { id } = agentParams.parse(request.params);
+    const body = (request.body as { system_prompt?: string; systemPrompt?: string } | undefined) ?? {};
+
+    const agent = await queryOne<{
+      id: string;
+      name: string;
+      system_prompt: string;
+      wizard_config: Record<string, unknown> | null;
+    }>(
+      `SELECT id, name, system_prompt, wizard_config
+       FROM ai_agents
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [request.tenant_id, id],
+    );
+    if (!agent) {
+      throw new NotFoundError("AI-агент не найден");
+    }
+
+    const tenantRow = await queryOne<{ name: string }>(
+      `SELECT name FROM tenants WHERE id = $1`,
+      [request.tenant_id],
+    );
+    const tenantName = tenantRow?.name || "Компания";
+
+    const docs = await query<{
+      id: string;
+      filename: string;
+      category: string | null;
+      content_text: string | null;
+    }>(
+      `SELECT id, filename, category, content_text
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready' AND content_text IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [request.tenant_id, id],
+    );
+
+    const reviewDocs: string[] = [];
+    const websiteDocs: string[] = [];
+    const kbDocs: string[] = [];
+
+    for (const doc of docs) {
+      const fn = (doc.filename || "").toLowerCase();
+      const text = (doc.content_text || "").trim();
+      if (!text) continue;
+
+      if (fn.includes("отзыв") || doc.category === "reviews") {
+        if (reviewDocs.length < 2) {
+          reviewDocs.push(`[${reviewDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1000)}`);
+        }
+      } else if (fn.includes("сайт") || doc.category === "website") {
+        if (websiteDocs.length < 2) {
+          websiteDocs.push(`[${websiteDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
+        }
+      } else {
+        if (kbDocs.length < 3) {
+          kbDocs.push(`[${kbDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
+        }
+      }
+    }
+
+    const kbContext = kbDocs.length > 0
+      ? kbDocs.join("\n\n")
+      : "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».";
+
+    const websiteContext = websiteDocs.length > 0
+      ? websiteDocs.join("\n\n")
+      : "Материалы сайта пока не загружены.";
+
+    const reviewsContext = reviewDocs.length > 0
+      ? reviewDocs.join("\n\n")
+      : "Отзывы клиентов пока не подключены.";
+
+    const crmExamples = await query<{ customer_query: string; agent_reply: string }>(
+      `SELECT customer_query, agent_reply
+       FROM ai_sales_examples
+       WHERE tenant_id = $1
+       ORDER BY created_at DESC
+       LIMIT 3`,
+      [request.tenant_id],
+    );
+
+    let crmContext = "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.";
+    if (crmExamples.length > 0) {
+      crmContext = crmExamples
+        .map((p, i) => `Пример ${i + 1}:\nКлиент: «${p.customer_query}»\nУспешный ответ: «${p.agent_reply}»`)
+        .join("\n\n");
+    }
+
+    const channelAccounts = await query<{ channel: string; label: string | null }>(
+      `SELECT c.channel, c.label
+       FROM ai_agent_channel_bindings b
+       JOIN channel_accounts c ON c.id = b.channel_account_id
+       WHERE b.agent_id = $1 AND c.tenant_id = $2
+       LIMIT 1`,
+      [id, request.tenant_id],
+    );
+    const channelType = channelAccounts[0]?.channel || "чат на сайте";
+
+    const currentTime = new Date().toLocaleTimeString("ru-RU", {
+      timeZone: "Europe/Moscow",
+      hour: "2-digit",
+      minute: "2-digit",
+    }) + " МСК";
+
+    const wc = (agent.wizard_config || {}) as Record<string, string | undefined>;
+    const variables: Record<string, string> = {
+      "tenant.name": tenantName,
+      "company.name": tenantName,
+      "consultant.name": wc.consultantName || agent.name || "Консультант",
+      "consultant.role": wc.consultantRole || "ведущий специалист",
+      "business.niche": wc.businessNiche || "оказание профильных услуг",
+      "target.action": wc.targetAction || "согласование деталей заказа",
+      "handoff.specialist": wc.handoffSpecialist || "старший специалист",
+      "current_time": currentTime,
+      "channel_type": channelType,
+      "knowledge_base_context": kbContext,
+      "website_context": websiteContext,
+      "reviews_and_reputation": reviewsContext,
+      "successful_crm_patterns": crmContext,
+    };
+
+    const template = (typeof body.system_prompt === "string" && body.system_prompt.trim().length > 0)
+      ? body.system_prompt
+      : ((typeof body.systemPrompt === "string" && body.systemPrompt.trim().length > 0)
+        ? body.systemPrompt
+        : agent.system_prompt);
+
+    let resolved = template.replace(/\{\{\s*([a-z_]+(?:\.[a-z_]+)*)\s*\}\}/g, (_match, token: string) => {
+      return variables[token] ?? "";
+    });
+
+    resolved = resolved
+      .replace(/<\/?(?:director_system_prompt|character_and_identity|context_and_knowledge|style_and_formatting|dialogue_management|golden_cage_rules_and_security|primary_objective|scene_rehearsals)>/gi, "")
+      .replace(/^\s*<[/]?[a-zA-Z0-9_]+>\s*$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    return reply.send({
+      data: {
+        resolvedPrompt: resolved,
+        variables,
+      },
+    });
+  };
+
+  app.get("/agents/:id/prompt-preview", { onRequest: readAgents }, handlePromptPreview);
+  app.post("/agents/:id/prompt-preview", { onRequest: readAgents }, handlePromptPreview);
 
   app.delete("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
