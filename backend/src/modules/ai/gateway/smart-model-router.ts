@@ -35,16 +35,9 @@ export class SmartModelRouter {
    */
   private async resolveBaseUrl(provider: string): Promise<string> {
     try {
-      const config = await platformConfigService.getRotatedLlmConfig();
-      if (config?.baseUrl) {
-        return config.baseUrl.replace(/\/+$/, "");
-      }
-    } catch {}
-
-    try {
       const integrations = await platformConfigService.getEffectiveIntegrations();
       const prov = integrations.llmProviders.find(
-        (p) => p.isActive && (p.providerType === provider || p.id.includes(provider)),
+        (p) => p.isActive && Boolean(p.baseUrl) && (p.providerType === provider || p.id.includes(provider)),
       );
       if (prov && prov.baseUrl) {
         return prov.baseUrl.replace(/\/+$/, "");
@@ -52,15 +45,33 @@ export class SmartModelRouter {
     } catch {}
 
     try {
+      const config = await platformConfigService.getRotatedLlmConfig();
+      if (config?.baseUrl) {
+        const isMatch =
+          (provider === "gemini" && (config.baseUrl.includes("googleapis.com") || config.providerId?.includes("gemini"))) ||
+          (provider === "openai" && (config.baseUrl.includes("openai.com") || config.providerId?.includes("openai"))) ||
+          (provider === "deepseek" && (config.baseUrl.includes("deepseek.com") || config.providerId?.includes("deepseek"))) ||
+          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter")));
+        if (isMatch) {
+          return config.baseUrl.replace(/\/+$/, "");
+        }
+      }
+    } catch {}
+
+    try {
       const env = getEnv();
-      if (env.LLM_API_BASE_URL) {
-        return env.LLM_API_BASE_URL.replace(/\/+$/, "");
+      const envUrl = env.LLM_API_BASE_URL || process.env.LLM_API_BASE_URL;
+      if (envUrl) {
+        const isMatch =
+          (provider === "gemini" && envUrl.includes("googleapis.com")) ||
+          (provider === "openai" && envUrl.includes("openai.com")) ||
+          (provider === "deepseek" && envUrl.includes("deepseek.com")) ||
+          (provider === "openrouter" && envUrl.includes("openrouter.ai"));
+        if (isMatch) {
+          return envUrl.replace(/\/+$/, "");
+        }
       }
-    } catch {
-      if (process.env.LLM_API_BASE_URL) {
-        return process.env.LLM_API_BASE_URL.replace(/\/+$/, "");
-      }
-    }
+    } catch {}
 
     if (provider === "gemini") {
       return "https://generativelanguage.googleapis.com/v1beta/openai";
@@ -123,7 +134,8 @@ export class SmartModelRouter {
     ];
 
     const maxAttempts = options.maxAttempts ?? Math.min(candidateModels.length * 3, 10);
-    const excludedKeyIds: string[] = [];
+    const globallyExcludedKeyIds = new Set<string>();
+    const excludedKeyModelPairs = new Set<string>();
     const modelsChecked: string[] = [];
 
     let lastError: Error | null = null;
@@ -144,6 +156,18 @@ export class SmartModelRouter {
           modelsChecked.push(candidateModel);
         }
 
+        const keysToExclude = Array.from(globallyExcludedKeyIds);
+        for (const pair of excludedKeyModelPairs) {
+          const colonIdx = pair.indexOf(":");
+          if (colonIdx !== -1) {
+            const kId = pair.slice(0, colonIdx);
+            const mId = pair.slice(colonIdx + 1);
+            if (mId === candidateModel && kId && !keysToExclude.includes(kId)) {
+              keysToExclude.push(kId);
+            }
+          }
+        }
+
         const slot = await this.poolManager.acquireKeySlot(
           profile.provider,
           candidateModel,
@@ -151,7 +175,7 @@ export class SmartModelRouter {
           {
             tenantId: options.tenantId,
             estimatedTokens,
-            excludeKeyIds: excludedKeyIds,
+            excludeKeyIds: keysToExclude,
           },
         );
 
@@ -243,8 +267,10 @@ export class SmartModelRouter {
           responseText.includes("deleted or disabled");
 
         if (isAuthError) {
-          platformConfigService.markKeyInvalid(selectedSlot.apiKey);
-          excludedKeyIds.push(selectedSlot.keyId);
+          if (selectedSlot.provider === selectedModelProfile.provider) {
+            platformConfigService.markKeyInvalid(selectedSlot.apiKey);
+          }
+          globallyExcludedKeyIds.add(selectedSlot.keyId);
           lastError = new AppError(401, "LLM_AUTH_FAILED", `API-ключ ${selectedSlot.maskedKey} недействителен`);
           continue;
         }
@@ -264,15 +290,15 @@ export class SmartModelRouter {
             responseText,
           );
           if (cooldown < minRetryAfter) minRetryAfter = cooldown;
-          excludedKeyIds.push(selectedSlot.keyId);
-          lastError = new LlmGatewayExhaustedError(`Ключ ${selectedSlot.maskedKey} достиг лимита 429`, cooldown);
+          excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
+          lastError = new LlmGatewayExhaustedError(`Ключ ${selectedSlot.maskedKey} достиг лимита для ${selectedSlot.model}`, cooldown);
           continue;
         }
 
         // Ошибки сервера провайдера (HTTP 5xx) -> Circuit Breaker
         if (response.status >= 500) {
           await this.limiter.recordFailure(selectedModelProfile.provider, selectedSlot.model);
-          excludedKeyIds.push(selectedSlot.keyId);
+          excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
           lastError = new AppError(502, "LLM_PROVIDER_ERROR", `Провайдер ${selectedModelProfile.provider} вернул ${response.status}`);
           continue;
         }
@@ -289,7 +315,7 @@ export class SmartModelRouter {
         }
 
         if (attempt < maxAttempts - 1) {
-          excludedKeyIds.push(selectedSlot.keyId);
+          excludedKeyModelPairs.add(`${selectedSlot.keyId}:${selectedSlot.model}`);
           lastError = err instanceof Error ? err : new Error(String(err));
           continue;
         }

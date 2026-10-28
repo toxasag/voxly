@@ -90,8 +90,10 @@ export class GatewayChatProvider implements ChatProvider {
     }
 
     let targetModel = input.model;
-    if (config?.chatModel && config.chatModel.trim().length > 0) {
-      targetModel = config.chatModel;
+    if (!targetModel || targetModel === "default" || targetModel === "auto") {
+      if (config?.chatModel && config.chatModel.trim().length > 0) {
+        targetModel = config.chatModel;
+      }
     }
     if (targetModel.startsWith("gemini/")) {
       targetModel = targetModel.replace(/^gemini\//, "");

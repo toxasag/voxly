@@ -37,20 +37,29 @@ export class KeyPoolManager {
     // 1. Читаем из платформенной конфигурации в БД
     try {
       const config = await platformConfigService.getRotatedLlmConfig();
-      if (config?.allKeys && config.allKeys.length > 0) {
-        rawKeys.push(...config.allKeys);
-      } else if (config?.apiKey) {
-        rawKeys.push(config.apiKey);
+      if (config) {
+        const isMatch =
+          (provider === "gemini" && (config.baseUrl.includes("googleapis.com") || config.providerId?.includes("gemini") || config.chatModel?.includes("gemini"))) ||
+          (provider === "openai" && (config.baseUrl.includes("openai.com") || config.providerId?.includes("openai") || config.chatModel?.includes("gpt") || config.chatModel?.includes("o1") || config.chatModel?.includes("o3"))) ||
+          (provider === "deepseek" && (config.baseUrl.includes("deepseek.com") || config.providerId?.includes("deepseek") || config.chatModel?.includes("deepseek"))) ||
+          (provider === "openrouter" && (config.baseUrl.includes("openrouter.ai") || config.providerId?.includes("openrouter")));
+        if (isMatch) {
+          if (config.allKeys && config.allKeys.length > 0) {
+            rawKeys.push(...config.allKeys);
+          } else if (config.apiKey) {
+            rawKeys.push(config.apiKey);
+          }
+        }
       }
 
       const integrations = await platformConfigService.getEffectiveIntegrations();
       const matchedProviders = integrations.llmProviders.filter((p) => {
         if (!p.isActive || !p.apiKeys || p.apiKeys.length === 0) return false;
-        if (provider === "gemini") return p.providerType === "gemini" || p.id.includes("gemini");
-        if (provider === "openai") return p.providerType === "openai" || p.id.includes("openai");
-        if (provider === "deepseek") return p.providerType === "deepseek" || p.id.includes("deepseek");
+        if (provider === "gemini") return p.providerType === "gemini" || p.id.includes("gemini") || (p.baseUrl && p.baseUrl.includes("googleapis.com"));
+        if (provider === "openai") return p.providerType === "openai" || p.id.includes("openai") || (p.baseUrl && p.baseUrl.includes("openai.com"));
+        if (provider === "deepseek") return p.providerType === "deepseek" || p.id.includes("deepseek") || (p.baseUrl && p.baseUrl.includes("deepseek.com"));
         if (provider === "anthropic") return p.providerType === "custom" && p.baseUrl.includes("anthropic");
-        if (provider === "openrouter") return p.providerType === "openrouter" || p.id.includes("openrouter");
+        if (provider === "openrouter") return p.providerType === "openrouter" || p.id.includes("openrouter") || (p.baseUrl && p.baseUrl.includes("openrouter.ai"));
         return p.providerType === provider || p.id === provider;
       });
 
@@ -223,15 +232,15 @@ export class KeyPoolManager {
     const lowerBody = bodyText.toLowerCase();
     const isDaily =
       lowerBody.includes("per day") ||
-      lowerBody.includes("rpd") ||
-      lowerBody.includes("daily") ||
+      lowerBody.includes("requestsperday") ||
+      lowerBody.includes("requests per day") ||
       lowerBody.includes("day limit") ||
-      lowerBody.includes("resource_exhausted");
+      (lowerBody.includes("quota exceeded") && lowerBody.includes("day"));
 
     if (isDaily) {
       cooloffSeconds = getSecondsUntilUtcMidnight();
     } else {
-      cooloffSeconds = Math.min(Math.max(cooloffSeconds, 10), 300); // 10s .. 300s
+      cooloffSeconds = Math.min(Math.max(cooloffSeconds, 10), 60); // 10s .. 60s
     }
 
     const reason = isDaily ? `DAILY_RPD_EXHAUSTED_${provider.toUpperCase()}` : "RATE_LIMIT_429";

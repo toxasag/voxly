@@ -163,25 +163,32 @@ export class PlatformConfigService {
   private cachedEffective: EffectiveIntegrations | null = null;
   private cacheExpiresAt = 0;
   private roundRobinIndex = 0;
-  private invalidKeysSet = new Set<string>();
+  private invalidKeysMap = new Map<string, number>();
 
-  markKeyInvalid(key: string): void {
+  markKeyInvalid(key: string, ttlMs = 5 * 60 * 1000): void {
     const trimmed = key?.trim();
     if (trimmed) {
-      this.invalidKeysSet.add(trimmed);
+      this.invalidKeysMap.set(trimmed, Date.now() + ttlMs);
     }
   }
 
   markKeyValid(key: string): void {
     const trimmed = key?.trim();
     if (trimmed) {
-      this.invalidKeysSet.delete(trimmed);
+      this.invalidKeysMap.delete(trimmed);
     }
   }
 
   isKeyInvalid(key: string): boolean {
     const trimmed = key?.trim();
-    return trimmed ? this.invalidKeysSet.has(trimmed) : true;
+    if (!trimmed) return true;
+    const expiresAt = this.invalidKeysMap.get(trimmed);
+    if (!expiresAt) return false;
+    if (Date.now() > expiresAt) {
+      this.invalidKeysMap.delete(trimmed);
+      return false;
+    }
+    return true;
   }
 
   isLlmConfiguredSync(): boolean {
@@ -390,7 +397,7 @@ export class PlatformConfigService {
 
     if (target && target.apiKeys.length > 0) {
       const allTargetKeys = target.apiKeys;
-      const validKeys = allTargetKeys.filter((k) => !this.invalidKeysSet.has(k.trim()));
+      const validKeys = allTargetKeys.filter((k) => !this.isKeyInvalid(k));
       // Если есть заведомо проверенные/не отклонённые ключи, ротируем их в первую очередь
       const keys = validKeys.length > 0 ? validKeys : allTargetKeys;
 
