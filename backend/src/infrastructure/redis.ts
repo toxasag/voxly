@@ -128,6 +128,13 @@ export function requireDurableQueue(queueName: string): void {
   }
 }
 
+export function getRedisHealth(): { configured: boolean; connected: boolean } {
+  return {
+    configured: getRedisConnectionOptions() !== null,
+    connected: isRedisAvailable(),
+  };
+}
+
 export function isRedisAvailable(): boolean {
   return isConnected && redisInstance !== null;
 }
