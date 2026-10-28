@@ -64,7 +64,18 @@ try {
   await db.query("SELECT set_config('app.tenant_id',$1,true)",['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']);
   const other=await db.query('SELECT id FROM contacts WHERE tenant_id=$1',['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']);
   assert.equal(other.rowCount,0);assertions++;
+  const alphaInvoices=await db.query('SELECT id FROM invoices');
+  assert.equal(alphaInvoices.rowCount,1);assertions++;
+  const alphaItems=await db.query('SELECT invoice_id FROM invoice_items');
+  assert.equal(alphaItems.rowCount,1);assertions++;
   await assert.rejects(()=>db.query("INSERT INTO contacts(tenant_id,first_name) VALUES($1,'forbidden')",['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']),{code:'42501'});assertions++;
+  await db.query('ROLLBACK');
+  await db.query('BEGIN');
+  await db.query("SELECT set_config('app.tenant_id',$1,true)",['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']);
+  const betaInvoices=await db.query('SELECT id FROM invoices');
+  assert.equal(betaInvoices.rowCount,1);assertions++;
+  const betaItems=await db.query('SELECT invoice_id FROM invoice_items');
+  assert.equal(betaItems.rowCount,1);assertions++;
   await db.query('ROLLBACK');
  } finally {await db.end();}
  console.log(JSON.stringify({auditDatabase:runtime.database, assertions, result:'passed', externalProviders:false}));
