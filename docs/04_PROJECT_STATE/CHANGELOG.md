@@ -12,6 +12,14 @@ Beta. Это дополняет статический аудит проверк
 PostgreSQL runtime и `.audit/runtime.json`. Выполнены `tsc --noEmit`, синтаксическая
 проверка `.mjs`, 4/4 теста классификатора RLS и `git diff --check`.
 
+### Verification note — 2026-10-28
+
+Повторная попытка запуска не изменила ограничение: Docker socket недоступен
+(`permission denied`), PostgreSQL CLI/runtime и `.audit/runtime.json` отсутствуют.
+Vitest не предназначен для `.mjs`-теста и закономерно сообщил `No test files found`;
+правильный запуск выполнен через `node --test`, результат 4/4. Backend typecheck
+и синтаксическая проверка smoke прошли.
+
 
 ### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
 
