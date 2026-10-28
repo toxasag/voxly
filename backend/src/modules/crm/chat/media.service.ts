@@ -40,7 +40,11 @@ export class ChatMediaService {
 
     const id = crypto.randomUUID();
     const ext = path.extname(input.originalName) || this.mimeToExtension(input.mimeType);
-    const safeFilename = `${input.tenantId}_${id}${ext}`;
+    const rawBase = path.basename(input.originalName, ext);
+    const cleanBase = rawBase.replace(/[/\\?%*:|"<>]/g, "_").slice(0, 50);
+    const safeFilename = cleanBase
+      ? `${input.tenantId}_${id}_${cleanBase}${ext}`
+      : `${input.tenantId}_${id}${ext}`;
     const filePath = path.join(this.uploadDir, safeFilename);
 
     await fs.writeFile(filePath, input.buffer);
@@ -68,6 +72,16 @@ export class ChatMediaService {
       case "audio/mp3":
       case "audio/mpeg":
         return ".mp3";
+      case "audio/mp4":
+      case "audio/m4a":
+      case "audio/x-m4a":
+        return ".m4a";
+      case "video/mp4":
+        return ".mp4";
+      case "video/quicktime":
+        return ".mov";
+      case "text/plain":
+        return ".txt";
       case "application/pdf":
         return ".pdf";
       case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":

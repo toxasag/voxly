@@ -260,6 +260,8 @@ export class DealMessagingService {
     };
     if (route.username !== undefined) outboundPayload.username = route.username;
     if (route.phone !== undefined) outboundPayload.phone = route.phone;
+    if (payload.attachment) outboundPayload.attachment = payload.attachment;
+    if (payload.attachment_type) outboundPayload.attachmentType = payload.attachment_type;
 
     try {
       return await sender(outboundPayload);

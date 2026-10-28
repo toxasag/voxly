@@ -1,5 +1,6 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
+import { ChatMediaService } from "./chat/media.service.js";
 import { contactsRoutes } from "./contacts/contacts.routes.js";
 import { companiesRoutes } from "./companies/companies.routes.js";
 import { dealsRoutes } from "./deals/deals.routes.js";
@@ -34,4 +35,37 @@ export default async function crmRoutes(app: FastifyInstance): Promise<void> {
   await app.register(timelineRoutes, { prefix: "/records" });
   await app.register(inboxRoutes, { prefix: "/inbox" });
   await app.register(leadsRoutes, { prefix: "/leads" });
+
+  // Загрузка вложений (документы, фото, видео, аудио) для чатов CRM
+  const handleUpload = async (request: FastifyRequest, reply: FastifyReply) => {
+    const file = await request.file();
+    if (!file) {
+      return reply.status(400).send({ error: "Файл не прикреплен" });
+    }
+
+    const buffer = await file.toBuffer();
+    if (buffer.length === 0) {
+      return reply.status(400).send({ error: "Пустой файл" });
+    }
+
+    const mediaService = new ChatMediaService();
+    const stored = await mediaService.storeBuffer({
+      buffer,
+      originalName: file.filename || `file_${Date.now()}`,
+      mimeType: file.mimetype || "application/octet-stream",
+      tenantId: request.tenant_id,
+    });
+
+    return reply.send({
+      data: {
+        url: stored.url,
+        filename: stored.filename,
+        mimeType: stored.mimeType,
+        sizeBytes: stored.sizeBytes,
+      },
+    });
+  };
+
+  app.post("/upload", handleUpload);
+  app.post("/chat/upload", handleUpload);
 }

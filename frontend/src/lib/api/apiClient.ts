@@ -254,14 +254,15 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   const token = readAccessToken();
 
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   if (token !== null) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(buildUrl(path, options.query), {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
     // Allows the backend to move to httpOnly cookies (M0.6.5) without a
     // client change.
     credentials: "include",
@@ -327,6 +328,10 @@ export const apiClient = {
 
   post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>> {
     return request<T>("POST", path, body, options);
+  },
+
+  postFormData<T>(path: string, formData: FormData, options?: RequestOptions): Promise<ApiResponse<T>> {
+    return request<T>("POST", path, formData, options);
   },
 
   put<T>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>> {

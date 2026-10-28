@@ -271,6 +271,12 @@ export async function buildApp(): Promise<FastifyInstance> {
           ".svg": "image/svg+xml",
           ".mp3": "audio/mpeg",
           ".ogg": "audio/ogg",
+          ".opus": "audio/ogg",
+          ".m4a": "audio/mp4",
+          ".wav": "audio/wav",
+          ".mp4": "video/mp4",
+          ".mov": "video/quicktime",
+          ".webm": "video/webm",
           ".pdf": "application/pdf",
           ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
           ".doc": "application/msword",
@@ -281,10 +287,17 @@ export async function buildApp(): Promise<FastifyInstance> {
         };
         const contentType = mimeMap[ext] ?? "application/octet-stream";
 
+        const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+        const isInline = contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/");
+        const disposition = isInline
+          ? "inline"
+          : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+
         return reply
           .type(contentType)
+          .header("Content-Disposition", disposition)
           .header("Cache-Control", "private, no-store")
-          .header("Cross-Origin-Resource-Policy", "same-site")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
           .send(createReadStream(filePath));
       } catch {
         return reply.status(404).send({ error: "File not found" });
