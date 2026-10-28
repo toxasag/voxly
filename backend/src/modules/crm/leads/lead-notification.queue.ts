@@ -320,8 +320,27 @@ export class LeadNotificationQueueService {
       return;
     }
 
+    // Claim a durable delivery slot before touching external providers. A crashed
+    // worker leaves a short lease; another attempt can retry after it expires.
+    const deliveryClaim = await queryOne<{ id: string }>(
+      `INSERT INTO lead_notification_deliveries (tenant_id, deal_id, status, attempts, locked_until)
+       VALUES ($1, $2, 'pending', 1, now() + interval '5 minutes')
+       ON CONFLICT (tenant_id, deal_id) DO UPDATE
+       SET status = 'pending', attempts = lead_notification_deliveries.attempts + 1,
+           locked_until = now() + interval '5 minutes',
+           last_error = NULL, updated_at = now()
+       WHERE lead_notification_deliveries.status <> 'sent'
+         AND (lead_notification_deliveries.locked_until IS NULL OR lead_notification_deliveries.locked_until < now())
+       RETURNING id`,
+      [tenantId, leadId],
+    );
+    if (!deliveryClaim) {
+      console.log(`[LeadNotification] Lead ${leadId} is already being delivered or was sent`);
+      return;
+    }
+
     // Delivery is claimed only after at least one channel confirms success.
-    // This avoids permanently losing a lead when SMTP/Telegram is down.
+    // The durable lease above prevents concurrent duplicate sends and allows retry.
     let delivered = false;
 
     // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp)
@@ -469,8 +488,22 @@ export class LeadNotificationQueueService {
     }
 
     if (!delivered) {
-      throw new Error(`No lead notification channel delivered lead ${lead.id}`);
+      const errorMessage = "No notification channel delivered the lead";
+      await query(
+        `UPDATE lead_notification_deliveries
+         SET status = 'failed', last_error = $3, locked_until = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND deal_id = $2 AND status <> 'sent'`,
+        [tenantId, leadId, errorMessage],
+      );
+      throw new Error(`${errorMessage}: ${lead.id}`);
     }
+
+    await query(
+      `UPDATE lead_notification_deliveries
+       SET status = 'sent', delivered_at = now(), locked_until = NULL, last_error = NULL, updated_at = now()
+       WHERE tenant_id = $1 AND deal_id = $2 AND status <> 'sent'`,
+      [tenantId, leadId],
+    );
 
     const claimed = await queryOne<{ id: string }>(
       `UPDATE deals SET lead_notified_at = now()

@@ -1,6 +1,18 @@
 # CHANGELOG
 
-### Changed · Security — RLS smoke harness расширен (2026-10-28)
+### Added · Reliability — durable lead notification delivery ledger (2026-10-28)
+
+Добавлена миграция `0054_lead_notification_deliveries`: tenant-scoped ledger
+с уникальностью `(tenant_id, deal_id)`, числом попыток, lease на пять минут,
+статусами `pending/failed/sent`, временем успешной доставки и последней ошибкой.
+Воркер теперь атомарно получает lease перед внешними провайдерами, освобождает
+его с ошибкой при неудаче и переводит запись в `sent` только после подтверждённой
+доставки. Старое `deals.lead_notified_at` сохранено для обратной совместимости,
+но больше не является единственным механизмом координации.
+
+Реальный DB-интеграционный прогон миграции и delivery ещё требует PostgreSQL/CI;
+локально подтверждены typecheck и unit-проверки после установки зависимостей.
+
 
 Расширен изолированный аудит RLS: synthetic fixtures теперь создают счета и
 `invoice_items` для обоих тестовых арендаторов, а `audit-smoke.mjs` проверяет
