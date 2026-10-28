@@ -25,8 +25,8 @@ import {
   renderPromptPreview,
 } from "@/lib/ai-bots/ai-bots.types";
 import { PROMPT_TEMPLATES } from "@/lib/ai-bots/prompt-templates";
-import { useAiAgent, useUpdateAiAgent } from "@/lib/api/use-ai-agents";
-import { useHasPermission } from "@/lib/auth/use-auth";
+import { useAiAgent, useAgentPromptPreview, useUpdateAiAgent } from "@/lib/api/use-ai-agents";
+import { useAuth, useHasPermission } from "@/lib/auth/use-auth";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { AgentChannelsTab } from "@/components/ai-bots/AgentChannelsTab";
 import { AgentKnowledgeTab } from "@/components/ai-bots/AgentKnowledgeTab";
@@ -56,6 +56,9 @@ interface BotDetailContentProps {
 
 function BotDetailContent({ bot }: BotDetailContentProps) {
   const update = useUpdateAiAgent();
+  const { tenant } = useAuth();
+  const tenantName = tenant?.tenantName ?? "Компания";
+
   // Тем же правом закрыта кнопка настроек ниже: интерфейс скрывает ровно то, что
   // отклонил бы сервер (`ai_bots:configure` на маршрутах записи).
   const canConfigure = useHasPermission("ai_bots:configure");
@@ -63,6 +66,20 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
   const [tab, setTab] = useState<BotTab>("chat");
   const [configOpen, setConfigOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(bot.system_prompt);
+
+  const { data: previewData } = useAgentPromptPreview(bot.id, promptDraft);
+
+  const previewText = useMemo(() => {
+    if (previewData?.resolvedPrompt) {
+      return previewData.resolvedPrompt;
+    }
+    return renderPromptPreview(promptDraft, bot, {
+      tenantName,
+      currentTime:
+        new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) + " МСК",
+      channelType: "чат на сайте",
+    });
+  }, [previewData?.resolvedPrompt, promptDraft, bot, tenantName]);
 
   // Черновик промпта синхронизируется с сервером: после сохранения приходит
   // обновлённый агент, и локальная копия не должна показывать прежний текст.
@@ -262,11 +279,11 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
               <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">
                 Подстановка во время выполнения
                 <span className="ml-1.5 text-xs font-normal text-[#888888]">
-                  примерные значения
+                  актуальные данные
                 </span>
               </h3>
               <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm leading-relaxed text-[#111111]">
-                {renderPromptPreview(promptDraft, bot)}
+                {previewText}
               </p>
             </div>
           </div>
