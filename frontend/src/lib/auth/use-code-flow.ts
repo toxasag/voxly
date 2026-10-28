@@ -31,6 +31,7 @@ export interface CodeFlowState {
   botUsername: string;
   channel: AuthChannel;
   cooldown: number;
+  error: string | null;
 }
 
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -63,6 +64,7 @@ export function useCodeFlow(purpose: "register" | "login") {
     botUsername: DEFAULT_BOT_USERNAME.telegram,
     channel: "telegram",
     cooldown: 0,
+    error: null,
   });
 
   // Таймеры держим в ref, чтобы очистить их при размонтировании: иначе опрос
@@ -111,6 +113,8 @@ export function useCodeFlow(purpose: "register" | "login") {
         void (async () => {
           if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
             stopPolling();
+            setState((prev) => ({ ...prev, stage: "idle", sessionId: null, deepLink: null, error: "Время ожидания истекло. Запросите новый код или выберите другой канал." }));
+            toast.error("Время ожидания истекло. Запросите новый код.");
             return;
           }
 
@@ -119,14 +123,14 @@ export function useCodeFlow(purpose: "register" | "login") {
 
             if (status.expired) {
               stopPolling();
-              setState((prev) => ({ ...prev, stage: "idle", sessionId: null, deepLink: null }));
+              setState((prev) => ({ ...prev, stage: "idle", sessionId: null, deepLink: null, error: "Срок действия кода истёк. Запросите код заново." }));
               toast.error("Срок действия кода истёк. Запросите код заново.");
               return;
             }
 
             if (status.delivered) {
               stopPolling();
-              setState((prev) => ({ ...prev, stage: "sent", deepLink: null }));
+              setState((prev) => ({ ...prev, stage: "sent", deepLink: null, error: null }));
               toast.success(`Код отправлен в ${CHANNEL_LABEL[channel]}`);
             }
           } catch {
@@ -146,12 +150,16 @@ export function useCodeFlow(purpose: "register" | "login") {
         return fields.phone ?? fields.email ?? fields._root ?? error.message;
       }
       switch (error.code) {
-        case "MAX_UNAVAILABLE":
-          return "MAX-бот не настроен. Обратитесь к администратору платформы.";
-        case "TELEGRAM_UNAVAILABLE":
-          return "Telegram-бот не настроен. Обратитесь к администратору платформы.";
         case "TOO_MANY_REQUESTS":
           return "Слишком много запросов кода. Попробуйте через минуту.";
+        case "CODE_NOT_DELIVERED":
+          return "Код ещё не доставлен. Откройте бота и нажмите Start, затем повторите проверку.";
+        case "TENANT_INACTIVE":
+          return "Доступ приостановлен: подписка компании неактивна";
+        case "TELEGRAM_UNAVAILABLE":
+          return "Telegram-бот не настроен. Обратитесь к администратору платформы.";
+        case "MAX_UNAVAILABLE":
+          return "MAX-бот не настроен. Обратитесь к администратору платформы.";
         default:
           return error.message;
       }
@@ -180,6 +188,7 @@ export function useCodeFlow(purpose: "register" | "login") {
           deepLink: result.deep_link,
           channel: result.channel,
           stage: result.delivered ? "sent" : "awaiting_bot",
+          error: null,
         }));
 
         startCooldown();
@@ -194,7 +203,7 @@ export function useCodeFlow(purpose: "register" | "login") {
 
         return true;
       } catch (error) {
-        setState((prev) => ({ ...prev, stage: "idle" }));
+        setState((prev) => ({ ...prev, stage: "idle", error: describeError(error) }));
         toast.error(describeError(error));
         return false;
       }
@@ -211,6 +220,7 @@ export function useCodeFlow(purpose: "register" | "login") {
       botUsername: DEFAULT_BOT_USERNAME.telegram,
       channel: "telegram",
       cooldown: 0,
+      error: null,
     });
   }, [stopPolling]);
 
