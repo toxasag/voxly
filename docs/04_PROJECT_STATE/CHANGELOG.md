@@ -1,6 +1,16 @@
 # CHANGELOG
 
-### Added · Reliability — durable lead notification delivery ledger (2026-10-28)
+### Added · CI / Reliability — backend quality gate and production queue fail-closed (2026-10-28)
+
+Добавлен `.github/workflows/backend-ci.yml`: `npm ci`, backend typecheck,
+production build, RLS classifier и полный Vitest suite выполняются на PR и push
+в `master`.
+
+`QueueManager` больше не принимает новые in-memory jobs при
+`NODE_ENV=production`, если отсутствует валидный `REDIS_URL`: вместо тихой потери
+критичной задачи выбрасывается `DURABLE_QUEUE_UNAVAILABLE`. Development/test
+поведение сохранено для локальных unit-тестов.
+
 
 Добавлена миграция `0054_lead_notification_deliveries`: tenant-scoped ledger
 с уникальностью `(tenant_id, deal_id)`, числом попыток, lease на пять минут,
