@@ -44,6 +44,7 @@ import { leadsRoutes } from "./modules/crm/leads/leads.routes.js";
 import { checkConnection, runWithRequestContext } from "./db/client.js";
 import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
+import { getRedisHealth } from "./infrastructure/redis.js";
 import fastify from "fastify";
 
 /** Пути webhook-ов ботов и платёжных шлюзов — исключения из общего лимита, сверяются точно. */
@@ -322,10 +323,13 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get("/health", async (_request, reply) => {
     const dbReachable = await checkConnection();
+    const redis = getRedisHealth();
+    const healthy = dbReachable && (env.NODE_ENV !== "production" || redis.connected);
 
-    return reply.status(dbReachable ? 200 : 503).send({
-      status: dbReachable ? "ok" : "degraded",
+    return reply.status(healthy ? 200 : 503).send({
+      status: healthy ? "ok" : "degraded",
       database: dbReachable ? "up" : "down",
+      redis,
       timestamp: new Date().toISOString(),
     });
   });

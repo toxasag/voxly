@@ -1,6 +1,16 @@
 # CHANGELOG
 
-### Added · Reliability — durable conversion delivery attempts (2026-10-28)
+### Added · Observability — request correlation and Redis health (2026-10-28)
+
+Ошибочный API envelope теперь содержит `requestId` из Fastify для сопоставления
+с логами. `/health` возвращает состояние `redis.configured/connected`; в
+production отсутствие соединения Redis переводит readiness в HTTP 503, потому
+что бизнес-критичные очереди fail-closed.
+
+Добавлены контрактные тесты для Redis health и request correlation. Полные
+queue metrics (waiting/active/failed/delayed/oldest age) требуют подключения к
+BullMQ Redis и вынесены в следующий runtime-срез.
+
 
 Добавлена миграция `0055_conversion_delivery_attempts`: tenant/deal/provider
 ledger с уникальным `event_key`, статусами `pending/sent/failed`, lease,
