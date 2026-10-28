@@ -1,5 +1,18 @@
 # CHANGELOG
 
+### Changed · Security — RLS smoke harness расширен (2026-10-28)
+
+Расширен изолированный аудит RLS: synthetic fixtures теперь создают счета и
+`invoice_items` для обоих тестовых арендаторов, а `audit-smoke.mjs` проверяет
+видимость parent-scoped строк при переключении `app.tenant_id` между Alpha и
+Beta. Это дополняет статический аудит проверкой фактического parent-scope,
+не дублирующего `tenant_id` в `invoice_items`.
+
+Локальный запуск smoke пока не объявлен успешным: в текущей среде отсутствуют
+PostgreSQL runtime и `.audit/runtime.json`. Выполнены `tsc --noEmit`, синтаксическая
+проверка `.mjs`, 4/4 теста классификатора RLS и `git diff --check`.
+
+
 ### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
 
 Реализация 4 ключевых блоков дорожной карты адаптации GetVoxly под эталонную архитектуру Twenty CRM:
