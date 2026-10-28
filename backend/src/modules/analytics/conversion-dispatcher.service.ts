@@ -1,5 +1,6 @@
 import { Queue, Worker } from "bullmq";
 import { getEnv } from "../../config/env.js";
+import { requireDurableQueue } from "../../infrastructure/redis.js";
 import { query } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
 import type {
@@ -74,17 +75,20 @@ export class ConversionDispatcherService {
   private initQueue(): void {
     const redisUrl = getEnv().REDIS_URL;
 
-    if (redisUrl) {
-      try {
-        const parsed = new URL(redisUrl);
-        const connection = {
-          host: parsed.hostname || "127.0.0.1",
-          port: parsed.port ? parseInt(parsed.port, 10) : 6379,
-          password: parsed.password || undefined,
-          username: parsed.username || undefined,
-        };
+    if (!redisUrl) {
+      requireDurableQueue(QUEUE_NAME);
+      return;
+    }
+    try {
+      const parsed = new URL(redisUrl);
+      const connection = {
+        host: parsed.hostname || "127.0.0.1",
+        port: parsed.port ? parseInt(parsed.port, 10) : 6379,
+        password: parsed.password || undefined,
+        username: parsed.username || undefined,
+      };
 
-        this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
+      this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
           connection,
           defaultJobOptions: {
             attempts: 5,
@@ -108,9 +112,9 @@ export class ConversionDispatcherService {
           // Логгер сбоев при отправке конверсий
           console.warn(`[ConversionDispatcher] Job ${job?.id} failed:`, err.message);
         });
-      } catch (err) {
-        console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis, using in-memory queue:", err);
-      }
+    } catch (err) {
+      requireDurableQueue(QUEUE_NAME);
+      console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis:", err);
     }
   }
 
@@ -120,7 +124,8 @@ export class ConversionDispatcherService {
       return;
     }
 
-    // In-memory fallback
+    // In-memory fallback is intentionally limited to development and tests.
+    requireDurableQueue(QUEUE_NAME);
     this.inMemoryQueue.push(payload);
     void this.processNextInMemory();
   }

@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
-import { getRedisConnectionOptions } from "../../infrastructure/redis.js";
+import { getRedisConnectionOptions, requireDurableQueue } from "../../infrastructure/redis.js";
 import { query } from "../../db/client.js";
 import { crawlWebsite } from "./site-crawler.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
@@ -66,6 +66,7 @@ export class KnowledgeBaseQueueService {
   private initBullMQ(): void {
     const connOptions = getRedisConnectionOptions();
     if (!connOptions) {
+      requireDurableQueue(KB_QUEUE_NAME);
       return;
     }
 
@@ -112,7 +113,8 @@ export class KnowledgeBaseQueueService {
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[KnowledgeBaseQueue] Failed to connect BullMQ to Redis (${msg}), using in-memory queue`);
+      requireDurableQueue(KB_QUEUE_NAME);
+      console.warn(`[KnowledgeBaseQueue] Failed to connect BullMQ to Redis (${msg})`);
       this.bullQueue = null;
       this.bullWorker = null;
     }
@@ -154,11 +156,13 @@ export class KnowledgeBaseQueueService {
         });
         return { id: String(job.id || jobId) };
       } catch (err) {
-        console.warn(`[KnowledgeBaseQueue] BullMQ enqueue failed, falling back to in-memory:`, err);
+        requireDurableQueue(KB_QUEUE_NAME);
+        console.warn(`[KnowledgeBaseQueue] BullMQ enqueue failed:`, err);
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback is intentionally limited to development and tests.
+    requireDurableQueue(KB_QUEUE_NAME);
     this.inMemoryQueue.push({ id: jobId, name, data });
     void this.processNextInMemory();
     return { id: jobId };
