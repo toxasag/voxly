@@ -15,6 +15,7 @@ export type QueueName =
   | "broadcasts"
   | "task-reminders"
   | "notifications"
+  | "invoice_reminders"
   | "knowledge-indexing";
 
 export interface QueueJob<T = unknown> {

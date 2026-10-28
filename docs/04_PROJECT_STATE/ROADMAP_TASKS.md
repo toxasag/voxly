@@ -361,7 +361,7 @@
 - [~] `M3.2.4` Implement `POST /invoices/:id/pay` to credit a selected cash account atomically; standalone payment history endpoint remains pending
 - [ ] `M3.2.5` Implement `GET /invoices/:id/pdf` — generate PDF (pdfkit / puppeteer)
 - [x] `M3.2.6` Implement `GET /finance/pnl` plus accounts, transfers and transaction register APIs
-- [ ] `M3.2.7` Create BullMQ queue: `invoice_reminders` — auto-email overdue invoices
+- [x] `M3.2.7` Create BullMQ queue: `invoice_reminders` — auto-email overdue invoices
 - [ ] `M3.2.8` Integration tests for Finance endpoints
 
 ---

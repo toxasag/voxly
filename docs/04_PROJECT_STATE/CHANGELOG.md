@@ -179,7 +179,11 @@ Audit runtime проверяет точный local target и очищает cre
 
 Проверено: backend typecheck, build, 26 DB-независимых тестов и `git diff --check`.
 
-[Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
+### Added · Finance — напоминания о просроченных счетах (2026-10-28)
+
+Закрыт `M3.2.7`: добавлена durable-очередь `invoice_reminders`, почтовый шаблон и ежечасный планировщик. Воркер выбирает только счета текущего арендатора, отправляет письмо владельцу или контактному e-mail компании, после успешной доставки атомарно ставит `reminder_sent_at`; повторная отправка одного счёта не выполняется. Миграция `0057_invoice_reminders.sql` и `schema.sql` синхронизированы. Production без Redis остаётся fail-closed.
+
+
 Даты в формате `YYYY-MM-DD`.
 
 Типы изменений: `Added`, `Changed`, `Fixed`, `Security`, `Removed`, `Docs`.
