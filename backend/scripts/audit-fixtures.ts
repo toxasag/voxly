@@ -8,9 +8,7 @@ try {
   for (const [index, tenant] of tenants.entries()) {
     await ensureTenantDefaults(tenant);
     await withTenant(tenant, async (tx) => {
-      const user = await tx.queryOneOrThrow<{ id: string }>(
-        'SELECT id FROM users WHERE tenant_id=$1 AND role=$2 LIMIT 1', [tenant, 'owner'],
-      );
+      const user = await tx.queryOneOrThrow<{ id: string }>('SELECT id FROM users WHERE tenant_id=$1 AND role=$2 LIMIT 1', [tenant, 'owner']);
       const prefix = index === 0 ? 'aaaaaaaa-aaaa-aaaa-aaaa' : 'bbbbbbbb-bbbb-bbbb-bbbb';
       const contact = await tx.queryOneOrThrow<{ id: string }>(
         `INSERT INTO contacts(id,tenant_id,first_name,last_name,email,created_by)
@@ -22,8 +20,7 @@ try {
         await tx.query(
           `INSERT INTO repair_orders(id,tenant_id,ticket_number,customer_id,customer_name,customer_phone,
            equipment_type,equipment_brand,equipment_model,equipment_serial,defect_description,master_id,master_name)
-           VALUES ($1,$2,'AUDIT-001',$3,'Audit клиент','+79990000000',
-           'Ноутбук','Audit','Test','SYNTHETIC','Не включается',$4,'Audit мастер') ON CONFLICT(id) DO NOTHING`,
+           VALUES ($1,$2,'AUDIT-001',$3,'Audit клиент','+79990000000','Ноутбук','Audit','Test','SYNTHETIC','Не включается',$4,'Audit мастер') ON CONFLICT(id) DO NOTHING`,
           [`${prefix}-000000000002`, tenant, contact.id, user.id],
         );
       }
@@ -37,9 +34,7 @@ try {
          VALUES($1,$2,'Audit item',1,1000,1000) ON CONFLICT(id) DO NOTHING`,
         [`${prefix}-000000000004`, `${prefix}-000000000003`],
       );
-      const deal = await tx.queryOne<{ id: string }>(
-        `SELECT id FROM deals WHERE tenant_id=$1 ORDER BY created_at LIMIT 1`, [tenant],
-      );
+      const deal = await tx.queryOne<{ id: string }>('SELECT id FROM deals WHERE tenant_id=$1 ORDER BY created_at LIMIT 1', [tenant]);
       if (deal) {
         await tx.query(
           `INSERT INTO lead_notification_deliveries(tenant_id,deal_id,status,attempts,last_error)
