@@ -168,6 +168,24 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.setErrorHandler(errorHandler);
 
+  // Structured request lifecycle logs: Fastify supplies a correlation id, while
+  // duration and response status make slow/error requests searchable in stdout
+  // without logging headers, cookies or request bodies.
+  app.addHook("onResponse", async (request, reply) => {
+    request.log.info(
+      {
+        requestId: request.id,
+        method: request.method,
+        url: request.url.split("?")[0],
+        statusCode: reply.statusCode,
+        durationMs: Math.round(reply.elapsedTime),
+        tenantId: request.tenant_id ?? undefined,
+        userId: request.authUser?.id ?? undefined,
+      },
+      "HTTP request completed",
+    );
+  });
+
   // Opens an AsyncLocalStorage scope for the whole request, which the
   // authenticate hook later fills with the tenant id. Registered here, before
   // any route group, so the store exists by the time authentication runs.

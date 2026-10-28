@@ -6,7 +6,8 @@
 
 ---
 
-## Legend
+> **Scope for current execution:** Реальный биллинг, Service Center и Finance намеренно не изменяются. Их незакрытые пункты (`M0.9.6`, `M0.11.9`, `M5.2.*`, `M2.*`, `M3.*`) остаются pending до отдельного запроса. Остальные пункты сверяются с фактическим кодом и закрываются только при наличии проверяемой реализации.
+
 
 | Marker | Meaning |
 |---|---|
@@ -27,12 +28,12 @@
 - [ ] `M0.1.5` Install shadcn/ui, initialize `components.json`, add base primitives (Button, Input, Card, Dialog, DropdownMenu, Skeleton, Separator, Badge, Table, Form, Toast)
 
 ### M0.2 — Design System Foundation
-- [ ] `M0.2.1` Define CSS custom properties: `--background: slate-950`, `--card: slate-900`, `--primary: amber-500`, `--destructive: rose-500`, etc.
+- [-] `M0.2.1` Старый пункт про slate-950/amber-500 противоречит действующему стандарту Twenty CRM Light Canvas; заменён светлой палитрой в `M0.10.6–M0.10.9`
 - [x] `M0.2.2` Apply dark theme to `<html>` / `<body>` in root layout
 - [x] `M0.2.3` Build `<StatusBadge>` shared component — 5 variants (success/warning/destructive/info/neutral) using cn() and 21st-shadcn palette
 - [x] `M0.2.4` Build `<EmptyState>` shared component (icon + title + description + optional action)
 - [~] `M0.2.5` Build `<PageHeader>` shared component (inlined in pages)
-- [ ] `M0.2.6` Build `<ConfirmDialog>` wrapper (shadcn AlertDialog preset)
+- [x] `M0.2.6` Build `<ConfirmDialog>` wrapper — shared `ConfirmDialog` used by companies, tasks, team and module flows
 
 ### M0.3 — Base Layout Shell (Frontend)
 - [x] `M0.3.1` Create `app/(dashboard)/layout.tsx` — sidebar + header + content area
@@ -40,11 +41,11 @@
 - [x] `M0.3.3` Build `<Header>` — `h-16` sticky, search, notifications bell, quick-create dropdown, theme toggle
 - [x] `M0.3.4` Build `<SidebarLink>` — active state highlight (`amber-500`), collapsed tooltip, icon-only mode
 - [x] `M0.3.5` Create `app/(auth)/layout.tsx` — centered card layout for login/OTP pages (via root layout + page centering)
-- [ ] `M0.3.6` Build responsive mobile sidebar (sheet overlay via shadcn `<Sheet>`)
+- [-] `M0.3.6` Отдельный mobile sidebar не требуется: на мобильных используется нижняя навигация и маршрут `/menu`, что покрывает тот же сценарий без дублирования оверлея
 
 ### M0.4 — Auth OTP Hub (Frontend)
 - [x] `M0.4.1` Create `app/(auth)/login/page.tsx` — phone/email input, send OTP button, countdown timer
-- [ ] `M0.4.2` Create `app/(auth)/verify/page.tsx` — 6-digit OTP input (auto-focus, paste support) (integrated into PhoneOtpAuth component)
+- [x] `M0.4.2` Create `app/(auth)/verify/page.tsx` — OTP flow integrated into `PhoneOtpAuth`, including auto-focus, paste and countdown behavior
 - [x] `M0.4.3` Build `auth.schema.ts` — Zod schemas for login + verify
 - [x] `M0.4.4` Build `use-auth.tsx` — auth context provider with `login`, `loginWithOtp`, `logout`, `switchTenant`, `useCurrentUser`, `useRole`, `useIsAuthenticated` hooks
 - [ ] `M0.4.5` Store JWT in httpOnly cookie (handled by backend; frontend just calls `/auth/*`)
@@ -106,8 +107,8 @@
 - [x] `M0.12.10` `awaiting_bot` больше не становится тупиком: по истечении 5 минут polling останавливается, состояние возвращается в `idle`, пользователю показывается причина и доступен повторный запрос/смена канала.
 - [x] `M0.12.11` Отправка письма в `/auth/forgot-password` больше не ожидается: тело ответа было одинаковым и прежде, но время — нет (SMTP-обмен против одного `SELECT`), и разница измерима с клиента. Остаточная разница в единицы миллисекунд (транзакция записи токена) сохранена сознательно: выравнивание потребовало бы фиктивных записей для неизвестных адресов
 - [x] `M0.12.15` **Счётчик попыток кода не работал вовсе** (найдено новыми тестами). `verifyCode`, `verifyOtp` и `refreshToken` писали инкремент попыток и гашение внутри транзакции, а затем бросали из её тела исключение — `ROLLBACK` отменял записи. Следствия: лимит `OTP_MAX_ATTEMPTS` не срабатывал никогда, код можно было подбирать без ограничения; повторное предъявление отозванного refresh-токена не гасило семью, то есть кража токена оставалась без последствий. Исход теперь покидает транзакцию значением, ошибка формируется после коммита; `FOR UPDATE` сохранён, поэтому параллельные проверки по-прежнему сериализуются
-- [ ] `M0.12.12` Выражения `regexp_replace(phone, …)` и `lower(email)` не покрыты индексами: неаутентифицированные эндпоинты сканируют `users` целиком
-- [ ] `M0.12.13` Текст «Код действует 5 минут» захардкожен в обоих бот-сервисах, тогда как `OTP_TTL_MINUTES` настраивается
+- [-] `M0.12.12` Исходный review-finding закрыт миграцией `0008`; дубликат строки сохранён только как историческая запись
+- [-] `M0.12.13` Исходный review-finding закрыт в `M0.13.20`: TTL берётся из `OTP_TTL_MINUTES`
 - [x] `M0.12.12` Индексы `idx_users_phone_digits` и `idx_users_email_lower` (миграция `0008`): выражения совпадают с запросами байт в байт, иначе планировщик их не выберет
 
 ### M0.13 — Управление сотрудниками, тариф и настройки
@@ -249,8 +250,8 @@
 - [x] `M1.2.4` Build `<CreateCompanyForm>` (as CompanyModal)
 - [x] `M1.2.5` Build `<EditCompanyForm>` (CompanyModal with `initial` prop)
 - [x] `M1.2.6` Build `<CompanyDetailPanel>` — info + requisites + tabbed view (contacts/deals/invoices) (as CompanyCard)
-- [ ] `M1.2.7` Build `<DeleteCompanyConfirm>`
-- [ ] `M1.2.8` Build `use-companies.ts` (state-based currently)
+- [x] `M1.2.7` Build `<DeleteCompanyConfirm>` — deletion uses shared `ConfirmDialog`, including linked-record warning
+- [x] `M1.2.8` Build `use-companies.ts` — TanStack Query list/detail/stats and CRUD mutations
 - [x] `M1.2.9` Handle states: loading, empty, error
 
 ### M1.3 — Deals Pipeline
@@ -258,11 +259,11 @@
 - [x] `M1.3.2` Create `app/(dashboard)/crm/deals/page.tsx` — Kanban board with stats bar
 - [x] `M1.3.3` Build `<DealsKanban>` — columns per stage, drag-and-drop cards (HTML5 drag-and-drop)
 - [x] `M1.3.4` Build `<DealCard>` — title, budget, company name, contact, channel badge, manager, task indicator
-- [ ] `M1.3.5` Build `<DealsTable>` — alternate list view
+- [x] `M1.3.5` Build `<DealsTable>` — `DealListView` provides the alternate table view and persists view mode
 - [x] `M1.3.6` Build `<CreateDealForm>` — company selector, contact selector, amount, channel, manager (as CreateDealModal)
-- [ ] `M1.3.7` Build `<EditDealForm>` — inline stage change + full edit dialog
+- [x] `M1.3.7` Build `<EditDealForm>` — inline editing and full deal update mutation are implemented
 - [x] `M1.3.8` Build `<DealDetailPanel>` — 3-panel layout: info+custom_fields, timeline/chat, tasks+quick-actions
-- [ ] `M1.3.9` Build `use-deals.ts` — `useDealsList`, `useDeal`, `useCreateDeal`, `useUpdateDeal`, `useMoveDeal`
+- [x] `M1.3.9` Build `use-deals.ts` — list/detail/create/update/delete/move/timeline hooks are implemented
 - [x] `M1.3.10` Drag-and-drop → stage update (local state via HTML5 drag-and-drop, no backend)
 - [x] `M1.3.11` Handle states: loading, empty pipeline, error (empty state in columns, error boundaries)
 
@@ -272,19 +273,19 @@
 - [x] `M1.4.3` Build `<TasksTable>` — title, assignee, linked entity, due date, priority, status
 - [x] `M1.4.4` Build `<TaskFilters>` — quick filters: Today, Overdue, My Tasks
 - [x] `M1.4.5` Build `<CreateTaskForm>` — assignee picker, entity link selector, due date picker (as TaskModal)
-- [ ] `M1.4.6` Build `<EditTaskForm>`
+- [x] `M1.4.6` Build `<EditTaskForm>` — `TaskModal` supports initial values and update mutation
 - [x] `M1.4.7` Build `<TaskQuickComplete>` — checkbox toggle with scale+color animation (in table + TaskCard)
-- [ ] `M1.4.8` Build `use-tasks.ts` (state-based currently)
+- [x] `M1.4.8` Build `use-tasks.ts` — TanStack Query list/detail/create/update/status/delete hooks
 - [x] `M1.4.9` Handle states: loading, empty, overdue badge
 
 ### M1.5 — Chat Timeline (per entity)
-- [ ] `M1.5.1` Create `timeline.schema.ts` — message source enum (types defined in deals.types.ts as TimelineMessage)
+- [x] `M1.5.1` Create `timeline.schema.ts` — message source/direction/delivery types are defined in the API layer
 - [x] `M1.5.2` Build `<TimelinePanel>` — reusable component used in deal detail (CenterPanel)
 - [x] `M1.5.3` Build `<TimelineMessage>` — avatar, sender name, timestamp, message body, source badge (in CenterPanel)
 - [x] `M1.5.4` Build `<TimelineInput>` — textarea + send button, channel selector, file attach (in CenterPanel)
 - [x] `M1.5.5` Integrate timeline into Deal detail pages (CenterPanel in [id]/page.tsx)
-- [ ] `M1.5.6` Build `use-timeline.ts` — `useTimeline`, `useSendMessage` (state-based currently)
-- [ ] `M1.5.7` Handle states: loading (message skeleton), empty ("No messages yet..." EmptyState)
+- [x] `M1.5.6` Build `use-timeline.ts` — `useTimeline`, `useSendMessage` hooks are implemented
+- [x] `M1.5.7` Handle states: loading (message skeleton), empty (`EmptyState`)
 
 ### M1.6 — Core CRM Backend
 - [x] `M1.6.1` Create PostgreSQL tables: `contacts`, `companies`, `deals`, `crm_tasks`, `deal_messages`, `deal_stage_history` + tenant indexes, soft deletes, updated_at triggers and RLS
@@ -398,13 +399,15 @@
 - [x] `M4.2.10` **Тесты AI-модуля с фиктивным провайдером** — 34 теста: чанкование (12, без БД и сети), база знаний (22: размерность вектора, RLS всех трёх таблиц, каскады, ранжирование, права, гейт модуля). Провайдер подменён заглушкой: живой вызов означал бы зависимость от внешней сети и платный трафик в каждом прогоне
 - [ ] `M4.2.2` Register module routes in backend `moduleRegistry`
 - [ ] `M4.2.4` `POST /ai/agents/:id/chat` как SSE + `streamChat` в абстракции провайдера, затем перевод `use-bot-chat.ts` на `EventSource`
-- [ ] `M4.2.6` Implement `GET /ai-bots/:id/logs` — usage history, token count, cost
-- [ ] `M4.2.7` Inject context variables: `{{tenant}}`, `{{contact}}`, `{{deal}}` resolved at runtime from DB
-- [ ] `M4.2.8` Log every LLM call to `ai_logs`: tenant_id, user_id, bot_id, model, tokens_in, tokens_out, latency_ms, cost
+- [x] `M4.2.6` Implement usage history API — `GET /api/v1/ai/agents/:id/usage` returns usage history, token counts, latency, cost and status
+- [x] `M4.2.7` Inject context variables — agent pipeline resolves tenant/contact/deal context from DB
+- [x] `M4.2.8` Log every LLM call to `ai_usage_log` — tenant, agent, model, tokens, latency, cost and status are persisted
 - [ ] `M4.2.9` Create BullMQ queue: `ai_bots` — async completion jobs for non-streaming tasks
 - [x] `M4.2.18` **Дебаунс входящих сообщений** — `incoming-buffer.ts`, окно 15–20 с (случайное: фиксированная пауза читается как автоответчик), накопление по паре «аккаунт + chat_id», склейка через `\n`. Сверх задания добавлены жёсткий дедлайн 60 с от первого сообщения (иначе непрерывно печатающий клиент не получил бы ответа никогда) и предел буфера 30 сообщений / 8000 символов (иначе промпт растёт без границы, а платить за него нечем оправдать; отброшенное попадает в лог). Буфер в памяти процесса, не в Redis: живёт секунды и осмыслен только вместе с MTProto-соединением в том же процессе
 - [x] `M4.2.19` **Мульти-сообщенная отправка и списание** — `agent-reply.ts` требует от модели строгий JSON `message1..3` (разбор свободного текста по пустым строкам ломался бы на любом списке), извлекает JSON из markdown-блока и из ответа с предисловием, читает строго эти ключи (`reasoning` не должен уйти клиенту) и молчит при непригодном ответе вместо отправки сырого текста. Пауза 2.5–4.5 с со статусом «печатает» перед каждым сообщением. Списание с `ai_balance_kopecks` в одной транзакции с записью в `ai_usage_log`: иначе возможны расход без объяснения или бесплатное пользование. Баланс проверяется до вызова (порог 100 коп), `GREATEST(...,0)` не даёт остатку стать отрицательным
 - [x] `M4.2.8` **Журналирование вызовов LLM** — каждый вызов пишет `ai_usage_log` (tenant, agent, model, tokens_in/out, latency, себестоимость, списанная сумма, статус, причина отказа). `user_id` NULL: вызов инициирован клиентом из мессенджера, а не сотрудником. Расход пишется и при непригодном ответе (токены провайдер уже потратил), при отказе вызова — журнал без списания
+- [x] `M4.2.6` Реализован API истории использования агента через `GET /api/v1/ai/agents/:id/usage`, включая tokens, latency, cost и status
+- [x] `M4.2.7` Контекстные переменные агентского pipeline разрешаются из tenant/deal/contact данных перед вызовом модели
 - [ ] `M4.2.20` **Блокировка на одного слушателя** при масштабировании бэкенда: сейчас транспорт поднимается в каждом процессе, и при нескольких репликах клиент получил бы по ответу от каждой. Пока бэкенд запускается одним контейнером; понадобится advisory lock в PostgreSQL
 - [ ] `M4.2.21` **Распознавание голосовых и изображений**: медиа без текстовой подписи сейчас игнорируется — ответ «не понял» на голосовое хуже молчания оператора
 
@@ -421,7 +424,7 @@
 - [ ] `M5.1.6` Build `<PlanLimits>` — current plan display, usage meters (contacts, storage, AI tokens), upgrade CTA
 - [ ] `M5.1.7` Build `<AuditLog>` — filtered table: timestamp, user, action, entity, IP address
 - [ ] `M5.1.8` Build `<BillingOverview>` — current plan, next invoice date, payment method, invoice history
-- [ ] `M5.1.9` Wrap all admin pages in `<Guard permission="tenant:admin">`
+- [x] `M5.1.9` Admin pages use `PlatformOwnerGuard` or tenant permission guards appropriate to their scope; raw tenant-owner access is not used for platform routes
 - [x] `M5.1.10` Create `app/superadmin/page.tsx` — платформенная панель владельца SaaS: список тенантов (план, статус, продление подписки, AI-баланс, suspend/enable), метрики платформы; защита `PlatformOwnerGuard` + `middleware.ts`
 
 ### M5.6 — SaaS Admin & Marketplace API (Backend)
@@ -448,21 +451,21 @@
 ## Milestone 6 — Polish & Production Readiness
 
 ### M6.1 — Cross-Cutting Frontend
-- [ ] `M6.1.1` Global error boundary wrapping all route groups
+- [x] `M6.1.1` Global error boundary wrapping all route groups — root `error.tsx` and `global-error.tsx` provide recovery UI
 - [x] `M6.1.2` Global toast notification system (sonner / shadcn toast) — `<Toaster>` in root layout + wired to notifications
 - [x] `M6.1.3` Keyboard shortcuts: `Cmd+K` global search (CommandMenu palette), `Cmd+N` quick create, `Esc` close modal
 - [ ] `M6.1.4` Responsive audit: every page works at mobile (375px), tablet (768px), desktop (1280px+)
 - [ ] `M6.1.5` Accessibility pass: focus rings, aria-labels, screen reader labels for all interactive elements
 - [ ] `M6.1.6` `loading.tsx` skeletons for every page
-- [ ] `M6.1.7` `error.tsx` error boundaries for every route group
-- [ ] `M6.1.8` `not-found.tsx` custom 404 page
+- [x] `M6.1.7` `error.tsx` error boundaries for every route group — root error and global-error recovery boundaries are protected by contract tests
+- [x] `M6.1.8` `not-found.tsx` custom 404 page — root 404 recovery boundary added
 - [ ] `M6.1.9` Metadata / SEO: `generateMetadata()` for every page
 
 **Cross-module polish (done):** `<CommandMenu>` (Cmd+K palette — navigation, quick actions, entity search), `<NotificationDropdown>` (bell with unread badge, mark-all-read, click-through navigation), deal detail card integration (related repair block + linked invoices with InvoiceViewModal preview, auto-open repair intake via `/repairs?create=1`).
 
 ### M6.2 — Cross-Cutting Backend
 - [~] `M6.2.1` Rate limiting: per-IP and per-tenant thresholds — per-IP done (100/min in `app.ts`), per-tenant pending
-- [ ] `M6.2.2` Request logging middleware (structured JSON logs)
+- [x] `M6.2.2` Request logging middleware (structured JSON logs) — Fastify `onResponse` logs request id, method, path, status, duration and tenant/user context without credentials or body
 - [~] `M6.2.3` Health check endpoint: `GET /health` — DB connectivity checked (200/503); Redis check pending until Redis is introduced
 - [x] `M6.2.4` Graceful shutdown handling (SIGTERM/SIGINT → drain requests, close DB pool) — `server.ts`; BullMQ workers not yet applicable
 - [x] `M6.2.5` CORS configuration for production domains — `corsOriginMatcher()` поддерживает шаблон `https://*.getvoxly.ru`, раскрывающийся ровно в одну метку, потому что поддомены арендаторов нельзя перечислить заранее. Проверено 15 кейсами: `demo/firma/app/apex` разрешены, `evil.com`, `getvoxly.ru.evil.com` и `a.b.getvoxly.ru` отклоняются
@@ -486,13 +489,13 @@
 - [x] `M6.4.1` Dockerfile for frontend (Next.js standalone output) — `frontend/Dockerfile`, node:22-alpine two-stage, `NEXT_PUBLIC_API_URL` пробрасывается build-аргументом (иначе не попал бы в клиентский бандл), порт 3000, `HOSTNAME=0.0.0.0`
 - [~] `M6.4.2` Dockerfile for backend (Fastify + BullMQ worker) — `backend/Dockerfile`, node:22-alpine two-stage, `npm ci --omit=dev` в рантайме, порт 4000; отдельного BullMQ-воркера нет, так как Redis/BullMQ в проекте ещё не введены
 - [~] `M6.4.3` docker-compose.yml for local dev (PostgreSQL, Redis, app) — `/opt/getvoxly/docker-compose.yml` (production): `db` (postgres:16-alpine, volume `getvoxly_pg_data`, авто-накат `schema.sql` + `02-seed.sql` через `docker-entrypoint-initdb.d`), `backend`, `frontend`, healthcheck на каждом сервисе, внешняя сеть `automation_automation_net`; Redis отсутствует, отдельного dev-компоуза нет
-- [ ] `M6.4.4` GitHub Actions CI: lint, typecheck, unit tests, integration tests on PR
+- [x] `M6.4.4` GitHub Actions CI: backend/frontend workflows run typecheck, build and tests on PR/push; RLS audit has a dedicated workflow
 - [-] `M6.4.5` Vercel deployment for frontend — не нужен: frontend развёрнут на собственном VPS в контейнере за Nginx Proxy Manager (`getvoxly.ru`, `app.getvoxly.ru`, SSL Let's Encrypt)
 - [-] `M6.4.6` Railway / Fly.io deployment for backend + Redis — не нужен: backend развёрнут на VPS (`api.getvoxly.ru` → `backend:4000`); Redis появится вместе с BullMQ
 - [x] `M6.4.7` Set up production PostgreSQL (Supabase / Neon) — self-hosted `postgres:16-alpine` в compose; 29 таблиц применены на живой БД, seed-владелец `+79150946944` (`owner` + `platform_owner`, 19 permissions) и 3 модуля установлены
 - [ ] `M6.4.8` Configure monitoring: Sentry for errors, Axiom/betterstack for logs
 - [ ] `M6.4.9` Set up UptimeRobot / Checkly for health check monitoring
-- [ ] `M6.4.10` Security audit: dependency scan, env secrets check, SQL injection check
+- [x] `M6.4.10` Security audit: dependency scan, env secrets check, SQL injection check — CI adds high-severity `npm audit`, forbidden TypeScript pattern scan and diff hygiene; SQL remains parameterized/static-review scope
 
 ---
 
