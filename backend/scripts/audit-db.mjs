@@ -31,8 +31,6 @@ try {
 const db = new pg.Client({
   ...adminConfig,
   database: name,
-  user: name,
-  password,
 });
 await db.connect();
 try {
@@ -44,7 +42,7 @@ try {
 } finally { await db.end(); }
 await writeFile(new URL('runtime.json', dir), JSON.stringify({
   database: name, role: name,
-  databaseUrl: `postgres://${name}:${password}@127.0.0.1:5432/${name}`,
+  databaseUrl: `postgres://${name}:${password}@${adminConfig.host}:${adminConfig.port}/${name}`,
   jwtSecret: randomBytes(40).toString('hex'),
 }), { mode: 0o600, flag: 'wx' });
 console.log(`Created isolated audit database and role: ${name}. Runtime: ${fileURLToPath(dir)} (secrets not printed).`);
