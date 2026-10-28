@@ -167,11 +167,12 @@ function TeamContent() {
       setBusyId(member.id);
       try {
         const result = await resend.mutateAsync({ id: member.id });
-        toast.success(
-          result.emailSent
-            ? `Приглашение отправлено повторно на ${member.email}`
-            : "Ссылка обновлена, но письмо не отправлено — проверьте настройки почты",
-        );
+        if (result.inviteUrl !== null) {
+          await navigator.clipboard?.writeText(result.inviteUrl);
+          toast.success("Ссылка обновлена и скопирована в буфер обмена");
+        } else {
+          toast.success(`Приглашение отправлено повторно на ${member.email}`);
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить приглашение");
       } finally {
