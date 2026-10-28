@@ -1,4 +1,11 @@
-### Fixed · Frontend quality gate recovery (2026-10-28)
+### Added · Backend maintenance — окончательная очистка данных модулей (2026-10-28)
+
+Добавлен `module-data-purge-maintenance.service.ts`: после `purge_after` сервис
+платформенно выбирает ожидающие журналы, выполняет tenant-scoped окончательное
+удаление мягко скрытых строк, учитывает фильтр канала для общей таблицы
+`channel_accounts`, помечает журнал `purged_at` и работает пакетами до 100
+журналов. Планировщик подключён к graceful shutdown в `server.ts`.
+
 
 Исправлены регрессии контрактных тестов после перехода на реальные Query hooks и
 единый `RecordTable`: тестовые QueryClient-обёртки для Inbox, Stories и AI balance,
