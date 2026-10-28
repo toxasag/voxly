@@ -35,6 +35,13 @@ const db = new pg.Client({
 await db.connect();
 try {
   await db.query(await readFile(new URL('src/db/schema.sql', root), 'utf8'));
+  // The audit schema is created from schema.sql, but the newest migrations are
+  // applied explicitly so runtime smoke covers tables that are not part of the
+  // bootstrap file. They run as the admin connection, then the app role receives
+  // only DML rights and is used for all isolation assertions.
+  for (const migration of ['0054_lead_notification_deliveries.sql', '0055_conversion_delivery_attempts.sql']) {
+    await db.query(await readFile(new URL(`src/db/migrations/${migration}`, root), 'utf8'));
+  }
   await db.query(`GRANT CONNECT ON DATABASE "${name}" TO "${name}"`);
   await db.query(`GRANT USAGE ON SCHEMA public TO "${name}"`);
   await db.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "${name}"`);

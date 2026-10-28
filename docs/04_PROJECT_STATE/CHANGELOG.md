@@ -64,7 +64,14 @@ Beta. Это дополняет статический аудит проверк
 PostgreSQL runtime и `.audit/runtime.json`. Выполнены `tsc --noEmit`, синтаксическая
 проверка `.mjs`, 4/4 теста классификатора RLS и `git diff --check`.
 
-### Verification note — 2026-10-28
+### Changed · CI — RLS smoke applies current durable ledgers (2026-10-28)
+
+Audit database preparation now applies migrations `0054` and `0055` after the
+bootstrap schema, so the RLS workflow tests the actual durable lead-notification
+and conversion-attempt tables rather than an older schema snapshot. Fixtures and
+smoke verify tenant-scoped visibility for delivery rows alongside invoices and
+`invoice_items`; CI also asserts both ledger tables exist before the runtime run.
+
 
 Повторная попытка запуска не изменила ограничение: Docker socket недоступен
 (`permission denied`), PostgreSQL CLI/runtime и `.audit/runtime.json` отсутствуют.
