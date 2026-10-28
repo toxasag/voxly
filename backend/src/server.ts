@@ -7,6 +7,7 @@ import { MaxService } from "./services/max.service.js";
 import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js";
 import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
 import { scheduleDealMaintenance } from "./modules/crm/deals/deal-maintenance.service.js";
+import { scheduleModuleDataPurgeMaintenance } from "./modules/marketplace/module-data-purge-maintenance.service.js";
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
@@ -142,6 +143,7 @@ async function main(): Promise<void> {
 
   // Периодическое обслуживание сделок (автозакрытие просроченных анонимных сделок «Первый контакт» через 5 суток).
   const stopDealMaintenance = scheduleDealMaintenance(app.log);
+  const stopModuleDataPurgeMaintenance = scheduleModuleDataPurgeMaintenance(app.log);
 
   // Транспорт входящих сообщений Telegram (M7.5.16).
   //
@@ -221,6 +223,7 @@ async function main(): Promise<void> {
       stopMaintenance();
       stopReminders();
       stopDealMaintenance();
+      stopModuleDataPurgeMaintenance();
       await shutdownWorker();
       stopTransport();
       unregisterMaxOutbound();
