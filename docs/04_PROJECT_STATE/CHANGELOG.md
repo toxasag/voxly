@@ -1,4 +1,12 @@
-### Added · CI — frontend quality gate and recovery boundary contract (2026-10-28)
+### Fixed · Frontend quality gate recovery (2026-10-28)
+
+Исправлены регрессии контрактных тестов после перехода на реальные Query hooks и
+единый `RecordTable`: тестовые QueryClient-обёртки для Inbox, Stories и AI balance,
+актуальные моки CompanyCard, проверки прямой ссылки сделки и WYSIWYG-композитора,
+адаптивное меню колонок, типографика строк, фильтры задач и состав навигации.
+
+Проверено: frontend typecheck, 45 файлов / 285 тестов и production build.
+
 
 Добавлен `.github/workflows/frontend-ci.yml`: `npm ci`, frontend typecheck,
 Vitest и production build выполняются на PR и push в `master`. Добавлен contract
