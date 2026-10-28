@@ -1,5 +1,8 @@
 import pg from 'pg';
 
+// Tables that are deliberately outside tenant RLS because they are used before a
+// tenant context exists or are platform-wide catalogs. Keep this list explicit:
+// adding a table here hides a finding and therefore requires a code review.
 export const INTENTIONAL_EXCEPTIONS = new Set([
   'auth_sessions', 'contacts_company_backfill_0020', 'marketplace_modules', 'otp_codes',
   'password_reset_tokens', 'pgmigrations', 'pipelines', 'platform_billing_config',
@@ -7,6 +10,7 @@ export const INTENTIONAL_EXCEPTIONS = new Set([
   'stages', 'tenant_audit_log', 'tenants', 'users',
 ]);
 
+// invoice_items is scoped through invoices.invoice_id, not a duplicated tenant_id.
 export const PARENT_SCOPED_EXCEPTIONS = new Set(['invoice_items']);
 
 export function classifyRlsRows(rows) {
@@ -18,6 +22,9 @@ export function classifyRlsRows(rows) {
     if (!intentional && !row.rls_enabled) violations.push('RLS disabled');
     if (!intentional && !row.rls_forced) violations.push('FORCE RLS disabled');
     if (!intentional && !row.has_policy) violations.push('policy missing');
+    if (!intentional && !parentScoped && row.has_tenant_id && row.has_unsafe_tenant_foreign_key) {
+      violations.push('tenant-unsafe foreign key');
+    }
     return { ...row, intentional, parentScoped, violations };
   });
 }
@@ -27,20 +34,47 @@ export async function auditRls(connectionString) {
   await client.connect();
   try {
     const result = await client.query(`
+      WITH table_columns AS (
+        SELECT table_name,
+               bool_or(column_name = 'tenant_id' AND is_nullable = 'NO') AS has_tenant_id,
+               bool_or(column_name = 'tenant_id') AS has_any_tenant_id
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+        GROUP BY table_name
+      ), unsafe_fks AS (
+        SELECT src.relname AS table_name
+        FROM pg_constraint fk
+        JOIN pg_class src ON src.oid = fk.conrelid
+        JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
+        JOIN pg_class dst ON dst.oid = fk.confrelid
+        JOIN pg_namespace dst_ns ON dst_ns.oid = dst.relnamespace
+        JOIN table_columns src_cols ON src_cols.table_name = src.relname
+        JOIN table_columns dst_cols ON dst_cols.table_name = dst.relname
+        WHERE fk.contype = 'f'
+          AND src_ns.nspname = 'public' AND dst_ns.nspname = 'public'
+          AND src_cols.has_any_tenant_id AND dst_cols.has_any_tenant_id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM unnest(fk.conkey) AS source_attnum
+            JOIN pg_attribute source_attr
+              ON source_attr.attrelid = src.oid AND source_attr.attnum = source_attnum
+            WHERE source_attr.attname = 'tenant_id'
+          )
+      )
       SELECT c.relname AS table_name,
              c.relrowsecurity AS rls_enabled,
              c.relforcerowsecurity AS rls_forced,
-             EXISTS (
-               SELECT 1 FROM information_schema.columns col
-               WHERE col.table_schema = 'public' AND col.table_name = c.relname
-                 AND col.column_name = 'tenant_id' AND col.is_nullable = 'NO'
-             ) AS has_tenant_id,
+             COALESCE(cols.has_tenant_id, false) AS has_tenant_id,
              EXISTS (
                SELECT 1 FROM pg_policies p
                WHERE p.schemaname = 'public' AND p.tablename = c.relname
-             ) AS has_policy
+             ) AS has_policy,
+             EXISTS (
+               SELECT 1 FROM unsafe_fks f WHERE f.table_name = c.relname
+             ) AS has_unsafe_tenant_foreign_key
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN table_columns cols ON cols.table_name = c.relname
       WHERE n.nspname = 'public' AND c.relkind = 'r'
       ORDER BY c.relname
     `);
@@ -48,6 +82,7 @@ export async function auditRls(connectionString) {
     return {
       tables: findings.length,
       intentionalExceptions: findings.filter((row) => row.intentional).map((row) => row.table_name),
+      parentScopedExceptions: findings.filter((row) => row.parentScoped).map((row) => row.table_name),
       unexplained: findings.filter((row) => row.violations.length > 0)
         .map((row) => ({ table: row.table_name, violations: row.violations })),
     };

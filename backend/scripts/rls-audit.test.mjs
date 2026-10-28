@@ -29,3 +29,11 @@ test('fails business table without tenant id, policy and RLS', () => {
     'missing tenant_id NOT NULL', 'RLS disabled', 'FORCE RLS disabled', 'policy missing',
   ]);
 });
+
+test('fails a tenant table with a foreign key that does not carry tenant scope', () => {
+  const [row] = classifyRlsRows([{
+    table_name: 'deals', rls_enabled: true, rls_forced: true,
+    has_tenant_id: true, has_policy: true, has_unsafe_tenant_foreign_key: true,
+  }]);
+  assert.deepEqual(row.violations, ['tenant-unsafe foreign key']);
+});
