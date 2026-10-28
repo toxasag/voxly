@@ -14,6 +14,7 @@ import { TelegramTransportService } from "./modules/channels/telegram-transport.
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
 import { MaxBridgeService } from "./modules/channels/max-bridge.service.js";
 import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
+import { resolveOutboundMedia, isMeaningfulCaption } from "./modules/channels/media-resolver.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -168,12 +169,34 @@ async function main(): Promise<void> {
         [message.tenantId, message.channelAccountId],
       );
       if (account) {
+        let mediaBase64: string | undefined;
+        let fileName: string | undefined;
+        let mimeType: string | undefined;
+        let textToSend = message.text;
+
+        if (message.attachment) {
+          const media = await resolveOutboundMedia(
+            message.attachment,
+            message.tenantId,
+            message.attachmentType,
+          );
+          if (media) {
+            mediaBase64 = media.buffer.toString("base64");
+            fileName = media.filename;
+            mimeType = media.mimeType;
+            textToSend = isMeaningfulCaption(message.text, media.filename) ? message.text : "";
+          }
+        }
+
         const res = await maxBridge.sendMessage({
           tenantId: message.tenantId,
           name: account.label,
           botId: account.id,
           recipient: message.recipient,
-          text: message.text,
+          text: textToSend,
+          mediaBase64,
+          fileName,
+          mimeType,
         });
         if (res.ok) return { ok: true };
       }
@@ -206,6 +229,26 @@ async function main(): Promise<void> {
       if (!instanceName) {
         return { ok: false, reason: "Инстанс WhatsApp не найден у подключения" };
       }
+
+      if (message.attachment) {
+        const media = await resolveOutboundMedia(
+          message.attachment,
+          message.tenantId,
+          message.attachmentType,
+        );
+        if (media) {
+          const caption = isMeaningfulCaption(message.text, media.filename) ? message.text : undefined;
+          const res = await evo.sendMediaMessage(instanceName, message.recipient, {
+            buffer: media.buffer,
+            filename: media.filename,
+            mimeType: media.mimeType,
+            caption,
+          });
+          if (res.ok) return { ok: true };
+          return { ok: false, reason: res.error ?? "Ошибка отправки медиа в WhatsApp" };
+        }
+      }
+
       const res = await evo.sendTextMessage(instanceName, message.recipient, message.text);
       if (res.ok) return { ok: true };
       return { ok: false, reason: res.error ?? "Ошибка отправки WhatsApp" };

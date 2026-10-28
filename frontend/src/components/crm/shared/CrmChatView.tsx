@@ -35,6 +35,7 @@ import { useDeal, useMarkDealPersonal, useUnmarkDealPersonal } from "@/lib/api/u
 import { useContact, useSetContactPersonal } from "@/lib/api/use-contacts";
 import {
   useCrmChat,
+  useUploadCrmMedia,
   type ChatMessageDTO,
   type CrmChatEntityType,
   type SendFromOptionDTO,
@@ -165,9 +166,21 @@ function isImageAttachment(attachment: string, attachmentType?: string | null): 
   return /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment);
 }
 
+function isVideoAttachment(attachment: string, attachmentType?: string | null): boolean {
+  if (attachmentType && attachmentType.startsWith("video/")) return true;
+  return /\.(mp4|mov|avi|mkv|webm)$/i.test(attachment);
+}
+
+function isAudioAttachment(attachment: string, attachmentType?: string | null): boolean {
+  if (attachmentType && attachmentType.startsWith("audio/")) return true;
+  return /\.(mp3|ogg|opus|wav|m4a|aac)$/i.test(attachment);
+}
+
 function getAttachmentInfo(attachment: string, attachmentType?: string | null, content?: string) {
   const url = resolveAttachmentUrl(attachment);
   const isImage = isImageAttachment(attachment, attachmentType);
+  const isVideo = isVideoAttachment(attachment, attachmentType);
+  const isAudio = isAudioAttachment(attachment, attachmentType);
 
   const extMatch = attachment.match(/\.([a-zA-Z0-9]+)(?:\?|#|$)/) || (content ? content.match(/\.([a-zA-Z0-9]+)$/) : null);
   const ext = extMatch ? extMatch[1].toUpperCase() : (attachmentType?.split("/")[1] || "FILE").toUpperCase();
@@ -177,7 +190,8 @@ function getAttachmentInfo(attachment: string, attachmentType?: string | null, c
     fileName = content.trim();
   } else {
     const rawBase = attachment.split("/").pop() || "Документ";
-    fileName = decodeURIComponent(rawBase);
+    const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
+    fileName = decodeURIComponent(cleaned || rawBase);
   }
 
   let typeLabel = `${ext} документ`;
@@ -187,11 +201,17 @@ function getAttachmentInfo(attachment: string, attachmentType?: string | null, c
     typeLabel = `Таблица Excel (${ext})`;
   } else if (ext === "PDF" || attachmentType?.includes("pdf")) {
     typeLabel = `Документ PDF`;
+  } else if (isVideo) {
+    typeLabel = `Видео (${ext})`;
+  } else if (isAudio) {
+    typeLabel = `Аудиозапись (${ext})`;
   }
 
   return {
     url,
     isImage,
+    isVideo,
+    isAudio,
     fileName,
     ext,
     typeLabel,
@@ -379,6 +399,8 @@ export function CrmChatView({
     syncHistoryMutation,
   } = useCrmChat({ entityType, entityId, live: true });
 
+  const uploadMediaMutation = useUploadCrmMedia();
+
   const isDeal = entityType === "deal";
   const dealQuery = useDeal(isDeal && entityId ? entityId : null);
   const contactQuery = useContact(!isDeal && entityId ? entityId : null);
@@ -564,12 +586,26 @@ export function CrmChatView({
   const handleSend = useCallback(
     async (attached?: AttachedFile) => {
       const text = input.trim();
-      if ((!text && !attached) || sendMessageMutation.isPending) return;
+      if ((!text && !attached) || sendMessageMutation.isPending || uploadMediaMutation.isPending) return;
 
       const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
       const fallbackChannel = lastMessageWithChannel?.channel ?? "telegram";
       const channel = selectedOption?.channel ?? (activeChannel !== "all" ? activeChannel : fallbackChannel);
       const channelAccountId = selectedOption?.channelAccountId;
+
+      let uploadedAttachmentUrl: string | undefined;
+      let uploadedAttachmentType: string | undefined;
+
+      if (attached) {
+        try {
+          const uploadRes = await uploadMediaMutation.mutateAsync(attached.file);
+          uploadedAttachmentUrl = uploadRes.url;
+          uploadedAttachmentType = uploadRes.mimeType;
+        } catch (uploadErr) {
+          toast.error("Не удалось загрузить файл на сервер");
+          return;
+        }
+      }
 
       try {
         await sendMessageMutation.mutateAsync({
@@ -578,15 +614,15 @@ export function CrmChatView({
           channel_account_id: channelAccountId || undefined,
           source: "manager",
           direction: "outbound",
-          attachment: attached?.name,
-          attachment_type: attached?.file.type,
+          attachment: uploadedAttachmentUrl,
+          attachment_type: uploadedAttachmentType,
         });
         setInput("");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
       }
     },
-    [input, sendMessageMutation, selectedOption, activeChannel, messages],
+    [input, sendMessageMutation, uploadMediaMutation, selectedOption, activeChannel, messages],
   );
 
   // Вызов AI-Copilot (генерация подсказки/черновика ответа)
@@ -947,10 +983,18 @@ export function CrmChatView({
                       {/* Текст сообщения */}
                       {(() => {
                         const trimmedContent = (message.content || "").trim();
+                        const info = message.attachment ? getAttachmentInfo(message.attachment, message.attachmentType, message.content) : null;
                         const isDummyContent =
                           trimmedContent === "." ||
                           trimmedContent === "[документ]" ||
-                          (message.attachment && trimmedContent === message.attachment);
+                          trimmedContent === "Вложение" ||
+                          trimmedContent === "Фотография" ||
+                          trimmedContent === "Видео" ||
+                          trimmedContent === "Аудио" ||
+                          (message.attachment && (
+                            trimmedContent === message.attachment ||
+                            (info && (trimmedContent === info.fileName || trimmedContent.toLowerCase() === info.fileName.toLowerCase()))
+                          ));
                         if (!trimmedContent || (message.attachment && isDummyContent)) {
                           return null;
                         }
@@ -985,6 +1029,33 @@ export function CrmChatView({
                           );
                         }
 
+                        if (info.isVideo) {
+                          return (
+                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-black shadow-2xs">
+                              <video
+                                src={info.url}
+                                controls
+                                preload="metadata"
+                                className="max-h-72 w-auto max-w-full rounded-[6px]"
+                              />
+                            </div>
+                          );
+                        }
+
+                        if (info.isAudio) {
+                          return (
+                            <div className="mt-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 shadow-2xs">
+                              <div className="mb-1 text-xs font-medium text-[#111111] truncate">{info.fileName}</div>
+                              <audio
+                                src={info.url}
+                                controls
+                                preload="metadata"
+                                className="w-full h-8"
+                              />
+                            </div>
+                          );
+                        }
+
                         return (
                           <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 transition-colors hover:border-[#cccccc]">
                             <div className="flex items-center gap-2.5 min-w-0">
@@ -1003,7 +1074,7 @@ export function CrmChatView({
                             <div className="flex shrink-0 items-center gap-1">
                               <a
                                 href={info.url}
-                                download
+                                download={info.fileName}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"

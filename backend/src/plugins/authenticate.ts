@@ -168,13 +168,23 @@ export const authenticatePlugin: FastifyPluginAsync = fp(
       // a future misplacement must not start demanding tokens on /auth.
       if (PUBLIC_PATHS.has(path)) return;
 
+      let token: string | undefined;
       const authHeader = request.headers.authorization;
 
-      if (authHeader === undefined || !authHeader.startsWith("Bearer ")) {
-        throw new UnauthorizedError("Missing bearer token");
+      if (authHeader !== undefined && authHeader.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (request.headers.cookie) {
+        const cookieMatch = request.headers.cookie.match(/(?:^|;\s*)(?:getvoxly_auth_token|access_token)=([^;]+)/);
+        if (cookieMatch && cookieMatch[1]) token = decodeURIComponent(cookieMatch[1]);
       }
 
-      const token = authHeader.slice("Bearer ".length);
+      if (!token && typeof (request.query as Record<string, unknown> | undefined)?.token === "string") {
+        token = (request.query as Record<string, string>).token;
+      }
+
+      if (!token) {
+        throw new UnauthorizedError("Missing bearer token");
+      }
       let payload: unknown;
 
       try {
