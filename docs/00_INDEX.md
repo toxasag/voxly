@@ -1,7 +1,9 @@
 # GETVOXLY — Documentation Index
 
 > B2B SaaS Modular Platform: Core CRM + Pluggable Modules (Service Center, Finance, AI Bots).
-> Stack: Next.js 15 + Fastify 5 + PostgreSQL 16 + Redis 7.
+> Stack: Next.js 15 + Fastify 5 + PostgreSQL 16 + Redis 7 + BullMQ.
+> Current release identity is read from `backend/src/release-manifest.json`; runtime
+> health exposes the same manifest under `release` without invoking Git.
 
 ---
 
@@ -22,7 +24,7 @@
 ```
 01_ARCHITECTURE/
 ├── 01_01_SYSTEM_OVERVIEW.md     ← Stack, repo layout, route mounting, tenant isolation, request flow
-├── 01_02_DATABASE_SCHEMA.md     ← All 27 tables, relations, JSONB fields, GIN indexes, triggers, RLS
+├── 01_02_DATABASE_SCHEMA.md     ← 56 source table definitions; current production snapshot: 57 public tables, 41 RLS policies
 ├── 01_03_SECURITY_RBAC.md       ← Roles, permissions, authenticate/authorize plugins, JWT flow
 ├── 01_04_DATABASE_MIGRATIONS.md ← Раннер миграций, порядок работы, baseline, откат
 ├── 01_05_UI_CONVENTIONS.md      ← Брейкпоинт 768px, структура на CSS против поведения на хуке, оверлеи
@@ -81,8 +83,9 @@
 ├── 05_01_SERVER_ACCESS.md       ← Как попасть на сервер (SSH, ключ, пароль для VNC),
 │                                   диагностика «сайт не открывается», порядок при зависании,
 │                                   инцидент 25.08.2026 и защита от брутфорса
-└── 05_02_DEPLOY.md              ← Деплой по ключу: ControlMaster (обязателен), scripts/deploy.sh,
-                                    отсоединённая сборка, ослабленные правила fail2ban
+├── 05_02_DEPLOY.md              ← Деплой по ключу, ControlMaster, отсоединённая сборка и health gates
+├── 05_03_SAFE_RELEASE.md        ← Approval gates, backup artifacts и безопасный rollback
+└── 05_04_RUNTIME_TOPOLOGY.md    ← Release manifest, Docker/NPM topology, Redis/BullMQ, auth path, DB snapshot
 ```
 
 > Читается в момент аварии: команды даны копипастой, без отсылок к другим документам.

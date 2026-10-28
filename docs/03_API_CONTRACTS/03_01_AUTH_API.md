@@ -1,7 +1,7 @@
 # 03_01 — API аутентификации
 
 > Источник: `backend/src/modules/auth/auth.routes.ts`, `backend/src/modules/auth/auth.service.ts`, `backend/src/modules/auth/auth-session.service.ts`, `backend/src/modules/auth/password-reset.service.ts`, `backend/src/services/max.service.ts`, `backend/src/plugins/authenticate.ts`, `backend/src/config/env.ts`.
-> Обновлено 2026-08-21: подключён транспорт MAX и восстановление пароля (см. `docs/04_PROJECT_STATE/CHANGELOG.md`).
+> Обновлено 2026-10-29: `/auth` — канонический фактический prefix; `/api/v1/auth` не используется.
 
 ---
 
@@ -13,7 +13,11 @@
 
 > Расхождение с реестром: маршруты смонтированы под `/auth`, а не `/api/v1/auth` (`backend/src/app.ts`). Ниже описано фактическое состояние. Приведение к `/api/v1/auth` потребует правки `app.ts` и списка публичных путей в `authenticate.ts`.
 
-Все эндпоинты группы публичные — они входят в `PUBLIC_PATHS` и не требуют токена: они либо выдают учётные данные, либо вызываются платформами ботов, либо восстанавливают доступ, когда войти нельзя по определению.
+## 1.1 Release metadata
+
+`GET /health` возвращает объект `release`, загруженный из
+`backend/src/release-manifest.json`. Runtime не вызывает `git`, поэтому версия
+не меняется из-за состояния checkout или наличия Git в production image.
 
 ---
 
