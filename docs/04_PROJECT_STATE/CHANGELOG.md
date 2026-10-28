@@ -173,7 +173,12 @@ Audit runtime проверяет точный local target и очищает cre
 
 Проверки: frontend 265, backend 225, audit runtime 9, deploy mocks 5, API/SQL smoke 37 assertions; типизация основного кода и audit entry points. Детали и блокеры: `BROWSER_VERIFICATION.md`, `IMPLEMENTATION_LOG.md`. Откат локальных изменений: backup manifest `~/.claude/backups/getvoxly/20260921-130930`. Production не менялся.
 
-Все заметные изменения проекта GETVOXLY. Формат основан на
+### Added · CRM — уведомления о назначении задач (2026-10-28)
+
+Закрыт `M1.6.8`: добавлена очередь `notifications` в backend queue manager и обработчик `task-assigned`. При создании задачи с исполнителем сервер ставит tenant-scoped job; worker получает актуальные данные задачи и сотрудника, проверяет `tenant_id`, и отправляет уведомление в Telegram при наличии привязанного чата. Ошибка доставки возвращает job в retry-механику очереди, отсутствие Telegram-конфигурации не создаёт ложное успешное уведомление. Production остаётся fail-closed без Redis через `requireDurableQueue`.
+
+Проверено: backend typecheck, build, 26 DB-независимых тестов и `git diff --check`.
+
 [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
 Даты в формате `YYYY-MM-DD`.
 

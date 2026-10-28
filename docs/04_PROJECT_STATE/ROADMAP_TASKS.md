@@ -294,7 +294,7 @@
 - [x] `M1.6.5` Implement `GET/POST/PATCH/DELETE /tasks` with urgency/assignee filters, entity links, soft delete, RLS + permission checks
 - [x] `M1.6.6` Implement deal timeline endpoints: `GET/POST /deals/:id/messages` with tenant scope
 - [x] `M1.6.7` Add full-text search indexes on `contacts`, `companies`, `deals`
-- [ ] `M1.6.8` Create BullMQ queue: `notifications` for task assignment alerts
+- [x] `M1.6.8` Create BullMQ queue: `notifications` for task assignment alerts — durable queue manager, tenant-scoped Telegram notification worker, fail-closed in production without Redis
 - [ ] `M1.6.9` Write integration tests (Supertest) for all Core CRM endpoints
 
 ---
