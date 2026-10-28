@@ -199,6 +199,29 @@ export function useDeleteAiAgent(): UseMutationResult<void, ApiClientError, { id
   });
 }
 
+export interface PromptPreviewResponse {
+  resolvedPrompt: string;
+  variables: Record<string, string>;
+}
+
+export function useAgentPromptPreview(
+  agentId: string,
+  systemPrompt?: string,
+): UseQueryResult<PromptPreviewResponse, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "prompt-preview", systemPrompt ?? ""],
+    queryFn: async () => {
+      const res = await apiClient.post<PromptPreviewResponse>(
+        `${BASE_PATH}/agents/${agentId}/prompt-preview`,
+        systemPrompt ? { system_prompt: systemPrompt } : {},
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+    staleTime: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Баланс ИИ
 // ---------------------------------------------------------------------------
