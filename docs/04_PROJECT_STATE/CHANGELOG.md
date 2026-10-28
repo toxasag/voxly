@@ -20,6 +20,22 @@ Vitest не предназначен для `.mjs`-теста и законом�
 правильный запуск выполнен через `node --test`, результат 4/4. Backend typecheck
 и синтаксическая проверка smoke прошли.
 
+### Tooling — команды RLS-аудита
+
+В `backend/package.json` добавлены явные команды для воспроизводимого запуска:
+
+```bash
+npm run audit:prepare
+npm run audit:seed
+npm run audit:fixtures
+npm run audit:rls -- "$DATABASE_URL"
+npm run audit:smoke
+```
+
+Первые три команды работают только в изолированной среде с PostgreSQL и создают
+локальный runtime; `audit:rls` принимает только URL этой базы. Production URL
+нельзя передавать в audit-инструменты.
+
 
 ### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
 

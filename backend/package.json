@@ -19,7 +19,13 @@
     "migrate:baseline": "node-pg-migrate -d MIGRATION_DATABASE_URL -f migrate-config.cjs up --fake",
     "migrate:dry": "node-pg-migrate -d MIGRATION_DATABASE_URL -f migrate-config.cjs up --dry-run",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "audit:rls": "node scripts/rls-audit.mjs",
+    "audit:rls:test": "node --test scripts/rls-audit.test.mjs",
+    "audit:prepare": "node scripts/audit-db.mjs",
+    "audit:seed": "node scripts/audit-seed.mjs",
+    "audit:fixtures": "tsx scripts/audit-fixtures.ts",
+    "audit:smoke": "node scripts/audit-smoke.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
