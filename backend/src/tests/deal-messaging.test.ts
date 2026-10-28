@@ -188,6 +188,23 @@ describe("Ответ менеджера уходит в канал", () => {
     expect(calls[0]?.text).toBe("Добрый день!");
   });
 
+  it("передает attachment и attachment_type в outboundPayload для отправки файла в канал", async () => {
+    const base = await fixture();
+    const calls = stubSender({ ok: true });
+
+    const res = await postMessage(base, {
+      content: "Счёт на оплату",
+      attachment: "/uploads/tenant_uuid_invoice.pdf",
+      attachment_type: "application/pdf",
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.attachment).toBe("/uploads/tenant_uuid_invoice.pdf");
+    expect(calls[0]?.attachmentType).toBe("application/pdf");
+    expect(calls[0]?.text).toBe("Счёт на оплату");
+  });
+
   it("помечает доставленное сообщение как sent", async () => {
     const base = await fixture();
     stubSender({ ok: true });

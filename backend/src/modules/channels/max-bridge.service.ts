@@ -149,6 +149,9 @@ export class MaxBridgeService {
     chatId?: string;
     recipient?: string;
     text: string;
+    mediaBase64?: string;
+    fileName?: string;
+    mimeType?: string;
   }): Promise<{ ok: boolean; messageId?: string; error?: string }> {
     const target = (input.recipient || input.chatId || "").trim();
     let peerUserId = "";
@@ -174,6 +177,15 @@ export class MaxBridgeService {
     }
     if (resolvePhone) {
       payload.resolvePhone = resolvePhone;
+    }
+    if (input.mediaBase64) {
+      payload.mediaBase64 = input.mediaBase64;
+    }
+    if (input.fileName) {
+      payload.fileName = input.fileName;
+    }
+    if (input.mimeType) {
+      payload.mimeType = input.mimeType;
     }
 
     const res = await this.bridgeFetch<{ ok: boolean; messageId?: string; detail?: string }>(

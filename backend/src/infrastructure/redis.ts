@@ -3,7 +3,6 @@ import { getEnv } from "../config/env.js";
 
 let redisInstance: Redis | null = null;
 let isConnected = false;
-let initAttempted = false;
 
 /**
  * Получение единого инстанса ioredis.
@@ -12,14 +11,8 @@ let initAttempted = false;
  */
 export function getRedisClient(): Redis | null {
   if (redisInstance) {
-    return isConnected ? redisInstance : null;
+    return redisInstance;
   }
-
-  if (initAttempted) {
-    return null;
-  }
-
-  initAttempted = true;
 
   let redisUrl: string | undefined;
   try {
@@ -37,7 +30,7 @@ export function getRedisClient(): Redis | null {
     const client = new Redis(redisUrl, {
       lazyConnect: false,
       maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
       connectTimeout: 4000,
       retryStrategy(times: number) {
         if (times > 5) return null; // Прекращаем попытки при длительном отсутствии Redis
@@ -129,14 +122,21 @@ export function requireDurableQueue(queueName: string): void {
 }
 
 export function getRedisHealth(): { configured: boolean; connected: boolean } {
+  if (!redisInstance) {
+    getRedisClient();
+  }
+  const connected = (isConnected || redisInstance?.status === "ready") && redisInstance !== null;
   return {
     configured: getRedisConnectionOptions() !== null,
-    connected: isRedisAvailable(),
+    connected,
   };
 }
 
 export function isRedisAvailable(): boolean {
-  return isConnected && redisInstance !== null;
+  if (!redisInstance) {
+    getRedisClient();
+  }
+  return (isConnected || redisInstance?.status === "ready") && redisInstance !== null;
 }
 
 /**
@@ -151,7 +151,6 @@ export async function closeRedis(): Promise<void> {
     } finally {
       redisInstance = null;
       isConnected = false;
-      initAttempted = false;
     }
   }
 }

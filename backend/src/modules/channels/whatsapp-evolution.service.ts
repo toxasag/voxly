@@ -261,6 +261,74 @@ export class WhatsappEvolutionService {
     return { ok: true, messageId: res.json?.key?.id };
   }
 
+  /** Отправка медиасообщения (документ, фото, видео, голосовое, аудио) через Evolution API */
+  async sendMediaMessage(
+    instanceName: string,
+    recipient: string,
+    input: {
+      buffer: Buffer;
+      filename: string;
+      mimeType: string;
+      caption?: string;
+    },
+  ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const cleanNumber = recipient.replace(/[^\d]/g, "");
+    if (!cleanNumber) {
+      return { ok: false, error: "Некорректный номер получателя WhatsApp" };
+    }
+
+    const { buffer, filename, mimeType, caption } = input;
+    const base64 = buffer.toString("base64");
+
+    const isImage = mimeType.startsWith("image/");
+    const isVideo = mimeType.startsWith("video/");
+    const isAudio = mimeType.startsWith("audio/");
+    const isVoice = isAudio && (mimeType.includes("ogg") || mimeType.includes("opus"));
+
+    if (isVoice) {
+      const res = await this.evoFetch(`/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          number: cleanNumber,
+          audio: base64,
+        }),
+      });
+      if (res.ok) {
+        return { ok: true, messageId: res.json?.key?.id };
+      }
+    }
+
+    let mediatype: "image" | "document" | "video" | "audio" = "document";
+    if (isImage) mediatype = "image";
+    else if (isVideo) mediatype = "video";
+    else if (isAudio) mediatype = "audio";
+
+    const payload: Record<string, unknown> = {
+      number: cleanNumber,
+      mediatype,
+      mimetype: mimeType,
+      caption: caption || undefined,
+      media: base64,
+      fileName: filename,
+    };
+
+    const res = await this.evoFetch(`/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errMsg =
+        res.json?.response?.message ||
+        res.json?.message ||
+        res.json?.error ||
+        "Ошибка отправки медиа в WhatsApp";
+      return { ok: false, error: errMsg };
+    }
+
+    return { ok: true, messageId: res.json?.key?.id };
+  }
+
   /** Проверка регистрации номеров в WhatsApp через Evolution API */
   async checkNumberStatus(
     instanceName: string,
