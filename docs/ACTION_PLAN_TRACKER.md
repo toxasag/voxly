@@ -35,6 +35,7 @@
   - Acceptance: audit output classifies intentional exceptions (`tenants`, auth/session and platform catalog tables) and fails on unexplained exceptions.
 - [ ] Verify every `USING`/`WITH CHECK` policy after migration 0053, including billing, analytics, notification and junction tables.
   - Acceptance: two-tenant SQL test proves cross-tenant SELECT=0 and cross-tenant INSERT/UPDATE/DELETE denied under `app_user`.
+  - Update 2026-10-28: migration `0058_force_notification_channels_rls.sql` deployed and `tenant_notification_channels.relforcerowsecurity = true` verified in production. Full RLS audit still fails on tenant-unsafe foreign-key findings and needs classification/migration.
 - [ ] Verify `stages` and other tables without `tenant_id` have an explicit parent-scope isolation contract.
   - Acceptance: no route can access a stage/pipeline from another tenant through an unscoped ID.
 
