@@ -1,4 +1,9 @@
-## 2026-10-27 — безопасный срез после сбоя провайдера
+## 2026-10-28 — VPS deployment verification
+
+- verified VPS: `getvoxly-backend-1` and `getvoxly-frontend-1` healthy; DB healthy; max-bridge and Evolution containers are running. Backend/frontend images were created 2026-10-27 around 14:45–14:46 UTC.
+- verified VPS/external: local frontend `/login` 200, local and public `/health` 200 with database up, production DB has 53 migrations, latest `0053_deal_analytics_tab`.
+- important: current local changes are **not deployed**. Production still responds 200 on both WhatsApp paths (`/api/internal/whatsapp/webhook` and `/api/v1/integrations/whatsapp/webhook`) and accepts an invalid secret probe when the instance is unknown (`account_not_found`). This reflects the old image/routes, not the local fail-closed implementation. No deploy was run: safe-release requires explicit `GETVOXLY_RELEASE_APPROVED=yes`.
+
 
 - Не повторялся внешний AI-вызов: прошлый запуск остановился на HTTP 429 `provider_account_unavailable` (нет capacity у OpenAI), что не является дефектом кода. Работа продолжена локальной детерминированной проверкой.
 - verified: `/uploads/:filename` больше не публичен: нужен access JWT, файл доступен только при tenant-префиксе, кэширование отключено.
