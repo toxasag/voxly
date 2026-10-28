@@ -32,7 +32,7 @@ import type { WizardConfig } from "./ai.types.js";
 const MIN_BALANCE_KOPECKS = 100;
 
 /** Модель по умолчанию, если у агента указана незнакомая. */
-const FALLBACK_MODEL: AiModelId = "gpt-4o-mini";
+const FALLBACK_MODEL: AiModelId = "gemini-3.5-flash-lite";
 
 /**
  * Соответствие моделей каталога идентификаторам шлюза.
@@ -51,6 +51,7 @@ const GATEWAY_MODEL: Record<string, string> = {
   "gemini-1.5-pro": "gemini/gemini-1.5-pro",
   "gemini-3.5-flash": "gemini/gemini-3.5-flash",
   "gemini-3.5-flash-lite": "gemini/gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest": "gemini/gemini-flash-lite-latest",
   "gemini-2.5-flash": "gemini/gemini-2.5-flash",
   "gemini-2.5-pro": "gemini/gemini-2.5-pro",
 };

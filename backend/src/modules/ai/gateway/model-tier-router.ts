@@ -45,6 +45,16 @@ export const MODEL_PROFILES_CATALOG: Record<string, ModelProfile> = {
     costInPer1k: 14,
     costOutPer1k: 28,
   },
+  "gemini-flash-lite-latest": {
+    id: "gemini-flash-lite-latest",
+    provider: "gemini",
+    tier: "FAST_CHEAP",
+    limits: { rpm: 15, tpm: 250_000, rpd: 500, maxContext: 1_000_000 },
+    fallbackModelId: "gemini-3.5-flash-lite",
+    priority: 12,
+    costInPer1k: 5,
+    costOutPer1k: 20,
+  },
   "gemini-3.5-flash": {
     id: "gemini-3.5-flash",
     provider: "gemini",
@@ -141,11 +151,12 @@ export const HIERARCHICAL_FALLBACK_MATRIX: Record<string, string[]> = {
   "claude-opus-4": ["gpt-4o", "claude-sonnet-4", "gpt-4o-mini"],
 
   // Fast & Cheap -> Resilient Cross-Provider Fallbacks
-  "gemini-3.8-flash": ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gpt-4o-mini"],
-  "gemini-3.5-flash": ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gpt-4o-mini"],
-  "gemini-2.5-flash": ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gpt-4o-mini"],
-  "gemini-3.5-flash-lite": ["gemini-3.1-flash-lite", "gpt-4o-mini", "deepseek-v3"],
-  "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gpt-4o-mini", "deepseek-v3"],
+  "gemini-3.8-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  "gemini-3.5-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash", "gemini-3.1-flash-lite"],
+  "gemini-2.5-flash": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+  "gemini-3.5-flash-lite": ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  "gemini-flash-lite-latest": ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+  "gemini-3.1-flash-lite": ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"],
   "gpt-4o-mini": ["gemini-3.5-flash-lite", "deepseek-v3", "gemini-3.1-flash-lite"],
   "deepseek-v3": ["gpt-4o-mini", "gemini-3.5-flash-lite"],
 };
