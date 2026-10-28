@@ -1,4 +1,10 @@
-# CHANGELOG
+### Added · CI — frontend quality gate and recovery boundary contract (2026-10-28)
+
+Добавлен `.github/workflows/frontend-ci.yml`: `npm ci`, frontend typecheck,
+Vitest и production build выполняются на PR и push в `master`. Добавлен contract
+тест, который предотвращает удаление корневых `loading.tsx`, `error.tsx` и
+`global-error.tsx` recovery boundaries.
+
 
 ### Added · Reliability — WhatsApp lead provider result persistence (2026-10-28)
 
