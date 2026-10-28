@@ -100,6 +100,9 @@ export class WhatsappEvolutionService {
         webhook: {
           enabled: true,
           url: webhookUrl,
+          headers: {
+            "x-evolution-webhook-secret": getEnv().EVOLUTION_WEBHOOK_SECRET,
+          },
           byEvents: false,
           base64: false,
           events: [
@@ -278,12 +281,17 @@ export class WhatsappEvolutionService {
 
   /** Настройка webhook в Evolution API */
   async setWebhook(instanceName: string, webhookUrl: string): Promise<boolean> {
+    const secret = getEnv().EVOLUTION_WEBHOOK_SECRET;
+    if (!secret) return false;
     const res = await this.evoFetch(`/webhook/set/${encodeURIComponent(instanceName)}`, {
       method: "POST",
       body: JSON.stringify({
         webhook: {
           enabled: true,
           url: webhookUrl,
+          headers: {
+            "x-evolution-webhook-secret": secret,
+          },
           byEvents: false,
           base64: false,
           events: [

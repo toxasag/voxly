@@ -1,4 +1,10 @@
-# Журнал выполнения
+## 2026-10-27 — безопасный срез после сбоя провайдера
+
+- Не повторялся внешний AI-вызов: прошлый запуск остановился на HTTP 429 `provider_account_unavailable` (нет capacity у OpenAI), что не является дефектом кода. Работа продолжена локальной детерминированной проверкой.
+- verified: `/uploads/:filename` больше не публичен: нужен access JWT, файл доступен только при tenant-префиксе, кэширование отключено.
+- verified: Evolution webhook оставлен на одном canonical `/api/internal/whatsapp/webhook`, секрет проверяется fail-closed; обработка payload переведена с `any` на `unknown`-narrowing.
+- verified: `npm run typecheck` прошёл. Полный Vitest запущен; 146 тестов прошли, 2 уже существующих теста упали в `chat-write-first` и `stories-service`, не связанных с этим срезом.
+
 
 ## 2026-10-19 / 2026-10-20 — реализация дорожной карты Twenty CRM Gap Audit и боевой деплой
 

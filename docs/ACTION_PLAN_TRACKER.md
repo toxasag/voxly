@@ -38,11 +38,9 @@
 
 ### Fastify / Channels / Security
 
-- [ ] Add fail-closed Evolution webhook authentication and remove the duplicate public webhook alias.
-  - Code target: `backend/src/modules/channels/whatsapp-integration.routes.ts`.
-  - Acceptance: missing/wrong secret returns 401/403; valid provider request is accepted; only one canonical endpoint is registered.
-- [ ] Replace public `/uploads/:filename` access with tenant-bound authorization or short-lived signed URLs.
-  - Acceptance: tenant A cannot fetch tenant B media; CRM media is not publicly cacheable.
+- [x] Harden WhatsApp webhook ingestion: one canonical internal endpoint, fail-closed Evolution secret validation, and strict unknown-payload narrowing.
+- [x] Replace public `/uploads/:filename` access with tenant-bound authorization or short-lived signed URLs.
+  - Acceptance: tenant A cannot fetch tenant B media; CRM media is not publicly cacheable. Реализована авторизация access-token, проверка tenant-префикса имени файла и `private, no-store`.
 - [ ] Remove any production default secret fallback from `docker-compose.yml`, especially Evolution API credentials.
   - Acceptance: missing secret prevents production boot; no literal secret remains in compose.
 

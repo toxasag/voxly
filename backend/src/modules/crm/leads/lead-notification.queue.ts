@@ -320,19 +320,9 @@ export class LeadNotificationQueueService {
       return;
     }
 
-    // Атомарная фиксация времени отправки (идемпотентность — защита от гонок воркеров)
-    const updated = await queryOne<{ id: string }>(
-      `UPDATE deals
-       SET lead_notified_at = now()
-       WHERE tenant_id = $1 AND id = $2 AND lead_notified_at IS NULL
-       RETURNING id`,
-      [tenantId, leadId],
-    );
-
-    if (!updated) {
-      console.log(`[LeadNotification] Lead ${leadId} already notified by another worker, skipping duplicate`);
-      return;
-    }
+    // Delivery is claimed only after at least one channel confirms success.
+    // This avoids permanently losing a lead when SMTP/Telegram is down.
+    let delivered = false;
 
     // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp)
     const configuredChannels = await query<{
@@ -414,6 +404,7 @@ export class LeadNotificationQueueService {
       });
 
       if (result.sent) {
+        delivered = true;
         console.log(`[BullMQ] Notification sent for lead ${lead.id} to ${toEmail}`);
       } else {
         console.warn(`[LeadNotification] Mailer reported error or not configured: ${result.error}`);
@@ -446,6 +437,7 @@ export class LeadNotificationQueueService {
               parseMode: "HTML",
             });
             if (res.delivered) {
+              delivered = true;
               console.log(
                 `[BullMQ] Telegram notification sent for lead ${lead.id} to chat ${ch.destination}`,
               );
@@ -471,9 +463,23 @@ export class LeadNotificationQueueService {
     // --- Канал 3: WhatsApp (Транзакционный сервисный шлюз) ---
     const whatsappChannels = configuredChannels.filter((c) => c.channel_type === "whatsapp");
     for (const ch of whatsappChannels) {
-      console.log(
-        `[BullMQ] Dispatched WhatsApp notification for lead ${lead.id} to ${ch.destination} via transactional gateway`,
+      console.warn(
+        `[LeadNotification] WhatsApp notification is configured but no provider adapter is available for ${ch.destination}; delivery remains retryable`,
       );
+    }
+
+    if (!delivered) {
+      throw new Error(`No lead notification channel delivered lead ${lead.id}`);
+    }
+
+    const claimed = await queryOne<{ id: string }>(
+      `UPDATE deals SET lead_notified_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND lead_notified_at IS NULL
+       RETURNING id`,
+      [tenantId, leadId],
+    );
+    if (!claimed) {
+      console.log(`[LeadNotification] Lead ${leadId} was claimed by another worker`);
     }
   }
 
