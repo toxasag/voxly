@@ -380,6 +380,7 @@ export class EmailService {
   static async sendTestEmail(to: string): Promise<SendResult> {
     const env = getEnv();
     const stamp = new Date().toISOString();
+    const body = `
       <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Проверка почтового сервиса</h1>
       <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
         Если вы читаете это письмо, SMTP настроен верно и Voxly может отправлять почту.
