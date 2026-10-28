@@ -1114,7 +1114,7 @@ export function CrmChatView({
             isSending={sendMessageMutation.isPending}
             onAiDraft={handleGenerateAiDraft}
             isAiDraftPending={aiDraftMutation.isPending}
-            placeholder="Сообщение..."
+            placeholder="Написать сообщение"
           />
         </div>
       </div>

@@ -10,6 +10,8 @@ vi.mock("@/lib/api/use-companies", () => ({
 
 vi.mock("@/lib/api/use-contacts", () => ({
   useContacts: () => ({ data: { items: [] }, isLoading: false }),
+  useCreateContact: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateContact: () => ({ mutateAsync: vi.fn(), isPending: false }),
   contactFullName: () => "Тестовый Контакт",
 }));
 
