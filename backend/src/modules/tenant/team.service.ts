@@ -2,9 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { query, queryOne, transaction } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { getEnv } from "../../config/env.js";
-import { ASSIGNABLE_ROLES, ROLE_LABELS, ROLE_PERMISSIONS } from "../../config/permissions.js";
+import { ASSIGNABLE_ROLES, ALL_PERMISSIONS, ROLE_LABELS, ROLE_PERMISSIONS, toPermissions } from "../../config/permissions.js";
 import { EmailService } from "../../services/email.service.js";
-import type { Role } from "../../types/index.js";
+import type { Permission, Role } from "../../types/index.js";
 
 // ---------------------------------------------------------------------------
 // Управление сотрудниками арендатора.
@@ -42,6 +42,7 @@ export interface TeamMemberDTO {
   role: Role;
   /** Base64 data-URI либо null; при null интерфейс показывает инициалы. */
   avatarUrl: string | null;
+  permissions: Permission[];
   status: TeamMemberStatus;
   /** Владельца нельзя удалить или понизить — на нём держится доступ к биллингу. */
   isOwner: boolean;
@@ -68,6 +69,8 @@ export interface TeamListDTO {
   seats: SeatUsageDTO;
   /** Роли, доступные для назначения (без `owner`). */
   assignableRoles: Role[];
+  /** Права, доступные для точечной настройки сотрудника. */
+  availablePermissions: Permission[];
 }
 
 interface MemberRow {
@@ -77,6 +80,7 @@ interface MemberRow {
   phone: string | null;
   role: Role;
   avatar_url: string | null;
+  permissions: string[] | null;
   invited_at: Date | string | null;
   activated_at: Date | string | null;
   created_at: Date | string;
@@ -108,6 +112,7 @@ function toMemberDTO(row: MemberRow, ownerId: string | null, selfId: string): Te
     phone: row.phone,
     role: row.role,
     avatarUrl: row.avatar_url,
+    permissions: toPermissions(row.permissions),
     status: row.activated_at === null ? "invited" : "active",
     isOwner: row.role === "owner" || row.id === ownerId,
     isSelf: row.id === selfId,
@@ -196,7 +201,7 @@ export class TeamService {
   async list(tenantId: string, currentUserId: string): Promise<TeamListDTO> {
     const [rows, seats, owner] = await Promise.all([
       query<MemberRow>(
-        `SELECT id, name, email, phone, role, avatar_url, invited_at, activated_at, created_at
+        `SELECT id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at
          FROM users
          WHERE tenant_id = $1 AND deleted_at IS NULL
          ORDER BY
@@ -213,6 +218,7 @@ export class TeamService {
       members: rows.map((row) => toMemberDTO(row, owner, currentUserId)),
       seats,
       assignableRoles: [...ASSIGNABLE_ROLES],
+      availablePermissions: [...ALL_PERMISSIONS],
     };
   }
 
@@ -275,7 +281,7 @@ export class TeamService {
            SET name = $3, role = $4, permissions = $5, invite_token_hash = $6,
                invited_at = now(), invite_expires_at = $7, invited_by = $8, updated_at = now()
            WHERE id = $1 AND tenant_id = $2
-           RETURNING id, name, email, phone, role, avatar_url, invited_at, activated_at, created_at`,
+           RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at`,
           [
             existing.id,
             input.tenantId,
@@ -294,7 +300,7 @@ export class TeamService {
            (tenant_id, email, name, role, permissions, invite_token_hash,
             invited_at, invite_expires_at, invited_by)
          VALUES ($1, $2, $3, $4, $5, $6, now(), $7, $8)
-         RETURNING id, name, email, phone, role, avatar_url, invited_at, activated_at, created_at`,
+         RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at`,
         [
           input.tenantId,
           input.email,
@@ -335,12 +341,13 @@ export class TeamService {
     };
   }
 
-  /** Смена роли. Права приводятся к новой роли, иначе они остались бы от прежней. */
+  /** Смена роли и/или точечных прав сотрудника. */
   async changeRole(input: {
     tenantId: string;
     actorId: string;
     userId: string;
     role: Role;
+    permissions?: Permission[];
   }): Promise<TeamMemberDTO> {
     if (!ASSIGNABLE_ROLES.includes(input.role)) {
       throw new AppError(400, "VALIDATION_ERROR", "Недопустимая роль", {
@@ -349,8 +356,6 @@ export class TeamService {
     }
 
     if (input.userId === input.actorId) {
-      // Иначе администратор мог бы понизить себя и потерять доступ к разделу,
-      // оставив арендатора без управления сотрудниками.
       throw new AppError(409, "CANNOT_MODIFY_SELF", "Нельзя изменить собственную роль");
     }
 
@@ -359,16 +364,25 @@ export class TeamService {
       throw new AppError(409, "CANNOT_MODIFY_OWNER", "Роль владельца изменить нельзя");
     }
 
+    const permissions = input.permissions === undefined
+      ? [...ROLE_PERMISSIONS[input.role]]
+      : toPermissions(input.permissions);
+    const rolePermissions = new Set(ROLE_PERMISSIONS[input.role]);
+    if (permissions.some((permission) => !rolePermissions.has(permission))) {
+      throw new AppError(400, "VALIDATION_ERROR", "Нельзя выдать право вне набора роли", {
+        permissions: ["Выберите права, совместимые с ролью сотрудника"],
+      });
+    }
+
     const updated = await queryOne<MemberRow>(
       `UPDATE users
        SET role = $3, permissions = $4, updated_at = now()
        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-       RETURNING id, name, email, phone, role, avatar_url, invited_at, activated_at, created_at`,
-      [input.userId, input.tenantId, input.role, [...ROLE_PERMISSIONS[input.role]]],
+       RETURNING id, name, email, phone, role, avatar_url, permissions, invited_at, activated_at, created_at`,
+      [input.userId, input.tenantId, input.role, permissions],
     );
 
     if (updated === null) throw new NotFoundError("Сотрудник не найден");
-
     return toMemberDTO(updated, owner, input.actorId);
   }
 
