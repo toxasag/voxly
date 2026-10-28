@@ -1,0 +1,53 @@
+name: RLS audit
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  rls-audit:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      AUDIT_ADMIN_USER: postgres
+      AUDIT_ADMIN_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck -- --pretty false --incremental false
+      - run: npm run audit:rls:test
+      - run: npm run audit:prepare
+      - run: npm run audit:seed
+      - run: npm run audit:fixtures
+      - name: Verify migration ledger tables
+        run: |
+          node -e "const pg=require('pg'); const fs=require('fs'); const r=JSON.parse(fs.readFileSync('.audit/runtime.json','utf8')); const c=new pg.Client({connectionString:r.databaseUrl}); c.connect().then(async()=>{const x=await c.query(\"SELECT to_regclass('public.lead_notification_deliveries') AS lead, to_regclass('public.conversion_delivery_attempts') AS conversion\"); if(!x.rows[0].lead||!x.rows[0].conversion) process.exit(1); await c.end();})"
+      - name: Run static RLS audit
+        run: npm run audit:rls -- "$(node -e \"console.log(JSON.parse(require('fs').readFileSync('.audit/runtime.json','utf8')).databaseUrl)\")"
+      - run: npm run audit:smoke

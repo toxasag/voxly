@@ -252,15 +252,17 @@ export class DealMessagingService {
       };
     }
 
+    const outboundPayload: Parameters<typeof sender>[0] = {
+      tenantId,
+      channelAccountId: route.channelAccountId,
+      recipient: route.recipient,
+      text: payload.content,
+    };
+    if (route.username !== undefined) outboundPayload.username = route.username;
+    if (route.phone !== undefined) outboundPayload.phone = route.phone;
+
     try {
-      return await sender({
-        tenantId,
-        channelAccountId: route.channelAccountId,
-        recipient: route.recipient,
-        text: payload.content,
-        username: route.username,
-        phone: route.phone,
-      });
+      return await sender(outboundPayload);
     } catch (error) {
       this.log?.error({ error, dealId }, "Outbound sender threw while sending deal message");
       return { ok: false, reason: "Транспорт канала недоступен" };

@@ -357,11 +357,29 @@ export class EmailService {
     });
   }
 
+  /** Уведомление о смене пароля владельцу аккаунта. */
+  static async sendPasswordChangedEmail(to: string, changedAt = new Date()): Promise<SendResult> {
+    const stamp = changedAt.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Пароль изменён</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
+        Пароль вашей учётной записи Voxly был изменён ${escapeHtml(stamp)} (МСК).
+      </p>
+      <p style="margin:0;font-size:13px;line-height:20px;color:#94a3b8;">
+        Если это были не вы, немедленно запросите восстановление пароля и обратитесь к администратору компании.
+      </p>`;
+
+    return EmailService.send({
+      to,
+      subject: "Voxly: пароль изменён",
+      html: layout({ title: "Пароль изменён", preheader: "Пароль вашей учётной записи Voxly был изменён.", body }),
+      text: `Пароль вашей учётной записи Voxly был изменён ${stamp} (МСК).\n\nЕсли это были не вы, запросите восстановление пароля и обратитесь к администратору компании.\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
   /** Диагностическое письмо для `POST /admin/test-email`. */
   static async sendTestEmail(to: string): Promise<SendResult> {
     const env = getEnv();
     const stamp = new Date().toISOString();
-
     const body = `
       <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Проверка почтового сервиса</h1>
       <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
@@ -610,6 +628,28 @@ export class EmailService {
     });
   }
 
+  /** Напоминание о просроченном счёте. */
+  static async sendInvoiceReminderEmail(options: {
+    to: string;
+    invoiceNumber: string;
+    companyName: string;
+    total: number;
+    currency: string;
+    dueDate: Date | string;
+  }): Promise<SendResult> {
+    const due = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeZone: "Europe/Moscow" }).format(new Date(options.dueDate));
+    const amount = `${options.total.toLocaleString("ru-RU")} ${options.currency}`;
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Просрочен счёт ${escapeHtml(options.invoiceNumber)}</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">Срок оплаты счёта для компании «${escapeHtml(options.companyName)}» истёк ${escapeHtml(due)}.</p>
+      <p style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">К оплате: ${escapeHtml(amount)}</p>`;
+    return EmailService.send({
+      to: options.to,
+      subject: `Voxly: просрочен счёт ${options.invoiceNumber}`,
+      html: layout({ title: "Просрочен счёт Voxly", preheader: `Счёт ${options.invoiceNumber} требует внимания.`, body }),
+      text: `Просрочен счёт ${options.invoiceNumber}\nКомпания: ${options.companyName}\nК оплате: ${amount}\nСрок оплаты: ${due}\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
   /** Проверка соединения и авторизации без отправки письма. */
   static async verifyConnection(): Promise<SendResult> {
     if (!EmailService.isConfigured) {

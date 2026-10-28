@@ -12,7 +12,8 @@
 // ---------------------------------------------------------------------------
 
 import { Queue, Worker, type JobsOptions } from "bullmq";
-import { getRedisConnectionOptions } from "../../../infrastructure/redis.js";
+import { getRedisConnectionOptions, requireDurableQueue } from "../../../infrastructure/redis.js";
+import { registerBullQueue } from "../../../infrastructure/queue-metrics.js";
 import { query, queryOne } from "../../../db/client.js";
 import { EmailService } from "../../../services/email.service.js";
 import { TelegramService, escapeHtml } from "../../auth/telegram.service.js";
@@ -178,6 +179,7 @@ export class LeadNotificationQueueService {
   private initBullMQ(): void {
     const connOptions = getRedisConnectionOptions();
     if (!connOptions) {
+      requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
       return;
     }
 
@@ -193,6 +195,7 @@ export class LeadNotificationQueueService {
           removeOnComplete: true,
         },
       });
+      registerBullQueue(LEAD_NOTIFICATIONS_QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
       this.bullQueue.on("error", (err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -224,7 +227,8 @@ export class LeadNotificationQueueService {
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[LeadNotificationQueue] Failed to connect BullMQ to Redis (${msg}), using in-memory queue`);
+      requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
+      console.warn(`[LeadNotificationQueue] Failed to connect BullMQ to Redis (${msg})`);
       this.bullQueue = null;
       this.bullWorker = null;
     }
@@ -251,11 +255,13 @@ export class LeadNotificationQueueService {
         });
         return { id: String(job.id || jobId) };
       } catch (err) {
-        console.warn(`[LeadNotificationQueue] BullMQ enqueue failed, falling back to in-memory:`, err);
+        requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
+        console.warn(`[LeadNotificationQueue] BullMQ enqueue failed:`, err);
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback is intentionally limited to development and tests.
+    requireDurableQueue(LEAD_NOTIFICATIONS_QUEUE_NAME);
     this.inMemoryQueue.push({ id: jobId, name, data });
     void this.processNextInMemory();
     return { id: jobId };
@@ -320,19 +326,31 @@ export class LeadNotificationQueueService {
       return;
     }
 
-    // Атомарная фиксация времени отправки (идемпотентность — защита от гонок воркеров)
-    const updated = await queryOne<{ id: string }>(
-      `UPDATE deals
-       SET lead_notified_at = now()
-       WHERE tenant_id = $1 AND id = $2 AND lead_notified_at IS NULL
+    // Claim a durable delivery slot before touching external providers. A crashed
+    // worker leaves a short lease; another attempt can retry after it expires.
+    const deliveryClaim = await queryOne<{ id: string }>(
+      `INSERT INTO lead_notification_deliveries (tenant_id, deal_id, status, attempts, locked_until)
+       VALUES ($1, $2, 'pending', 1, now() + interval '5 minutes')
+       ON CONFLICT (tenant_id, deal_id) DO UPDATE
+       SET status = 'pending', attempts = lead_notification_deliveries.attempts + 1,
+           locked_until = now() + interval '5 minutes',
+           last_error = NULL, updated_at = now()
+       WHERE lead_notification_deliveries.status <> 'sent'
+         AND (lead_notification_deliveries.locked_until IS NULL OR lead_notification_deliveries.locked_until < now())
        RETURNING id`,
       [tenantId, leadId],
     );
-
-    if (!updated) {
-      console.log(`[LeadNotification] Lead ${leadId} already notified by another worker, skipping duplicate`);
+    if (!deliveryClaim) {
+      console.log(`[LeadNotification] Lead ${leadId} is already being delivered or was sent`);
       return;
     }
+
+    // Delivery is claimed only after at least one channel confirms success.
+    // The durable lease above prevents concurrent duplicate sends and allows retry.
+    let delivered = false;
+    let deliveredChannel: "email" | "telegram" | "whatsapp" | null = null;
+    let providerMessageId: string | null = null;
+    let providerResponse: Record<string, unknown> | null = null;
 
     // 1. Извлекаем активные каналы уведомлений тенанта (Email, Telegram, WhatsApp)
     const configuredChannels = await query<{
@@ -414,6 +432,9 @@ export class LeadNotificationQueueService {
       });
 
       if (result.sent) {
+        delivered = true;
+        deliveredChannel = "email";
+        providerResponse = { sent: result.sent };
         console.log(`[BullMQ] Notification sent for lead ${lead.id} to ${toEmail}`);
       } else {
         console.warn(`[LeadNotification] Mailer reported error or not configured: ${result.error}`);
@@ -446,6 +467,9 @@ export class LeadNotificationQueueService {
               parseMode: "HTML",
             });
             if (res.delivered) {
+              delivered = true;
+              deliveredChannel = "telegram";
+              providerResponse = { delivered: res.delivered };
               console.log(
                 `[BullMQ] Telegram notification sent for lead ${lead.id} to chat ${ch.destination}`,
               );
@@ -468,12 +492,65 @@ export class LeadNotificationQueueService {
       }
     }
 
-    // --- Канал 3: WhatsApp (Транзакционный сервисный шлюз) ---
     const whatsappChannels = configuredChannels.filter((c) => c.channel_type === "whatsapp");
-    for (const ch of whatsappChannels) {
-      console.log(
-        `[BullMQ] Dispatched WhatsApp notification for lead ${lead.id} to ${ch.destination} via transactional gateway`,
+    if (whatsappChannels.length > 0) {
+      const whatsappService = new (await import("../../channels/whatsapp-evolution.service.js")).WhatsappEvolutionService();
+      for (const ch of whatsappChannels) {
+        const account = await queryOne<{ credentials: { instanceName?: string } | null }>(
+          `SELECT credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY connected_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        const instanceName = account?.credentials?.instanceName;
+        if (!instanceName) {
+          console.warn(`[LeadNotification] WhatsApp instance is not connected for ${ch.destination}`);
+          continue;
+        }
+        try {
+          const result = await whatsappService.sendTextMessage(instanceName, ch.destination, `Новая заявка: ${lead.title}\nОткрыть сделку: ${crmUrl}`);
+          if (result.ok) {
+            delivered = true;
+            deliveredChannel = "whatsapp";
+            providerMessageId = result.messageId ?? null;
+            providerResponse = { ok: result.ok, messageId: result.messageId ?? null };
+          } else {
+            console.warn(`[LeadNotification] WhatsApp delivery failed: ${result.error ?? "unknown error"}`);
+          }
+        } catch (error) {
+          console.warn(`[LeadNotification] WhatsApp provider error:`, error);
+        }
+      }
+    }
+
+    if (!delivered) {
+      const errorMessage = "No notification channel delivered the lead";
+      await query(
+        `UPDATE lead_notification_deliveries
+         SET status = 'failed', last_error = $3, locked_until = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND deal_id = $2 AND status <> 'sent'`,
+        [tenantId, leadId, errorMessage],
       );
+      throw new Error(`${errorMessage}: ${lead.id}`);
+    }
+
+    await query(
+      `UPDATE lead_notification_deliveries
+       SET status = 'sent', delivered_at = now(), locked_until = NULL, last_error = NULL,
+           delivered_channel = $3, provider_message_id = $4, provider_response = $5::jsonb,
+           updated_at = now()
+       WHERE tenant_id = $1 AND deal_id = $2 AND status <> 'sent'`,
+      [tenantId, leadId, deliveredChannel, providerMessageId, JSON.stringify(providerResponse ?? {})],
+    );
+
+    const claimed = await queryOne<{ id: string }>(
+      `UPDATE deals SET lead_notified_at = now()
+       WHERE tenant_id = $1 AND id = $2 AND lead_notified_at IS NULL
+       RETURNING id`,
+      [tenantId, leadId],
+    );
+    if (!claimed) {
+      console.log(`[LeadNotification] Lead ${leadId} was claimed by another worker`);
     }
   }
 

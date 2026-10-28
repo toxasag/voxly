@@ -1,4 +1,26 @@
-# Журнал выполнения
+## 2026-10-28 — production deploy verification and rollback
+
+- preflight passed: backend/frontend typecheck; backend targeted suites passed (32/32 deploy smoke subset, plus webhook routing 1/1).
+- restore rehearsal was attempted on VPS but failed because the dump path was inside the DB container and was not available to the restore invocation; orphan temporary database `getvoxly_restore_20261028065822` was removed. Existing prior rehearsal reference remained unchanged.
+- controlled backend deploy created release artifacts `/opt/getvoxly-releases/20261028T065850Z-3428016` and `/opt/getvoxly-releases/20261028T070433Z-3429447`, backed up DB/images, built the image, and applied no pending migrations (53 rows; migration runner reports historical missing file `0021_contact_indexes_and_validation`).
+- deploy gate caught a real production configuration defect: new backend image entered restart-loop because `EVOLUTION_API_URL` and `EVOLUTION_API_KEY` are present but `EVOLUTION_WEBHOOK_SECRET` is absent in the VPS runtime environment. This is fail-closed behavior by design. The new image was rolled back to the previous image tag `getvoxly-rollback-backend:20261028T065850Z-3428016`; backend is healthy again.
+- production smoke after rollback: backend healthy, public `https://api.getvoxly.ru/health` 200/database up, frontend `https://getvoxly.ru/login` 200. RLS inventory: 39 public policies, 38 tables with RLS+FORCE.
+- local change `whatsapp` legacy route removal is not deployed because the required production secret is missing. Do not retry deployment until the secret is provisioned in VPS `.env` and validated without recording its value.
+
+
+- verified VPS: `getvoxly-backend-1` and `getvoxly-frontend-1` healthy; DB healthy; max-bridge and Evolution containers are running. Backend/frontend images were created 2026-10-27 around 14:45–14:46 UTC.
+- verified VPS/external: local frontend `/login` 200, local and public `/health` 200 with database up, production DB has 53 migrations, latest `0053_deal_analytics_tab`.
+- important: current local changes are **not deployed**. Production still responds 200 on both WhatsApp paths (`/api/internal/whatsapp/webhook` and `/api/v1/integrations/whatsapp/webhook`) and accepts an invalid secret probe when the instance is unknown (`account_not_found`). This reflects the old image/routes, not the local fail-closed implementation. No deploy was run: safe-release requires explicit `GETVOXLY_RELEASE_APPROVED=yes`.
+
+
+- Не повторялся внешний AI-вызов: прошлый запуск остановился на HTTP 429 `provider_account_unavailable` (нет capacity у OpenAI), что не является дефектом кода. Работа продолжена локальной детерминированной проверкой.
+- verified: `/uploads/:filename` больше не публичен: нужен access JWT, файл доступен только при tenant-префиксе, кэширование отключено.
+- verified: Evolution webhook оставлен на одном canonical `/api/internal/whatsapp/webhook`, секрет проверяется fail-closed; обработка payload переведена с `any` на `unknown`-narrowing.
+- verified: `DealMessagingService` больше не передаёт опциональные `username`/`phone` как `undefined`, восстановлена совместимость outbound sender contract; соответствующий write-first тест зелёный.
+- verified: stories publish test mock теперь корректно распознаёт SQL UPDATE после форматирования запроса.
+- verified: целевые тесты `chat-write-first.test.ts` и `stories-service.test.ts` — 6/6 passed; backend typecheck — passed.
+- blocked: полный integration suite требует локальный PostgreSQL на `127.0.0.1:5432`; в текущем окружении `ECONNREFUSED`, поэтому 13 suite failures — инфраструктурный блокер, а не подтверждённые дефекты кода.
+
 
 ## 2026-10-19 / 2026-10-20 — реализация дорожной карты Twenty CRM Gap Audit и боевой деплой
 

@@ -3,15 +3,19 @@
 //
 // Предоставляет отказоустойчивый интерфейс постановки и обработки задач
 // с поддержкой очередей: `ai-usage`, `timeline-sync`, `broadcasts`.
-// При наличии REDIS_URL/BullMQ работает через Redis, при отсутствии —
-// через надёжный in-memory worker с экспоненциальным backoff (до 5 попыток).
+// При NODE_ENV=production отсутствие Redis не маскируется in-memory очередью:
+// бизнес-критичные jobs должны быть durable либо явно отклонены.
 // ---------------------------------------------------------------------------
+
+import { requireDurableQueue } from "./redis.js";
 
 export type QueueName =
   | "ai-usage"
   | "timeline-sync"
   | "broadcasts"
   | "task-reminders"
+  | "notifications"
+  | "invoice_reminders"
   | "knowledge-indexing";
 
 export interface QueueJob<T = unknown> {
@@ -51,6 +55,8 @@ class QueueManager {
     maxAttempts?: number;
     backoffMs?: number;
   }): Promise<QueueJob<T>> {
+    requireDurableQueue("queue-manager");
+
     const job: QueueJob<T> = {
       id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       queue: params.queue,

@@ -1,5 +1,8 @@
 import { Queue, Worker } from "bullmq";
+import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
+import { createHash } from "node:crypto";
 import { getEnv } from "../../config/env.js";
+import { requireDurableQueue } from "../../infrastructure/redis.js";
 import { query } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
 import type {
@@ -44,6 +47,12 @@ export function maskToken(val: unknown): string {
   return val.slice(0, 3) + "***" + val.slice(-3);
 }
 
+function conversionEventKey(payload: ConversionEventPayload, provider: AnalyticsProvider): string {
+  return createHash("sha256")
+    .update(`${payload.tenantId}:${payload.dealId}:${provider}:${payload.stageId}:${payload.eventName}`)
+    .digest("hex");
+}
+
 export class ConversionDispatcherService {
   private static instance: ConversionDispatcherService | null = null;
   private readonly providers: Map<AnalyticsProvider, IConversionProvider>;
@@ -74,17 +83,20 @@ export class ConversionDispatcherService {
   private initQueue(): void {
     const redisUrl = getEnv().REDIS_URL;
 
-    if (redisUrl) {
-      try {
-        const parsed = new URL(redisUrl);
-        const connection = {
-          host: parsed.hostname || "127.0.0.1",
-          port: parsed.port ? parseInt(parsed.port, 10) : 6379,
-          password: parsed.password || undefined,
-          username: parsed.username || undefined,
-        };
+    if (!redisUrl) {
+      requireDurableQueue(QUEUE_NAME);
+      return;
+    }
+    try {
+      const parsed = new URL(redisUrl);
+      const connection = {
+        host: parsed.hostname || "127.0.0.1",
+        port: parsed.port ? parseInt(parsed.port, 10) : 6379,
+        password: parsed.password || undefined,
+        username: parsed.username || undefined,
+      };
 
-        this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
+      this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
           connection,
           defaultJobOptions: {
             attempts: 5,
@@ -94,7 +106,8 @@ export class ConversionDispatcherService {
             },
             removeOnComplete: true,
           },
-        });
+      });
+      registerBullQueue(QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
         this.bullWorker = new Worker<ConversionEventPayload>(
           QUEUE_NAME,
@@ -108,9 +121,9 @@ export class ConversionDispatcherService {
           // Логгер сбоев при отправке конверсий
           console.warn(`[ConversionDispatcher] Job ${job?.id} failed:`, err.message);
         });
-      } catch (err) {
-        console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis, using in-memory queue:", err);
-      }
+    } catch (err) {
+      requireDurableQueue(QUEUE_NAME);
+      console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis:", err);
     }
   }
 
@@ -120,7 +133,8 @@ export class ConversionDispatcherService {
       return;
     }
 
-    // In-memory fallback
+    // In-memory fallback is intentionally limited to development and tests.
+    requireDurableQueue(QUEUE_NAME);
     this.inMemoryQueue.push(payload);
     void this.processNextInMemory();
   }
@@ -282,19 +296,53 @@ export class ConversionDispatcherService {
         eventName: mappedEventName,
       };
 
+      const eventKey = conversionEventKey(eventPayloadWithMappedName, integration.provider);
+      const claimed = await query<{ id: string }>(
+        `INSERT INTO conversion_delivery_attempts
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload)
+         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb)
+         ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
+         SET status = 'pending', attempts = conversion_delivery_attempts.attempts + 1,
+             locked_until = now() + interval '5 minutes', last_error = NULL,
+             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name
+         WHERE conversion_delivery_attempts.status <> 'sent'
+           AND (conversion_delivery_attempts.locked_until IS NULL OR conversion_delivery_attempts.locked_until < now())
+         RETURNING id`,
+        [payload.tenantId, payload.dealId, integration.provider, eventKey, mappedEventName, JSON.stringify(eventPayloadWithMappedName)],
+      );
+      if (claimed.length === 0) continue;
+
+      let result: ConversionResult;
       try {
-        const res = await provider.sendEvent(eventPayloadWithMappedName, decryptedConfig);
-        results.push(res);
+        result = await provider.sendEvent(eventPayloadWithMappedName, decryptedConfig);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        results.push({
+        result = {
           provider: integration.provider,
           success: false,
           eventName: mappedEventName,
           status: 500,
           error: message,
-        });
+        };
       }
+      results.push(result);
+      await query(
+        `UPDATE conversion_delivery_attempts
+         SET status = $3, last_status = $4, last_error = $5, response_snippet = $6,
+             delivered_at = CASE WHEN $3 = 'sent' THEN now() ELSE NULL END,
+             locked_until = NULL, updated_at = now()
+         WHERE tenant_id = $1 AND deal_id = $2 AND provider = $7 AND event_key = $8`,
+        [
+          payload.tenantId,
+          payload.dealId,
+          result.success ? "sent" : "failed",
+          result.status,
+          result.error ?? null,
+          result.responseSnippet ?? null,
+          integration.provider,
+          eventKey,
+        ],
+      );
     }
 
     return results;

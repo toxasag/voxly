@@ -7,6 +7,8 @@ import { queryOne, runWithTenantContext, runWithPlatformScope } from "../../db/c
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { getEnv } from "../../config/env.js";
+import { safeEqual } from "../../services/credentials-cipher.js";
 
 const startQrSchema = z.object({
   label: z.string().min(1).default("Основной"),
@@ -20,29 +22,62 @@ const statusQuerySchema = z.object({
 
 function extractWaMessageText(message: Record<string, unknown> | null | undefined): string {
   if (!message || typeof message !== "object") return "";
-  const m = message as Record<string, any>;
-  if (typeof m.conversation === "string") return m.conversation;
-  if (typeof m.extendedTextMessage?.text === "string") return m.extendedTextMessage.text;
-  if (typeof m.imageMessage?.caption === "string") return m.imageMessage.caption;
-  if (typeof m.videoMessage?.caption === "string") return m.videoMessage.caption;
-  if (typeof m.documentMessage?.caption === "string") return m.documentMessage.caption;
-  if (m.imageMessage) return "[фото]";
-  if (m.videoMessage) return "[видео]";
-  if (m.audioMessage) return "[аудио]";
-  if (m.documentMessage) return "[документ]";
+  const nested = (key: string): Record<string, unknown> | null => {
+    const value = message[key];
+    return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+  };
+  const stringValue = (value: unknown): string | null => typeof value === "string" ? value : null;
+  const conversation = stringValue(message.conversation);
+  if (conversation !== null) return conversation;
+  const extendedText = stringValue(nested("extendedTextMessage")?.text);
+  if (extendedText !== null) return extendedText;
+  const imageCaption = stringValue(nested("imageMessage")?.caption);
+  if (imageCaption !== null) return imageCaption;
+  const videoCaption = stringValue(nested("videoMessage")?.caption);
+  if (videoCaption !== null) return videoCaption;
+  const documentCaption = stringValue(nested("documentMessage")?.caption);
+  if (documentCaption !== null) return documentCaption;
+  if (nested("imageMessage") !== null) return "[фото]";
+  if (nested("videoMessage") !== null) return "[видео]";
+  if (nested("audioMessage") !== null) return "[аудио]";
+  if (nested("documentMessage") !== null) return "[документ]";
   return "";
 }
 
+type WhatsappWebhookItem = Record<string, unknown>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : null;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
 async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyReply) {
-  const payload = request.body as Record<string, any> | undefined;
-  const event = String(payload?.event || "").toLowerCase();
+  const expectedSecret = getEnv().EVOLUTION_WEBHOOK_SECRET;
+  const providedSecret = request.headers["x-evolution-webhook-secret"];
+  if (
+    expectedSecret === undefined ||
+    typeof providedSecret !== "string" ||
+    !safeEqual(providedSecret, expectedSecret)
+  ) {
+    return reply.status(401).send({ error: "Invalid webhook secret" });
+  }
+
+  const payload = asRecord(request.body);
+  const event = asString(payload?.event).toLowerCase();
 
   // Evolution sends 'messages.upsert' or 'MESSAGES_UPSERT'
   if (!event.includes("messages.upsert") && !event.includes("messages_upsert")) {
     return reply.send({ ok: true, skipped: event });
   }
 
-  const instanceName = String(payload?.instance || "").trim();
+  const instanceName = asString(payload?.instance).trim();
   if (!instanceName) {
     return reply.send({ ok: true, skipped: "no_instance" });
   }
@@ -62,13 +97,16 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
   }
 
   const data = payload?.data;
-  const messages = Array.isArray(data) ? data : data ? [data] : [];
+  const messages: WhatsappWebhookItem[] = Array.isArray(data)
+    ? data.map(asRecord).filter((item): item is WhatsappWebhookItem => item !== null)
+    : [asRecord(data)].filter((item): item is WhatsappWebhookItem => item !== null);
   const crm = new CrmPipelineService();
   const evolutionService = new WhatsappEvolutionService();
 
   for (const item of messages) {
-    const fromMe = Boolean(item?.key?.fromMe);
-    const remoteJid = String(item?.key?.remoteJid || "");
+    const key = asRecord(item.key);
+    const fromMe = asBoolean(key?.fromMe);
+    const remoteJid = asString(key?.remoteJid);
 
     // Skip groups, status, broadcasts, newsletters
     if (
@@ -85,11 +123,15 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
     if (!phoneDigits || phoneDigits.length < 10) continue;
     const phoneE164 = `+${phoneDigits}`;
 
-    const msg = item?.message;
-    const isDocument = Boolean(msg?.documentMessage || msg?.documentWithCaptionMessage);
-    const isImage = Boolean(msg?.imageMessage);
-    const isVideo = Boolean(msg?.videoMessage);
-    const isAudio = Boolean(msg?.audioMessage);
+    const msg = asRecord(item.message);
+    const documentMessage = asRecord(msg?.documentMessage);
+    const imageMessage = asRecord(msg?.imageMessage);
+    const videoMessage = asRecord(msg?.videoMessage);
+    const audioMessage = asRecord(msg?.audioMessage);
+    const isDocument = documentMessage !== null || asRecord(msg?.documentWithCaptionMessage) !== null;
+    const isImage = imageMessage !== null;
+    const isVideo = videoMessage !== null;
+    const isAudio = audioMessage !== null;
     const isMedia = isDocument || isImage || isVideo || isAudio;
 
     let attachmentUrl: string | null = null;
@@ -113,10 +155,10 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
                     ? "audio/ogg"
                     : "application/octet-stream");
 
+          const documentFileName = asString(documentMessage?.fileName) || asString(documentMessage?.title);
           const originalName =
             downloaded.fileName ||
-            msg?.documentMessage?.fileName ||
-            msg?.documentMessage?.title ||
+            documentFileName ||
             (isDocument ? "Документ.docx" : isImage ? "Изображение.jpg" : isVideo ? "Видео.mp4" : "Аудио.ogg");
 
           const mediaService = new ChatMediaService();
@@ -130,12 +172,11 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
           attachmentUrl = stored.url;
           attachmentType = stored.mimeType;
 
-          const rawCaption = (
-            msg?.documentMessage?.caption ||
-            msg?.imageMessage?.caption ||
-            msg?.videoMessage?.caption ||
-            ""
-          ).trim();
+          const rawCaption = [
+            asString(documentMessage?.caption),
+            asString(imageMessage?.caption),
+            asString(videoMessage?.caption),
+          ].find((caption) => caption.length > 0) ?? "";
           if (!rawCaption || rawCaption === ".") {
             text = originalName;
           } else {
@@ -274,8 +315,9 @@ export async function whatsappInternalRoutes(app: FastifyInstance): Promise<void
 }
 
 export default async function whatsappIntegrationRoutes(app: FastifyInstance): Promise<void> {
-  // Публичный маршрут для webhook от Evolution API (без JWT авторизации)
-  app.post("/webhook", handleWhatsappWebhook);
+  // The internal route above is the single canonical Evolution ingress.
+  // Do not expose a second public alias: it bypasses deployment allowlists and
+  // makes provider replay/deduplication harder to reason about.
 
   const protectedRoutes = async (subApp: FastifyInstance) => {
     await subApp.register(authenticatePlugin);

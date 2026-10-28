@@ -5,10 +5,11 @@ import { loadAuditRuntime } from "./audit-runtime.mjs";
 const runtime = await loadAuditRuntime();
 
 const client = new pg.Client({
-  host: "127.0.0.1",
-  port: 5432,
+  host: process.env.PGHOST ?? '127.0.0.1',
+  port: Number(process.env.PGPORT ?? 5432),
   database: runtime.database,
-  user: "postgres",
+  user: process.env.AUDIT_ADMIN_USER ?? 'postgres',
+  password: process.env.AUDIT_ADMIN_PASSWORD,
 });
 const passwordHash = await argon2.hash("AuditLocal12345");
 await client.connect();

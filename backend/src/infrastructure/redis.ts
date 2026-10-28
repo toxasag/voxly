@@ -122,9 +122,19 @@ export function getRedisConnectionOptions(): {
   }
 }
 
-/**
- * Проверка доступности активного соединения с Redis.
- */
+export function requireDurableQueue(queueName: string): void {
+  if (process.env.NODE_ENV === "production" && !getRedisConnectionOptions()) {
+    throw new Error(`DURABLE_QUEUE_UNAVAILABLE: REDIS_URL is required for ${queueName}`);
+  }
+}
+
+export function getRedisHealth(): { configured: boolean; connected: boolean } {
+  return {
+    configured: getRedisConnectionOptions() !== null,
+    connected: isRedisAvailable(),
+  };
+}
+
 export function isRedisAvailable(): boolean {
   return isConnected && redisInstance !== null;
 }

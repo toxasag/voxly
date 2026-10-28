@@ -141,7 +141,7 @@ describe("StoriesService", () => {
       if (sql.includes("SELECT * FROM story_posts")) {
         return mockStory as unknown as never;
       }
-      if (sql.includes("UPDATE story_posts SET status = 'published'")) {
+      if (sql.includes("UPDATE story_posts") && sql.includes("status = 'published'")) {
         return { ...mockStory, status: "published" } as unknown as never;
       }
       return null as unknown as never;

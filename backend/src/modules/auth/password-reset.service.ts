@@ -184,6 +184,15 @@ export class PasswordResetService {
     });
 
     this.app.log.info({ userId }, "Password reset completed");
+    const recipient = await queryOne<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [userId]);
+    if (recipient !== null) {
+      void EmailService.sendPasswordChangedEmail(recipient.email).then(
+        (result) => {
+          if (!result.sent) this.app.log.warn({ userId, reason: result.error }, "Password reset notification not sent");
+        },
+        (error: unknown) => this.app.log.warn({ userId, error }, "Password reset notification failed"),
+      );
+    }
 
     return { message: "Пароль обновлён. Войдите с новым паролем." };
   }

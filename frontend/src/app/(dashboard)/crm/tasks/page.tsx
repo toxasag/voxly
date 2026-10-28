@@ -545,7 +545,7 @@ function TasksContent() {
               type="button"
               onClick={() => setPresetView(tab.id)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                "inline-flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0 whitespace-nowrap",
                 active
                   ? "bg-white border border-[#e5e5e5] text-[#111111] shadow-2xs"
                   : "text-[#666666] hover:bg-black/[0.04] hover:text-[#111111]",

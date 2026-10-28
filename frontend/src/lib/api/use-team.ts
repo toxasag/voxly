@@ -110,11 +110,12 @@ export function useTenantInfo(): UseQueryResult<TenantInfoDTO, ApiClientError> {
   });
 }
 
-interface InviteResult {
+export interface InviteResultDTO {
   member: TeamMemberDTO;
   seats: SeatUsageDTO;
-  /** false, когда SMTP не настроен: ссылку придётся передать вручную. */
   emailSent: boolean;
+  /** Одноразовая ссылка только когда SMTP не доставил письмо. */
+  inviteUrl: string | null;
 }
 
 export interface InvitePayload {
@@ -141,13 +142,12 @@ function useTeamMutationInvalidation(): () => void {
   };
 }
 
-export function useInviteMember(): UseMutationResult<InviteResult, ApiClientError, InvitePayload> {
+export function useInviteMember(): UseMutationResult<InviteResultDTO, ApiClientError, InvitePayload> {
   const invalidate = useTeamMutationInvalidation();
 
-  return useMutation({
+  return useMutation<InviteResultDTO, ApiClientError, InvitePayload>({
     mutationFn: async (payload) =>
-      (await apiClient.post<InviteResult>("/api/v1/tenant/team/invite", payload)).data,
-    onSuccess: invalidate,
+      (await apiClient.post<InviteResultDTO>("/api/v1/tenant/team/invite", payload)).data,
   });
 }
 
@@ -179,14 +179,19 @@ export function useRemoveMember(): UseMutationResult<
   });
 }
 
+export interface ResendInviteResult {
+  emailSent: boolean;
+  inviteUrl: string | null;
+}
+
 export function useResendInvite(): UseMutationResult<
-  { emailSent: boolean },
+  ResendInviteResult,
   ApiClientError,
   { id: string }
 > {
-  return useMutation({
+  return useMutation<ResendInviteResult, ApiClientError, { id: string }>({
     mutationFn: async ({ id }) =>
-      (await apiClient.post<{ emailSent: boolean }>(`/api/v1/tenant/team/${id}/resend`, {})).data,
+      (await apiClient.post<ResendInviteResult>(`/api/v1/tenant/team/${id}/resend`, {})).data,
   });
 }
 

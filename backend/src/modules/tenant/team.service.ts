@@ -231,7 +231,7 @@ export class TeamService {
     email: string;
     role: Role;
     confirmExtraSeat: boolean;
-  }): Promise<{ member: TeamMemberDTO; seats: SeatUsageDTO; emailSent: boolean }> {
+  }): Promise<{ member: TeamMemberDTO; seats: SeatUsageDTO; emailSent: boolean; inviteUrl: string | null }> {
     if (!ASSIGNABLE_ROLES.includes(input.role)) {
       throw new AppError(400, "VALIDATION_ERROR", "Недопустимая роль", {
         role: ["Роль нельзя назначить приглашаемому сотруднику"],
@@ -331,6 +331,7 @@ export class TeamService {
       member: toMemberDTO(created, owner, input.actorId),
       seats,
       emailSent: sent.sent,
+      inviteUrl: sent.sent ? null : link,
     };
   }
 
@@ -419,7 +420,7 @@ export class TeamService {
   async resendInvite(input: {
     tenantId: string;
     userId: string;
-  }): Promise<{ emailSent: boolean }> {
+  }): Promise<{ emailSent: boolean; inviteUrl: string | null }> {
     const token = randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + INVITE_TTL_HOURS * 3_600_000);
 
@@ -447,6 +448,6 @@ export class TeamService {
       expiresInHours: INVITE_TTL_HOURS,
     });
 
-    return { emailSent: sent.sent };
+    return { emailSent: sent.sent, inviteUrl: sent.sent ? null : link };
   }
 }

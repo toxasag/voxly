@@ -340,6 +340,12 @@ export function LoginForm() {
         бота выбранного канала: до этого выбор MAX упирался в жёлтую надпись и
         отключённую кнопку, и подключиться было нечем.
       */}
+      {code.error !== null && code.stage === "idle" && (
+        <p role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {code.error}
+        </p>
+      )}
+
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
         <div className="space-y-3 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
           <p className="text-[13px] text-[#111111]">

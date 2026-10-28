@@ -19,13 +19,8 @@ import { join } from "node:path";
 const FILTER_ROWS = [
   {
     file: "src/app/(dashboard)/crm/tasks/page.tsx",
-    anchor: "FILTERS.map",
+    anchor: "PRESET_TABS.map",
     label: "быстрые фильтры задач",
-  },
-  {
-    file: "src/app/(dashboard)/crm/contacts/page.tsx",
-    anchor: "CHANNEL_FILTERS.map",
-    label: "фильтры каналов контактов",
   },
 ];
 
@@ -35,8 +30,10 @@ function containerClassName(source: string, anchor: string): string {
   expect(anchorIndex).toBeGreaterThan(-1);
 
   const before = source.slice(0, anchorIndex);
-  const matches = [...before.matchAll(/className="([^"]*)"/g)];
-  const last = matches[matches.length - 1];
+      const matches = [...before.matchAll(/className="([^"]*)"/g)];
+  const last = [...matches].reverse().find((match) =>
+    match[1]?.includes("overflow-x-auto") || match[1]?.includes("flex-wrap"),
+  );
 
   return last?.[1] ?? "";
 }

@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { queryOne, transaction } from "../../db/client.js";
 import { AppError, NotFoundError, UnauthorizedError } from "../../plugins/errorHandler.js";
 import { AuthService } from "../auth/auth.service.js";
+import { EmailService } from "../../services/email.service.js";
 import type { AuthChannel } from "../auth/auth-session.service.js";
 import type { Role } from "../../types/index.js";
 
@@ -280,6 +281,15 @@ export class ProfileService {
     });
 
     this.app.log.info({ userId: input.userId }, "Password changed from profile");
+    const recipient = await queryOne<{ email: string }>(`SELECT email FROM users WHERE id = $1`, [input.userId]);
+    if (recipient !== null) {
+      void EmailService.sendPasswordChangedEmail(recipient.email).then(
+        (result) => {
+          if (!result.sent) this.app.log.warn({ userId: input.userId, reason: result.error }, "Password change email not sent");
+        },
+        (error: unknown) => this.app.log.warn({ userId: input.userId, error }, "Password change email failed"),
+      );
+    }
   }
 
   /**
