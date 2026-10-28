@@ -30,6 +30,22 @@ test('fails business table without tenant id, policy and RLS', () => {
   ]);
 });
 
+test('fails a tenant-scoped table whose policy has no tenant predicate', () => {
+  const [row] = classifyRlsRows([{
+    table_name: 'contacts', rls_enabled: true, rls_forced: true,
+    has_tenant_id: true, has_policy: true, policy_tenant_scoped: false,
+  }]);
+  assert.deepEqual(row.violations, ['policy is not tenant-scoped']);
+});
+
+test('requires parent-scope policy for invoice items', () => {
+  const [row] = classifyRlsRows([{
+    table_name: 'invoice_items', rls_enabled: true, rls_forced: true,
+    has_tenant_id: false, has_policy: true, parent_scope_policy: false,
+  }]);
+  assert.deepEqual(row.violations, ['parent-scope policy missing']);
+});
+
 test('fails a tenant table with a foreign key that does not carry tenant scope', () => {
   const [row] = classifyRlsRows([{
     table_name: 'deals', rls_enabled: true, rls_forced: true,

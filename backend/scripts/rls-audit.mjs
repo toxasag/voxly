@@ -22,8 +22,16 @@ export function classifyRlsRows(rows) {
     if (!intentional && !row.rls_enabled) violations.push('RLS disabled');
     if (!intentional && !row.rls_forced) violations.push('FORCE RLS disabled');
     if (!intentional && !row.has_policy) violations.push('policy missing');
+    // A policy existing is not enough: a permissive policy without a tenant
+    // predicate silently turns RLS into "enabled but ineffective". The SQL
+    // audit supplies this flag from pg_policies; unit fixtures default to true
+    // for backwards-compatible, focused classification tests.
+    if (!intentional && row.policy_tenant_scoped === false) violations.push('policy is not tenant-scoped');
     if (!intentional && !parentScoped && row.has_tenant_id && row.has_unsafe_tenant_foreign_key) {
       violations.push('tenant-unsafe foreign key');
+    }
+    if (!intentional && parentScoped && row.parent_scope_policy === false) {
+      violations.push('parent-scope policy missing');
     }
     return { ...row, intentional, parentScoped, violations };
   });
@@ -41,6 +49,19 @@ export async function auditRls(connectionString) {
         FROM information_schema.columns
         WHERE table_schema = 'public'
         GROUP BY table_name
+      ), policy_scope AS (
+        SELECT p.tablename AS table_name,
+               bool_or(
+                 COALESCE(p.qual::text, '') ~* '(tenant_id|current_tenant_id|app\\.tenant_id)'
+                 OR COALESCE(p.with_check::text, '') ~* '(tenant_id|current_tenant_id|app\\.tenant_id)'
+               ) AS policy_tenant_scoped,
+               bool_or(
+                 COALESCE(p.qual::text, '') ~* '(invoice_id|invoices)'
+                 OR COALESCE(p.with_check::text, '') ~* '(invoice_id|invoices)'
+               ) AS parent_scope_policy
+        FROM pg_policies p
+        WHERE p.schemaname = 'public'
+        GROUP BY p.tablename
       ), unsafe_fks AS (
         SELECT src.relname AS table_name
         FROM pg_constraint fk
@@ -69,12 +90,15 @@ export async function auditRls(connectionString) {
                SELECT 1 FROM pg_policies p
                WHERE p.schemaname = 'public' AND p.tablename = c.relname
              ) AS has_policy,
+             COALESCE(scope.policy_tenant_scoped, false) AS policy_tenant_scoped,
+             COALESCE(scope.parent_scope_policy, false) AS parent_scope_policy,
              EXISTS (
                SELECT 1 FROM unsafe_fks f WHERE f.table_name = c.relname
              ) AS has_unsafe_tenant_foreign_key
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       LEFT JOIN table_columns cols ON cols.table_name = c.relname
+      LEFT JOIN policy_scope scope ON scope.table_name = c.relname
       WHERE n.nspname = 'public' AND c.relkind = 'r'
       ORDER BY c.relname
     `);
