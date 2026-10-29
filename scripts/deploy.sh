@@ -37,10 +37,10 @@ if [ "$TARGET" = "backend" ] || [ "$TARGET" = "all" ]; then
   if nc -z 127.0.0.1 5432 2>/dev/null; then
     (cd "$LOCAL/backend" && env -i PATH="$PATH" HOME="$HOME" USER="${USER:-postgres}" \
       TEST_ADMIN_DATABASE_URL="postgres://postgres@127.0.0.1:5432/postgres" \
-      TEST_DATABASE_NAME="getvoxly_audit_release_$$" TEST_APP_ROLE="getvoxly_audit_release_$$" npm test --silent)
+      TEST_DATABASE_NAME="getvoxly_audit_release_$$" TEST_APP_ROLE="getvoxly_audit_release_$$" NODE_ENV=test npm test --silent)
   else
     printf 'Локальный PostgreSQL недоступен (127.0.0.1:5432) — прогон модульных тестов без БД\n'
-    (cd "$LOCAL/backend" && npx vitest run src/tests/chat-from-me.test.ts src/tests/chat-stream.test.ts src/tests/crm-enrichment.test.ts src/tests/queue-worker.test.ts src/tests/robokassa-client.test.ts src/tests/sales-learn.test.ts src/tests/stage-funnels.test.ts src/tests/stories-service.test.ts)
+    (cd "$LOCAL/backend" && NODE_ENV=test npx vitest run src/tests/chat-from-me.test.ts src/tests/chat-stream.test.ts src/tests/crm-enrichment.test.ts src/tests/queue-worker.test.ts src/tests/robokassa-client.test.ts src/tests/sales-learn.test.ts src/tests/stage-funnels.test.ts src/tests/stories-service.test.ts)
   fi
 fi
 
