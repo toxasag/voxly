@@ -5,16 +5,19 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowUpDown,
   Bot,
   Camera,
   Check,
   ExternalLink,
+  Flame,
   Laptop,
   Link2,
   Loader2,
   MessageSquare,
   Moon,
   Palette,
+  Radio,
   Send,
   Sparkles,
   Sun,
@@ -34,7 +37,52 @@ import {
 } from "./InteractiveMascot";
 import { CreatePhotoMascotModal } from "./CreatePhotoMascotModal";
 
+export type WebchatAttentionEffect = "none" | "shimmer" | "pulse" | "glow" | "bounce";
+
 type WebchatAvatarType = "icon" | "photo" | "mascot";
+
+interface AttentionCustomStyles extends React.CSSProperties {
+  [key: `--${string}`]: string | number;
+}
+
+function getAttentionClasses(
+  effect: WebchatAttentionEffect,
+  interval: number,
+  enabled: boolean,
+  isMascot: boolean = false
+): string {
+  if (!enabled || effect === "none") return "";
+  const base = `webchat-attention-${effect}`;
+  const continuous = interval === 0 ? "is-continuous" : "";
+  const mascotClass = isMascot ? "is-mascot" : "";
+  return cn("webchat-attention-target", base, continuous, mascotClass);
+}
+
+function getAttentionStyles(
+  interval: number,
+  currentAccentColor: string
+): AttentionCustomStyles {
+  const dur =
+    interval === 0
+      ? 0
+      : interval === 3
+      ? 4
+      : interval === 5
+      ? 6
+      : interval === 10
+      ? 12
+      : interval === 15
+      ? 18
+      : interval + 1.2;
+  const styles: AttentionCustomStyles = {
+    "--accent-color": currentAccentColor,
+    "--accent-glow-color": `${currentAccentColor}bb`,
+  };
+  if (dur > 0) {
+    styles["--attention-duration"] = `${dur}s`;
+  }
+  return styles;
+}
 
 interface WebchatAppearanceSettingsProps {
   account: ChannelAccountDTO;
@@ -363,6 +411,40 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
     return () => clearInterval(timer);
   }, [parsedBadgeTexts, badgeRotateIntervalSec]);
 
+  // 6. Эффект привлечения внимания (Attention Grabber)
+  const [attentionEnabled, setAttentionEnabled] = useState<boolean>(() => {
+    if (initialCreds.attentionEnabled !== undefined) {
+      return Boolean(initialCreds.attentionEnabled);
+    }
+    if (initialCreds.attentionEffect === "none") return false;
+    return true;
+  });
+
+  const [attentionEffect, setAttentionEffect] = useState<WebchatAttentionEffect>(() => {
+    const eff = initialCreds.attentionEffect;
+    if (
+      eff === "none" ||
+      eff === "shimmer" ||
+      eff === "pulse" ||
+      eff === "glow" ||
+      eff === "bounce"
+    ) {
+      return eff as WebchatAttentionEffect;
+    }
+    return "shimmer";
+  });
+
+  const [attentionInterval, setAttentionInterval] = useState<number>(() => {
+    if (typeof initialCreds.attentionInterval === "number" && initialCreds.attentionInterval >= 0) {
+      return initialCreds.attentionInterval;
+    }
+    if (typeof initialCreds.attentionInterval === "string") {
+      const parsed = parseInt(initialCreds.attentionInterval, 10);
+      if (!isNaN(parsed) && parsed >= 0) return parsed;
+    }
+    return 5;
+  });
+
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(true);
@@ -442,6 +524,10 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           badgeTexts: parsedBadgeTexts,
           badgeRotateIntervalSec,
           badgeIntervalSeconds: badgeRotateIntervalSec,
+          // Эффект привлечения внимания (Attention Grabber)
+          attentionEnabled,
+          attentionEffect: attentionEnabled ? attentionEffect : "none",
+          attentionInterval,
         },
       },
       {
@@ -1260,6 +1346,238 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Эффект привлечения внимания (Attention Grabber) */}
+          <div className="rounded-xl border border-[#e5e5e5] bg-white p-5 shadow-2xs space-y-4">
+            <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+                  <Sparkles className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold uppercase tracking-wider text-[#111111]">
+                      Привлечение внимания
+                    </h2>
+                    <span className="rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#4a38f5]">
+                      Конверсия +45%
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-[#666666]">
+                    Микро-анимация кнопки чата (блик, пульсация, свечение, парение) для привлечения взгляда посетителя.
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={attentionEnabled}
+                  onChange={(e) => setAttentionEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-[#e5e5e5] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[#cccccc] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#4a38f5]"></div>
+              </label>
+            </div>
+
+            {attentionEnabled && (
+              <div className="space-y-4 pt-1">
+                {/* Выбор визуального эффекта */}
+                <div>
+                  <label className="text-xs font-semibold text-[#111111] block mb-2">
+                    Тип анимационного эффекта
+                  </label>
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                    {/* 1. Блик / Shimmer */}
+                    <button
+                      type="button"
+                      onClick={() => setAttentionEffect("shimmer")}
+                      className={cn(
+                        "group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer",
+                        attentionEffect === "shimmer"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      <div className="flex w-full items-center justify-between mb-1.5">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+                          <Sparkles className="h-4 w-4" />
+                        </div>
+                        <span className="rounded-[4px] bg-amber-50 border border-amber-200 px-1 py-0.2 text-[9px] font-semibold text-amber-800">
+                          Топ
+                        </span>
+                      </div>
+                      <span className="text-xs font-bold text-[#111111]">Блик (Shimmer)</span>
+                      <span className="mt-0.5 text-[11px] text-[#888888] leading-tight">
+                        Световой отблеск по диагонали
+                      </span>
+                    </button>
+
+                    {/* 2. Пульсация / Pulse */}
+                    <button
+                      type="button"
+                      onClick={() => setAttentionEffect("pulse")}
+                      className={cn(
+                        "group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer",
+                        attentionEffect === "pulse"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      <div className="flex w-full items-center justify-between mb-1.5">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#4a38f5]/10 text-[#4a38f5]">
+                          <Radio className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-[#111111]">Пульсация (Pulse)</span>
+                      <span className="mt-0.5 text-[11px] text-[#888888] leading-tight">
+                        Расходящаяся волна в цвете бренда
+                      </span>
+                    </button>
+
+                    {/* 3. Свечение / Glow */}
+                    <button
+                      type="button"
+                      onClick={() => setAttentionEffect("glow")}
+                      className={cn(
+                        "group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer",
+                        attentionEffect === "glow"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      <div className="flex w-full items-center justify-between mb-1.5">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600">
+                          <Flame className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-[#111111]">Свечение (Glow)</span>
+                      <span className="mt-0.5 text-[11px] text-[#888888] leading-tight">
+                        Дыхание неоновой ауры кнопки
+                      </span>
+                    </button>
+
+                    {/* 4. Парение / Float */}
+                    <button
+                      type="button"
+                      onClick={() => setAttentionEffect("bounce")}
+                      className={cn(
+                        "group relative flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer",
+                        attentionEffect === "bounce"
+                          ? "border-[#4a38f5] bg-[#4a38f5]/5 text-[#4a38f5] ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      <div className="flex w-full items-center justify-between mb-1.5">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600">
+                          <ArrowUpDown className="h-4 w-4" />
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-[#111111]">Парение (Float)</span>
+                      <span className="mt-0.5 text-[11px] text-[#888888] leading-tight">
+                        Микро-левитация кнопки вверх-вниз
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Частота повторения эффекта */}
+                <div className="pt-2 border-t border-[#f0f0f0]">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-[#111111]">
+                      Частота повторения эффекта
+                    </label>
+                    <span className="text-xs font-mono font-semibold text-[#4a38f5]">
+                      {attentionInterval === 0 ? "Непрерывно (без пауз)" : `Каждые ${attentionInterval} сек`}
+                    </span>
+                  </div>
+
+                  {/* Быстрые пресеты интервала */}
+                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-5 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setAttentionInterval(0)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5 text-xs font-medium text-center transition-colors cursor-pointer",
+                        attentionInterval === 0
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      Непрерывно
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttentionInterval(3)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5 text-xs font-medium text-center transition-colors cursor-pointer",
+                        attentionInterval === 3
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      3 сек
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttentionInterval(5)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5 text-xs font-medium text-center transition-colors cursor-pointer flex flex-col items-center justify-center",
+                        attentionInterval === 5
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      <span>5 сек</span>
+                      <span className="text-[9px] text-[#4a38f5] font-normal leading-none mt-0.5">Рекомендуем</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttentionInterval(10)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5 text-xs font-medium text-center transition-colors cursor-pointer",
+                        attentionInterval === 10
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      10 сек
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttentionInterval(15)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1.5 text-xs font-medium text-center transition-colors cursor-pointer",
+                        attentionInterval === 15
+                          ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5] font-semibold ring-1 ring-[#4a38f5]"
+                          : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]"
+                      )}
+                    >
+                      15 сек
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3 mb-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      step={1}
+                      value={attentionInterval}
+                      onChange={(e) => setAttentionInterval(parseInt(e.target.value, 10) || 0)}
+                      className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-[#e5e5e5] accent-[#4a38f5]"
+                    />
+                    <span className="w-16 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-center text-xs font-mono text-[#111111]">
+                      {attentionInterval === 0 ? "0 сек" : `${attentionInterval} с`}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-[#888888] leading-relaxed">
+                    💡 Анимация привлекает взгляд посетителя сайта, не раздражая его. При наведении курсора или открытии диалога эффект автоматически приостанавливается.
+                  </p>
+                </div>
               </div>
             )}
           </div>
@@ -2133,9 +2451,13 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                   ) : avatarType === "mascot" ? (
                     <div
                       onClick={() => setPreviewOpen(true)}
-                      className="group relative flex h-16 w-16 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 cursor-pointer shrink-0"
+                      className={cn(
+                        "group relative flex h-16 w-16 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 cursor-pointer shrink-0",
+                        getAttentionClasses(attentionEffect, attentionInterval, attentionEnabled, true)
+                      )}
                       style={{
                         filter: `drop-shadow(0 10px 20px ${accentColor}40)`,
+                        ...getAttentionStyles(attentionInterval, accentColor),
                       }}
                       title="Нажмите, чтобы открыть чат"
                     >
@@ -2148,7 +2470,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                         customReactions={customReactions}
                         onClick={() => setPreviewOpen(true)}
                       />
-                      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs">
+                      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-[9px] font-bold text-white shadow-xs z-10">
                         1
                       </span>
                     </div>
@@ -2156,23 +2478,37 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                     <button
                       type="button"
                       onClick={() => setPreviewOpen(true)}
-                      className="group relative flex h-14 w-14 items-center justify-center rounded-full overflow-hidden border-2 border-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
-                      style={{ backgroundColor: accentColor }}
+                      className={cn(
+                        "group relative flex h-14 w-14 items-center justify-center rounded-full border-2 border-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0",
+                        getAttentionClasses(attentionEffect, attentionInterval, attentionEnabled, false)
+                      )}
+                      style={{
+                        backgroundColor: accentColor,
+                        ...getAttentionStyles(attentionInterval, accentColor),
+                      }}
                       title="Нажмите, чтобы написать консультанту"
                     >
-                      <img
-                        src={consultantAvatar}
-                        alt={consultantName || "Консультант"}
-                        className="h-full w-full object-cover"
-                      />
-                      <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow-xs" />
+                      <div className="h-full w-full rounded-full overflow-hidden">
+                        <img
+                          src={consultantAvatar}
+                          alt={consultantName || "Консультант"}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white bg-emerald-500 shadow-xs z-10" />
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => setPreviewOpen(true)}
-                      className="flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
-                      style={{ backgroundColor: accentColor }}
+                      className={cn(
+                        "flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0 relative",
+                        getAttentionClasses(attentionEffect, attentionInterval, attentionEnabled, false)
+                      )}
+                      style={{
+                        backgroundColor: accentColor,
+                        ...getAttentionStyles(attentionInterval, accentColor),
+                      }}
                       title="Открыть чат"
                     >
                       <MessageSquare className="h-6 w-6 stroke-[2.5]" />

@@ -20,6 +20,8 @@ export interface WebchatMessengerButton {
   handle?: string;
 }
 
+export type WebchatAttentionEffect = "none" | "shimmer" | "pulse" | "glow" | "bounce";
+
 export interface WebchatAccountInfo {
   id: string;
   tenantId: string;
@@ -56,6 +58,9 @@ export interface WebchatAccountInfo {
   proactiveEnabled?: boolean;
   proactiveDelaySeconds?: number;
   proactiveMessage?: string;
+  attentionEnabled?: boolean;
+  attentionEffect?: WebchatAttentionEffect;
+  attentionInterval?: number;
 }
 
 interface ChannelAccountRow {
@@ -427,6 +432,32 @@ export class WebchatService {
             ? parseInt(creds.badgeRotateIntervalSec, 10)
             : 5);
 
+    // Эффект привлечения внимания (Attention Grabber)
+    const attentionEnabled = creds.attentionEnabled !== undefined
+      ? Boolean(creds.attentionEnabled)
+      : (creds.attentionEffect !== "none");
+
+    let attentionEffect: WebchatAttentionEffect = "shimmer";
+    if (
+      creds.attentionEffect === "none" ||
+      creds.attentionEffect === "shimmer" ||
+      creds.attentionEffect === "pulse" ||
+      creds.attentionEffect === "glow" ||
+      creds.attentionEffect === "bounce"
+    ) {
+      attentionEffect = creds.attentionEffect as WebchatAttentionEffect;
+    }
+    if (!attentionEnabled) {
+      attentionEffect = "none";
+    }
+
+    const attentionInterval =
+      typeof creds.attentionInterval === "number" && creds.attentionInterval >= 0
+        ? creds.attentionInterval
+        : (typeof creds.attentionInterval === "string" && !isNaN(parseInt(creds.attentionInterval, 10))
+            ? Math.max(0, parseInt(creds.attentionInterval, 10))
+            : 5);
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -471,6 +502,9 @@ export class WebchatService {
       badgeTexts,
       badgeRotateIntervalSec,
       badgeIntervalSeconds: badgeRotateIntervalSec,
+      attentionEnabled,
+      attentionEffect,
+      attentionInterval,
     };
   }
 

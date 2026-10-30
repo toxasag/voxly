@@ -12,10 +12,10 @@
     "ai-bots"
   ],
   "migrations": {
-    "expected": 61,
-    "applied": 61,
+    "expected": 62,
+    "applied": 62,
     "pending": 0,
-    "head": "0061_partner_tenants_and_auth_settings"
+    "head": "0062_tenant_users_view"
   },
   "database": {
     "engine": "PostgreSQL 16",

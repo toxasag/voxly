@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ALL_PERMISSIONS } from "../../config/permissions.js";
 import type { Permission } from "../../types/index.js";
-import { queryOne } from "../../db/client.js";
+import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
@@ -120,6 +120,120 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         isFreeCustomPlan,
       },
     });
+  });
+
+  /**
+   * GET /tenant/workspaces — список доступных рабочих пространств для переключения.
+   * Возвращает текущее пространство, родительскую организацию (если портал дочерний)
+   * и все дочерние компании (для партнеров и суперадминов платформы).
+   */
+  app.get("/workspaces", async (request, reply) => {
+    const currentTenantId = request.tenant_id;
+    const user = request.authUser;
+    const isPlatformOwner = user.platform_role === "platform_owner";
+    const canManageTenants =
+      isPlatformOwner ||
+      user.role === "partner" ||
+      user.role === "owner" ||
+      user.role === "admin" ||
+      request.permissions.has("tenant:admin");
+
+    const currentTenant = await queryOne<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      parent_tenant_id: string | null;
+    }>(
+      "SELECT id, name, slug, plan, status, parent_tenant_id FROM tenants WHERE id = $1",
+      [currentTenantId],
+    );
+
+    if (!currentTenant) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Арендатор не найден" } });
+    }
+
+    const workspaces: Array<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      is_current: boolean;
+      is_parent: boolean;
+      role: string;
+    }> = [];
+
+    workspaces.push({
+      id: currentTenant.id,
+      name: currentTenant.name,
+      slug: currentTenant.slug,
+      plan: currentTenant.plan,
+      status: currentTenant.status,
+      is_current: true,
+      is_parent: false,
+      role: user.role,
+    });
+
+    if (currentTenant.parent_tenant_id) {
+      const parentTenant = await queryOne<{
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+      }>(
+        "SELECT id, name, slug, plan, status FROM tenants WHERE id = $1",
+        [currentTenant.parent_tenant_id],
+      );
+      if (parentTenant) {
+        workspaces.push({
+          id: parentTenant.id,
+          name: parentTenant.name,
+          slug: parentTenant.slug,
+          plan: parentTenant.plan,
+          status: parentTenant.status,
+          is_current: false,
+          is_parent: true,
+          role: "owner",
+        });
+      }
+    }
+
+    if (canManageTenants) {
+      const parentIdForChildren = currentTenant.parent_tenant_id ?? currentTenant.id;
+      interface ChildTenantRow {
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+        parent_tenant_id: string | null;
+      }
+      const childRows = await query<ChildTenantRow>(
+        `SELECT id, name, slug, plan, status, parent_tenant_id
+         FROM tenants
+         WHERE parent_tenant_id = $1 AND id != $2
+         ORDER BY name ASC`,
+        [parentIdForChildren, currentTenant.id],
+      );
+
+      for (const child of childRows) {
+        workspaces.push({
+          id: child.id,
+          name: child.name,
+          slug: child.slug,
+          plan: child.plan,
+          status: child.status,
+          is_current: false,
+          is_parent: false,
+          role: "partner",
+        });
+      }
+    }
+
+    return reply.send({ data: workspaces, meta: { total: workspaces.length } });
   });
 
   // -------------------------------------------------------------------------
