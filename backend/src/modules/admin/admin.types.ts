@@ -31,6 +31,17 @@ export const updateTenantSchema = z.object({
 
   /** Внутренние заметки менеджера платформы (допродажи, договоренности). */
   custom_notes: z.string().max(4000).nullable().optional(),
+
+  /** Политика аутентификации: обязательный 2FA через Telegram-бота */
+  require_telegram_auth: z.boolean().optional(),
+
+  /** Настройки аутентификации */
+  auth_settings: z
+    .object({
+      require_telegram_auth: z.boolean(),
+      allow_password_auth: z.boolean().optional().default(true),
+    })
+    .optional(),
 });
 
 export type UpdateTenantPayload = z.infer<typeof updateTenantSchema>;

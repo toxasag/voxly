@@ -29,6 +29,11 @@ export interface AdminTenantDTO {
   custom_plan_name: string | null;
   business_niche: string | null;
   custom_notes: string | null;
+  auth_settings?: {
+    require_telegram_auth: boolean;
+    allow_password_auth?: boolean;
+  };
+  require_telegram_auth?: boolean;
   /** УСТАРЕЛО: остаток в штуках токенов. Актуален ai_balance_kopecks. */
   ai_tokens_balance: number;
   /** Баланс ИИ в копейках. */
@@ -68,6 +73,11 @@ export type UpdateTenantPayload = {
   custom_plan_name?: string | null;
   business_niche?: string | null;
   custom_notes?: string | null;
+  require_telegram_auth?: boolean;
+  auth_settings?: {
+    require_telegram_auth: boolean;
+    allow_password_auth?: boolean;
+  };
 };
 
 export interface ImpersonateResponse {
