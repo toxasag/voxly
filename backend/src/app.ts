@@ -33,6 +33,7 @@ import adminPlatformRoutes from "./modules/admin/admin-platform.routes.js";
 import geminiIntegrationRoutes from "./modules/ai/gemini-integration.routes.js";
 import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
+import partnerRoutes from "./modules/partner/partner.routes.js";
 import notificationChannelsRoutes from "./modules/notifications/notification-channels.routes.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { conversionDispatcher } from "./modules/analytics/conversion-dispatcher.service.js";
@@ -201,6 +202,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authorizePlugin);
 
   await app.register(authRoutes, { prefix: "/auth" });
+  await app.register(authRoutes, { prefix: "/api/v1/auth" });
+  await app.register(authRoutes, { prefix: "/api/auth" });
 
   // Core CRM — authenticate + authorize are registered inside the group.
   await app.register(crmRoutes, { prefix: "/api/v1/crm" });
@@ -342,6 +345,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });
+  await app.register(partnerRoutes, { prefix: "/api/v1/partner" });
+  await app.register(partnerRoutes, { prefix: "/api/partner" });
 
   // Автоматический сбор опыта в базу знаний AI при успешном закрытии сделок
   const salesLearnService = new SalesLearnService();

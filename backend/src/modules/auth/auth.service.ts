@@ -54,6 +54,9 @@ interface AuthUserRow {
   tenant_status: string;
   tenant_custom_price_rubles?: number | null;
   tenant_custom_plan_name?: string | null;
+  tenant_auth_settings?: { require_telegram_auth?: boolean; allow_password_auth?: boolean } | null;
+  tenant_parent_id?: string | null;
+  tenant_custom_pricing?: Record<string, unknown> | null;
 }
 
 interface OtpRow {
@@ -121,7 +124,8 @@ type RefreshOutcome =
 
 const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
     u.password_hash, t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan,
-    t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name`;
+    t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name,
+    t.auth_settings AS tenant_auth_settings, t.parent_tenant_id AS tenant_parent_id, t.custom_pricing AS tenant_custom_pricing`;
 
 /**
  * Условие «учётная запись пригодна для входа» одной строкой SQL.
@@ -473,6 +477,13 @@ export class AuthService {
     if (!valid) throw new InvalidCredentialsError("Invalid email or password");
 
     assertTenantActive(user.tenant_status);
+
+    const authSettings = user.tenant_auth_settings;
+    const requireTelegram = authSettings?.require_telegram_auth ?? true;
+
+    if (requireTelegram) {
+      throw new AppError(401, "SECOND_FACTOR_REQUIRED", "Введите код подтверждения из Telegram или MAX");
+    }
 
     return this.issueTokens(user, undefined, undefined, metadata);
   }
