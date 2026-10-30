@@ -71,7 +71,22 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
   const pageLayoutTabs = new PageLayoutTabsService();
 
   app.get("/modules", { onRequest: auth }, async (request) => {
-    const usersCount = await countUsers(request.tenant_id);
+    const [usersCount, tenant] = await Promise.all([
+      countUsers(request.tenant_id),
+      queryOne<{
+        id: string;
+        plan: string;
+        custom_price_rubles: number | null;
+        custom_plan_name: string | null;
+      }>(
+        `SELECT id, plan, custom_price_rubles, custom_plan_name FROM tenants WHERE id = $1`,
+        [request.tenant_id],
+      ),
+    ]);
+
+    const hasCustomPrice = tenant?.custom_price_rubles !== null && tenant?.custom_price_rubles !== undefined;
+    const isFreeCustomPlan = (hasCustomPrice && Number(tenant.custom_price_rubles) === 0) || tenant?.plan === "custom_free";
+    const customPlanName = tenant?.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
 
     const rows = await query<CatalogRow>(
       `SELECT m.slug, m.name, m.description, m.price_monthly, m.billing_kind,
@@ -90,39 +105,46 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
       const quantity = row.quantity ?? 0;
       const pricing = {
         billingKind: row.billing_kind,
-        basePrice: Number(row.base_price),
-        unitPrice: Number(row.unit_price),
-        includedUnits: row.included_units,
+        basePrice: isFreeCustomPlan ? 0 : Number(row.base_price),
+        unitPrice: isFreeCustomPlan ? 0 : Number(row.unit_price),
+        includedUnits: isFreeCustomPlan ? Math.max(row.included_units, 999999) : row.included_units,
         // Для не установленного модуля показываем цену за одну единицу,
         // иначе карточка per_unit показывала бы 0 ₽.
         quantity: quantity === 0 ? 1 : quantity,
         usersCount,
       };
 
+      const monthly = isFreeCustomPlan
+        ? 0
+        : row.installed
+          ? effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at)
+          : monthlyPrice(pricing);
+
       return {
         slug: row.slug,
         name: row.name,
         description: row.description,
-        priceMonthly: Number(row.price_monthly),
+        priceMonthly: isFreeCustomPlan ? 0 : Number(row.price_monthly),
         billingKind: row.billing_kind,
         basePrice: pricing.basePrice,
         unitPrice: pricing.unitPrice,
-        includedUnits: row.included_units,
+        includedUnits: pricing.includedUnits,
         unitLabel: row.unit_label,
         isMulti: row.is_multi,
         isBaseModule: row.slug === BASE_MODULE_SLUG,
         category: row.category,
         icon: row.icon,
-        trialDays: row.trial_days,
+        trialDays: isFreeCustomPlan ? 0 : row.trial_days,
         features: row.features ?? [],
         installed: row.installed,
         installedAt: toIso(row.installed_at),
         quantity,
-        trialEndsAt: row.included_units > 0 ? null : toIso(row.trial_ends_at),
-        trialActive: row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
-        monthlyTotal: row.installed
-          ? effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at)
-          : monthlyPrice(pricing),
+        trialEndsAt: isFreeCustomPlan || row.included_units > 0 ? null : toIso(row.trial_ends_at),
+        trialActive: isFreeCustomPlan || row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
+        monthlyTotal: monthly,
+        isCustomPlan: hasCustomPrice,
+        isFreeCustomPlan,
+        customPlanName: hasCustomPrice ? customPlanName : null,
       };
     });
 
@@ -131,7 +153,23 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
 
   /** Сводка по подписке: что и сколько арендатор платит сейчас. */
   app.get("/billing", { onRequest: auth }, async (request) => {
-    const usersCount = await countUsers(request.tenant_id);
+    const [usersCount, tenant] = await Promise.all([
+      countUsers(request.tenant_id),
+      queryOne<{
+        id: string;
+        plan: string;
+        custom_price_rubles: number | null;
+        custom_plan_name: string | null;
+      }>(
+        `SELECT id, plan, custom_price_rubles, custom_plan_name FROM tenants WHERE id = $1`,
+        [request.tenant_id],
+      ),
+    ]);
+
+    const hasCustomPrice = tenant?.custom_price_rubles !== null && tenant?.custom_price_rubles !== undefined;
+    const isFreeCustomPlan = (hasCustomPrice && Number(tenant.custom_price_rubles) === 0) || tenant?.plan === "custom_free";
+    const customPlanName = tenant?.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const customPrice = hasCustomPrice ? Number(tenant.custom_price_rubles) : null;
 
     const rows = await query<CatalogRow>(
       `SELECT m.slug, m.name, m.description, m.price_monthly, m.billing_kind,
@@ -156,38 +194,61 @@ export default async function marketplaceRoutes(app: FastifyInstance): Promise<v
     const items = rows.map((row) => {
       const pricing = {
         billingKind: row.billing_kind,
-        basePrice: Number(row.base_price),
-        unitPrice: Number(row.unit_price),
-        includedUnits: row.included_units,
+        basePrice: isFreeCustomPlan ? 0 : Number(row.base_price),
+        unitPrice: isFreeCustomPlan ? 0 : Number(row.unit_price),
+        includedUnits: isFreeCustomPlan ? Math.max(row.included_units, 999999) : row.included_units,
         quantity: row.quantity ?? 1,
         usersCount,
       };
+
+      const itemMonthly = isFreeCustomPlan
+        ? 0
+        : effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at);
+
+      const fullMonthly = isFreeCustomPlan
+        ? 0
+        : monthlyPrice(pricing);
 
       return {
         slug: row.slug,
         name: row.name,
         quantity: row.quantity ?? 1,
-        monthlyTotal: effectiveMonthly(pricing, row.included_units > 0 ? null : row.trial_ends_at),
+        monthlyTotal: itemMonthly,
         // Полная цена без скидки пробного периода — чтобы показать, во что
         // подписка превратится после его окончания.
-        fullMonthly: monthlyPrice(pricing),
-        trialActive: row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
-        trialEndsAt: row.included_units > 0 ? null : toIso(row.trial_ends_at),
+        fullMonthly,
+        trialActive: isFreeCustomPlan || row.included_units > 0 ? false : isTrialActive(row.trial_ends_at),
+        trialEndsAt: isFreeCustomPlan || row.included_units > 0 ? null : toIso(row.trial_ends_at),
       };
     });
+
+    const calculatedMonthly = items.reduce((sum, item) => sum + item.monthlyTotal, 0);
+    const calculatedAfterTrials = items.reduce((sum, item) => sum + item.fullMonthly, 0);
+
+    const effectiveTotal = isFreeCustomPlan
+      ? 0
+      : (hasCustomPrice && customPrice !== null ? customPrice : calculatedMonthly);
+
+    const effectiveAfterTrials = isFreeCustomPlan
+      ? 0
+      : (hasCustomPrice && customPrice !== null ? customPrice : calculatedAfterTrials);
 
     const integrations = await platformConfigService.getEffectiveIntegrations();
     const isRoboConfigured = integrations.robokassa.isConfigured;
 
     const summary: BillingSummaryDTO = {
-      monthlyTotal: items.reduce((sum, item) => sum + item.monthlyTotal, 0),
-      monthlyAfterTrials: items.reduce((sum, item) => sum + item.fullMonthly, 0),
+      monthlyTotal: effectiveTotal,
+      monthlyAfterTrials: effectiveAfterTrials,
       usersCount,
       items: items.map(({ fullMonthly: _full, ...rest }) => rest),
       billingProvider: {
         connected: isRoboConfigured,
         provider: isRoboConfigured ? "robokassa" : null,
       },
+      isCustomPlan: hasCustomPrice,
+      isFreeCustomPlan,
+      customPlanName: hasCustomPrice ? customPlanName : null,
+      customPriceRubles: customPrice,
     };
 
     return { data: summary };

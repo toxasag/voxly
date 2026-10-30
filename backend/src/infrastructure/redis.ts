@@ -3,7 +3,6 @@ import { getEnv } from "../config/env.js";
 
 let redisInstance: Redis | null = null;
 let isConnected = false;
-let initAttempted = false;
 
 /**
  * Получение единого инстанса ioredis.
@@ -12,14 +11,8 @@ let initAttempted = false;
  */
 export function getRedisClient(): Redis | null {
   if (redisInstance) {
-    return isConnected ? redisInstance : null;
+    return redisInstance;
   }
-
-  if (initAttempted) {
-    return null;
-  }
-
-  initAttempted = true;
 
   let redisUrl: string | undefined;
   try {
@@ -27,11 +20,6 @@ export function getRedisClient(): Redis | null {
     redisUrl = env.REDIS_URL || process.env.REDIS_URL;
   } catch {
     redisUrl = process.env.REDIS_URL;
-  }
-
-  // Если URL не задан явно, в production используем контейнер automation-redis-1
-  if (!redisUrl && process.env.NODE_ENV === "production") {
-    redisUrl = "redis://automation-redis-1:6379";
   }
 
   if (!redisUrl) {
@@ -42,9 +30,9 @@ export function getRedisClient(): Redis | null {
     const client = new Redis(redisUrl, {
       lazyConnect: false,
       maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
+      enableOfflineQueue: true,
       connectTimeout: 4000,
-      retryStrategy(times) {
+      retryStrategy(times: number) {
         if (times > 5) return null; // Прекращаем попытки при длительном отсутствии Redis
         return Math.min(times * 300, 2000);
       },
@@ -80,10 +68,75 @@ export function getRedisClient(): Redis | null {
 }
 
 /**
- * Проверка доступности активного соединения с Redis.
+ * Параметры подключения к Redis для BullMQ / ioredis.
  */
+export function getRedisConnectionOptions(): {
+  host: string;
+  port: number;
+  password?: string;
+  username?: string;
+  db?: number;
+  maxRetriesPerRequest: null;
+  enableOfflineQueue?: boolean;
+  connectTimeout?: number;
+  retryStrategy?: (times: number) => number | null;
+} | null {
+  let redisUrl: string | undefined;
+  try {
+    const env = getEnv();
+    redisUrl = env.REDIS_URL || process.env.REDIS_URL;
+  } catch {
+    redisUrl = process.env.REDIS_URL;
+  }
+
+  if (!redisUrl) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(redisUrl);
+    const dbNum = parsed.pathname ? parseInt(parsed.pathname.replace(/^\//, ""), 10) || 0 : 0;
+    return {
+      host: parsed.hostname || "127.0.0.1",
+      port: parsed.port ? parseInt(parsed.port, 10) : 6379,
+      password: parsed.password || undefined,
+      username: parsed.username || undefined,
+      db: dbNum,
+      maxRetriesPerRequest: null,
+      enableOfflineQueue: false,
+      connectTimeout: 3000,
+      retryStrategy(times: number) {
+        if (times > 3) return null;
+        return Math.min(times * 300, 1500);
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function requireDurableQueue(queueName: string): void {
+  if (process.env.NODE_ENV === "production" && !getRedisConnectionOptions()) {
+    throw new Error(`DURABLE_QUEUE_UNAVAILABLE: REDIS_URL is required for ${queueName}`);
+  }
+}
+
+export function getRedisHealth(): { configured: boolean; connected: boolean } {
+  if (!redisInstance) {
+    getRedisClient();
+  }
+  const connected = (isConnected || redisInstance?.status === "ready") && redisInstance !== null;
+  return {
+    configured: getRedisConnectionOptions() !== null,
+    connected,
+  };
+}
+
 export function isRedisAvailable(): boolean {
-  return isConnected && redisInstance !== null;
+  if (!redisInstance) {
+    getRedisClient();
+  }
+  return (isConnected || redisInstance?.status === "ready") && redisInstance !== null;
 }
 
 /**
@@ -98,7 +151,6 @@ export async function closeRedis(): Promise<void> {
     } finally {
       redisInstance = null;
       isConnected = false;
-      initAttempted = false;
     }
   }
 }

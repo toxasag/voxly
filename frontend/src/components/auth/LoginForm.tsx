@@ -70,12 +70,13 @@ function postLoginTarget(tenantSlug: string): string {
 }
 
 export function LoginForm() {
-  const { loginWithCode, forgotPassword, tenant, isAuthenticated } = useAuth();
+  const { login, loginWithCode, forgotPassword, tenant, isAuthenticated } = useAuth();
   const code = useCodeFlow("login");
 
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   // Показывается только после отказа по паролю: до первой неудачи предлагать
   // восстановление незачем.
   const [showRecovery, setShowRecovery] = useState(false);
@@ -129,7 +130,7 @@ export function LoginForm() {
     return "Нет связи с сервером. Проверьте подключение и повторите попытку.";
   }, []);
 
-  /** «Получить код»: e-mail и пароль обязательны до запроса кода. */
+  /** «Войти»: проверяем пароль, если 2FA не требуется — входим сразу, иначе запрашиваем код. */
   const handleRequestCode = useCallback(async () => {
     const valid = await form.trigger();
     if (!valid) {
@@ -139,11 +140,40 @@ export function LoginForm() {
 
     const values = form.getValues();
     setOtpError(null);
+    setIsLoggingIn(true);
 
-    // Телефон берётся с сервера по e-mail — пользователь его здесь не вводит.
-    // Поэтому передаём e-mail, а номер резолвит backend.
-    await code.request({ channel: values.channel, phone: "", email: values.email });
-  }, [form, code]);
+    try {
+      const session = await login(values.email, values.password);
+      window.location.href = postLoginTarget(session.slug);
+      return;
+    } catch (err) {
+      if (err instanceof ApiClientError) {
+        if (err.code === "SECOND_FACTOR_REQUIRED") {
+          // Телефон берётся с сервера по e-mail — пользователь его здесь не вводит.
+          // Поэтому передаём e-mail, а номер резолвит backend.
+          await code.request({ channel: values.channel, phone: "", email: values.email });
+          return;
+        }
+
+        const message = describeError(err);
+        const isCredentialError =
+          err.status === 401 &&
+          (err.message.toLowerCase().includes("password") ||
+            err.message.toLowerCase().includes("email") ||
+            err.code === "UNAUTHORIZED");
+
+        if (isCredentialError) {
+          form.setError("password", { message });
+          setShowRecovery(true);
+        }
+        toast.error(message);
+        return;
+      }
+      toast.error(describeError(err));
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }, [form, code, login, describeError]);
 
   /** Отправка ссылки восстановления на указанный в форме адрес. */
   const handleForgotPassword = useCallback(async () => {
@@ -218,7 +248,11 @@ export function LoginForm() {
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        void handleSubmit();
+        if (codeRequested) {
+          void handleSubmit();
+        } else {
+          void handleRequestCode();
+        }
       }}
       className="space-y-4"
     >
@@ -314,21 +348,21 @@ export function LoginForm() {
         <button
           type="button"
           onClick={() => void handleRequestCode()}
-          disabled={code.stage === "requesting"}
+          disabled={code.stage === "requesting" || isLoggingIn}
           className={cn(
             "flex h-10 w-full items-center justify-center gap-2 rounded-[8px] text-[13px] font-medium transition-colors shadow-2xs",
             "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]",
             "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
-          {code.stage === "requesting" ? (
+          {code.stage === "requesting" || isLoggingIn ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              Отправляем...
+              Вход...
             </>
           ) : (
             <>
-              Получить код
+              Войти
               <ArrowRight className="h-4 w-4" />
             </>
           )}
@@ -340,6 +374,12 @@ export function LoginForm() {
         бота выбранного канала: до этого выбор MAX упирался в жёлтую надпись и
         отключённую кнопку, и подключиться было нечем.
       */}
+      {code.error !== null && code.stage === "idle" && (
+        <p role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+          {code.error}
+        </p>
+      )}
+
       {code.stage === "awaiting_bot" && code.deepLink !== null && (
         <div className="space-y-3 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4">
           <p className="text-[13px] text-[#111111]">

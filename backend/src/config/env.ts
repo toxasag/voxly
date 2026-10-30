@@ -44,7 +44,7 @@ const baseSchema = z.object({
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
   ACCESS_TOKEN_TTL: z.string().min(1).default("15m"),
-  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(30),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(60),
   OTP_TTL_MINUTES: z.coerce.number().int().positive().max(60).default(5),
   OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().max(20).default(5),
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
@@ -79,6 +79,7 @@ const baseSchema = z.object({
    */
   EVOLUTION_API_URL: z.string().default("http://evolution-api:8080"),
   EVOLUTION_API_KEY: optionalNonEmpty(z.string()),
+  EVOLUTION_WEBHOOK_SECRET: optionalNonEmpty(z.string().min(16)),
 
   /**
    * MAX bridge for personal MAX accounts (PyMax).
@@ -226,7 +227,16 @@ const envSchema = baseSchema.superRefine((env, ctx) => {
     });
   }
 
-  // Ключи MTProto имеют смысл только в паре: с одним из двух GramJS не
+  // WhatsApp webhook is public by design, but it must be authenticated by the
+  // Evolution shared secret. Fail closed when the channel is enabled.
+  if (env.EVOLUTION_API_URL !== undefined && env.EVOLUTION_API_KEY !== undefined && env.EVOLUTION_WEBHOOK_SECRET === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["EVOLUTION_WEBHOOK_SECRET"],
+      message: "EVOLUTION_WEBHOOK_SECRET is required when Evolution API is configured",
+    });
+  }
+
   // подключится, и канал молча не работал бы вместо честного отказа на старте.
   const hasApiId = env.TELEGRAM_API_ID !== undefined;
   const hasApiHash = env.TELEGRAM_API_HASH !== undefined;

@@ -11,7 +11,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
 export type ChatMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type ChatMessageDirection = "inbound" | "outbound" | "neutral";
-export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed";
+export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 
 export interface ChatMessageDTO {
   id: string;
@@ -45,6 +45,7 @@ export interface AiStatusDTO {
   isPaused: boolean;
   pausedUntil: string | null;
   pausedReason: string | null;
+  status?: "enabled" | "paused" | "disabled";
 }
 
 export type AiControlAction = "enable" | "pause" | "disable";
@@ -61,6 +62,31 @@ export interface SendChatMessagePayload {
   direction?: ChatMessageDirection;
   attachment?: string;
   attachment_type?: string;
+}
+
+export interface UploadMediaResultDTO {
+  url: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export function useUploadCrmMedia(): UseMutationResult<
+  UploadMediaResultDTO,
+  ApiClientError,
+  File
+> {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      const res = await apiClient.postFormData<UploadMediaResultDTO>(
+        "/api/v1/crm/upload",
+        formData,
+      );
+      return res.data;
+    },
+  });
 }
 
 export const crmChatKeys = {

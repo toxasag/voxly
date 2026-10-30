@@ -7,11 +7,14 @@ import { MaxService } from "./services/max.service.js";
 import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js";
 import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
 import { scheduleDealMaintenance } from "./modules/crm/deals/deal-maintenance.service.js";
+import { scheduleModuleDataPurgeMaintenance } from "./modules/marketplace/module-data-purge-maintenance.service.js";
+import { scheduleInvoiceReminders } from "./modules/finance/invoice-reminders.service.js";
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
 import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
 import { MaxBridgeService } from "./modules/channels/max-bridge.service.js";
 import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
+import { resolveOutboundMedia, isMeaningfulCaption } from "./modules/channels/media-resolver.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -142,6 +145,8 @@ async function main(): Promise<void> {
 
   // Периодическое обслуживание сделок (автозакрытие просроченных анонимных сделок «Первый контакт» через 5 суток).
   const stopDealMaintenance = scheduleDealMaintenance(app.log);
+  const stopModuleDataPurgeMaintenance = scheduleModuleDataPurgeMaintenance(app.log);
+  const stopInvoiceReminders = scheduleInvoiceReminders(app.log);
 
   // Транспорт входящих сообщений Telegram (M7.5.16).
   //
@@ -164,12 +169,34 @@ async function main(): Promise<void> {
         [message.tenantId, message.channelAccountId],
       );
       if (account) {
+        let mediaBase64: string | undefined;
+        let fileName: string | undefined;
+        let mimeType: string | undefined;
+        let textToSend = message.text;
+
+        if (message.attachment) {
+          const media = await resolveOutboundMedia(
+            message.attachment,
+            message.tenantId,
+            message.attachmentType,
+          );
+          if (media) {
+            mediaBase64 = media.buffer.toString("base64");
+            fileName = media.filename;
+            mimeType = media.mimeType;
+            textToSend = isMeaningfulCaption(message.text, media.filename) ? message.text : "";
+          }
+        }
+
         const res = await maxBridge.sendMessage({
           tenantId: message.tenantId,
           name: account.label,
           botId: account.id,
           recipient: message.recipient,
-          text: message.text,
+          text: textToSend,
+          mediaBase64,
+          fileName,
+          mimeType,
         });
         if (res.ok) return { ok: true };
       }
@@ -202,6 +229,26 @@ async function main(): Promise<void> {
       if (!instanceName) {
         return { ok: false, reason: "Инстанс WhatsApp не найден у подключения" };
       }
+
+      if (message.attachment) {
+        const media = await resolveOutboundMedia(
+          message.attachment,
+          message.tenantId,
+          message.attachmentType,
+        );
+        if (media) {
+          const caption = isMeaningfulCaption(message.text, media.filename) ? message.text : undefined;
+          const res = await evo.sendMediaMessage(instanceName, message.recipient, {
+            buffer: media.buffer,
+            filename: media.filename,
+            mimeType: media.mimeType,
+            caption,
+          });
+          if (res.ok) return { ok: true };
+          return { ok: false, reason: res.error ?? "Ошибка отправки медиа в WhatsApp" };
+        }
+      }
+
       const res = await evo.sendTextMessage(instanceName, message.recipient, message.text);
       if (res.ok) return { ok: true };
       return { ok: false, reason: res.error ?? "Ошибка отправки WhatsApp" };
@@ -221,6 +268,8 @@ async function main(): Promise<void> {
       stopMaintenance();
       stopReminders();
       stopDealMaintenance();
+      stopModuleDataPurgeMaintenance();
+      stopInvoiceReminders();
       await shutdownWorker();
       stopTransport();
       unregisterMaxOutbound();

@@ -44,6 +44,7 @@ export function InviteMemberModal({
 }: InviteMemberModalProps) {
   const invite = useInviteMember();
   const [pendingConfirm, setPendingConfirm] = useState<InviteMemberValues | null>(null);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
   const form = useForm<InviteMemberValues>({
     resolver: zodResolver(inviteMemberSchema),
@@ -60,6 +61,7 @@ export function InviteMemberModal({
     if (open) {
       form.reset({ name: "", email: "", role: "manager" });
       setPendingConfirm(null);
+      setInviteUrl(null);
     }
   }, [open, form]);
 
@@ -80,6 +82,10 @@ export function InviteMemberModal({
         );
 
         setPendingConfirm(null);
+        if (result.inviteUrl !== null) {
+          setInviteUrl(result.inviteUrl);
+          return;
+        }
         onClose();
       } catch (error) {
         if (error instanceof ApiClientError) {
@@ -134,7 +140,17 @@ export function InviteMemberModal({
       </SheetHeader>
 
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
-        {pendingConfirm !== null ? (
+        {inviteUrl !== null ? (
+          <div className="flex flex-1 flex-col justify-center gap-4 p-6">
+            <h3 className="text-sm font-semibold">Приглашение создано</h3>
+            <p className="text-xs text-[#666666]">Письмо не отправлено. Передайте сотруднику эту одноразовую ссылку:</p>
+            <input readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} className="w-full rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3 py-2 text-xs text-[#111111]" aria-label="Ссылка приглашения" />
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => void navigator.clipboard?.writeText(inviteUrl)} className="rounded-[8px] border border-[#e5e5e5] px-3 py-2 text-xs font-medium">Копировать</button>
+              <button type="button" onClick={onClose} className="rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-medium text-white">Готово</button>
+            </div>
+          </div>
+        ) : pendingConfirm !== null ? (
           <div className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               <div className="flex gap-3 rounded-[8px] border border-[#4a38f5]/30 bg-[#4a38f5]/5 p-4">

@@ -11,8 +11,9 @@ import { useAuth } from "@/lib/auth/use-auth";
 // ---------------------------------------------------------------------------
 
 const ROLE_HIERARCHY: Record<Role, Role[]> = {
-  owner: ["owner", "admin", "manager", "technician", "viewer"],
-  admin: ["admin", "manager", "technician", "viewer"],
+  owner: ["owner", "admin", "partner", "manager", "technician", "viewer"],
+  admin: ["admin", "partner", "manager", "technician", "viewer"],
+  partner: ["partner", "manager", "technician", "viewer"],
   manager: ["manager", "technician", "viewer"],
   technician: ["technician", "viewer"],
   viewer: ["viewer"],

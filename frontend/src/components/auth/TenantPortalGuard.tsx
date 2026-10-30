@@ -1,47 +1,107 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth/use-auth";
-import { shouldRedirectToOwnPortal, tenantPortalUrl } from "@/lib/auth/tenant-host";
+import { currentTenantSlug, shouldRedirectToOwnPortal, tenantPortalUrl } from "@/lib/auth/tenant-host";
+import { readImpersonationBackup, writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { readAccessToken, readRefreshToken } from "@/lib/auth/session";
+import { apiClient } from "@/lib/api/apiClient";
+import type { AuthTokensDTO } from "@/lib/auth/use-auth";
 
 /**
  * Keeps the portal in the address bar consistent with the signed-in tenant.
  *
- * Two cases are handled:
- *   * viewing someone else's subdomain — the user is moved to their own portal;
- *   * viewing a platform host while signed in to a tenant — also moved, so the
- *     URL reflects the workspace being used.
- *
- * This is a navigation affordance, not an access control. The backend scopes
- * every query by the tenant inside the token and RLS enforces it in the
- * database, so landing on a foreign subdomain cannot expose another tenant's
- * data — it would simply render that user's own, which is confusing rather than
- * unsafe.
- *
- * Решение о переходе принимает `shouldRedirectToOwnPortal`, а не сравнение
- * слагов здесь. Прежнее условие сравнивало `currentTenantSlug() !== tenantSlug` и
- * на localhost всегда давало истину: `currentTenantSlug()` там `null` по
- * построению (однометочный хост не может быть портулом), а `tenantPortalUrl`
- * возвращал относительный путь текущей страницы. Итог — присваивание
- * `window.location.href` тем же адресом и бесконечная перезагрузка;
- * восстановление сессии повторялось на каждой итерации, отсюда и наблюдавшийся
- * «цикл /auth/refresh» (`M0.13.15`). Ошибка была в навигации, а не в сессии:
- * каждый refresh отвечал 200.
+ * Rules:
+ *  - Regular tenant members viewing someone else's subdomain are redirected to their own portal.
+ *  - Platform owners (superadmin) are never redirected away: if they open a tenant portal,
+ *    they automatically enter impersonation view for that tenant so they can inspect data.
+ *  - Platform administration routes (/admin/*, /superadmin/*) belong to the platform and
+ *    are never bounced to a tenant subdomain.
+ *  - Active impersonation sessions are preserved on the client subdomain.
  */
 export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
-  const { tenant, isAuthenticated, isLoading } = useAuth();
+  const { user, tenant, isAuthenticated, isLoading } = useAuth();
+  const [isAutoSwitching, setIsAutoSwitching] = useState(false);
 
   const tenantSlug = tenant?.slug ?? "";
-  // Only redirect once the session is known, otherwise the first render would
-  // bounce every visitor before the token has been restored.
+  const hostSlug = currentTenantSlug();
+
+  const isPlatformAdminRoute =
+    typeof window !== "undefined" &&
+    (window.location.pathname.startsWith("/admin") ||
+      window.location.pathname.startsWith("/superadmin"));
+
+  const isPlatformOwner = user?.platform_role === "platform_owner";
+  const isImpersonating = typeof window !== "undefined" && readImpersonationBackup() !== null;
+
+  // Если суперадминистратор платформы целенаправленно открыл поддомен клиента (например, valera.getvoxly.ru/crm/deals),
+  // не перенаправляем его назад на voxly.getvoxly.ru. Вместо этого автоматически переводим его в режим просмотра (impersonate)
+  // арендатора, сохраняя исходную админскую сессию в бэкап.
+  useEffect(() => {
+    if (isLoading || !isAuthenticated || !isPlatformOwner || isAutoSwitching) return;
+    if (!hostSlug || hostSlug === "voxly" || hostSlug === tenantSlug) return;
+
+    let cancelled = false;
+    const enterTenantView = async () => {
+      setIsAutoSwitching(true);
+      try {
+        const currentAccessToken = readAccessToken();
+        const currentRefreshToken = readRefreshToken();
+
+        if (currentAccessToken && currentRefreshToken && !readImpersonationBackup()) {
+          writeImpersonationBackup({
+            accessToken: currentAccessToken,
+            refreshToken: currentRefreshToken,
+            adminUserEmail: user?.email ?? "",
+            adminUserName: user?.name ?? "",
+            impersonatedTenantSlug: hostSlug,
+            enteredAt: new Date().toISOString(),
+          });
+        }
+
+        const res = await apiClient.post<AuthTokensDTO>(`/api/v1/admin/tenants/by-slug/${hostSlug}/impersonate`);
+        if (!cancelled && res.data) {
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error("Не удалось автоматически войти под арендатором", err);
+        if (!cancelled) {
+          setIsAutoSwitching(false);
+        }
+      }
+    };
+
+    void enterTenantView();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, isAuthenticated, isPlatformOwner, hostSlug, tenantSlug, user, isAutoSwitching]);
+
   const mismatched =
-    !isLoading && isAuthenticated && shouldRedirectToOwnPortal(tenantSlug);
+    !isLoading &&
+    isAuthenticated &&
+    !isPlatformAdminRoute &&
+    !isPlatformOwner &&
+    !isImpersonating &&
+    shouldRedirectToOwnPortal(tenantSlug);
 
   useEffect(() => {
     if (!mismatched) return;
     window.location.href = tenantPortalUrl(tenantSlug, window.location.pathname);
   }, [mismatched, tenantSlug]);
+
+  if (isAutoSwitching) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="flex items-center gap-3 text-sm text-[#666666]">
+          <Loader2 className="h-4 w-4 animate-spin text-[#4a38f5]" />
+          Входим в пространство клиента «{hostSlug}»...
+        </div>
+      </div>
+    );
+  }
 
   if (mismatched) {
     return (

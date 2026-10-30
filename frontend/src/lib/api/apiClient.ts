@@ -130,13 +130,13 @@ let refreshInFlight: Promise<string | null> | null = null;
 
 async function performRefresh(): Promise<string | null> {
   const refreshToken = readRefreshToken();
-  if (refreshToken === null) return null;
 
   try {
     const res = await fetch(buildUrl("/auth/refresh"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
+      credentials: "include",
     });
 
     if (!res.ok) return null;
@@ -169,7 +169,7 @@ async function performRefresh(): Promise<string | null> {
   }
 }
 
-function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(): Promise<string | null> {
   const pending = refreshInFlight;
   if (pending !== null) return pending;
 
@@ -254,14 +254,15 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   const token = readAccessToken();
 
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (body !== undefined && !isFormData) headers["Content-Type"] = "application/json";
   if (token !== null) headers.Authorization = `Bearer ${token}`;
 
   const res = await fetch(buildUrl(path, options.query), {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: isFormData ? (body as FormData) : body === undefined ? undefined : JSON.stringify(body),
     // Allows the backend to move to httpOnly cookies (M0.6.5) without a
     // client change.
     credentials: "include",
@@ -327,6 +328,10 @@ export const apiClient = {
 
   post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>> {
     return request<T>("POST", path, body, options);
+  },
+
+  postFormData<T>(path: string, formData: FormData, options?: RequestOptions): Promise<ApiResponse<T>> {
+    return request<T>("POST", path, formData, options);
   },
 
   put<T>(path: string, body?: unknown, options?: RequestOptions): Promise<ApiResponse<T>> {

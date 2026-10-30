@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/use-team";
 import { userInitials } from "@/lib/api/use-tenant-users";
 import { cn } from "@/lib/utils";
+import type { Permission } from "@/types";
 
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -44,14 +45,18 @@ function formatDate(iso: string): string {
 function MemberActions({
   member,
   assignableRoles,
+  availablePermissions,
   onChangeRole,
+  onChangePermissions,
   onRemove,
   onResend,
   isBusy,
 }: {
   member: TeamMemberDTO;
   assignableRoles: AssignableRole[];
+  availablePermissions: Permission[];
   onChangeRole: (role: AssignableRole) => void;
+  onChangePermissions: (permissions: Permission[]) => void;
   onRemove: () => void;
   onResend: () => void;
   isBusy: boolean;
@@ -102,6 +107,24 @@ function MemberActions({
               >
                 {ROLE_LABELS[role]}
                 {role === member.role && <ShieldCheck className="h-3.5 w-3.5 text-[#4a38f5]" />}
+              </button>
+            ))}
+
+            {availablePermissions.map((permission) => (
+              <button
+                key={permission}
+                type="button"
+                onClick={() => {
+                  const next = member.permissions.includes(permission)
+                    ? member.permissions.filter((item) => item !== permission)
+                    : [...member.permissions, permission];
+                  setOpen(false);
+                  onChangePermissions(next);
+                }}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[11px] text-[#666666] hover:bg-[#fafafa]"
+              >
+                <span>{permission}</span>
+                {member.permissions.includes(permission) && <ShieldCheck className="h-3 w-3 text-[#4a38f5]" />}
               </button>
             ))}
 
@@ -162,16 +185,31 @@ function TeamContent() {
     [changeRole],
   );
 
+  const handleChangePermissions = useCallback(
+    async (member: TeamMemberDTO, permissions: Permission[]) => {
+      setBusyId(member.id);
+      try {
+        await changeRole.mutateAsync({ id: member.id, role: member.role as AssignableRole, permissions });
+        toast.success(`${member.fullName}: права обновлены`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Не удалось обновить права");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [changeRole],
+  );
   const handleResend = useCallback(
     async (member: TeamMemberDTO) => {
       setBusyId(member.id);
       try {
         const result = await resend.mutateAsync({ id: member.id });
-        toast.success(
-          result.emailSent
-            ? `Приглашение отправлено повторно на ${member.email}`
-            : "Ссылка обновлена, но письмо не отправлено — проверьте настройки почты",
-        );
+        if (result.inviteUrl !== null) {
+          await navigator.clipboard?.writeText(result.inviteUrl);
+          toast.success("Ссылка обновлена и скопирована в буфер обмена");
+        } else {
+          toast.success(`Приглашение отправлено повторно на ${member.email}`);
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить приглашение");
       } finally {
@@ -218,7 +256,7 @@ function TeamContent() {
     );
   }
 
-  const { members, seats, assignableRoles } = data;
+  const { members, seats, assignableRoles, availablePermissions } = data;
 
   return (
     <div className="space-y-6">
@@ -373,8 +411,10 @@ function TeamContent() {
                       <MemberActions
                         member={member}
                         assignableRoles={assignableRoles}
+                        availablePermissions={availablePermissions}
                         isBusy={busyId === member.id}
                         onChangeRole={(role) => void handleChangeRole(member, role)}
+                        onChangePermissions={(permissions) => void handleChangePermissions(member, permissions)}
                         onRemove={() => setRemoveTarget(member)}
                         onResend={() => void handleResend(member)}
                       />

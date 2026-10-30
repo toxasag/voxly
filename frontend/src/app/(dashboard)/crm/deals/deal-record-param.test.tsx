@@ -119,7 +119,7 @@ function wrapper({ children }: { children: ReactNode }) {
 async function renderPage() {
   const { default: DealsPage } = await import("@/app/(dashboard)/crm/deals/page");
   render(<DealsPage />, { wrapper });
-  await waitFor(() => expect(screen.getByText("Поставка кофемашины")).toBeDefined());
+  await waitFor(() => expect(screen.getAllByText("Поставка кофемашины").length).toBeGreaterThan(0));
 }
 
 beforeEach(() => {

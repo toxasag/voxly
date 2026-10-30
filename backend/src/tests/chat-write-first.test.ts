@@ -11,7 +11,6 @@ vi.mock("../db/client.js", () => ({
   runWithPlatformScope: (fn: () => Promise<unknown>) => fn(),
   withTenant: (_tenantId: string, fn: (tx: unknown) => Promise<unknown>) => fn({}),
 }));
-
 describe("Write-First Chat and Send-From Options", () => {
   let dealsService: DealsService;
   let messagingService: DealMessagingService;
@@ -121,12 +120,12 @@ describe("Write-First Chat and Send-From Options", () => {
       });
 
       expect(result.deliveryStatus).toBe("sent");
-      expect(mockSender).toHaveBeenCalledWith({
+      expect(mockSender).toHaveBeenCalledWith(expect.objectContaining({
         tenantId: "tenant-1",
         channelAccountId: "acc-tg-fallback",
         recipient: "987654321",
         text: "Здравствуйте! Чем могу помочь?",
-      });
+      }));
     });
   });
 });

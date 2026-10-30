@@ -100,6 +100,9 @@ export class WhatsappEvolutionService {
         webhook: {
           enabled: true,
           url: webhookUrl,
+          headers: {
+            "x-evolution-webhook-secret": getEnv().EVOLUTION_WEBHOOK_SECRET,
+          },
           byEvents: false,
           base64: false,
           events: [
@@ -258,6 +261,74 @@ export class WhatsappEvolutionService {
     return { ok: true, messageId: res.json?.key?.id };
   }
 
+  /** Отправка медиасообщения (документ, фото, видео, голосовое, аудио) через Evolution API */
+  async sendMediaMessage(
+    instanceName: string,
+    recipient: string,
+    input: {
+      buffer: Buffer;
+      filename: string;
+      mimeType: string;
+      caption?: string;
+    },
+  ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    const cleanNumber = recipient.replace(/[^\d]/g, "");
+    if (!cleanNumber) {
+      return { ok: false, error: "Некорректный номер получателя WhatsApp" };
+    }
+
+    const { buffer, filename, mimeType, caption } = input;
+    const base64 = buffer.toString("base64");
+
+    const isImage = mimeType.startsWith("image/");
+    const isVideo = mimeType.startsWith("video/");
+    const isAudio = mimeType.startsWith("audio/");
+    const isVoice = isAudio && (mimeType.includes("ogg") || mimeType.includes("opus"));
+
+    if (isVoice) {
+      const res = await this.evoFetch(`/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          number: cleanNumber,
+          audio: base64,
+        }),
+      });
+      if (res.ok) {
+        return { ok: true, messageId: res.json?.key?.id };
+      }
+    }
+
+    let mediatype: "image" | "document" | "video" | "audio" = "document";
+    if (isImage) mediatype = "image";
+    else if (isVideo) mediatype = "video";
+    else if (isAudio) mediatype = "audio";
+
+    const payload: Record<string, unknown> = {
+      number: cleanNumber,
+      mediatype,
+      mimetype: mimeType,
+      caption: caption || undefined,
+      media: base64,
+      fileName: filename,
+    };
+
+    const res = await this.evoFetch(`/message/sendMedia/${encodeURIComponent(instanceName)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const errMsg =
+        res.json?.response?.message ||
+        res.json?.message ||
+        res.json?.error ||
+        "Ошибка отправки медиа в WhatsApp";
+      return { ok: false, error: errMsg };
+    }
+
+    return { ok: true, messageId: res.json?.key?.id };
+  }
+
   /** Проверка регистрации номеров в WhatsApp через Evolution API */
   async checkNumberStatus(
     instanceName: string,
@@ -278,12 +349,17 @@ export class WhatsappEvolutionService {
 
   /** Настройка webhook в Evolution API */
   async setWebhook(instanceName: string, webhookUrl: string): Promise<boolean> {
+    const secret = getEnv().EVOLUTION_WEBHOOK_SECRET;
+    if (!secret) return false;
     const res = await this.evoFetch(`/webhook/set/${encodeURIComponent(instanceName)}`, {
       method: "POST",
       body: JSON.stringify({
         webhook: {
           enabled: true,
           url: webhookUrl,
+          headers: {
+            "x-evolution-webhook-secret": secret,
+          },
           byEvents: false,
           base64: false,
           events: [
@@ -305,6 +381,55 @@ export class WhatsappEvolutionService {
       });
     } catch {
       // Игнорируем ошибку при удалении
+    }
+  }
+
+  /**
+   * Скачивает медиа-вложение сообщения через Evolution API в base64
+   */
+  async downloadMedia(
+    instanceName: string,
+    messageItem: Record<string, any>,
+  ): Promise<{ base64: string; mimetype?: string; fileName?: string } | null> {
+    try {
+      const messageId = messageItem?.key?.id;
+
+      // Вариант 1: передаём messageItem целиком
+      let res = await this.evoFetch(`/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`, {
+        method: "POST",
+        body: JSON.stringify({
+          message: messageItem,
+          convertToMp4: false,
+        }),
+      });
+
+      // Вариант 2: если ошибка или нет base64, пробуем передать { key: { id } }
+      if ((!res.ok || !res.json?.base64) && messageId) {
+        res = await this.evoFetch(`/chat/getBase64FromMediaMessage/${encodeURIComponent(instanceName)}`, {
+          method: "POST",
+          body: JSON.stringify({
+            message: { key: { id: messageId } },
+            convertToMp4: false,
+          }),
+        });
+      }
+
+      if (!res.ok || !res.json) {
+        return null;
+      }
+
+      const base64 = res.json.base64 || res.json.data?.base64;
+      if (!base64 || typeof base64 !== "string") {
+        return null;
+      }
+
+      return {
+        base64,
+        mimetype: res.json.mimetype || res.json.data?.mimetype,
+        fileName: res.json.fileName || res.json.data?.fileName,
+      };
+    } catch {
+      return null;
     }
   }
 }

@@ -489,3 +489,45 @@ export function useImportWhatsAppKnowledge(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Мониторинг прогресса сканирования сайта
+// ---------------------------------------------------------------------------
+
+export interface CrawlStatusData {
+  status: "idle" | "pending" | "in_progress" | "ready" | "failed";
+  websiteUrl: string | null;
+  pagesScanned: number;
+  pagesIndexed: number;
+  error: string | null;
+  updatedAt: string | null;
+}
+
+export function useCrawlStatus(
+  agentId: string | null | undefined,
+): UseQueryResult<CrawlStatusData, ApiClientError> {
+  const queryClient = useQueryClient();
+
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", "crawl-status"],
+    queryFn: async () => {
+      if (!agentId) throw new Error("No agentId");
+      const res = await apiClient.get<CrawlStatusData>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/crawl-status`,
+      );
+      if (res.data?.status === "ready" || res.data?.status === "failed") {
+        void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      }
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && (data.status === "pending" || data.status === "in_progress")) {
+        return 3000;
+      }
+      return false;
+    },
+  });
+}
+
+

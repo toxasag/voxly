@@ -32,7 +32,7 @@ import type { WizardConfig } from "./ai.types.js";
 const MIN_BALANCE_KOPECKS = 100;
 
 /** Модель по умолчанию, если у агента указана незнакомая. */
-const FALLBACK_MODEL: AiModelId = "gpt-4o-mini";
+const FALLBACK_MODEL: AiModelId = "gemini-3.5-flash-lite";
 
 /**
  * Соответствие моделей каталога идентификаторам шлюза.
@@ -51,6 +51,7 @@ const GATEWAY_MODEL: Record<string, string> = {
   "gemini-1.5-pro": "gemini/gemini-1.5-pro",
   "gemini-3.5-flash": "gemini/gemini-3.5-flash",
   "gemini-3.5-flash-lite": "gemini/gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest": "gemini/gemini-flash-lite-latest",
   "gemini-2.5-flash": "gemini/gemini-2.5-flash",
   "gemini-2.5-pro": "gemini/gemini-2.5-pro",
 };
@@ -98,38 +99,33 @@ export class AgentPipelineService {
    * могут — клиент получил бы два разных ответа на одно сообщение. Берётся
    * старейший как детерминированный выбор.
    */
-  private async resolveAgent(input: {
+  /**
+   * Агент, отвечающий в этом аккаунте канала.
+   *
+   * Строгий Channel Gate: агент выбирается ИСКЛЮЧИТЕЛЬНО при наличии активной
+   * привязки в таблице `ai_agent_channel_bindings` со статусом `is_enabled = TRUE`.
+   * Никаких неявных fallback-опросов ко всем ботам тенанта: если пользователь
+   * снял отметку с канала в UI, бот не должен перехватывать сообщения.
+   *
+   * `ORDER BY a.created_at LIMIT 1`: схема допускает несколько агентов на один
+   * аккаунт, берётся старейший как детерминированный выбор.
+   */
+  async resolveAgent(input: {
     tenantId: string;
     channelAccountId: string;
   }): Promise<AgentRow | null> {
-    const bound = await queryOne<AgentRow>(
+    return queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
          AND b.channel_account_id = $2
-         AND b.is_enabled
+         AND b.is_enabled = TRUE
          AND a.deleted_at IS NULL
        ORDER BY a.created_at
        LIMIT 1`,
       [input.tenantId, input.channelAccountId],
-    );
-
-    if (bound !== null) return bound;
-
-    // Fallback: если нет персональной привязки к каналу, но в тенанте есть активный бот
-    return queryOne<AgentRow>(
-      `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt, a.wizard_config
-       FROM ai_agents a
-       WHERE a.tenant_id = $1
-         AND a.status = 'active'
-         AND a.mode = 'autoreply'
-         AND a.deleted_at IS NULL
-       ORDER BY a.created_at ASC
-       LIMIT 1`,
-      [input.tenantId],
     );
   }
 
@@ -148,14 +144,52 @@ export class AgentPipelineService {
     channelType?: string;
     dealId?: string;
   }): Promise<PipelineOutcome> {
+    // 0. Channel Gate: если канал не привязан к агенту (чекбокс снят или привязка удалена),
+    // немедленно прерываем обработку без обращения к LLM и без списания токенов.
     const agent = await this.resolveAgent(input);
-
-    if (agent === null) return { kind: "no_agent" };
+    if (agent === null) {
+      return { kind: "no_agent" };
+    }
 
     // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
     // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
     if (agent.status !== "active" || agent.mode !== "autoreply") {
       return { kind: "agent_paused" };
+    }
+
+    // 1. Защита от автоответов личным контактам и при выключенном/приостановленном AI
+    if (input.dealId) {
+      const dealRow = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND ai_paused_until IS NOT NULL AND ai_paused_until > now()
+         LIMIT 1`,
+        [input.tenantId, input.dealId],
+      );
+      if (dealRow !== null) {
+        return { kind: "agent_paused" };
+      }
+    }
+
+    const cleanDigits = input.chatId.replace(/\D/g, "");
+    if (cleanDigits.length >= 10 || /^\d+$/.test(input.chatId)) {
+      const contactCheck = await queryOne<{ id: string; is_personal: boolean; paused_deals: number }>(
+        `SELECT c.id, c.is_personal,
+                (SELECT COUNT(*)::int FROM deals d WHERE d.contact_id = c.id AND d.tenant_id = c.tenant_id AND d.deleted_at IS NULL AND d.ai_paused_until > now()) AS paused_deals
+         FROM contacts c
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             c.phone = $2
+             OR c.phone = '+' || $2
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', $2::text))
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', ('+' || $2)::text))
+             OR c.telegram_chat_id = CASE WHEN $2 ~ '^\\d+$' THEN $2::bigint ELSE NULL END
+           )
+         LIMIT 1`,
+        [input.tenantId, cleanDigits],
+      );
+      if (contactCheck !== null && (contactCheck.is_personal || contactCheck.paused_deals > 0)) {
+        return { kind: "agent_paused" };
+      }
     }
 
     if (!this.chat.isConfigured) return { kind: "llm_unavailable" };

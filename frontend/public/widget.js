@@ -440,6 +440,7 @@
       }
       .getvoxly-textarea {
         font-size: 16px !important; /* Предотвращает нежелательный зум страницы в iOS Safari */
+        line-height: 20px !important;
       }
       .getvoxly-input-area {
         padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
@@ -766,7 +767,9 @@
       border: none !important;
       color: #888888 !important;
       cursor: pointer !important;
-      padding: 4px !important;
+      padding: 0 !important;
+      width: 30px !important;
+      height: 30px !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -1061,12 +1064,12 @@
     }
     .getvoxly-input-wrapper {
       display: flex !important;
-      align-items: center !important;
+      align-items: flex-end !important;
       gap: 8px !important;
       background: #ffffff !important;
       border: 1px solid #e5e5e5 !important;
       border-radius: 12px !important;
-      padding: 6px 8px 6px 12px !important;
+      padding: 6px 8px 6px 10px !important;
       transition: border-color 0.15s !important;
     }
     .is-dark-theme .getvoxly-input-wrapper {
@@ -1081,14 +1084,30 @@
       background: transparent !important;
       border: none !important;
       color: #111111 !important;
-      padding: 0 !important;
+      padding: 5px 0 !important;
       font-size: 13px !important;
       font-family: inherit !important;
       resize: none !important;
-      height: 24px !important;
-      max-height: 80px !important;
+      min-height: 20px !important;
+      max-height: 120px !important;
       outline: none !important;
-      line-height: 24px !important;
+      line-height: 20px !important;
+      box-sizing: border-box !important;
+      overflow-y: hidden;
+      margin: 0 !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar {
+      width: 4px !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-track {
+      background: transparent !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #d4d4d8 !important;
+      border-radius: 4px !important;
+    }
+    .is-dark-theme .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #3f3f46 !important;
     }
     .is-dark-theme .getvoxly-textarea {
       color: #f1f5f9 !important;
@@ -1266,14 +1285,16 @@
 
     var dfp = getDeviceFingerprint();
 
-    // UTM-метки и рекламные Click ID
+    // UTM-метки и рекламные Click ID (с поддержкой localStorage, sessionStorage, cookie, search и hash SPA)
     var STORAGE_KEY_UTM = 'getvoxly_utm_tags';
     var STORAGE_KEY_CLICKS = 'getvoxly_click_ids';
     var utmTags = {};
     var clickIds = {};
     try {
-      utmTags = JSON.parse(safeStorage.getItem(STORAGE_KEY_UTM) || '{}');
-      clickIds = JSON.parse(safeStorage.getItem(STORAGE_KEY_CLICKS) || '{}');
+      var rawUtm = safeStorage.getItem(STORAGE_KEY_UTM) || safeSessionStorage.getItem(STORAGE_KEY_UTM) || getCookie('getvoxly_utm');
+      if (rawUtm) utmTags = JSON.parse(rawUtm);
+      var rawClicks = safeStorage.getItem(STORAGE_KEY_CLICKS) || safeSessionStorage.getItem(STORAGE_KEY_CLICKS) || getCookie('getvoxly_clicks');
+      if (rawClicks) clickIds = JSON.parse(rawClicks);
     } catch (e) {
       utmTags = {};
       clickIds = {};
@@ -1281,26 +1302,41 @@
 
     try {
       var searchParams = new URLSearchParams(window.location.search);
+      var hashParams = null;
+      if (window.location.hash && window.location.hash.indexOf('?') !== -1) {
+        try {
+          hashParams = new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf('?')));
+        } catch (e) {}
+      }
+
       var detectedUtm = {};
-      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(function (param) {
-        if (searchParams.has(param)) {
-          detectedUtm[param] = searchParams.get(param);
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_creative_format', 'utm_marketing_tactic'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedUtm[param] = val;
         }
       });
       if (Object.keys(detectedUtm).length > 0) {
         utmTags = Object.assign({}, utmTags, detectedUtm);
         safeStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        safeSessionStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        setPersistentCookie('getvoxly_utm', JSON.stringify(utmTags), 30);
       }
 
       var detectedClicks = {};
-      ['yclid', 'gclid', 'fbclid', 'vkclid', '_openstat'].forEach(function (param) {
-        if (searchParams.has(param)) {
-          detectedClicks[param] = searchParams.get(param);
+      ['yclid', 'gclid', 'fbclid', 'vkclid', 'ttclid', 'msclkid', '_openstat', 'wbraid', 'gbraid'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedClicks[param] = val;
         }
       });
       if (Object.keys(detectedClicks).length > 0) {
         clickIds = Object.assign({}, clickIds, detectedClicks);
         safeStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        safeSessionStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        setPersistentCookie('getvoxly_clicks', JSON.stringify(clickIds), 30);
       }
     } catch (e) {}
 
@@ -1526,6 +1562,23 @@
 
     function hideNetworkStatus() {
       if (networkStatusEl) networkStatusEl.style.display = 'none';
+    }
+
+    function adjustInputHeight() {
+      if (!inputEl) return;
+      inputEl.style.setProperty('height', 'auto', 'important');
+      var scrollH = inputEl.scrollHeight;
+      var minH = 30;
+      var maxH = 120;
+      var newH = Math.max(minH, Math.min(scrollH, maxH));
+      inputEl.style.setProperty('height', newH + 'px', 'important');
+      inputEl.style.setProperty('overflow-y', scrollH > maxH ? 'auto' : 'hidden', 'important');
+      if (messagesContainer) {
+        var isNearBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 50;
+        if (isNearBottom) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }
     }
 
     var isExpanded = false;
@@ -2020,8 +2073,14 @@
       if (messagesContainer) {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
       }
+      if (inputEl) {
+        adjustInputHeight();
+      }
       if (!isMobileScreen() && inputEl && typeof inputEl.focus === 'function') {
-        setTimeout(function () { inputEl.focus(); }, 100);
+        setTimeout(function () {
+          inputEl.focus();
+          adjustInputHeight();
+        }, 100);
       }
       initSession();
       syncHistoryFromServer();
@@ -2539,6 +2598,42 @@
       await executeSendMessage(combinedText);
     }
 
+    function extractClientPhone(val) {
+      if (!val || typeof val !== 'string') return null;
+      var cl = val.trim();
+      var m = cl.match(/(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/);
+      if (m) {
+        var raw = m[0].trim();
+        var dig = raw.replace(/\D/g, '');
+        if (raw.charAt(0) === '+' && dig.length >= 10 && dig.length <= 15) {
+          if (dig.charAt(0) === '7' && dig.length === 11) return '+7' + dig.slice(1);
+          return '+' + dig;
+        }
+        if (dig.length === 11 && (dig.charAt(0) === '7' || dig.charAt(0) === '8')) {
+          return '+7' + dig.slice(1);
+        }
+        if (dig.length === 10 && dig.charAt(0) === '9') {
+          return '+7' + dig;
+        }
+      }
+      var onlyDig = cl.replace(/\D/g, '');
+      if (onlyDig.length === 11 && (onlyDig.charAt(0) === '7' || onlyDig.charAt(0) === '8')) {
+        return '+7' + onlyDig.slice(1);
+      }
+      if (onlyDig.length === 10 && onlyDig.charAt(0) === '9') {
+        return '+7' + onlyDig;
+      }
+      return null;
+    }
+
+    function extractClientEmail(val) {
+      if (!val || typeof val !== 'string') return null;
+      var m = val.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      return m ? m[0].toLowerCase() : null;
+    }
+
     function handleUserSubmit() {
       var text = inputEl.value.trim();
       if (!text && !pendingAttachment) return;
@@ -2551,20 +2646,17 @@
       renderAttachmentPreview(null);
 
       inputEl.value = '';
-      inputEl.style.height = '24px';
+      adjustInputHeight();
       lastDraft = '';
 
       if (text) {
-        var phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2} /);
-        if (phoneMatch) {
-          var digits = phoneMatch[0].replace(/\D/g, '');
-          if (digits.length >= 10) {
-            safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phoneMatch[0]);
-          }
+        var parsedPhone = extractClientPhone(text);
+        if (parsedPhone) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, parsedPhone);
         }
-        var emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) {
-          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, emailMatch[0]);
+        var parsedEmail = extractClientEmail(text);
+        if (parsedEmail) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, parsedEmail);
         }
       }
 
@@ -2598,8 +2690,17 @@
         typingIndicator.style.display = 'block';
       }
       try {
-        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || undefined;
-        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || undefined;
+        var detectedPhone = extractClientPhone(fullText);
+        var detectedEmail = extractClientEmail(fullText);
+        if (detectedPhone && !safeStorage.getItem(STORAGE_KEY_LEAD_PHONE)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, detectedPhone);
+        }
+        if (detectedEmail && !safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, detectedEmail);
+        }
+
+        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || detectedPhone || undefined;
+        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
         var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
 
         var payload = {
@@ -2643,11 +2744,17 @@
           isDraft: Boolean(isDraft),
         };
 
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timeoutId = controller ? setTimeout(function () { controller.abort(); }, 45000) : null;
+
         var res = await fetch(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
+          signal: controller ? controller.signal : undefined,
         });
+
+        if (timeoutId) clearTimeout(timeoutId);
 
         typingIndicator.style.display = 'none';
 
@@ -2679,6 +2786,8 @@
           throw new Error('HTTP ' + res.status);
         }
       } catch (e) {
+        console.error('[GetVoxly] Message delivery failed:', e);
+        sendTelemetry('message_send_failed', e && (e.message || String(e)));
         typingIndicator.style.display = 'none';
         if (!isDraft) {
           if (retryCount < MAX_RETRIES) {
@@ -2722,6 +2831,8 @@
     sentDrafts = {};
 
     if (inputEl) {
+      adjustInputHeight();
+
       inputEl.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
@@ -2730,6 +2841,8 @@
       });
 
       inputEl.addEventListener('input', function (e) {
+        adjustInputHeight();
+
         if (messageBuffer.length > 0 && !isBotResponding) {
           clearTimeout(sendTimer);
           typingIndicator.textContent = 'печатает...';
@@ -2747,6 +2860,10 @@
         if (current.length > 3) {
           lastDraft = current;
         }
+      });
+
+      inputEl.addEventListener('paste', function () {
+        setTimeout(adjustInputHeight, 0);
       });
     }
 

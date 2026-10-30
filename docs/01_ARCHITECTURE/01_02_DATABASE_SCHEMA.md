@@ -2,14 +2,9 @@
 
 > Источник: `backend/src/db/schema.sql`. PostgreSQL 16 + **pgvector 0.8.0**.
 >
-> Фактическое количество таблиц — **38** (сверено с развёрнутой схемой в
-> контейнере; `pgmigrations` служебная, её создаёт раннер миграций).
-> Обновлено 2026-08-24: добавлены `knowledge_base_documents`,
-> `knowledge_base_chunks` и `ai_agent_channel_bindings` (`0015`), число таблиц
-> приведено к фактическому.
-> Ранее: `channel_accounts` (`0012`), `telegram_auth_sessions` (`0013`),
-> `ai_agents`, `ai_usage_log`, `ai_balance_topups` (`0014`), `module_data_purges`
-> (`0010`).
+> Фактический source snapshot содержит 56 пользовательских `CREATE TABLE`-определений; production-сверка 2026-10-28 показала 57 таблиц в `public` (служебная `pgmigrations` считается отдельно раннером). Число может увеличиваться следующей миграцией; для текущего release см. `backend/release-manifest.json`.
+> Последняя проверенная production-схема: 58 применённых миграций, 41 RLS policy.
+> Обновлено 2026-10-29.
 >
 > Расширения: `uuid-ossp`, `pgcrypto`, `vector`. Последнее требует образа БД с
 > pgvector — см. `docker/postgres-pgvector.Dockerfile`.

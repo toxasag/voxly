@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { ALL_PERMISSIONS } from "../../config/permissions.js";
+import type { Permission } from "../../types/index.js";
 import { queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
@@ -27,7 +29,12 @@ const inviteBody = z.object({
   confirm_extra_seat: z.boolean().default(false),
 });
 
-const changeRoleBody = z.object({ role: roleSchema });
+const permissionSchema = z.enum([...ALL_PERMISSIONS] as [Permission, ...Permission[]]);
+
+const changeRoleBody = z.object({
+  role: roleSchema,
+  permissions: z.array(permissionSchema).optional(),
+});
 const userParams = z.object({ id: z.string().uuid() });
 
 export default async function tenantRoutes(app: FastifyInstance): Promise<void> {
@@ -68,10 +75,12 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       slug: string;
       plan: string;
       status: string;
+      custom_price_rubles: number | null;
+      custom_plan_name: string | null;
       trial_ends_at: Date | string | null;
       created_at: Date | string;
     }>(
-      `SELECT id, name, slug, plan, status, trial_ends_at, created_at
+      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, created_at
        FROM tenants WHERE id = $1`,
       [request.tenant_id],
     );
@@ -87,6 +96,11 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         ? 0
         : Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000));
 
+    const hasCustomPrice = row.custom_price_rubles !== null && row.custom_price_rubles !== undefined;
+    const isFreeCustomPlan = (hasCustomPrice && Number(row.custom_price_rubles) === 0) || row.plan === "custom_free";
+    const customPlanName = row.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const customPriceRubles = hasCustomPrice ? Number(row.custom_price_rubles) : null;
+
     return reply.send({
       data: {
         id: row.id,
@@ -100,6 +114,10 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         trialDaysLeft,
         trialActive: trialDaysLeft > 0,
         createdAt: toIso(row.created_at),
+        customPriceRubles,
+        customPlanName: hasCustomPrice ? customPlanName : null,
+        isCustomPlan: hasCustomPrice,
+        isFreeCustomPlan,
       },
     });
   });
@@ -145,6 +163,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       actorId: request.authUser.id,
       userId: id,
       role: body.role,
+      permissions: body.permissions,
     });
 
     return reply.send({ data: member });

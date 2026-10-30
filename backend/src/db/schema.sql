@@ -254,6 +254,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   expires_at TIMESTAMPTZ NOT NULL,
   revoked_at TIMESTAMPTZ,
   replaced_by UUID REFERENCES refresh_tokens(id),
+  user_agent TEXT,
+  ip TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -422,7 +424,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   delivery_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT deal_messages_delivery_status_valid
-    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed'))
+    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed', 'received'))
 );
 
 CREATE TABLE IF NOT EXISTS crm_tasks (
@@ -555,7 +557,7 @@ CREATE TABLE IF NOT EXISTS deal_stage_history (
   deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
   from_stage_id UUID,
   to_stage_id UUID NOT NULL,
-  changed_by UUID NOT NULL REFERENCES users(id),
+  changed_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -899,7 +901,7 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS repair_order_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deal_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_account_id UUID;
-ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_transactions_deal_id ON transactions(deal_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_repair_order_id ON transactions(repair_order_id);

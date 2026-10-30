@@ -1,4 +1,4 @@
-export type Role = "owner" | "admin" | "manager" | "technician" | "viewer";
+export type Role = "owner" | "admin" | "partner" | "manager" | "technician" | "viewer";
 
 /**
  * Глобальная (платформенная) роль — в отличие от Role, не привязана к тенанту.
@@ -93,8 +93,15 @@ export interface User {
 export interface Tenant {
   id: string;
   name: string;
+  slug?: string;
   plan: string;
   status: "trial" | "active" | "past_due" | "suspended";
+  parent_tenant_id?: string | null;
+  auth_settings?: {
+    require_telegram_auth: boolean;
+    allow_password_auth?: boolean;
+  } | null;
+  custom_pricing?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }

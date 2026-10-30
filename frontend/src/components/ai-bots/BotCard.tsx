@@ -2,7 +2,7 @@
 
 import { memo, useCallback } from "react";
 import Link from "next/link";
-import { Bot, MessageSquare, Settings2, Zap, Clock } from "lucide-react";
+import { Bot, Settings2, SlidersHorizontal, Zap, Clock } from "lucide-react";
 import type { AiBot } from "@/lib/ai-bots/ai-bots.types";
 import {
   getAccentClasses,
@@ -185,8 +185,8 @@ export const BotCard = memo(function BotCard({
           href={`/modules/ai-bots/${bot.id}`}
           className="flex flex-1 items-center justify-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#3d2ee0]"
         >
-          <MessageSquare className="h-3.5 w-3.5" />
-          Чат
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Конфигурация
         </Link>
         <button
           type="button"

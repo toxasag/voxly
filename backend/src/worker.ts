@@ -1,6 +1,9 @@
 import { queueManager, type QueueJob } from "./infrastructure/queue.js";
 import { chargeAiUsage, type ChargeAiUsageParams } from "./modules/ai/ai-usage-queue.js";
 import { TaskRemindersService } from "./modules/crm/tasks/task-reminders.service.js";
+import { notifyTaskAssignment, type TaskAssignmentNotificationJob } from "./modules/crm/tasks/task-notification.service.js";
+import { processInvoiceReminder, type InvoiceReminderJob } from "./modules/finance/invoice-reminders.service.js";
+import { leadNotificationQueue } from "./modules/crm/leads/lead-notification.queue.js";
 
 // ---------------------------------------------------------------------------
 // Background Worker (M7.2): обработчики задач очередей.
@@ -28,7 +31,23 @@ export function initBackgroundWorker(): void {
     await remindersService.checkAndDispatchReminders(job.data.tenantId);
   });
 
-  // 5. Очередь knowledge-indexing (асинхронная векторизация базы знаний агента)
+  // 5. Уведомления о назначении задач
+  queueManager.registerHandler<TaskAssignmentNotificationJob>(
+    "notifications",
+    async (job: QueueJob<TaskAssignmentNotificationJob>) => {
+      await notifyTaskAssignment(job.data);
+    },
+  );
+
+  // 6. Напоминания о просроченных счетах
+  queueManager.registerHandler<InvoiceReminderJob>(
+    "invoice_reminders",
+    async (job: QueueJob<InvoiceReminderJob>) => {
+      await processInvoiceReminder(job.data);
+    },
+  );
+
+  // 7. Очередь knowledge-indexing (асинхронная векторизация базы знаний агента)
   queueManager.registerHandler<{ tenantId: string; documentId: string }>(
     "knowledge-indexing",
     async (job: QueueJob<{ tenantId: string; documentId: string }>) => {
@@ -42,4 +61,5 @@ export function initBackgroundWorker(): void {
 // Graceful shutdown
 export async function shutdownWorker(): Promise<void> {
   await queueManager.shutdown();
+  await leadNotificationQueue.shutdown();
 }

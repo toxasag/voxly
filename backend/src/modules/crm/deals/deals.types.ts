@@ -26,6 +26,7 @@ export const createDealSchema = z.object({
   owner_id: optionalUuid,
   close_date: optionalDate,
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
 });
 
 export const updateDealSchema = z.object({
@@ -40,6 +41,7 @@ export const updateDealSchema = z.object({
   close_date: optionalDate,
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
   closed_at: z.string().datetime().optional().or(z.literal("")),
 });
 
@@ -109,12 +111,14 @@ export interface DealRow {
   budget: string;
   currency: string;
   custom_fields: Record<string, unknown>;
+  source_metadata?: Record<string, unknown> | null;
   created_by: string;
   owner_id: string | null;
   close_date: Date | string | null;
   /** DOUBLE PRECISION приходит числом. */
   position: number;
   closed_at: Date | string | null;
+  lead_notified_at?: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
   /**
@@ -154,11 +158,13 @@ export interface DealDTO {
   budget: number;
   currency: string;
   customFields: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown> | null;
   createdBy: string;
   ownerId: string | null;
   closeDate: string | null;
   position: number;
   closedAt: string | null;
+  leadNotifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
@@ -212,11 +218,13 @@ export function toDealDTO(row: DealRow): DealDTO {
     budget: Number(row.budget),
     currency: row.currency,
     customFields: row.custom_fields,
+    sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     createdBy: row.created_by,
     ownerId: row.owner_id,
     closeDate: toDateOrNull(row.close_date),
     position: Number(row.position),
     closedAt: toIsoOrNull(row.closed_at),
+    leadNotifiedAt: toIsoOrNull(row.lead_notified_at ?? null),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,
@@ -246,7 +254,7 @@ export function toDealDTO(row: DealRow): DealDTO {
  * причину в `delivery_error`: неотправленное сообщение обязано отличаться в
  * таймлайне от отправленного, иначе менеджер ждёт ответа на то, что не ушло.
  */
-export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed"]);
+export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed", "received"]);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 
 export interface DealMessageRow {
@@ -374,13 +382,26 @@ export interface DealOtherDealItemDTO {
 
 export interface DealContactTimelineItemDTO {
   id: string;
-  type: "note" | "task" | "message" | "stage_change" | "deal_created";
+  type:
+    | "note"
+    | "task"
+    | "message"
+    | "stage_change"
+    | "deal_created"
+    | "widget_launch"
+    | "form_submission"
+    | "im_session_inbound"
+    | "im_session_outbound";
   dealId?: string;
   dealTitle?: string;
   timestamp: string;
   title: string;
   description?: string;
   authorName?: string;
+  activityChannel?: string;
+  activityKind?: string;
+  direction?: "inbound" | "outbound" | null;
+  payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 

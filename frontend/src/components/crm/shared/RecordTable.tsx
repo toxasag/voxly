@@ -660,7 +660,7 @@ export function RecordTable<T>({
           >
             {/* Заголовок */}
             <div
-              className="grid border-b border-[#e5e5e5] bg-white text-[12px] font-medium text-[#666666] select-none"
+              className="grid border-b border-[#e5e5e5] bg-white text-xs font-medium text-[#666666] select-none uppercase"
               style={{ gridTemplateColumns: gridTemplate, height: `${RECORD_TABLE_ROW_HEIGHT}px` }}
             >
               {selectionEnabled && (
@@ -800,7 +800,7 @@ export function RecordTable<T>({
                   key={id}
                   onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
                   className={cn(
-                    "group grid border-b border-[#e5e5e5] text-[13px] text-[#111111] transition-colors",
+                    "group grid border-b border-[#e5e5e5] text-sm text-[#111111] transition-colors",
                     isSelected
                       ? "bg-[#f0f9ff] shadow-[inset_2px_0_0_#3b82f6]"
                       : isRowFocused
@@ -919,7 +919,7 @@ export function RecordTable<T>({
             }
             className={cn(
               "fixed z-[9999] flex flex-col overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xl text-left",
-              isMobile ? "w-auto" : "w-64",
+              isMobile ? "w-full max-w-[calc(100vw-1rem)]" : "w-56",
             )}
           >
             {/* Поиск полей (Twenty CRM style) */}

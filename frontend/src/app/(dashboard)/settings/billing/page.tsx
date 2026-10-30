@@ -233,7 +233,13 @@ function BillingContent() {
               )}
             </div>
             <p className="mt-1.5 text-2xl font-bold text-[#111111]">
-              {info === undefined ? "—" : (PLAN_LABELS[info.plan] ?? info.plan)}
+              {info?.isCustomPlan
+                ? (info.customPlanName || "Индивидуальный")
+                : summary.isCustomPlan
+                  ? (summary.customPlanName || "Индивидуальный")
+                  : info === undefined
+                    ? "—"
+                    : (PLAN_LABELS[info.plan] ?? info.plan)}
             </p>
 
             {info !== undefined && info.trialActive && (
@@ -424,52 +430,61 @@ function BillingContent() {
           </div>
         )}
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (isProviderConnected) {
-                void handleSubscriptionCheckout();
-              } else {
-                setNotice("card");
-                toast.info("Подключите Robokassa в панели администратора для приёма карт");
-              }
-            }}
-            disabled={checkout.isPending}
-            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
-          >
-            <div className="rounded-[8px] bg-indigo-50 p-2">
-              <CreditCard className="h-4 w-4 text-[#4a38f5]" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#111111]">
-                {checkout.isPending ? "Формируем платёж..." : "Оплатить картой онлайн"}
-              </p>
-              <p className="mt-0.5 text-xs text-[#666666]">
-                {isProviderConnected
-                  ? `Оплата за 1 месяц (${formatRub(summary.monthlyTotal > 0 ? summary.monthlyTotal : 1500)})`
-                  : "Оплата картой после настройки шлюза"}
-              </p>
-            </div>
-          </button>
+        {summary.isFreeCustomPlan ? (
+          <div className="mt-4 rounded-[8px] border border-emerald-200 bg-emerald-50/60 p-4 text-xs text-emerald-800">
+            <p className="font-semibold text-sm text-emerald-900">Индивидуальный тариф активен</p>
+            <p className="mt-1 text-emerald-700">
+              Для вашей организации установлен бесплатный индивидуальный тариф ({summary.customPlanName || "Партнёрский"}). Оплата подписки не требуется.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (isProviderConnected) {
+                  void handleSubscriptionCheckout();
+                } else {
+                  setNotice("card");
+                  toast.info("Подключите Robokassa в панели администратора для приёма карт");
+                }
+              }}
+              disabled={checkout.isPending}
+              className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa] disabled:opacity-50"
+            >
+              <div className="rounded-[8px] bg-indigo-50 p-2">
+                <CreditCard className="h-4 w-4 text-[#4a38f5]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#111111]">
+                  {checkout.isPending ? "Формируем платёж..." : "Оплатить картой онлайн"}
+                </p>
+                <p className="mt-0.5 text-xs text-[#666666]">
+                  {isProviderConnected
+                    ? `Оплата за 1 месяц (${formatRub(summary.monthlyTotal > 0 ? summary.monthlyTotal : 1500)})`
+                    : "Оплата картой после настройки шлюза"}
+                </p>
+              </div>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setNotice("invoice");
-              toast.info("Запрос отправлен: менеджер свяжется для выставления счёта");
-            }}
-            className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
-          >
-            <div className="rounded-[8px] bg-sky-50 p-2">
-              <Building2 className="h-4 w-4 text-sky-600" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-[#111111]">Счёт для юрлица или ИП</p>
-              <p className="mt-0.5 text-xs text-[#666666]">Оплата по счёту с указанием ИНН</p>
-            </div>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => {
+                setNotice("invoice");
+                toast.info("Запрос отправлен: менеджер свяжется для выставления счёта");
+              }}
+              className="flex items-start gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-4 text-left shadow-2xs transition-colors hover:border-[#cccccc] hover:bg-[#fafafa]"
+            >
+              <div className="rounded-[8px] bg-sky-50 p-2">
+                <Building2 className="h-4 w-4 text-sky-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#111111]">Счёт для юрлица или ИП</p>
+                <p className="mt-0.5 text-xs text-[#666666]">Оплата по счёту с указанием ИНН</p>
+              </div>
+            </button>
+          </div>
+        )}
 
         {notice !== null && (
           <div className="mt-4 flex gap-3 rounded-[8px] border border-amber-200 bg-amber-50 p-4">

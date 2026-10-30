@@ -31,13 +31,27 @@ export interface DealOtherDealItemDTO {
 
 export interface DealContactTimelineItemDTO {
   id: string;
-  type: "note" | "task" | "message" | "stage_change" | "deal_created";
+  type:
+    | "note"
+    | "task"
+    | "message"
+    | "stage_change"
+    | "deal_created"
+    | "widget_launch"
+    | "form_submission"
+    | "im_session_inbound"
+    | "im_session_outbound";
   dealId?: string;
   dealTitle?: string;
   timestamp: string;
   title: string;
   description?: string;
   authorName?: string;
+  clientHandle?: string;
+  activityChannel?: string;
+  activityKind?: string;
+  direction?: "inbound" | "outbound" | null;
+  payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 
@@ -83,10 +97,11 @@ export function useDealContactHistory(dealId: string | null | undefined) {
           timeline: [],
         };
       }
-      const res = await apiClient.get<{ data: DealContactHistoryDTO }>(
+      const res = await apiClient.get<DealContactHistoryDTO>(
         `/api/v1/crm/deals/${dealId}/contact-history`,
       );
-      return res.data.data;
+      const payload = (res.data as any)?.data ?? res.data;
+      return payload;
     },
     enabled: Boolean(dealId),
   });

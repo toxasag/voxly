@@ -108,6 +108,8 @@ describe("resolvePageLayoutTabs", () => {
       ["home", 10, true],
       ["chat", 15, true],
       ["timeline", 20, true],
+      ["analytics", 22, true],
+      ["source", 24, true],
       ["contact-history", 25, true],
       ["tasks", 30, true],
       ["notes", 40, true],

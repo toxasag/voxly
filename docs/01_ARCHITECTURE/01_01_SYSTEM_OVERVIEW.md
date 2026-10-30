@@ -1,6 +1,6 @@
 # 01_01 — Обзор системы
 
-> Статус: соответствует коду на 2026-08-18. Источник правды — `frontend/src/`, `backend/src/`.
+> Статус: актуальный source snapshot на 2026-10-29. Источник runtime-контракта — `backend/src/` и `frontend/src/`; идентификатор релиза — `backend/src/release-manifest.json`.
 
 ---
 
@@ -27,9 +27,9 @@ GETVOXLY — модульная B2B SaaS-платформа: ядро CRM плю
 | Конфигурация | Zod-валидация окружения при старте | `backend/src/config/env.ts` |
 | Безопасность HTTP | helmet, cors, rate-limit | `backend/src/app.ts` |
 
-**Redis 7 + BullMQ** заявлены в архитектуре для фоновых задач (очереди `notifications`, `service_notifications`, `invoice_reminders`, `ai_bots`), но **в коде пока не подключены** — соответствующие задачи M1.6.8, M2.2.6, M3.2.7, M4.2.9 в роадмапе открыты.
+Redis 7 + BullMQ подключены для durable-фоновых задач. В production Redis приходит по `REDIS_URL` (текущий compose default: `redis://automation-redis-1:6379/1`), а приложение fail-closed для бизнес-критичных постановок при отсутствии Redis. Фактически зарегистрированные BullMQ-очереди: `lead-notifications`, `kb`, `conversion-events`; их counters и oldest active job age входят в `/health`. Дополнительный `queueManager` сохраняет совместимый интерфейс для задач, которые используют `requireDurableQueue`, но не является заменой BullMQ для зарегистрированных очередей.
 
-Как следствие, одноразовые коды входа хранятся не в Redis, а в таблице `otp_codes`: зависимости Redis ещё нет, а код, переживающий перезапуск, предпочтительнее кода, молча исчезающего вместе с процессом. Перенос в Redis станет возможен вместе с M6.2.x.
+Одноразовые коды входа хранятся в PostgreSQL (`otp_codes` и `auth_sessions`), а не в Redis: это сохраняет ожидающие подтверждения при перезапуске API. Redis используется для очередей и подключаемых runtime-механизмов, не как источник истины для auth-сессий.
 
 ---
 
@@ -84,7 +84,7 @@ Route groups в `frontend/src/app/`:
 | `/api/v1/invoices` | `modules/finance/invoices.routes.ts` | JWT + модуль `finance` + права |
 | `/api/v1/marketplace` | `modules/marketplace` | JWT + `tenant:admin` |
 | `/api/v1/admin` | `modules/admin` | JWT + роль `owner` |
-| `/health` | inline в `app.ts` | публичный, проверяет БД |
+| `/health` | inline в `app.ts` | публичный, проверяет БД, Redis, очереди и release manifest |
 
 > Auth смонтирован под `/auth`, **не** под `/api/v1/auth`. Это фактическое состояние кода.
 

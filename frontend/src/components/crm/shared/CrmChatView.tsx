@@ -12,6 +12,8 @@ import {
   Bot,
   CheckCheck,
   Clock,
+  Download,
+  FileText,
   Loader2,
   MessageCircle,
   Paperclip,
@@ -33,6 +35,7 @@ import { useDeal, useMarkDealPersonal, useUnmarkDealPersonal } from "@/lib/api/u
 import { useContact, useSetContactPersonal } from "@/lib/api/use-contacts";
 import {
   useCrmChat,
+  useUploadCrmMedia,
   type ChatMessageDTO,
   type CrmChatEntityType,
   type SendFromOptionDTO,
@@ -163,10 +166,71 @@ function isImageAttachment(attachment: string, attachmentType?: string | null): 
   return /\.(jpe?g|png|webp|gif|svg)$/i.test(attachment);
 }
 
+function isVideoAttachment(attachment: string, attachmentType?: string | null): boolean {
+  if (attachmentType && attachmentType.startsWith("video/")) return true;
+  return /\.(mp4|mov|avi|mkv|webm)$/i.test(attachment);
+}
+
+function isAudioAttachment(attachment: string, attachmentType?: string | null): boolean {
+  if (attachmentType && attachmentType.startsWith("audio/")) return true;
+  return /\.(mp3|ogg|opus|wav|m4a|aac)$/i.test(attachment);
+}
+
+function getAttachmentInfo(attachment: string, attachmentType?: string | null, content?: string) {
+  const url = resolveAttachmentUrl(attachment);
+  const isImage = isImageAttachment(attachment, attachmentType);
+  const isVideo = isVideoAttachment(attachment, attachmentType);
+  const isAudio = isAudioAttachment(attachment, attachmentType);
+
+  const extMatch = attachment.match(/\.([a-zA-Z0-9]+)(?:\?|#|$)/) || (content ? content.match(/\.([a-zA-Z0-9]+)$/) : null);
+  const ext = extMatch ? extMatch[1].toUpperCase() : (attachmentType?.split("/")[1] || "FILE").toUpperCase();
+
+  let fileName = "";
+  if (content && content.trim() !== "." && content.trim() !== "[документ]" && !content.startsWith("/uploads/")) {
+    fileName = content.trim();
+  } else {
+    const rawBase = attachment.split("/").pop() || "Документ";
+    const cleaned = rawBase.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "");
+    fileName = decodeURIComponent(cleaned || rawBase);
+  }
+
+  let typeLabel = `${ext} документ`;
+  if (["DOC", "DOCX"].includes(ext) || attachmentType?.includes("word")) {
+    typeLabel = `Документ Word (${ext})`;
+  } else if (["XLS", "XLSX"].includes(ext) || attachmentType?.includes("sheet") || attachmentType?.includes("excel")) {
+    typeLabel = `Таблица Excel (${ext})`;
+  } else if (ext === "PDF" || attachmentType?.includes("pdf")) {
+    typeLabel = `Документ PDF`;
+  } else if (isVideo) {
+    typeLabel = `Видео (${ext})`;
+  } else if (isAudio) {
+    typeLabel = `Аудиозапись (${ext})`;
+  }
+
+  return {
+    url,
+    isImage,
+    isVideo,
+    isAudio,
+    fileName,
+    ext,
+    typeLabel,
+  };
+}
+
+export function stripTechnicalMessageMetadata(content: string): string {
+  if (!content) return "";
+  const technicalRegex = /^\s*(?:\[(?:Устройство|Страница|UTM|Реклама ClickID|Яндекс ID|YM ClientID|GA ClientID|Top\.Mail\.ru|История переходов|Визит №|Черновик)[^\]]*\]\s*)+/gi;
+  return content.replace(technicalRegex, "").trim();
+}
+
 function renderChatMessageContent(content: string): React.ReactNode {
   if (!content) return null;
 
-  const lines = content.split("\n");
+  const clean = stripTechnicalMessageMetadata(content);
+  if (!clean) return null;
+
+  const lines = clean.split("\n");
 
   return lines.map((line, lineIdx) => {
     const isQuote = /^>\s?/.test(line);
@@ -343,6 +407,8 @@ export function CrmChatView({
     aiDraftMutation,
     syncHistoryMutation,
   } = useCrmChat({ entityType, entityId, live: true });
+
+  const uploadMediaMutation = useUploadCrmMedia();
 
   const isDeal = entityType === "deal";
   const dealQuery = useDeal(isDeal && entityId ? entityId : null);
@@ -529,12 +595,26 @@ export function CrmChatView({
   const handleSend = useCallback(
     async (attached?: AttachedFile) => {
       const text = input.trim();
-      if ((!text && !attached) || sendMessageMutation.isPending) return;
+      if ((!text && !attached) || sendMessageMutation.isPending || uploadMediaMutation.isPending) return;
 
       const lastMessageWithChannel = [...messages].reverse().find((m) => m.channel && m.channel !== "system");
       const fallbackChannel = lastMessageWithChannel?.channel ?? "telegram";
       const channel = selectedOption?.channel ?? (activeChannel !== "all" ? activeChannel : fallbackChannel);
       const channelAccountId = selectedOption?.channelAccountId;
+
+      let uploadedAttachmentUrl: string | undefined;
+      let uploadedAttachmentType: string | undefined;
+
+      if (attached) {
+        try {
+          const uploadRes = await uploadMediaMutation.mutateAsync(attached.file);
+          uploadedAttachmentUrl = uploadRes.url;
+          uploadedAttachmentType = uploadRes.mimeType;
+        } catch (uploadErr) {
+          toast.error("Не удалось загрузить файл на сервер");
+          return;
+        }
+      }
 
       try {
         await sendMessageMutation.mutateAsync({
@@ -543,15 +623,15 @@ export function CrmChatView({
           channel_account_id: channelAccountId || undefined,
           source: "manager",
           direction: "outbound",
-          attachment: attached?.name,
-          attachment_type: attached?.file.type,
+          attachment: uploadedAttachmentUrl,
+          attachment_type: uploadedAttachmentType,
         });
         setInput("");
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось отправить сообщение");
       }
     },
-    [input, sendMessageMutation, selectedOption, activeChannel, messages],
+    [input, sendMessageMutation, uploadMediaMutation, selectedOption, activeChannel, messages],
   );
 
   // Вызов AI-Copilot (генерация подсказки/черновика ответа)
@@ -628,6 +708,12 @@ export function CrmChatView({
     return groups;
   }, [displayedMessages]);
 
+  const isAiActive =
+    (aiStatus?.aiControl === "enabled" || aiStatus?.status === "enabled") &&
+    !aiStatus?.isPaused &&
+    aiStatus?.status !== "paused";
+  const isAiPaused = Boolean(aiStatus?.isPaused || aiStatus?.status === "paused");
+
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-white text-[#111111]", className)}>
       {/* Шапка: статус AI-автопилота и управление */}
@@ -635,23 +721,23 @@ export function CrmChatView({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
-              {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+              {isAiActive ? (
                 <>
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-600" />
                 </>
-              ) : aiStatus?.isPaused ? (
+              ) : isAiPaused ? (
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
               ) : (
                 <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#888888]" />
               )}
             </span>
             <span className="text-xs font-medium text-[#111111]">
-              {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+              {isAiActive ? (
                 <span className="font-semibold text-emerald-700">AI Автопилот активен</span>
-              ) : aiStatus?.isPaused ? (
-                <span className="text-amber-700">
-                  AI на паузе {aiStatus.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
+              ) : isAiPaused ? (
+                <span className="text-amber-700 font-medium">
+                  AI на паузе {aiStatus?.pausedUntil ? `до ${formatTime(aiStatus.pausedUntil)}` : ""} (ручной перехват)
                 </span>
               ) : (
                 <span className="text-[#666666]">AI Автопилот выключен</span>
@@ -695,14 +781,14 @@ export function CrmChatView({
 
           {/* Кнопки переключения режима AI */}
           <div className="flex items-center gap-1.5">
-            {aiStatus?.aiControl === "enabled" && !aiStatus.isPaused ? (
+            {isAiActive ? (
               <>
                 <button
                   type="button"
                   onClick={() => handleAiAction("pause")}
                   disabled={aiControlMutation.isPending}
                   title="Приостановить автоответчик на 1 час (оператор перехватывает диалог)"
-                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111] disabled:opacity-50 cursor-pointer"
                 >
                   <Pause className="h-3 w-3 text-amber-600" />
                   <span>Пауза на 1 ч</span>
@@ -712,7 +798,7 @@ export function CrmChatView({
                   onClick={() => handleAiAction("disable")}
                   disabled={aiControlMutation.isPending}
                   title="Полностью отключить автоответчик по этой сделке/контакту"
-                  className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                  className="inline-flex items-center rounded-[8px] border border-[#e5e5e5] bg-white p-1 text-[#888888] transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50 cursor-pointer"
                 >
                   <PowerOff className="h-3.5 w-3.5" />
                 </button>
@@ -723,10 +809,10 @@ export function CrmChatView({
                 onClick={() => handleAiAction("enable")}
                 disabled={aiControlMutation.isPending}
                 title="Включить AI-автопилот"
-                className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
               >
-                <Play className="h-3 w-3 fill-current" />
-                <span>Включить AI</span>
+                <Play className="h-3 w-3 text-emerald-700" />
+                <span>{isAiPaused ? "Снять с паузы" : "Включить AI"}</span>
               </button>
             )}
           </div>
@@ -855,14 +941,21 @@ export function CrmChatView({
                 const isAi = message.source === "ai" || message.source === "ai_bot";
                 const isClient = message.direction === "inbound" || message.source === "client";
 
+                const cleanedContent = stripTechnicalMessageMetadata(message.content || "");
+
                 if (isSystem) {
+                  if (!cleanedContent) return null;
                   return (
 <div key={message.id} className="my-1.5 flex justify-center">
                       <div className="max-w-md rounded-full border border-[#e5e5e5] bg-[#f5f5f5] px-3 py-1 text-center text-xs text-[#666666]">
-                        {renderChatMessageContent(message.content)}
+                        {renderChatMessageContent(cleanedContent)}
                       </div>
                     </div>
                   );
+                }
+
+                if (!cleanedContent.trim() && !message.attachment) {
+                  return null;
                 }
 
                 return (
@@ -904,47 +997,118 @@ export function CrmChatView({
                       </div>
 
                       {/* Текст сообщения */}
-                      <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                        {renderChatMessageContent(message.content)}
-                      </div>
+                      {(() => {
+                        const trimmedContent = cleanedContent.trim();
+                        const info = message.attachment ? getAttachmentInfo(message.attachment, message.attachmentType, cleanedContent) : null;
+                        const isDummyContent =
+                          trimmedContent === "." ||
+                          trimmedContent === "[документ]" ||
+                          trimmedContent === "Вложение" ||
+                          trimmedContent === "Фотография" ||
+                          trimmedContent === "Видео" ||
+                          trimmedContent === "Аудио" ||
+                          (message.attachment && (
+                            trimmedContent === message.attachment ||
+                            (info && (trimmedContent === info.fileName || trimmedContent.toLowerCase() === info.fileName.toLowerCase()))
+                          ));
+                        if (!trimmedContent || (message.attachment && isDummyContent)) {
+                          return null;
+                        }
+                        return (
+                          <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
+                            {renderChatMessageContent(cleanedContent)}
+                          </div>
+                        );
+                      })()}
 
                       {/* Вложение сообщения, если есть */}
-                      {message.attachment && (
-                        <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
-                          {isImageAttachment(message.attachment, message.attachmentType) ? (
-                            <a
-                              href={resolveAttachmentUrl(message.attachment)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="group block overflow-hidden rounded-[8px]"
-                              title="Нажмите, чтобы открыть фото в полном размере"
-                            >
-                              <img
-                                src={resolveAttachmentUrl(message.attachment)}
-                                alt="Фотография"
-                                className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
-                                loading="lazy"
+                      {message.attachment && (() => {
+                        const info = getAttachmentInfo(message.attachment, message.attachmentType, message.content);
+                        if (info.isImage) {
+                          return (
+                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+                              <a
+                                href={info.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group block overflow-hidden rounded-[8px]"
+                                title="Нажмите, чтобы открыть фото в полном размере"
+                              >
+                                <img
+                                  src={info.url}
+                                  alt="Фотография"
+                                  className="max-h-72 w-auto max-w-full rounded-[6px] object-cover transition-transform duration-150 group-hover:scale-[1.01]"
+                                  loading="lazy"
+                                />
+                              </a>
+                            </div>
+                          );
+                        }
+
+                        if (info.isVideo) {
+                          return (
+                            <div className="mt-2 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-black shadow-2xs">
+                              <video
+                                src={info.url}
+                                controls
+                                preload="metadata"
+                                className="max-h-72 w-auto max-w-full rounded-[6px]"
                               />
-                            </a>
-                          ) : (
-                            <a
-                              href={resolveAttachmentUrl(message.attachment)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-[#fafafa] transition-colors"
-                            >
-                              <Paperclip className="h-3.5 w-3.5 text-[#888888] shrink-0" />
-                              <span className="font-medium text-[#111111] truncate">{message.attachment}</span>
-                            </a>
-                          )}
-                        </div>
-                      )}
+                            </div>
+                          );
+                        }
+
+                        if (info.isAudio) {
+                          return (
+                            <div className="mt-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 shadow-2xs">
+                              <div className="mb-1 text-xs font-medium text-[#111111] truncate">{info.fileName}</div>
+                              <audio
+                                src={info.url}
+                                controls
+                                preload="metadata"
+                                className="w-full h-8"
+                              />
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 transition-colors hover:border-[#cccccc]">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] bg-white border border-[#e5e5e5] text-[#4a38f5] shadow-2xs">
+                                <FileText className="h-5 w-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
+                                  {info.fileName}
+                                </div>
+                                <div className="text-[11px] text-[#666666]">
+                                  {info.typeLabel}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <a
+                                href={info.url}
+                                download={info.fileName}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2.5 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
+                                title="Скачать файл"
+                              >
+                                <Download className="h-3 w-3 text-[#666666]" />
+                                <span>Скачать</span>
+                              </a>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Подвал пузыря: время и статус доставки */}
                       <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] text-[#888888]">
                         <span>{formatTime(message.createdAt)}</span>
 
-                        {isOutbound && (
+                        {isOutbound ? (
                           <span className="inline-flex items-center">
                             {message.deliveryStatus === "pending" && (
                               <span title="Отправляется в канал..." className="flex items-center gap-0.5 text-amber-600">
@@ -959,10 +1123,18 @@ export function CrmChatView({
                             {message.deliveryStatus === "failed" && (
                               <span
                                 title={`Ошибка доставки: ${message.deliveryError || "неизвестная ошибка"}`}
-className="flex items-center gap-1 font-medium text-rose-600"
+                                className="flex items-center gap-1 font-medium text-rose-600"
                               >
                                 <AlertCircle className="h-3 w-3" />
                                 <span>Сбой</span>
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center">
+                            {message.deliveryStatus === "received" && (
+                              <span title="Получено от клиента" className="flex items-center text-emerald-600">
+                                <CheckCheck className="h-3.5 w-3.5" />
                               </span>
                             )}
                           </span>
@@ -1029,7 +1201,7 @@ className="flex items-center gap-1 font-medium text-rose-600"
             isSending={sendMessageMutation.isPending}
             onAiDraft={handleGenerateAiDraft}
             isAiDraftPending={aiDraftMutation.isPending}
-            placeholder="Сообщение..."
+            placeholder="Написать сообщение"
           />
         </div>
       </div>

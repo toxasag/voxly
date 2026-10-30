@@ -38,6 +38,9 @@ export interface MarketplaceModuleDTO {
   trialEndsAt: string | null;
   trialActive: boolean;
   monthlyTotal: number;
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
+  customPlanName?: string | null;
 }
 
 export interface BillingSummaryDTO {
@@ -57,6 +60,10 @@ export interface BillingSummaryDTO {
     provider: string | null;
     testMode?: boolean;
   };
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
+  customPlanName?: string | null;
+  customPriceRubles?: number | null;
 }
 
 export const marketplaceKeys = {

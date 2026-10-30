@@ -252,15 +252,19 @@ export class DealMessagingService {
       };
     }
 
+    const outboundPayload: Parameters<typeof sender>[0] = {
+      tenantId,
+      channelAccountId: route.channelAccountId,
+      recipient: route.recipient,
+      text: payload.content,
+    };
+    if (route.username !== undefined) outboundPayload.username = route.username;
+    if (route.phone !== undefined) outboundPayload.phone = route.phone;
+    if (payload.attachment) outboundPayload.attachment = payload.attachment;
+    if (payload.attachment_type) outboundPayload.attachmentType = payload.attachment_type;
+
     try {
-      return await sender({
-        tenantId,
-        channelAccountId: route.channelAccountId,
-        recipient: route.recipient,
-        text: payload.content,
-        username: route.username,
-        phone: route.phone,
-      });
+      return await sender(outboundPayload);
     } catch (error) {
       this.log?.error({ error, dealId }, "Outbound sender threw while sending deal message");
       return { ok: false, reason: "Транспорт канала недоступен" };
@@ -391,23 +395,53 @@ export class DealMessagingService {
   async getAiStatus(
     tenantId: string,
     dealId: string,
-  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+  ): Promise<{
+    aiControl: "enabled" | "paused" | "disabled";
+    isPaused: boolean;
+    pausedUntil: string | null;
+    pausedReason: string | null;
+    status: "enabled" | "paused" | "disabled";
+  }> {
     const row = await queryOne<{ ai_paused_until: string | null }>(
       `SELECT ai_paused_until FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [tenantId, dealId],
     );
     if (!row || !row.ai_paused_until) {
-      return { status: "enabled", pausedUntil: null };
+      return {
+        aiControl: "enabled",
+        isPaused: false,
+        pausedUntil: null,
+        pausedReason: null,
+        status: "enabled",
+      };
     }
     const pausedUntilDate = new Date(row.ai_paused_until);
     const now = new Date();
-    if (pausedUntilDate.getFullYear() >= 9999) {
-      return { status: "disabled", pausedUntil: null };
+    if (pausedUntilDate.getFullYear() >= 2090) {
+      return {
+        aiControl: "disabled",
+        isPaused: false,
+        pausedUntil: null,
+        pausedReason: null,
+        status: "disabled",
+      };
     }
     if (pausedUntilDate > now) {
-      return { status: "paused", pausedUntil: row.ai_paused_until };
+      return {
+        aiControl: "paused",
+        isPaused: true,
+        pausedUntil: row.ai_paused_until,
+        pausedReason: "manual_takeover",
+        status: "paused",
+      };
     }
-    return { status: "enabled", pausedUntil: null };
+    return {
+      aiControl: "enabled",
+      isPaused: false,
+      pausedUntil: null,
+      pausedReason: null,
+      status: "enabled",
+    };
   }
 
   /**
@@ -417,14 +451,39 @@ export class DealMessagingService {
     tenantId: string,
     dealId: string,
     action: "enable" | "pause" | "disable",
-  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
-    let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND id = $2`;
+  ): Promise<{
+    aiControl: "enabled" | "paused" | "disabled";
+    isPaused: boolean;
+    pausedUntil: string | null;
+    pausedReason: string | null;
+    status: "enabled" | "paused" | "disabled";
+  }> {
+    const deal = await queryOne<{ contact_id: string | null }>(
+      `SELECT contact_id FROM deals WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, dealId],
+    );
+
+    let targetDate: string | null = null;
     if (action === "pause") {
-      updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND id = $2`;
+      targetDate = "now() + interval '1 hour'";
     } else if (action === "disable") {
-      updateSql = `UPDATE deals SET ai_paused_until = '9999-12-31 23:59:59+00' WHERE tenant_id = $1 AND id = $2`;
+      targetDate = "'9999-12-31 23:59:59+00'::timestamptz";
     }
-    await query(updateSql, [tenantId, dealId]);
+
+    if (targetDate) {
+      await query(
+        `UPDATE deals SET ai_paused_until = ${targetDate}
+         WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
+        [tenantId, dealId, deal?.contact_id ?? null],
+      );
+    } else {
+      await query(
+        `UPDATE deals SET ai_paused_until = NULL
+         WHERE tenant_id = $1 AND (id = $2 OR ($3::uuid IS NOT NULL AND contact_id = $3::uuid AND deleted_at IS NULL))`,
+        [tenantId, dealId, deal?.contact_id ?? null],
+      );
+    }
+
     return this.getAiStatus(tenantId, dealId);
   }
 
@@ -728,14 +787,28 @@ export class DealMessagingService {
   async getContactAiStatus(
     tenantId: string,
     contactId: string,
-  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+  ): Promise<{
+    aiControl: "enabled" | "paused" | "disabled";
+    isPaused: boolean;
+    pausedUntil: string | null;
+    pausedReason: string | null;
+    status: "enabled" | "paused" | "disabled";
+  }> {
     const deal = await queryOne<{ id: string }>(
       `SELECT id FROM deals
        WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL
        ORDER BY updated_at DESC LIMIT 1`,
       [tenantId, contactId],
     );
-    if (!deal) return { status: "enabled", pausedUntil: null };
+    if (!deal) {
+      return {
+        aiControl: "enabled",
+        isPaused: false,
+        pausedUntil: null,
+        pausedReason: null,
+        status: "enabled",
+      };
+    }
     return this.getAiStatus(tenantId, deal.id);
   }
 
@@ -746,7 +819,13 @@ export class DealMessagingService {
     tenantId: string,
     contactId: string,
     action: "enable" | "pause" | "disable",
-  ): Promise<{ status: "enabled" | "paused" | "disabled"; pausedUntil: string | null }> {
+  ): Promise<{
+    aiControl: "enabled" | "paused" | "disabled";
+    isPaused: boolean;
+    pausedUntil: string | null;
+    pausedReason: string | null;
+    status: "enabled" | "paused" | "disabled";
+  }> {
     let updateSql = `UPDATE deals SET ai_paused_until = NULL WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;
     if (action === "pause") {
       updateSql = `UPDATE deals SET ai_paused_until = now() + interval '1 hour' WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL`;

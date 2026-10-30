@@ -11,6 +11,8 @@ import { NotFoundError } from "../../../plugins/errorHandler.js";
 import { DealMessagingService } from "../deals/deal-messaging.service.js";
 import { createDealMessageSchema } from "../deals/deals.types.js";
 import { CrmEnrichmentService } from "../enrichment.service.js";
+import { ContactActivityService } from "./contact-activity.service.js";
+import { activityChannelSchema, activityKindSchema } from "./contact-activity.types.js";
 
 const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
@@ -241,5 +243,72 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const result = await messaging.syncContactChatHistory(request.tenant_id, id);
     return reply.send({ data: result });
+  });
+
+  const timelineQuerySchema = z.object({
+    limit: z.coerce.number().int().positive().max(100).default(50),
+    offset: z.coerce.number().int().nonnegative().default(0),
+    channel: activityChannelSchema.optional(),
+    kind: activityKindSchema.optional(),
+    deal_id: z.string().uuid().optional(),
+  });
+
+  app.get("/:id/timeline", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const { limit, offset, channel, kind, deal_id } = timelineQuerySchema.parse(request.query);
+
+    const activityService = new ContactActivityService();
+    const result = await activityService.listContactActivities(request.tenant_id, id, {
+      limit,
+      offset,
+      channel,
+      kind,
+      dealId: deal_id,
+    });
+
+    return reply.send({
+      data: result.items,
+      meta: {
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
+      },
+    });
+  });
+
+  const recordActivityBodySchema = z.object({
+    deal_id: z.string().uuid().optional().nullable(),
+    activity_channel: activityChannelSchema,
+    activity_kind: activityKindSchema,
+    direction: z.enum(["inbound", "outbound"]).optional().nullable(),
+    title: z.string().min(1).max(500),
+    client_handle: z.string().max(255).optional().nullable(),
+    external_account_id: z.string().max(255).optional().nullable(),
+    occurred_at: z.string().datetime().optional(),
+    payload: z.record(z.unknown()).default({}),
+  });
+
+  app.post("/:id/activities", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const body = recordActivityBodySchema.parse(request.body);
+
+    const activityService = new ContactActivityService();
+    const activity = await activityService.recordActivity({
+      tenantId: request.tenant_id,
+      contactId: id,
+      dealId: body.deal_id,
+      activityChannel: body.activity_channel,
+      activityKind: body.activity_kind,
+      direction: body.direction,
+      title: body.title,
+      authorId: request.authUser.id,
+      authorName: request.authUser.name || undefined,
+      clientHandle: body.client_handle,
+      externalAccountId: body.external_account_id,
+      occurredAt: body.occurred_at,
+      payload: body.payload,
+    });
+
+    return reply.status(201).send({ data: activity });
   });
 }

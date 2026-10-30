@@ -21,12 +21,13 @@ import type {
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
-import { TimelineService } from "../timeline/timeline.service.js";
+import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
+import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-  budget, currency, custom_fields, created_by, owner_id, close_date, position,
-  closed_at, created_at, updated_at
+  budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
+  closed_at, lead_notified_at, created_at, updated_at
 `;
 
 /**
@@ -38,8 +39,8 @@ const DEAL_COLUMNS = `
  */
 const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
-  d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
-  d.close_date, d.position, d.closed_at, d.created_at, d.updated_at,
+  d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
+  d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
   co.phone AS company_phone,
   co.email AS company_email,
@@ -320,9 +321,12 @@ export class DealsService {
     createdBy: string,
     payload: CreateDealPayload,
   ): Promise<DealDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const created = await withTenant(tenantId, async (tx) => {
       return this.createInTx(tx, tenantId, createdBy, payload);
     });
+
+    void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
+    return created;
   }
 
   async createInTx(
@@ -357,8 +361,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, created_by, owner_id, close_date, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -371,6 +375,7 @@ export class DealsService {
           payload.budget,
           payload.currency,
           JSON.stringify(payload.custom_fields ?? {}),
+          JSON.stringify(payload.source_metadata ?? {}),
           createdBy,
           // Ответственный по умолчанию — создатель: сделка без владельца
           // выпадает из отчётов по менеджерам.
@@ -449,7 +454,11 @@ export class DealsService {
 
     // Перечитываем через get: RETURNING не отдаёт подписи связей (они приходят
     // JOIN'ами), и ответ на inline-правку обнулял бы чипы в таблице.
-    return this.get(tenantId, id);
+    const updated = await this.get(tenantId, id);
+    if (updated) {
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
+    }
+    return updated;
   }
 
   /**
@@ -609,6 +618,8 @@ export class DealsService {
          WHERE d.tenant_id = $1 AND d.id = $2`,
         [tenantId, id],
       );
+
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
 
       return toDealDTO(row);
     });
@@ -1038,7 +1049,7 @@ export class DealsService {
         `UPDATE deals
          SET stage_id = $1,
              closed_at = COALESCE(closed_at, now()),
-             ai_paused_until = '2099-01-01'::timestamptz,
+             ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
              updated_at = now()
          WHERE tenant_id = $2 AND id = $3`,
         [lostStage.id, tenantId, deal.id],
@@ -1144,6 +1155,26 @@ export class DealsService {
 
     if (!deal) {
       throw new NotFoundError("Сделка не найдена");
+    }
+
+    if (!deal.contact_id) {
+      const contactCandidate = await queryOne<{ id: string }>(
+        `SELECT c.id FROM contacts c
+         JOIN deal_messages m ON m.deal_id = $2 AND m.tenant_id = $1
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             (c.phone IS NOT NULL AND c.phone != '' AND (m.sender_name ILIKE '%' || c.phone || '%' OR m.content ILIKE '%' || c.phone || '%'))
+             OR (m.channel_account_id IS NOT NULL AND c.custom_fields->>'chat_id' = m.sender_name)
+           )
+         LIMIT 1`,
+        [tenantId, dealId],
+      );
+      if (contactCandidate) {
+        deal.contact_id = contactCandidate.id;
+        await withTenant(tenantId, async (tx) => {
+          await tx.query(`UPDATE deals SET contact_id = $1 WHERE id = $2 AND tenant_id = $3`, [contactCandidate.id, dealId, tenantId]);
+        }).catch(() => {});
+      }
     }
 
     if (!deal.contact_id) {
@@ -1281,50 +1312,32 @@ export class DealsService {
         };
       });
 
-    // 3. Сквозной таймлайн
-    const timelineService = new TimelineService();
-    const timelineResponse = await timelineService.getTimeline(
+    // 3. Сквозной таймлайн активности контакта
+    const activityService = new ContactActivityService();
+    const activitiesResponse = await activityService.listContactActivities(
       tenantId,
-      "contact",
       deal.contact_id,
-      50,
-      0,
+      {
+        limit: 50,
+        offset: 0,
+      },
     );
 
-    const timeline: DealContactTimelineItemDTO[] = timelineResponse.items.map((ev) => {
-      let title = "Событие";
-      let description: string | undefined = undefined;
-      const dId = ev.data?.dealId as string | undefined;
-      const dTitle = ev.data?.dealTitle as string | undefined;
-
-      if (ev.type === "note") {
-        title = (ev.data?.title as string) || "Заметка";
-        description = ev.data?.body as string | undefined;
-      } else if (ev.type === "message") {
-        title =
-          ev.data?.channel === "webchat"
-            ? "Онлайн-чат"
-            : (ev.data?.channel as string) || "Сообщение";
-        description = (ev.data?.content || ev.data?.text) as string | undefined;
-      } else if (ev.type === "stage_change") {
-        title = `Смена этапа${dTitle ? ` в «${dTitle}»` : ""}: ${ev.data?.toStageName || ""}`;
-      } else if (ev.type === "task") {
-        title = (ev.data?.title as string) || "Задача";
-        description = ev.data?.description as string | undefined;
-      }
-
-      return {
-        id: ev.id,
-        type: ev.type,
-        dealId: dId,
-        dealTitle: dTitle,
-        timestamp: ev.createdAt,
-        title,
-        description,
-        authorName: ev.authorName || undefined,
-        metadata: ev.data,
-      };
-    });
+    const timeline: DealContactTimelineItemDTO[] = activitiesResponse.items.map((ev) => ({
+      id: ev.id,
+      type: ev.activityKind,
+      dealId: ev.dealId,
+      dealTitle: ev.dealTitle,
+      timestamp: ev.timestamp,
+      title: ev.title,
+      description: ev.description,
+      authorName: ev.authorName,
+      activityChannel: ev.activityChannel,
+      activityKind: ev.activityKind,
+      direction: ev.direction,
+      payload: ev.payload,
+      metadata: ev.payload,
+    }));
 
     return {
       dealId,

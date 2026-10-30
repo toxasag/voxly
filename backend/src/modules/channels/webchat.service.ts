@@ -2,6 +2,7 @@ import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
+import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публичного онлайн-чата на сайте (WebChat).
@@ -87,6 +88,7 @@ export interface WebchatMessageInput {
   attachment?: string;
   attachmentType?: string;
   pageUrl?: string;
+  pageTitle?: string;
   referrer?: string;
   utmTags?: Record<string, string>;
   clickIds?: Record<string, string>;
@@ -144,6 +146,59 @@ function parseUserAgent(ua: string) {
   return { os, browser, deviceType };
 }
 
+function extractUtmAndClickIdsFromUrl(urlStr?: string | null): {
+  utmTags: Record<string, string>;
+  clickIds: Record<string, string>;
+} {
+  const utmTags: Record<string, string> = {};
+  const clickIds: Record<string, string> = {};
+  if (!urlStr || typeof urlStr !== "string") return { utmTags, clickIds };
+
+  try {
+    const url = new URL(urlStr);
+    const searchParams = url.searchParams;
+
+    const utmKeys = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "utm_id",
+      "utm_creative_format",
+      "utm_marketing_tactic",
+    ];
+    for (const key of utmKeys) {
+      const val = searchParams.get(key) || searchParams.get(key.toUpperCase());
+      if (val) utmTags[key] = val;
+    }
+
+    const clickKeys = ["yclid", "gclid", "fbclid", "vkclid", "ttclid", "msclkid", "_openstat", "wbraid", "gbraid"];
+    for (const key of clickKeys) {
+      const val = searchParams.get(key) || searchParams.get(key.toUpperCase());
+      if (val) clickIds[key] = val;
+    }
+
+    if (url.hash && url.hash.includes("?")) {
+      const hashParams = new URLSearchParams(url.hash.substring(url.hash.indexOf("?")));
+      for (const key of utmKeys) {
+        if (!utmTags[key]) {
+          const val = hashParams.get(key) || hashParams.get(key.toUpperCase());
+          if (val) utmTags[key] = val;
+        }
+      }
+      for (const key of clickKeys) {
+        if (!clickIds[key]) {
+          const val = hashParams.get(key) || hashParams.get(key.toUpperCase());
+          if (val) clickIds[key] = val;
+        }
+      }
+    }
+  } catch {}
+
+  return { utmTags, clickIds };
+}
+
 export class WebchatService {
   private static readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly crm = new CrmPipelineService();
@@ -189,7 +244,7 @@ export class WebchatService {
       ),
     );
 
-    let agent = await runWithPlatformScope(() =>
+    const agent = await runWithPlatformScope(() =>
       queryOne<AgentRow>(
         `SELECT a.id, a.name, a.status
          FROM ai_agent_channel_bindings b
@@ -203,23 +258,6 @@ export class WebchatService {
         [account.tenant_id, account.id],
       ),
     );
-
-    // Fallback: если нет привязки в ai_agent_channel_bindings, но в тенанте есть активный бот
-    if (!agent) {
-      agent = await runWithPlatformScope(() =>
-        queryOne<AgentRow>(
-          `SELECT a.id, a.name, a.status
-           FROM ai_agents a
-           WHERE a.tenant_id = $1
-             AND a.status = 'active'
-             AND a.mode = 'autoreply'
-             AND a.deleted_at IS NULL
-           ORDER BY a.created_at ASC
-           LIMIT 1`,
-          [account.tenant_id],
-        ),
-      );
-    }
 
     const creds = (account.credentials ?? {}) as Record<string, unknown>;
 
@@ -449,8 +487,11 @@ export class WebchatService {
     });
     WebchatService.sessionLocks.set(sessionKey, currentLock);
 
-    // Ожидаем завершения предыдущего обращения по этой же сессии
-    await previousLock;
+    // Ожидаем завершения предыдущего обращения по этой же сессии (с защитой от зависания и ошибок)
+    await Promise.race([
+      previousLock.catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 20000)),
+    ]);
 
     try {
       return await this.executeProcessIncomingMessage(input);
@@ -472,23 +513,16 @@ export class WebchatService {
 
     // Автоматическое определение номера телефона из текста, если не был передан явно
     let detectedPhone = input.senderPhone?.trim();
-    if (!detectedPhone && text) {
-      const phoneMatch = text.match(/(?:\+7|8)[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}\b/);
-      if (phoneMatch) {
-        const digits = phoneMatch[0].replace(/\D/g, "");
-        if (digits.length === 11) {
-          detectedPhone = `+7${digits.slice(1)}`;
-        }
-      }
+    if (detectedPhone) {
+      detectedPhone = extractPhoneNumber(detectedPhone) ?? detectedPhone;
+    } else if (text) {
+      detectedPhone = extractPhoneNumber(text) ?? undefined;
     }
 
     // Автоматическое определение email из текста, если не был передан явно
     let detectedEmail = input.senderEmail?.trim();
     if (!detectedEmail && text) {
-      const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-      if (emailMatch) {
-        detectedEmail = emailMatch[0];
-      }
+      detectedEmail = extractEmailAddress(text) ?? undefined;
     }
 
     const fallbackText = input.attachment
@@ -507,58 +541,72 @@ export class WebchatService {
     const tmrLvid = input.analytics?.tmrLvid || undefined;
 
     const parsedUa = input.userAgent ? parseUserAgent(input.userAgent) : null;
-    const enrichedDeviceInfo = {
+    const enrichedDeviceInfo: Record<string, unknown> = {
       ...(input.deviceInfo || {}),
       ...(parsedUa ? { os: parsedUa.os, browser: parsedUa.browser, deviceType: parsedUa.deviceType } : {}),
       ...(input.clientIp ? { ip: input.clientIp } : {}),
     };
 
-    // Формируем структурированный контекст для CRM и менеджеров
-    const contextLines: string[] = [];
-    if (input.isDraft) {
-      contextLines.push("[Черновик / Неотправленное обращение]");
-    }
-    if (parsedUa || enrichedDeviceInfo.deviceType) {
-      const devType = enrichedDeviceInfo.deviceType === "mobile" ? "Мобильный" : enrichedDeviceInfo.deviceType === "tablet" ? "Планшет" : "Десктоп";
-      contextLines.push(`[Устройство: ${devType} (${enrichedDeviceInfo.os || "OS"} / ${enrichedDeviceInfo.browser || "Браузер"})]`);
-    }
+    // Извлекаем UTM и рекламные Click ID (с поддержкой URL страницы и реферера)
+    const fromPage = extractUtmAndClickIdsFromUrl(input.pageUrl);
+    const fromReferrer = extractUtmAndClickIdsFromUrl(input.referrer);
+    const effectiveUtmTags: Record<string, string> = {
+      ...fromReferrer.utmTags,
+      ...fromPage.utmTags,
+      ...(input.utmTags || {}),
+    };
+    const effectiveClickIds: Record<string, string> = {
+      ...fromReferrer.clickIds,
+      ...fromPage.clickIds,
+      ...(input.clickIds || {}),
+    };
+
+    let pageDomain = "";
     if (input.pageUrl) {
-      contextLines.push(`[Страница: ${input.pageUrl}]`);
-    }
-    if (input.visitCount && input.visitCount > 1) {
-      contextLines.push(`[Визит №${input.visitCount}]`);
-    }
-    if (input.utmTags && Object.keys(input.utmTags).length > 0) {
-      const utmStr = Object.entries(input.utmTags)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      contextLines.push(`[UTM: ${utmStr}]`);
-    }
-    if (input.clickIds && Object.keys(input.clickIds).length > 0) {
-      const clickStr = Object.entries(input.clickIds)
-        .filter(([_, v]) => Boolean(v))
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      if (clickStr) contextLines.push(`[Реклама ClickID: ${clickStr}]`);
-    }
-    if (yandexuid) {
-      contextLines.push(`[Яндекс ID: ${yandexuid}]`);
-    }
-    if (ymUid) {
-      contextLines.push(`[YM ClientID: ${ymUid}]`);
-    }
-    if (gaId) {
-      contextLines.push(`[GA ClientID: ${gaId}]`);
-    }
-    if (tmrLvid) {
-      contextLines.push(`[Top.Mail.ru: ${tmrLvid}]`);
-    }
-    if (input.pageHistory && input.pageHistory.length > 1) {
-      const historyStr = input.pageHistory.map((h) => h.url).join(" -> ");
-      contextLines.push(`[История переходов: ${historyStr}]`);
+      try {
+        pageDomain = new URL(input.pageUrl).hostname;
+      } catch {
+        pageDomain = "";
+      }
     }
 
-    const crmInboundText = contextLines.length > 0 ? `${contextLines.join("\n")}\n\n${effectiveText}` : effectiveText;
+    const sourceMetadata: Record<string, unknown> = {
+      device: {
+        deviceType: (enrichedDeviceInfo.deviceType as string | undefined) || (parsedUa ? parsedUa.deviceType : "desktop"),
+        os: (enrichedDeviceInfo.os as string | undefined) || (parsedUa ? parsedUa.os : "Неизвестно"),
+        browser: (enrichedDeviceInfo.browser as string | undefined) || (parsedUa ? parsedUa.browser : "Неизвестно"),
+        screen: enrichedDeviceInfo.screen,
+        platform: enrichedDeviceInfo.platform,
+        rawUserAgent: input.userAgent,
+      },
+      page: {
+        url: input.pageUrl || "",
+        title: input.pageTitle || "",
+        domain: pageDomain,
+      },
+      utm: effectiveUtmTags,
+      clickIds: effectiveClickIds,
+      referrer: input.referrer || "",
+      network: {
+        ip: input.clientIp || (enrichedDeviceInfo.ip as string | undefined),
+        city: enrichedDeviceInfo.city as string | undefined,
+        country: enrichedDeviceInfo.country as string | undefined,
+      },
+      analytics: {
+        yandexuid,
+        ymUid,
+        gaId,
+        fbId,
+        tmrLvid,
+      },
+      firstSeenAt: new Date().toISOString(),
+      visitCount: input.visitCount || 1,
+      pageHistory: input.pageHistory || [],
+    };
+
+    // Чат содержит ТОЛЬКО живой текст диалога между клиентом и оператором/ботом.
+    // Метаданные источника сохраняются непосредственно в source_metadata контакта и сделки.
+    const crmInboundText = effectiveText;
 
     const senderDisplayName =
       input.senderName && input.senderName.trim().length > 0
@@ -586,12 +634,14 @@ export class WebchatService {
         gaId: gaId,
         fbId: fbId,
         tmrLvid: tmrLvid,
-        clickIds: input.clickIds,
+        clickIds: effectiveClickIds,
         referrer: input.referrer,
         pageUrl: input.pageUrl,
+        pageTitle: input.pageTitle,
         pageHistory: input.pageHistory,
         visitCount: input.visitCount,
-        utmTags: input.utmTags,
+        utmTags: effectiveUtmTags,
+        sourceMetadata,
       }),
     );
 
@@ -615,16 +665,28 @@ export class WebchatService {
       };
     }
 
-    // 2. Проверяем AI Handoff (если оператор перехватил диалог, бот временно на паузе)
-    if (crmResult.dealId) {
+    // 2. Проверяем AI Handoff (если оператор перехватил диалог, бот временно на паузе или выключен)
+    if (crmResult.dealId || crmResult.contactId) {
       const isAiPaused = await runWithTenantContext(account.tenantId, async () => {
-        const row = await queryOne<{ id: string }>(
-          `SELECT id FROM deals
-           WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
-           LIMIT 1`,
-          [account.tenantId, crmResult.dealId],
-        );
-        return row !== null;
+        if (crmResult.dealId) {
+          const row = await queryOne<{ id: string }>(
+            `SELECT id FROM deals
+             WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
+             LIMIT 1`,
+            [account.tenantId, crmResult.dealId],
+          );
+          if (row !== null) return true;
+        }
+        if (crmResult.contactId) {
+          const contactDeal = await queryOne<{ id: string }>(
+            `SELECT id FROM deals
+             WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+             LIMIT 1`,
+            [account.tenantId, crmResult.contactId],
+          );
+          if (contactDeal !== null) return true;
+        }
+        return false;
       }).catch(() => false);
 
       if (isAiPaused) {
@@ -638,6 +700,17 @@ export class WebchatService {
     }
 
     // 3. Вызываем AI-агента для генерации ответа.
+    // Если для этого виджета чата AI-агент не привязан — диалог остаётся в CRM
+    // для операторов без генерации автоответов.
+    if (!account.isAiEnabled) {
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "operator_needed",
+      };
+    }
+
     // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
     const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
     const outcome = await runWithTenantContext(account.tenantId, () =>
@@ -653,7 +726,17 @@ export class WebchatService {
 
     const botSenderName = account.consultantName || account.botName || "Онлайн-консультант";
 
-    // 3. Если агент сформировал ответ — сохраняем его в deal_messages.
+    // Если канал не привязан к агенту (no_agent) — передаем операторам без заглушки
+    if (outcome.kind === "no_agent") {
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "operator_needed",
+      };
+    }
+
+    // 4. Если агент сформировал ответ — сохраняем его в deal_messages.
     if (outcome.kind === "replied" && crmResult.dealId) {
       await runWithTenantContext(account.tenantId, () =>
         this.crm.saveAgentReply({
@@ -715,7 +798,7 @@ export class WebchatService {
       dealId: crmResult.dealId,
       contactId: crmResult.contactId,
       replies: [],
-      status: outcome.kind === "no_agent" || outcome.kind === "agent_paused" ? "operator_needed" : "agent_unavailable",
+      status: outcome.kind === "agent_paused" ? "operator_needed" : "agent_unavailable",
     };
   }
 

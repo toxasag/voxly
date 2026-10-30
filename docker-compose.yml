@@ -121,9 +121,14 @@ services:
       # WhatsApp (Evolution API) и MAX (max-bridge)
       # ---------------------------------------------------------------------
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
-      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-607da7cc7d21b29de7e6d29dc2705111e56435ef5a1c8c5a}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}
+      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:?EVOLUTION_WEBHOOK_SECRET is required}
       MAX_BRIDGE_URL: ${MAX_BRIDGE_URL:-http://max-bridge:3010}
       VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      # ---------------------------------------------------------------------
+      # Очереди задач и кэш (BullMQ + Redis 7)
+      # ---------------------------------------------------------------------
+      REDIS_URL: ${REDIS_URL:-redis://automation-redis-1:6379/1}
       # ---------------------------------------------------------------------
       # Шлюз LLM (OpenAI-совместимый API) для эмбеддингов базы знаний.
       #
@@ -211,7 +216,7 @@ services:
     restart: unless-stopped
     environment:
       SERVER_URL: ${EVOLUTION_SERVER_URL:-http://evolution-api:8080}
-      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-607da7cc7d21b29de7e6d29dc2705111e56435ef5a1c8c5a}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}
       AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: postgresql

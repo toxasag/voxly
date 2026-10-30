@@ -8,6 +8,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
+import { marketplaceKeys } from "@/lib/api/use-marketplace";
 
 export interface AdminTenantChecklist {
   has_channels: boolean;
@@ -191,6 +192,10 @@ export function useUpdateTenant(): UseMutationResult<
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: adminKeys.tenants });
       void queryClient.invalidateQueries({ queryKey: adminKeys.metrics });
+      void queryClient.invalidateQueries({ queryKey: marketplaceKeys.modules });
+      void queryClient.invalidateQueries({ queryKey: marketplaceKeys.billing });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", "info"] });
+      void queryClient.invalidateQueries({ queryKey: ["tenant", "modules"] });
     },
   });
 }

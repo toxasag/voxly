@@ -110,8 +110,7 @@ export function AgentChannelsTab({ agentId, canEdit }: AgentChannelsTabProps) {
         <div>
           <h3 className="text-sm font-semibold text-[#111111]">Подключенные каналы</h3>
           <p className="text-xs text-[#666666]">
-            Аккаунты, в которых агент будет отвечать. Обмен сообщениями заработает после
-            подключения транспорта — сейчас привязка только сохраняется.
+            Аккаунты, в которых агент будет автоматически отвечать на входящие сообщения.
           </p>
         </div>
 

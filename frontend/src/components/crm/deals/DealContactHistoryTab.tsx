@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { formatPhone } from "@/lib/utils/phone";
 import { timeAgo } from "@/lib/utils";
+import { ContactActivityTimeline } from "@/components/crm/shared/ContactActivityTimeline";
 
 interface DealContactHistoryTabProps {
   dealId: string;
@@ -119,8 +120,9 @@ export function DealContactHistoryTab({ dealId }: DealContactHistoryTabProps) {
                   onClick={() => router.push(`/crm/contacts?record=${contact.id}`)}
                   className="cursor-pointer text-[14px] font-semibold text-[#111111] hover:text-[#4a38f5] hover:underline"
                 >
-                  {contact.firstName} {contact.lastName}
+                  {contact.firstName || contact.lastName ? `${contact.firstName} ${contact.lastName}`.trim() : "Max"}
                 </span>
+                <TagPill color="emerald">Привязан</TagPill>
                 {metrics.isRepeatClient ? (
                   <TagPill color="emerald">Повторный клиент</TagPill>
                 ) : (
@@ -294,57 +296,11 @@ export function DealContactHistoryTab({ dealId }: DealContactHistoryTabProps) {
         <h3 className="mb-2.5 text-[13px] font-semibold text-[#111111]">
           Сквозной таймлайн активности клиента ({timeline.length})
         </h3>
-        {timeline.length === 0 ? (
-          <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-4 text-center text-[12px] text-[#666666]">
-            Нет зафиксированных событий активности.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {timeline.map((ev) => {
-              const isNote = ev.type === "note";
-              const isMsg = ev.type === "message";
-              const isStage = ev.type === "stage_change";
-              const isTask = ev.type === "task";
-
-              return (
-                <div
-                  key={ev.id}
-                  className="rounded-[8px] border border-[#e5e5e5] bg-white p-3 shadow-2xs transition-colors hover:border-[#cccccc]"
-                >
-                  <div className="flex items-center justify-between text-[11px]">
-                    <div className="flex items-center gap-1.5 font-medium">
-                      {isNote && <StickyNote className="h-3.5 w-3.5 text-amber-500" />}
-                      {isMsg && <MessageCircle className="h-3.5 w-3.5 text-sky-500" />}
-                      {isStage && <Activity className="h-3.5 w-3.5 text-violet-500" />}
-                      {isTask && <Clock className="h-3.5 w-3.5 text-emerald-500" />}
-                      <span className="text-[#111111]">{ev.title}</span>
-                      {ev.dealTitle && (
-                        <span className="text-[10px] text-[#888888]">
-                          (сделка: {ev.dealTitle})
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-mono text-[#888888]">
-                      {timeAgo(ev.timestamp)}
-                    </span>
-                  </div>
-
-                  {ev.description && (
-                    <div className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-[#444444]">
-                      {ev.description}
-                    </div>
-                  )}
-
-                  {ev.authorName && (
-                    <div className="mt-1 text-[10px] text-[#888888]">
-                      Автор: {ev.authorName}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <ContactActivityTimeline
+          contactId={contact.id}
+          dealId={dealId}
+          initialItems={timeline}
+        />
       </div>
     </div>
   );

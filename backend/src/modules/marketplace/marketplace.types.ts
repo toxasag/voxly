@@ -72,14 +72,20 @@ export interface MarketplaceModuleDTO {
   trialActive: boolean;
   /**
    * Фактическая сумма к оплате в месяц с учётом количества и мест.
-   * Для активного пробного периода — 0.
+   * Для активного пробного периода или индивидуального бесплатного тарифа — 0.
    */
   monthlyTotal: number;
+  /** Признак индивидуального тарифа арендатора (включая бесплатные/партнёрские). */
+  isCustomPlan?: boolean;
+  /** Признак полностью бесплатного / безлимитного тарифа (0 ₽ / unlimited). */
+  isFreeCustomPlan?: boolean;
+  /** Название кастомного тарифа (например, «Партнёрский», «VIP»). */
+  customPlanName?: string | null;
 }
 
 /** Сводка по подписке арендатора. */
 export interface BillingSummaryDTO {
-  /** Сумма по всем подключённым модулям без пробных. */
+  /** Сумма по всем подключённым модулям без пробных. Для бесплатного тарифа строго 0. */
   monthlyTotal: number;
   /** Сколько было бы к оплате, если бы пробные периоды закончились. */
   monthlyAfterTrials: number;
@@ -96,4 +102,12 @@ export interface BillingSummaryDTO {
     connected: boolean;
     provider: string | null;
   };
+  /** Признак индивидуального тарифа. */
+  isCustomPlan?: boolean;
+  /** Признак бесплатного индивидуального тарифа (0 руб/мес). */
+  isFreeCustomPlan?: boolean;
+  /** Название индивидуального плана. */
+  customPlanName?: string | null;
+  /** Индивидуальная цена в рублях (0 если бесплатно). */
+  customPriceRubles?: number | null;
 }

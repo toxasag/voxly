@@ -15,6 +15,7 @@ import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { nextTypingPauseMs } from "../ai/agent-reply.js";
 import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { resolveOutboundMedia, isMeaningfulCaption } from "./media-resolver.js";
 import {
   registerOutboundSender,
   registerStoryPublisher,
@@ -460,6 +461,13 @@ export class TelegramTransportService {
           else if (mime.includes("png")) filename += ".png";
           else if (mime.includes("jpeg") || mime.includes("jpg")) filename += ".jpg";
           else if (mime.includes("webp")) filename += ".webp";
+          else if (mime.includes("word") || mime.includes("document")) filename += ".docx";
+          else if (mime.includes("sheet") || mime.includes("excel")) filename += ".xlsx";
+          else if (mime.includes("text") || mime.includes("plain")) filename += ".txt";
+          else if (mime.includes("video") || mime.includes("mp4")) filename += ".mp4";
+          else if (mime.includes("quicktime")) filename += ".mov";
+          else if (mime.includes("ogg") || mime.includes("opus")) filename += ".ogg";
+          else if (mime.includes("mpeg") || mime.includes("mp3")) filename += ".mp3";
         }
       }
 
@@ -630,6 +638,7 @@ export class TelegramTransportService {
 
     // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
     let dealId: string | null = null;
+    let contactId: string | null = null;
 
     try {
       const crmResult = await runWithTenantContext(batch.tenantId, () =>
@@ -651,6 +660,7 @@ export class TelegramTransportService {
       }
 
       dealId = crmResult.dealId;
+      contactId = crmResult.contactId;
     } catch (error) {
       this.log.error(
         { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
@@ -658,25 +668,35 @@ export class TelegramTransportService {
       );
     }
 
-    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора).
-    if (dealId !== null) {
-      const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора или выключенном AI).
+    const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+      if (dealId !== null) {
         const row = await queryOne<{ id: string }>(
           `SELECT id FROM deals
            WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
            LIMIT 1`,
           [batch.tenantId, dealId],
         );
-        return row !== null;
-      }).catch(() => false);
-
-      if (isPaused) {
-        this.log.info(
-          { dealId, channelAccountId: batch.channelAccountId },
-          "AI bot paused due to active operator handoff",
-        );
-        return;
+        if (row !== null) return true;
       }
+      if (contactId !== null) {
+        const contactDeal = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+           LIMIT 1`,
+          [batch.tenantId, contactId],
+        );
+        if (contactDeal !== null) return true;
+      }
+      return false;
+    }).catch(() => false);
+
+    if (isPaused) {
+      this.log.info(
+        { dealId, contactId, channelAccountId: batch.channelAccountId },
+        "AI bot paused due to active operator handoff or disabled AI",
+      );
+      return;
     }
 
     // 4. Спрашиваем агента (в контексте арендатора, как раньше).
@@ -726,6 +746,18 @@ export class TelegramTransportService {
           model: outcome.model,
         },
         "Agent replied to the incoming batch",
+      );
+      return;
+    }
+
+    if (outcome.kind === "no_agent") {
+      this.log.info(
+        {
+          chatId: batch.chatId,
+          channelAccountId: batch.channelAccountId,
+          messageCount: batch.messageCount,
+        },
+        "AI auto-reply skipped: channel not bound to agent (skipped_bot_disabled_for_channel)",
       );
       return;
     }
@@ -816,6 +848,8 @@ export class TelegramTransportService {
     text: string;
     username?: string;
     phone?: string;
+    attachment?: string;
+    attachmentType?: string;
   }): Promise<{ ok: true } | { ok: false; reason: string }> {
     const connection = this.connections.get(message.channelAccountId);
 
@@ -823,8 +857,45 @@ export class TelegramTransportService {
       return { ok: false, reason: "Аккаунт Telegram не подключён к транспорту" };
     }
 
+    const sendToTarget = async (target: any) => {
+      if (message.attachment) {
+        const media = await resolveOutboundMedia(
+          message.attachment,
+          connection.tenantId,
+          message.attachmentType,
+        );
+        if (media) {
+          const customFile = new CustomFile(
+            media.filename,
+            media.buffer.length,
+            "",
+            media.buffer,
+          );
+          const caption = isMeaningfulCaption(message.text, media.filename)
+            ? message.text
+            : undefined;
+
+          const isVoice = media.category === "voice";
+          const isVideo = media.category === "video";
+          const isDoc = media.category === "document";
+
+          await connection.client.sendFile(target, {
+            file: customFile,
+            caption,
+            forceDocument: isDoc,
+            voiceNote: isVoice,
+            supportsStreaming: isVideo,
+            workers: 1,
+          });
+          return;
+        }
+      }
+
+      await connection.client.sendMessage(target, { message: message.text });
+    };
+
     try {
-      await connection.client.sendMessage(message.recipient, { message: message.text });
+      await sendToTarget(message.recipient);
       return { ok: true };
     } catch (error) {
       const errStr = error instanceof Error ? error.message : String(error);
@@ -842,7 +913,7 @@ export class TelegramTransportService {
             const uname = message.username.replace(/^@/, "");
             const entity = await connection.client.getEntity(uname);
             if (entity) {
-              await connection.client.sendMessage(entity, { message: message.text });
+              await sendToTarget(entity);
               return { ok: true };
             }
           } catch (unameErr) {
@@ -853,7 +924,7 @@ export class TelegramTransportService {
         // 2. Прогрев кэша сущностей через getDialogs (загружает активные чаты с их access_hash)
         try {
           await connection.client.getDialogs({ limit: 100 });
-          await connection.client.sendMessage(message.recipient, { message: message.text });
+          await sendToTarget(message.recipient);
           return { ok: true };
         } catch (dialogsErr) {
           this.log.warn({ dialogsErr }, "Failed to resolve peer via getDialogs");
@@ -865,7 +936,7 @@ export class TelegramTransportService {
             const digits = message.phone.replace(/\D/g, "");
             const phoneResolve = await this.resolveUserByPhone(connection.tenantId, digits);
             if (phoneResolve.exists && phoneResolve.userId) {
-              await connection.client.sendMessage(phoneResolve.userId, { message: message.text });
+              await sendToTarget(phoneResolve.userId);
               return { ok: true };
             }
           } catch (phoneErr) {

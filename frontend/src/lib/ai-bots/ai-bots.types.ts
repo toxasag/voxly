@@ -103,6 +103,11 @@ export interface AiBot {
   system_prompt: string;
   context_entities: BotContextEntity[];
   wizard_config?: WizardConfig | null;
+  website_url?: string;
+  crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
+  crawl_pages_scanned?: number;
+  crawl_pages_indexed?: number;
+  crawl_error?: string;
   tokens_used: number;
   tokens_limit: number;
   requests_count: number;
@@ -135,25 +140,25 @@ export interface PromptVariable {
 }
 
 export const PROMPT_VARIABLES: PromptVariable[] = [
-  { token: "tenant.name", label: "Название компании", example: "ООО Ромашка" },
-  { token: "consultant.name", label: "Имя консультанта", example: "Алексей" },
-  { token: "consultant.role", label: "Должность / роль консультанта", example: "старший мастер-приёмщик" },
-  { token: "business.niche", label: "Ниша / профиль компании", example: "сервис технического обслуживания автомобилей" },
-  { token: "target.action", label: "Целевое действие", example: "согласование времени для бесплатной диагностики" },
-  { token: "handoff.specialist", label: "Специалист для эскалации", example: "руководитель сервисного отдела" },
-  { token: "channel_type", label: "Канал связи", example: "онлайн-чат на сайте" },
-  { token: "current_time", label: "Текущее время", example: "14:30 МСК" },
-  { token: "knowledge_base_context", label: "Контекст базы знаний", example: "Выдержки из актуального прайса" },
-  { token: "website_context", label: "Материалы сайта", example: "Информация о гарантиях и услугах с сайта" },
-  { token: "reviews_and_reputation", label: "Отзывы клиентов", example: "Рейтинг 4.9 на Яндекс.Картах (более 200 отзывов)" },
-  { token: "successful_crm_patterns", label: "Успешный опыт CRM", example: "Примеры выигранных диалогов менеджеров" },
-  { token: "user.name", label: "Текущий пользователь", example: "Иван Петров" },
-  { token: "contact.name", label: "Имя контакта", example: "Сергей Волков" },
-  { token: "contact.phone", label: "Телефон контакта", example: "+7 999 123 45 67" },
-  { token: "company.name", label: "Название организации", example: "ООО ТехКорп" },
-  { token: "deal.title", label: "Название сделки", example: "Внедрение CRM" },
-  { token: "deal.budget", label: "Бюджет сделки", example: "450 000 ₽" },
-  { token: "repair.ticket_number", label: "Номер заказ-наряда", example: "ЗН-2026-0042" },
+  { token: "tenant.name", label: "Название компании", example: "Название вашей компании" },
+  { token: "consultant.name", label: "Имя консультанта", example: "Имя сотрудника" },
+  { token: "consultant.role", label: "Должность / роль консультанта", example: "ведущий специалист" },
+  { token: "business.niche", label: "Ниша / профиль компании", example: "профиль вашей компании" },
+  { token: "target.action", label: "Целевое действие", example: "согласование деталей заказа" },
+  { token: "handoff.specialist", label: "Специалист для эскалации", example: "старший специалист" },
+  { token: "channel_type", label: "Канал связи", example: "чат на сайте" },
+  { token: "current_time", label: "Текущее время", example: "текущее время диалога" },
+  { token: "knowledge_base_context", label: "Контекст базы знаний", example: "актуальные документы и прайсы" },
+  { token: "website_context", label: "Материалы сайта", example: "информация со страниц сайта" },
+  { token: "reviews_and_reputation", label: "Отзывы клиентов", example: "отзывы с Яндекс Карт и 2ГИС" },
+  { token: "successful_crm_patterns", label: "Успешный опыт CRM", example: "примеры закрытых сделок" },
+  { token: "user.name", label: "Текущий пользователь", example: "Имя менеджера" },
+  { token: "contact.name", label: "Имя контакта", example: "Имя клиента" },
+  { token: "contact.phone", label: "Телефон контакта", example: "+7 999 000 00 00" },
+  { token: "company.name", label: "Название организации", example: "Организация клиента" },
+  { token: "deal.title", label: "Название сделки", example: "Тема сделки" },
+  { token: "deal.budget", label: "Бюджет сделки", example: "Сумма сделки" },
+  { token: "repair.ticket_number", label: "Номер заказ-наряда", example: "Номер заказа" },
 ];
 
 const VARIABLE_PATTERN = /\{\{\s*([a-z_]+(?:\.[a-z_]+)*)\s*\}\}/g;
@@ -174,36 +179,89 @@ export function findUnknownVariables(body: string): string[] {
   return extractPromptVariables(body).filter((token) => !supported.has(token));
 }
 
-/** Substitutes every known variable with its example value or bot-specific value (preview only). */
+export interface PromptPreviewRealContext {
+  tenantName?: string;
+  knowledgeBaseContext?: string;
+  websiteContext?: string;
+  reviewsContext?: string;
+  crmPatternsContext?: string;
+  channelType?: string;
+  currentTime?: string;
+  [key: string]: string | undefined;
+}
+
+/**
+ * Подставляет реальные данные в шаблон промпта и очищает XML-обёртки
+ * (<character_and_identity>, <director_system_prompt> и др.) для корректного отображения.
+ */
 export function renderPromptPreview(
   body: string,
   bot?: { name?: string; wizard_config?: WizardConfig },
-  tenantName?: string,
+  contextOrTenantName?: string | PromptPreviewRealContext,
 ): string {
-  const examples = new Map(PROMPT_VARIABLES.map((v) => [v.token, v.example]));
+  const context: PromptPreviewRealContext =
+    typeof contextOrTenantName === "string"
+      ? { tenantName: contextOrTenantName }
+      : (contextOrTenantName ?? {});
+
   const wc = bot?.wizard_config;
+  const tenant = context.tenantName || "Компания";
 
-  if (tenantName) {
-    examples.set("tenant.name", tenantName);
-    examples.set("company.name", tenantName);
-  }
-  if (wc?.consultantName || bot?.name) {
-    examples.set("consultant.name", wc?.consultantName || bot?.name || "Консультант");
-  }
-  if (wc?.consultantRole) {
-    examples.set("consultant.role", wc.consultantRole);
-  }
-  if (wc?.businessNiche) {
-    examples.set("business.niche", wc.businessNiche);
-  }
-  if (wc?.targetAction) {
-    examples.set("target.action", wc.targetAction);
-  }
-  if (wc?.handoffSpecialist) {
-    examples.set("handoff.specialist", wc.handoffSpecialist);
-  }
+  const resolvedValues = new Map<string, string>();
+  resolvedValues.set("tenant.name", tenant);
+  resolvedValues.set("company.name", tenant);
+  resolvedValues.set("consultant.name", wc?.consultantName || bot?.name || "Консультант");
+  resolvedValues.set("consultant.role", wc?.consultantRole || "ведущий специалист");
+  resolvedValues.set("business.niche", wc?.businessNiche || "оказание профильных услуг");
+  resolvedValues.set("target.action", wc?.targetAction || "согласование деталей заказа");
+  resolvedValues.set("handoff.specialist", wc?.handoffSpecialist || "старший специалист");
+  resolvedValues.set(
+    "current_time",
+    context.currentTime ||
+      new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) + " МСК",
+  );
+  resolvedValues.set("channel_type", context.channelType || "чат на сайте");
+  resolvedValues.set(
+    "knowledge_base_context",
+    context.knowledgeBaseContext ||
+      "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».",
+  );
+  resolvedValues.set(
+    "website_context",
+    context.websiteContext || "Материалы сайта пока не загружены.",
+  );
+  resolvedValues.set(
+    "reviews_and_reputation",
+    context.reviewsContext || "Отзывы клиентов пока не подключены.",
+  );
+  resolvedValues.set(
+    "successful_crm_patterns",
+    context.crmPatternsContext ||
+      "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.",
+  );
 
-  return body.replace(VARIABLE_PATTERN, (whole, token: string) => examples.get(token) ?? whole);
+  // Fallback for CRM entity tokens
+  resolvedValues.set("user.name", "Имя сотрудника");
+  resolvedValues.set("contact.name", "Имя клиента");
+  resolvedValues.set("contact.phone", "+7 999 000 00 00");
+  resolvedValues.set("deal.title", "Сделка клиента");
+  resolvedValues.set("deal.budget", "от 100 000 ₽");
+  resolvedValues.set("repair.ticket_number", "ЗН-0001");
+
+  // Interpolate tokens
+  let result = body.replace(VARIABLE_PATTERN, (whole, token: string) => resolvedValues.get(token) ?? whole);
+
+  // Strip XML container tags so <character_and_identity> never leaks to human preview
+  result = result
+    .replace(
+      /<\/?(?:director_system_prompt|character_and_identity|context_and_knowledge|style_and_formatting|dialogue_management|golden_cage_rules_and_security|primary_objective|scene_rehearsals)>/gi,
+      "",
+    )
+    .replace(/^\s*<[/]?[a-zA-Z0-9_]+>\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return result;
 }
 
 /**

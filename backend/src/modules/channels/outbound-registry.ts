@@ -37,6 +37,8 @@ export interface OutboundMessage {
   text: string;
   username?: string;
   phone?: string;
+  attachment?: string;
+  attachmentType?: string;
 }
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;

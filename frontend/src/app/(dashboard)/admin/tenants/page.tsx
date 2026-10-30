@@ -27,6 +27,9 @@ import {
   type AdminTenantDTO,
 } from "@/lib/api/use-admin";
 import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
+import { writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { useAuth } from "@/lib/auth/use-auth";
+import { tenantPortalUrl } from "@/lib/auth/tenant-host";
 import { TenantManageModal } from "@/components/admin/TenantManageModal";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SkeletonTable } from "@/components/shared/Skeleton";
@@ -225,6 +228,7 @@ function DeleteTenantDialog({
 }
 
 export default function AdminTenantsPage() {
+  const { user: currentAdminUser } = useAuth();
   const { data: tenants = [], isLoading, isError, error, refetch, isFetching } = useAdminTenants();
   const update = useUpdateTenant();
   const impersonate = useImpersonateTenant();
@@ -374,15 +378,19 @@ export default function AdminTenantsPage() {
 
         const userEmail = res.user?.email ?? tenant.owner_email ?? "";
 
-        // Сохраняем исходную сессию суперадминистратора в бэкап
+        // Сохраняем исходную сессию суперадминистратора в бэкап (domain-scoped cookie + localStorage)
+        const targetSlug = tenant.slug || "";
         const backup = {
           accessToken: currentAccessToken,
           refreshToken: currentRefreshToken,
+          adminUserEmail: currentAdminUser?.email ?? "",
+          adminUserName: currentAdminUser?.name ?? "",
+          impersonatedTenantSlug: targetSlug,
           impersonatedTenantName: tenant.name,
           impersonatedUserEmail: userEmail,
           enteredAt: new Date().toISOString(),
         };
-        localStorage.setItem("voxly_impersonator_backup", JSON.stringify(backup));
+        writeImpersonationBackup(backup);
 
         // Применяем токен клиента
         writeTokens({
@@ -391,14 +399,15 @@ export default function AdminTenantsPage() {
         });
 
         toast.success(`Вход выполнен под организацией «${tenant.name}» ${userEmail ? `(${userEmail})` : ""}`);
-        window.location.href = "/crm/deals";
+        // Переходим напрямую на персональный домен/поддомен арендатора
+        window.location.href = targetSlug ? tenantPortalUrl(targetSlug, "/crm/deals") : "/crm/deals";
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Не удалось выполнить вход под аккаунтом клиента");
       } finally {
         setPendingId(null);
       }
     },
-    [impersonate],
+    [impersonate, currentAdminUser],
   );
 
   // Переключение статуса

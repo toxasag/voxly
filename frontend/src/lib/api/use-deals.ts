@@ -19,6 +19,7 @@ export interface DealDTO {
   description: string;
   budget: number;
   currency: string;
+  sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   createdBy: string;
   ownerId: string | null;
@@ -50,7 +51,7 @@ export interface KanbanColumnDTO { stageId: string; stageName: string; sortOrder
  * Доставка исходящего в канал. `neutral` — доставлять некуда (входящее,
  * системная запись), `failed` держит причину в `deliveryError`.
  */
-export type DealMessageDeliveryStatus = "neutral" | "pending" | "sent" | "failed";
+export type DealMessageDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 export interface DealMessageDTO { id: string; dealId: string; channelAccountId: string | null; source: DealMessageSource; direction: DealMessageDirection; senderName: string; content: string; channel: string; attachment: string | null; attachmentType: string | null; deliveryStatus: DealMessageDeliveryStatus; deliveryError: string | null; createdAt: string; }
 /** contactId / companyId — секции «Сделки» на карточках контакта и компании. */
 export interface DealsParams { pipelineId?: string; stageId?: string; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; }

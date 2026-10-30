@@ -1,4 +1,159 @@
-# CHANGELOG
+### Added · Security notifications — пароль изменён (2026-10-28)
+
+Добавлен брендированный `sendPasswordChangedEmail`. Уведомление отправляется
+асинхронно после смены пароля из профиля и после восстановления по ссылке;
+ошибка SMTP логируется и не откатывает уже успешную операцию.
+
+
+Legacy `POST /auth/login` больше не выдаёт токены без подтверждения: endpoint
+возвращает `401 SECOND_FACTOR_REQUIRED`. Рабочий поток использует отдельные
+`/auth/code/request` и `/auth/login/verify`; silent session restoration через
+`/auth/me`/`/auth/refresh` не затронут.
+
+
+Код авторизации теперь явно переводит `CODE_NOT_DELIVERED` и `TENANT_INACTIVE`,
+показывает ошибку на форме, а таймаут `awaiting_bot` завершает polling, очищает
+сессию и возвращает пользователя к повторному запросу вместо вечного ожидания.
+
+
+Команды приглашений теперь возвращают `inviteUrl` только если письмо не было
+доставлено. UI показывает одноразовую ссылку, позволяет выделить и скопировать
+её; повторная отправка также копирует свежую ссылку в буфер. Токен не хранится в
+ответе при успешной отправке письма.
+
+
+Добавлен `module-data-purge-maintenance.service.ts`: после `purge_after` сервис
+платформенно выбирает ожидающие журналы, выполняет tenant-scoped окончательное
+удаление мягко скрытых строк, учитывает фильтр канала для общей таблицы
+`channel_accounts`, помечает журнал `purged_at` и работает пакетами до 100
+журналов. Планировщик подключён к graceful shutdown в `server.ts`.
+
+
+Исправлены регрессии контрактных тестов после перехода на реальные Query hooks и
+единый `RecordTable`: тестовые QueryClient-обёртки для Inbox, Stories и AI balance,
+актуальные моки CompanyCard, проверки прямой ссылки сделки и WYSIWYG-композитора,
+адаптивное меню колонок, типографика строк, фильтры задач и состав навигации.
+
+Проверено: frontend typecheck, 45 файлов / 285 тестов и production build.
+
+
+Добавлен `.github/workflows/frontend-ci.yml`: `npm ci`, frontend typecheck,
+Vitest и production build выполняются на PR и push в `master`. Добавлен contract
+тест, который предотвращает удаление корневых `loading.tsx`, `error.tsx` и
+`global-error.tsx` recovery boundaries.
+
+
+### Added · Reliability — WhatsApp lead provider result persistence (2026-10-28)
+
+Lead notifications now send configured WhatsApp destinations through the existing
+Evolution API adapter instead of log-only dispatch. Successful delivery persists
+`delivered_channel`, provider message id and sanitized provider response in the
+new migration `0056_lead_notification_provider_result.sql`; failed delivery keeps
+the durable lease retryable and records the error.
+
+
+### Added · Observability — BullMQ queue metrics (2026-10-28)
+
+Добавлен безопасный metrics collector для зарегистрированных BullMQ queues:
+waiting, active, completed, failed, delayed и возраст старшей ожидающей/активной
+задачи. `/health` возвращает эти агрегаты без URL, паролей и payload jobs.
+Ошибки отдельной очереди попадают в её `error`, не ломая health response целиком.
+
+Подключены очереди knowledge base, lead notifications и conversion dispatch.
+Добавлен contract test для стабильной формы metrics.
+
+
+Ошибочный API envelope теперь содержит `requestId` из Fastify для сопоставления
+с логами. `/health` возвращает состояние `redis.configured/connected`; в
+production отсутствие соединения Redis переводит readiness в HTTP 503, потому
+что бизнес-критичные очереди fail-closed.
+
+Добавлены контрактные тесты для Redis health и request correlation. Полные
+queue metrics (waiting/active/failed/delayed/oldest age) требуют подключения к
+BullMQ Redis и вынесены в следующий runtime-срез.
+
+
+Добавлена миграция `0055_conversion_delivery_attempts`: tenant/deal/provider
+ledger с уникальным `event_key`, статусами `pending/sent/failed`, lease,
+счётчиком попыток, HTTP-статусом, ошибкой, сокращённым ответом провайдера и
+сохранённым payload. Conversion dispatcher теперь захватывает запись до
+сетевого вызова и переводит её в `sent` только после успеха; повторный worker
+не отправляет уже успешно доставленное событие.
+
+Добавлен unit-тест детерминированности ключа события. DB-интеграционный прогон
+ожидает CI PostgreSQL smoke.
+
+
+Добавлен `.github/workflows/backend-ci.yml`: `npm ci`, backend typecheck,
+production build, RLS classifier и полный Vitest suite выполняются на PR и push
+в `master`.
+
+`QueueManager`, lead notifications, knowledge indexing и conversion dispatch больше
+не принимают новые in-memory jobs в production без Redis: вместо тихой потери
+критичной задачи выбрасывается `DURABLE_QUEUE_UNAVAILABLE`. Development/test
+поведение сохранено для локальных unit-тестов.
+
+
+Добавлена миграция `0054_lead_notification_deliveries`: tenant-scoped ledger
+с уникальностью `(tenant_id, deal_id)`, числом попыток, lease на пять минут,
+статусами `pending/failed/sent`, временем успешной доставки и последней ошибкой.
+Воркер теперь атомарно получает lease перед внешними провайдерами, освобождает
+его с ошибкой при неудаче и переводит запись в `sent` только после подтверждённой
+доставки. Старое `deals.lead_notified_at` сохранено для обратной совместимости,
+но больше не является единственным механизмом координации.
+
+Реальный DB-интеграционный прогон миграции и delivery ещё требует PostgreSQL/CI;
+локально подтверждены typecheck и unit-проверки после установки зависимостей.
+
+
+Расширен изолированный аудит RLS: synthetic fixtures теперь создают счета и
+`invoice_items` для обоих тестовых арендаторов, а `audit-smoke.mjs` проверяет
+видимость parent-scoped строк при переключении `app.tenant_id` между Alpha и
+Beta. Это дополняет статический аудит проверкой фактического parent-scope,
+не дублирующего `tenant_id` в `invoice_items`.
+
+Локальный запуск smoke пока не объявлен успешным: в текущей среде отсутствуют
+PostgreSQL runtime и `.audit/runtime.json`. Выполнены `tsc --noEmit`, синтаксическая
+проверка `.mjs`, 4/4 теста классификатора RLS и `git diff --check`.
+
+### Changed · CI — RLS smoke applies current durable ledgers (2026-10-28)
+
+Audit database preparation now applies migrations `0054` and `0055` after the
+bootstrap schema, so the RLS workflow tests the actual durable lead-notification
+and conversion-attempt tables rather than an older schema snapshot. Fixtures and
+smoke verify tenant-scoped visibility for delivery rows alongside invoices and
+`invoice_items`; CI also asserts both ledger tables exist before the runtime run.
+
+
+Повторная попытка запуска не изменила ограничение: Docker socket недоступен
+(`permission denied`), PostgreSQL CLI/runtime и `.audit/runtime.json` отсутствуют.
+Vitest не предназначен для `.mjs`-теста и закономерно сообщил `No test files found`;
+правильный запуск выполнен через `node --test`, результат 4/4. Backend typecheck
+и синтаксическая проверка smoke прошли.
+
+### Tooling — команды RLS-аудита
+
+В `backend/package.json` добавлены явные команды для воспроизводимого запуска:
+
+```bash
+npm run audit:prepare
+npm run audit:seed
+npm run audit:fixtures
+npm run audit:rls -- "$DATABASE_URL"
+npm run audit:smoke
+```
+
+Первые три команды работают только в изолированной среде с PostgreSQL и создают
+локальный runtime; `audit:rls` принимает только URL этой базы. Production URL
+нельзя передавать в audit-инструменты.
+
+Для CI добавлен `.github/workflows/rls-audit.yml`: GitHub Actions поднимает
+PostgreSQL 16 + pgvector, задаёт admin-параметры через переменные окружения,
+создаёт отдельную audit-БД/роль и выполняет typecheck, классификатор, статический
+RLS-аудит и runtime smoke. Локальный `audit-db.mjs` теперь поддерживает
+`PGHOST`, `PGPORT`, `PGDATABASE`, `AUDIT_ADMIN_USER` и `AUDIT_ADMIN_PASSWORD`,
+но сохраняет запрет на production URL.
+
 
 ### Added · Changed · Fixed — Twenty CRM Gap Audit Parity & Unified Timeline (2026-10-19 / 2026-10-20, deploy)
 
@@ -18,8 +173,27 @@ Audit runtime проверяет точный local target и очищает cre
 
 Проверки: frontend 265, backend 225, audit runtime 9, deploy mocks 5, API/SQL smoke 37 assertions; типизация основного кода и audit entry points. Детали и блокеры: `BROWSER_VERIFICATION.md`, `IMPLEMENTATION_LOG.md`. Откат локальных изменений: backup manifest `~/.claude/backups/getvoxly/20260921-130930`. Production не менялся.
 
-Все заметные изменения проекта GETVOXLY. Формат основан на
-[Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).
+### Added · Roadmap sync & production hardening (2026-10-28)
+
+Зафиксированы исключения текущего этапа: реальный биллинг, Service Center и Finance не изменялись. Roadmap сверён с кодом: отмечены реализованные Query hooks/табличный вид CRM, ConfirmDialog, recovery boundaries, AI usage/context/log API и существующий CI.
+
+Добавлены практические улучшения вне исключённых блоков:
+- backend structured `onResponse` logging с request id, status, duration и tenant/user context без credentials/body;
+- root `not-found.tsx` для frontend;
+- security workflow с high-severity dependency audit, typecheck, запретом unsafe TypeScript patterns и `git diff --check`.
+
+Проверено: backend typecheck/build и 26 тестов; frontend typecheck и 6 тестов; diff hygiene.
+
+
+Закрыт `M1.6.8`: добавлена очередь `notifications` в backend queue manager и обработчик `task-assigned`. При создании задачи с исполнителем сервер ставит tenant-scoped job; worker получает актуальные данные задачи и сотрудника, проверяет `tenant_id`, и отправляет уведомление в Telegram при наличии привязанного чата. Ошибка доставки возвращает job в retry-механику очереди, отсутствие Telegram-конфигурации не создаёт ложное успешное уведомление. Production остаётся fail-closed без Redis через `requireDurableQueue`.
+
+Проверено: backend typecheck, build, 26 DB-независимых тестов и `git diff --check`.
+
+### Added · Finance — напоминания о просроченных счетах (2026-10-28)
+
+Закрыт `M3.2.7`: добавлена durable-очередь `invoice_reminders`, почтовый шаблон и ежечасный планировщик. Воркер выбирает только счета текущего арендатора, отправляет письмо владельцу или контактному e-mail компании, после успешной доставки атомарно ставит `reminder_sent_at`; повторная отправка одного счёта не выполняется. Миграция `0057_invoice_reminders.sql` и `schema.sql` синхронизированы. Production без Redis остаётся fail-closed.
+
+
 Даты в формате `YYYY-MM-DD`.
 
 Типы изменений: `Added`, `Changed`, `Fixed`, `Security`, `Removed`, `Docs`.
