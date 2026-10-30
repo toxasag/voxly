@@ -395,6 +395,8 @@
       height: 56px !important;
       min-width: 56px !important;
       min-height: 56px !important;
+      max-width: 56px !important;
+      padding: 0 !important;
       border-radius: 50% !important;
       background: var(--accent-color, #6366F1) !important;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
@@ -413,6 +415,107 @@
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
       display: none !important;
+    }
+
+    /* Формат кнопки-капсулы (Информативная плашка с аватаром, именем и статусом «Онлайн») */
+    .getvoxly-widget-bubble.is-pill {
+      display: inline-flex !important;
+      align-items: center !important;
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: 340px !important;
+      height: 56px !important;
+      min-height: 56px !important;
+      border-radius: 9999px !important;
+      padding: 5px 20px 5px 6px !important;
+      gap: 11px !important;
+      background: var(--accent-color, #4a38f5) !important;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.22) !important;
+      cursor: pointer !important;
+      overflow: hidden !important;
+      border: none !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+    }
+    @media (max-width: 440px) {
+      .getvoxly-widget-bubble.is-pill {
+        max-width: calc(100vw - 36px) !important;
+        padding: 5px 14px 5px 6px !important;
+        gap: 8px !important;
+      }
+    }
+    .getvoxly-widget-bubble.is-pill:hover {
+      transform: scale(1.03) !important;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3) !important;
+    }
+    .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon {
+      display: flex !important;
+      align-items: center !important;
+      gap: 11px !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .getvoxly-bubble-pill-avatar-wrap {
+      position: relative !important;
+      width: 44px !important;
+      height: 44px !important;
+      min-width: 44px !important;
+      min-height: 44px !important;
+      border-radius: 50% !important;
+      border: 2px solid #ffffff !important;
+      background: #ffffff !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+      overflow: visible !important;
+    }
+    .getvoxly-bubble-pill-avatar-img {
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50% !important;
+      object-fit: cover !important;
+      display: block !important;
+    }
+    .getvoxly-bubble-pill-dot {
+      position: absolute !important;
+      bottom: 0px !important;
+      right: 0px !important;
+      width: 13px !important;
+      height: 13px !important;
+      background: #10b981 !important;
+      border: 2px solid #ffffff !important;
+      border-radius: 50% !important;
+      z-index: 2 !important;
+      box-shadow: 0 0 5px rgba(16, 185, 129, 0.6) !important;
+    }
+    .getvoxly-bubble-pill-text {
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+      text-align: left !important;
+      min-width: 0 !important;
+      line-height: 1.2 !important;
+    }
+    .getvoxly-bubble-pill-name {
+      color: #ffffff !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      font-size: 14px !important;
+      font-weight: 700 !important;
+      line-height: 1.25 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      letter-spacing: -0.01em !important;
+    }
+    .getvoxly-bubble-pill-status {
+      color: rgba(255, 255, 255, 0.92) !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      line-height: 1.2 !important;
+      white-space: nowrap !important;
     }
 
     /* Поддержка режима уменьшения движения (prefers-reduced-motion) */
@@ -2572,8 +2675,31 @@
             }
           }
 
-          // Рендер плавающего маскота / фото в кнопке
-          if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+          // Рендер плавающего маскота / фото / капсулы в кнопке
+          if (data.launcherStyle === 'pill') {
+            bubble.classList.add('is-pill');
+            var pAvatar = data.consultantAvatar || (data.avatarType === 'photo' ? '/miroslava.png' : '');
+            var pName = data.consultantName || data.title || 'Консультант';
+            var pStatus = data.statusText || 'Онлайн';
+            var avatarHtml = '';
+            if (pAvatar) {
+              avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pAvatar + '" alt="' + pName + '">';
+            } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+              avatarHtml = '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else {
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+            }
+
+            bubbleIcon.innerHTML =
+              '<div class="getvoxly-bubble-pill-avatar-wrap">' +
+                avatarHtml +
+                '<span class="getvoxly-bubble-pill-dot"></span>' +
+              '</div>' +
+              '<div class="getvoxly-bubble-pill-text">' +
+                '<span class="getvoxly-bubble-pill-name">' + pName + '</span>' +
+                '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
+              '</div>';
+          } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
             bubble.classList.add('is-mascot');
 
             var mascotEl = document.createElement('div');

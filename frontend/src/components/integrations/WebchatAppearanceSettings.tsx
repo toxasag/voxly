@@ -102,6 +102,11 @@ const PRESET_COLORS = [
 
 const AVATAR_PRESETS = [
   {
+    name: "Мирослава Ковалева",
+    role: "Онлайн-консультант",
+    avatar: "/miroslava.png",
+  },
+  {
     name: "Анна",
     role: "Консультант",
     avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
@@ -230,6 +235,14 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   );
   const [position, setPosition] = useState<"bottom-right" | "bottom-left">(
     initialCreds.position === "bottom-left" ? "bottom-left" : "bottom-right",
+  );
+  const [launcherStyle, setLauncherStyle] = useState<"circle" | "pill">(
+    initialCreds.launcherStyle === "pill" ? "pill" : "circle",
+  );
+  const [statusText, setStatusText] = useState<string>(
+    typeof initialCreds.statusText === "string" && initialCreds.statusText.trim().length > 0
+      ? initialCreds.statusText.trim()
+      : "Онлайн",
   );
 
   const initialCustomDirs =
@@ -487,6 +500,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
           greeting,
           placeholder,
           position,
+          launcherStyle,
+          statusText: statusText.trim() || "Онлайн",
           // Мессенджеры
           showMessengerBanner,
           messengerBannerMode,
@@ -715,6 +730,150 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
             <p className="text-xs text-[#666666]">
               Выберите, как виджет выглядит на вашем сайте: живой 3D-маскот, фото реального менеджера или классическая лаконичная кнопка.
             </p>
+
+            {/* Выбор формата кнопки: Круглая vs Информативная капсула */}
+            <div className="rounded-xl border border-[#e5e5e5] bg-[#fafafa] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#111111]">
+                  Формат кнопки на сайте (Лаунчер)
+                </span>
+                <span className="text-[11px] text-[#666666]">
+                  Вид в свернутом состоянии
+                </span>
+              </div>
+              <p className="text-xs text-[#666666]">
+                Выберите, как кнопка отображается в углу сайта до клика:
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* 1. Компактная круглая кнопка */}
+                <button
+                  type="button"
+                  onClick={() => setLauncherStyle("circle")}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border p-3 text-left transition-all cursor-pointer",
+                    launcherStyle === "circle"
+                      ? "border-[#4a38f5] bg-white text-[#111111] ring-2 ring-[#4a38f5] shadow-xs"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                  )}
+                >
+                  <div
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-xs"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    <MessageSquare className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-[#111111]">Компактная кнопка</span>
+                      {launcherStyle === "circle" && <Check className="h-3.5 w-3.5 text-[#4a38f5] stroke-[3]" />}
+                    </div>
+                    <span className="text-[11px] text-[#888888] leading-tight block mt-0.5">
+                      Круглая иконка 56×56 px в углу экрана
+                    </span>
+                  </div>
+                </button>
+
+                {/* 2. Информативная капсула / плашка */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLauncherStyle("pill");
+                    if (!consultantName) {
+                      setConsultantName("Мирослава Ковалева");
+                    }
+                    if (avatarType !== "photo" && avatarType !== "mascot") {
+                      setAvatarType("photo");
+                    }
+                    if (!consultantAvatar) {
+                      setConsultantAvatar("/miroslava.png");
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-2.5 rounded-xl border p-2.5 text-left transition-all cursor-pointer",
+                    launcherStyle === "pill"
+                      ? "border-[#4a38f5] bg-white text-[#111111] ring-2 ring-[#4a38f5] shadow-xs"
+                      : "border-[#e5e5e5] bg-white text-[#666666] hover:border-[#cccccc] hover:text-[#111111]",
+                  )}
+                >
+                  {/* Мини-превью капсулы в точности как на скриншоте */}
+                  <div
+                    className="flex h-10 shrink-0 items-center gap-2 rounded-full px-2.5 shadow-xs"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white bg-white overflow-hidden">
+                      {consultantAvatar ? (
+                        <img
+                          src={consultantAvatar}
+                          alt="Аватар"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <User className="h-3.5 w-3.5 text-[#666666]" />
+                      )}
+                      <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border border-white bg-emerald-500" />
+                    </div>
+                    <div className="flex flex-col pr-1 text-left leading-none">
+                      <span className="text-[10px] font-bold text-white max-w-[70px] truncate">
+                        {consultantName || "Мирослава"}
+                      </span>
+                      <span className="text-[9px] font-medium text-white/90 mt-0.5">
+                        {statusText || "Онлайн"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-[#111111]">Информативная капсула</span>
+                      {launcherStyle === "pill" && <Check className="h-3.5 w-3.5 text-[#4a38f5] stroke-[3]" />}
+                    </div>
+                    <span className="text-[11px] text-[#888888] leading-tight block mt-0.5">
+                      Фото + имя сотрудника + статус «Онлайн»
+                    </span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Настройка текста статуса при выборе капсулы */}
+              {launcherStyle === "pill" && (
+                <div className="mt-2.5 rounded-lg border border-[#e5e5e5] bg-white p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-[#111111]">Статус в плашке</label>
+                    <span className="text-[10px] text-[#888888]">Текст второй строки</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={statusText}
+                      onChange={(e) => setStatusText(e.target.value)}
+                      placeholder="Онлайн"
+                      className="flex-1 min-w-[140px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 font-medium"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {["Онлайн", "На связи", "Отвечу за 1 мин", "В сети"].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setStatusText(preset)}
+                          className={cn(
+                            "rounded-md border px-2 py-1 text-[11px] transition-colors cursor-pointer",
+                            statusText === preset
+                              ? "border-[#4a38f5] bg-[#4a38f5] text-white font-medium"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:text-[#111111]",
+                          )}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <label className="text-xs font-semibold uppercase tracking-wider text-[#111111] block pt-2">
+              Аватар и иконка виджета
+            </label>
 
             {/* Переключатель 3 вариантов */}
             <div className="grid grid-cols-3 gap-2">
@@ -1083,9 +1242,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                             type="button"
                             onClick={() => {
                               setConsultantAvatar(preset.avatar);
-                              if (!consultantName) {
-                                setConsultantName(preset.name);
-                              }
+                              setConsultantName(preset.name);
                             }}
                             className={cn(
                               "flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs transition-colors cursor-pointer",
@@ -2447,6 +2604,55 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       title="Закрыть чат"
                     >
                       <X className="h-6 w-6 stroke-[2.5]" />
+                    </button>
+                  ) : launcherStyle === "pill" ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewOpen(true)}
+                      className={cn(
+                        "group relative flex items-center gap-3 rounded-full shadow-2xl transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0",
+                        getAttentionClasses(attentionEffect, attentionInterval, attentionEnabled, false),
+                      )}
+                      style={{
+                        backgroundColor: accentColor,
+                        padding: "5px 20px 5px 6px",
+                        height: "56px",
+                        ...getAttentionStyles(attentionInterval, accentColor),
+                      }}
+                      title="Нажмите, чтобы открыть чат"
+                    >
+                      <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-white bg-white overflow-hidden shadow-xs">
+                        {avatarType === "photo" && consultantAvatar ? (
+                          <img
+                            src={consultantAvatar}
+                            alt={consultantName || "Консультант"}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : avatarType === "mascot" ? (
+                          <InteractiveMascot
+                            mascotId={mascotId}
+                            size={44}
+                            accentColor={accentColor}
+                            interactive={false}
+                            customDirections={customDirections}
+                            customReactions={customReactions}
+                          />
+                        ) : (
+                          <User className="h-5 w-5 text-[#666666]" />
+                        )}
+                        <span
+                          className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 bg-emerald-500 shadow-xs z-10"
+                          style={{ borderColor: "#ffffff" }}
+                        />
+                      </div>
+                      <div className="flex flex-col text-left">
+                        <span className="text-[14px] font-bold text-white leading-tight">
+                          {consultantName || "Мирослава Ковалева"}
+                        </span>
+                        <span className="text-[12px] font-medium text-white/95 leading-tight">
+                          {statusText || "Онлайн"}
+                        </span>
+                      </div>
                     </button>
                   ) : avatarType === "mascot" ? (
                     <div
