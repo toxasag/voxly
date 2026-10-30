@@ -77,10 +77,10 @@ export function useAnalyticsIntegrations() {
   return useQuery({
     queryKey: analyticsIntegrationsKeys.all,
     queryFn: async (): Promise<AnalyticsIntegrationDTO[]> => {
-      const res = await apiClient.get<{ data: AnalyticsIntegrationDTO[] }>(
+      const res = await apiClient.get<AnalyticsIntegrationDTO[]>(
         "/api/v1/analytics/integrations",
       );
-      return res.data.data;
+      return res.data ?? [];
     },
   });
 }
@@ -90,11 +90,11 @@ export function useCreateAnalyticsIntegration() {
 
   return useMutation({
     mutationFn: async (payload: CreateIntegrationPayload): Promise<AnalyticsIntegrationDTO> => {
-      const res = await apiClient.post<{ data: AnalyticsIntegrationDTO }>(
+      const res = await apiClient.post<AnalyticsIntegrationDTO>(
         "/api/v1/analytics/integrations",
         payload,
       );
-      return res.data.data;
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
@@ -117,8 +117,8 @@ export function useUpdateAnalyticsIntegration() {
         ? `/api/v1/analytics/integrations/by-id/${payload.id}`
         : `/api/v1/analytics/integrations/${provider}`;
 
-      const res = await apiClient.put<{ data: AnalyticsIntegrationDTO }>(url, payload);
-      return res.data.data;
+      const res = await apiClient.put<AnalyticsIntegrationDTO>(url, payload);
+      return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
@@ -142,11 +142,11 @@ export function useDeleteAnalyticsIntegration() {
 export function useTestAnalyticsIntegration() {
   return useMutation({
     mutationFn: async (provider: AnalyticsProvider): Promise<TestIntegrationResult> => {
-      const res = await apiClient.post<{ data: TestIntegrationResult }>(
+      const res = await apiClient.post<TestIntegrationResult>(
         `/api/v1/analytics/integrations/${provider}/test`,
         {},
       );
-      return res.data.data;
+      return res.data;
     },
   });
 }
@@ -154,11 +154,11 @@ export function useTestAnalyticsIntegration() {
 export function useTestQueueAnalyticsIntegration() {
   return useMutation({
     mutationFn: async (provider: AnalyticsProvider): Promise<TestQueueResult> => {
-      const res = await apiClient.post<{ data: TestQueueResult }>(
+      const res = await apiClient.post<TestQueueResult>(
         `/api/v1/analytics/integrations/${provider}/test-queue`,
         {},
       );
-      return res.data.data;
+      return res.data;
     },
   });
 }
@@ -167,10 +167,10 @@ export function useTestQueueStatus(provider: AnalyticsProvider, jobId: string | 
   return useQuery({
     queryKey: analyticsIntegrationsKeys.jobStatus(jobId || ""),
     queryFn: async (): Promise<TestQueueStatus> => {
-      const res = await apiClient.get<{ data: TestQueueStatus }>(
+      const res = await apiClient.get<TestQueueStatus>(
         `/api/v1/analytics/integrations/${provider}/test-queue/${jobId}`,
       );
-      return res.data.data;
+      return res.data;
     },
     enabled: Boolean(jobId),
     refetchInterval: (query) => {

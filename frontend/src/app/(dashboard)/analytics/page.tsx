@@ -87,7 +87,7 @@ export default function AnalyticsPage() {
             </div>
           )}
 
-          {(isError || !data) && !isLoading && (
+          {isError && !isLoading && (
             <div role="alert" className="rounded-[8px] border border-rose-200 bg-rose-50 p-6">
               <p className="text-sm font-semibold text-rose-900">
                 Не удалось загрузить данные аналитики
@@ -106,28 +106,28 @@ export default function AnalyticsPage() {
             </div>
           )}
 
-          {data && (
+          {!isError && data && (
             <>
               {/* KPI Cards */}
               <KpiCards
-                revenue={data.kpis.revenue}
-                revenueChange={data.kpis.revenue_change}
-                netProfit={data.kpis.net_profit}
-                profitChange={data.kpis.profit_change}
-                closedRepairs={data.kpis.closed_repairs}
-                repairsChange={data.kpis.repairs_change}
-                avgTicket={data.kpis.avg_ticket}
-                ticketChange={data.kpis.ticket_change}
+                revenue={data.kpis?.revenue ?? 0}
+                revenueChange={data.kpis?.revenue_change ?? 0}
+                netProfit={data.kpis?.net_profit ?? 0}
+                profitChange={data.kpis?.profit_change ?? 0}
+                closedRepairs={data.kpis?.closed_repairs ?? 0}
+                repairsChange={data.kpis?.repairs_change ?? 0}
+                avgTicket={data.kpis?.avg_ticket ?? 0}
+                ticketChange={data.kpis?.ticket_change ?? 0}
               />
 
               {/* P&L Chart — full width */}
-              <PnlChart data={data.pnl} />
+              <PnlChart data={data.pnl ?? []} />
 
               {/* Bottom Grid: Funnel + TopRepairs + MasterLoad */}
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <FunnelChart data={data.funnel} />
-                <TopRepairsChart data={data.top_repairs} />
-                <MasterLoadChart data={data.master_load} />
+                <FunnelChart data={data.funnel ?? []} />
+                <TopRepairsChart data={data.top_repairs ?? []} />
+                <MasterLoadChart data={data.master_load ?? []} />
               </div>
             </>
           )}
