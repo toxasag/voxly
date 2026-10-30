@@ -36,6 +36,8 @@ export interface WebchatAccountInfo {
   greeting?: string;
   placeholder?: string;
   position?: "bottom-right" | "bottom-left";
+  launcherStyle?: "circle" | "pill";
+  statusText?: string;
   badgeEnabled?: boolean;
   badgeText?: string;
   badgeTexts?: string[];
@@ -472,6 +474,11 @@ export class WebchatService {
       greeting: typeof creds.greeting === "string" && creds.greeting.trim().length > 0 ? creds.greeting.trim() : "Здравствуйте! Чем я могу вам помочь? Напишите ваш вопрос, и я сразу отвечу.",
       placeholder: typeof creds.placeholder === "string" ? creds.placeholder : "Введите ваш вопрос...",
       position: creds.position === "bottom-left" ? "bottom-left" : "bottom-right",
+      launcherStyle: creds.launcherStyle === "pill" ? "pill" : "circle",
+      statusText:
+        typeof creds.statusText === "string" && creds.statusText.trim().length > 0
+          ? creds.statusText.trim()
+          : "Онлайн",
       showMessengerBanner,
       messengerBannerMode,
       singleTarget,

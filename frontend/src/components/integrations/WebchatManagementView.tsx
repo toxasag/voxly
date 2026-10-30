@@ -152,6 +152,23 @@ export function WebchatManagementView({
         )}
       </div>
 
+      {/* Подсказка о настройке внешнего вида и капсулы */}
+      <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[#111111]">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5] text-white">
+            <Palette className="h-4 w-4" />
+          </div>
+          <div>
+            <span className="font-semibold text-[#111111]">
+              Оформление виджета: информативная капсула и фото консультанта
+            </span>
+            <p className="text-[#666666] mt-0.5">
+              Включите отображение виджета в виде плашки «Имя + Онлайн» (как на скриншоте) в меню «Настроить виджет» нужного сайта.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Список подключенных сайтов */}
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -246,6 +263,20 @@ export function WebchatManagementView({
                         ))}
                       </select>
                     </div>
+                  </div>
+
+                  {/* Стиль кнопки виджета на сайте */}
+                  <div className="mt-3 flex items-center justify-between text-xs text-[#666666] border-t border-[#f0f0f0] pt-2.5">
+                    <span>Стиль кнопки:</span>
+                    {creds.launcherStyle === "pill" ? (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#4a38f5] bg-[#4a38f5]/10 px-2 py-0.5 rounded-full text-[11px]">
+                        Капсула ({String(creds.consultantName || "Консультант")}, {String(creds.statusText || "Онлайн")})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#666666] bg-[#f0f0f0] px-2 py-0.5 rounded-full text-[11px]">
+                        Круглая кнопка
+                      </span>
+                    )}
                   </div>
                 </div>
 
