@@ -18,6 +18,8 @@ import {
   DollarSign,
   FileText,
   Save,
+  Shield,
+  ShieldCheck,
 } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import {

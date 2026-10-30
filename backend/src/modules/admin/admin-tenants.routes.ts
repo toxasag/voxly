@@ -36,6 +36,10 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       custom_plan_name: string | null;
       business_niche: string | null;
       custom_notes: string | null;
+      auth_settings: {
+        require_telegram_auth: boolean;
+        allow_password_auth?: boolean;
+      } | null;
       ai_tokens_balance: string;
       ai_balance_kopecks: string;
       ai_markup_percent: string;
@@ -56,6 +60,7 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     }>(
       `SELECT t.id, t.name, t.slug, t.plan, t.status,
           t.custom_price_rubles, t.custom_plan_name, t.business_niche, t.custom_notes,
+          t.auth_settings,
           t.ai_tokens_balance,
           t.ai_balance_kopecks::text AS ai_balance_kopecks,
           t.ai_markup_percent::text AS ai_markup_percent,
@@ -122,6 +127,11 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
           custom_plan_name: row.custom_plan_name ?? null,
           business_niche: row.business_niche ?? null,
           custom_notes: row.custom_notes ?? null,
+          auth_settings: row.auth_settings ?? {
+            require_telegram_auth: false,
+            allow_password_auth: true,
+          },
+          require_telegram_auth: Boolean(row.auth_settings?.require_telegram_auth),
           ai_tokens_balance: Number(row.ai_tokens_balance || 0),
           ai_balance_kopecks: Number(row.ai_balance_kopecks || 0),
           ai_markup_percent: Number(row.ai_markup_percent || 0),
@@ -200,23 +210,60 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       params.push(body.custom_notes);
       sets.push(`custom_notes = $${params.length}`);
     }
+    if (body.auth_settings !== undefined) {
+      params.push(JSON.stringify(body.auth_settings));
+      sets.push(`auth_settings = $${params.length}::jsonb`);
+    } else if (body.require_telegram_auth !== undefined) {
+      params.push(
+        JSON.stringify({
+          require_telegram_auth: body.require_telegram_auth,
+          allow_password_auth: true,
+        }),
+      );
+      sets.push(`auth_settings = $${params.length}::jsonb`);
+    }
+
+    interface UpdatedTenantRow {
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      custom_price_rubles: number | null;
+      custom_plan_name: string | null;
+      business_niche: string | null;
+      custom_notes: string | null;
+      auth_settings: {
+        require_telegram_auth: boolean;
+        allow_password_auth?: boolean;
+      } | null;
+      ai_tokens_balance: number;
+      ai_balance_kopecks: string;
+      ai_markup_percent: string;
+      subscription_expires_at: Date | string | null;
+    }
 
     const RETURN_COLUMNS = `id, name, slug, plan, status, custom_price_rubles,
-         custom_plan_name, business_niche, custom_notes, ai_tokens_balance,
+         custom_plan_name, business_niche, custom_notes, auth_settings, ai_tokens_balance,
          ai_balance_kopecks::text AS ai_balance_kopecks,
          ai_markup_percent::text AS ai_markup_percent,
          subscription_expires_at`;
 
     if (sets.length === 0) {
-      const existing = await queryOne(
+      const existing = await queryOne<UpdatedTenantRow>(
         `SELECT ${RETURN_COLUMNS} FROM tenants WHERE id = $1`,
         [tenantId],
       );
       if (existing === null) throw new NotFoundError("Tenant not found");
-      return reply.send({ data: existing });
+      return reply.send({
+        data: {
+          ...existing,
+          require_telegram_auth: Boolean(existing.auth_settings?.require_telegram_auth),
+        },
+      });
     }
 
-    const row = await queryOne(
+    const row = await queryOne<UpdatedTenantRow>(
       `UPDATE tenants SET ${sets.join(", ")}
        WHERE id = $1
        RETURNING ${RETURN_COLUMNS}`,
@@ -231,7 +278,12 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
       [tenantId, request.authUser.id, tenantId, JSON.stringify(body)],
     );
 
-    return reply.send({ data: row });
+    return reply.send({
+      data: {
+        ...row,
+        require_telegram_auth: Boolean(row.auth_settings?.require_telegram_auth),
+      },
+    });
   });
 
   app.post("/tenants/:id/impersonate", { onRequest: platformOwner }, async (request, reply) => {
