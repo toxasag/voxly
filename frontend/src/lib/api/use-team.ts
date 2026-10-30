@@ -48,7 +48,7 @@ export interface SeatUsageDTO {
  * неограниченную передачу прав на биллинг. Совпадает с `ASSIGNABLE_ROLES` и
  * Zod-схемой бэкенда.
  */
-export type AssignableRole = Exclude<Role, "owner">;
+export type AssignableRole = Exclude<Role, "owner" | "partner">;
 
 export interface TeamListDTO {
   members: TeamMemberDTO[];
@@ -83,6 +83,7 @@ export const teamKeys = {
 export const ROLE_LABELS: Record<Role, string> = {
   owner: "Владелец",
   admin: "Администратор",
+  partner: "Партнёр",
   manager: "Менеджер",
   technician: "Мастер",
   viewer: "Наблюдатель",
@@ -92,6 +93,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const ROLE_HINTS: Record<Role, string> = {
   owner: "Полный доступ, включая подписку и оплату",
   admin: "Всё, кроме управления подпиской и оплатой",
+  partner: "Управление клиентскими порталами и компаниями",
   manager: "Работа с клиентами, сделками и задачами",
   technician: "Приёмка и выполнение ремонтов, задачи",
   viewer: "Только просмотр данных",

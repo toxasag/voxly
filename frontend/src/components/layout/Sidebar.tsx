@@ -16,6 +16,7 @@ import {
   Building2,
   ListChecks,
   BarChart3,
+  PlusCircle,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -25,6 +26,7 @@ import { useTenantModules } from "@/lib/api/use-tenant-modules";
 import { useProfile } from "@/lib/api/use-profile";
 import { userInitials } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { CreateTenantDialog } from "@/components/partner/CreateTenantDialog";
 import { Logo } from "@/components/brand";
 import {
   MARKETPLACE_NAV,
@@ -101,6 +103,7 @@ export function Sidebar({
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [createTenantOpen, setCreateTenantOpen] = useState(false);
 
   const { data: profile } = useProfile();
 
@@ -119,6 +122,13 @@ export function Sidebar({
   const isPlatformOwner = user?.platform_role === "platform_owner";
   const isProfileActive = pathname === "/settings/profile";
   const permissions = user?.permissions ?? null;
+
+  const canCreateTenant =
+    user?.role === "partner" ||
+    user?.role === "owner" ||
+    user?.role === "admin" ||
+    user?.platform_role === "platform_owner" ||
+    Boolean(user?.permissions?.has("tenant:admin"));
 
   const toggleCollapsed = onToggle;
 
@@ -234,6 +244,34 @@ export function Sidebar({
                   </span>
                 </Link>
               ))}
+
+              {canCreateTenant && (
+                <>
+                  <div className="my-1 border-t border-[#f0f0f0]" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setTenantMenuOpen(false);
+                      setCreateTenantOpen(true);
+                    }}
+                    className="flex w-full items-start gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]"
+                  >
+                    <PlusCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#4a38f5]" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5 font-medium text-[#111111]">
+                        Создать компанию
+                        <span className="rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.2 text-[10px] font-semibold text-[#4a38f5]">
+                          Партнёр
+                        </span>
+                      </span>
+                      <span className="block truncate text-[11px] text-[#888888]">
+                        Новый клиентский портал
+                      </span>
+                    </span>
+                  </button>
+                </>
+              )}
             </div>
           </>
         )}
@@ -455,6 +493,11 @@ export function Sidebar({
         confirmLabel="Выйти"
         variant="destructive"
         isPending={isLoggingOut}
+      />
+
+      <CreateTenantDialog
+        open={createTenantOpen}
+        onClose={() => setCreateTenantOpen(false)}
       />
 
       {/* Collapse Toggle */}

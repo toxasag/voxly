@@ -19,7 +19,7 @@ export type Permission =
   | "tenant:admin"
   | "billing:manage";
 
-export type Role = "owner" | "admin" | "manager" | "technician" | "viewer";
+export type Role = "owner" | "admin" | "partner" | "manager" | "technician" | "viewer";
 
 /** Глобальная платформенная роль (superadmin); null у обычных пользователей CRM. */
 export type PlatformRole = "platform_owner";
