@@ -377,13 +377,26 @@ export interface DealOtherDealItemDTO {
 
 export interface DealContactTimelineItemDTO {
   id: string;
-  type: "note" | "task" | "message" | "stage_change" | "deal_created";
+  type:
+    | "note"
+    | "task"
+    | "message"
+    | "stage_change"
+    | "deal_created"
+    | "widget_launch"
+    | "form_submission"
+    | "im_session_inbound"
+    | "im_session_outbound";
   dealId?: string;
   dealTitle?: string;
   timestamp: string;
   title: string;
   description?: string;
   authorName?: string;
+  activityChannel?: string;
+  activityKind?: string;
+  direction?: "inbound" | "outbound" | null;
+  payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 

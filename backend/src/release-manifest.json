@@ -12,15 +12,15 @@
     "ai-bots"
   ],
   "migrations": {
-    "expected": 58,
-    "applied": 58,
+    "expected": 59,
+    "applied": 59,
     "pending": 0,
-    "head": "0058_force_notification_channels_rls"
+    "head": "0059_contact_activities_timeline"
   },
   "database": {
     "engine": "PostgreSQL 16",
-    "publicTables": 57,
-    "rlsPolicies": 41,
+    "publicTables": 58,
+    "rlsPolicies": 42,
     "extensions": ["uuid-ossp", "pgcrypto", "vector"]
   },
   "queues": [
