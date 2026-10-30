@@ -4,7 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { query, queryOne, transaction } from "../../db/client.js";
 import { updateTenantSchema } from "./admin.types.js";
-import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError, PermissionDeniedError } from "../../plugins/errorHandler.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { getEnv } from "../../config/env.js";
@@ -242,14 +242,19 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     return reply.send({ success: true, data: tokens });
   });
 
-  app.post("/tenants/by-slug/:slug/impersonate", { onRequest: platformOwner }, async (request, reply) => {
+  app.post("/tenants/by-slug/:slug/impersonate", async (request, reply) => {
     const { slug } = z.object({ slug: z.string().min(1) }).parse(request.params);
-    const tenant = await queryOne<{ id: string; name: string; slug: string }>(
-      "SELECT id, name, slug FROM tenants WHERE slug = $1",
+    const tenant = await queryOne<{ id: string; name: string; slug: string; parent_tenant_id: string | null }>(
+      "SELECT id, name, slug, parent_tenant_id FROM tenants WHERE slug = $1",
       [slug.toLowerCase()],
     );
     if (!tenant) {
       throw new NotFoundError("Компания не найдена");
+    }
+    const isPlatformOwner = request.authUser?.platform_role === "platform_owner";
+    const isParentPartner = tenant.parent_tenant_id !== null && tenant.parent_tenant_id === request.tenant_id;
+    if (!isPlatformOwner && !isParentPartner) {
+      throw new PermissionDeniedError("Недостаточно прав для входа в пространство клиента");
     }
     const authService = new AuthService(app);
     const tokens = await authService.impersonateTenant(tenant.id, request.authUser.id);
