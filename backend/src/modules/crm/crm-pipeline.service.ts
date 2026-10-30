@@ -237,7 +237,7 @@ export class CrmPipelineService {
         }
 
         // 1.6. Обогащаем данными посетителя сайта (webchat_visitor_id, ym_uid, ga_id, fb_id, utm, page)
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
         if (siteVisitorId) {
           await tx.query(
             `UPDATE contacts
@@ -383,7 +383,7 @@ export class CrmPipelineService {
         if (input.channel === "max" && input.chatId) {
           customFields.max_chat_id = input.chatId;
         }
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
         if (siteVisitorId) {
           customFields.webchat_visitor_id = siteVisitorId;
           customFields.visitor_ids = [siteVisitorId];
@@ -422,7 +422,7 @@ export class CrmPipelineService {
       let dealId: string;
       let isNewDeal = false;
 
-      const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/site_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+      const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
       const dealCustomFields: Record<string, unknown> = {};
       if (siteVisitorId) dealCustomFields.webchat_visitor_id = siteVisitorId;
       if (input.deviceFingerprint) dealCustomFields.device_fingerprint = input.deviceFingerprint;
@@ -1049,7 +1049,7 @@ export class CrmPipelineService {
     // Идентификация посетителя веб-чата и связывание сессий при переходе в Telegram/WhatsApp
     let siteVisitorIdFromText: string | undefined;
     if (input.text) {
-      const match = input.text.match(/site_([a-zA-Z0-9_-]+)/);
+      const match = input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/);
       if (match) {
         siteVisitorIdFromText = match[1];
       }

@@ -90,6 +90,7 @@ export function TenantManageModal({
   const [aiBalanceRubles, setAiBalanceRubles] = useState<string>("");
   const [aiMarkupPercent, setAiMarkupPercent] = useState<string>("");
   const [subscriptionExpiresAt, setSubscriptionExpiresAt] = useState<string>("");
+  const [requireTelegramAuth, setRequireTelegramAuth] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -119,6 +120,13 @@ export function TenantManageModal({
           ? tenant.subscription_expires_at.slice(0, 10)
           : "",
       );
+      setRequireTelegramAuth(
+        Boolean(
+          tenant.auth_settings?.require_telegram_auth ??
+          tenant.require_telegram_auth ??
+          false,
+        ),
+      );
     }
   }, [tenant, open]);
 
@@ -133,6 +141,11 @@ export function TenantManageModal({
         plan,
         business_niche: businessNiche.trim() ? businessNiche.trim() : null,
         custom_notes: customNotes.trim() ? customNotes.trim() : null,
+        require_telegram_auth: requireTelegramAuth,
+        auth_settings: {
+          require_telegram_auth: requireTelegramAuth,
+          allow_password_auth: true,
+        },
       };
 
       if (isCustomPrice) {
@@ -178,6 +191,7 @@ export function TenantManageModal({
     customPlanName,
     businessNiche,
     customNotes,
+    requireTelegramAuth,
     aiBalanceRubles,
     aiMarkupPercent,
     subscriptionExpiresAt,
@@ -504,6 +518,58 @@ export function TenantManageModal({
                   : "Бессрочно / Не ограничено"}
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* Секция: Политика аутентификации */}
+        <div className="rounded-[10px] border border-[#e5e5e5] p-4 space-y-3 bg-white">
+          <div className="flex items-center gap-2 border-b border-[#f0f0f0] pb-2">
+            <ShieldCheck className="h-4 w-4 text-[#4a38f5]" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#111111]">
+              Политика аутентификации портала
+            </h3>
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3.5 space-y-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-medium text-[#111111]">
+                  Обязательный вход через Telegram-бота (2FA)
+                </span>
+                <p className="text-[11px] text-[#666666] mt-0.5">
+                  {requireTelegramAuth
+                    ? "Вход защищен кодом из Telegram-бота. Пользователи обязаны подтверждать вход через бота."
+                    : "Вход только по логину и паролю. Подтверждение через Telegram-бота отключено."}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={requireTelegramAuth}
+                onClick={() => setRequireTelegramAuth((prev) => !prev)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5] focus:ring-offset-2",
+                  requireTelegramAuth ? "bg-[#4a38f5]" : "bg-[#cccccc]",
+                )}
+              >
+                <span
+                  className={cn(
+                    "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out",
+                    requireTelegramAuth ? "translate-x-4" : "translate-x-0",
+                  )}
+                />
+              </button>
+            </div>
+
+            {!requireTelegramAuth && (
+              <div className="flex items-center gap-2 pt-1.5 text-xs text-[#854d0e]">
+                <Shield className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <span>
+                  Сотрудники смогут входить по e-mail и паролю без необходимости запускать Telegram-бота.
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

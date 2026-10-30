@@ -10,6 +10,7 @@ import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
 import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -160,6 +161,7 @@ const telegramUpdate = z.object({
       }),
       from: z
         .object({
+          id: z.number().optional(),
           username: z.string().optional(),
           first_name: z.string().optional(),
           last_name: z.string().optional(),
@@ -304,12 +306,38 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     const startMatch = /^\/start(?:\s+([A-Za-z0-9_-]+))?/.exec(text);
 
     if (startMatch === null) {
+      // Пользователь отправил обычное текстовое сообщение: фиксируем квалифицированное первое сообщение
+      if (text.length > 0) {
+        await attributionEngineService.handleIncomingMessage(
+          "telegram",
+          String(message.from?.id || chatId),
+          text,
+          {
+            username: message.from?.username ?? null,
+            chatId: String(chatId),
+          },
+        );
+      }
       return reply.status(200).send({ ok: true });
     }
 
     const token = startMatch[1];
 
     if (token === undefined) {
+      await telegram.sendGreeting(chatId);
+      return reply.status(200).send({ ok: true });
+    }
+
+    // Регистрация запуска бота по маркетинговому deep link: ref_<token>
+    // ВНИМАНИЕ: На этом этапе конверсия НЕ отправляется, чтобы не сливать бюджет за пустые клики
+    if (token.startsWith("ref_")) {
+      await attributionEngineService.handleBotStart(
+        token,
+        "telegram",
+        String(message.from?.id || chatId),
+        message.from?.username ?? null,
+        String(chatId),
+      );
       await telegram.sendGreeting(chatId);
       return reply.status(200).send({ ok: true });
     }

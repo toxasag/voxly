@@ -2718,13 +2718,13 @@
               var b = buttons[0];
               var linkHref = b.url;
               if (b.type === 'telegram') {
-                linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
               } else if (b.type === 'whatsapp') {
                 var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
-                linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+                linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
               } else if (b.type === 'max') {
                 if (linkHref.indexOf('/u/') === -1) {
-                  linkHref += (linkHref.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
                 }
               }
               var iconSvg = '';
@@ -2751,13 +2751,13 @@
                 var btn = buttons[j];
                 var href = btn.url;
                 if (btn.type === 'telegram') {
-                  href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                  href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
                 } else if (btn.type === 'whatsapp') {
                   var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
-                  href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! (код: site_' + visitorId + ')');
+                  href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
                 } else if (btn.type === 'max') {
                   if (href.indexOf('/u/') === -1) {
-                    href += (href.indexOf('?') === -1 ? '?start=site_' + visitorId : '&start=site_' + visitorId);
+                    href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
                   }
                 }
                 var icon = '';

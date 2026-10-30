@@ -8,13 +8,35 @@ export type AnalyticsProvider = "yandex" | "ga4" | "google_ads" | "meta" | "vk";
 export interface AnalyticsIntegrationDTO {
   id: string;
   provider: AnalyticsProvider;
+  siteName: string;
+  siteUrl: string | null;
+  counterId: string | null;
+  channelAccountId: string | null;
+  isDefault: boolean;
   config: Record<string, unknown>;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface CreateIntegrationPayload {
+  provider: AnalyticsProvider;
+  siteName: string;
+  siteUrl?: string | null;
+  counterId?: string | null;
+  channelAccountId?: string | null;
+  isDefault?: boolean;
+  isActive?: boolean;
+  config: Record<string, unknown>;
+}
+
 export interface UpdateIntegrationPayload {
+  id?: string;
+  siteName?: string;
+  siteUrl?: string | null;
+  counterId?: string | null;
+  channelAccountId?: string | null;
+  isDefault?: boolean;
   isActive?: boolean;
   config: Record<string, unknown>;
 }
@@ -28,9 +50,27 @@ export interface TestIntegrationResult {
   error?: string;
 }
 
+export interface TestQueueResult {
+  jobId: string;
+  provider: AnalyticsProvider;
+  status: "enqueued" | "failed";
+  message: string;
+}
+
+export interface TestQueueStatus {
+  jobId: string;
+  status: "pending" | "sent" | "failed";
+  attempts: number;
+  lastStatus: number | null;
+  lastError: string | null;
+  responseSnippet: string | null;
+  deliveredAt: string | null;
+}
+
 export const analyticsIntegrationsKeys = {
   all: ["analytics", "integrations"] as const,
   detail: (provider: string) => ["analytics", "integrations", provider] as const,
+  jobStatus: (jobId: string) => ["analytics", "jobStatus", jobId] as const,
 };
 
 export function useAnalyticsIntegrations() {
@@ -41,6 +81,23 @@ export function useAnalyticsIntegrations() {
         "/api/v1/analytics/integrations",
       );
       return res.data.data;
+    },
+  });
+}
+
+export function useCreateAnalyticsIntegration() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (payload: CreateIntegrationPayload): Promise<AnalyticsIntegrationDTO> => {
+      const res = await apiClient.post<{ data: AnalyticsIntegrationDTO }>(
+        "/api/v1/analytics/integrations",
+        payload,
+      );
+      return res.data.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
     },
   });
 }
@@ -56,11 +113,25 @@ export function useUpdateAnalyticsIntegration() {
       provider: AnalyticsProvider;
       payload: UpdateIntegrationPayload;
     }): Promise<AnalyticsIntegrationDTO> => {
-      const res = await apiClient.put<{ data: AnalyticsIntegrationDTO }>(
-        `/api/v1/analytics/integrations/${provider}`,
-        payload,
-      );
+      const url = payload.id
+        ? `/api/v1/analytics/integrations/by-id/${payload.id}`
+        : `/api/v1/analytics/integrations/${provider}`;
+
+      const res = await apiClient.put<{ data: AnalyticsIntegrationDTO }>(url, payload);
       return res.data.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
+    },
+  });
+}
+
+export function useDeleteAnalyticsIntegration() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      await apiClient.delete(`/api/v1/analytics/integrations/by-id/${id}`);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
@@ -76,6 +147,38 @@ export function useTestAnalyticsIntegration() {
         {},
       );
       return res.data.data;
+    },
+  });
+}
+
+export function useTestQueueAnalyticsIntegration() {
+  return useMutation({
+    mutationFn: async (provider: AnalyticsProvider): Promise<TestQueueResult> => {
+      const res = await apiClient.post<{ data: TestQueueResult }>(
+        `/api/v1/analytics/integrations/${provider}/test-queue`,
+        {},
+      );
+      return res.data.data;
+    },
+  });
+}
+
+export function useTestQueueStatus(provider: AnalyticsProvider, jobId: string | null) {
+  return useQuery({
+    queryKey: analyticsIntegrationsKeys.jobStatus(jobId || ""),
+    queryFn: async (): Promise<TestQueueStatus> => {
+      const res = await apiClient.get<{ data: TestQueueStatus }>(
+        `/api/v1/analytics/integrations/${provider}/test-queue/${jobId}`,
+      );
+      return res.data.data;
+    },
+    enabled: Boolean(jobId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status === "sent" || status === "failed") {
+        return false;
+      }
+      return 1500;
     },
   });
 }
