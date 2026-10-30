@@ -21,8 +21,8 @@ import type {
 import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
-import { TimelineService } from "../timeline/timeline.service.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
+import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
@@ -1311,50 +1311,32 @@ export class DealsService {
         };
       });
 
-    // 3. Сквозной таймлайн
-    const timelineService = new TimelineService();
-    const timelineResponse = await timelineService.getTimeline(
+    // 3. Сквозной таймлайн активности контакта
+    const activityService = new ContactActivityService();
+    const activitiesResponse = await activityService.listContactActivities(
       tenantId,
-      "contact",
       deal.contact_id,
-      50,
-      0,
+      {
+        limit: 50,
+        offset: 0,
+      },
     );
 
-    const timeline: DealContactTimelineItemDTO[] = timelineResponse.items.map((ev) => {
-      let title = "Событие";
-      let description: string | undefined = undefined;
-      const dId = ev.data?.dealId as string | undefined;
-      const dTitle = ev.data?.dealTitle as string | undefined;
-
-      if (ev.type === "note") {
-        title = (ev.data?.title as string) || "Заметка";
-        description = ev.data?.body as string | undefined;
-      } else if (ev.type === "message") {
-        title =
-          ev.data?.channel === "webchat"
-            ? "Онлайн-чат"
-            : (ev.data?.channel as string) || "Сообщение";
-        description = (ev.data?.content || ev.data?.text) as string | undefined;
-      } else if (ev.type === "stage_change") {
-        title = `Смена этапа${dTitle ? ` в «${dTitle}»` : ""}: ${ev.data?.toStageName || ""}`;
-      } else if (ev.type === "task") {
-        title = (ev.data?.title as string) || "Задача";
-        description = ev.data?.description as string | undefined;
-      }
-
-      return {
-        id: ev.id,
-        type: ev.type,
-        dealId: dId,
-        dealTitle: dTitle,
-        timestamp: ev.createdAt,
-        title,
-        description,
-        authorName: ev.authorName || undefined,
-        metadata: ev.data,
-      };
-    });
+    const timeline: DealContactTimelineItemDTO[] = activitiesResponse.items.map((ev) => ({
+      id: ev.id,
+      type: ev.activityKind,
+      dealId: ev.dealId,
+      dealTitle: ev.dealTitle,
+      timestamp: ev.timestamp,
+      title: ev.title,
+      description: ev.description,
+      authorName: ev.authorName,
+      activityChannel: ev.activityChannel,
+      activityKind: ev.activityKind,
+      direction: ev.direction,
+      payload: ev.payload,
+      metadata: ev.payload,
+    }));
 
     return {
       dealId,
