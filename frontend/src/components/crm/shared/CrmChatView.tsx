@@ -218,10 +218,19 @@ function getAttachmentInfo(attachment: string, attachmentType?: string | null, c
   };
 }
 
+export function stripTechnicalMessageMetadata(content: string): string {
+  if (!content) return "";
+  const technicalRegex = /^\s*(?:\[(?:Устройство|Страница|UTM|Реклама ClickID|Яндекс ID|YM ClientID|GA ClientID|Top\.Mail\.ru|История переходов|Визит №|Черновик)[^\]]*\]\s*)+/gi;
+  return content.replace(technicalRegex, "").trim();
+}
+
 function renderChatMessageContent(content: string): React.ReactNode {
   if (!content) return null;
 
-  const lines = content.split("\n");
+  const clean = stripTechnicalMessageMetadata(content);
+  if (!clean) return null;
+
+  const lines = clean.split("\n");
 
   return lines.map((line, lineIdx) => {
     const isQuote = /^>\s?/.test(line);
@@ -932,14 +941,21 @@ export function CrmChatView({
                 const isAi = message.source === "ai" || message.source === "ai_bot";
                 const isClient = message.direction === "inbound" || message.source === "client";
 
+                const cleanedContent = stripTechnicalMessageMetadata(message.content || "");
+
                 if (isSystem) {
+                  if (!cleanedContent) return null;
                   return (
 <div key={message.id} className="my-1.5 flex justify-center">
                       <div className="max-w-md rounded-full border border-[#e5e5e5] bg-[#f5f5f5] px-3 py-1 text-center text-xs text-[#666666]">
-                        {renderChatMessageContent(message.content)}
+                        {renderChatMessageContent(cleanedContent)}
                       </div>
                     </div>
                   );
+                }
+
+                if (!cleanedContent.trim() && !message.attachment) {
+                  return null;
                 }
 
                 return (
@@ -982,8 +998,8 @@ export function CrmChatView({
 
                       {/* Текст сообщения */}
                       {(() => {
-                        const trimmedContent = (message.content || "").trim();
-                        const info = message.attachment ? getAttachmentInfo(message.attachment, message.attachmentType, message.content) : null;
+                        const trimmedContent = cleanedContent.trim();
+                        const info = message.attachment ? getAttachmentInfo(message.attachment, message.attachmentType, cleanedContent) : null;
                         const isDummyContent =
                           trimmedContent === "." ||
                           trimmedContent === "[документ]" ||
@@ -1000,7 +1016,7 @@ export function CrmChatView({
                         }
                         return (
                           <div className="whitespace-pre-wrap break-words leading-relaxed text-[#111111]">
-                            {renderChatMessageContent(message.content)}
+                            {renderChatMessageContent(cleanedContent)}
                           </div>
                         );
                       })()}

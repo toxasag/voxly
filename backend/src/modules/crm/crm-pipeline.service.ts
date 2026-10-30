@@ -60,9 +60,11 @@ export interface InboundMessageInput {
   gaId?: string;
   fbId?: string;
   pageUrl?: string;
+  pageTitle?: string;
   pageHistory?: Array<{ step: number; time: string; url: string }>;
   visitCount?: number;
   utmTags?: Record<string, string>;
+  sourceMetadata?: Record<string, unknown>;
 }
 
 /** Найденный контакт: ФИО нужно заголовку сделки, когда профиль недоступен. */
@@ -356,6 +358,16 @@ export class CrmPipelineService {
           );
         }
 
+        if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
+          await tx.query(
+            `UPDATE contacts
+             SET source_metadata = COALESCE(source_metadata, '{}'::jsonb) || $1::jsonb,
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.sourceMetadata), contact.id, input.tenantId],
+          );
+        }
+
         // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
         const newName = contactNameFrom(input);
         if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
@@ -401,6 +413,7 @@ export class CrmPipelineService {
           channel: contactChannelFor(input.channel),
           notes: `Автоматически создан из ${this.channelLabel(input.channel)}`,
           custom_fields: customFields,
+          source_metadata: input.sourceMetadata,
         });
       }
 
@@ -453,6 +466,16 @@ export class CrmPipelineService {
                  updated_at = now()
              WHERE id = $2 AND tenant_id = $3`,
             [JSON.stringify(dealCustomFields), activeDeal.id, input.tenantId],
+          );
+        }
+
+        if (input.sourceMetadata && Object.keys(input.sourceMetadata).length > 0) {
+          await tx.query(
+            `UPDATE deals
+             SET source_metadata = COALESCE(source_metadata, '{}'::jsonb) || $1::jsonb,
+                 updated_at = now()
+             WHERE id = $2 AND tenant_id = $3`,
+            [JSON.stringify(input.sourceMetadata), activeDeal.id, input.tenantId],
           );
         }
 
@@ -620,6 +643,7 @@ export class CrmPipelineService {
             // новую — канал плодил дубли.
             contact_id: contactId,
             custom_fields: dealCustomFields,
+            source_metadata: input.sourceMetadata,
           });
 
           dealId = deal.id;

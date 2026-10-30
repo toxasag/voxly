@@ -88,6 +88,7 @@ export interface WebchatMessageInput {
   attachment?: string;
   attachmentType?: string;
   pageUrl?: string;
+  pageTitle?: string;
   referrer?: string;
   utmTags?: Record<string, string>;
   clickIds?: Record<string, string>;
@@ -540,7 +541,7 @@ export class WebchatService {
     const tmrLvid = input.analytics?.tmrLvid || undefined;
 
     const parsedUa = input.userAgent ? parseUserAgent(input.userAgent) : null;
-    const enrichedDeviceInfo = {
+    const enrichedDeviceInfo: Record<string, unknown> = {
       ...(input.deviceInfo || {}),
       ...(parsedUa ? { os: parsedUa.os, browser: parsedUa.browser, deviceType: parsedUa.deviceType } : {}),
       ...(input.clientIp ? { ip: input.clientIp } : {}),
@@ -560,52 +561,52 @@ export class WebchatService {
       ...(input.clickIds || {}),
     };
 
-    // Формируем структурированный контекст для CRM и менеджеров
-    const contextLines: string[] = [];
-    if (input.isDraft) {
-      contextLines.push("[Черновик / Неотправленное обращение]");
-    }
-    if (parsedUa || enrichedDeviceInfo.deviceType) {
-      const devType = enrichedDeviceInfo.deviceType === "mobile" ? "Мобильный" : enrichedDeviceInfo.deviceType === "tablet" ? "Планшет" : "Десктоп";
-      contextLines.push(`[Устройство: ${devType} (${enrichedDeviceInfo.os || "OS"} / ${enrichedDeviceInfo.browser || "Браузер"})]`);
-    }
+    let pageDomain = "";
     if (input.pageUrl) {
-      contextLines.push(`[Страница: ${input.pageUrl}]`);
-    }
-    if (input.visitCount && input.visitCount > 1) {
-      contextLines.push(`[Визит №${input.visitCount}]`);
-    }
-    if (Object.keys(effectiveUtmTags).length > 0) {
-      const utmStr = Object.entries(effectiveUtmTags)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      contextLines.push(`[UTM: ${utmStr}]`);
-    }
-    if (Object.keys(effectiveClickIds).length > 0) {
-      const clickStr = Object.entries(effectiveClickIds)
-        .filter(([_, v]) => Boolean(v))
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ");
-      if (clickStr) contextLines.push(`[Реклама ClickID: ${clickStr}]`);
-    }
-    if (yandexuid) {
-      contextLines.push(`[Яндекс ID: ${yandexuid}]`);
-    }
-    if (ymUid) {
-      contextLines.push(`[YM ClientID: ${ymUid}]`);
-    }
-    if (gaId) {
-      contextLines.push(`[GA ClientID: ${gaId}]`);
-    }
-    if (tmrLvid) {
-      contextLines.push(`[Top.Mail.ru: ${tmrLvid}]`);
-    }
-    if (input.pageHistory && input.pageHistory.length > 1) {
-      const historyStr = input.pageHistory.map((h) => h.url).join(" -> ");
-      contextLines.push(`[История переходов: ${historyStr}]`);
+      try {
+        pageDomain = new URL(input.pageUrl).hostname;
+      } catch {
+        pageDomain = "";
+      }
     }
 
-    const crmInboundText = contextLines.length > 0 ? `${contextLines.join("\n")}\n\n${effectiveText}` : effectiveText;
+    const sourceMetadata: Record<string, unknown> = {
+      device: {
+        deviceType: (enrichedDeviceInfo.deviceType as string | undefined) || (parsedUa ? parsedUa.deviceType : "desktop"),
+        os: (enrichedDeviceInfo.os as string | undefined) || (parsedUa ? parsedUa.os : "Неизвестно"),
+        browser: (enrichedDeviceInfo.browser as string | undefined) || (parsedUa ? parsedUa.browser : "Неизвестно"),
+        screen: enrichedDeviceInfo.screen,
+        platform: enrichedDeviceInfo.platform,
+        rawUserAgent: input.userAgent,
+      },
+      page: {
+        url: input.pageUrl || "",
+        title: input.pageTitle || "",
+        domain: pageDomain,
+      },
+      utm: effectiveUtmTags,
+      clickIds: effectiveClickIds,
+      referrer: input.referrer || "",
+      network: {
+        ip: input.clientIp || (enrichedDeviceInfo.ip as string | undefined),
+        city: enrichedDeviceInfo.city as string | undefined,
+        country: enrichedDeviceInfo.country as string | undefined,
+      },
+      analytics: {
+        yandexuid,
+        ymUid,
+        gaId,
+        fbId,
+        tmrLvid,
+      },
+      firstSeenAt: new Date().toISOString(),
+      visitCount: input.visitCount || 1,
+      pageHistory: input.pageHistory || [],
+    };
+
+    // Чат содержит ТОЛЬКО живой текст диалога между клиентом и оператором/ботом.
+    // Метаданные источника сохраняются непосредственно в source_metadata контакта и сделки.
+    const crmInboundText = effectiveText;
 
     const senderDisplayName =
       input.senderName && input.senderName.trim().length > 0
@@ -636,9 +637,11 @@ export class WebchatService {
         clickIds: effectiveClickIds,
         referrer: input.referrer,
         pageUrl: input.pageUrl,
+        pageTitle: input.pageTitle,
         pageHistory: input.pageHistory,
         visitCount: input.visitCount,
         utmTags: effectiveUtmTags,
+        sourceMetadata,
       }),
     );
 

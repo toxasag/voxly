@@ -26,6 +26,7 @@ export const createDealSchema = z.object({
   owner_id: optionalUuid,
   close_date: optionalDate,
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
 });
 
 export const updateDealSchema = z.object({
@@ -40,6 +41,7 @@ export const updateDealSchema = z.object({
   close_date: optionalDate,
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
   closed_at: z.string().datetime().optional().or(z.literal("")),
 });
 
@@ -109,6 +111,7 @@ export interface DealRow {
   budget: string;
   currency: string;
   custom_fields: Record<string, unknown>;
+  source_metadata?: Record<string, unknown> | null;
   created_by: string;
   owner_id: string | null;
   close_date: Date | string | null;
@@ -155,6 +158,7 @@ export interface DealDTO {
   budget: number;
   currency: string;
   customFields: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown> | null;
   createdBy: string;
   ownerId: string | null;
   closeDate: string | null;
@@ -214,6 +218,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     budget: Number(row.budget),
     currency: row.currency,
     customFields: row.custom_fields,
+    sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     createdBy: row.created_by,
     ownerId: row.owner_id,
     closeDate: toDateOrNull(row.close_date),

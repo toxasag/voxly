@@ -104,6 +104,7 @@ export const createContactSchema = z.object({
   linkedin_link: z.string().url("Invalid URL").max(300).optional().or(z.literal("")),
   notes: z.string().max(4000).optional().or(z.literal("")),
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();
@@ -148,6 +149,7 @@ export interface ContactRow {
   channel: ContactChannel;
   linkedin_link: string;
   custom_fields: Record<string, unknown>;
+  source_metadata?: Record<string, unknown> | null;
   notes: string;
   is_personal?: boolean;
   suppress_deal_creation?: boolean;
@@ -195,6 +197,7 @@ export interface ContactDTO {
   channel: ContactChannel;
   linkedinLink: string;
   customFields: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown> | null;
   notes: string;
   isPersonal?: boolean;
   suppressDealCreation?: boolean;
@@ -279,6 +282,7 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     channel: row.channel,
     linkedinLink: row.linkedin_link,
     customFields: row.custom_fields,
+    sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     notes: row.notes,
     isPersonal: Boolean(row.is_personal),
     suppressDealCreation: Boolean(row.suppress_deal_creation),

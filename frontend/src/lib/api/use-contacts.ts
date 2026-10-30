@@ -53,6 +53,7 @@ export interface ContactDTO {
   channel: ContactChannel;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
+  sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   notes: string;
   isPersonal?: boolean;

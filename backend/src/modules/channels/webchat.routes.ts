@@ -21,6 +21,7 @@ const messageBodySchema = z
     attachment: z.string().trim().max(1000).optional(),
     attachmentType: z.string().trim().max(100).optional(),
     pageUrl: z.string().trim().max(500).optional(),
+    pageTitle: z.string().trim().max(300).optional(),
     referrer: z.string().trim().max(500).optional(),
     utmTags: z.record(z.string()).optional(),
     clickIds: z.record(z.string().nullable().optional()).optional(),
