@@ -160,10 +160,78 @@
       box-sizing: border-box !important;
     }
 
-    @keyframes getvoxlyPulse {
-      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45); }
-      70% { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    /* Эффекты привлечения внимания к кнопке (Attention Grabber System) */
+    @keyframes getvoxly-shimmer-periodic {
+      0% { transform: translate3d(-120%, -120%, 0) rotate(25deg); opacity: 0; }
+      2% { opacity: 1; }
+      16% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 1; }
+      17%, 100% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 0; }
+    }
+    @keyframes getvoxly-shimmer-continuous {
+      0% { transform: translate3d(-120%, -120%, 0) rotate(25deg); opacity: 0; }
+      4% { opacity: 1; }
+      96% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 1; }
+      100% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 0; }
+    }
+
+    @keyframes getvoxly-pulse-ring-periodic {
+      0% { transform: scale(0.96); opacity: 0.85; border-width: 2.5px; }
+      18% { transform: scale(1.48); opacity: 0; border-width: 1px; }
+      19%, 100% { transform: scale(1); opacity: 0; }
+    }
+    @keyframes getvoxly-pulse-ring-continuous {
+      0% { transform: scale(0.96); opacity: 0.85; border-width: 2.5px; }
+      100% { transform: scale(1.48); opacity: 0; border-width: 1px; }
+    }
+    @keyframes getvoxly-pulse-btn-periodic {
+      0%, 20%, 100% { transform: scale(1); }
+      8% { transform: scale(1.05); }
+    }
+    @keyframes getvoxly-pulse-btn-continuous {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    @keyframes getvoxly-glow-periodic {
+      0%, 22%, 100% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.2)) !important;
+      }
+      11% {
+        box-shadow: 0 0 32px var(--accent-color, #6366F1), 0 0 16px var(--accent-color, #6366F1) !important;
+        filter: drop-shadow(0 0 20px var(--accent-color, #6366F1)) !important;
+      }
+    }
+    @keyframes getvoxly-glow-continuous {
+      0%, 100% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.2)) !important;
+      }
+      50% {
+        box-shadow: 0 0 32px var(--accent-color, #6366F1), 0 0 16px var(--accent-color, #6366F1) !important;
+        filter: drop-shadow(0 0 20px var(--accent-color, #6366F1)) !important;
+      }
+    }
+
+    @keyframes getvoxly-bounce-periodic {
+      0%, 24%, 100% { transform: translateY(0); }
+      7% { transform: translateY(-8px) scale(1.02); }
+      13% { transform: translateY(0) scale(0.98); }
+      17% { transform: translateY(-3px) scale(1.01); }
+      20% { transform: translateY(0) scale(1); }
+    }
+    @keyframes getvoxly-bounce-continuous {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+
+    @keyframes getvoxly-mascot-shimmer-periodic {
+      0%, 20%, 100% { filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)) brightness(1); }
+      10% { filter: drop-shadow(0 12px 28px var(--accent-color, #6366F1)) brightness(1.3); }
+    }
+    @keyframes getvoxly-mascot-shimmer-continuous {
+      0%, 100% { filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)) brightness(1); }
+      50% { filter: drop-shadow(0 12px 28px var(--accent-color, #6366F1)) brightness(1.3); }
     }
 
     .getvoxly-widget-bubble {
@@ -179,13 +247,126 @@
       align-items: center !important;
       justify-content: center !important;
       position: relative !important;
-      animation: getvoxlyPulse 2.4s infinite !important;
       transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s !important;
       user-select: none !important;
       border: none !important;
       outline: none !important;
       visibility: visible !important;
       opacity: 1 !important;
+    }
+
+    /* Эффект: Shimmer */
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer {
+      position: relative !important;
+      overflow: hidden !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer::after {
+      content: '' !important;
+      position: absolute !important;
+      top: -60% !important;
+      left: -60% !important;
+      width: 220% !important;
+      height: 220% !important;
+      background: linear-gradient(
+        115deg,
+        transparent 20%,
+        rgba(255, 255, 255, 0) 35%,
+        rgba(255, 255, 255, 0.7) 50%,
+        rgba(255, 255, 255, 0) 65%,
+        transparent 80%
+      ) !important;
+      transform: translate3d(-120%, -120%, 0) rotate(25deg) !important;
+      pointer-events: none !important;
+      z-index: 5 !important;
+      animation: getvoxly-shimmer-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: transform, opacity !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer.is-continuous::after {
+      animation: getvoxly-shimmer-continuous 2.4s ease-in-out infinite !important;
+    }
+
+    /* Shimmer для Маскота */
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer {
+      overflow: visible !important;
+      animation: getvoxly-mascot-shimmer-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer.is-continuous {
+      animation: getvoxly-mascot-shimmer-continuous 2.4s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer::after {
+      display: none !important;
+    }
+
+    /* Эффект: Pulse */
+    .getvoxly-widget-bubble.getvoxly-effect-pulse {
+      position: relative !important;
+      overflow: visible !important;
+      animation: getvoxly-pulse-btn-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: transform !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse.is-continuous {
+      animation: getvoxly-pulse-btn-continuous 2.2s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse::before {
+      content: '' !important;
+      position: absolute !important;
+      inset: -3px !important;
+      border-radius: 50% !important;
+      border: 2px solid var(--accent-color, #6366F1) !important;
+      pointer-events: none !important;
+      z-index: -1 !important;
+      animation: getvoxly-pulse-ring-periodic var(--attention-duration, 6s) cubic-bezier(0.2, 0.8, 0.2, 1) infinite !important;
+      will-change: transform, opacity !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse.is-continuous::before {
+      animation: getvoxly-pulse-ring-continuous 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite !important;
+    }
+
+    /* Эффект: Glow */
+    .getvoxly-widget-bubble.getvoxly-effect-glow {
+      position: relative !important;
+      overflow: visible !important;
+      animation: getvoxly-glow-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: box-shadow, filter !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-glow.is-continuous {
+      animation: getvoxly-glow-continuous 2.6s ease-in-out infinite !important;
+    }
+
+    /* Эффект: Bounce */
+    .getvoxly-widget-bubble.getvoxly-effect-bounce {
+      position: relative !important;
+      animation: getvoxly-bounce-periodic var(--attention-duration, 6s) cubic-bezier(0.34, 1.56, 0.64, 1) infinite !important;
+      will-change: transform !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-bounce.is-continuous {
+      animation: getvoxly-bounce-continuous 2.8s ease-in-out infinite !important;
+    }
+
+    /* Специфика для маскота при bounce / glow / pulse */
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-bounce {
+      animation: getvoxly-bounce-periodic var(--attention-duration, 6s) cubic-bezier(0.34, 1.56, 0.64, 1) infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-bounce.is-continuous {
+      animation: getvoxly-bounce-continuous 2.8s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-glow {
+      animation: getvoxly-glow-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-glow.is-continuous {
+      animation: getvoxly-glow-continuous 2.6s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-pulse {
+      animation: getvoxly-pulse-btn-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-pulse.is-continuous {
+      animation: getvoxly-pulse-btn-continuous 2.2s ease-in-out infinite !important;
+    }
+
+    .getvoxly-widget-bubble:hover,
+    .getvoxly-widget-bubble:hover::before,
+    .getvoxly-widget-bubble:hover::after {
+      animation: none !important;
     }
     .getvoxly-widget-bubble:hover {
       animation: none !important;
@@ -219,6 +400,11 @@
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
       animation: none !important;
     }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::after {
+      animation: none !important;
+      display: none !important;
+    }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon {
       display: none !important;
     }
@@ -227,6 +413,17 @@
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
       display: none !important;
+    }
+
+    /* Поддержка режима уменьшения движения (prefers-reduced-motion) */
+    @media (prefers-reduced-motion: reduce) {
+      .getvoxly-widget-bubble,
+      .getvoxly-widget-bubble::before,
+      .getvoxly-widget-bubble::after {
+        animation: none !important;
+        transform: none !important;
+        transition: none !important;
+      }
     }
 
     .getvoxly-widget-bubble.is-photo {
@@ -1518,6 +1715,10 @@
     sendTelemetry('dom_appended', 'bubble_ready');
 
     var bubble = document.getElementById('getvoxly-bubble');
+    if (bubble) {
+      bubble.classList.add('getvoxly-effect-shimmer');
+      bubble.style.setProperty('--attention-duration', '6s');
+    }
     var bubbleIcon = document.getElementById('getvoxly-bubble-icon');
     var badge = document.getElementById('getvoxly-badge');
     var messagesContainer = document.getElementById('getvoxly-messages');
@@ -2209,6 +2410,34 @@
           wrapper.style.setProperty('--accent-color', accent);
           wrapper.style.setProperty('--badge-color', accent);
           win.style.setProperty('--accent-color', accent);
+
+          // Настройка эффекта привлечения внимания к кнопке
+          if (bubble) {
+            bubble.classList.remove(
+              'getvoxly-effect-none',
+              'getvoxly-effect-shimmer',
+              'getvoxly-effect-pulse',
+              'getvoxly-effect-glow',
+              'getvoxly-effect-bounce',
+              'is-continuous'
+            );
+            var attentionEff = data.attentionEffect || 'shimmer';
+            var attentionInt = typeof data.attentionInterval === 'number' ? data.attentionInterval : 5;
+            if (data.attentionEnabled === false) {
+              attentionEff = 'none';
+            }
+            if (attentionEff && attentionEff !== 'none') {
+              bubble.classList.add('getvoxly-effect-' + attentionEff);
+              if (attentionInt === 0) {
+                bubble.classList.add('is-continuous');
+              } else {
+                var dur = attentionInt === 3 ? 4 : attentionInt === 5 ? 6 : attentionInt === 10 ? 12 : attentionInt === 15 ? 18 : (attentionInt + 1.2);
+                bubble.style.setProperty('--attention-duration', dur + 's');
+              }
+            } else {
+              bubble.classList.add('getvoxly-effect-none');
+            }
+          }
 
           // Настройка всплывающего бейджа и динамической смены фраз
           var badgeEl = document.getElementById('getvoxly-badge');

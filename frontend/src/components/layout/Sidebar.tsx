@@ -17,6 +17,8 @@ import {
   ListChecks,
   BarChart3,
   PlusCircle,
+  Check,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
@@ -28,6 +30,7 @@ import { userInitials } from "@/lib/api/use-tenant-users";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { CreateTenantDialog } from "@/components/partner/CreateTenantDialog";
 import { Logo } from "@/components/brand";
+import { useWorkspaces, switchWorkspace } from "@/lib/api/use-workspaces";
 import {
   MARKETPLACE_NAV,
   PLATFORM_NAV,
@@ -104,10 +107,50 @@ export function Sidebar({
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [createTenantOpen, setCreateTenantOpen] = useState(false);
+  const [switchingSlug, setSwitchingSlug] = useState<string | null>(null);
 
   const { data: profile } = useProfile();
+  const { data: workspacesData } = useWorkspaces();
 
   const displayTenant = tenant ?? { tenantName: "", slug: "", plan: "", installedModules: [] };
+
+  const workspaces = useMemo(() => {
+    if (workspacesData && workspacesData.length > 0) return workspacesData;
+    if (displayTenant.slug) {
+      return [
+        {
+          id: tenant?.tenantId ?? "current",
+          name: displayTenant.tenantName || "Рабочее пространство",
+          slug: displayTenant.slug,
+          plan: displayTenant.plan,
+          status: "active",
+          is_current: true,
+          is_parent: false,
+          role: user?.role ?? "member",
+        },
+      ];
+    }
+    return [];
+  }, [workspacesData, displayTenant, tenant, user]);
+
+  const handleSwitchWorkspace = async (targetSlug: string) => {
+    if (targetSlug === displayTenant.slug) {
+      setTenantMenuOpen(false);
+      return;
+    }
+    try {
+      setSwitchingSlug(targetSlug);
+      await switchWorkspace(
+        targetSlug,
+        displayTenant.slug,
+        user?.email,
+        user?.name,
+      );
+    } catch (err) {
+      console.error("Не удалось переключить организацию", err);
+      setSwitchingSlug(null);
+    }
+  };
 
   const installedSlugs = useMemo(
     () => new Set((liveModules ?? []).map((module) => module.slug)),
@@ -218,32 +261,92 @@ export function Sidebar({
             <div
               role="menu"
               className={cn(
-                "absolute z-50 mt-1 overflow-hidden rounded-xl border border-[#e5e5e5] bg-white shadow-lg",
-                collapsed ? "left-full top-2 ml-2 w-56" : "left-2.5 right-2.5",
+                "absolute z-50 mt-1 max-h-[85vh] overflow-y-auto rounded-xl border border-[#e5e5e5] bg-white shadow-lg",
+                collapsed ? "left-full top-2 ml-2 w-64" : "left-2.5 right-2.5",
               )}
             >
-              <p className="border-b border-[#f0f0f0] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
-                Компания
-              </p>
-              {TENANT_MENU.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  role="menuitem"
-                  onClick={() => setTenantMenuOpen(false)}
-                  className="flex items-start gap-2.5 px-3 py-2 text-[13px] transition-colors hover:bg-black/[0.03]"
-                >
-                  <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-[#666666]" />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium text-[#111111]">
-                      {item.label}
+              <div className="border-b border-[#f0f0f0] px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
+                Организации
+              </div>
+              <div className="max-h-52 overflow-y-auto divide-y divide-[#f7f7f7]">
+                {workspaces.map((ws) => (
+                  <button
+                    key={ws.id}
+                    type="button"
+                    disabled={switchingSlug !== null}
+                    onClick={() => handleSwitchWorkspace(ws.slug)}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-black/[0.03]",
+                      ws.is_current && "bg-[#4a38f5]/[0.04]",
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div
+                        className={cn(
+                          "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] font-semibold",
+                          ws.is_current
+                            ? "bg-[#4a38f5] text-white"
+                            : "bg-black/[0.07] text-[#111111]",
+                        )}
+                      >
+                        {ws.name.charAt(0)}
+                      </div>
+                      <div className="min-w-0 truncate">
+                        <span
+                          className={cn(
+                            "block truncate text-[13px]",
+                            ws.is_current
+                              ? "font-semibold text-[#111111]"
+                              : "font-medium text-[#333333]",
+                          )}
+                        >
+                          {ws.name}
+                        </span>
+                        <span className="block truncate text-[10px] text-[#888888]">
+                          {ws.slug}.getvoxly.ru
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {switchingSlug === ws.slug ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+                      ) : ws.is_current ? (
+                        <Check className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      ) : (
+                        <span className="rounded-[4px] border border-emerald-200 bg-emerald-50 px-1.5 py-0.2 text-[10px] font-medium text-emerald-700">
+                          {ws.status === "active" ? "активен" : ws.status}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="border-t border-[#f0f0f0]">
+                <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[#888888]">
+                  Компания
+                </p>
+                {TENANT_MENU.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    role="menuitem"
+                    onClick={() => setTenantMenuOpen(false)}
+                    className="flex items-start gap-2.5 px-3 py-2 text-[13px] transition-colors hover:bg-black/[0.03]"
+                  >
+                    <item.icon className="mt-0.5 h-4 w-4 shrink-0 text-[#666666]" />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-[#111111]">
+                        {item.label}
+                      </span>
+                      <span className="block truncate text-[11px] text-[#888888]">
+                        {item.description}
+                      </span>
                     </span>
-                    <span className="block truncate text-[11px] text-[#888888]">
-                      {item.description}
-                    </span>
-                  </span>
-                </Link>
-              ))}
+                  </Link>
+                ))}
+              </div>
 
               {canCreateTenant && (
                 <>
