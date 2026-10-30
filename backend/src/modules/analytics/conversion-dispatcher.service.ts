@@ -3,13 +3,16 @@ import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
 import { createHash } from "node:crypto";
 import { getEnv } from "../../config/env.js";
 import { requireDurableQueue } from "../../infrastructure/redis.js";
-import { query } from "../../db/client.js";
+import { query, queryOne } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
 import type {
   AnalyticsIntegrationRow,
   AnalyticsProvider,
+  ConversionDeliveryAttemptRow,
   ConversionEventPayload,
   ConversionResult,
+  TestQueueResult,
+  TestQueueStatus,
 } from "./analytics.types.js";
 import type { IConversionProvider } from "./conversion-provider.interface.js";
 import { YandexConversionProvider } from "./providers/yandex-conversion.provider.js";
@@ -49,7 +52,9 @@ export function maskToken(val: unknown): string {
 
 function conversionEventKey(payload: ConversionEventPayload, provider: AnalyticsProvider): string {
   return createHash("sha256")
-    .update(`${payload.tenantId}:${payload.dealId}:${provider}:${payload.stageId}:${payload.eventName}`)
+    .update(
+      `${payload.tenantId}:${payload.dealId || payload.jobId || "test"}:${provider}:${payload.stageId || "test"}:${payload.eventName}`,
+    )
     .digest("hex");
 }
 
@@ -97,32 +102,33 @@ export class ConversionDispatcherService {
       };
 
       this.bullQueue = new Queue<ConversionEventPayload>(QUEUE_NAME, {
-          connection,
-          defaultJobOptions: {
-            attempts: 5,
-            backoff: {
-              type: "exponential",
-              delay: 3000,
-            },
-            removeOnComplete: true,
+        connection,
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: {
+            type: "exponential",
+            delay: 3000,
           },
+          removeOnComplete: true,
+        },
       });
       registerBullQueue(QUEUE_NAME, this.bullQueue as Queue<unknown>);
 
-        this.bullWorker = new Worker<ConversionEventPayload>(
-          QUEUE_NAME,
-          async (job: { data: ConversionEventPayload }) => {
-            await this.processEvent(job.data);
-          },
-          { connection, concurrency: 5 },
-        );
+      this.bullWorker = new Worker<ConversionEventPayload>(
+        QUEUE_NAME,
+        async (job: { data: ConversionEventPayload }) => {
+          await this.processEvent(job.data);
+        },
+        { connection, concurrency: 5 },
+      );
 
-        this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
-          // Логгер сбоев при отправке конверсий
-          console.warn(`[ConversionDispatcher] Job ${job?.id} failed:`, err.message);
-        });
+      this.bullWorker.on("failed", (job: { id?: string } | undefined, err: Error) => {
+        console.error(
+          `[ConversionDispatcher] Job ${job?.id ?? "unknown"} failed permanently:`,
+          err.message,
+        );
+      });
     } catch (err) {
-      requireDurableQueue(QUEUE_NAME);
       console.warn("[ConversionDispatcher] Failed to connect BullMQ to Redis:", err);
     }
   }
@@ -133,10 +139,84 @@ export class ConversionDispatcherService {
       return;
     }
 
-    // In-memory fallback is intentionally limited to development and tests.
     requireDurableQueue(QUEUE_NAME);
     this.inMemoryQueue.push(payload);
-    void this.processNextInMemory();
+    void this.drainInMemoryQueue();
+  }
+
+  /**
+   * Постановка тестовой задачи в очередь BullMQ для проверки отредактированных настроек.
+   */
+  async enqueueTestEvent(
+    tenantId: string,
+    provider: AnalyticsProvider,
+  ): Promise<TestQueueResult> {
+    const jobId = `test_${provider}_${Date.now()}`;
+    const testPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: null,
+      dealTitle: "Тестовая проверка настроек",
+      stageId: "test-stage-id",
+      stageName: "Тест",
+      isWon: true,
+      isLost: false,
+      budget: 1000,
+      currency: "RUB",
+      email: "test@example.com",
+      phone: "+79991234567",
+      eventName: "TestConversion",
+      isTest: true,
+      jobId,
+    };
+
+    if (this.bullQueue) {
+      const job = await this.bullQueue.add("test-conversion", testPayload, {
+        jobId,
+        attempts: 1,
+        removeOnComplete: false,
+      });
+      return {
+        jobId: job.id || jobId,
+        provider,
+        status: "enqueued",
+        message: "Тестовая задача поставлена в очередь BullMQ",
+      };
+    }
+
+    // In-memory обработка при отсутствии Redis
+    void this.processEvent(testPayload);
+    return {
+      jobId,
+      provider,
+      status: "enqueued",
+      message: "Тестовая задача поставлена на локальное выполнение",
+    };
+  }
+
+  /**
+   * Получение статуса выполнения тестовой задачи из базы попыток
+   */
+  async getJobStatus(tenantId: string, jobId: string): Promise<TestQueueStatus | null> {
+    const row = await queryOne<ConversionDeliveryAttemptRow>(
+      `SELECT status, attempts, last_status, last_error, response_snippet, delivered_at
+       FROM conversion_delivery_attempts
+       WHERE tenant_id = $1 AND job_id = $2
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [tenantId, jobId],
+    );
+
+    if (!row) return null;
+
+    return {
+      jobId,
+      status: row.status,
+      attempts: row.attempts,
+      lastStatus: row.last_status,
+      lastError: row.last_error,
+      responseSnippet: row.response_snippet,
+      deliveredAt: row.delivered_at ? new Date(row.delivered_at).toISOString() : null,
+    };
   }
 
   async handleDealStageChanged(payload: {
@@ -213,6 +293,26 @@ export class ConversionDispatcherService {
       (contactCustomFields.yandex_client_id as string) ||
       null;
 
+    const yandexuid =
+      (dealCustomFields.yandexuid as string) ||
+      (contactCustomFields.yandexuid as string) ||
+      null;
+
+    const gaId =
+      (dealCustomFields.ga_id as string) ||
+      (contactCustomFields.ga_id as string) ||
+      null;
+
+    const fbId =
+      (dealCustomFields.fb_id as string) ||
+      (contactCustomFields.fb_id as string) ||
+      null;
+
+    const tmrLvid =
+      (dealCustomFields.tmr_lvid as string) ||
+      (contactCustomFields.tmr_lvid as string) ||
+      null;
+
     const eventPayload: ConversionEventPayload = {
       tenantId,
       dealId: deal.id,
@@ -221,24 +321,27 @@ export class ConversionDispatcherService {
       stageName: deal.stage_name,
       isWon: deal.is_won,
       isLost: deal.is_lost,
-      budget: Number(deal.budget || 0),
+      budget: parseFloat(deal.budget) || 0,
       currency: deal.currency || "RUB",
       contactId: deal.contact_id,
       clientId,
       ymUid,
-      gaId: clientId,
+      yandexuid,
+      gaId,
+      fbId,
+      tmrLvid,
       email,
       phone,
-      eventName: deal.is_won ? "Purchase" : "Lead",
-      timestamp: new Date().toISOString(),
+      eventName: deal.is_won ? "Purchase" : "DealStageChanged",
     };
 
     await this.enqueueEvent(eventPayload);
   }
 
-  private async processNextInMemory(): Promise<void> {
-    if (this.isProcessingInMemory || this.inMemoryQueue.length === 0) return;
+  private async drainInMemoryQueue(): Promise<void> {
+    if (this.isProcessingInMemory) return;
     this.isProcessingInMemory = true;
+
     try {
       while (this.inMemoryQueue.length > 0) {
         const item = this.inMemoryQueue.shift();
@@ -252,9 +355,9 @@ export class ConversionDispatcherService {
   }
 
   async processEvent(payload: ConversionEventPayload): Promise<ConversionResult[]> {
-    // 1. Получаем активные интеграции для тенанта
+    // Получаем активные интеграции для тенанта
     const integrations = await query<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, site_url, counter_id, channel_account_id, is_default, config, is_active, created_at, updated_at
        FROM analytics_integrations
        WHERE tenant_id = $1 AND is_active = true`,
       [payload.tenantId],
@@ -266,7 +369,6 @@ export class ConversionDispatcherService {
 
     const results: ConversionResult[] = [];
 
-    // 2. Рассылаем событие параллельно во все подключенные счетчики
     for (const integration of integrations) {
       const provider = this.providers.get(integration.provider);
       if (!provider) continue;
@@ -274,12 +376,10 @@ export class ConversionDispatcherService {
       const rawConfig = integration.config || {};
       const stageEvents = (rawConfig.stageEvents as Record<string, string>) || {};
 
-      // Определяем имя события: маппинг из стадии -> дефолт по статусу (Purchase / QualifiedLead / Lead)
       const mappedEventName =
-        stageEvents[payload.stageId] ||
+        stageEvents[payload.stageId || ""] ||
         (payload.isWon ? "Purchase" : payload.eventName || "Lead");
 
-      // Расшифровываем токены для сетевого вызова
       const decryptedConfig: Record<string, unknown> = { ...rawConfig };
       if (typeof decryptedConfig.oauthToken === "string") {
         decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
@@ -299,16 +399,26 @@ export class ConversionDispatcherService {
       const eventKey = conversionEventKey(eventPayloadWithMappedName, integration.provider);
       const claimed = await query<{ id: string }>(
         `INSERT INTO conversion_delivery_attempts
-           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload)
-         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb)
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, locked_until, payload, is_test, job_id)
+         VALUES ($1, $2, $3, $4, $5, 'pending', 1, now() + interval '5 minutes', $6::jsonb, $7, $8)
          ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
          SET status = 'pending', attempts = conversion_delivery_attempts.attempts + 1,
              locked_until = now() + interval '5 minutes', last_error = NULL,
-             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name
+             updated_at = now(), payload = EXCLUDED.payload, event_name = EXCLUDED.event_name,
+             is_test = EXCLUDED.is_test, job_id = EXCLUDED.job_id
          WHERE conversion_delivery_attempts.status <> 'sent'
            AND (conversion_delivery_attempts.locked_until IS NULL OR conversion_delivery_attempts.locked_until < now())
          RETURNING id`,
-        [payload.tenantId, payload.dealId, integration.provider, eventKey, mappedEventName, JSON.stringify(eventPayloadWithMappedName)],
+        [
+          payload.tenantId,
+          payload.dealId ?? null,
+          integration.provider,
+          eventKey,
+          mappedEventName,
+          JSON.stringify(eventPayloadWithMappedName),
+          Boolean(payload.isTest),
+          payload.jobId ?? null,
+        ],
       );
       if (claimed.length === 0) continue;
 
@@ -331,10 +441,10 @@ export class ConversionDispatcherService {
          SET status = $3, last_status = $4, last_error = $5, response_snippet = $6,
              delivered_at = CASE WHEN $3 = 'sent' THEN now() ELSE NULL END,
              locked_until = NULL, updated_at = now()
-         WHERE tenant_id = $1 AND deal_id = $2 AND provider = $7 AND event_key = $8`,
+         WHERE tenant_id = $1 AND provider = $7 AND event_key = $8`,
         [
           payload.tenantId,
-          payload.dealId,
+          payload.dealId ?? null,
           result.success ? "sent" : "failed",
           result.status,
           result.error ?? null,

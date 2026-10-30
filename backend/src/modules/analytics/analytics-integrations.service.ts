@@ -6,6 +6,9 @@ import {
   type AnalyticsIntegrationRow,
   type AnalyticsProvider,
   type ConversionResult,
+  type CreateAnalyticsIntegrationPayload,
+  type TestQueueResult,
+  type TestQueueStatus,
   type UpdateAnalyticsIntegrationPayload,
 } from "./analytics.types.js";
 import { conversionDispatcher, maskToken } from "./conversion-dispatcher.service.js";
@@ -30,134 +33,263 @@ function maskConfigSecrets(config: Record<string, unknown>): Record<string, unkn
   return result;
 }
 
+function rowToDto(row: AnalyticsIntegrationRow): AnalyticsIntegrationDTO {
+  return {
+    id: row.id,
+    provider: row.provider,
+    siteName: row.site_name || "Основной сайт",
+    siteUrl: row.site_url,
+    counterId: row.counter_id,
+    channelAccountId: row.channel_account_id,
+    isDefault: row.is_default,
+    config: maskConfigSecrets(row.config || {}),
+    isActive: row.is_active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
 export class AnalyticsIntegrationsService {
+  /**
+   * Возвращает все подключенные счётчики и сайты тенанта
+   */
   async listIntegrations(tenantId: string): Promise<AnalyticsIntegrationDTO[]> {
     const rows = await query<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, site_url, counter_id,
+              channel_account_id, is_default, config, is_active, created_at, updated_at
        FROM analytics_integrations
-       WHERE tenant_id = $1`,
+       WHERE tenant_id = $1
+       ORDER BY is_default DESC, created_at ASC`,
       [tenantId],
     );
 
-    const byProvider = new Map<AnalyticsProvider, AnalyticsIntegrationRow>();
-    for (const r of rows) {
-      byProvider.set(r.provider, r);
-    }
-
-    // Возвращаем все 5 поддерживаемых провайдеров (даже если еще не настроены)
-    return ANALYTICS_PROVIDERS.map((provider) => {
-      const existing = byProvider.get(provider);
-      if (existing) {
-        return {
-          id: existing.id,
-          provider: existing.provider,
-          config: maskConfigSecrets(existing.config || {}),
-          isActive: existing.is_active,
-          createdAt: toIso(existing.created_at),
-          updatedAt: toIso(existing.updated_at),
-        };
-      }
-
-      return {
+    if (rows.length === 0) {
+      // Для каждого из 5 провайдеров возвращаем пустую болванку для первого запуска
+      return ANALYTICS_PROVIDERS.map((provider) => ({
         id: "",
         provider,
+        siteName: "Основной сайт",
+        siteUrl: null,
+        counterId: null,
+        channelAccountId: null,
+        isDefault: true,
         config: {},
         isActive: false,
         createdAt: "",
         updatedAt: "",
-      };
-    });
+      }));
+    }
+
+    return rows.map(rowToDto);
   }
 
+  /**
+   * Создание нового счётчика / интеграции сайта
+   */
+  async createIntegration(
+    tenantId: string,
+    payload: CreateAnalyticsIntegrationPayload,
+  ): Promise<AnalyticsIntegrationDTO> {
+    const encryptedConfig = this.processIncomingSecrets({}, payload.config || {});
+
+    const counterId =
+      payload.counterId ||
+      String(payload.config?.counterId || payload.config?.measurementId || payload.config?.pixelId || "");
+
+    const isDefault = payload.isDefault !== undefined ? payload.isDefault : false;
+
+    // Если создается как default, снимаем предыдущий default для этого провайдера
+    if (isDefault) {
+      await query(
+        `UPDATE analytics_integrations SET is_default = false
+         WHERE tenant_id = $1 AND provider = $2`,
+        [tenantId, payload.provider],
+      );
+    }
+
+    const row = await queryOne<AnalyticsIntegrationRow>(
+      `INSERT INTO analytics_integrations (
+         tenant_id, provider, site_name, site_url, counter_id,
+         channel_account_id, is_default, config, is_active
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+       RETURNING id, tenant_id, provider, site_name, site_url, counter_id,
+                 channel_account_id, is_default, config, is_active, created_at, updated_at`,
+      [
+        tenantId,
+        payload.provider,
+        payload.siteName || "Сайт",
+        payload.siteUrl || null,
+        counterId || null,
+        payload.channelAccountId || null,
+        isDefault,
+        JSON.stringify(encryptedConfig),
+        payload.isActive !== undefined ? payload.isActive : true,
+      ],
+    );
+
+    if (!row) throw new Error("Failed to create integration");
+    return rowToDto(row);
+  }
+
+  /**
+   * Обновление интеграции по её уникальному UUID
+   */
+  async updateIntegrationById(
+    tenantId: string,
+    id: string,
+    payload: UpdateAnalyticsIntegrationPayload,
+  ): Promise<AnalyticsIntegrationDTO> {
+    const existing = await queryOne<AnalyticsIntegrationRow>(
+      `SELECT * FROM analytics_integrations WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+
+    if (!existing) {
+      throw new Error(`Integration with id ${id} not found`);
+    }
+
+    const updatedConfig = this.processIncomingSecrets(existing.config || {}, payload.config || {});
+    const counterId =
+      payload.counterId !== undefined
+        ? payload.counterId
+        : String(payload.config?.counterId || payload.config?.measurementId || payload.config?.pixelId || existing.counter_id || "");
+
+    const isDefault = payload.isDefault !== undefined ? payload.isDefault : existing.is_default;
+    if (isDefault && !existing.is_default) {
+      await query(
+        `UPDATE analytics_integrations SET is_default = false
+         WHERE tenant_id = $1 AND provider = $2 AND id <> $3`,
+        [tenantId, existing.provider, id],
+      );
+    }
+
+    const updated = await queryOne<AnalyticsIntegrationRow>(
+      `UPDATE analytics_integrations
+       SET site_name = COALESCE($3, site_name),
+           site_url = COALESCE($4, site_url),
+           counter_id = COALESCE($5, counter_id),
+           channel_account_id = COALESCE($6, channel_account_id),
+           is_default = $7,
+           config = $8::jsonb,
+           is_active = COALESCE($9, is_active),
+           updated_at = now()
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING id, tenant_id, provider, site_name, site_url, counter_id,
+                 channel_account_id, is_default, config, is_active, created_at, updated_at`,
+      [
+        id,
+        tenantId,
+        payload.siteName ?? null,
+        payload.siteUrl ?? null,
+        counterId || null,
+        payload.channelAccountId ?? null,
+        isDefault,
+        JSON.stringify(updatedConfig),
+        payload.isActive ?? null,
+      ],
+    );
+
+    if (!updated) throw new Error("Failed to update integration");
+    return rowToDto(updated);
+  }
+
+  /**
+   * Удаление интеграции
+   */
+  async deleteIntegration(tenantId: string, id: string): Promise<boolean> {
+    const res = await query(
+      `DELETE FROM analytics_integrations WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+    return res.length > 0;
+  }
+
+  /**
+   * Обратная совместимость для getIntegration по провайдеру (возвращает дефолтный)
+   */
   async getIntegration(
     tenantId: string,
     provider: AnalyticsProvider,
   ): Promise<AnalyticsIntegrationDTO | null> {
     const row = await queryOne<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, site_url, counter_id,
+              channel_account_id, is_default, config, is_active, created_at, updated_at
        FROM analytics_integrations
-       WHERE tenant_id = $1 AND provider = $2`,
+       WHERE tenant_id = $1 AND provider = $2
+       ORDER BY is_default DESC, created_at ASC
+       LIMIT 1`,
       [tenantId, provider],
     );
 
     if (!row) return null;
-
-    return {
-      id: row.id,
-      provider: row.provider,
-      config: maskConfigSecrets(row.config || {}),
-      isActive: row.is_active,
-      createdAt: toIso(row.created_at),
-      updatedAt: toIso(row.updated_at),
-    };
+    return rowToDto(row);
   }
 
+  /**
+   * Обратная совместимость для saveIntegration по провайдеру
+   */
   async saveIntegration(
     tenantId: string,
     provider: AnalyticsProvider,
     payload: UpdateAnalyticsIntegrationPayload,
   ): Promise<AnalyticsIntegrationDTO> {
     const existing = await queryOne<AnalyticsIntegrationRow>(
-      `SELECT id, config, is_active FROM analytics_integrations
-       WHERE tenant_id = $1 AND provider = $2`,
+      `SELECT * FROM analytics_integrations
+       WHERE tenant_id = $1 AND provider = $2
+       ORDER BY is_default DESC, created_at ASC
+       LIMIT 1`,
       [tenantId, provider],
     );
 
-    const oldConfig = existing?.config || {};
-    const newConfig: Record<string, unknown> = { ...oldConfig, ...(payload.config || {}) };
+    if (existing) {
+      return this.updateIntegrationById(tenantId, existing.id, payload);
+    }
 
-    // Обработка шифрования секретов:
-    // Если пользователь передал звездочки (маску) или пустоту — сохраняем старый зашифрованный токен
+    return this.createIntegration(tenantId, {
+      provider,
+      siteName: payload.siteName || "Основной сайт",
+      siteUrl: payload.siteUrl,
+      counterId: payload.counterId,
+      channelAccountId: payload.channelAccountId,
+      isDefault: true,
+      isActive: payload.isActive,
+      config: payload.config || {},
+    });
+  }
+
+  private processIncomingSecrets(
+    oldConfig: Record<string, unknown>,
+    newIncoming: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...oldConfig, ...newIncoming };
     const secretFields = ["oauthToken", "apiSecret", "accessToken"] as const;
+
     for (const field of secretFields) {
-      const incomingVal = payload.config?.[field];
+      const incomingVal = newIncoming[field];
       if (typeof incomingVal === "string") {
         const trimmed = incomingVal.trim();
         if (trimmed.includes("***") || trimmed === "") {
-          // Сохраняем старый ключ
-          newConfig[field] = oldConfig[field];
+          merged[field] = oldConfig[field];
         } else {
-          // Новый токен — шифруем AES-256-GCM
-          newConfig[field] = encryptSecret(trimmed);
+          merged[field] = encryptSecret(trimmed);
         }
       }
     }
 
-    const isActive = payload.isActive !== undefined ? payload.isActive : (existing?.is_active ?? true);
-
-    const saved = await queryOne<AnalyticsIntegrationRow>(
-      `INSERT INTO analytics_integrations (tenant_id, provider, config, is_active)
-       VALUES ($1, $2, $3::jsonb, $4)
-       ON CONFLICT (tenant_id, provider)
-       DO UPDATE SET
-         config = EXCLUDED.config,
-         is_active = EXCLUDED.is_active,
-         updated_at = now()
-       RETURNING id, tenant_id, provider, config, is_active, created_at, updated_at`,
-      [tenantId, provider, JSON.stringify(newConfig), isActive],
-    );
-
-    if (!saved) {
-      throw new Error("Failed to save analytics integration");
-    }
-
-    return {
-      id: saved.id,
-      provider: saved.provider,
-      config: maskConfigSecrets(saved.config || {}),
-      isActive: saved.is_active,
-      createdAt: toIso(saved.created_at),
-      updatedAt: toIso(saved.updated_at),
-    };
+    return merged;
   }
 
+  /**
+   * Прямой синхронный тест соединения
+   */
   async testIntegration(
     tenantId: string,
     provider: AnalyticsProvider,
   ): Promise<ConversionResult> {
     const results = await conversionDispatcher.processEvent({
       tenantId,
-      dealId: "test-deal-id",
+      dealId: null,
       dealTitle: "Тестовая конверсия",
       stageId: "test-stage-id",
       stageName: "Тестовый этап",
@@ -168,6 +300,7 @@ export class AnalyticsIntegrationsService {
       email: "test@example.com",
       phone: "+79991234567",
       eventName: "TestConversion",
+      isTest: true,
     });
 
     const target = results.find((r) => r.provider === provider);
@@ -182,6 +315,23 @@ export class AnalyticsIntegrationsService {
     }
 
     return target;
+  }
+
+  /**
+   * Постановка тестовой задачи в фоновую очередь BullMQ
+   */
+  async testIntegrationInQueue(
+    tenantId: string,
+    provider: AnalyticsProvider,
+  ): Promise<TestQueueResult> {
+    return conversionDispatcher.enqueueTestEvent(tenantId, provider);
+  }
+
+  /**
+   * Получение статуса задачи из очереди
+   */
+  async getTestJobStatus(tenantId: string, jobId: string): Promise<TestQueueStatus | null> {
+    return conversionDispatcher.getJobStatus(tenantId, jobId);
   }
 }
 
