@@ -26,7 +26,7 @@ import { ContactActivityService } from "../contacts/contact-activity.service.js"
 
 const DEAL_COLUMNS = `
   id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-  budget, currency, custom_fields, created_by, owner_id, close_date, position,
+  budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
   closed_at, lead_notified_at, created_at, updated_at
 `;
 
@@ -39,7 +39,7 @@ const DEAL_COLUMNS = `
  */
 const DEAL_COLUMNS_WITH_LABELS = `
   d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
-  d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
+  d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
   co.phone AS company_phone,
@@ -361,8 +361,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, created_by, owner_id, close_date, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -375,6 +375,7 @@ export class DealsService {
           payload.budget,
           payload.currency,
           JSON.stringify(payload.custom_fields ?? {}),
+          JSON.stringify(payload.source_metadata ?? {}),
           createdBy,
           // Ответственный по умолчанию — создатель: сделка без владельца
           // выпадает из отчётов по менеджерам.

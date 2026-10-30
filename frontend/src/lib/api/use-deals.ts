@@ -19,6 +19,7 @@ export interface DealDTO {
   description: string;
   budget: number;
   currency: string;
+  sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   createdBy: string;
   ownerId: string | null;

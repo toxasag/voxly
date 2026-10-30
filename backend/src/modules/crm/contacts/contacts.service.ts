@@ -33,7 +33,7 @@ const CONTACT_COLUMNS_WITH_COUNTS = `
   c.phone_country_code, c.phone_calling_code, c.additional_phones,
   c.email, c.telegram_username, c.telegram_chat_id, c.whatsapp, c.socials,
   c.job_title, c.company_name, c.company_id, c.channel,
-  c.linkedin_link, c.custom_fields, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
+  c.linkedin_link, c.custom_fields, c.source_metadata, c.notes, c.is_personal, c.suppress_deal_creation, c.created_by, c.created_at, c.updated_at,
   COALESCE(d.deals_count, 0)::text AS deals_count,
   COALESCE(t.tasks_count, 0)::text AS tasks_count,
   u.name AS created_by_name
@@ -268,9 +268,9 @@ export class ContactsService {
           phone, phone_country_code, phone_calling_code, additional_phones,
           email, telegram_username, telegram_chat_id, whatsapp, socials,
           job_title, company_name, company_id, channel, linkedin_link,
-          custom_fields, notes, created_by)
+          custom_fields, source_metadata, notes, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb,
-               $14, $15, $16, $17, $18, $19::jsonb, $20, $21)
+               $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21, $22)
        RETURNING id`,
       [
         tenantId,
@@ -292,6 +292,7 @@ export class ContactsService {
         payload.channel ?? "phone",
         payload.linkedin_link ?? "",
         JSON.stringify(payload.custom_fields ?? {}),
+        JSON.stringify(payload.source_metadata ?? {}),
         payload.notes ?? "",
         createdBy ?? null,
       ],

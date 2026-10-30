@@ -12,10 +12,10 @@
     "ai-bots"
   ],
   "migrations": {
-    "expected": 59,
-    "applied": 59,
+    "expected": 60,
+    "applied": 60,
     "pending": 0,
-    "head": "0059_contact_activities_timeline"
+    "head": "0060_source_metadata_and_tabs"
   },
   "database": {
     "engine": "PostgreSQL 16",
