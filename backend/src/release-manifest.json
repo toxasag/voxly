@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0",
+  "releaseDate": "2026-10-28T17:36:01Z",
+  "gitCommit": "0e5e36d650e1bf3ceb79e5da7482363e0b7cef0d",
+  "buildId": "0e5e36d650e1bf3ceb79e5da7482363e0b7cef0d",
+  "environment": "source",
+  "targetEnvironment": "production",
+  "modules": [
+    "core",
+    "service-center",
+    "finance",
+    "ai-bots"
+  ],
+  "migrations": {
+    "expected": 58,
+    "applied": 58,
+    "pending": 0,
+    "head": "0058_force_notification_channels_rls"
+  },
+  "database": {
+    "engine": "PostgreSQL 16",
+    "publicTables": 57,
+    "rlsPolicies": 41,
+    "extensions": ["uuid-ossp", "pgcrypto", "vector"]
+  },
+  "queues": [
+    "lead-notifications",
+    "kb",
+    "conversion-events"
+  ]
+}

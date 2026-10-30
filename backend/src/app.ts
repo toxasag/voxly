@@ -46,6 +46,7 @@ import { corsOriginMatcher, getEnv } from "./config/env.js";
 import { WIDGET_SCRIPT } from "./modules/channels/widget-script.js";
 import { getRedisHealth } from "./infrastructure/redis.js";
 import { getBullQueueMetrics } from "./infrastructure/queue-metrics.js";
+import releaseManifest from "./release-manifest.json" with { type: "json" };
 import fastify from "fastify";
 
 /** Пути webhook-ов ботов и платёжных шлюзов — исключения из общего лимита, сверяются точно. */
@@ -361,6 +362,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     return reply.status(healthy ? 200 : 503).send({
       status: healthy ? "ok" : "degraded",
+      release: releaseManifest,
       database: dbReachable ? "up" : "down",
       redis,
       queues,
