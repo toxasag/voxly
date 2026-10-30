@@ -47,32 +47,30 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
   // не перенаправляем его назад на voxly.getvoxly.ru. Вместо этого автоматически переводим его в режим просмотра (impersonate)
   // арендатора, сохраняя исходную админскую сессию в бэкап и записывая новые JWT-токены в хранилище.
   useEffect(() => {
-    if (isLoading || !isAuthenticated || !canAutoSwitch || isAutoSwitching || switchError) return;
+    if (isLoading || !isAuthenticated || !canAutoSwitch) return;
     if (!hostSlug || hostSlug === "voxly" || hostSlug === tenantSlug) return;
     if (hasTriggeredRef.current) return;
 
-    let cancelled = false;
     hasTriggeredRef.current = true;
     setIsAutoSwitching(true);
+    setSwitchError(null);
 
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
-      if (!cancelled) {
-        abortController.abort();
-        setSwitchError("Превышено время ожидания ответа сервера при переключении пространства");
-        setIsAutoSwitching(false);
-      }
-    }, 8000);
+      abortController.abort();
+      setSwitchError("Превышено время ожидания ответа сервера при переключении пространства");
+      setIsAutoSwitching(false);
+    }, 12000);
 
     const enterTenantView = async () => {
       try {
         const currentAccessToken = readAccessToken();
         const currentRefreshToken = readRefreshToken();
 
-        if (currentAccessToken && currentRefreshToken && !readImpersonationBackup()) {
+        if (currentAccessToken && !readImpersonationBackup()) {
           writeImpersonationBackup({
             accessToken: currentAccessToken,
-            refreshToken: currentRefreshToken,
+            refreshToken: currentRefreshToken || currentAccessToken,
             adminUserEmail: user?.email ?? "",
             adminUserName: user?.name ?? "",
             impersonatedTenantSlug: hostSlug,
@@ -88,7 +86,7 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
 
         clearTimeout(timeoutId);
 
-        if (!cancelled && res.data) {
+        if (res.data) {
           const accessToken = res.data.access_token;
           const refreshToken = res.data.refresh_token;
 
@@ -101,22 +99,19 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         clearTimeout(timeoutId);
-        if (!cancelled) {
-          console.error("Не удалось автоматически войти в пространство арендатора:", err);
-          const msg =
-            err instanceof Error && err.name === "AbortError"
-              ? "Превышено время ожидания ответа сервера при переключении пространства"
-              : "Не удалось войти в клиентское пространство. Возможно, у вас нет прав на этот портал.";
-          setSwitchError(msg);
-          setIsAutoSwitching(false);
-        }
+        console.error("Не удалось автоматически войти в пространство арендатора:", err);
+        const msg =
+          err instanceof Error && err.name === "AbortError"
+            ? "Превышено время ожидания ответа сервера при переключении пространства"
+            : "Не удалось войти в клиентское пространство. Возможно, у вас нет прав на этот портал.";
+        setSwitchError(msg);
+        setIsAutoSwitching(false);
       }
     };
 
     void enterTenantView();
 
     return () => {
-      cancelled = true;
       clearTimeout(timeoutId);
     };
   }, [
@@ -125,9 +120,8 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
     canAutoSwitch,
     hostSlug,
     tenantSlug,
-    user,
-    isAutoSwitching,
-    switchError,
+    user?.email,
+    user?.name,
   ]);
 
   const mismatched =
