@@ -99,38 +99,33 @@ export class AgentPipelineService {
    * могут — клиент получил бы два разных ответа на одно сообщение. Берётся
    * старейший как детерминированный выбор.
    */
-  private async resolveAgent(input: {
+  /**
+   * Агент, отвечающий в этом аккаунте канала.
+   *
+   * Строгий Channel Gate: агент выбирается ИСКЛЮЧИТЕЛЬНО при наличии активной
+   * привязки в таблице `ai_agent_channel_bindings` со статусом `is_enabled = TRUE`.
+   * Никаких неявных fallback-опросов ко всем ботам тенанта: если пользователь
+   * снял отметку с канала в UI, бот не должен перехватывать сообщения.
+   *
+   * `ORDER BY a.created_at LIMIT 1`: схема допускает несколько агентов на один
+   * аккаунт, берётся старейший как детерминированный выбор.
+   */
+  async resolveAgent(input: {
     tenantId: string;
     channelAccountId: string;
   }): Promise<AgentRow | null> {
-    const bound = await queryOne<AgentRow>(
+    return queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
          AND b.channel_account_id = $2
-         AND b.is_enabled
+         AND b.is_enabled = TRUE
          AND a.deleted_at IS NULL
        ORDER BY a.created_at
        LIMIT 1`,
       [input.tenantId, input.channelAccountId],
-    );
-
-    if (bound !== null) return bound;
-
-    // Fallback: если нет персональной привязки к каналу, но в тенанте есть активный бот
-    return queryOne<AgentRow>(
-      `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt, a.wizard_config
-       FROM ai_agents a
-       WHERE a.tenant_id = $1
-         AND a.status = 'active'
-         AND a.mode = 'autoreply'
-         AND a.deleted_at IS NULL
-       ORDER BY a.created_at ASC
-       LIMIT 1`,
-      [input.tenantId],
     );
   }
 
@@ -149,7 +144,20 @@ export class AgentPipelineService {
     channelType?: string;
     dealId?: string;
   }): Promise<PipelineOutcome> {
-    // 0. Защита от автоответов личным контактам и при выключенном/приостановленном AI
+    // 0. Channel Gate: если канал не привязан к агенту (чекбокс снят или привязка удалена),
+    // немедленно прерываем обработку без обращения к LLM и без списания токенов.
+    const agent = await this.resolveAgent(input);
+    if (agent === null) {
+      return { kind: "no_agent" };
+    }
+
+    // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
+    // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
+    if (agent.status !== "active" || agent.mode !== "autoreply") {
+      return { kind: "agent_paused" };
+    }
+
+    // 1. Защита от автоответов личным контактам и при выключенном/приостановленном AI
     if (input.dealId) {
       const dealRow = await queryOne<{ id: string }>(
         `SELECT id FROM deals
@@ -182,16 +190,6 @@ export class AgentPipelineService {
       if (contactCheck !== null && (contactCheck.is_personal || contactCheck.paused_deals > 0)) {
         return { kind: "agent_paused" };
       }
-    }
-
-    const agent = await this.resolveAgent(input);
-
-    if (agent === null) return { kind: "no_agent" };
-
-    // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
-    // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
-    if (agent.status !== "active" || agent.mode !== "autoreply") {
-      return { kind: "agent_paused" };
     }
 
     if (!this.chat.isConfigured) return { kind: "llm_unavailable" };

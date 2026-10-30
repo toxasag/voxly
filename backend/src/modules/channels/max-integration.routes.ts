@@ -345,7 +345,12 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       }),
     );
 
-    if (outcome.kind === "replied") {
+    if (outcome.kind === "no_agent") {
+      request.log.info(
+        { channelAccountId, peerId },
+        "AI auto-reply skipped: channel not bound to agent (skipped_bot_disabled_for_channel)",
+      );
+    } else if (outcome.kind === "replied") {
       if (crmResult.dealId !== null) {
         await runWithTenantContext(tenantId, () =>
           crm.saveAgentReply({

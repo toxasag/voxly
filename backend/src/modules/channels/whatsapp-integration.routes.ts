@@ -284,6 +284,14 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
         }),
       );
 
+      if (outcome.kind === "no_agent") {
+        request.log.info(
+          { channelAccountId: account.id, phoneE164 },
+          "AI auto-reply skipped: channel not bound to agent (skipped_bot_disabled_for_channel)",
+        );
+        continue;
+      }
+
       if (outcome.kind === "replied") {
         if (crmResult.dealId !== null) {
           await runWithTenantContext(account.tenant_id, () =>

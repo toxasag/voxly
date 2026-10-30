@@ -750,6 +750,18 @@ export class TelegramTransportService {
       return;
     }
 
+    if (outcome.kind === "no_agent") {
+      this.log.info(
+        {
+          chatId: batch.chatId,
+          channelAccountId: batch.channelAccountId,
+          messageCount: batch.messageCount,
+        },
+        "AI auto-reply skipped: channel not bound to agent (skipped_bot_disabled_for_channel)",
+      );
+      return;
+    }
+
     // Агент не ответил — только логируем.
     this.log.info(
       {

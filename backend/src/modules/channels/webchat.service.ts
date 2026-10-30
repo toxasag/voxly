@@ -243,7 +243,7 @@ export class WebchatService {
       ),
     );
 
-    let agent = await runWithPlatformScope(() =>
+    const agent = await runWithPlatformScope(() =>
       queryOne<AgentRow>(
         `SELECT a.id, a.name, a.status
          FROM ai_agent_channel_bindings b
@@ -257,23 +257,6 @@ export class WebchatService {
         [account.tenant_id, account.id],
       ),
     );
-
-    // Fallback: если нет привязки в ai_agent_channel_bindings, но в тенанте есть активный бот
-    if (!agent) {
-      agent = await runWithPlatformScope(() =>
-        queryOne<AgentRow>(
-          `SELECT a.id, a.name, a.status
-           FROM ai_agents a
-           WHERE a.tenant_id = $1
-             AND a.status = 'active'
-             AND a.mode = 'autoreply'
-             AND a.deleted_at IS NULL
-           ORDER BY a.created_at ASC
-           LIMIT 1`,
-          [account.tenant_id],
-        ),
-      );
-    }
 
     const creds = (account.credentials ?? {}) as Record<string, unknown>;
 
@@ -714,6 +697,17 @@ export class WebchatService {
     }
 
     // 3. Вызываем AI-агента для генерации ответа.
+    // Если для этого виджета чата AI-агент не привязан — диалог остаётся в CRM
+    // для операторов без генерации автоответов.
+    if (!account.isAiEnabled) {
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "operator_needed",
+      };
+    }
+
     // Передаем агенту чистый вопрос и контекст текущей страницы для релевантного ответа
     const promptText = input.pageUrl ? `[Пользователь на странице: ${input.pageUrl}]\n${text}` : text;
     const outcome = await runWithTenantContext(account.tenantId, () =>
@@ -729,7 +723,17 @@ export class WebchatService {
 
     const botSenderName = account.consultantName || account.botName || "Онлайн-консультант";
 
-    // 3. Если агент сформировал ответ — сохраняем его в deal_messages.
+    // Если канал не привязан к агенту (no_agent) — передаем операторам без заглушки
+    if (outcome.kind === "no_agent") {
+      return {
+        dealId: crmResult.dealId,
+        contactId: crmResult.contactId,
+        replies: [],
+        status: "operator_needed",
+      };
+    }
+
+    // 4. Если агент сформировал ответ — сохраняем его в deal_messages.
     if (outcome.kind === "replied" && crmResult.dealId) {
       await runWithTenantContext(account.tenantId, () =>
         this.crm.saveAgentReply({
@@ -791,7 +795,7 @@ export class WebchatService {
       dealId: crmResult.dealId,
       contactId: crmResult.contactId,
       replies: [],
-      status: outcome.kind === "no_agent" || outcome.kind === "agent_paused" ? "operator_needed" : "agent_unavailable",
+      status: outcome.kind === "agent_paused" ? "operator_needed" : "agent_unavailable",
     };
   }
 
