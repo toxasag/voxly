@@ -23,6 +23,7 @@ import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.j
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
 import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { notificationQueue } from "../../notifications/notification.queue.js";
+import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
@@ -328,6 +329,7 @@ export class DealsService {
 
     void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
     void notificationQueue.dispatchLeadCreated({ tenantId, dealId: created.id });
+    void conversionDispatcher.handleDealCreated({ tenantId, dealId: created.id });
     return created;
   }
 

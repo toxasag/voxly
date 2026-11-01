@@ -5,14 +5,15 @@ import { getEnv } from "../../config/env.js";
 import { requireDurableQueue } from "../../infrastructure/redis.js";
 import { query, queryOne } from "../../db/client.js";
 import { decryptSecret } from "../../services/credentials-cipher.js";
-import type {
-  AnalyticsIntegrationRow,
-  AnalyticsProvider,
-  ConversionDeliveryAttemptRow,
-  ConversionEventPayload,
-  ConversionResult,
-  TestQueueResult,
-  TestQueueStatus,
+import {
+  normalizeAnalyticsProvider,
+  type AnalyticsIntegrationRow,
+  type AnalyticsProvider,
+  type ConversionDeliveryAttemptRow,
+  type ConversionEventPayload,
+  type ConversionResult,
+  type TestQueueResult,
+  type TestQueueStatus,
 } from "./analytics.types.js";
 import type { IConversionProvider } from "./conversion-provider.interface.js";
 import { YandexConversionProvider } from "./providers/yandex-conversion.provider.js";
@@ -219,6 +220,117 @@ export class ConversionDispatcherService {
     };
   }
 
+  /**
+   * Отправка серверной конверсии «Лид» при создании новой сделки
+   */
+  async handleDealCreated(payload: { tenantId: string; dealId: string }): Promise<void> {
+    const { tenantId, dealId } = payload;
+
+    const dealRows = await query<{
+      id: string;
+      title: string;
+      budget: string;
+      currency: string;
+      contact_id: string | null;
+      custom_fields: Record<string, unknown> | null;
+      source_metadata: Record<string, unknown> | null;
+      stage_name: string;
+      stage_id: string;
+      is_won: boolean;
+      is_lost: boolean;
+    }>(
+      `SELECT d.id, d.title, d.budget::text, d.currency, d.contact_id, d.custom_fields, d.source_metadata,
+              d.stage_id, s.name AS stage_name, s.is_won, s.is_lost
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    const deal = dealRows[0];
+    if (!deal) return;
+
+    let email: string | null = null;
+    let phone: string | null = null;
+    let contactCustomFields: Record<string, unknown> = {};
+
+    if (deal.contact_id) {
+      const contactRows = await query<{
+        email: string | null;
+        phone: string | null;
+        custom_fields: Record<string, unknown> | null;
+      }>(
+        `SELECT email, phone, custom_fields
+         FROM contacts
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [tenantId, deal.contact_id],
+      );
+      const contact = contactRows[0];
+      if (contact) {
+        email = contact.email;
+        phone = contact.phone;
+        if (contact.custom_fields && typeof contact.custom_fields === "object") {
+          contactCustomFields = contact.custom_fields;
+        }
+      }
+    }
+
+    const dealCustomFields =
+      deal.custom_fields && typeof deal.custom_fields === "object" ? deal.custom_fields : {};
+    const sourceMetadata =
+      deal.source_metadata && typeof deal.source_metadata === "object" ? deal.source_metadata : {};
+
+    const clientId =
+      (dealCustomFields.client_id as string) ||
+      (dealCustomFields.ga_client_id as string) ||
+      (contactCustomFields.client_id as string) ||
+      (contactCustomFields.ga_client_id as string) ||
+      (sourceMetadata.ga_client_id as string) ||
+      null;
+
+    const ymUid =
+      (dealCustomFields.ym_uid as string) ||
+      (dealCustomFields.yandex_client_id as string) ||
+      (contactCustomFields.ym_uid as string) ||
+      (contactCustomFields.yandex_client_id as string) ||
+      (sourceMetadata.ym_client_id as string) ||
+      null;
+
+    const yandexuid =
+      (dealCustomFields.yandexuid as string) ||
+      (contactCustomFields.yandexuid as string) ||
+      (sourceMetadata.yandexuid as string) ||
+      null;
+
+    const sourceUrl =
+      (sourceMetadata.url as string) ||
+      (sourceMetadata.site_url as string) ||
+      (sourceMetadata.page_url as string) ||
+      null;
+
+    const eventPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: deal.id,
+      dealTitle: deal.title,
+      stageId: deal.stage_id,
+      stageName: deal.stage_name,
+      isWon: deal.is_won,
+      isLost: deal.is_lost,
+      budget: parseFloat(deal.budget) || 0,
+      currency: deal.currency || "RUB",
+      contactId: deal.contact_id,
+      clientId,
+      ymUid,
+      yandexuid,
+      email,
+      phone,
+      eventName: "Lead",
+      sourceUrl,
+    };
+
+    await this.enqueueEvent(eventPayload);
+  }
+
   async handleDealStageChanged(payload: {
     tenantId: string;
     dealId: string;
@@ -354,10 +466,100 @@ export class ConversionDispatcherService {
     }
   }
 
+  /**
+   * Прямая синхронная проверка одного конкретного счетчика по его ID
+   */
+  async testSingleIntegration(
+    tenantId: string,
+    integration: AnalyticsIntegrationRow,
+  ): Promise<ConversionResult> {
+    const canonical = normalizeAnalyticsProvider(integration.provider);
+    const provider = this.providers.get(canonical);
+    if (!provider) {
+      return {
+        provider: integration.provider,
+        success: false,
+        eventName: "TestConversion",
+        status: 400,
+        error: `Провайдер ${integration.provider} не поддерживается`,
+      };
+    }
+
+    const rawConfig = integration.config || {};
+    const decryptedConfig: Record<string, unknown> = { ...rawConfig };
+    if (typeof decryptedConfig.oauthToken === "string") {
+      decryptedConfig.oauthToken = safeDecrypt(decryptedConfig.oauthToken);
+    }
+    if (typeof decryptedConfig.apiSecret === "string") {
+      decryptedConfig.apiSecret = safeDecrypt(decryptedConfig.apiSecret);
+    }
+    if (typeof decryptedConfig.accessToken === "string") {
+      decryptedConfig.accessToken = safeDecrypt(decryptedConfig.accessToken);
+    }
+
+    const testPayload: ConversionEventPayload = {
+      tenantId,
+      dealId: null,
+      dealTitle: `Тестовая конверсия (${integration.site_name || "Сайт"})`,
+      stageId: "test-stage-id",
+      stageName: "Тестовый этап",
+      isWon: true,
+      isLost: false,
+      budget: 1000,
+      currency: "RUB",
+      email: "test@example.com",
+      phone: "+79991234567",
+      eventName: "TestConversion",
+      isTest: true,
+      jobId: `test-${integration.id}`,
+    };
+
+    let result: ConversionResult;
+    try {
+      result = await provider.sendEvent(testPayload, decryptedConfig);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      result = {
+        provider: integration.provider,
+        success: false,
+        eventName: "TestConversion",
+        status: 500,
+        error: message,
+      };
+    }
+
+    // Записываем результат проверки в conversion_delivery_attempts
+    try {
+      const eventKey = conversionEventKey(testPayload, integration.provider);
+      await query(
+        `INSERT INTO conversion_delivery_attempts
+           (tenant_id, deal_id, provider, event_key, event_name, status, attempts, last_status, last_error, response_snippet, is_test, job_id, delivered_at)
+         VALUES ($1, NULL, $2, $3, 'TestConversion', $4, 1, $5, $6, $7, true, $8, CASE WHEN $4 = 'sent' THEN now() ELSE NULL END)
+         ON CONFLICT (tenant_id, provider, event_key) DO UPDATE
+         SET status = EXCLUDED.status, last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error,
+             response_snippet = EXCLUDED.response_snippet, delivered_at = EXCLUDED.delivered_at, updated_at = now()`,
+        [
+          tenantId,
+          integration.provider,
+          eventKey,
+          result.success ? "sent" : "failed",
+          result.status,
+          result.error ?? null,
+          result.responseSnippet ? result.responseSnippet.slice(0, 500) : null,
+          testPayload.jobId ?? null,
+        ],
+      );
+    } catch {
+      // Игнорируем ошибку логирования в базу
+    }
+
+    return result;
+  }
+
   async processEvent(payload: ConversionEventPayload): Promise<ConversionResult[]> {
     // Получаем активные интеграции для тенанта
     const integrations = await query<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, site_name, site_url, counter_id, channel_account_id, is_default, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, site_url, counter_id, channel_account_id, is_default, config, event_rules, is_active, created_at, updated_at
        FROM analytics_integrations
        WHERE tenant_id = $1 AND is_active = true`,
       [payload.tenantId],
@@ -370,8 +572,38 @@ export class ConversionDispatcherService {
     const results: ConversionResult[] = [];
 
     for (const integration of integrations) {
-      const provider = this.providers.get(integration.provider);
+      const canonical = normalizeAnalyticsProvider(integration.provider);
+      const provider = this.providers.get(canonical);
       if (!provider) continue;
+
+      // 1. Проверяем правила событий
+      const eventRules = integration.event_rules || {};
+      if (payload.isWon && eventRules.onDealWon === false) {
+        continue;
+      }
+      if (payload.eventName === "Lead" && eventRules.onLeadCreated === false) {
+        continue;
+      }
+      if (payload.eventName === "Chat" && eventRules.onFirstMessage === false) {
+        continue;
+      }
+
+      // 2. Если у события указан домен/URL источника, а у интеграции задан site_url
+      if (payload.sourceUrl && integration.site_url) {
+        try {
+          const payloadHost = new URL(
+            payload.sourceUrl.startsWith("http") ? payload.sourceUrl : `https://${payload.sourceUrl}`,
+          ).hostname.replace(/^www\./, "");
+          const intHost = new URL(
+            integration.site_url.startsWith("http") ? integration.site_url : `https://${integration.site_url}`,
+          ).hostname.replace(/^www\./, "");
+          if (payloadHost !== intHost && !integration.is_default) {
+            continue;
+          }
+        } catch {
+          // ignore url parse error
+        }
+      }
 
       const rawConfig = integration.config || {};
       const stageEvents = (rawConfig.stageEvents as Record<string, string>) || {};

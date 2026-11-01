@@ -21,25 +21,40 @@ const testQueueParamsSchema = z.object({
   jobId: z.string().min(1),
 });
 
+const eventRulesSchema = z
+  .object({
+    onLeadCreated: z.boolean().optional(),
+    onDealWon: z.boolean().optional(),
+    onFirstMessage: z.boolean().optional(),
+    stageIds: z.array(z.string()).optional(),
+  })
+  .optional();
+
 const updateIntegrationSchema = z.object({
+  name: z.string().optional(),
   siteName: z.string().optional(),
   siteUrl: z.string().nullable().optional(),
   counterId: z.string().nullable().optional(),
   channelAccountId: z.string().uuid().nullable().optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.unknown()).optional(),
+  credentials: z.record(z.unknown()).optional(),
+  eventRules: eventRulesSchema,
 });
 
 const createIntegrationSchema = z.object({
   provider: z.enum(ANALYTICS_PROVIDERS),
-  siteName: z.string().min(1, "Название сайта обязательно"),
+  name: z.string().optional(),
+  siteName: z.string().optional(),
   siteUrl: z.string().nullable().optional(),
   counterId: z.string().nullable().optional(),
   channelAccountId: z.string().uuid().nullable().optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.unknown()).optional(),
+  credentials: z.record(z.unknown()).optional(),
+  eventRules: eventRulesSchema,
 });
 
 const clickSchema = z.object({
@@ -139,20 +154,36 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
-   * Обновление интеграции по ID
+   * Обновление интеграции по ID или имени провайдера (PUT / PATCH)
    */
-  app.put("/integrations/by-id/:id", async (request, reply) => {
+  const handleUpdate = async (request: { tenant_id: string; params: unknown; body: unknown }, reply: { send: (data: unknown) => unknown }) => {
     const tenantId = request.tenant_id;
-    const { id } = idParamSchema.parse(request.params);
+    const { id } = request.params as { id: string };
     const payload = updateIntegrationSchema.parse(request.body);
-    const data = await analyticsIntegrationsService.updateIntegrationById(tenantId, id, payload);
-    return reply.send({ data });
-  });
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (isUuid) {
+      const data = await analyticsIntegrationsService.updateIntegrationById(tenantId, id, payload);
+      return reply.send({ data });
+    }
+
+    const providerResult = providerParamSchema.safeParse({ provider: id });
+    if (providerResult.success) {
+      const data = await analyticsIntegrationsService.saveIntegration(tenantId, providerResult.data.provider, payload);
+      return reply.send({ data });
+    }
+
+    throw new ValidationError("Параметр должен быть валидным UUID интеграции или именем провайдера");
+  };
+
+  app.patch("/integrations/:id", handleUpdate);
+  app.put("/integrations/:id", handleUpdate);
+  app.put("/integrations/by-id/:id", handleUpdate);
 
   /**
    * Удаление интеграции по ID
    */
-  app.delete("/integrations/by-id/:id", async (request, reply) => {
+  const handleDelete = async (request: { tenant_id: string; params: unknown }, reply: { status: (code: number) => { send: () => unknown } }) => {
     const tenantId = request.tenant_id;
     const { id } = idParamSchema.parse(request.params);
     const deleted = await analyticsIntegrationsService.deleteIntegration(tenantId, id);
@@ -160,27 +191,32 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       throw new NotFoundError("Интеграция не найдена");
     }
     return reply.status(204).send();
-  });
+  };
 
-  /**
-   * Сохранение настроек интеграции по провайдеру (обратная совместимость)
-   */
-  app.put("/integrations/:provider", async (request, reply) => {
-    const tenantId = request.tenant_id;
-    const { provider } = providerParamSchema.parse(request.params);
-    const payload = updateIntegrationSchema.parse(request.body);
-    const data = await analyticsIntegrationsService.saveIntegration(tenantId, provider, payload);
-    return reply.send({ data });
-  });
+  app.delete("/integrations/:id", handleDelete);
+  app.delete("/integrations/by-id/:id", handleDelete);
 
   /**
    * Прямая синхронная тестовая отправка события в систему аналитики
+   * Поддерживает :id (UUID конкретного счётчика) или :provider (имя провайдера)
    */
-  app.post("/integrations/:provider/test", async (request, reply) => {
+  app.post("/integrations/:id/test", async (request, reply) => {
     const tenantId = request.tenant_id;
-    const { provider } = providerParamSchema.parse(request.params);
-    const result = await analyticsIntegrationsService.testIntegration(tenantId, provider);
-    return reply.send({ data: result });
+    const { id } = request.params as { id: string };
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    if (isUuid) {
+      const result = await analyticsIntegrationsService.testIntegrationById(tenantId, id);
+      return reply.send({ data: result });
+    }
+
+    const providerResult = providerParamSchema.safeParse({ provider: id });
+    if (providerResult.success) {
+      const result = await analyticsIntegrationsService.testIntegration(tenantId, providerResult.data.provider);
+      return reply.send({ data: result });
+    }
+
+    throw new ValidationError("Параметр должен быть валидным UUID интеграции или именем провайдера");
   });
 
   /**

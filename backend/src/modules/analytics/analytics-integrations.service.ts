@@ -1,7 +1,8 @@
 import { query, queryOne } from "../../db/client.js";
 import { encryptSecret } from "../../services/credentials-cipher.js";
 import {
-  ANALYTICS_PROVIDERS,
+  normalizeAnalyticsProvider,
+  type AnalyticsEventRules,
   type AnalyticsIntegrationDTO,
   type AnalyticsIntegrationRow,
   type AnalyticsProvider,
@@ -34,15 +35,28 @@ function maskConfigSecrets(config: Record<string, unknown>): Record<string, unkn
 }
 
 function rowToDto(row: AnalyticsIntegrationRow): AnalyticsIntegrationDTO {
+  const canonical = normalizeAnalyticsProvider(row.provider);
+  const siteName = row.name || row.site_name || "Основной сайт";
+  const maskedConfig = maskConfigSecrets(row.config || {});
+  const eventRules: AnalyticsEventRules = row.event_rules || {
+    onLeadCreated: true,
+    onDealWon: true,
+    onFirstMessage: true,
+  };
+
   return {
     id: row.id,
     provider: row.provider,
-    siteName: row.site_name || "Основной сайт",
+    canonicalProvider: canonical,
+    name: siteName,
+    siteName,
     siteUrl: row.site_url,
     counterId: row.counter_id,
     channelAccountId: row.channel_account_id,
     isDefault: row.is_default,
-    config: maskConfigSecrets(row.config || {}),
+    config: maskedConfig,
+    credentials: maskedConfig,
+    eventRules,
     isActive: row.is_active,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
@@ -55,30 +69,13 @@ export class AnalyticsIntegrationsService {
    */
   async listIntegrations(tenantId: string): Promise<AnalyticsIntegrationDTO[]> {
     const rows = await query<AnalyticsIntegrationRow>(
-      `SELECT id, tenant_id, provider, site_name, site_url, counter_id,
-              channel_account_id, is_default, config, is_active, created_at, updated_at
+      `SELECT id, tenant_id, provider, site_name, name, site_url, counter_id,
+              channel_account_id, is_default, config, event_rules, is_active, created_at, updated_at
        FROM analytics_integrations
        WHERE tenant_id = $1
        ORDER BY is_default DESC, created_at ASC`,
       [tenantId],
     );
-
-    if (rows.length === 0) {
-      // Для каждого из 5 провайдеров возвращаем пустую болванку для первого запуска
-      return ANALYTICS_PROVIDERS.map((provider) => ({
-        id: "",
-        provider,
-        siteName: "Основной сайт",
-        siteUrl: null,
-        counterId: null,
-        channelAccountId: null,
-        isDefault: true,
-        config: {},
-        isActive: false,
-        createdAt: "",
-        updatedAt: "",
-      }));
-    }
 
     return rows.map(rowToDto);
   }
@@ -90,13 +87,26 @@ export class AnalyticsIntegrationsService {
     tenantId: string,
     payload: CreateAnalyticsIntegrationPayload,
   ): Promise<AnalyticsIntegrationDTO> {
-    const encryptedConfig = this.processIncomingSecrets({}, payload.config || {});
+    const rawConfig = payload.credentials || payload.config || {};
+    const encryptedConfig = this.processIncomingSecrets({}, rawConfig);
 
     const counterId =
       payload.counterId ||
-      String(payload.config?.counterId || payload.config?.measurementId || payload.config?.pixelId || "");
+      String(
+        rawConfig.counterId ||
+          rawConfig.measurementId ||
+          rawConfig.pixelId ||
+          rawConfig.conversionId ||
+          "",
+      );
 
     const isDefault = payload.isDefault !== undefined ? payload.isDefault : false;
+    const name = payload.name || payload.siteName || "Сайт";
+    const eventRules = payload.eventRules || {
+      onLeadCreated: true,
+      onDealWon: true,
+      onFirstMessage: true,
+    };
 
     // Если создается как default, снимаем предыдущий default для этого провайдера
     if (isDefault) {
@@ -109,21 +119,22 @@ export class AnalyticsIntegrationsService {
 
     const row = await queryOne<AnalyticsIntegrationRow>(
       `INSERT INTO analytics_integrations (
-         tenant_id, provider, site_name, site_url, counter_id,
-         channel_account_id, is_default, config, is_active
+         tenant_id, provider, site_name, name, site_url, counter_id,
+         channel_account_id, is_default, config, event_rules, is_active
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
-       RETURNING id, tenant_id, provider, site_name, site_url, counter_id,
-                 channel_account_id, is_default, config, is_active, created_at, updated_at`,
+       VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+       RETURNING id, tenant_id, provider, site_name, name, site_url, counter_id,
+                 channel_account_id, is_default, config, event_rules, is_active, created_at, updated_at`,
       [
         tenantId,
         payload.provider,
-        payload.siteName || "Сайт",
+        name,
         payload.siteUrl || null,
         counterId || null,
         payload.channelAccountId || null,
         isDefault,
         JSON.stringify(encryptedConfig),
+        JSON.stringify(eventRules),
         payload.isActive !== undefined ? payload.isActive : true,
       ],
     );
@@ -149,11 +160,19 @@ export class AnalyticsIntegrationsService {
       throw new Error(`Integration with id ${id} not found`);
     }
 
-    const updatedConfig = this.processIncomingSecrets(existing.config || {}, payload.config || {});
+    const incomingConfig = payload.credentials || payload.config || {};
+    const updatedConfig = this.processIncomingSecrets(existing.config || {}, incomingConfig);
     const counterId =
       payload.counterId !== undefined
         ? payload.counterId
-        : String(payload.config?.counterId || payload.config?.measurementId || payload.config?.pixelId || existing.counter_id || "");
+        : String(
+            incomingConfig.counterId ||
+              incomingConfig.measurementId ||
+              incomingConfig.pixelId ||
+              incomingConfig.conversionId ||
+              existing.counter_id ||
+              "",
+          );
 
     const isDefault = payload.isDefault !== undefined ? payload.isDefault : existing.is_default;
     if (isDefault && !existing.is_default) {
@@ -164,28 +183,34 @@ export class AnalyticsIntegrationsService {
       );
     }
 
+    const name = payload.name || payload.siteName || existing.name || existing.site_name;
+    const eventRules = payload.eventRules ? { ...(existing.event_rules || {}), ...payload.eventRules } : existing.event_rules;
+
     const updated = await queryOne<AnalyticsIntegrationRow>(
       `UPDATE analytics_integrations
        SET site_name = COALESCE($3, site_name),
+           name = COALESCE($3, name),
            site_url = COALESCE($4, site_url),
            counter_id = COALESCE($5, counter_id),
            channel_account_id = COALESCE($6, channel_account_id),
            is_default = $7,
            config = $8::jsonb,
-           is_active = COALESCE($9, is_active),
+           event_rules = COALESCE($9::jsonb, event_rules),
+           is_active = COALESCE($10, is_active),
            updated_at = now()
        WHERE id = $1 AND tenant_id = $2
-       RETURNING id, tenant_id, provider, site_name, site_url, counter_id,
-                 channel_account_id, is_default, config, is_active, created_at, updated_at`,
+       RETURNING id, tenant_id, provider, site_name, name, site_url, counter_id,
+                 channel_account_id, is_default, config, event_rules, is_active, created_at, updated_at`,
       [
         id,
         tenantId,
-        payload.siteName ?? null,
+        name ?? null,
         payload.siteUrl ?? null,
         counterId || null,
         payload.channelAccountId ?? null,
         isDefault,
         JSON.stringify(updatedConfig),
+        eventRules ? JSON.stringify(eventRules) : null,
         payload.isActive ?? null,
       ],
     );
@@ -203,6 +228,25 @@ export class AnalyticsIntegrationsService {
       [id, tenantId],
     );
     return res.length > 0;
+  }
+
+  /**
+   * Прямой синхронный тест соединения для конкретной интеграции по ID
+   */
+  async testIntegrationById(
+    tenantId: string,
+    id: string,
+  ): Promise<ConversionResult> {
+    const integration = await queryOne<AnalyticsIntegrationRow>(
+      `SELECT * FROM analytics_integrations WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId],
+    );
+
+    if (!integration) {
+      throw new Error(`Интеграция с ID ${id} не найдена`);
+    }
+
+    return conversionDispatcher.testSingleIntegration(tenantId, integration);
   }
 
   /**

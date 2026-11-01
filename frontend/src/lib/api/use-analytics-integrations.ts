@@ -3,17 +3,59 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api/apiClient";
 
-export type AnalyticsProvider = "yandex" | "ga4" | "google_ads" | "meta" | "vk";
+export type AnalyticsProvider =
+  | "yandex"
+  | "ga4"
+  | "google_ads"
+  | "meta"
+  | "vk"
+  | "yandex_metrika"
+  | "google_analytics_4"
+  | "meta_pixel"
+  | "vk_ads";
+
+export type CanonicalAnalyticsProvider = "yandex" | "ga4" | "google_ads" | "meta" | "vk";
+
+export function normalizeAnalyticsProvider(provider: string): CanonicalAnalyticsProvider {
+  switch (provider) {
+    case "yandex_metrika":
+    case "yandex":
+      return "yandex";
+    case "google_analytics_4":
+    case "ga4":
+      return "ga4";
+    case "meta_pixel":
+    case "meta":
+      return "meta";
+    case "vk_ads":
+    case "vk":
+      return "vk";
+    case "google_ads":
+    default:
+      return "google_ads";
+  }
+}
+
+export interface AnalyticsEventRules {
+  onLeadCreated?: boolean;
+  onDealWon?: boolean;
+  onFirstMessage?: boolean;
+  stageIds?: string[];
+}
 
 export interface AnalyticsIntegrationDTO {
   id: string;
   provider: AnalyticsProvider;
+  canonicalProvider?: CanonicalAnalyticsProvider;
+  name?: string;
   siteName: string;
   siteUrl: string | null;
   counterId: string | null;
   channelAccountId: string | null;
   isDefault: boolean;
   config: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  eventRules?: AnalyticsEventRules;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -21,24 +63,30 @@ export interface AnalyticsIntegrationDTO {
 
 export interface CreateIntegrationPayload {
   provider: AnalyticsProvider;
-  siteName: string;
-  siteUrl?: string | null;
-  counterId?: string | null;
-  channelAccountId?: string | null;
-  isDefault?: boolean;
-  isActive?: boolean;
-  config: Record<string, unknown>;
-}
-
-export interface UpdateIntegrationPayload {
-  id?: string;
+  name?: string;
   siteName?: string;
   siteUrl?: string | null;
   counterId?: string | null;
   channelAccountId?: string | null;
   isDefault?: boolean;
   isActive?: boolean;
-  config: Record<string, unknown>;
+  config?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  eventRules?: AnalyticsEventRules;
+}
+
+export interface UpdateIntegrationPayload {
+  id?: string;
+  name?: string;
+  siteName?: string;
+  siteUrl?: string | null;
+  counterId?: string | null;
+  channelAccountId?: string | null;
+  isDefault?: boolean;
+  isActive?: boolean;
+  config?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  eventRules?: AnalyticsEventRules;
 }
 
 export interface TestIntegrationResult {
@@ -107,17 +155,20 @@ export function useUpdateAnalyticsIntegration() {
 
   return useMutation({
     mutationFn: async ({
+      id,
       provider,
       payload,
     }: {
-      provider: AnalyticsProvider;
+      id?: string;
+      provider?: AnalyticsProvider;
       payload: UpdateIntegrationPayload;
     }): Promise<AnalyticsIntegrationDTO> => {
-      const url = payload.id
-        ? `/api/v1/analytics/integrations/by-id/${payload.id}`
-        : `/api/v1/analytics/integrations/${provider}`;
+      const targetId = id || payload.id;
+      const url = targetId
+        ? `/api/v1/analytics/integrations/${targetId}`
+        : `/api/v1/analytics/integrations/${provider || "yandex"}`;
 
-      const res = await apiClient.put<AnalyticsIntegrationDTO>(url, payload);
+      const res = await apiClient.patch<AnalyticsIntegrationDTO>(url, payload);
       return res.data;
     },
     onSuccess: () => {
@@ -131,10 +182,22 @@ export function useDeleteAnalyticsIntegration() {
 
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      await apiClient.delete(`/api/v1/analytics/integrations/by-id/${id}`);
+      await apiClient.delete(`/api/v1/analytics/integrations/${id}`);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: analyticsIntegrationsKeys.all });
+    },
+  });
+}
+
+export function useTestAnalyticsIntegrationById() {
+  return useMutation({
+    mutationFn: async (id: string): Promise<TestIntegrationResult> => {
+      const res = await apiClient.post<TestIntegrationResult>(
+        `/api/v1/analytics/integrations/${id}/test`,
+        {},
+      );
+      return res.data;
     },
   });
 }

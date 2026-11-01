@@ -46,19 +46,61 @@ export interface AnalyticsOverviewDTO {
 // Серверные конверсии и трекеры (Server-Side Conversion Tracking)
 // ---------------------------------------------------------------------------
 
-export const ANALYTICS_PROVIDERS = ["yandex", "ga4", "google_ads", "meta", "vk"] as const;
+export const ANALYTICS_PROVIDERS = [
+  "yandex",
+  "ga4",
+  "google_ads",
+  "meta",
+  "vk",
+  "yandex_metrika",
+  "google_analytics_4",
+  "meta_pixel",
+  "vk_ads",
+] as const;
+
 export type AnalyticsProvider = (typeof ANALYTICS_PROVIDERS)[number];
+
+export type CanonicalAnalyticsProvider = "yandex" | "ga4" | "google_ads" | "meta" | "vk";
+
+export function normalizeAnalyticsProvider(provider: string): CanonicalAnalyticsProvider {
+  switch (provider) {
+    case "yandex_metrika":
+    case "yandex":
+      return "yandex";
+    case "google_analytics_4":
+    case "ga4":
+      return "ga4";
+    case "meta_pixel":
+    case "meta":
+      return "meta";
+    case "vk_ads":
+    case "vk":
+      return "vk";
+    case "google_ads":
+    default:
+      return "google_ads";
+  }
+}
+
+export interface AnalyticsEventRules {
+  onLeadCreated?: boolean;
+  onDealWon?: boolean;
+  onFirstMessage?: boolean;
+  stageIds?: string[];
+}
 
 export interface AnalyticsIntegrationRow {
   id: string;
   tenant_id: string;
   provider: AnalyticsProvider;
   site_name: string;
+  name?: string | null;
   site_url: string | null;
   counter_id: string | null;
   channel_account_id: string | null;
   is_default: boolean;
   config: Record<string, unknown>;
+  event_rules?: AnalyticsEventRules | null;
   is_active: boolean;
   created_at: Date | string;
   updated_at: Date | string;
@@ -67,12 +109,16 @@ export interface AnalyticsIntegrationRow {
 export interface AnalyticsIntegrationDTO {
   id: string;
   provider: AnalyticsProvider;
+  canonicalProvider: CanonicalAnalyticsProvider;
+  name: string;
   siteName: string;
   siteUrl: string | null;
   counterId: string | null;
   channelAccountId: string | null;
   isDefault: boolean;
   config: Record<string, unknown>;
+  credentials: Record<string, unknown>;
+  eventRules: AnalyticsEventRules;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -80,16 +126,7 @@ export interface AnalyticsIntegrationDTO {
 
 export interface CreateAnalyticsIntegrationPayload {
   provider: AnalyticsProvider;
-  siteName: string;
-  siteUrl?: string | null;
-  counterId?: string | null;
-  channelAccountId?: string | null;
-  isDefault?: boolean;
-  isActive?: boolean;
-  config: Record<string, unknown>;
-}
-
-export interface UpdateAnalyticsIntegrationPayload {
+  name?: string;
   siteName?: string;
   siteUrl?: string | null;
   counterId?: string | null;
@@ -97,6 +134,21 @@ export interface UpdateAnalyticsIntegrationPayload {
   isDefault?: boolean;
   isActive?: boolean;
   config?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  eventRules?: AnalyticsEventRules;
+}
+
+export interface UpdateAnalyticsIntegrationPayload {
+  name?: string;
+  siteName?: string;
+  siteUrl?: string | null;
+  counterId?: string | null;
+  channelAccountId?: string | null;
+  isDefault?: boolean;
+  isActive?: boolean;
+  config?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
+  eventRules?: AnalyticsEventRules;
 }
 
 export interface ConversionEventPayload {
