@@ -4,6 +4,7 @@ import { TaskRemindersService } from "./modules/crm/tasks/task-reminders.service
 import { notifyTaskAssignment, type TaskAssignmentNotificationJob } from "./modules/crm/tasks/task-notification.service.js";
 import { processInvoiceReminder, type InvoiceReminderJob } from "./modules/finance/invoice-reminders.service.js";
 import { leadNotificationQueue } from "./modules/crm/leads/lead-notification.queue.js";
+import { notificationQueue } from "./modules/notifications/notification.queue.js";
 
 // ---------------------------------------------------------------------------
 // Background Worker (M7.2): обработчики задач очередей.
@@ -62,4 +63,5 @@ export function initBackgroundWorker(): void {
 export async function shutdownWorker(): Promise<void> {
   await queueManager.shutdown();
   await leadNotificationQueue.shutdown();
+  await notificationQueue.shutdown();
 }

@@ -16,6 +16,7 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
 import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
+import { notificationQueue } from "../notifications/notification.queue.js";
 import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 
@@ -791,6 +792,23 @@ export class CrmPipelineService {
 
     // Асинхронное уведомление о новом лиде (при наличии контактов и этапе не «Первый контакт»)
     void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
+
+    // Мгновенные Web Push & In-App уведомления
+    if (result.isNewDeal) {
+      void notificationQueue.dispatchLeadCreated({
+        tenantId: input.tenantId,
+        dealId: result.dealId,
+      });
+    } else {
+      const messageText = input.text.trim() || (input.attachment ? "Вложение" : "Входящее сообщение");
+      void notificationQueue.dispatchMessageReceived({
+        tenantId: input.tenantId,
+        dealId: result.dealId,
+        senderName: input.senderName,
+        text: messageText,
+        channel: input.channel,
+      });
+    }
 
     // Автоматическая генерация и синхронизация AI-выжимки в заметку сделки
     void getDealConversationSummary(input.tenantId, result.dealId).catch(() => {});
