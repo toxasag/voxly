@@ -802,7 +802,16 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                     style={{ backgroundColor: accentColor }}
                   >
                     <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white bg-white overflow-hidden">
-                      {consultantAvatar ? (
+                      {avatarType === "mascot" ? (
+                        <InteractiveMascot
+                          mascotId={mascotId}
+                          size={28}
+                          accentColor={accentColor}
+                          interactive={false}
+                          customDirections={customDirections}
+                          customReactions={customReactions}
+                        />
+                      ) : consultantAvatar ? (
                         <img
                           src={consultantAvatar}
                           alt="Аватар"

@@ -8,6 +8,7 @@ import { CheckCircle2, Gift, Plug, Plus, ShoppingBag } from "lucide-react";
 import { Guard } from "@/components/shared/Guard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ChannelAccountsTable } from "@/components/integrations/ChannelAccountsTable";
+import { ChannelAccountLinksCard } from "@/components/integrations/ChannelAccountLinksCard";
 import { ConnectChannelModal } from "@/components/integrations/ConnectChannelModal";
 import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramModal";
 import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
@@ -117,6 +118,12 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
           </button>
         )}
       </div>
+
+      <ChannelAccountLinksCard
+        channel={channel}
+        accounts={accounts}
+        onConnect={limitReached ? undefined : openConnect}
+      />
 
       <ChannelAccountsTable
         channel={channel}

@@ -2,12 +2,13 @@
 
 import { memo, useCallback, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plug, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { Link2, Loader2, Plug, RefreshCw, Settings2, Trash2 } from "lucide-react";
 
 import { EmptyState } from "@/components/shared/EmptyState";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/shared/StatusBadge";
 import { SkeletonTable } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { ConfigureLinkModal } from "./ConfigureLinkModal";
 import {
   CHANNEL_STATUS_LABELS,
   useDeleteChannelAccount,
@@ -74,6 +75,7 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
   const checkTelegram = useTelegramCheckAccount();
 
   const [removeTarget, setRemoveTarget] = useState<ChannelAccountDTO | null>(null);
+  const [configureTarget, setConfigureTarget] = useState<ChannelAccountDTO | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   /**
@@ -271,6 +273,17 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
                         )}
                       </button>
                     )}
+                    {channel !== "webchat" && (
+                      <button
+                        type="button"
+                        onClick={() => setConfigureTarget(account)}
+                        title="Ссылки для сайта и кнопок"
+                        aria-label={`Ссылки ${account.label}`}
+                        className="rounded-md p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-[#4a38f5]"
+                      >
+                        <Link2 className="h-4 w-4" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setRemoveTarget(account)}
@@ -300,6 +313,13 @@ export const ChannelAccountsTable = memo(function ChannelAccountsTable({
         confirmLabel="Удалить"
         variant="destructive"
         isPending={remove.isPending}
+      />
+
+      <ConfigureLinkModal
+        open={configureTarget !== null}
+        onClose={() => setConfigureTarget(null)}
+        channel={channel}
+        account={configureTarget}
       />
     </>
   );

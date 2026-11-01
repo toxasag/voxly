@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
@@ -98,6 +98,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         url === "/to" ||
         url.startsWith("/api/v1/public/track/") ||
         url.startsWith("/api/v1/public/chat/") ||
+        url.startsWith("/api/v1/analytics/pre-chat-telemetry") ||
         url.startsWith("/mascots/");
 
       if (isPublicRoute) {
@@ -269,6 +270,81 @@ export async function buildApp(): Promise<FastifyInstance> {
       .header("Cross-Origin-Resource-Policy", "cross-origin")
       .header("Cross-Origin-Embedder-Policy", "unsafe-none")
       .send(WIDGET_SCRIPT);
+  });
+
+  // Публичная раздача статических ассетов маскотов виджета с поддержкой CORS для внешних сайтов
+  app.get("/mascots/:filename", async (request, reply) => {
+    const { filename } = request.params as { filename: string };
+    const safeFilename = path.basename(filename);
+    const candidatePaths = [
+      path.resolve(process.cwd(), "public/mascots", safeFilename),
+      path.resolve(process.cwd(), "../frontend/public/mascots", safeFilename),
+      path.resolve("/app/public/mascots", safeFilename),
+      path.resolve("/opt/getvoxly/frontend/public/mascots", safeFilename),
+    ];
+    let filePath: string | null = null;
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        filePath = p;
+        break;
+      }
+    }
+    if (filePath) {
+      const ext = path.extname(safeFilename).toLowerCase();
+      const contentType = ext === ".webp" ? "image/webp" : ext === ".png" ? "image/png" : "application/octet-stream";
+      return reply
+        .type(contentType)
+        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .send(createReadStream(filePath));
+    }
+    // Fallback: проксирование из frontend контейнера по внутренней сети
+    try {
+      const upstream = await fetch(`http://frontend:3000/mascots/${encodeURIComponent(safeFilename)}`);
+      if (upstream.ok) {
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        const cType = upstream.headers.get("content-type") || "image/webp";
+        return reply
+          .type(cType)
+          .header("Cache-Control", "public, max-age=31536000, immutable")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(buffer);
+      }
+    } catch {}
+    return reply.status(404).send({ error: "Mascot asset not found" });
+  });
+
+  app.get("/miroslava.png", async (_request, reply) => {
+    const candidatePaths = [
+      path.resolve(process.cwd(), "public/miroslava.png"),
+      path.resolve(process.cwd(), "../frontend/public/miroslava.png"),
+      path.resolve("/opt/getvoxly/frontend/public/miroslava.png"),
+    ];
+    for (const p of candidatePaths) {
+      if (existsSync(p)) {
+        return reply
+          .type("image/png")
+          .header("Cache-Control", "public, max-age=86400")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(createReadStream(p));
+      }
+    }
+    try {
+      const upstream = await fetch("http://frontend:3000/miroslava.png");
+      if (upstream.ok) {
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        return reply
+          .type("image/png")
+          .header("Cache-Control", "public, max-age=86400")
+          .header("Access-Control-Allow-Origin", "*")
+          .header("Cross-Origin-Resource-Policy", "cross-origin")
+          .send(buffer);
+      }
+    } catch {}
+    return reply.status(404).send({ error: "Avatar not found" });
   });
 
   // Медиа CRM доступны только авторизованному пользователю своего арендатора.

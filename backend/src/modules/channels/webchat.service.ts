@@ -471,6 +471,60 @@ export class WebchatService {
 
     const prechatConfig = await preChatModalService.getConfig(account.tenant_id).catch(() => null);
 
+    const normalizeAssetUrl = (url: string | undefined): string | undefined => {
+      if (!url || typeof url !== "string") return undefined;
+      const trimmed = url.trim();
+      if (!trimmed) return undefined;
+      if (
+        trimmed.startsWith("data:") ||
+        trimmed.startsWith("blob:") ||
+        trimmed.startsWith("http://") ||
+        trimmed.startsWith("https://")
+      ) {
+        return trimmed;
+      }
+      if (trimmed.startsWith("//")) {
+        return `https:${trimmed}`;
+      }
+      return `https://getvoxly.ru/${trimmed.replace(/^\/+/, "")}`;
+    };
+
+    const consultantAvatar = normalizeAssetUrl(
+      typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0
+        ? creds.consultantAvatar.trim()
+        : undefined,
+    );
+    const customMascotDirections = normalizeAssetUrl(
+      typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0
+        ? creds.customMascotDirections.trim()
+        : undefined,
+    );
+    const customMascotReactions = normalizeAssetUrl(
+      typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0
+        ? creds.customMascotReactions.trim()
+        : undefined,
+    );
+
+    const isMascotSelected =
+      creds.avatarType === "mascot" ||
+      creds.mascotId === "custom" ||
+      Boolean(customMascotDirections);
+
+    const avatarType: "mascot" | "photo" | "icon" = isMascotSelected
+      ? "mascot"
+      : creds.avatarType === "photo" || creds.avatarType === "icon"
+        ? (creds.avatarType as "photo" | "icon")
+        : consultantAvatar
+          ? "photo"
+          : "mascot";
+
+    const mascotId =
+      typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
+        ? creds.mascotId
+        : customMascotDirections
+          ? "custom"
+          : "drone";
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -499,19 +553,11 @@ export class WebchatService {
       whatsappPhone: rawWa || undefined,
       maxLink: rawMax || undefined,
       consultantName: typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0 ? creds.consultantName.trim() : undefined,
-      consultantAvatar: typeof creds.consultantAvatar === "string" && creds.consultantAvatar.trim().length > 0 ? creds.consultantAvatar.trim() : undefined,
-      avatarType:
-        creds.avatarType === "mascot" || creds.avatarType === "photo" || creds.avatarType === "icon"
-          ? (creds.avatarType as "mascot" | "photo" | "icon")
-          : (creds.customMascotDirections || creds.mascotId === "custom"
-              ? "mascot"
-              : (creds.consultantAvatar ? "photo" : "icon")),
-      mascotId:
-        typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
-          ? creds.mascotId
-          : (creds.customMascotDirections ? "custom" : "drone"),
-      customMascotDirections: typeof creds.customMascotDirections === "string" && creds.customMascotDirections.trim().length > 0 ? creds.customMascotDirections.trim() : undefined,
-      customMascotReactions: typeof creds.customMascotReactions === "string" && creds.customMascotReactions.trim().length > 0 ? creds.customMascotReactions.trim() : undefined,
+      consultantAvatar,
+      avatarType,
+      mascotId,
+      customMascotDirections,
+      customMascotReactions,
       proactiveEnabled,
       proactiveDelaySeconds,
       proactiveMessage,

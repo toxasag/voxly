@@ -2287,16 +2287,32 @@
       }
     }
 
+    function resolveAssetUrl(url) {
+      if (!url || typeof url !== 'string') return '';
+      url = url.trim();
+      if (!url) return '';
+      if (url.indexOf('data:') === 0 || url.indexOf('blob:') === 0 || url.indexOf('http://') === 0 || url.indexOf('https://') === 0) {
+        return url;
+      }
+      if (url.indexOf('//') === 0) {
+        return 'https:' + url;
+      }
+      var base = 'https://getvoxly.ru';
+      return base.replace(/\/+$/, '') + '/' + url.replace(/^\/+/, '');
+    }
+
     function createMiniAvatarHtml() {
+      var botFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
       if (!currentConfig) {
         return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
       }
-      if (currentConfig.avatarType === 'photo' && currentConfig.consultantAvatar) {
-        return '<img src="' + currentConfig.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">';
-      }
-      var isMascot = currentConfig.avatarType === 'mascot' || (!currentConfig.avatarType && (currentConfig.customMascotDirections || currentConfig.mascotId === 'custom' || currentConfig.mascotId));
+      var isMascot = currentConfig.avatarType === 'mascot' || currentConfig.mascotId === 'custom' || Boolean(currentConfig.customMascotDirections) || (!currentConfig.avatarType && (currentConfig.mascotId || !currentConfig.consultantAvatar));
       if (isMascot && currentConfig._directionsUrl) {
         return '<div style="width:28px;height:28px;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      }
+      if ((currentConfig.avatarType === 'photo' || currentConfig.consultantAvatar) && currentConfig.consultantAvatar) {
+        var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar);
+        return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
       }
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
@@ -3034,63 +3050,21 @@
 
           // Обновление аватара в шапке
           if (headerAvatarInner) {
-            if (data.avatarType === 'photo' && data.consultantAvatar) {
-              headerAvatarInner.innerHTML = '<img src="' + data.consultantAvatar + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;">';
-            } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+            var isMascotHeader = data.avatarType === 'mascot' || data.mascotId === 'custom' || Boolean(data.customMascotDirections) || (!data.avatarType && !data.consultantAvatar);
+            if (isMascotHeader && directionsUrl) {
               headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else if (data.avatarType === 'photo' || data.consultantAvatar) {
+              var headerAvatarUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var headerFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
             }
           }
 
-          // Рендер плавающего маскота / фото / капсулы в кнопке
-          if (data.launcherStyle === 'pill') {
-            bubble.classList.add('is-pill');
-            var pAvatar = data.consultantAvatar || (data.avatarType === 'photo' ? '/miroslava.png' : '');
-            var pName = data.consultantName || data.title || 'Консультант';
-            var pStatus = data.statusText || 'Онлайн';
-            var avatarHtml = '';
-            if (pAvatar) {
-              avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pAvatar + '" alt="' + pName + '">';
-            } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
-              avatarHtml = '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
-            } else {
-              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-            }
-
-            bubbleIcon.innerHTML =
-              '<div class="getvoxly-bubble-pill-avatar-wrap">' +
-                avatarHtml +
-                '<span class="getvoxly-bubble-pill-dot"></span>' +
-              '</div>' +
-              '<div class="getvoxly-bubble-pill-text">' +
-                '<span class="getvoxly-bubble-pill-name">' + pName + '</span>' +
-                '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
-              '</div>';
-          } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
-            bubble.classList.add('is-mascot');
-
-            var mascotEl = document.createElement('div');
-            mascotEl.className = 'getvoxly-mascot-wrap';
-            mascotEl.id = 'getvoxly-mascot-el';
-
-            var spriteEl = document.createElement('div');
-            spriteEl.className = 'getvoxly-mascot-sprite';
-            spriteEl.id = 'getvoxly-mascot-sprite';
-            spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
-            spriteEl.style.setProperty('background-position', '50% 50%', 'important');
-
-            var dot = document.createElement('span');
-            dot.className = 'getvoxly-bubble-dot';
-
-            mascotEl.appendChild(spriteEl);
-            mascotEl.appendChild(dot);
-
-            bubbleIcon.innerHTML = '';
-            bubbleIcon.appendChild(mascotEl);
-
+          function setupMascotInteractivity(bubbleEl, spriteEl, mascotWrapEl, dUrl, rUrl) {
+            if (!spriteEl) return;
             var isBooped = false;
             var boopTimer = null;
 
-            // Точное отслеживание направления взгляда маскота по 8 секторам
             var CLOCKWISE = [
               'right',
               'down-right',
@@ -3123,7 +3097,7 @@
             var currentSector = -1;
             function updateMascotAim(clientX, clientY) {
               if (!spriteEl || isBooped || isOpen) return;
-              var b = bubble.getBoundingClientRect();
+              var b = bubbleEl.getBoundingClientRect();
               var cx = b.left + b.width / 2;
               var cy = b.top + b.height / 2;
               var dx = clientX - cx;
@@ -3146,7 +3120,6 @@
               spriteEl.style.setProperty('background-position', pos, 'important');
             }
 
-            // Плавное отслеживание направления взгляда маскота без двойного срабатывания и рывков
             var rAF = null;
             var lastClientX = 0, lastClientY = 0;
             function onPointerMove(e) {
@@ -3162,27 +3135,88 @@
             var moveEvent = window.PointerEvent ? 'pointermove' : 'mousemove';
             window.addEventListener(moveEvent, onPointerMove, { passive: true });
 
-            if (bubble) {
-              bubble.addEventListener('pointerdown', function (e) {
-                if (isOpen) return; // Если окно уже открыто, клик обрабатывается как закрытие
+            if (bubbleEl) {
+              bubbleEl.addEventListener('pointerdown', function () {
+                if (isOpen) return;
                 if (!spriteEl) return;
                 isBooped = true;
-                spriteEl.style.backgroundImage = 'url("' + reactionsUrl + '")';
+                spriteEl.style.backgroundImage = 'url("' + rUrl + '")';
                 spriteEl.style.setProperty('background-position', '50% 50%', 'important');
-                if (mascotEl) mascotEl.classList.add('squashing');
+                if (mascotWrapEl) mascotWrapEl.classList.add('squashing');
 
                 clearTimeout(boopTimer);
                 boopTimer = setTimeout(function () {
                   isBooped = false;
-                  spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
-                  if (mascotEl) mascotEl.classList.remove('squashing');
+                  spriteEl.style.backgroundImage = 'url("' + dUrl + '")';
+                  if (mascotWrapEl) mascotWrapEl.classList.remove('squashing');
                   spriteEl.style.setProperty('background-position', '50% 50%', 'important');
                 }, 600);
               });
             }
+          }
+
+          // Рендер плавающего маскота / фото / капсулы в кнопке
+          if (data.launcherStyle === 'pill') {
+            bubble.classList.add('is-pill');
+            var isMascotPill = data.avatarType === 'mascot' || data.mascotId === 'custom' || Boolean(data.customMascotDirections) || (!data.avatarType && !data.consultantAvatar);
+            var pName = data.consultantName || data.title || 'Консультант';
+            var pStatus = data.statusText || 'Онлайн';
+            var avatarHtml = '';
+
+            if (isMascotPill && directionsUrl) {
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite" style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else if (data.avatarType === 'photo' || data.consultantAvatar) {
+              var pillPhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var pillFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+              avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pillPhotoUrl + '" alt="' + pName + '" onerror="this.onerror=null;this.src=\'' + pillFallbackSvg + '\';">';
+            } else {
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+            }
+
+            bubbleIcon.innerHTML =
+              '<div class="getvoxly-bubble-pill-avatar-wrap">' +
+                avatarHtml +
+                '<span class="getvoxly-bubble-pill-dot"></span>' +
+              '</div>' +
+              '<div class="getvoxly-bubble-pill-text">' +
+                '<span class="getvoxly-bubble-pill-name">' + pName + '</span>' +
+                '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
+              '</div>';
+
+            if (isMascotPill && directionsUrl) {
+              var pillSprite = bubbleIcon.querySelector('#getvoxly-mascot-sprite');
+              if (pillSprite) {
+                setupMascotInteractivity(bubble, pillSprite, null, directionsUrl, reactionsUrl);
+              }
+            }
+          } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+            bubble.classList.add('is-mascot');
+
+            var mascotEl = document.createElement('div');
+            mascotEl.className = 'getvoxly-mascot-wrap';
+            mascotEl.id = 'getvoxly-mascot-el';
+
+            var spriteEl = document.createElement('div');
+            spriteEl.className = 'getvoxly-mascot-sprite';
+            spriteEl.id = 'getvoxly-mascot-sprite';
+            spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
+            spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+
+            var dot = document.createElement('span');
+            dot.className = 'getvoxly-bubble-dot';
+
+            mascotEl.appendChild(spriteEl);
+            mascotEl.appendChild(dot);
+
+            bubbleIcon.innerHTML = '';
+            bubbleIcon.appendChild(mascotEl);
+
+            setupMascotInteractivity(bubble, spriteEl, mascotEl, directionsUrl, reactionsUrl);
           } else if (data.avatarType === 'photo' && data.consultantAvatar) {
             bubble.classList.add('is-photo');
-            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + data.consultantAvatar + '" alt="Консультант"><span class="getvoxly-bubble-dot"></span>';
+            var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar);
+            var circleFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="Консультант" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"><span class="getvoxly-bubble-dot"></span>';
           }
 
           // Приветственное сообщение
