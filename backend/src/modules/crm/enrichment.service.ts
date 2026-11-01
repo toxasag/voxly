@@ -2,6 +2,7 @@ import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js"
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
 import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
 import { resolveTelegramPhone } from "../channels/outbound-registry.js";
+import { isPlaceholderName, parseNameFromTelegramUsername } from "./identity-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -62,16 +63,7 @@ function normalizePhoneDigits(raw: string): string {
   return digits;
 }
 
-function isPlaceholderName(firstName: string | null | undefined, lastName: string | null | undefined): boolean {
-  const full = `${firstName ?? ""} ${lastName ?? ""}`.trim().toLowerCase();
-  return (
-    full.length === 0 ||
-    full === "клиент" ||
-    full === "client" ||
-    /^noname\d*$/.test(full) ||
-    /^клиент\s*\d*$/.test(full)
-  );
-}
+// isPlaceholderName импортирован из identity-resolution.js со строгой проверкой шаблонов («Клиент +7...», «Посетитель сайта...»)
 
 export class CrmEnrichmentService {
   private providers: CrossChannelProviders;
@@ -176,6 +168,13 @@ export class CrmEnrichmentService {
             if (tgRes.firstName) updatedFirstName = tgRes.firstName;
             if (tgRes.lastName) updatedLastName = tgRes.lastName;
             enrichedFields.push("name");
+          } else if (shouldUpdateName && (updatedTgUsername || tgRes.username)) {
+            const parsedTg = parseNameFromTelegramUsername(updatedTgUsername || tgRes.username);
+            if (parsedTg && parsedTg.firstName) {
+              updatedFirstName = parsedTg.firstName;
+              if (parsedTg.lastName) updatedLastName = parsedTg.lastName;
+              enrichedFields.push("name");
+            }
           }
         }
       } catch (err) {
@@ -277,6 +276,27 @@ export class CrmEnrichmentService {
             tenantId,
           ],
         );
+
+        if (enrichedFields.includes("name")) {
+          const resolvedFullName = `${updatedFirstName} ${updatedLastName || ""}`.trim();
+          await tx.query(
+            `UPDATE deals
+             SET title = 'Заявка от ' || $1 || ' (' || 
+                 COALESCE(
+                   CASE 
+                     WHEN title LIKE '%(Онлайн-чат)%' THEN 'Онлайн-чат'
+                     WHEN title LIKE '%(Telegram)%' THEN 'Telegram'
+                     WHEN title LIKE '%(WhatsApp)%' THEN 'WhatsApp'
+                     WHEN title LIKE '%(MAX)%' THEN 'MAX'
+                     ELSE 'Прямое обращение'
+                   END, 'Прямое обращение'
+                 ) || ')',
+                 updated_at = now()
+             WHERE contact_id = $2 AND tenant_id = $3
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+            [resolvedFullName, contactId, tenantId],
+          );
+        }
       });
     }
 

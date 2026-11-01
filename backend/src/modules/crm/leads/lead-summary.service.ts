@@ -10,7 +10,7 @@
 // и детерминированным fallback-режимом при недоступности нейросети.
 // ---------------------------------------------------------------------------
 
-import { query } from "../../../db/client.js";
+import { query, queryOne } from "../../../db/client.js";
 import { smartModelRouter } from "../../ai/gateway/smart-model-router.js";
 
 export interface ChatMessageItem {
@@ -22,20 +22,68 @@ export interface ChatMessageItem {
 
 const SYSTEM_SUMMARY_PROMPT = `
 Ты — аналитик входящих обращений клиентов в CRM.
-Твоя задача: составить предельно краткую и емкую сводку диалога (2-3 предложения) для менеджера отдела продаж.
+Твоя задача: составить предельно краткую, емкую и полезную сводку диалога (1-3 строки) для менеджера отдела продаж.
 
 СТРОГИЕ ПРАВИЛА (Anti-Sludge):
-1. Никакого канцелярита и нейрослопа! Запрещены пустые фразы ("клиент выразил заинтересованность", "в ходе содержательного диалога", "стороны обсудили").
-2. Только осязаемые факты:
-   - Потребность / задача: что конкретно нужно клиенту (услуга, товар, модель устройства, проблема).
-   - Важные детали: симптомы поломки, цвет, размер, модификация или условия.
-   - Бюджет и сроки: если клиент их называл (если нет — не придумывай).
-3. Пиши естественным русским языком, сразу переходя к сути.
+1. Никакого канцелярита и нейрослопа! Категорически запрещены абстрактные фразы ("клиент выразил заинтересованность", "в ходе диалога", "запросил расчёт стоимости внедрения и скидки на объём").
+2. Фиксируй ключевые осязаемые сущности:
+   - Локация / Город (СПб, Питер, Москва, регион).
+   - Потребность / оборудование / услуга (например: аппарат на все тело, лицо, тело, полный комплект).
+   - Конкретный запрос (прайс-лист, спецификация, условия поставки, видео-демо).
+   - Контакты (имя, телефон, email, Telegram).
+3. Формат выжимки: предельно лаконичный, фактологический, готовый для отображения в заметке на карточке сделки.
+Пример: "СПб. Аппарат на все тело (лицо, тело, полный). Запросила прайс. Контакты: Наталья (+79102470980, magha@mail.ru, TG: @NataliaDiudiaeva)"
 `.trim();
 
 /**
+ * Создаёт или обновляет заметку с AI-выжимкой диалога в таблице notes.
+ * Это гарантирует немедленное отображение выжимки в карточке сделки (Заметка: ...) на Канбан-доске.
+ */
+export async function syncDealSummaryNote(
+  tenantId: string,
+  dealId: string,
+  summary: string,
+): Promise<void> {
+  if (!summary || !summary.trim()) return;
+
+  const title = "[AI Выжимка]";
+  const body = summary.trim();
+
+  try {
+    const existing = await queryOne<{ id: string }>(
+      `SELECT id FROM notes
+       WHERE tenant_id = $1 AND deal_id = $2 AND title = $3 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tenantId, dealId, title],
+    );
+
+    if (existing) {
+      await query(
+        `UPDATE notes
+         SET body = $1, updated_at = now()
+         WHERE id = $2 AND tenant_id = $3`,
+        [body, existing.id, tenantId],
+      );
+    } else {
+      const deal = await queryOne<{ created_by: string | null }>(
+        `SELECT created_by FROM deals WHERE id = $1 AND tenant_id = $2`,
+        [dealId, tenantId],
+      );
+
+      await query(
+        `INSERT INTO notes (tenant_id, deal_id, created_by, title, body, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, now(), now())`,
+        [tenantId, dealId, deal?.created_by ?? null, title, body],
+      );
+    }
+  } catch (err) {
+    console.warn(`[LeadSummary] Failed to sync summary note for deal ${dealId}:`, err);
+  }
+}
+
+/**
  * Детерминированная сборка выжимки без LLM (Fallback).
- * Извлекает ключевые сообщения клиента и формирует понятный текст.
+ * Извлекает ключевые сообщения клиента и формирует понятный текст с сущностями.
  */
 export function buildDeterministicSummary(messages: ChatMessageItem[]): string | null {
   const customerMsgs = messages
@@ -46,7 +94,6 @@ export function buildDeterministicSummary(messages: ChatMessageItem[]): string |
     .map((m) => m.content.trim());
 
   if (customerMsgs.length === 0) {
-    // Если нет сообщений с явным source=customer, берем любые несистемные сообщения
     const nonSystem = messages
       .filter((m) => (m.source || "").toLowerCase() !== "system" && m.content?.trim())
       .map((m) => `${m.sender_name ? `${m.sender_name}: ` : ""}${m.content.trim()}`);
@@ -54,15 +101,56 @@ export function buildDeterministicSummary(messages: ChatMessageItem[]): string |
     return nonSystem.slice(-3).join(" · ");
   }
 
-  const first = customerMsgs[0];
-  if (!first) return null;
+  const fullText = customerMsgs.join(" ");
 
-  const last = customerMsgs[customerMsgs.length - 1] ?? first;
-  if (customerMsgs.length === 1 || first === last) {
-    return first;
+  // Извлечение локации
+  let location = "";
+  if (/(?:^|[^а-яёa-z0-9])(?:спб|питер|санкт-петербург)(?:[^а-яёa-z0-9]|$)/i.test(fullText)) {
+    location = "СПб";
+  } else if (/(?:^|[^а-яёa-z0-9])(?:москва|мск)(?:[^а-яёa-z0-9]|$)/i.test(fullText)) {
+    location = "Москва";
   }
 
-  return `${first}\nУточнение: ${last}`;
+  // Извлечение ключевых запросов
+  const topics: string[] = [];
+  if (/лицо.*тело.*полн|все\s+три|на\s+все\s+три/i.test(fullText)) {
+    topics.push("Аппарат на все тело (лицо, тело, полный)");
+  } else if (/лицо/i.test(fullText) && /тело/i.test(fullText)) {
+    topics.push("Аппарат для лица и тела");
+  } else if (/лицо/i.test(fullText)) {
+    topics.push("Аппарат для лица");
+  } else if (/тело/i.test(fullText)) {
+    topics.push("Аппарат для тела");
+  }
+
+  if (/прайс/i.test(fullText)) {
+    topics.push("Запрос прайс-листа");
+  }
+
+  // Контакты из текста
+  const contacts: string[] = [];
+  const nameMatch = fullText.match(/(?:меня\s+зовут|зовут)\s+([А-ЯЁ][а-яё]+)/i);
+  if (nameMatch && nameMatch[1]) contacts.push(nameMatch[1]);
+
+  const phoneMatch = fullText.match(/(?:\+7|8)[\d\s\(\)\-]{9,}/);
+  if (phoneMatch) contacts.push(phoneMatch[0].trim());
+
+  const emailMatch = fullText.match(/[\w.-]+@[\w.-]+\.\w+/);
+  if (emailMatch) contacts.push(emailMatch[0].trim());
+
+  const parts: string[] = [];
+  if (location) parts.push(location);
+  if (topics.length > 0) parts.push(topics.join(". "));
+  if (contacts.length > 0) parts.push(`Контакты: ${contacts.join(", ")}`);
+
+  if (parts.length > 0) {
+    return parts.join(". ");
+  }
+
+  const first = customerMsgs[0];
+  if (!first) return null;
+  const last = customerMsgs[customerMsgs.length - 1] ?? first;
+  return customerMsgs.length === 1 || first === last ? first : `${first}\nУточнение: ${last}`;
 }
 
 /**
@@ -151,7 +239,11 @@ export async function getDealConversationSummary(
       [tenantId, dealId],
     );
 
-    return await generateLeadSummary(rows, { tenantId });
+    const summary = await generateLeadSummary(rows, { tenantId });
+    if (summary) {
+      void syncDealSummaryNote(tenantId, dealId, summary).catch(() => {});
+    }
+    return summary;
   } catch (err) {
     console.warn(`[LeadSummary] Failed to load messages for deal ${dealId}:`, err);
     return null;
