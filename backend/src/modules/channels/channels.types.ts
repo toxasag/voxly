@@ -56,6 +56,37 @@ export const updateChannelAccountSchema = z
 export type UpdateChannelAccountPayload = z.infer<typeof updateChannelAccountSchema>;
 
 /**
+ * Схема запроса настройки и кастомизации ссылок подключения (Direct / Tracking Links).
+ */
+export const customizeAccountLinksSchema = z.object({
+  text: z.string().max(1000).optional(),
+  startTag: z.string().max(64).optional(),
+  btn: z.string().max(100).optional(),
+});
+
+export type CustomizeAccountLinksQuery = z.infer<typeof customizeAccountLinksSchema>;
+
+/**
+ * Прямые ссылки и умный редиректор сквозной аналитики для аккаунта канала.
+ */
+export interface ChannelAccountLinksDTO {
+  /** Прямая ссылка на мессенджер (t.me/..., wa.me/..., max.ru/...) */
+  directUrl: string;
+  /** Умный редиректор сквозной аналитики с фиксацией UTM, ClientID и кода лида */
+  trackingUrl: string;
+  /** Тип подключённого аккаунта: бот компании, личный профиль (MTProto) или WABA */
+  accountType: "bot" | "user_api" | "whatsapp" | "max" | "default";
+  /** Очищенный логин или номер телефона для отображения */
+  cleanIdentifier: string;
+  /** Текст первого сообщения по умолчанию (для WhatsApp и Telegram User API) */
+  defaultText?: string;
+  /** Стартовый тег для ботов компании */
+  startTag?: string;
+  /** Идентификатор кнопки или виджета для сквозной аналитики */
+  btnTag?: string;
+}
+
+/**
  * DTO подключения.
  *
  * `credentials` отсутствует намеренно для внешних каналов (токены не покидают сервер).
@@ -77,6 +108,8 @@ export interface ChannelAccountDTO {
   createdAt: string;
   boundAgentId?: string | null;
   boundAgentName?: string | null;
+  /** Прямые ссылки и ссылки трекинга для кнопок на сайте */
+  links?: ChannelAccountLinksDTO;
 }
 
 /** Сводка по каналу для шапки страницы. */

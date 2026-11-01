@@ -20,6 +20,7 @@ import billingRoutes from "./modules/finance/billing/billing.routes.js";
 import storiesRoutes from "./modules/stories/stories.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
+import trackingRedirectRoutes from "./modules/channels/tracking-redirect.routes.js";
 import telegramIntegrationRoutes from "./modules/channels/telegram-integration.routes.js";
 import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
@@ -93,6 +94,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       // Публичный виджет и чат для внешних сайтов клиентов (WordPress, Tilda и др.)
       const isPublicRoute =
         url === "/widget.js" ||
+        url.startsWith("/to/") ||
+        url === "/to" ||
+        url.startsWith("/api/v1/public/track/") ||
         url.startsWith("/api/v1/public/chat/") ||
         url.startsWith("/mascots/");
 
@@ -227,6 +231,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
   await app.register(channelsRoutes, { prefix: "/api/v1/channels" });
+
+  // Публичный умный редиректор сквозной аналитики (Direct & Deep Links)
+  await app.register(trackingRedirectRoutes, { prefix: "/to" });
+  await app.register(trackingRedirectRoutes, { prefix: "/api/v1/public/track/m" });
 
   // Авторизация аккаунтов Telegram через MTProto. Отдельная группа: у остальных
   // каналов нет двухшагового входа с кодом и облачным паролем.

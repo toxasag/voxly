@@ -1,11 +1,14 @@
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
+import { channelLinksService } from "./channel-links.service.js";
 import type {
   ChannelAccountDTO,
+  ChannelAccountLinksDTO,
   ChannelStatus,
   ChannelSummaryDTO,
   CreateChannelAccountPayload,
+  CustomizeAccountLinksQuery,
   UpdateChannelAccountPayload,
 } from "./channels.types.js";
 
@@ -24,6 +27,10 @@ interface ChannelAccountRow {
   created_at: Date | string;
   bound_agent_id?: string | null;
   bound_agent_name?: string | null;
+  cred_username?: string | null;
+  cred_phone?: string | null;
+  cred_bot?: string | null;
+  has_session?: boolean;
 }
 
 function toIso(value: Date | string | null): string | null {
@@ -41,6 +48,11 @@ function pluralConnections(count: number): string {
 }
 
 function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
+  const links =
+    row.channel !== "webchat"
+      ? channelLinksService.resolveAccountLinks(row)
+      : undefined;
+
   return {
     id: row.id,
     channel: row.channel,
@@ -56,6 +68,7 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     createdAt: toIso(row.created_at) ?? "",
     boundAgentId: row.bound_agent_id ?? null,
     boundAgentName: row.bound_agent_name ?? null,
+    links,
   };
 }
 
@@ -67,6 +80,10 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
 const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
         (credentials <> '{}'::jsonb) AS has_credentials,
         CASE WHEN channel = 'webchat' THEN credentials ELSE '{}'::jsonb END AS credentials,
+        credentials->>'username' AS cred_username,
+        credentials->>'phone' AS cred_phone,
+        credentials->>'telegramBot' AS cred_bot,
+        (credentials ? 'session') AS has_session,
         remote_user_id, last_sync_at, connected_at, created_at`;
 
 /**
@@ -86,6 +103,10 @@ export class ChannelsService {
       `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
               (c.credentials <> '{}'::jsonb) AS has_credentials,
               CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
               c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at,
               b.agent_id AS bound_agent_id,
               a.name AS bound_agent_name
@@ -102,6 +123,34 @@ export class ChannelsService {
     );
 
     return rows.map(toDTO);
+  }
+
+  /**
+   * Получение и кастомизация ссылок подключения (Direct Link & Smart Tracking Link).
+   */
+  async getLinks(
+    tenantId: string,
+    channel: ChannelSlug,
+    id: string,
+    options?: CustomizeAccountLinksQuery,
+  ): Promise<ChannelAccountLinksDTO> {
+    const row = await queryOne<ChannelAccountRow>(
+      `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
+              (c.credentials <> '{}'::jsonb) AS has_credentials,
+              CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
+              c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at
+       FROM channel_accounts c
+       WHERE c.tenant_id = $1 AND c.channel = $2 AND c.id = $3 AND c.deleted_at IS NULL`,
+      [tenantId, channel, id],
+    );
+
+    if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    return channelLinksService.resolveAccountLinks(row, options);
   }
 
   /**

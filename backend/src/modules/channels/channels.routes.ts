@@ -7,6 +7,7 @@ import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
   channelSlugSchema,
   createChannelAccountSchema,
+  customizeAccountLinksSchema,
   updateChannelAccountSchema,
 } from "./channels.types.js";
 
@@ -67,6 +68,15 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     const account = await service.update(request.tenant_id, channel, id, body);
 
     return reply.send({ data: account });
+  });
+
+  app.get("/:channel/accounts/:id/links", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const query = customizeAccountLinksSchema.parse(request.query ?? {});
+
+    const links = await service.getLinks(request.tenant_id, channel, id, query);
+
+    return reply.send({ data: links });
   });
 
   app.get("/:channel/accounts/:id/stats", { onRequest: guards }, async (request, reply) => {
