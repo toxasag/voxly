@@ -35,6 +35,7 @@ import tenantRoutes from "./modules/tenant/tenant.routes.js";
 import profileRoutes from "./modules/profile/profile.routes.js";
 import partnerRoutes from "./modules/partner/partner.routes.js";
 import notificationChannelsRoutes from "./modules/notifications/notification-channels.routes.js";
+import { pushNotificationRoutes } from "./modules/notifications/push-notification.routes.js";
 import { analyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { conversionDispatcher } from "./modules/analytics/conversion-dispatcher.service.js";
 import { onDealWon, onDealStageChanged } from "./modules/crm/deals/deals.service.js";
@@ -346,6 +347,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(profileRoutes, { prefix: "/api/v1/profile" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/v1/settings/notifications" });
   await app.register(notificationChannelsRoutes, { prefix: "/api/settings/notifications" });
+  await app.register(pushNotificationRoutes, { prefix: "/api/v1" });
+  await app.register(pushNotificationRoutes, { prefix: "/api" });
   await app.register(partnerRoutes, { prefix: "/api/v1/partner" });
   await app.register(partnerRoutes, { prefix: "/api/partner" });
 
