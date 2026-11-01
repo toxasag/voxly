@@ -140,6 +140,7 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
       display: flex !important;
       align-items: center !important;
+      flex-direction: row !important;
       gap: 12px !important;
       margin: 0 !important;
       padding: 0 !important;
@@ -155,6 +156,7 @@
       right: auto !important;
       left: 20px !important;
       left: calc(20px + env(safe-area-inset-left, 0px)) !important;
+      flex-direction: row-reverse !important;
     }
     .getvoxly-widget-wrapper * {
       box-sizing: border-box !important;
@@ -657,10 +659,11 @@
     }
 
     .getvoxly-chat-badge {
-      position: absolute !important;
-      right: 74px !important;
-      top: 50% !important;
-      transform: translateY(-50%) !important;
+      position: relative !important;
+      right: auto !important;
+      left: auto !important;
+      top: auto !important;
+      transform: none !important;
       background: var(--badge-color, #6366F1) !important;
       color: #ffffff !important;
       padding: 7px 14px !important;
@@ -668,6 +671,8 @@
       border-radius: 10px !important;
       font-weight: 600 !important;
       white-space: nowrap !important;
+      max-width: 320px !important;
+      text-overflow: ellipsis !important;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
       pointer-events: auto !important;
       cursor: pointer !important;
@@ -678,14 +683,17 @@
       line-height: 1.3 !important;
       visibility: visible !important;
       opacity: 1 !important;
+      overflow: visible !important;
+      z-index: 10 !important;
+      flex-shrink: 0 !important;
     }
     .getvoxly-chat-badge.is-animating {
       opacity: 0 !important;
-      transform: translateY(-68%) scale(0.92) !important;
+      transform: translateY(-6px) scale(0.95) !important;
     }
     .position-left .getvoxly-chat-badge {
       right: auto !important;
-      left: 74px !important;
+      left: auto !important;
     }
     .getvoxly-chat-badge::after {
       content: '' !important;
@@ -701,6 +709,7 @@
       right: auto !important;
       left: -6px !important;
       border-width: 6px 6px 6px 0 !important;
+      border-style: solid !important;
       border-color: transparent var(--badge-color, #6366F1) transparent transparent !important;
     }
 
@@ -1524,11 +1533,16 @@
       bottom: 0 !important;
       background: rgba(0, 0, 0, 0.45) !important;
       z-index: 9999 !important;
-      display: flex !important;
+      display: none !important;
       flex-direction: column !important;
       justify-content: flex-end !important;
       backdrop-filter: blur(2px) !important;
       animation: getvoxly-fade-in 0.18s ease-out !important;
+      pointer-events: none !important;
+    }
+    .getvoxly-prechat-overlay.is-open {
+      display: flex !important;
+      pointer-events: auto !important;
     }
     .getvoxly-prechat-card {
       background: #ffffff !important;
@@ -2043,7 +2057,7 @@
       <div class="getvoxly-consent">
         Нажимая «Отправить», вы даете согласие на обработку персональных данных.
       </div>
-      <div class="getvoxly-prechat-overlay" id="getvoxly-prechat-modal" style="display: none;"></div>
+      <div class="getvoxly-prechat-overlay" id="getvoxly-prechat-modal" style="display: none !important;"></div>
     `;
 
     document.body.appendChild(wrapper);
@@ -2353,6 +2367,9 @@
       if (url.indexOf('//') === 0) {
         return 'https:' + url;
       }
+      if (url.indexOf('/uploads/') === 0 || url.indexOf('uploads/') === 0) {
+        return 'https://api.getvoxly.ru/' + url.replace(/^\/+/, '');
+      }
       var base = 'https://getvoxly.ru';
       return base.replace(/\/+$/, '') + '/' + url.replace(/^\/+/, '');
     }
@@ -2362,13 +2379,22 @@
       if (!currentConfig) {
         return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
       }
-      var isMascot = currentConfig.avatarType === 'mascot' || currentConfig.mascotId === 'custom' || Boolean(currentConfig.customMascotDirections) || (!currentConfig.avatarType && (currentConfig.mascotId || !currentConfig.consultantAvatar));
-      if (isMascot && currentConfig._directionsUrl) {
-        return '<div style="width:28px;height:28px;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      if (currentConfig.avatarType === 'icon') {
+        return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
       }
-      if ((currentConfig.avatarType === 'photo' || currentConfig.consultantAvatar) && currentConfig.consultantAvatar) {
+      if (currentConfig.avatarType === 'photo' && currentConfig.consultantAvatar) {
         var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar);
         return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
+      }
+      if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
+        return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      }
+      if (currentConfig._directionsUrl) {
+        return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      }
+      if (currentConfig.consultantAvatar) {
+        var fbUrl = resolveAssetUrl(currentConfig.consultantAvatar);
+        return '<img src="' + fbUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
       }
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
@@ -2618,6 +2644,7 @@
 
     function openWidget() {
       isOpen = true;
+      closePreChatModal();
       win.style.display = 'flex';
       wrapper.classList.add('is-chat-open');
       if (isMobileScreen()) {
@@ -2645,6 +2672,7 @@
 
     function closeWidget() {
       isOpen = false;
+      closePreChatModal();
       win.style.display = 'none';
       wrapper.classList.remove('is-chat-open');
       unlockMobileScroll();
@@ -2726,7 +2754,8 @@
 
     function closePreChatModal() {
       if (prechatModalEl) {
-        prechatModalEl.style.display = 'none';
+        prechatModalEl.classList.remove('is-open');
+        prechatModalEl.style.setProperty('display', 'none', 'important');
         prechatModalEl.innerHTML = '';
       }
     }
@@ -2787,7 +2816,8 @@
           '</div>' +
         '</div>';
 
-      prechatModalEl.style.display = 'flex';
+      prechatModalEl.classList.add('is-open');
+      prechatModalEl.style.setProperty('display', 'flex', 'important');
 
       var nameInput = document.getElementById('getvoxly-prechat-input-name');
       var noteInput = document.getElementById('getvoxly-prechat-input-note');
@@ -3106,13 +3136,18 @@
 
           // Обновление аватара в шапке
           if (headerAvatarInner) {
-            var isMascotHeader = data.avatarType === 'mascot' || data.mascotId === 'custom' || Boolean(data.customMascotDirections) || (!data.avatarType && !data.consultantAvatar);
-            if (isMascotHeader && directionsUrl) {
-              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
-            } else if (data.avatarType === 'photo' || data.consultantAvatar) {
+            if (data.avatarType === 'icon') {
+              headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+            } else if (data.avatarType === 'photo' && data.consultantAvatar) {
               var headerAvatarUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var headerFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
               headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else if (directionsUrl) {
+              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else {
+              headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
             }
           }
 
@@ -3214,19 +3249,23 @@
           // Рендер плавающего маскота / фото / капсулы в кнопке
           if (data.launcherStyle === 'pill') {
             bubble.classList.add('is-pill');
-            var isMascotPill = data.avatarType === 'mascot' || data.mascotId === 'custom' || Boolean(data.customMascotDirections) || (!data.avatarType && !data.consultantAvatar);
+            bubble.classList.remove('is-mascot', 'is-photo');
             var pName = data.consultantName || data.title || 'Консультант';
             var pStatus = data.statusText || 'Онлайн';
             var avatarHtml = '';
 
-            if (isMascotPill && directionsUrl) {
-              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
-            } else if (data.avatarType === 'photo' || data.consultantAvatar) {
+            if (data.avatarType === 'icon') {
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            } else if (data.avatarType === 'photo' && data.consultantAvatar) {
               var pillPhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var pillFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
               avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pillPhotoUrl + '" alt="' + pName + '" onerror="this.onerror=null;this.src=\'' + pillFallbackSvg + '\';">';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
+            } else if (!data.avatarType && directionsUrl) {
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
             } else {
-              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
             }
 
             bubbleIcon.innerHTML =
@@ -3241,14 +3280,24 @@
                 '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
               '</div>';
 
-            if (isMascotPill && directionsUrl) {
+            if ((data.avatarType === 'mascot' || (!data.avatarType && !data.consultantAvatar)) && directionsUrl) {
               var pillSprite = bubbleIcon.querySelector('#getvoxly-mascot-sprite');
               if (pillSprite) {
                 setupMascotInteractivity(bubble, pillSprite, null, directionsUrl, reactionsUrl);
               }
             }
-          } else if (data.avatarType === 'mascot' || (!data.avatarType && (data.customMascotDirections || data.mascotId === 'custom'))) {
+          } else if (data.avatarType === 'icon') {
+            bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+            bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+          } else if (data.avatarType === 'photo' && data.consultantAvatar) {
+            bubble.classList.add('is-photo');
+            bubble.classList.remove('is-pill', 'is-mascot');
+            var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar);
+            var circleFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="Консультант" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"><span class="getvoxly-bubble-dot"></span>';
+          } else if (data.avatarType === 'mascot' && directionsUrl) {
             bubble.classList.add('is-mascot');
+            bubble.classList.remove('is-pill', 'is-photo');
 
             var mascotEl = document.createElement('div');
             mascotEl.className = 'getvoxly-mascot-wrap';
@@ -3270,11 +3319,9 @@
             bubbleIcon.appendChild(mascotEl);
 
             setupMascotInteractivity(bubble, spriteEl, mascotEl, directionsUrl, reactionsUrl);
-          } else if (data.avatarType === 'photo' && data.consultantAvatar) {
-            bubble.classList.add('is-photo');
-            var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar);
-            var circleFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="Консультант" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"><span class="getvoxly-bubble-dot"></span>';
+          } else {
+            bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+            bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
           }
 
           // Приветственное сообщение

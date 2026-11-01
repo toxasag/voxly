@@ -486,6 +486,9 @@ export class WebchatService {
       if (trimmed.startsWith("//")) {
         return `https:${trimmed}`;
       }
+      if (trimmed.startsWith("/uploads/") || trimmed.startsWith("uploads/")) {
+        return `https://api.getvoxly.ru/${trimmed.replace(/^\/+/, "")}`;
+      }
       return `https://getvoxly.ru/${trimmed.replace(/^\/+/, "")}`;
     };
 
@@ -505,18 +508,16 @@ export class WebchatService {
         : undefined,
     );
 
-    const isMascotSelected =
-      creds.avatarType === "mascot" ||
-      creds.mascotId === "custom" ||
-      Boolean(customMascotDirections);
-
-    const avatarType: "mascot" | "photo" | "icon" = isMascotSelected
-      ? "mascot"
-      : creds.avatarType === "photo" || creds.avatarType === "icon"
-        ? (creds.avatarType as "photo" | "icon")
-        : consultantAvatar
-          ? "photo"
-          : "mascot";
+    let avatarType: "icon" | "photo" | "mascot";
+    if (creds.avatarType === "icon" || creds.avatarType === "photo" || creds.avatarType === "mascot") {
+      avatarType = creds.avatarType;
+    } else if (consultantAvatar) {
+      avatarType = "photo";
+    } else if (customMascotDirections || creds.mascotId) {
+      avatarType = "mascot";
+    } else {
+      avatarType = "icon";
+    }
 
     const mascotId =
       typeof creds.mascotId === "string" && creds.mascotId.trim().length > 0
