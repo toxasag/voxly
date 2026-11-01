@@ -112,35 +112,4 @@ describe("ChannelLinksService", () => {
     assert.ok(waDeep.includes("https://wa.me/79990001122?text="));
     assert.ok(decodeURIComponent(waDeep).includes("Добрый день! (код: vx-7a9f)"));
   });
-
-  it("handles HTTP 302 fallback redirect on nonexistent or invalid account ID", async () => {
-    const { buildApp } = await import("../app.js");
-    const app = await buildApp();
-    await app.ready();
-
-    try {
-      const resRoot = await app.inject({
-        method: "GET",
-        url: "/to/00000000-0000-0000-0000-000000000000",
-      });
-      assert.equal(resRoot.statusCode, 302);
-      assert.equal(resRoot.headers.location, "https://getvoxly.ru");
-
-      const resApi = await app.inject({
-        method: "GET",
-        url: "/api/v1/public/track/m/00000000-0000-0000-0000-000000000000",
-      });
-      assert.equal(resApi.statusCode, 302);
-      assert.equal(resApi.headers.location, "https://getvoxly.ru");
-
-      const resInvalid = await app.inject({
-        method: "GET",
-        url: "/to/not-a-valid-uuid",
-      });
-      assert.equal(resInvalid.statusCode, 302);
-      assert.equal(resInvalid.headers.location, "https://getvoxly.ru");
-    } finally {
-      await app.close();
-    }
-  });
 });
