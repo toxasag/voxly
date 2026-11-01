@@ -13,6 +13,7 @@ import {
   type KanbanStageOps,
 } from "@/components/crm/deals/DealKanban";
 import { DealListView } from "@/components/crm/deals/DealListView";
+import { DealsCalendarView } from "@/components/crm/deals/DealsCalendarView";
 import { useDealsViewMode } from "@/components/crm/deals/use-deals-view-mode";
 import { CreateDealModal } from "@/components/crm/deals/CreateDealModal";
 import { DealDrawer } from "@/components/crm/deals/DealDrawer";
@@ -466,6 +467,13 @@ function DealsContent() {
             configure={configureMode}
             stageOps={stageOps}
             cardOptions={appearance}
+          />
+        ) : view === "calendar" ? (
+          <DealsCalendarView
+            deals={sortedDeals}
+            stagesById={stagesById}
+            usersById={usersById}
+            onOpenDeal={configureMode ? undefined : handleOpenDeal}
           />
         ) : (
           <DealListView

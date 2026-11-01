@@ -48,6 +48,7 @@ function ViewSwitch() {
       <output data-testid="mode">{viewMode}</output>
       <button type="button" onClick={() => setViewMode("table")}>Список</button>
       <button type="button" onClick={() => setViewMode("kanban")}>Канбан</button>
+      <button type="button" onClick={() => setViewMode("calendar")}>Календарь</button>
     </>
   );
 }
@@ -191,5 +192,24 @@ describe("Режим отображения сделок", () => {
 
     // Испорченная запись означает возврат к умолчанию, а не пустой экран.
     await waitFor(() => expect(currentMode()).toBe("kanban"));
+  });
+
+  it("сохраняет и применяет режим календарь", async () => {
+    getMock.mockResolvedValue({
+      data: {
+        tableId: "deals",
+        layout: { widths: {}, order: [], hidden: [], viewMode: "calendar" },
+        updatedAt: "2026-10-19T10:00:00.000Z",
+      },
+    });
+
+    render(<ViewSwitch />, { wrapper });
+    await waitFor(() => expect(currentMode()).toBe("calendar"));
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Список" }));
+    expect(currentMode()).toBe("table");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Календарь" }));
+    expect(currentMode()).toBe("calendar");
   });
 });
