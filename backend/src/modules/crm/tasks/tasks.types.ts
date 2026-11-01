@@ -36,6 +36,11 @@ export const createTaskSchema = z
     assignee_id: z.string().uuid("assignee_id must be a UUID"),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid().optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    notify_telegram: z.boolean().optional().default(false),
+    remind_before_minutes: z.coerce.number().int().min(0).max(10080).optional().default(30),
   })
   .superRefine(linkedEntityRefinement);
 
@@ -49,7 +54,12 @@ export const updateTaskSchema = z
     assignee_id: z.string().uuid().optional(),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid().optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
     completed_at: optionalDateTime,
+    notify_telegram: z.boolean().optional(),
+    remind_before_minutes: z.coerce.number().int().min(0).max(10080).optional(),
   })
   .superRefine(linkedEntityRefinement);
 
@@ -74,6 +84,9 @@ export interface TaskRow {
   due_date: Date | string | null;
   assignee_id: string;
   completed_at: Date | string | null;
+  notify_telegram?: boolean;
+  remind_before_minutes?: number | null;
+  reminder_sent_at?: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -92,6 +105,9 @@ export interface TaskDTO {
   dueDate: string | null;
   assigneeId: string;
   completedAt: string | null;
+  notifyTelegram: boolean;
+  remindBeforeMinutes: number | null;
+  reminderSentAt: string | null;
   /** Derived: past due and not yet done. */
   isOverdue: boolean;
   createdAt: string;
@@ -132,6 +148,9 @@ export function toTaskDTO(row: TaskRow): TaskDTO {
     dueDate,
     assigneeId: row.assignee_id,
     completedAt: toIsoOrNull(row.completed_at),
+    notifyTelegram: Boolean(row.notify_telegram),
+    remindBeforeMinutes: row.remind_before_minutes ?? null,
+    reminderSentAt: toIsoOrNull(row.reminder_sent_at ?? null),
     isOverdue: dueDate !== null && row.status !== "done" && new Date(dueDate).getTime() < Date.now(),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),

@@ -1,18 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
-import { AppError } from "../../plugins/errorHandler.js";
+import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AiService } from "./ai.service.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
 import { BillingService } from "../finance/billing/billing.service.js";
 import { PRODUCT_CODES } from "../finance/billing/billing.types.js";
+import { platformConfigService } from "../admin/platform-config.service.js";
 import {
   createAgentSchema,
   topupBalanceSchema,
   updateAgentSchema,
 } from "./ai.types.js";
 import { AI_MODEL_CATALOG } from "./ai-pricing.js";
+import { crawlMapReviews } from "./map-reviews-crawler.js";
+import { knowledgeBaseQueue, isNewUrl } from "./knowledge-base.queue.js";
+import { knowledgeSynthesizerService } from "./knowledge-synthesizer.service.js";
 import {
   extensionOf,
   extractText,
@@ -21,6 +26,8 @@ import {
   SUPPORTED_EXTENSIONS,
   UnsupportedDocumentError,
 } from "./knowledge-text.js";
+import { queueManager } from "../../infrastructure/queue.js";
+import { AgentPipelineService } from "./agent-pipeline.service.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ, смонтировано в app.ts под /api/v1/ai.
@@ -51,6 +58,30 @@ const documentParams = z.object({
 const knowledgeTextSchema = z.object({
   title: z.string().trim().min(1, "Укажите название").max(200),
   text: z.string().trim().min(1, "Текст не может быть пустым").max(500_000),
+  category: z.string().trim().optional(),
+});
+
+/**
+ * Импорт веб-страницы или справочника по URL.
+ */
+const knowledgeUrlSchema = z.object({
+  url: z.string().url("Укажите корректный URL (http:// или https://)"),
+  title: z.string().trim().max(120).optional(),
+});
+
+/**
+ * Сканирование всех страниц сайта (Краулер).
+ */
+const crawlSiteSchema = z.object({
+  url: z.string().url("Укажите корректный URL (http:// или https://)"),
+  maxPages: z.number().int().min(1).max(50).default(25).optional(),
+});
+
+/**
+ * Импорт отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon).
+ */
+const mapReviewsSchema = z.object({
+  url: z.string().url("Укажите корректный URL на Яндекс Карты, 2ГИС, Google Maps, Zoon или Flamp"),
 });
 
 /**
@@ -64,27 +95,181 @@ const channelBindingsSchema = z.object({
   channel_account_ids: z.array(z.string().uuid()).max(50),
 });
 
+const whatsappImportSchema = z.object({
+  text: z.string().min(10, "Переписка должна содержать текст").max(1_000_000, "Превышен максимальный объём текста (1 МБ)"),
+  filename: z.string().optional(),
+});
+
+const updateDocumentSchema = z.object({
+  text: z.string().min(1, "Текст документа не может быть пустым"),
+  filename: z.string().optional(),
+});
+
+const testChatSchema = z.object({
+  message: z.string().trim().min(1, "Сообщение не может быть пустым").max(2000),
+  history: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().max(2000),
+      }),
+    )
+    .optional(),
+});
+
 export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(authenticatePlugin);
 
   const service = new AiService();
   const knowledge = new KnowledgeBaseService();
+  const pipeline = new AgentPipelineService(app.log);
 
   const readAgents = [app.requirePermission("ai_bots:read"), app.requireModule("ai_bots")];
   const writeAgents = [app.requirePermission("ai_bots:configure"), app.requireModule("ai_bots")];
 
-  // Каталог моделей с ценами. Отдаётся сервером, потому что цена — основание для
-  // списания: держать её копию на клиенте означало бы риск расхождения.
+  // Каталог моделей с ценами и информацией о реальных провайдерах платформы.
   app.get("/models", { onRequest: [app.requirePermission("ai_bots:read")] }, async (_request, reply) => {
-    return reply.send({
-      data: Object.values(AI_MODEL_CATALOG).map((model) => ({
+    let activeProvider: {
+      name: string;
+      providerType: string;
+      chatModel?: string;
+      isConfigured: boolean;
+    } | null = null;
+
+    let dynamicModels: Array<{
+      id: string;
+      label: string;
+      provider: string;
+      contextWindow: number;
+      costInPer1k: number;
+      costOutPer1k: number;
+      isConfigured: boolean;
+    }> = [];
+
+    let isProviderConfigured = (_provider: string) => false;
+
+    try {
+      const effective = await platformConfigService.getEffectiveIntegrations();
+      const activeProviders = effective.llmProviders.filter(
+        (p) => p.isActive && p.apiKeys.length > 0 && Boolean(p.baseUrl),
+      );
+
+      isProviderConfigured = (targetProvider: string) => {
+        const lower = targetProvider.toLowerCase();
+        return activeProviders.some((p) => {
+          const pType = p.providerType.toLowerCase();
+          const pName = p.name.toLowerCase();
+          if (pType === lower) return true;
+          if (lower === "google" && (pType === "gemini" || pName.includes("gemini") || pName.includes("google"))) return true;
+          if (lower === "openai" && (pType === "openai" || pName.includes("openai"))) return true;
+          if (lower === "anthropic" && (pType === "anthropic" || pName.includes("claude") || pName.includes("anthropic"))) return true;
+          if (lower === "deepseek" && (pType === "deepseek" || pName.includes("deepseek"))) return true;
+          return false;
+        });
+      };
+
+      const activeItem = activeProviders.find((p) => p.isDefault) || activeProviders[0];
+      if (activeItem) {
+        activeProvider = {
+          name: activeItem.name,
+          providerType: activeItem.providerType,
+          chatModel: activeItem.chatModel,
+          isConfigured: true,
+        };
+      } else if (effective.llm.isConfigured) {
+        activeProvider = {
+          name: "Основной провайдер",
+          providerType: "custom",
+          chatModel: effective.llm.chatModel || undefined,
+          isConfigured: true,
+        };
+      }
+    } catch (err) {
+      _request.log.warn({ err }, "Не удалось прочитать конфигурацию интеграций для каталога моделей");
+    }
+
+    // Запрашиваем РЕАЛЬНО доступные чат-модели у активного провайдера отдельным изолированным вызовом
+    if (activeProvider && activeProvider.isConfigured) {
+      try {
+        const available = await platformConfigService.fetchAvailableModels();
+        if (available.success && available.models.length > 0) {
+          const chatOnly = available.models.filter((m) => {
+            if (m.type !== "chat") return false;
+            const id = m.id.toLowerCase();
+            if (id.includes("tts") || id.includes("audio") || id.includes("transcribe")) return false;
+            if (id.includes("banana") || id.includes("robotics") || id.includes("lyria") || id.includes("clip")) return false;
+            if (id === "aqa") return false;
+            return true;
+          });
+
+          dynamicModels = chatOnly.map((m) => ({
+            id: m.id,
+            label: m.name,
+            provider: activeProvider?.providerType || "google",
+            contextWindow: 128_000,
+            costInPer1k: 5,
+            costOutPer1k: 15,
+            isConfigured: true,
+          }));
+        }
+      } catch (err) {
+        _request.log.warn({ err }, "Не удалось запросить динамический список моделей от внешнего API");
+      }
+    }
+
+    // Если у активного провайдера задана chatModel, гарантируем её присутствие на первом месте
+    if (activeProvider?.chatModel) {
+      const idx = dynamicModels.findIndex((m) => m.id === activeProvider?.chatModel);
+      if (idx > -1) {
+        const [target] = dynamicModels.splice(idx, 1);
+        if (target) dynamicModels.unshift(target);
+      } else {
+        dynamicModels.unshift({
+          id: activeProvider.chatModel,
+          label: activeProvider.chatModel,
+          provider: activeProvider.providerType || "google",
+          contextWindow: 128_000,
+          costInPer1k: 5,
+          costOutPer1k: 15,
+          isConfigured: true,
+        });
+      }
+    }
+
+    // Формируем список моделей каталога с честным статусом подключения
+    const catalogWithRealStatus = Object.values(AI_MODEL_CATALOG).map((model) => {
+      const isConfig =
+        isProviderConfigured(model.provider) ||
+        (Boolean(activeProvider?.isConfigured) &&
+          (model.provider === "google" || model.provider === activeProvider?.providerType));
+
+      return {
         id: model.id,
         label: model.label,
         provider: model.provider,
         contextWindow: model.contextWindow,
         costInPer1k: model.costInPer1k,
         costOutPer1k: model.costOutPer1k,
-      })),
+        isConfigured: isConfig,
+      };
+    });
+
+    // Если провайдер вернул реальные модели, используем их; иначе базовый каталог с честными статусами
+    const finalModels = dynamicModels.length > 0 ? dynamicModels : catalogWithRealStatus;
+
+    const defaultProvider = activeProvider ?? {
+      name: "Провайдер платформы",
+      providerType: "unknown",
+      isConfigured: false,
+    };
+
+    return reply.send({
+      data: {
+        activeProvider: defaultProvider,
+        data: finalModels,
+      },
+      activeProvider: defaultProvider,
+      dataList: finalModels,
     });
   });
 
@@ -101,14 +286,294 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
   app.post("/agents", { onRequest: writeAgents }, async (request, reply) => {
     const body = createAgentSchema.parse(request.body);
     const agent = await service.createAgent(request.tenant_id, body);
+
+    // Если при создании передан URL сайта, асинхронно ставим задачу сканирования в BullMQ очередь kb
+    const websiteUrl = (body.website_url || body.websiteUrl)?.trim();
+    if (websiteUrl) {
+      try {
+        await knowledgeBaseQueue.add("crawl-website", {
+          tenantId: request.tenant_id,
+          botId: agent.id,
+          url: websiteUrl,
+          source: "agent_settings_auto",
+        });
+      } catch (err) {
+        request.log.warn({ err }, "[KnowledgeBaseQueue] Не удалось поставить в очередь сканирование сайта при создании агента");
+      }
+    }
+
+    // Если при создании передан URL на отзывы/карты, извлекаем рейтинг и отзывы
+    if (body.map_reviews_url && body.map_reviews_url.trim()) {
+      try {
+        const reviewsResult = await crawlMapReviews(body.map_reviews_url.trim());
+        await knowledge.addDocument({
+          tenantId: request.tenant_id,
+          agentId: agent.id,
+          filename: `Отзывы (${reviewsResult.platform}): ${reviewsResult.orgName.slice(0, 50)}`,
+          mimeType: "text/markdown",
+          text: reviewsResult.markdownContent,
+        });
+      } catch (err) {
+        request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при создании агента");
+      }
+    }
+
+    // Если включен автосбор опыта из CRM (сделки и переписки)
+    if (body.sync_crm === true) {
+      void knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, agent.id).catch((err) => {
+        request.log.warn({ err }, "Не удалось автоматически синтезировать опыт из CRM");
+      });
+    }
+
+    // Если передана выгрузка переписки WhatsApp
+    if (body.whatsapp_chat_text && body.whatsapp_chat_text.trim().length > 20) {
+      void knowledgeSynthesizerService
+        .synthesizeFromWhatsApp(
+          request.tenant_id,
+          agent.id,
+          body.whatsapp_chat_text.trim(),
+          "WhatsApp-чат.txt",
+        )
+        .catch((err) => {
+          request.log.warn({ err }, "Не удалось автоматически синтезировать переписку WhatsApp");
+        });
+    }
+
     return reply.status(201).send({ data: agent });
   });
 
   app.patch("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
     const body = updateAgentSchema.parse(request.body);
-    return reply.send({ data: await service.updateAgent(request.tenant_id, id, body) });
+    const existingAgent = await service.getAgent(request.tenant_id, id);
+    const agent = await service.updateAgent(request.tenant_id, id, body);
+
+    // Если передан URL сайта и он отличается от прежнего, запускаем сканирование страниц сайта в базу знаний через очередь
+    const newWebsiteUrl = (body.website_url !== undefined ? body.website_url : body.websiteUrl)?.trim();
+    const oldWebsiteUrl = (existingAgent.wizardConfig as Record<string, unknown> | null)?.website_url as string | undefined;
+
+    if (newWebsiteUrl && isNewUrl(oldWebsiteUrl, newWebsiteUrl)) {
+      try {
+        await knowledgeBaseQueue.add("crawl-website", {
+          tenantId: request.tenant_id,
+          botId: agent.id,
+          url: newWebsiteUrl,
+          source: "agent_settings_auto",
+        });
+      } catch (err) {
+        request.log.warn({ err }, "[KnowledgeBaseQueue] Не удалось поставить в очередь сканирование сайта при обновлении агента");
+      }
+    }
+
+    // Если передан URL на отзывы/карты, извлекаем рейтинг и отзывы
+    if (body.map_reviews_url && body.map_reviews_url.trim()) {
+      void (async () => {
+        try {
+          const reviewsResult = await crawlMapReviews(body.map_reviews_url!.trim());
+          await knowledge.addDocument({
+            tenantId: request.tenant_id,
+            agentId: agent.id,
+            filename: `Отзывы (${reviewsResult.platform}): ${reviewsResult.orgName.slice(0, 50)}`,
+            mimeType: "text/markdown",
+            text: reviewsResult.markdownContent,
+          });
+        } catch (err) {
+          request.log.warn({ err }, "Не удалось автоматически загрузить отзывы при обновлении агента");
+        }
+      })();
+    }
+
+    // Если включен автосбор опыта из CRM (сделки и переписки)
+    if (body.sync_crm === true) {
+      void knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, agent.id).catch((err) => {
+        request.log.warn({ err }, "Не удалось автоматически синтезировать опыт из CRM");
+      });
+    }
+
+    // Если передана выгрузка переписки WhatsApp
+    if (body.whatsapp_chat_text && body.whatsapp_chat_text.trim().length > 20) {
+      void knowledgeSynthesizerService
+        .synthesizeFromWhatsApp(
+          request.tenant_id,
+          agent.id,
+          body.whatsapp_chat_text.trim(),
+          "WhatsApp-чат.txt",
+        )
+        .catch((err) => {
+          request.log.warn({ err }, "Не удалось автоматически синтезировать переписку WhatsApp");
+        });
+    }
+
+    return reply.send({ data: agent });
   });
+
+  app.post("/agents/:id/test-chat", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = testChatSchema.parse(request.body);
+
+    const result = await pipeline.generateTestReply({
+      tenantId: request.tenant_id,
+      agentId: id,
+      message: body.message,
+      history: body.history,
+    });
+
+    return reply.send({ data: result });
+  });
+
+  const handlePromptPreview = async (
+    request: { tenant_id: string; params: unknown; body?: unknown },
+    reply: { send: (payload: unknown) => unknown },
+  ) => {
+    const { id } = agentParams.parse(request.params);
+    const body = (request.body as { system_prompt?: string; systemPrompt?: string } | undefined) ?? {};
+
+    const agent = await queryOne<{
+      id: string;
+      name: string;
+      system_prompt: string;
+      wizard_config: Record<string, unknown> | null;
+    }>(
+      `SELECT id, name, system_prompt, wizard_config
+       FROM ai_agents
+       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [request.tenant_id, id],
+    );
+    if (!agent) {
+      throw new NotFoundError("AI-агент не найден");
+    }
+
+    const tenantRow = await queryOne<{ name: string }>(
+      `SELECT name FROM tenants WHERE id = $1`,
+      [request.tenant_id],
+    );
+    const tenantName = tenantRow?.name || "Компания";
+
+    const docs = await query<{
+      id: string;
+      filename: string;
+      category: string | null;
+      content_text: string | null;
+    }>(
+      `SELECT id, filename, category, content_text
+       FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND (agent_id = $2 OR agent_id IS NULL) AND status = 'ready' AND content_text IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [request.tenant_id, id],
+    );
+
+    const reviewDocs: string[] = [];
+    const websiteDocs: string[] = [];
+    const kbDocs: string[] = [];
+
+    for (const doc of docs) {
+      const fn = (doc.filename || "").toLowerCase();
+      const text = (doc.content_text || "").trim();
+      if (!text) continue;
+
+      if (fn.includes("отзыв") || doc.category === "reviews") {
+        if (reviewDocs.length < 2) {
+          reviewDocs.push(`[${reviewDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1000)}`);
+        }
+      } else if (fn.includes("сайт") || doc.category === "website") {
+        if (websiteDocs.length < 2) {
+          websiteDocs.push(`[${websiteDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
+        }
+      } else {
+        if (kbDocs.length < 3) {
+          kbDocs.push(`[${kbDocs.length + 1}] Из «${doc.filename}»:\n${text.slice(0, 1200)}`);
+        }
+      }
+    }
+
+    const kbContext = kbDocs.length > 0
+      ? kbDocs.join("\n\n")
+      : "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».";
+
+    const websiteContext = websiteDocs.length > 0
+      ? websiteDocs.join("\n\n")
+      : "Материалы сайта пока не загружены.";
+
+    const reviewsContext = reviewDocs.length > 0
+      ? reviewDocs.join("\n\n")
+      : "Отзывы клиентов пока не подключены.";
+
+    const crmExamples = await query<{ customer_query: string; agent_reply: string }>(
+      `SELECT customer_query, agent_reply
+       FROM ai_sales_examples
+       WHERE tenant_id = $1
+       ORDER BY created_at DESC
+       LIMIT 3`,
+      [request.tenant_id],
+    );
+
+    let crmContext = "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.";
+    if (crmExamples.length > 0) {
+      crmContext = crmExamples
+        .map((p, i) => `Пример ${i + 1}:\nКлиент: «${p.customer_query}»\nУспешный ответ: «${p.agent_reply}»`)
+        .join("\n\n");
+    }
+
+    const channelAccounts = await query<{ channel: string; label: string | null }>(
+      `SELECT c.channel, c.label
+       FROM ai_agent_channel_bindings b
+       JOIN channel_accounts c ON c.id = b.channel_account_id
+       WHERE b.agent_id = $1 AND c.tenant_id = $2
+       LIMIT 1`,
+      [id, request.tenant_id],
+    );
+    const channelType = channelAccounts[0]?.channel || "чат на сайте";
+
+    const currentTime = new Date().toLocaleTimeString("ru-RU", {
+      timeZone: "Europe/Moscow",
+      hour: "2-digit",
+      minute: "2-digit",
+    }) + " МСК";
+
+    const wc = (agent.wizard_config || {}) as Record<string, string | undefined>;
+    const variables: Record<string, string> = {
+      "tenant.name": tenantName,
+      "company.name": tenantName,
+      "consultant.name": wc.consultantName || agent.name || "Консультант",
+      "consultant.role": wc.consultantRole || "ведущий специалист",
+      "business.niche": wc.businessNiche || "оказание профильных услуг",
+      "target.action": wc.targetAction || "согласование деталей заказа",
+      "handoff.specialist": wc.handoffSpecialist || "старший специалист",
+      "current_time": currentTime,
+      "channel_type": channelType,
+      "knowledge_base_context": kbContext,
+      "website_context": websiteContext,
+      "reviews_and_reputation": reviewsContext,
+      "successful_crm_patterns": crmContext,
+    };
+
+    const template = (typeof body.system_prompt === "string" && body.system_prompt.trim().length > 0)
+      ? body.system_prompt
+      : ((typeof body.systemPrompt === "string" && body.systemPrompt.trim().length > 0)
+        ? body.systemPrompt
+        : agent.system_prompt);
+
+    let resolved = template.replace(/\{\{\s*([a-z_]+(?:\.[a-z_]+)*)\s*\}\}/g, (_match, token: string) => {
+      return variables[token] ?? "";
+    });
+
+    resolved = resolved
+      .replace(/<\/?(?:director_system_prompt|character_and_identity|context_and_knowledge|style_and_formatting|dialogue_management|golden_cage_rules_and_security|primary_objective|scene_rehearsals)>/gi, "")
+      .replace(/^\s*<[/]?[a-zA-Z0-9_]+>\s*$/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    return reply.send({
+      data: {
+        resolvedPrompt: resolved,
+        variables,
+      },
+    });
+  };
+
+  app.get("/agents/:id/prompt-preview", { onRequest: readAgents }, handlePromptPreview);
+  app.post("/agents/:id/prompt-preview", { onRequest: readAgents }, handlePromptPreview);
 
   app.delete("/agents/:id", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
@@ -177,13 +642,31 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
       const text = await extractText({ filename: file.filename, extension, buffer });
 
+      let category = "general";
+      if (file.fields && typeof file.fields === "object") {
+        const catField = (file.fields as Record<string, { value?: unknown }>).category;
+        if (typeof catField?.value === "string" && catField.value.trim()) {
+          category = catField.value.trim();
+        }
+      }
+
       const document = await knowledge.addDocument({
         tenantId: request.tenant_id,
         agentId: id,
         filename: file.filename,
         mimeType: file.mimetype,
         text,
+        category,
       });
+
+      void queueManager
+        .enqueue({
+          queue: "knowledge-indexing",
+          tenantId: request.tenant_id,
+          name: `index-doc-${document.id}`,
+          data: { tenantId: request.tenant_id, documentId: document.id },
+        })
+        .catch(() => {});
 
       return reply.status(201).send({ data: document });
     }
@@ -196,9 +679,243 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       filename: body.title,
       mimeType: "text/plain",
       text: body.text,
+      category: body.category || "general",
+    });
+
+    void queueManager
+      .enqueue({
+        queue: "knowledge-indexing",
+        tenantId: request.tenant_id,
+        name: `index-doc-${document.id}`,
+        data: { tenantId: request.tenant_id, documentId: document.id },
+      })
+      .catch(() => {});
+
+    return reply.status(201).send({ data: document });
+  });
+
+  app.post("/agents/:id/knowledge/url", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url, title } = knowledgeUrlSchema.parse(request.body);
+
+    const parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      throw new AppError(400, "INVALID_URL", "Поддерживаются только протоколы http:// и https://");
+    }
+    if (
+      parsedUrl.hostname === "localhost" ||
+      parsedUrl.hostname.startsWith("127.") ||
+      parsedUrl.hostname.startsWith("169.254.") ||
+      parsedUrl.hostname.startsWith("10.") ||
+      parsedUrl.hostname.startsWith("192.168.")
+    ) {
+      throw new AppError(400, "FORBIDDEN_URL", "Запрос к локальным адресам запрещен");
+    }
+
+    let html = "";
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,text/plain;q=0.9",
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!response.ok) {
+        throw new AppError(502, "FETCH_FAILED", `Не удалось загрузить страницу: HTTP ${response.status}`);
+      }
+
+      html = await response.text();
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      const msg = err instanceof Error ? err.message : "Ошибка сети";
+      throw new AppError(502, "FETCH_FAILED", `Ошибка при загрузке URL: ${msg}`);
+    }
+
+    const cleanText = html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+      .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (cleanText.length < 50) {
+      throw new AppError(400, "EMPTY_CONTENT", "На странице не найдено достаточного текстового содержимого");
+    }
+
+    const docTitle = title?.trim() || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
+
+    const document = await knowledge.addDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      filename: `Сайт: ${docTitle}`,
+      mimeType: "text/html",
+      text: cleanText.slice(0, 100_000),
     });
 
     return reply.status(201).send({ data: document });
+  });
+
+  // Сканирование всех страниц сайта (Краулер / Паук по внутренним ссылкам и sitemap.xml)
+  app.post("/agents/:id/knowledge/crawl-site", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url, maxPages } = crawlSiteSchema.parse(request.body);
+
+    const job = await knowledgeBaseQueue.add("crawl-website", {
+      tenantId: request.tenant_id,
+      botId: id,
+      url,
+      maxPages: maxPages ?? 25,
+      source: "manual_button",
+    });
+
+    return reply.status(200).send({
+      data: {
+        jobId: job.id,
+        status: "pending",
+        scannedCount: 0,
+        indexedCount: 0,
+        documents: [],
+        message: "Задача сканирования сайта добавлена в очередь",
+      },
+    });
+  });
+
+  // Получение статуса сканирования сайта агента
+  app.get("/agents/:id/knowledge/crawl-status", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const agent = await service.getAgent(request.tenant_id, id);
+    const cfg = (agent.wizardConfig || {}) as Record<string, unknown>;
+    const status = (cfg.crawl_status as string) || "idle";
+
+    return reply.send({
+      data: {
+        status,
+        websiteUrl: (cfg.website_url as string) ?? null,
+        pagesScanned: (cfg.crawl_pages_scanned as number) ?? 0,
+        pagesIndexed: (cfg.crawl_pages_indexed as number) ?? 0,
+        error: (cfg.crawl_error as string) ?? null,
+        updatedAt: (cfg.crawl_updated_at as string) ?? null,
+      },
+    });
+  });
+
+  // Загрузка отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon) по ссылке
+  app.post("/agents/:id/knowledge/map-reviews", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const { url } = mapReviewsSchema.parse(request.body);
+
+    let result;
+    try {
+      result = await crawlMapReviews(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить отзывы с карт";
+      throw new AppError(400, "MAP_REVIEWS_FAILED", msg);
+    }
+
+    const document = await knowledge.addDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      filename: `Отзывы (${result.platform}): ${result.orgName.slice(0, 50)}`,
+      mimeType: "text/markdown",
+      text: result.markdownContent,
+    });
+
+    return reply.status(201).send({
+      data: {
+        document,
+        details: {
+          platform: result.platform,
+          orgName: result.orgName,
+          rating: result.rating,
+          reviewsCount: result.reviewsCount,
+          reviewsFound: result.reviews.length,
+        },
+      },
+    });
+  });
+
+  app.get("/agents/:id/sales-examples", { onRequest: readAgents }, async (request, reply) => {
+    const examples = await query<{
+      id: string;
+      deal_id: string;
+      deal_title: string | null;
+      customer_query: string;
+      agent_reply: string;
+      created_at: Date;
+    }>(
+      `SELECT e.id, e.deal_id, d.title as deal_title, e.customer_query, e.agent_reply, e.created_at
+       FROM ai_sales_examples e
+       LEFT JOIN deals d ON d.id = e.deal_id
+       WHERE e.tenant_id = $1
+       ORDER BY e.created_at DESC
+       LIMIT 50`,
+      [request.tenant_id],
+    );
+
+    return reply.send({
+      data: examples.map((ex) => ({
+        id: ex.id,
+        dealId: ex.deal_id,
+        dealTitle: ex.deal_title ?? "Сделка",
+        customerQuery: ex.customer_query,
+        agentReply: ex.agent_reply,
+        createdAt: ex.created_at.toISOString(),
+      })),
+      meta: {
+        total: examples.length,
+      },
+    });
+  });
+
+  app.get("/knowledge/crm-stats", { onRequest: readAgents }, async (request, reply) => {
+    const stats = await knowledgeSynthesizerService.getCrmStats(request.tenant_id);
+    return reply.send({ data: stats });
+  });
+
+  app.post("/agents/:id/knowledge/sync-crm", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const result = await knowledgeSynthesizerService.synthesizeFromCrm(request.tenant_id, id);
+    return reply.status(201).send({ data: result });
+  });
+
+  app.post("/agents/:id/knowledge/import-whatsapp", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = whatsappImportSchema.parse(request.body);
+    const result = await knowledgeSynthesizerService.synthesizeFromWhatsApp(
+      request.tenant_id,
+      id,
+      body.text,
+      body.filename,
+    );
+    return reply.status(201).send({ data: result });
+  });
+
+  app.get("/agents/:id/knowledge/:docId", { onRequest: readAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const doc = await knowledge.getDocument(request.tenant_id, id, docId);
+    return reply.send({ data: doc });
+  });
+
+  app.put("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const body = updateDocumentSchema.parse(request.body);
+    const doc = await knowledge.updateDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      text: body.text,
+      filename: body.filename,
+    });
+    return reply.send({ data: doc });
   });
 
   app.delete("/agents/:id/knowledge/:docId", { onRequest: writeAgents }, async (request, reply) => {

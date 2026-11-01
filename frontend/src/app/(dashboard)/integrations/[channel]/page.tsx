@@ -8,8 +8,11 @@ import { CheckCircle2, Gift, Plug, Plus, ShoppingBag } from "lucide-react";
 import { Guard } from "@/components/shared/Guard";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ChannelAccountsTable } from "@/components/integrations/ChannelAccountsTable";
+import { ChannelAccountLinksCard } from "@/components/integrations/ChannelAccountLinksCard";
 import { ConnectChannelModal } from "@/components/integrations/ConnectChannelModal";
 import { ConnectTelegramModal } from "@/components/integrations/ConnectTelegramModal";
+import { ConnectWhatsappModal } from "@/components/integrations/ConnectWhatsappModal";
+import { ConnectMaxModal } from "@/components/integrations/ConnectMaxModal";
 import { channelEntry } from "@/lib/modules/registry";
 import { pluralAccounts, useChannelAccounts } from "@/lib/api/use-channels";
 import { trialDaysLeft } from "@/lib/api/use-marketplace";
@@ -70,7 +73,7 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
               ) : (
                 <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
                   <CheckCircle2 className="h-3 w-3" />
-                  Активен
+                  Включено в тариф
                 </span>
               )}
             </div>
@@ -116,6 +119,12 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
         )}
       </div>
 
+      <ChannelAccountLinksCard
+        channel={channel}
+        accounts={accounts}
+        onConnect={limitReached ? undefined : openConnect}
+      />
+
       <ChannelAccountsTable
         channel={channel}
         channelName={entry.label}
@@ -128,14 +137,16 @@ function ChannelPageContent({ channel }: { channel: ChannelSlug }) {
         limitReached={limitReached}
       />
 
-      {/*
-        Telegram подключается по коду из приложения (MTProto), остальные каналы —
-        простой записью аккаунта: у них транспорт ещё не реализован, и мастер с
-        кодом обещал бы работающее соединение, которого нет.
-      */}
-      {channel === "telegram" ? (
+      {channel === "telegram" && (
         <ConnectTelegramModal open={connectOpen} onClose={() => setConnectOpen(false)} />
-      ) : (
+      )}
+      {channel === "whatsapp" && (
+        <ConnectWhatsappModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      )}
+      {channel === "max" && (
+        <ConnectMaxModal open={connectOpen} onClose={() => setConnectOpen(false)} />
+      )}
+      {channel !== "telegram" && channel !== "whatsapp" && channel !== "max" && (
         <ConnectChannelModal
           open={connectOpen}
           channel={channel}

@@ -1,7 +1,11 @@
+import fs from "node:fs";
+import path from "node:path";
+import bigInt from "big-integer";
 import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { LogLevel } from "telegram/extensions/Logger.js";
+import { CustomFile } from "telegram/client/uploads.js";
 
 import { getEnv } from "../../config/env.js";
 import { query, queryOne, runWithPlatformScope, runWithTenantContext } from "../../db/client.js";
@@ -10,7 +14,18 @@ import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { nextTypingPauseMs } from "../ai/agent-reply.js";
 import { IncomingMessageBuffer, type BufferedIncoming } from "./incoming-buffer.js";
-import { registerOutboundSender } from "./outbound-registry.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
+import { resolveOutboundMedia, isMeaningfulCaption } from "./media-resolver.js";
+import {
+  registerOutboundSender,
+  registerStoryPublisher,
+  registerTelegramPhoneResolver,
+  registerTelegramHistorySyncer,
+  type TelegramHistorySyncParams,
+  type TelegramPhoneResolveResult,
+  type StoryPublishPayload,
+  type StoryPublishResult,
+} from "./outbound-registry.js";
 import { ChannelProfileCache } from "./profile-cache.js";
 import type { ChannelProfile } from "../crm/crm-pipeline.service.js";
 
@@ -87,6 +102,12 @@ export class TelegramTransportService {
   private stopped = false;
   /** Снятие регистрации в реестре исходящих; ставится в `start()`. */
   private unregisterOutbound: (() => void) | null = null;
+  /** Снятие регистрации в реестре сторис; ставится в `start()`. */
+  private unregisterStory: (() => void) | null = null;
+  /** Снятие регистрации резолвера поиска по номеру телефона */
+  private unregisterPhoneResolver: (() => void) | null = null;
+  /** Снятие регистрации синхронизатора истории диалога */
+  private unregisterHistorySyncer: (() => void) | null = null;
 
   constructor(
     private readonly log: Logger,
@@ -134,6 +155,15 @@ export class TelegramTransportService {
     this.unregisterOutbound = registerOutboundSender("telegram", (message) =>
       this.sendOutbound(message),
     );
+    this.unregisterStory = registerStoryPublisher("telegram", (payload) =>
+      this.sendStory(payload),
+    );
+    this.unregisterPhoneResolver = registerTelegramPhoneResolver((tenantId, phoneDigits) =>
+      this.resolveUserByPhone(tenantId, phoneDigits),
+    );
+    this.unregisterHistorySyncer = registerTelegramHistorySyncer((params) =>
+      this.syncDialogHistory(params),
+    );
 
     this.startupTimer = setTimeout(() => {
       void this.resync();
@@ -155,6 +185,21 @@ export class TelegramTransportService {
     if (this.unregisterOutbound !== null) {
       this.unregisterOutbound();
       this.unregisterOutbound = null;
+    }
+
+    if (this.unregisterStory !== null) {
+      this.unregisterStory();
+      this.unregisterStory = null;
+    }
+
+    if (this.unregisterPhoneResolver !== null) {
+      this.unregisterPhoneResolver();
+      this.unregisterPhoneResolver = null;
+    }
+
+    if (this.unregisterHistorySyncer !== null) {
+      this.unregisterHistorySyncer();
+      this.unregisterHistorySyncer = null;
     }
 
     if (this.startupTimer !== null) clearTimeout(this.startupTimer);
@@ -359,8 +404,91 @@ export class TelegramTransportService {
   }
 
   // -------------------------------------------------------------------------
-  // Входящие
+  // Медиавложения и входящие
   // -------------------------------------------------------------------------
+
+  /**
+   * Извлечение и сохранение медиавложения (фото, документ) из сообщения Telegram.
+   */
+  private async extractAndStoreMedia(
+    client: TelegramClient,
+    message: Api.Message,
+    tenantId: string,
+  ): Promise<{ url: string; mimeType: string; filename: string } | null> {
+    if (!message.media) return null;
+
+    try {
+      const isPhoto = Boolean(
+        message.photo ||
+        message.media instanceof Api.MessageMediaPhoto ||
+        (typeof message.media === "object" && "photo" in message.media && (message.media as { photo?: unknown }).photo),
+      );
+
+      const isDocument = Boolean(
+        message.document ||
+        message.media instanceof Api.MessageMediaDocument ||
+        (typeof message.media === "object" && "document" in message.media && (message.media as { document?: unknown }).document),
+      );
+
+      if (!isPhoto && !isDocument) return null;
+
+      const buffer = await client.downloadMedia(message, {});
+      if (!Buffer.isBuffer(buffer) || buffer.length === 0) return null;
+
+      let mime = "application/octet-stream";
+      let filename = `telegram_${Date.now()}`;
+
+      if (isPhoto) {
+        mime = "image/jpeg";
+        filename = `photo_${Date.now()}.jpg`;
+      } else if (isDocument) {
+        const doc =
+          message.document ||
+          (message.media && "document" in message.media ? (message.media.document as Api.Document) : null);
+        if (doc && "mimeType" in doc && typeof doc.mimeType === "string") {
+          mime = doc.mimeType;
+        }
+        if (doc && "attributes" in doc && Array.isArray(doc.attributes)) {
+          for (const attr of doc.attributes) {
+            if (attr instanceof Api.DocumentAttributeFilename && attr.fileName) {
+              filename = attr.fileName;
+              break;
+            }
+          }
+        }
+        if (!filename.includes(".")) {
+          if (mime.includes("pdf")) filename += ".pdf";
+          else if (mime.includes("png")) filename += ".png";
+          else if (mime.includes("jpeg") || mime.includes("jpg")) filename += ".jpg";
+          else if (mime.includes("webp")) filename += ".webp";
+          else if (mime.includes("word") || mime.includes("document")) filename += ".docx";
+          else if (mime.includes("sheet") || mime.includes("excel")) filename += ".xlsx";
+          else if (mime.includes("text") || mime.includes("plain")) filename += ".txt";
+          else if (mime.includes("video") || mime.includes("mp4")) filename += ".mp4";
+          else if (mime.includes("quicktime")) filename += ".mov";
+          else if (mime.includes("ogg") || mime.includes("opus")) filename += ".ogg";
+          else if (mime.includes("mpeg") || mime.includes("mp3")) filename += ".mp3";
+        }
+      }
+
+      const mediaService = new ChatMediaService();
+      const stored = await mediaService.storeBuffer({
+        buffer,
+        originalName: filename,
+        mimeType: mime,
+        tenantId,
+      });
+
+      return {
+        url: stored.url,
+        mimeType: stored.mimeType,
+        filename: stored.filename,
+      };
+    } catch (error) {
+      this.log.warn({ error }, "Failed to download and store Telegram media");
+      return null;
+    }
+  }
 
   /**
    * Обработчик `NewMessage`.
@@ -383,18 +511,33 @@ export class TelegramTransportService {
 
       const text = typeof message.message === "string" ? message.message.trim() : "";
 
+      // Проверяем наличие медиавложения (фотография, документ)
+      let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
+      const connection = this.connections.get(account.id);
+      if (connection && message.media) {
+        mediaAttachment = await this.extractAndStoreMedia(
+          connection.client,
+          message,
+          account.tenant_id,
+        );
+      }
+
       // M5.3: Зеркалирование нативных исходящих от оператора (fromMe)
       if (message.out === true) {
-        if (text.length > 0) {
+        if (text.length > 0 || mediaAttachment !== null) {
+          const contentText =
+            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
           await runWithTenantContext(account.tenant_id, () =>
             this.crm.processNativeOutbound({
               tenantId: account.tenant_id,
               channel: "telegram",
               channelAccountId: account.id,
               chatId,
-              text,
+              text: contentText,
               senderName: "Менеджер",
               pauseMinutes: 30,
+              attachment: mediaAttachment?.url ?? null,
+              attachmentType: mediaAttachment?.mimeType ?? null,
             }),
           ).catch((error) => {
             this.log.error(
@@ -406,16 +549,62 @@ export class TelegramTransportService {
         return;
       }
 
-      // Медиа без подписи пропускаем: распознавание голоса и изображений не
-      // реализовано, а ответ «не понял» на голосовое хуже молчания оператора.
-      if (text.length === 0) {
+      // Если ни текста, ни медиа — пропускаем
+      if (text.length === 0 && mediaAttachment === null) {
         this.log.info(
           { accountId: account.id },
-          "Incoming message without text (media/voice) — ignored",
+          "Incoming message without text or media — ignored",
         );
         return;
       }
 
+      // Если получено медиа (фотография или документ)
+      if (mediaAttachment !== null) {
+        const profile = connection ? await this.fetchProfile(connection, senderId) : null;
+        const senderName = profile?.firstName || senderId;
+        const contentText =
+          text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+
+        const crmResult = await runWithTenantContext(account.tenant_id, () =>
+          this.crm.processIncoming({
+            tenantId: account.tenant_id,
+            channel: "telegram",
+            channelAccountId: account.id,
+            chatId,
+            text: contentText,
+            senderName,
+            senderTelegramChatId: senderId,
+            profile: profile ?? undefined,
+            attachment: mediaAttachment.url,
+            attachmentType: mediaAttachment.mimeType,
+          }),
+        ).catch((error) => {
+          this.log.error(
+            { error, accountId: account.id, chatId },
+            "Failed to process incoming Telegram media message",
+          );
+          return null;
+        });
+
+        if (crmResult?.isPersonal) {
+          this.log.info({ senderId }, "Personal Telegram contact media ignored by CRM");
+          return;
+        }
+
+        // Если с медиа была текстовая подпись, передаем её в буфер для AI-бота
+        if (text.length > 0) {
+          this.buffer.add({
+            tenantId: account.tenant_id,
+            channelAccountId: account.id,
+            chatId,
+            peerId: senderId,
+            text,
+          });
+        }
+        return;
+      }
+
+      // Обычное текстовое входящее сообщение передаем в дебаунс-буфер
       this.buffer.add({
         tenantId: account.tenant_id,
         channelAccountId: account.id,
@@ -449,6 +638,7 @@ export class TelegramTransportService {
 
     // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
     let dealId: string | null = null;
+    let contactId: string | null = null;
 
     try {
       const crmResult = await runWithTenantContext(batch.tenantId, () =>
@@ -464,7 +654,13 @@ export class TelegramTransportService {
         }),
       );
 
+      if (crmResult.isPersonal) {
+        this.log.info({ peerId: batch.peerId }, "Personal Telegram contact message ignored by CRM");
+        return;
+      }
+
       dealId = crmResult.dealId;
+      contactId = crmResult.contactId;
     } catch (error) {
       this.log.error(
         { error, chatId: batch.chatId, channelAccountId: batch.channelAccountId },
@@ -472,25 +668,35 @@ export class TelegramTransportService {
       );
     }
 
-    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора).
-    if (dealId !== null) {
-      const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+    // 3. Проверяем AI Handoff (пауза бота при недавнем ответе оператора или выключенном AI).
+    const isPaused = await runWithTenantContext(batch.tenantId, async () => {
+      if (dealId !== null) {
         const row = await queryOne<{ id: string }>(
           `SELECT id FROM deals
            WHERE tenant_id = $1 AND id = $2 AND ai_paused_until > now()
            LIMIT 1`,
           [batch.tenantId, dealId],
         );
-        return row !== null;
-      }).catch(() => false);
-
-      if (isPaused) {
-        this.log.info(
-          { dealId, channelAccountId: batch.channelAccountId },
-          "AI bot paused due to active operator handoff",
-        );
-        return;
+        if (row !== null) return true;
       }
+      if (contactId !== null) {
+        const contactDeal = await queryOne<{ id: string }>(
+          `SELECT id FROM deals
+           WHERE tenant_id = $1 AND contact_id = $2 AND deleted_at IS NULL AND ai_paused_until > now()
+           LIMIT 1`,
+          [batch.tenantId, contactId],
+        );
+        if (contactDeal !== null) return true;
+      }
+      return false;
+    }).catch(() => false);
+
+    if (isPaused) {
+      this.log.info(
+        { dealId, contactId, channelAccountId: batch.channelAccountId },
+        "AI bot paused due to active operator handoff or disabled AI",
+      );
+      return;
     }
 
     // 4. Спрашиваем агента (в контексте арендатора, как раньше).
@@ -500,6 +706,8 @@ export class TelegramTransportService {
         channelAccountId: batch.channelAccountId,
         chatId: batch.chatId,
         text: batch.text,
+        channelType: "Telegram",
+        dealId: dealId ?? undefined,
       }),
     );
 
@@ -538,6 +746,18 @@ export class TelegramTransportService {
           model: outcome.model,
         },
         "Agent replied to the incoming batch",
+      );
+      return;
+    }
+
+    if (outcome.kind === "no_agent") {
+      this.log.info(
+        {
+          chatId: batch.chatId,
+          channelAccountId: batch.channelAccountId,
+          messageCount: batch.messageCount,
+        },
+        "AI auto-reply skipped: channel not bound to agent (skipped_bot_disabled_for_channel)",
       );
       return;
     }
@@ -626,6 +846,10 @@ export class TelegramTransportService {
     channelAccountId: string;
     recipient: string;
     text: string;
+    username?: string;
+    phone?: string;
+    attachment?: string;
+    attachmentType?: string;
   }): Promise<{ ok: true } | { ok: false; reason: string }> {
     const connection = this.connections.get(message.channelAccountId);
 
@@ -633,10 +857,94 @@ export class TelegramTransportService {
       return { ok: false, reason: "Аккаунт Telegram не подключён к транспорту" };
     }
 
+    const sendToTarget = async (target: any) => {
+      if (message.attachment) {
+        const media = await resolveOutboundMedia(
+          message.attachment,
+          connection.tenantId,
+          message.attachmentType,
+        );
+        if (media) {
+          const customFile = new CustomFile(
+            media.filename,
+            media.buffer.length,
+            "",
+            media.buffer,
+          );
+          const caption = isMeaningfulCaption(message.text, media.filename)
+            ? message.text
+            : undefined;
+
+          const isVoice = media.category === "voice";
+          const isVideo = media.category === "video";
+          const isDoc = media.category === "document";
+
+          await connection.client.sendFile(target, {
+            file: customFile,
+            caption,
+            forceDocument: isDoc,
+            voiceNote: isVoice,
+            supportsStreaming: isVideo,
+            workers: 1,
+          });
+          return;
+        }
+      }
+
+      await connection.client.sendMessage(target, { message: message.text });
+    };
+
     try {
-      await connection.client.sendMessage(message.recipient, { message: message.text });
+      await sendToTarget(message.recipient);
       return { ok: true };
     } catch (error) {
+      const errStr = error instanceof Error ? error.message : String(error);
+
+      // Если в кэше сессии GramJS нет access_hash для этого peerId (например, после рестарта бэкенда)
+      if (errStr.includes("Could not find the input entity") || errStr.includes("Cannot cast") || errStr.includes("PeerUser")) {
+        this.log.info(
+          { recipient: message.recipient, username: message.username },
+          "Telegram entity not found in cache, attempting resolution",
+        );
+
+        // 1. Попытка резолва по username (@genadich_agency)
+        if (message.username) {
+          try {
+            const uname = message.username.replace(/^@/, "");
+            const entity = await connection.client.getEntity(uname);
+            if (entity) {
+              await sendToTarget(entity);
+              return { ok: true };
+            }
+          } catch (unameErr) {
+            this.log.warn({ unameErr, username: message.username }, "Failed to resolve peer by username");
+          }
+        }
+
+        // 2. Прогрев кэша сущностей через getDialogs (загружает активные чаты с их access_hash)
+        try {
+          await connection.client.getDialogs({ limit: 100 });
+          await sendToTarget(message.recipient);
+          return { ok: true };
+        } catch (dialogsErr) {
+          this.log.warn({ dialogsErr }, "Failed to resolve peer via getDialogs");
+        }
+
+        // 3. Попытка резолва по номеру телефона, если номер известен
+        if (message.phone) {
+          try {
+            const digits = message.phone.replace(/\D/g, "");
+            const phoneResolve = await this.resolveUserByPhone(connection.tenantId, digits);
+            if (phoneResolve.exists && phoneResolve.userId) {
+              await sendToTarget(phoneResolve.userId);
+              return { ok: true };
+            }
+          } catch (phoneErr) {
+            this.log.warn({ phoneErr }, "Failed to resolve peer by phone");
+          }
+        }
+      }
+
       this.log.error(
         { error, channelAccountId: message.channelAccountId },
         "Failed to send manager reply to Telegram",
@@ -647,6 +955,358 @@ export class TelegramTransportService {
       // разных действий оператора.
       const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram";
       return { ok: false, reason: `Telegram отклонил отправку: ${reason}` };
+    }
+  }
+
+  /**
+   * Публикация Stories (истории) в аккаунт Telegram через GramJS MTProto.
+   */
+  async sendStory(payload: StoryPublishPayload): Promise<StoryPublishResult> {
+    let connection: ActiveConnection | undefined;
+
+    if (payload.channelAccountId) {
+      connection = this.connections.get(payload.channelAccountId);
+    }
+
+    if (!connection) {
+      // Ищем любое активное соединение этого арендатора
+      for (const conn of this.connections.values()) {
+        if (conn.tenantId === payload.tenantId) {
+          connection = conn;
+          break;
+        }
+      }
+    }
+
+    if (!connection) {
+      return {
+        ok: false,
+        reason: "Нет активного подключения Telegram MTProto для отправки сторис",
+      };
+    }
+
+    try {
+      let toUpload: CustomFile;
+
+      if (payload.mediaUrl.startsWith("http://") || payload.mediaUrl.startsWith("https://")) {
+        const res = await fetch(payload.mediaUrl);
+        if (!res.ok) {
+          return { ok: false, reason: `Не удалось скачать медиафайл по URL: HTTP ${res.status}` };
+        }
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        const urlPath = new URL(payload.mediaUrl).pathname;
+        const filename = path.basename(urlPath) || (payload.mediaType === "video" ? "story.mp4" : "story.jpg");
+        toUpload = new CustomFile(filename, buf.length, "", buf);
+      } else {
+        if (!fs.existsSync(payload.mediaUrl)) {
+          return { ok: false, reason: `Локальный файл ${payload.mediaUrl} не найден` };
+        }
+        const stat = await fs.promises.stat(payload.mediaUrl);
+        const filename = path.basename(payload.mediaUrl);
+        toUpload = new CustomFile(filename, stat.size, payload.mediaUrl);
+      }
+
+      const inputFile = await connection.client.uploadFile({
+        file: toUpload,
+        workers: 1,
+      });
+
+      let media: Api.TypeInputMedia;
+      if (payload.mediaType === "video") {
+        media = new Api.InputMediaUploadedDocument({
+          file: inputFile,
+          mimeType: "video/mp4",
+          attributes: [
+            new Api.DocumentAttributeVideo({
+              supportsStreaming: true,
+              duration: 15,
+              w: 720,
+              h: 1280,
+            }),
+          ],
+        });
+      } else {
+        media = new Api.InputMediaUploadedPhoto({
+          file: inputFile,
+        });
+      }
+
+      let mediaAreas: Api.TypeMediaArea[] | undefined;
+      if (payload.linkUrl) {
+        mediaAreas = [
+          new Api.MediaAreaUrl({
+            coordinates: new Api.MediaAreaCoordinates({
+              x: 50,
+              y: 75,
+              w: 80,
+              h: 10,
+              rotation: 0,
+            }),
+            url: payload.linkUrl,
+          }),
+        ];
+      }
+
+      const updates = await connection.client.invoke(
+        new Api.stories.SendStory({
+          peer: new Api.InputPeerSelf(),
+          media,
+          caption: payload.caption || undefined,
+          mediaAreas,
+          privacyRules: [new Api.InputPrivacyValueAllowAll()],
+          pinned: false,
+          period: 86400,
+        }),
+      );
+
+      let storyId: string | undefined;
+      if ("updates" in updates && Array.isArray(updates.updates)) {
+        for (const u of updates.updates) {
+          if ("story" in u && u.story && typeof u.story === "object" && "id" in u.story) {
+            storyId = String((u.story as { id: number }).id);
+            break;
+          }
+        }
+      }
+
+      this.log.info(
+        { tenantId: payload.tenantId, channelAccountId: connection.accountId, storyId },
+        "Story successfully published to Telegram",
+      );
+
+      return { ok: true, externalId: storyId };
+    } catch (error) {
+      this.log.error(
+        { error, tenantId: payload.tenantId, channelAccountId: payload.channelAccountId },
+        "Failed to send Telegram Story",
+      );
+      const reason = error instanceof Error ? error.message : "Неизвестная ошибка Telegram MTProto";
+      return { ok: false, reason: `Telegram отклонил публикацию сторис: ${reason}` };
+    }
+  }
+
+  /**
+   * Поиск пользователя в Telegram по номеру телефона (ImportContacts).
+   * Используется для автоматического кросс-канального обогащения контакта.
+   */
+  async resolveUserByPhone(
+    tenantId: string,
+    phoneRaw: string,
+  ): Promise<TelegramPhoneResolveResult> {
+    const digits = phoneRaw.replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) return { exists: false, error: "bad_phone" };
+    const phone = `+${digits}`;
+
+    let conn = Array.from(this.connections.values()).find((c) => c.tenantId === tenantId);
+    if (!conn) {
+      conn = this.connections.values().next().value;
+    }
+    if (!conn) {
+      return { exists: false, error: "no_active_telegram_session" };
+    }
+
+    try {
+      const imported = (await conn.client.invoke(
+        new Api.contacts.ImportContacts({
+          contacts: [
+            new Api.InputPhoneContact({
+              clientId: bigInt(Date.now()),
+              phone,
+              firstName: "Lead",
+              lastName: "Contact",
+            }),
+          ],
+        }),
+      )) as { users?: Api.User[]; imported?: Array<{ userId?: unknown }> };
+
+      const users: Api.User[] = Array.isArray(imported?.users) ? imported.users : [];
+      let user = users.find((u) => u instanceof Api.User && !u.bot);
+
+      if (!user && Array.isArray(imported?.imported) && imported.imported.length > 0) {
+        const uid = imported.imported[0]?.userId;
+        if (uid != null) {
+          try {
+            const entity = await conn.client.getEntity(String(uid));
+            if (entity instanceof Api.User && !entity.bot) user = entity;
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      if (!user || user.bot) {
+        return { exists: false };
+      }
+
+      let username: string | undefined = user.username ? String(user.username).trim().replace(/^@/, "") : undefined;
+      if (!username) {
+        try {
+          const fresh = await conn.client.getEntity(user);
+          if (fresh instanceof Api.User && fresh.username) {
+            username = String(fresh.username).trim().replace(/^@/, "");
+            user = fresh;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      try {
+        const input = await conn.client.getInputEntity(user);
+        await conn.client.invoke(new Api.contacts.DeleteContacts({ id: [input] }));
+      } catch {
+        // ignore
+      }
+
+      return {
+        exists: true,
+        userId: user.id ? user.id.toString() : undefined,
+        username: username || undefined,
+        firstName: user.firstName ? String(user.firstName).trim() : undefined,
+        lastName: user.lastName ? String(user.lastName).trim() : undefined,
+      };
+    } catch (err) {
+      this.log.warn({ err, phone }, "Telegram resolveUserByPhone failed");
+      return { exists: false, error: String(err) };
+    }
+  }
+
+  /**
+   * Синхронизация предшествующих сообщений и медиа из диалога Telegram в сделку CRM.
+   */
+  async syncDialogHistory(params: TelegramHistorySyncParams): Promise<number> {
+    const connection = this.connections.get(params.channelAccountId);
+    if (!connection) {
+      this.log.warn(
+        { channelAccountId: params.channelAccountId },
+        "Cannot sync Telegram history: account not connected",
+      );
+      return 0;
+    }
+
+    try {
+      // GramJS требует наличия access_hash для личных диалогов в кэше сессии.
+      // Пытаемся получить сообщения по peerId / username, прогревая кэш диалогов при необходимости.
+      let messages: Api.Message[] = [];
+      try {
+        const res = await connection.client.getMessages(params.peerId, {
+          limit: params.limit ?? 50,
+        });
+        messages = [...res];
+      } catch (err) {
+        this.log.info(
+          { err, peerId: params.peerId, username: params.username },
+          "Telegram entity not found in cache, warming dialogs for sync",
+        );
+        if (params.username) {
+          try {
+            const res = await connection.client.getMessages(params.username.replace(/^@/, ""), {
+              limit: params.limit ?? 50,
+            });
+            messages = [...res];
+          } catch {
+            // fallback
+          }
+        }
+        if (messages.length === 0) {
+          try {
+            await connection.client.getDialogs({ limit: 100 });
+            const res = await connection.client.getMessages(params.peerId, {
+              limit: params.limit ?? 50,
+            });
+            messages = [...res];
+          } catch {
+            if (params.username) {
+              const res = await connection.client.getMessages(params.username.replace(/^@/, ""), {
+                limit: params.limit ?? 50,
+              });
+              messages = [...res];
+            }
+          }
+        }
+      }
+
+      if (!messages || messages.length === 0) return 0;
+
+      let importedCount = 0;
+      const list = [...messages].reverse();
+
+      await runWithTenantContext(params.tenantId, async () => {
+        for (const msg of list) {
+          if (typeof msg.id !== "number") continue;
+          const text = typeof msg.message === "string" ? msg.message.trim() : "";
+          const isOutbound = msg.out === true;
+          const date = new Date(msg.date * 1000);
+
+          let mediaAttachment: { url: string; mimeType: string; filename: string } | null = null;
+          if (msg.media) {
+            mediaAttachment = await this.extractAndStoreMedia(
+              connection.client,
+              msg,
+              params.tenantId,
+            );
+          }
+
+          if (text.length === 0 && !mediaAttachment) continue;
+
+          const contentText =
+            text || (mediaAttachment?.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
+
+          // Проверяем наличие сообщения в сделке (дедупликация)
+          const existing = await queryOne<{ id: string }>(
+            `SELECT id FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2
+               AND channel = 'telegram'
+               AND (
+                 (attachment IS NOT NULL AND attachment = $3)
+                 OR (content = $4 AND created_at BETWEEN $5::timestamptz - interval '5 seconds' AND $5::timestamptz + interval '5 seconds')
+               )
+             LIMIT 1`,
+            [
+              params.tenantId,
+              params.dealId,
+              mediaAttachment?.url ?? null,
+              contentText,
+              date.toISOString(),
+            ],
+          );
+
+          if (!existing) {
+            await query(
+              `INSERT INTO deal_messages
+                 (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, attachment, attachment_type, delivery_status, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'telegram', $8, $9, $10, $11)`,
+              [
+                params.tenantId,
+                params.dealId,
+                params.channelAccountId,
+                isOutbound ? "manager" : "client",
+                isOutbound ? "outbound" : "inbound",
+                isOutbound ? "Менеджер" : params.peerId,
+                contentText,
+                mediaAttachment?.url ?? null,
+                mediaAttachment?.mimeType ?? null,
+                isOutbound ? "sent" : "neutral",
+                date.toISOString(),
+              ],
+            );
+            importedCount++;
+          }
+        }
+      });
+
+      this.log.info(
+        { dealId: params.dealId, peerId: params.peerId, count: importedCount },
+        "Synced Telegram dialog history to CRM",
+      );
+      return importedCount;
+    } catch (error) {
+      this.log.error(
+        { err: error, dealId: params.dealId, peerId: params.peerId },
+        "Failed to sync Telegram dialog history",
+      );
+      return 0;
     }
   }
 

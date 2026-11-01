@@ -29,6 +29,11 @@ export const createTaskSchema = z
     assignee_id: z.string().uuid("Выберите ответственного"),
     linked_entity_type: linkedEntityTypeSchema.optional().or(z.literal("")),
     linked_entity_id: z.string().uuid("Выберите запись").optional().or(z.literal("")),
+    deal_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    contact_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    company_id: z.string().uuid().optional().nullable().or(z.literal("")),
+    notify_telegram: z.boolean().optional(),
+    remind_before_minutes: z.coerce.number().int().min(0).max(10080).optional(),
   })
   .superRefine((value, ctx) => {
     const hasType = value.linked_entity_type !== undefined && value.linked_entity_type !== "";

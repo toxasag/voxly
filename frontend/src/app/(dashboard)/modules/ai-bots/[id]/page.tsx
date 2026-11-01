@@ -25,8 +25,8 @@ import {
   renderPromptPreview,
 } from "@/lib/ai-bots/ai-bots.types";
 import { PROMPT_TEMPLATES } from "@/lib/ai-bots/prompt-templates";
-import { useAiAgent, useUpdateAiAgent } from "@/lib/api/use-ai-agents";
-import { useHasPermission } from "@/lib/auth/use-auth";
+import { useAiAgent, useAgentPromptPreview, useUpdateAiAgent } from "@/lib/api/use-ai-agents";
+import { useAuth, useHasPermission } from "@/lib/auth/use-auth";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { AgentChannelsTab } from "@/components/ai-bots/AgentChannelsTab";
 import { AgentKnowledgeTab } from "@/components/ai-bots/AgentKnowledgeTab";
@@ -56,6 +56,9 @@ interface BotDetailContentProps {
 
 function BotDetailContent({ bot }: BotDetailContentProps) {
   const update = useUpdateAiAgent();
+  const { tenant } = useAuth();
+  const tenantName = tenant?.tenantName ?? "Компания";
+
   // Тем же правом закрыта кнопка настроек ниже: интерфейс скрывает ровно то, что
   // отклонил бы сервер (`ai_bots:configure` на маршрутах записи).
   const canConfigure = useHasPermission("ai_bots:configure");
@@ -63,6 +66,20 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
   const [tab, setTab] = useState<BotTab>("chat");
   const [configOpen, setConfigOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(bot.system_prompt);
+
+  const { data: previewData } = useAgentPromptPreview(bot.id, promptDraft);
+
+  const previewText = useMemo(() => {
+    if (previewData?.resolvedPrompt) {
+      return previewData.resolvedPrompt;
+    }
+    return renderPromptPreview(promptDraft, bot, {
+      tenantName,
+      currentTime:
+        new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) + " МСК",
+      channelType: "чат на сайте",
+    });
+  }, [previewData?.resolvedPrompt, promptDraft, bot, tenantName]);
 
   // Черновик промпта синхронизируется с сервером: после сохранения приходит
   // обновлённый агент, и локальная копия не должна показывать прежний текст.
@@ -95,8 +112,9 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
 
   const handleConfigSubmit = useCallback(
     async (payload: CreateBotPayload) => {
-      await update.mutateAsync({ id: bot.id, payload });
+      const updated = await update.mutateAsync({ id: bot.id, payload });
       toast.success("Настройки агента сохранены");
+      return updated;
     },
     [bot.id, update],
   );
@@ -218,14 +236,6 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
       */}
       {tab === "chat" && (
         <div className="space-y-3">
-          <div className="flex items-start gap-2.5 rounded-[8px] border border-amber-200 bg-amber-50 px-4 py-3">
-            <Braces className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-            <p className="text-xs leading-relaxed text-amber-800">
-              Демонстрационный режим: ответы формируются локально в браузере, модель не
-              вызывается и баланс ИИ не расходуется. Реальные ответы появятся после
-              подключения провайдера.
-            </p>
-          </div>
           <BotChat bot={bot} />
         </div>
       )}
@@ -269,11 +279,11 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
               <h3 className="mb-3 text-[13px] font-semibold text-[#111111]">
                 Подстановка во время выполнения
                 <span className="ml-1.5 text-xs font-normal text-[#888888]">
-                  примерные значения
+                  актуальные данные
                 </span>
               </h3>
               <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-4 py-3 text-sm leading-relaxed text-[#111111]">
-                {renderPromptPreview(promptDraft)}
+                {previewText}
               </p>
             </div>
           </div>

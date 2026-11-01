@@ -1,0 +1,33 @@
+name: Security checks
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Dependency audit
+        working-directory: backend
+        run: npm audit --audit-level=high
+      - name: Typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Diff and forbidden patterns
+        run: |
+          if grep -RInE '(@ts-ignore|@ts-expect-error|:[[:space:]]*any\b)' backend/src frontend/src; then
+            echo "Forbidden unsafe TypeScript pattern found"
+            exit 1
+          fi
+          git diff --check

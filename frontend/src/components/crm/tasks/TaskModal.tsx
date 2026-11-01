@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ListChecks, User, Calendar, AlertCircle, Link2, Loader2 } from "lucide-react";
+import { ListChecks, User, Calendar, AlertCircle, Link2, Loader2, Bell } from "lucide-react";
 import { createTaskSchema, type CreateTaskPayload } from "@/schemas/task.schema";
 import { ApiClientError } from "@/lib/api/apiClient";
 import { useTenantUsers } from "@/lib/api/use-tenant-users";
@@ -50,6 +50,14 @@ const STATUSES = [
   { value: "done" as const, label: "Выполнено" },
 ];
 
+const REMINDER_OPTIONS = [
+  { value: 15, label: "15 мин", fullLabel: "За 15 минут" },
+  { value: 30, label: "30 мин", fullLabel: "За 30 минут" },
+  { value: 60, label: "1 час", fullLabel: "За 1 час" },
+  { value: 120, label: "2 часа", fullLabel: "За 2 часа" },
+  { value: 1440, label: "24 часа", fullLabel: "За 24 часа" },
+];
+
 const EMPTY: CreateTaskPayload = {
   title: "",
   description: "",
@@ -59,6 +67,8 @@ const EMPTY: CreateTaskPayload = {
   assignee_id: "",
   linked_entity_type: "",
   linked_entity_id: "",
+  notify_telegram: false,
+  remind_before_minutes: 30,
 };
 
 const INPUT_CLASS =
@@ -86,7 +96,13 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
   const defaults = useMemo<CreateTaskPayload>(
     () => (initial === undefined
       ? { ...EMPTY, assignee_id: assigneeId }
-      : { ...initial, due_date: toLocalInput(initial.due_date) }),
+      : {
+          ...EMPTY,
+          ...initial,
+          due_date: toLocalInput(initial.due_date),
+          notify_telegram: initial.notify_telegram ?? false,
+          remind_before_minutes: initial.remind_before_minutes ?? 30,
+        }),
     [initial, assigneeId],
   );
 
@@ -306,6 +322,74 @@ export function TaskModal({ open, onClose, onSubmit, assigneeId, initial, title 
                 )}
               </div>
               {message(errors.linked_entity_id) && <p className="text-xs text-rose-600">{message(errors.linked_entity_id)}</p>}
+            </div>
+
+            {/* Напоминание в Telegram перед наступлением срока */}
+            <div className="rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-3 space-y-2.5 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#0088cc]/10 text-[#0088cc]">
+                    <Bell className="h-3.5 w-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-[#111111]">
+                      Напоминание в Telegram-бот
+                    </div>
+                    <div className="text-[11px] text-[#666666]">
+                      Прислать уведомление в @GetVoxlybot перед сроком
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(form.watch("notify_telegram"))}
+                  onClick={() => form.setValue("notify_telegram", !form.watch("notify_telegram"), { shouldValidate: true })}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20",
+                    form.watch("notify_telegram") ? "bg-[#4a38f5]" : "bg-[#d4d4d4]",
+                  )}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out",
+                      form.watch("notify_telegram") ? "translate-x-4" : "translate-x-0",
+                    )}
+                  />
+                </button>
+              </div>
+
+              {form.watch("notify_telegram") && (
+                <div className="pt-2.5 border-t border-[#e5e5e5] space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-[#666666]">
+                    <span>За сколько до срока напомнить:</span>
+                    <span className="font-medium text-[#111111]">
+                      {REMINDER_OPTIONS.find((opt) => opt.value === (form.watch("remind_before_minutes") ?? 30))?.fullLabel ?? "За 30 минут"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {REMINDER_OPTIONS.map((opt) => {
+                      const isSelected = (form.watch("remind_before_minutes") ?? 30) === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => form.setValue("remind_before_minutes", opt.value, { shouldValidate: true })}
+                          className={cn(
+                            "h-7 rounded-[6px] border text-[11px] font-medium transition-all cursor-pointer flex items-center justify-center",
+                            isSelected
+                              ? "border-[#4a38f5] bg-[#4a38f5] text-white shadow-xs"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-[#fafafa] hover:text-[#111111]",
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  BarChart3,
   Bot,
   Check,
   Code2,
@@ -24,6 +25,7 @@ import {
 } from "@/lib/api/use-channels";
 import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { WebchatAppearanceSettings } from "./WebchatAppearanceSettings";
+import { WebchatAnalyticsDrawer } from "./WebchatAnalyticsDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
 
 interface WebchatManagementViewProps {
@@ -41,6 +43,9 @@ export function WebchatManagementView({
 }: WebchatManagementViewProps) {
   // Выбранный сайт для настройки внешнего вида
   const [editingAppearanceId, setEditingAppearanceId] = useState<string | null>(null);
+
+  // Выбранный сайт для просмотра воронки и аналитики
+  const [analyticsAccount, setAnalyticsAccount] = useState<ChannelAccountDTO | null>(null);
 
   // Модалка кода для вставки на сайт
   const [codeModalAccount, setCodeModalAccount] = useState<ChannelAccountDTO | null>(null);
@@ -152,6 +157,23 @@ export function WebchatManagementView({
         )}
       </div>
 
+      {/* Подсказка о настройке внешнего вида и капсулы */}
+      <div className="rounded-xl border border-[#4a38f5]/20 bg-[#4a38f5]/5 p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-[#111111]">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#4a38f5] text-white">
+            <Palette className="h-4 w-4" />
+          </div>
+          <div>
+            <span className="font-semibold text-[#111111]">
+              Оформление виджета: информативная капсула и фото консультанта
+            </span>
+            <p className="text-[#666666] mt-0.5">
+              Включите отображение виджета в виде плашки «Имя + Онлайн» (как на скриншоте) в меню «Настроить виджет» нужного сайта.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Список подключенных сайтов */}
       {isLoading ? (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -247,10 +269,24 @@ export function WebchatManagementView({
                       </select>
                     </div>
                   </div>
+
+                  {/* Стиль кнопки виджета на сайте */}
+                  <div className="mt-3 flex items-center justify-between text-xs text-[#666666] border-t border-[#f0f0f0] pt-2.5">
+                    <span>Стиль кнопки:</span>
+                    {creds.launcherStyle === "pill" ? (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#4a38f5] bg-[#4a38f5]/10 px-2 py-0.5 rounded-full text-[11px]">
+                        Капсула ({String(creds.consultantName || "Консультант")}, {String(creds.statusText || "Онлайн")})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-medium text-[#666666] bg-[#f0f0f0] px-2 py-0.5 rounded-full text-[11px]">
+                        Круглая кнопка
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Действия карточки */}
-                <div className="mt-5 flex items-center justify-between border-t border-[#e5e5e5] pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[#e5e5e5] pt-4">
                   <button
                     type="button"
                     onClick={() => setCodeModalAccount(acc)}
@@ -260,14 +296,26 @@ export function WebchatManagementView({
                     Код для сайта
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setEditingAppearanceId(acc.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
-                  >
-                    <Palette className="h-3.5 w-3.5 text-[#4a38f5]" />
-                    Настроить виджет
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAnalyticsAccount(acc)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                      title="Воронка и конверсии виджета"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Воронка
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setEditingAppearanceId(acc.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#111111] transition-colors hover:bg-[#fafafa]"
+                    >
+                      <Palette className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Настроить
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -417,6 +465,13 @@ export function WebchatManagementView({
           </div>
         </div>
       )}
+
+      {/* Шторка воронки конверсий и аналитики виджета */}
+      <WebchatAnalyticsDrawer
+        account={analyticsAccount}
+        open={Boolean(analyticsAccount)}
+        onClose={() => setAnalyticsAccount(null)}
+      />
     </div>
   );
 }

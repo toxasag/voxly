@@ -35,11 +35,92 @@ export interface OutboundMessage {
   /** Адрес получателя в терминах канала: peer id Telegram, номер WhatsApp. */
   recipient: string;
   text: string;
+  username?: string;
+  phone?: string;
+  attachment?: string;
+  attachmentType?: string;
 }
 
 export type OutboundSender = (message: OutboundMessage) => Promise<OutboundSendResult>;
 
+export interface StoryPublishPayload {
+  tenantId: string;
+  channelAccountId: string | null;
+  mediaUrl: string;
+  mediaType: "photo" | "video";
+  caption?: string;
+  linkUrl?: string | null;
+  linkText?: string | null;
+}
+
+export type StoryPublishResult =
+  | { ok: true; externalId?: string }
+  | { ok: false; reason: string };
+
+export type StoryPublisher = (payload: StoryPublishPayload) => Promise<StoryPublishResult>;
+
+export interface TelegramPhoneResolveResult {
+  exists: boolean;
+  userId?: string;
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  error?: string;
+}
+
+export type TelegramPhoneResolver = (
+  tenantId: string,
+  phoneDigits: string,
+) => Promise<TelegramPhoneResolveResult>;
+
+export interface TelegramHistorySyncParams {
+  tenantId: string;
+  dealId: string;
+  channelAccountId: string;
+  peerId: string;
+  username?: string;
+  phone?: string;
+  limit?: number;
+}
+
+export type TelegramHistorySyncer = (params: TelegramHistorySyncParams) => Promise<number>;
+
 const senders = new Map<ChannelSlug, OutboundSender>();
+const storyPublishers = new Map<ChannelSlug, StoryPublisher>();
+let telegramPhoneResolver: TelegramPhoneResolver | null = null;
+let telegramHistorySyncer: TelegramHistorySyncer | null = null;
+
+/** Транспорт Telegram регистрирует синхронизатор истории сообщений */
+export function registerTelegramHistorySyncer(syncer: TelegramHistorySyncer): () => void {
+  telegramHistorySyncer = syncer;
+  return () => {
+    if (telegramHistorySyncer === syncer) telegramHistorySyncer = null;
+  };
+}
+
+/** Вызов синхронизатора истории диалога Telegram */
+export function resolveTelegramHistorySyncer(): TelegramHistorySyncer | null {
+  return telegramHistorySyncer;
+}
+
+/** Транспорт Telegram регистрирует резолвер поиска по номеру телефона */
+
+/** Транспорт Telegram регистрирует резолвер поиска по номеру телефона */
+export function registerTelegramPhoneResolver(resolver: TelegramPhoneResolver): () => void {
+  telegramPhoneResolver = resolver;
+  return () => {
+    if (telegramPhoneResolver === resolver) telegramPhoneResolver = null;
+  };
+}
+
+/** Вызов резолвера Telegram по номеру телефона */
+export async function resolveTelegramPhone(
+  tenantId: string,
+  phoneDigits: string,
+): Promise<TelegramPhoneResolveResult | null> {
+  if (!telegramPhoneResolver) return null;
+  return telegramPhoneResolver(tenantId, phoneDigits);
+}
 
 /** Транспорт объявляет себя отправителем канала при старте процесса. */
 export function registerOutboundSender(channel: ChannelSlug, sender: OutboundSender): () => void {
@@ -53,10 +134,31 @@ export function registerOutboundSender(channel: ChannelSlug, sender: OutboundSen
 
 /** `null` — канал не умеет отправлять в этом процессе; это не ошибка. */
 export function resolveOutboundSender(channel: string): OutboundSender | null {
+  if (channel === "webchat") {
+    // Веб-чат на сайте клиента: сообщение менеджера сохранено в deal_messages,
+    // а посетитель сайта забирает его через /history при активной сессии.
+    return async () => ({ ok: true });
+  }
   return senders.get(channel as ChannelSlug) ?? null;
+}
+
+/** Транспорт объявляет себя публикатором сторис канала. */
+export function registerStoryPublisher(channel: ChannelSlug, publisher: StoryPublisher): () => void {
+  storyPublishers.set(channel, publisher);
+  return () => {
+    if (storyPublishers.get(channel) === publisher) storyPublishers.delete(channel);
+  };
+}
+
+/** `null` — канал не умеет публиковать сторис в этом процессе. */
+export function resolveStoryPublisher(channel: string): StoryPublisher | null {
+  return storyPublishers.get(channel as ChannelSlug) ?? null;
 }
 
 /** Для тестов: снимает все регистрации между прогонами. */
 export function clearOutboundSenders(): void {
   senders.clear();
+  storyPublishers.clear();
+  telegramPhoneResolver = null;
+  telegramHistorySyncer = null;
 }

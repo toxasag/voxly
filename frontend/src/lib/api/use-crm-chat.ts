@@ -11,7 +11,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 
 export type ChatMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot" | "system";
 export type ChatMessageDirection = "inbound" | "outbound" | "neutral";
-export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed";
+export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 
 export interface ChatMessageDTO {
   id: string;
@@ -33,6 +33,7 @@ export interface ChatMessageDTO {
 export interface SendFromOptionDTO {
   channelAccountId: string;
   channel: string;
+  label?: string;
   accountName: string;
   isDefault: boolean;
   available: boolean;
@@ -44,6 +45,7 @@ export interface AiStatusDTO {
   isPaused: boolean;
   pausedUntil: string | null;
   pausedReason: string | null;
+  status?: "enabled" | "paused" | "disabled";
 }
 
 export type AiControlAction = "enable" | "pause" | "disable";
@@ -60,6 +62,31 @@ export interface SendChatMessagePayload {
   direction?: ChatMessageDirection;
   attachment?: string;
   attachment_type?: string;
+}
+
+export interface UploadMediaResultDTO {
+  url: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export function useUploadCrmMedia(): UseMutationResult<
+  UploadMediaResultDTO,
+  ApiClientError,
+  File
+> {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      const res = await apiClient.postFormData<UploadMediaResultDTO>(
+        "/api/v1/crm/upload",
+        formData,
+      );
+      return res.data;
+    },
+  });
 }
 
 export const crmChatKeys = {
@@ -91,7 +118,7 @@ export function useDealChatMessages(
     queryKey: crmChatKeys.deal.messages(dealId),
     queryFn: async () => {
       const response = await apiClient.get<ChatMessageDTO[]>(
-        `/api/v1/crm/deals/${dealId}/timeline`,
+        `/api/v1/crm/deals/${dealId}/messages`,
       );
       return response.data;
     },
@@ -302,6 +329,48 @@ export function useSendContactChatMessage(contactId: string): UseMutationResult<
   });
 }
 
+export function useSyncDealChatHistory(dealId: string): UseMutationResult<
+  { ok: boolean; synced: number },
+  ApiClientError,
+  void
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const response = await apiClient.post<{ ok: boolean; synced: number }>(
+        `/api/v1/crm/deals/${dealId}/sync-chat-history`,
+        {},
+      );
+      return response.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: crmChatKeys.deal.messages(dealId) });
+      void qc.invalidateQueries({ queryKey: crmChatKeys.deal.sendFromOptions(dealId) });
+    },
+  });
+}
+
+export function useSyncContactChatHistory(contactId: string): UseMutationResult<
+  { ok: boolean; synced: number },
+  ApiClientError,
+  void
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const response = await apiClient.post<{ ok: boolean; synced: number }>(
+        `/api/v1/crm/contacts/${contactId}/sync-chat-history`,
+        {},
+      );
+      return response.data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: crmChatKeys.contact.messages(contactId) });
+      void qc.invalidateQueries({ queryKey: crmChatKeys.contact.sendFromOptions(contactId) });
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Унифицированный хук чата для CrmChatView
 // ---------------------------------------------------------------------------
@@ -335,6 +404,9 @@ export function useCrmChat({ entityType, entityId, live = true }: UseCrmChatOpti
   const dealAiDraft = useDealAiDraft(isDeal ? entityId : "");
   const contactAiDraft = useContactAiDraft(!isDeal ? entityId : "");
 
+  const dealSyncHistory = useSyncDealChatHistory(isDeal ? entityId : "");
+  const contactSyncHistory = useSyncContactChatHistory(!isDeal ? entityId : "");
+
   return {
     messagesQuery: isDeal ? dealMessages : contactMessages,
     sendFromOptionsQuery: isDeal ? dealSendFrom : contactSendFrom,
@@ -342,5 +414,6 @@ export function useCrmChat({ entityType, entityId, live = true }: UseCrmChatOpti
     sendMessageMutation: isDeal ? dealSend : contactSend,
     aiControlMutation: isDeal ? dealAiControl : contactAiControl,
     aiDraftMutation: isDeal ? dealAiDraft : contactAiDraft,
+    syncHistoryMutation: isDeal ? dealSyncHistory : contactSyncHistory,
   };
 }

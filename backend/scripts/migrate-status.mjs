@@ -31,7 +31,7 @@ if (!config.url) {
 }
 
 const files = (await readdir(join(process.cwd(), MIGRATIONS_DIR)))
-  .filter((name) => name.endsWith(".sql"))
+  .filter((name) => name.endsWith(".sql") || name.endsWith(".js"))
   .sort();
 
 const client = new pg.Client({ connectionString: config.url });
@@ -62,7 +62,7 @@ try {
 await client.end();
 
 const appliedNames = new Set(applied.map((row) => row.name));
-const fileNames = files.map((name) => name.replace(/\.sql$/, ""));
+const fileNames = files.map((name) => name.replace(/\.(sql|js)$/, ""));
 
 console.log(`Каталог:  ${MIGRATIONS_DIR}`);
 console.log(`Таблица:  ${TABLE}${tableExists ? "" : " (ещё не создана)"}`);

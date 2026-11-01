@@ -11,6 +11,9 @@ import {
   updateTaskSchema,
 } from "./tasks.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
+import { queueManager } from "../../../infrastructure/queue.js";
+import type { TaskAssignmentNotificationJob } from "./task-notification.service.js";
+import { notificationQueue } from "../../notifications/notification.queue.js";
 
 const listQuerySchema = z
   .object({
@@ -21,7 +24,7 @@ const listQuerySchema = z
     status: taskStatusSchema.optional(),
     linked_entity_type: linkedEntityTypeSchema.optional(),
     linked_entity_id: z.string().uuid().optional(),
-    limit: z.coerce.number().int().positive().max(100).default(25),
+    limit: z.coerce.number().int().positive().max(500).default(25),
     offset: z.coerce.number().int().nonnegative().default(0),
   })
   .refine(
@@ -90,6 +93,26 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const body = createTaskSchema.parse(request.body);
     const task = await service.create(request.tenant_id, body);
 
+    if (task.assigneeId !== null) {
+      void notificationQueue.dispatchTaskAssigned({
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        assigneeId: task.assigneeId,
+      });
+
+      const job: TaskAssignmentNotificationJob = {
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        assigneeId: task.assigneeId,
+      };
+      await queueManager.enqueue({
+        queue: "notifications",
+        tenantId: request.tenant_id,
+        name: "task-assigned",
+        data: job,
+      });
+    }
+
     return reply.status(201).send({ data: task });
   });
 
@@ -100,6 +123,14 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
     if (task === null) throw new NotFoundError("Task not found");
 
+    if (body.status) {
+      void notificationQueue.dispatchTaskStatusChanged({
+        tenantId: request.tenant_id,
+        taskId: task.id,
+        newStatus: body.status,
+      });
+    }
+
     return reply.send({ data: task });
   });
 
@@ -109,6 +140,12 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
     const task = await service.setStatus(request.tenant_id, id, status);
 
     if (task === null) throw new NotFoundError("Task not found");
+
+    void notificationQueue.dispatchTaskStatusChanged({
+      tenantId: request.tenant_id,
+      taskId: task.id,
+      newStatus: status,
+    });
 
     return reply.send({ data: task });
   });

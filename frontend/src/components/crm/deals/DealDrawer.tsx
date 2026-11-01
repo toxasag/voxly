@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, Trash2 } from "lucide-react";
+import { CheckSquare, Clock, FileText, Handshake, Heart, Home, Mail, MoreHorizontal, Paperclip, Pencil, ShieldAlert, Trash2, UserX } from "lucide-react";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
-import { useDeal, useDeleteDeal, useUpdateDeal } from "@/lib/api/use-deals";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { useDeal, useDeleteDeal, useMarkDealPersonal, useUnmarkDealPersonal, useUpdateDeal } from "@/lib/api/use-deals";
 import { dealTabContents, type DealStageInfo, type DealTabsContext } from "@/components/crm/deals/deal-tabs";
 import { useTabsRenderer } from "@/components/crm/shared/TabsRenderer";
 import { chipInitials, paletteFor } from "@/components/crm/shared/EntityChip";
@@ -70,6 +71,9 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
 
   const updateDeal = useUpdateDeal();
   const deleteDeal = useDeleteDeal();
+  const markDealPersonal = useMarkDealPersonal();
+  const unmarkDealPersonal = useUnmarkDealPersonal();
+  const [showPersonalConfirm, setShowPersonalConfirm] = useState(false);
 
   useEffect(() => {
     setCardView("deal");
@@ -236,6 +240,12 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
                     >
                       <Pencil className="h-3 w-3" />
                     </button>
+                    {deal.data?.contactIsPersonal && (
+                      <span className="inline-flex items-center gap-1 rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[10px] font-medium text-[#854d0e] shrink-0">
+                        <ShieldAlert className="h-3 w-3 text-[#854d0e]" />
+                        Личный контакт
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -279,8 +289,8 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
             )}
           </SheetContent>
 
-          {/* Sticky Bottom Actions Bar (Twenty CRM drawer footer) */}
-          {deal.data !== undefined && (
+          {/* Sticky Bottom Actions Bar (Twenty CRM drawer footer) — скрыт на вкладке чата */}
+          {deal.data !== undefined && tab !== "chat" && (
             <div className="sticky bottom-0 z-20 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-4 py-2.5 shrink-0">
               <div className="relative flex items-center gap-1.5">
                 <button
@@ -296,7 +306,38 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
                 {moreMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-30 cursor-default" onClick={() => setMoreMenuOpen(false)} />
-                    <div className="absolute bottom-full left-0 z-40 mb-1 w-48 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-xl">
+                    <div className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded-[8px] border border-[#e5e5e5] bg-white p-1 shadow-xl">
+                      {deal.data?.contactIsPersonal ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            if (deal.data) {
+                              unmarkDealPersonal.mutate(deal.data.id, {
+                                onSuccess: () => toast.success("Контакт возвращён в категорию рабочих"),
+                                onError: (err) => toast.error(err.message || "Ошибка"),
+                              });
+                            }
+                          }}
+                          className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors text-left cursor-pointer"
+                        >
+                          <ShieldAlert className="h-3.5 w-3.5 shrink-0 text-[#854d0e]" />
+                          <span>Вернуть контакт в рабочие</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            setShowPersonalConfirm(true);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-xs text-[#111111] hover:bg-[#fafafa] transition-colors text-left cursor-pointer"
+                        >
+                          <UserX className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
+                          <span>Личный контакт</span>
+                        </button>
+                      )}
+                      <div className="my-1 h-px bg-[#e5e5e5]" />
                       <button
                         type="button"
                         onClick={handleDelete}
@@ -342,6 +383,28 @@ export function DealDrawer({ dealId, open, onClose, onDelete, isDeleting = false
           )}
         </>
       )}
+
+      <ConfirmDialog
+        open={showPersonalConfirm}
+        onClose={() => setShowPersonalConfirm(false)}
+        onConfirm={() => {
+          if (deal.data) {
+            markDealPersonal.mutate(deal.data.id, {
+              onSuccess: () => {
+                setShowPersonalConfirm(false);
+                toast.success("Контакт помечен как личный. Сделка переведена в отказ, переписка не попадает в CRM.");
+              },
+              onError: (err) => toast.error(err.message || "Ошибка"),
+            });
+          }
+        }}
+        title="Пометить как личный контакт?"
+        description="Сделка сразу перейдет в статус «Закрыто и не реализовано», новые сделки по этому контакту создаваться не будут. Входящие сообщения перестанут поступать в CRM (не сохраняются в историю, AI не отвечает). Уведомления продолжат приходить на ваш телефон, сообщения НЕ отмечаются прочитанными платформой — вы спокойно общаетесь с телефона как обычно."
+        confirmLabel="Пометить как личный"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={markDealPersonal.isPending}
+      />
     </Sheet>
   );
 }

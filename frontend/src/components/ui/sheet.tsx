@@ -94,7 +94,7 @@ export function SheetHeader({
   isMaximized = false,
 }: SheetHeaderProps) {
   return (
-    <div className="flex items-center justify-between border-b border-[#e5e5e5] px-4 py-3 bg-white">
+    <div className="flex items-center justify-between border-b border-[#e5e5e5] px-6 py-3.5 bg-white shrink-0">
       <div className="flex-1 min-w-0">{children}</div>
       <div className="flex items-center gap-1 shrink-0 ml-3">
         {onDelete !== undefined && (

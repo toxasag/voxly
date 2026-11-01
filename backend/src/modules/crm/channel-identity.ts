@@ -123,6 +123,14 @@ function nameFromSender(senderName: string): { first_name: string; last_name: st
   // peerId, у MAX числовой профиль. Именем такое быть не может.
   if (trimmed === "" || /^@?\d+$/.test(trimmed)) return null;
 
+  // Системные заглушки сайта вида «Посетитель сайта (...)» или «Клиент ...» не режем по пробелу
+  if (/^Посетитель\s+сайта/i.test(trimmed) || /^Клиент(?:\s+.*)?$/i.test(trimmed)) {
+    return {
+      first_name: trimmed,
+      last_name: "",
+    };
+  }
+
   const parts = trimmed.split(/\s+/);
 
   return {
@@ -169,9 +177,31 @@ export function contactSocialsFrom(
   const kind = SOCIAL_KIND_BY_SLUG[identity.channel];
   if (kind === undefined) return [];
 
+  if (identity.channel === "webchat") {
+    // В веб-чате идентификатор сессии (chatId) — это visitor_id / ym_uid, а не соцсеть.
+    // Сохраняется в custom_fields.webchat_visitor_id и custom_fields.ym_uid, но не в socials.
+    return [];
+  }
+
   if (kind === "whatsapp") {
     const phone = normalizePhone(identity.profile?.phone ?? identity.chatId);
     return phone === "" ? [] : [{ kind, value: phone }];
+  }
+
+  if (kind === "max") {
+    const username = identity.profile?.username?.trim() ?? "";
+    if (username !== "") {
+      return [{ kind, value: username.startsWith("@") ? username : `@${username}` }];
+    }
+    const phone = normalizePhone(identity.profile?.phone ?? identity.senderPhone ?? "");
+    if (phone !== "") {
+      return [{ kind, value: phone }];
+    }
+    const fromChatId = identity.chatId.trim();
+    if (fromChatId.startsWith("@") && !/^@\d+$/.test(fromChatId)) {
+      return [{ kind, value: fromChatId }];
+    }
+    return [];
   }
 
   const username = identity.profile?.username?.trim() ?? "";
@@ -193,4 +223,66 @@ export function contactSocialsFrom(
 export function displayNameFrom(identity: SenderIdentity): string {
   const { first_name, last_name } = contactNameFrom(identity);
   return last_name === "" ? first_name : `${first_name} ${last_name}`;
+}
+
+/**
+ * Извлекает валидный номер телефона из произвольного текста (в формате E.164: +7XXXXXXXXXX или +XXXXXXXXXXX).
+ * Корректно распознаёт:
+ * - 11 цифр: 79150946944, +79150946944, 89150946944
+ * - 10 цифр (мобильные РФ): 9150946944, (915) 094-69-44, 915-094-69-44
+ * - форматы с разделителями: +7 (915) 094-69-44, 8-915-094-69-44, 7 915 094 69 44
+ * - международные номера: +375XXXXXXXXX, +77XXXXXXXXX и др.
+ */
+export function extractPhoneNumber(text?: string | null): string | null {
+  if (!text || typeof text !== "string") return null;
+  const cleaned = text.trim();
+  if (cleaned.length === 0) return null;
+
+  // 1. Ищем номера с явными разделителями или префиксами
+  const patterns = [
+    // 11 цифр с префиксом +7, 7 или 8 (включая слитные: 79150946944, +79150946944, 89150946944)
+    /(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/,
+    // 10 цифр начиная с 9 (9150946944, (915) 094-69-44, 915-094-69-44)
+    /(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/,
+    // Международные (+375..., +77..., etc. от 10 до 15 цифр)
+    /(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/,
+  ];
+
+  for (const p of patterns) {
+    const m = cleaned.match(p);
+    if (m) {
+      const raw = m[0].trim();
+      const digits = raw.replace(/\D/g, "");
+      if (raw.startsWith("+") && digits.length >= 10 && digits.length <= 15) {
+        if (digits.startsWith("7") && digits.length === 11) return `+7${digits.slice(1)}`;
+        return `+${digits}`;
+      }
+      if (digits.length === 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+        return `+7${digits.slice(1)}`;
+      }
+      if (digits.length === 10 && digits.startsWith("9")) {
+        return `+7${digits}`;
+      }
+    }
+  }
+
+  // Запасной: весь текст состоит из 10 или 11 цифр (возможно с дефисами/пробелами)
+  const onlyDigits = cleaned.replace(/\D/g, "");
+  if (onlyDigits.length === 11 && (onlyDigits.startsWith("7") || onlyDigits.startsWith("8"))) {
+    return `+7${onlyDigits.slice(1)}`;
+  }
+  if (onlyDigits.length === 10 && onlyDigits.startsWith("9")) {
+    return `+7${onlyDigits}`;
+  }
+
+  return null;
+}
+
+/**
+ * Извлекает валидный email из произвольного текста.
+ */
+export function extractEmailAddress(text?: string | null): string | null {
+  if (!text || typeof text !== "string") return null;
+  const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  return match ? match[0].toLowerCase() : null;
 }

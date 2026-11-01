@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS tenants (
   -- тот считается для каждого модуля, и «осталось X дней» по аккаунту из него не
   -- выводится.
   trial_ends_at TIMESTAMPTZ,
+  custom_price_rubles INTEGER DEFAULT NULL,
+  custom_plan_name TEXT DEFAULT NULL,
+  business_niche TEXT DEFAULT NULL,
+  custom_notes TEXT DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT tenants_slug_format CHECK (
@@ -250,6 +254,8 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   expires_at TIMESTAMPTZ NOT NULL,
   revoked_at TIMESTAMPTZ,
   replaced_by UUID REFERENCES refresh_tokens(id),
+  user_agent TEXT,
+  ip TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -418,7 +424,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   delivery_error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT deal_messages_delivery_status_valid
-    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed'))
+    CHECK (delivery_status IN ('neutral', 'pending', 'sent', 'failed', 'received'))
 );
 
 CREATE TABLE IF NOT EXISTS crm_tasks (
@@ -527,6 +533,7 @@ CREATE INDEX IF NOT EXISTS idx_page_layout_tabs_object_active
 -- Soft-delete columns (see .cursorrules §10: queries filter deleted_at IS NULL)
 ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS suppress_deal_creation BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE contacts   ADD COLUMN IF NOT EXISTS is_personal BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE companies  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE deals      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE crm_tasks  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
@@ -550,7 +557,7 @@ CREATE TABLE IF NOT EXISTS deal_stage_history (
   deal_id UUID NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
   from_stage_id UUID,
   to_stage_id UUID NOT NULL,
-  changed_by UUID NOT NULL REFERENCES users(id),
+  changed_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -894,7 +901,7 @@ ALTER TABLE invoices ADD COLUMN IF NOT EXISTS repair_order_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deal_id UUID;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_account_id UUID;
-ALTER TABLE invoices ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_transactions_deal_id ON transactions(deal_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_repair_order_id ON transactions(repair_order_id);
@@ -1014,17 +1021,17 @@ VALUES
    500, 'per_unit', 0, 500, 0, 'аккаунт', true, 'integration', 'Instagram', 14,
    ARRAY['Мульти-аккаунт', 'Direct и комментарии', 'Автоответы', 'Лид в сделку'], 90),
   ('webchat', 'Онлайн-чат на сайт',
-   'Виджет чата для сайтов с AI-ассистентом. 1 сайт включен бесплатно, дополнительные сайты — по тарифу.',
-   500, 'per_unit', 0, 500, 1, 'сайт', true, 'integration', 'MessageSquareText', 14,
+   'Виджет чата для сайтов с AI-ассистентом. 1 сайт включен бесплатно в базовый тариф, дополнительные сайты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'сайт', true, 'integration', 'MessageSquareText', 0,
    ARRAY['1 сайт бесплатно в тарифе', 'Дополнительные сайты — 500 ₽/мес', 'Привязка AI-ассистентов', 'Сбор контактов в CRM'], 95),
   ('telegram_bot', 'Telegram-бот компании',
-   'Официальный публичный бот компании через Bot API токен (@BotFather).',
-   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Bot', 14,
-   ARRAY['Подключение по Bot API токену', 'Неограниченно клиентов', 'Команды и меню', 'Интеграция с AI-агентами'], 55),
+   'Официальный публичный бот компании через Bot API токен (@BotFather). 1 бот включен бесплатно в базовый тариф, дополнительные боты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'бот', true, 'integration', 'Bot', 0,
+   ARRAY['1 бот бесплатно в тарифе', 'Дополнительные боты — 500 ₽/мес', 'Подключение по Bot API токену', 'Неограниченно клиентов', 'Команды и меню', 'Интеграция с AI-агентами'], 55),
   ('max_bot', 'MAX-бот компании',
-   'Официальный публичный бот в мессенджере MAX по Bot API токену.',
-   500, 'per_unit', 0, 500, 0, 'бот', true, 'integration', 'Hash', 14,
-   ARRAY['Подключение по Bot API токену', 'Каналы и группы', 'Интеграция с AI-агентами'], 75)
+   'Официальный публичный бот в мессенджере MAX по Bot API токену. 1 бот включен бесплатно в базовый тариф, дополнительные боты — по тарифу.',
+   500, 'per_unit', 0, 500, 1, 'бот', true, 'integration', 'Hash', 0,
+   ARRAY['1 бот бесплатно в тарифе', 'Дополнительные боты — 500 ₽/мес', 'Подключение по Bot API токену', 'Каналы и группы', 'Интеграция с AI-агентами'], 75)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Платформенные настройки квот и цен Базовой CRM
@@ -1042,6 +1049,27 @@ CREATE TABLE IF NOT EXISTS platform_billing_config (
 );
 
 INSERT INTO platform_billing_config (id)
+VALUES ('default')
+ON CONFLICT (id) DO NOTHING;
+
+-- Платформенные настройки интеграций (Robokassa и LLM)
+CREATE TABLE IF NOT EXISTS platform_integrations_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  robokassa_login TEXT,
+  robokassa_password_1 TEXT,
+  robokassa_password_2 TEXT,
+  robokassa_is_test BOOLEAN NOT NULL DEFAULT true,
+  robokassa_hash_algo TEXT NOT NULL DEFAULT 'SHA256',
+  robokassa_tax TEXT NOT NULL DEFAULT 'none',
+  llm_api_base_url TEXT,
+  llm_api_key TEXT,
+  llm_embedding_model TEXT DEFAULT 'text-embedding-3-small',
+  llm_chat_model TEXT DEFAULT 'openai/gpt-4o-mini',
+  llm_providers JSONB DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO platform_integrations_config (id)
 VALUES ('default')
 ON CONFLICT (id) DO NOTHING;
 

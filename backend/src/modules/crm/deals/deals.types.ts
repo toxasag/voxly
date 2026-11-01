@@ -24,8 +24,10 @@ export const createDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
 });
 
 export const updateDealSchema = z.object({
@@ -37,9 +39,11 @@ export const updateDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
   closed_at: z.string().datetime().optional().or(z.literal("")),
 });
 
@@ -103,18 +107,21 @@ export interface DealRow {
   stage_id: string;
   contact_id: string | null;
   company_id: string | null;
+  source_widget_id?: string | null;
   title: string;
   description: string;
   /** NUMERIC arrives from pg as a string. */
   budget: string;
   currency: string;
   custom_fields: Record<string, unknown>;
+  source_metadata?: Record<string, unknown> | null;
   created_by: string;
   owner_id: string | null;
   close_date: Date | string | null;
   /** DOUBLE PRECISION приходит числом. */
   position: number;
   closed_at: Date | string | null;
+  lead_notified_at?: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
   /**
@@ -125,10 +132,22 @@ export interface DealRow {
    * сделок стоил бы 100 запросов.
    */
   company_name?: string | null;
+  company_phone?: string | null;
+  company_email?: string | null;
+  company_domain_name?: string | null;
+  company_city?: string | null;
   contact_first_name?: string | null;
   contact_last_name?: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+  contact_job_title?: string | null;
+  contact_is_personal?: boolean | null;
   owner_name?: string | null;
   latest_note_body?: string | null;
+  tasks_count?: string | number | null;
+  pending_tasks_count?: string | number | null;
+  next_task_title?: string | null;
+  next_task_due_date?: Date | string | null;
 }
 
 export interface DealDTO {
@@ -137,23 +156,38 @@ export interface DealDTO {
   stageId: string;
   contactId: string | null;
   companyId: string | null;
+  sourceWidgetId?: string | null;
   title: string;
   description: string;
   budget: number;
   currency: string;
   customFields: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown> | null;
   createdBy: string;
   ownerId: string | null;
   closeDate: string | null;
   position: number;
   closedAt: string | null;
+  leadNotifiedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   /** Денормализованные подписи связей для таблицы и канбана. */
   companyName: string | null;
+  companyPhone?: string | null;
+  companyEmail?: string | null;
+  companyWebsite?: string | null;
+  companyCity?: string | null;
   contactName: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  contactJobTitle?: string | null;
+  contactIsPersonal?: boolean;
   ownerName: string | null;
   latestNote: string | null;
+  tasksCount?: number;
+  pendingTasksCount?: number;
+  nextTaskTitle?: string | null;
+  nextTaskDueDate?: string | null;
 }
 
 function toIso(value: Date | string): string {
@@ -183,22 +217,37 @@ export function toDealDTO(row: DealRow): DealDTO {
     stageId: row.stage_id,
     contactId: row.contact_id,
     companyId: row.company_id,
+    sourceWidgetId: row.source_widget_id ?? null,
     title: row.title,
     description: row.description,
     budget: Number(row.budget),
     currency: row.currency,
     customFields: row.custom_fields,
+    sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     createdBy: row.created_by,
     ownerId: row.owner_id,
     closeDate: toDateOrNull(row.close_date),
     position: Number(row.position),
     closedAt: toIsoOrNull(row.closed_at),
+    leadNotifiedAt: toIsoOrNull(row.lead_notified_at ?? null),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
     companyName: row.company_name ?? null,
+    companyPhone: row.company_phone || null,
+    companyEmail: row.company_email || null,
+    companyWebsite: row.company_domain_name || null,
+    companyCity: row.company_city || null,
     contactName: joinName(row.contact_first_name, row.contact_last_name),
+    contactPhone: row.contact_phone || null,
+    contactEmail: row.contact_email || null,
+    contactJobTitle: row.contact_job_title || null,
+    contactIsPersonal: Boolean(row.contact_is_personal),
     ownerName: row.owner_name ?? null,
     latestNote: row.latest_note_body ?? null,
+    tasksCount: Number(row.tasks_count ?? 0),
+    pendingTasksCount: Number(row.pending_tasks_count ?? 0),
+    nextTaskTitle: row.next_task_title || null,
+    nextTaskDueDate: toIsoOrNull(row.next_task_due_date ?? null),
   };
 }
 
@@ -210,7 +259,7 @@ export function toDealDTO(row: DealRow): DealDTO {
  * причину в `delivery_error`: неотправленное сообщение обязано отличаться в
  * таймлайне от отправленного, иначе менеджер ждёт ответа на то, что не ушло.
  */
-export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed"]);
+export const deliveryStatusSchema = z.enum(["neutral", "pending", "sent", "failed", "received"]);
 export type DeliveryStatus = z.infer<typeof deliveryStatusSchema>;
 
 export interface DealMessageRow {
@@ -305,3 +354,75 @@ export interface StageRow {
   is_system: boolean;
   color: StageColor;
 }
+
+// ---------------------------------------------------------------------------
+// Deal Contact History (1:N Contact to Deals & Unified Timeline)
+// ---------------------------------------------------------------------------
+
+export interface DealContactSummaryDTO {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string | null;
+  phone: string | null;
+  companyId: string | null;
+  companyName: string | null;
+  customFields: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DealOtherDealItemDTO {
+  id: string;
+  title: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColor: StageColor;
+  isWon: boolean;
+  isLost: boolean;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+export interface DealContactTimelineItemDTO {
+  id: string;
+  type:
+    | "note"
+    | "task"
+    | "message"
+    | "stage_change"
+    | "deal_created"
+    | "widget_launch"
+    | "form_submission"
+    | "im_session_inbound"
+    | "im_session_outbound";
+  dealId?: string;
+  dealTitle?: string;
+  timestamp: string;
+  title: string;
+  description?: string;
+  authorName?: string;
+  activityChannel?: string;
+  activityKind?: string;
+  direction?: "inbound" | "outbound" | null;
+  payload?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DealContactHistoryDTO {
+  dealId: string;
+  contact: DealContactSummaryDTO | null;
+  metrics: {
+    totalDeals: number;
+    wonDeals: number;
+    lostDeals: number;
+    activeDeals: number;
+    totalLtv: number;
+    avgCheck: number;
+    isRepeatClient: boolean;
+  };
+  otherDeals: DealOtherDealItemDTO[];
+  timeline: DealContactTimelineItemDTO[];
+}
+

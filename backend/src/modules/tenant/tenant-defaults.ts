@@ -18,7 +18,8 @@ const DEFAULT_STAGES: ReadonlyArray<{
   isSystem: boolean;
   color: string;
 }> = [
-  // Системные этапы: вход янтарный, успех зелёный предпоследним, провал красный последним.
+  // Системные этапы: нулевой этап серый для входящих диалогов без контактов, новый лид янтарный, успех зелёный, провал красный.
+  { name: "Первый контакт", isWon: false, isLost: false, isSystem: true, color: "slate" },
   { name: "Новый лид", isWon: false, isLost: false, isSystem: true, color: "amber" },
   { name: "Квалификация", isWon: false, isLost: false, isSystem: false, color: "sky" },
   { name: "Согласование", isWon: false, isLost: false, isSystem: false, color: "violet" },
@@ -53,6 +54,7 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
 }> = [
   { objectType: "contact", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
   { objectType: "contact", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "contacts:write" },
+  { objectType: "contact", tabKey: "deals-history", title: "История обращений / Сделки", icon: "Briefcase", position: 18, isActive: true, requiredPermission: "deals:read" },
   { objectType: "contact", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "contact", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "company", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
@@ -60,6 +62,8 @@ const DEFAULT_PAGE_LAYOUT_TABS: ReadonlyArray<{
   { objectType: "company", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, requiredPermission: "deals:write" },
+  { objectType: "deal", tabKey: "analytics", title: "Аналитика", icon: "BarChart3", position: 22, isActive: true, requiredPermission: null },
+  { objectType: "deal", tabKey: "contact-history", title: "История контакта", icon: "History", position: 25, isActive: true, requiredPermission: "contacts:read" },
   { objectType: "deal", tabKey: "tasks", title: "Задачи", icon: "ListChecks", position: 30, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "notes", title: "Заметки", icon: "StickyNote", position: 40, isActive: true, requiredPermission: null },
   { objectType: "deal", tabKey: "files", title: "Файлы", icon: "Paperclip", position: 50, isActive: false, requiredPermission: null },

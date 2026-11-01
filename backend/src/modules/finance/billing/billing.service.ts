@@ -20,35 +20,41 @@ import {
   type SubscriptionRow,
 } from "./billing.types.js";
 
+import { platformConfigService } from "../../admin/platform-config.service.js";
+
 export class BillingService {
-  private readonly robokassaClient: RobokassaClient | null;
+  private readonly customClient: RobokassaClient | null = null;
 
-  constructor(client?: RobokassaClient) {
-    if (client) {
-      this.robokassaClient = client;
-      return;
-    }
-
-    const env = getEnv();
-    if (
-      env.ROBOKASSA_MERCHANT_LOGIN &&
-      env.ROBOKASSA_PASSWORD_1 &&
-      env.ROBOKASSA_PASSWORD_2
-    ) {
-      this.robokassaClient = new RobokassaClient({
-        merchantLogin: env.ROBOKASSA_MERCHANT_LOGIN,
-        password1: env.ROBOKASSA_PASSWORD_1,
-        password2: env.ROBOKASSA_PASSWORD_2,
-        isTest: env.ROBOKASSA_IS_TEST,
-        hashAlgorithm: env.ROBOKASSA_HASH_ALGO === "MD5" ? "md5" : "sha256",
-      });
-    } else {
-      this.robokassaClient = null;
+  constructor(client?: RobokassaClient | null) {
+    if (client !== undefined) {
+      this.customClient = client;
     }
   }
 
-  isConfigured(): boolean {
-    return this.robokassaClient !== null;
+  async getRobokassaClient(): Promise<RobokassaClient | null> {
+    if (this.customClient !== undefined) {
+      return this.customClient;
+    }
+
+    const integrations = await platformConfigService.getEffectiveIntegrations();
+    const robo = integrations.robokassa;
+
+    if (!robo.isConfigured || !robo.merchantLogin || !robo.password1 || !robo.password2) {
+      return null;
+    }
+
+    return new RobokassaClient({
+      merchantLogin: robo.merchantLogin,
+      password1: robo.password1,
+      password2: robo.password2,
+      isTest: robo.isTest,
+      hashAlgorithm: robo.hashAlgo === "MD5" ? "md5" : "sha256",
+    });
+  }
+
+  async isConfigured(): Promise<boolean> {
+    const client = await this.getRobokassaClient();
+    return client !== null;
   }
 
   /**
@@ -59,11 +65,12 @@ export class BillingService {
     actorId?: string;
     payload: CreateCheckoutPayload;
   }): Promise<CheckoutResultDTO> {
-    if (!this.robokassaClient) {
+    const robokassaClient = await this.getRobokassaClient();
+    if (!robokassaClient) {
       throw new AppError(
         503,
         "ROBOKASSA_NOT_CONFIGURED",
-        "Платежный шлюз Robokassa не настроен в конфигурации сервера",
+        "Платежный шлюз Robokassa не настроен в конфигурации платформы",
       );
     }
 
@@ -137,7 +144,7 @@ export class BillingService {
       product_code: payload.product_code,
     };
 
-    const paymentUrl = this.robokassaClient.generatePaymentUrl({
+    const paymentUrl = robokassaClient.generatePaymentUrl({
       invId,
       amount: payload.amount_rubles,
       description,
@@ -161,7 +168,8 @@ export class BillingService {
    * Возвращает строго строку "OK{invId}" при успешном исполнении.
    */
   async handleResultWebhook(rawParams: Record<string, unknown>): Promise<string> {
-    if (!this.robokassaClient) {
+    const robokassaClient = await this.getRobokassaClient();
+    if (!robokassaClient) {
       throw new AppError(503, "ROBOKASSA_NOT_CONFIGURED", "Шлюз Robokassa не настроен");
     }
 
@@ -185,8 +193,10 @@ export class BillingService {
       }
     }
 
+
+
     // 1. Проверяем подпись ResultURL (Пароль №2)
-    const isSignatureValid = this.robokassaClient.verifyResultSignature({
+    const isSignatureValid = robokassaClient.verifyResultSignature({
       outSum,
       invId: invIdStr,
       signatureValue,
@@ -336,13 +346,14 @@ export class BillingService {
   /**
    * Проверка подписи страницы возврата SuccessURL (Пароль №1).
    */
-  verifySuccessRedirect(rawParams: Record<string, unknown>): {
+  async verifySuccessRedirect(rawParams: Record<string, unknown>): Promise<{
     valid: boolean;
     invId: string;
     outSum: string;
-  } {
-    if (!this.robokassaClient) {
-      throw new AppError(503, "ROBOKASSA_NOT_CONFIGURED", "Шлюз Robokassa не настроен");
+  }> {
+    const robokassaClient = await this.getRobokassaClient();
+    if (!robokassaClient) {
+      throw new AppError(503, "ROBOKASSA_NOT_CONFIGURED", "Шлюз Robokassa не настроен в конфигурации платформы");
     }
 
     const outSum = String(rawParams.OutSum ?? rawParams.outSum ?? "");
@@ -360,7 +371,7 @@ export class BillingService {
       }
     }
 
-    const valid = this.robokassaClient.verifySuccessSignature({
+    const valid = robokassaClient.verifySuccessSignature({
       outSum,
       invId,
       signatureValue,

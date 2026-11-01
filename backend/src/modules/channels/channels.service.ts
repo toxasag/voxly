@@ -1,11 +1,14 @@
 import { query, queryOne, withTenant } from "../../db/client.js";
 import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import type { ChannelSlug } from "../../types/index.js";
+import { channelLinksService } from "./channel-links.service.js";
 import type {
   ChannelAccountDTO,
+  ChannelAccountLinksDTO,
   ChannelStatus,
   ChannelSummaryDTO,
   CreateChannelAccountPayload,
+  CustomizeAccountLinksQuery,
   UpdateChannelAccountPayload,
 } from "./channels.types.js";
 
@@ -24,6 +27,10 @@ interface ChannelAccountRow {
   created_at: Date | string;
   bound_agent_id?: string | null;
   bound_agent_name?: string | null;
+  cred_username?: string | null;
+  cred_phone?: string | null;
+  cred_bot?: string | null;
+  has_session?: boolean;
 }
 
 function toIso(value: Date | string | null): string | null {
@@ -41,13 +48,18 @@ function pluralConnections(count: number): string {
 }
 
 function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
+  const links =
+    row.channel !== "webchat"
+      ? channelLinksService.resolveAccountLinks(row)
+      : undefined;
+
   return {
     id: row.id,
     channel: row.channel,
     label: row.label,
     externalId: row.external_id,
     status: row.status,
-    statusMessage: row.status_message,
+    statusMessage: row.status_message ?? "",
     hasCredentials: row.has_credentials,
     credentials: row.credentials,
     remoteUserId: row.remote_user_id,
@@ -56,6 +68,7 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
     createdAt: toIso(row.created_at) ?? "",
     boundAgentId: row.bound_agent_id ?? null,
     boundAgentName: row.bound_agent_name ?? null,
+    links,
   };
 }
 
@@ -67,6 +80,10 @@ function toDTO(row: ChannelAccountRow): ChannelAccountDTO {
 const SELECT_COLUMNS = `id, channel, label, external_id, status, status_message,
         (credentials <> '{}'::jsonb) AS has_credentials,
         CASE WHEN channel = 'webchat' THEN credentials ELSE '{}'::jsonb END AS credentials,
+        credentials->>'username' AS cred_username,
+        credentials->>'phone' AS cred_phone,
+        credentials->>'telegramBot' AS cred_bot,
+        (credentials ? 'session') AS has_session,
         remote_user_id, last_sync_at, connected_at, created_at`;
 
 /**
@@ -86,6 +103,10 @@ export class ChannelsService {
       `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
               (c.credentials <> '{}'::jsonb) AS has_credentials,
               CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
               c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at,
               b.agent_id AS bound_agent_id,
               a.name AS bound_agent_name
@@ -105,6 +126,34 @@ export class ChannelsService {
   }
 
   /**
+   * Получение и кастомизация ссылок подключения (Direct Link & Smart Tracking Link).
+   */
+  async getLinks(
+    tenantId: string,
+    channel: ChannelSlug,
+    id: string,
+    options?: CustomizeAccountLinksQuery,
+  ): Promise<ChannelAccountLinksDTO> {
+    const row = await queryOne<ChannelAccountRow>(
+      `SELECT c.id, c.channel, c.label, c.external_id, c.status, c.status_message,
+              (c.credentials <> '{}'::jsonb) AS has_credentials,
+              CASE WHEN c.channel = 'webchat' THEN c.credentials ELSE '{}'::jsonb END AS credentials,
+              c.credentials->>'username' AS cred_username,
+              c.credentials->>'phone' AS cred_phone,
+              c.credentials->>'telegramBot' AS cred_bot,
+              (c.credentials ? 'session') AS has_session,
+              c.remote_user_id, c.last_sync_at, c.connected_at, c.created_at
+       FROM channel_accounts c
+       WHERE c.tenant_id = $1 AND c.channel = $2 AND c.id = $3 AND c.deleted_at IS NULL`,
+      [tenantId, channel, id],
+    );
+
+    if (row === null) throw new NotFoundError("Подключение не найдено");
+
+    return channelLinksService.resolveAccountLinks(row, options);
+  }
+
+  /**
    * Сводка для шапки страницы.
    *
    * `quantity` берётся из `installed_modules`, а не считается по факту: это
@@ -115,11 +164,13 @@ export class ChannelsService {
     const row = await queryOne<{
       quantity: number | null;
       trial_ends_at: Date | string | null;
+      included_units: number;
       connected_count: string;
       total: string;
     }>(
       `SELECT i.quantity,
               i.trial_ends_at,
+              COALESCE(m.included_units, 0) AS included_units,
               (SELECT count(*)::text FROM channel_accounts c
                 WHERE c.tenant_id = $1 AND c.channel = $2
                   AND c.deleted_at IS NULL AND c.status = 'connected') AS connected_count,
@@ -127,11 +178,13 @@ export class ChannelsService {
                 WHERE c.tenant_id = $1 AND c.channel = $2
                   AND c.deleted_at IS NULL) AS total
        FROM installed_modules i
+       LEFT JOIN marketplace_modules m ON m.slug = i.slug
        WHERE i.tenant_id = $1 AND i.slug = $2`,
       [tenantId, channel],
     );
 
-    const trialEndsAt = toIso(row?.trial_ends_at ?? null);
+    const isFreeInPlan = (row?.included_units ?? 0) > 0;
+    const trialEndsAt = isFreeInPlan ? null : toIso(row?.trial_ends_at ?? null);
 
     return {
       channel,
@@ -139,9 +192,10 @@ export class ChannelsService {
       connectedCount: Number(row?.connected_count ?? 0),
       total: Number(row?.total ?? 0),
       trialEndsAt,
-      // Считается на сервере: часы браузера можно перевести, и клиент показал бы
-      // действующий пробный период после его окончания.
-      trialActive: trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
+      // Модули с постоянными бесплатными квотами входят в базовый тариф навсегда
+      trialActive: isFreeInPlan
+        ? false
+        : trialEndsAt !== null && new Date(trialEndsAt).getTime() > Date.now(),
     };
   }
 

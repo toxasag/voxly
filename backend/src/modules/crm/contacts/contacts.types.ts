@@ -104,6 +104,7 @@ export const createContactSchema = z.object({
   linkedin_link: z.string().url("Invalid URL").max(300).optional().or(z.literal("")),
   notes: z.string().max(4000).optional().or(z.literal("")),
   custom_fields: z.record(z.unknown()).optional(),
+  source_metadata: z.record(z.unknown()).optional(),
 });
 
 export const updateContactSchema = createContactSchema.partial();
@@ -148,7 +149,10 @@ export interface ContactRow {
   channel: ContactChannel;
   linkedin_link: string;
   custom_fields: Record<string, unknown>;
+  source_metadata?: Record<string, unknown> | null;
   notes: string;
+  is_personal?: boolean;
+  suppress_deal_creation?: boolean;
   created_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -193,7 +197,10 @@ export interface ContactDTO {
   channel: ContactChannel;
   linkedinLink: string;
   customFields: Record<string, unknown>;
+  sourceMetadata?: Record<string, unknown> | null;
   notes: string;
+  isPersonal?: boolean;
+  suppressDealCreation?: boolean;
   createdBy: string | null;
   /** Отображаемое имя создателя для группы «Система» на карточке. */
   createdByName: string | null;
@@ -275,7 +282,10 @@ export function toContactDTO(row: ContactRow): ContactDTO {
     channel: row.channel,
     linkedinLink: row.linkedin_link,
     customFields: row.custom_fields,
+    sourceMetadata: (row.source_metadata as Record<string, unknown>) ?? null,
     notes: row.notes,
+    isPersonal: Boolean(row.is_personal),
+    suppressDealCreation: Boolean(row.suppress_deal_creation),
     createdBy: row.created_by,
     createdByName: row.created_by_name ?? null,
     createdAt: toIso(row.created_at),
@@ -344,6 +354,17 @@ export function normalizeSocials(socials: ContactSocialPayload[]): ContactSocial
     const value = entry.value.trim();
     if (value === "") continue;
 
+    // Технические числовые ID каналов не должны попадать в socials:
+    // с ними пользователь ничего сделать не может, а для роутинга есть custom_fields и telegram_chat_id.
+    if (entry.kind === "max") {
+      if (value.startsWith("max://")) continue;
+      if (/^\d{1,10}$/.test(value)) continue;
+      if (/^\+\d{1,10}$/.test(value)) continue;
+    }
+    if (entry.kind === "telegram" && /^\d+$/.test(value)) {
+      continue;
+    }
+
     const key = `${entry.kind}:${value.toLowerCase()}`;
     if (seen.has(key)) continue;
 
@@ -364,4 +385,43 @@ export function normalizeSocials(socials: ContactSocialPayload[]): ContactSocial
  */
 export function socialValue(socials: ContactSocialJson[], kind: SocialKind): string | null {
   return socials.find((entry) => entry.kind === kind)?.value ?? null;
+}
+
+export interface ContactDealItemDTO {
+  id: string;
+  title: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColorKey: string;
+  isWon: boolean;
+  isLost: boolean;
+  pipelineId: string;
+  pipelineName: string;
+  ownerId: string | null;
+  ownerName: string | null;
+  createdAt: string;
+  closedAt: string | null;
+  daysInPipeline: number;
+}
+
+export interface ContactDealsHistoryDTO {
+  deals: ContactDealItemDTO[];
+  metrics: {
+    totalDeals: number;
+    wonDeals: number;
+    lostDeals: number;
+    openDeals: number;
+    totalBudget: number;
+    wonRevenue: number;
+    ltv: number;
+    avgCheck: number;
+    firstDealAt: string | null;
+    lastDealAt: string | null;
+    repeatCustomer: boolean;
+  };
+  total: number;
+  limit: number;
+  offset: number;
 }

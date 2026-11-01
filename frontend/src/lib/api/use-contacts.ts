@@ -53,8 +53,11 @@ export interface ContactDTO {
   channel: ContactChannel;
   /** Twenty: person.linkedinLink, группа social на карточке. */
   linkedinLink: string;
+  sourceMetadata?: Record<string, unknown> | null;
   customFields: Record<string, unknown>;
   notes: string;
+  isPersonal?: boolean;
+  suppressDealCreation?: boolean;
   /** Twenty: person.createdBy — автор записи, группа system. */
   createdBy: string | null;
   createdByName: string | null;
@@ -252,6 +255,24 @@ export function useDeleteContact(): UseMutationResult<
     onSuccess: (result) => {
       queryClient.removeQueries({ queryKey: contactKeys.detail(result.id) });
       void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+    },
+  });
+}
+
+export function useSetContactPersonal(): UseMutationResult<
+  ContactDTO,
+  ApiClientError,
+  { id: string; is_personal: boolean }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, is_personal }) =>
+      (await apiClient.patch<ContactDTO>(`${BASE_PATH}/${id}/personal`, { is_personal })).data,
+    onSuccess: (contact) => {
+      queryClient.setQueryData(contactKeys.detail(contact.id), contact);
+      void queryClient.invalidateQueries({ queryKey: contactKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "contact", contact.id] });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

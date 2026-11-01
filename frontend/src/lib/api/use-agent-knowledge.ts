@@ -36,7 +36,32 @@ export interface KnowledgeDocument {
   status: DocumentStatus;
   errorMessage: string;
   chunksCount: number;
+  category?: string;
   createdAt: string;
+}
+
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  contentText: string;
+}
+
+export interface CrmKnowledgeStats {
+  totalDeals: number;
+  wonDeals: number;
+  totalMessages: number;
+  dealsWithMessages: number;
+  isAvailable: boolean;
+}
+
+export interface SyncCrmResult {
+  documentsCreated: number;
+  dealsAnalyzed: number;
+  messagesAnalyzed: number;
+}
+
+export interface ImportWhatsAppResult {
+  documentsCreated: number;
+  participants: string[];
+  messagesAnalyzed: number;
 }
 
 /**
@@ -139,16 +164,21 @@ export function useAddKnowledgeText(
  */
 export function useUploadKnowledgeFile(
   agentId: string,
-): UseMutationResult<KnowledgeDocument, Error, File> {
+): UseMutationResult<KnowledgeDocument, Error, File | { file: File; category?: string }> {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (file) => {
+    mutationFn: async (input) => {
+      const file = input instanceof File ? input : input.file;
+      const category = input instanceof File ? undefined : input.category;
       const { API_BASE_URL } = await import("@/lib/api/apiClient");
       const { readAccessToken } = await import("@/lib/auth/session");
 
       const form = new FormData();
       form.append("file", file);
+      if (category) {
+        form.append("category", category);
+      }
 
       const token = readAccessToken();
 
@@ -248,3 +278,256 @@ export function useSaveAgentChannels(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Импорт веб-страниц по ссылке (URL)
+// ---------------------------------------------------------------------------
+
+export function useImportKnowledgeUrl(
+  agentId: string,
+): UseMutationResult<KnowledgeDocument, ApiClientError, { url: string; title?: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url, title }) => {
+      const res = await apiClient.post<KnowledgeDocument>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/url`,
+        { url, title },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Сканирование сайта (Краулер по sitemap.xml и внутренним ссылкам)
+// ---------------------------------------------------------------------------
+
+export interface CrawlSiteResult {
+  scannedCount: number;
+  indexedCount: number;
+  documents: KnowledgeDocument[];
+}
+
+export function useCrawlSite(
+  agentId: string,
+): UseMutationResult<CrawlSiteResult, ApiClientError, { url: string; maxPages?: number }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url, maxPages }) => {
+      const res = await apiClient.post<CrawlSiteResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/crawl-site`,
+        { url, maxPages },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Импорт отзывов и профиля организации с карт (Яндекс Карты, 2ГИС, Google Maps, Zoon)
+// ---------------------------------------------------------------------------
+
+export interface MapReviewsImportResult {
+  document: KnowledgeDocument;
+  details: {
+    platform: string;
+    orgName: string;
+    rating?: string;
+    reviewsCount?: string;
+    reviewsFound: number;
+  };
+}
+
+export function useImportMapReviews(
+  agentId: string,
+): UseMutationResult<MapReviewsImportResult, ApiClientError, { url: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ url }) => {
+      const res = await apiClient.post<MapReviewsImportResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/map-reviews`,
+        { url },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Обучение на успешных сделках (Closed-Won RAG)
+// ---------------------------------------------------------------------------
+
+export interface SalesExample {
+  id: string;
+  dealId: string;
+  dealTitle: string;
+  customerQuery: string;
+  agentReply: string;
+  createdAt: string;
+}
+
+export function useSalesExamples(
+  agentId: string,
+): UseQueryResult<SalesExample[], ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "sales-examples"],
+    queryFn: async () => {
+      const res = await apiClient.get<SalesExample[]>(
+        `${BASE_PATH}/agents/${agentId}/sales-examples`,
+      );
+      return res.data;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Просмотр и редактирование документов (актуализация цен и регламентов)
+// ---------------------------------------------------------------------------
+
+export function useKnowledgeDocumentDetail(
+  agentId: string,
+  docId: string | null,
+): UseQueryResult<KnowledgeDocumentDetail, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", docId],
+    queryFn: async () => {
+      if (!docId) throw new Error("No docId");
+      const res = await apiClient.get<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId && docId),
+  });
+}
+
+export function useUpdateKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string; text: string; filename?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId, text, filename }) => {
+      const res = await apiClient.put<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}`,
+        { text, filename },
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Синтез базы знаний из CRM и WhatsApp
+// ---------------------------------------------------------------------------
+
+export function useCrmKnowledgeStats(): UseQueryResult<CrmKnowledgeStats, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "knowledge", "crm-stats"],
+    queryFn: async () => {
+      const res = await apiClient.get<CrmKnowledgeStats>(`${BASE_PATH}/knowledge/crm-stats`);
+      return res.data;
+    },
+  });
+}
+
+export function useSyncCrmKnowledge(
+  agentId: string,
+): UseMutationResult<SyncCrmResult, ApiClientError, void> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.post<SyncCrmResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/sync-crm`,
+        {},
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+export function useImportWhatsAppKnowledge(
+  agentId: string,
+): UseMutationResult<ImportWhatsAppResult, ApiClientError, { text: string; filename?: string }> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ text, filename }) => {
+      const res = await apiClient.post<ImportWhatsAppResult>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/import-whatsapp`,
+        { text, filename },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Мониторинг прогресса сканирования сайта
+// ---------------------------------------------------------------------------
+
+export interface CrawlStatusData {
+  status: "idle" | "pending" | "in_progress" | "ready" | "failed";
+  websiteUrl: string | null;
+  pagesScanned: number;
+  pagesIndexed: number;
+  error: string | null;
+  updatedAt: string | null;
+}
+
+export function useCrawlStatus(
+  agentId: string | null | undefined,
+): UseQueryResult<CrawlStatusData, ApiClientError> {
+  const queryClient = useQueryClient();
+
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "knowledge", "crawl-status"],
+    queryFn: async () => {
+      if (!agentId) throw new Error("No agentId");
+      const res = await apiClient.get<CrawlStatusData>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/crawl-status`,
+      );
+      if (res.data?.status === "ready" || res.data?.status === "failed") {
+        void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      }
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && (data.status === "pending" || data.status === "in_progress")) {
+        return 3000;
+      }
+      return false;
+    },
+  });
+}
+
+

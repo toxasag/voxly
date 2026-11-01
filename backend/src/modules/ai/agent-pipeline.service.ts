@@ -1,4 +1,4 @@
-import { queryOne, transaction } from "../../db/client.js";
+import { query, queryOne, transaction } from "../../db/client.js";
 import {
   GatewayChatProvider,
   type ChatProvider,
@@ -6,6 +6,9 @@ import {
 import { calculateAiCharge, isAiModelId, type AiModelId } from "./ai-pricing.js";
 import { buildSystemPrompt, parseAgentReply, type AgentReply } from "./agent-reply.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
+import { SalesLearnService } from "./sales-learn.service.js";
+import type { WizardConfig } from "./ai.types.js";
+import { isPlaceholderName } from "../crm/identity-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -30,7 +33,7 @@ import { KnowledgeBaseService } from "./knowledge.service.js";
 const MIN_BALANCE_KOPECKS = 100;
 
 /** Модель по умолчанию, если у агента указана незнакомая. */
-const FALLBACK_MODEL: AiModelId = "gpt-4o-mini";
+const FALLBACK_MODEL: AiModelId = "gemini-3.5-flash-lite";
 
 /**
  * Соответствие моделей каталога идентификаторам шлюза.
@@ -40,13 +43,18 @@ const FALLBACK_MODEL: AiModelId = "gpt-4o-mini";
  * каталоге сразу идентификаторы шлюза нельзя: смена шлюза тогда меняла бы и цены,
  * и историю расхода в журнале.
  */
-const GATEWAY_MODEL: Record<AiModelId, string> = {
+const GATEWAY_MODEL: Record<string, string> = {
   "gpt-4o": "openrouter/openai/gpt-4o",
   "gpt-4o-mini": "openrouter/openai/gpt-4o-mini",
   "claude-sonnet-4": "openrouter/anthropic/claude-sonnet-4",
   "claude-opus-4": "openrouter/anthropic/claude-opus-4",
   "deepseek-v3": "openrouter/deepseek/deepseek-chat",
   "gemini-1.5-pro": "gemini/gemini-1.5-pro",
+  "gemini-3.5-flash": "gemini/gemini-3.5-flash",
+  "gemini-3.5-flash-lite": "gemini/gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest": "gemini/gemini-flash-lite-latest",
+  "gemini-2.5-flash": "gemini/gemini-2.5-flash",
+  "gemini-2.5-pro": "gemini/gemini-2.5-pro",
 };
 
 export type PipelineOutcome =
@@ -67,6 +75,7 @@ interface AgentRow {
   temperature: string;
   max_tokens: number;
   system_prompt: string;
+  wizard_config: WizardConfig | null;
 }
 
 interface Logger {
@@ -80,6 +89,7 @@ export class AgentPipelineService {
     private readonly log: Logger,
     private readonly knowledge: KnowledgeBaseService = new KnowledgeBaseService(),
     private readonly chat: ChatProvider = new GatewayChatProvider(),
+    private readonly salesLearn: SalesLearnService = new SalesLearnService(),
   ) {}
 
   /**
@@ -90,18 +100,29 @@ export class AgentPipelineService {
    * могут — клиент получил бы два разных ответа на одно сообщение. Берётся
    * старейший как детерминированный выбор.
    */
-  private async resolveAgent(input: {
+  /**
+   * Агент, отвечающий в этом аккаунте канала.
+   *
+   * Строгий Channel Gate: агент выбирается ИСКЛЮЧИТЕЛЬНО при наличии активной
+   * привязки в таблице `ai_agent_channel_bindings` со статусом `is_enabled = TRUE`.
+   * Никаких неявных fallback-опросов ко всем ботам тенанта: если пользователь
+   * снял отметку с канала в UI, бот не должен перехватывать сообщения.
+   *
+   * `ORDER BY a.created_at LIMIT 1`: схема допускает несколько агентов на один
+   * аккаунт, берётся старейший как детерминированный выбор.
+   */
+  async resolveAgent(input: {
     tenantId: string;
     channelAccountId: string;
   }): Promise<AgentRow | null> {
     return queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt
+              a.max_tokens, a.system_prompt, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
          AND b.channel_account_id = $2
-         AND b.is_enabled
+         AND b.is_enabled = TRUE
          AND a.deleted_at IS NULL
        ORDER BY a.created_at
        LIMIT 1`,
@@ -121,15 +142,55 @@ export class AgentPipelineService {
     channelAccountId: string;
     chatId: string;
     text: string;
+    channelType?: string;
+    dealId?: string;
   }): Promise<PipelineOutcome> {
+    // 0. Channel Gate: если канал не привязан к агенту (чекбокс снят или привязка удалена),
+    // немедленно прерываем обработку без обращения к LLM и без списания токенов.
     const agent = await this.resolveAgent(input);
-
-    if (agent === null) return { kind: "no_agent" };
+    if (agent === null) {
+      return { kind: "no_agent" };
+    }
 
     // Отвечает только `autoreply`. `suggester` готовит черновики оператору, и
     // отправлять их клиенту напрямую означало бы игнорировать выбор настройки.
     if (agent.status !== "active" || agent.mode !== "autoreply") {
       return { kind: "agent_paused" };
+    }
+
+    // 1. Защита от автоответов личным контактам и при выключенном/приостановленном AI
+    if (input.dealId) {
+      const dealRow = await queryOne<{ id: string }>(
+        `SELECT id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND ai_paused_until IS NOT NULL AND ai_paused_until > now()
+         LIMIT 1`,
+        [input.tenantId, input.dealId],
+      );
+      if (dealRow !== null) {
+        return { kind: "agent_paused" };
+      }
+    }
+
+    const cleanDigits = input.chatId.replace(/\D/g, "");
+    if (cleanDigits.length >= 10 || /^\d+$/.test(input.chatId)) {
+      const contactCheck = await queryOne<{ id: string; is_personal: boolean; paused_deals: number }>(
+        `SELECT c.id, c.is_personal,
+                (SELECT COUNT(*)::int FROM deals d WHERE d.contact_id = c.id AND d.tenant_id = c.tenant_id AND d.deleted_at IS NULL AND d.ai_paused_until > now()) AS paused_deals
+         FROM contacts c
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             c.phone = $2
+             OR c.phone = '+' || $2
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', $2::text))
+             OR c.additional_phones @> jsonb_build_array(jsonb_build_object('number', ('+' || $2)::text))
+             OR c.telegram_chat_id = CASE WHEN $2 ~ '^\\d+$' THEN $2::bigint ELSE NULL END
+           )
+         LIMIT 1`,
+        [input.tenantId, cleanDigits],
+      );
+      if (contactCheck !== null && (contactCheck.is_personal || contactCheck.paused_deals > 0)) {
+        return { kind: "agent_paused" };
+      }
     }
 
     if (!this.chat.isConfigured) return { kind: "llm_unavailable" };
@@ -142,21 +203,150 @@ export class AgentPipelineService {
       return { kind: "insufficient_balance", balanceKopecks: balance.balanceKopecks };
     }
 
-    // Поиск не должен ронять ответ: при недоступных эмбеддингах агент отвечает
-    // без контекста, а не молчит.
-    const contextChunks = await this.knowledge
-      .search({
-        tenantId: input.tenantId,
-        agentId: agent.id,
-        question: input.text,
-      })
-      .catch((error: unknown) => {
-        this.log.warn(
-          { error, agentId: agent.id },
-          "Knowledge search failed, answering without context",
+    // Загружаем предыдущую историю сообщений диалога для поддержания целостного контекста
+    let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let contactProfileContext = "";
+    let knownContactName: string | undefined;
+    if (input.dealId) {
+      try {
+        interface HistoryMessageRow {
+          direction: string;
+          content: string;
+          channel?: string;
+        }
+
+        // 1. Находим contact_id сделки для сквозной памяти по всем каналам (Webchat -> Telegram -> WhatsApp)
+        const dealInfo = await queryOne<{ contact_id: string | null }>(
+          `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+          [input.dealId, input.tenantId],
         );
-        return [];
-      });
+        const contactId = dealInfo?.contact_id;
+
+        let rows: HistoryMessageRow[] = [];
+        if (contactId) {
+          // Сквозная выборка истории: все сообщения контакта по всем каналам и сделкам
+          rows = await query<HistoryMessageRow>(
+            `SELECT m.direction, m.content, m.channel
+             FROM deal_messages m
+             JOIN deals d ON d.id = m.deal_id
+             WHERE d.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+             ORDER BY m.created_at DESC
+             LIMIT 16`,
+            [input.tenantId, contactId],
+          );
+
+          // Профиль контакта (имя, телефон, ниша, заметки) для постоянной памяти агента
+          const contactRow = await queryOne<{
+            first_name: string;
+            last_name: string;
+            phone: string;
+            notes: string;
+            custom_fields: Record<string, unknown> | null;
+          }>(
+            `SELECT first_name, last_name, phone, notes, custom_fields
+             FROM contacts
+             WHERE id = $1 AND tenant_id = $2`,
+            [contactId, input.tenantId],
+          );
+
+          if (contactRow) {
+            const profileParts: string[] = [];
+            const fullName = `${contactRow.first_name || ""} ${contactRow.last_name || ""}`.trim();
+            const hasRealName = fullName.length > 0 && !isPlaceholderName(contactRow.first_name, contactRow.last_name);
+            if (hasRealName) {
+              knownContactName = contactRow.first_name;
+              profileParts.push(`Имя клиента: ${fullName}`);
+              profileParts.push(`Имя клиента УЖЕ известно (${contactRow.first_name}). Обязательно обращайся к нему по имени и КАТЕГОРИЧЕСКИ НЕ СПРАШИВАЙ его имя повторно!`);
+            } else {
+              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси: «Подскажите, как могу к вам обращаться?».`);
+            }
+            if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
+            if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
+            if (contactRow.custom_fields && typeof contactRow.custom_fields === "object") {
+              const cf = contactRow.custom_fields;
+              if (cf.business_niche) profileParts.push(`Сфера деятельности клиента: ${cf.business_niche}`);
+            }
+            if (profileParts.length > 0) {
+              contactProfileContext = `ПРОФИЛЬ И КОНТЕКСТ КЛИЕНТА В CRM:\n${profileParts.join("\n")}`;
+            }
+          }
+        } else {
+          rows = await query<HistoryMessageRow>(
+            `SELECT direction, content, channel
+             FROM deal_messages
+             WHERE tenant_id = $1 AND deal_id = $2
+             ORDER BY created_at DESC
+             LIMIT 16`,
+            [input.tenantId, input.dealId],
+          );
+        }
+
+        const chronological: HistoryMessageRow[] = [...rows].reverse();
+        // Убираем последнее сообщение, если оно дублирует текущий входящий input.text
+        if (
+          chronological.length > 0 &&
+          chronological[chronological.length - 1]?.direction === "inbound"
+        ) {
+          chronological.pop();
+        }
+
+        conversationHistory = chronological
+          .map((m: HistoryMessageRow) => {
+            let content = m.content.trim();
+            if (m.direction === "inbound") {
+              content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();
+            }
+            return {
+              role: (m.direction === "inbound" ? "user" : "assistant") as "user" | "assistant",
+              content,
+            };
+          })
+          .filter((m: { role: "user" | "assistant"; content: string }) => m.content.length > 0);
+      } catch (err) {
+        this.log.warn({ err, dealId: input.dealId }, "Failed to fetch deal message history for agent");
+      }
+    }
+
+    const recentUserContext = conversationHistory
+      .filter((m) => m.role === "user")
+      .map((m) => m.content)
+      .slice(-2)
+      .join(" ");
+    const searchQuestion = recentUserContext ? `${recentUserContext} ${input.text}` : input.text;
+
+    // Параллельный 4-слойный поиск: база знаний + закрытые сделки CRM + имя компании
+    const [contextChunks, salesExamples, tenantRow] = await Promise.all([
+      this.knowledge
+        .search({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          question: searchQuestion,
+        })
+        .catch((error: unknown) => {
+          this.log.warn(
+            { error, agentId: agent.id },
+            "Knowledge search failed, answering without context",
+          );
+          return [];
+        }),
+      this.salesLearn
+        .findRelevantSalesExamples({
+          tenantId: input.tenantId,
+          query: searchQuestion,
+          limit: 2,
+        })
+        .catch((error: unknown) => {
+          this.log.warn(
+            { error, agentId: agent.id },
+            "Sales learn search failed, continuing without crm patterns",
+          );
+          return [];
+        }),
+      queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [input.tenantId],
+      ).catch(() => null),
+    ]);
 
     const model = isAiModelId(agent.model) ? agent.model : FALLBACK_MODEL;
 
@@ -167,19 +357,48 @@ export class AgentPipelineService {
       );
     }
 
+    const wc = agent.wizard_config;
+    const effectiveTenantName =
+      wc?.companyName ||
+      (tenantRow?.name && tenantRow.name !== "valera" ? tenantRow.name : "Элерон");
+    const variables: Record<string, string> = {
+      "tenant.name": effectiveTenantName,
+      "channel_type": input.channelType ?? "онлайн-чат",
+      "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    if (knownContactName) {
+      variables["contact.name"] = knownContactName;
+    }
+
+    if (wc) {
+      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
+      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
+      if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
     const systemPrompt = buildSystemPrompt({
       agentPrompt: agent.system_prompt,
       contextChunks: contextChunks.map((hit) => ({
         content: hit.content,
         filename: hit.filename,
       })),
+      variables,
+      crmPatterns: salesExamples.map((ex) => ({
+        customerQuery: ex.customerQuery,
+        agentReply: ex.agentReply,
+      })),
+      contactProfile: contactProfileContext,
     });
 
     try {
       const completion = await this.chat.complete({
-        model: GATEWAY_MODEL[model],
+        model: GATEWAY_MODEL[model] ?? model,
         messages: [
           { role: "system", content: systemPrompt },
+          ...conversationHistory,
           { role: "user", content: input.text },
         ],
         temperature: Number(agent.temperature),
@@ -318,6 +537,135 @@ export class AgentPipelineService {
 
       return charge.chargedKopecks;
     });
+  }
+
+  /**
+   * Тестовый чат с агентом прямо из кабинета платформы.
+   *
+   * Использует боевой RAG базы знаний агента, подстановку переменных и LLM-провайдер,
+   * чтобы администратор видел точный ответ, который получит реальный клиент.
+   */
+  async generateTestReply(input: {
+    tenantId: string;
+    agentId: string;
+    message: string;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
+  }): Promise<{ reply: string; messages: string[]; tokens: number; latencyMs: number }> {
+    const agent = await queryOne<AgentRow>(
+      `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
+              a.max_tokens, a.system_prompt, a.wizard_config
+       FROM ai_agents a
+       WHERE a.tenant_id = $1
+         AND a.id = $2
+         AND a.deleted_at IS NULL
+       LIMIT 1`,
+      [input.tenantId, input.agentId],
+    );
+
+    if (agent === null) {
+      throw new Error("Агент не найден или удалён");
+    }
+
+    const [contextChunks, salesExamples, tenantRow] = await Promise.all([
+      this.knowledge
+        .search({
+          tenantId: input.tenantId,
+          agentId: agent.id,
+          question: input.message,
+        })
+        .catch((error: unknown) => {
+          this.log.warn({ error, agentId: agent.id }, "Knowledge search failed in test chat");
+          return [];
+        }),
+      this.salesLearn
+        .findRelevantSalesExamples({
+          tenantId: input.tenantId,
+          query: input.message,
+          limit: 2,
+        })
+        .catch(() => []),
+      queryOne<{ name: string }>(
+        `SELECT name FROM tenants WHERE id = $1`,
+        [input.tenantId],
+      ).catch(() => null),
+    ]);
+
+    const wc = agent.wizard_config;
+    const variables: Record<string, string> = {
+      "tenant.name": tenantRow?.name || "Компания",
+      "channel_type": "тестовый чат",
+      "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    if (wc) {
+      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
+      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
+      if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
+    }
+
+    const systemPrompt = buildSystemPrompt({
+      agentPrompt: agent.system_prompt,
+      contextChunks: contextChunks.map((hit) => ({
+        content: hit.content,
+        filename: hit.filename,
+      })),
+      variables,
+      crmPatterns: salesExamples.map((ex) => ({
+        customerQuery: ex.customerQuery,
+        agentReply: ex.agentReply,
+      })),
+    });
+
+    const model = isAiModelId(agent.model) ? agent.model : FALLBACK_MODEL;
+
+    const chatMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+    ];
+
+    if (input.history && Array.isArray(input.history)) {
+      for (const h of input.history.slice(-6)) {
+        if (h && (h.role === "user" || h.role === "assistant") && typeof h.content === "string") {
+          chatMessages.push({ role: h.role, content: h.content });
+        }
+      }
+    }
+
+    chatMessages.push({ role: "user", content: input.message });
+
+    const completion = await this.chat.complete({
+      model: GATEWAY_MODEL[model] ?? model,
+      messages: chatMessages,
+      temperature: Number(agent.temperature),
+      maxTokens: agent.max_tokens,
+      jsonMode: true,
+    });
+
+    const parsed = parseAgentReply(completion.content);
+    const messages = parsed ? parsed.messages : [completion.content];
+    const replyText = messages.join("\n\n");
+
+    // Фиксируем использование в журнале
+    void this.chargeUsage({
+      tenantId: input.tenantId,
+      agentId: agent.id,
+      model,
+      tokensIn: completion.tokensIn ?? 0,
+      tokensOut: completion.tokensOut ?? 0,
+      latencyMs: completion.latencyMs ?? 0,
+      status: "success",
+      errorMessage: "",
+    }).catch((err) => {
+      this.log.warn({ err }, "Не удалось зафиксировать статистику тестового чата");
+    });
+
+    return {
+      reply: replyText,
+      messages,
+      tokens: (completion.tokensIn ?? 0) + (completion.tokensOut ?? 0),
+      latencyMs: completion.latencyMs ?? 0,
+    };
   }
 
 }

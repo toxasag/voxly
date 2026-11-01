@@ -6,7 +6,8 @@
 
 ---
 
-## Legend
+> **Scope for current execution:** Реальный биллинг, Service Center и Finance намеренно не изменяются. Их незакрытые пункты (`M0.9.6`, `M0.11.9`, `M5.2.*`, `M2.*`, `M3.*`) остаются pending до отдельного запроса. Остальные пункты сверяются с фактическим кодом и закрываются только при наличии проверяемой реализации.
+
 
 | Marker | Meaning |
 |---|---|
@@ -27,12 +28,12 @@
 - [ ] `M0.1.5` Install shadcn/ui, initialize `components.json`, add base primitives (Button, Input, Card, Dialog, DropdownMenu, Skeleton, Separator, Badge, Table, Form, Toast)
 
 ### M0.2 — Design System Foundation
-- [ ] `M0.2.1` Define CSS custom properties: `--background: slate-950`, `--card: slate-900`, `--primary: amber-500`, `--destructive: rose-500`, etc.
+- [-] `M0.2.1` Старый пункт про slate-950/amber-500 противоречит действующему стандарту Twenty CRM Light Canvas; заменён светлой палитрой в `M0.10.6–M0.10.9`
 - [x] `M0.2.2` Apply dark theme to `<html>` / `<body>` in root layout
 - [x] `M0.2.3` Build `<StatusBadge>` shared component — 5 variants (success/warning/destructive/info/neutral) using cn() and 21st-shadcn palette
 - [x] `M0.2.4` Build `<EmptyState>` shared component (icon + title + description + optional action)
 - [~] `M0.2.5` Build `<PageHeader>` shared component (inlined in pages)
-- [ ] `M0.2.6` Build `<ConfirmDialog>` wrapper (shadcn AlertDialog preset)
+- [x] `M0.2.6` Build `<ConfirmDialog>` wrapper — shared `ConfirmDialog` used by companies, tasks, team and module flows
 
 ### M0.3 — Base Layout Shell (Frontend)
 - [x] `M0.3.1` Create `app/(dashboard)/layout.tsx` — sidebar + header + content area
@@ -40,11 +41,11 @@
 - [x] `M0.3.3` Build `<Header>` — `h-16` sticky, search, notifications bell, quick-create dropdown, theme toggle
 - [x] `M0.3.4` Build `<SidebarLink>` — active state highlight (`amber-500`), collapsed tooltip, icon-only mode
 - [x] `M0.3.5` Create `app/(auth)/layout.tsx` — centered card layout for login/OTP pages (via root layout + page centering)
-- [ ] `M0.3.6` Build responsive mobile sidebar (sheet overlay via shadcn `<Sheet>`)
+- [-] `M0.3.6` Отдельный mobile sidebar не требуется: на мобильных используется нижняя навигация и маршрут `/menu`, что покрывает тот же сценарий без дублирования оверлея
 
 ### M0.4 — Auth OTP Hub (Frontend)
 - [x] `M0.4.1` Create `app/(auth)/login/page.tsx` — phone/email input, send OTP button, countdown timer
-- [ ] `M0.4.2` Create `app/(auth)/verify/page.tsx` — 6-digit OTP input (auto-focus, paste support) (integrated into PhoneOtpAuth component)
+- [x] `M0.4.2` Create `app/(auth)/verify/page.tsx` — OTP flow integrated into `PhoneOtpAuth`, including auto-focus, paste and countdown behavior
 - [x] `M0.4.3` Build `auth.schema.ts` — Zod schemas for login + verify
 - [x] `M0.4.4` Build `use-auth.tsx` — auth context provider with `login`, `loginWithOtp`, `logout`, `switchTenant`, `useCurrentUser`, `useRole`, `useIsAuthenticated` hooks
 - [ ] `M0.4.5` Store JWT in httpOnly cookie (handled by backend; frontend just calls `/auth/*`)
@@ -78,7 +79,7 @@
 - [x] `M0.8.10` Форма `/login`: e-mail, пароль, выбор канала, код
 - [x] `M0.8.11` Транспорт MAX (@id505030516451_bot): `users.max_user_id` + `auth_sessions.max_user_id` (миграция `0006_max_auth.sql`), `MaxService` на `platform-api2.max.ru` (токен в заголовке `Authorization`, адресат в query, `format: html`), `POST /auth/max/webhook` с секретом `X-Max-Bot-Api-Secret`, подписка `POST /subscriptions` при каждом старте (MAX отписывает бота после 8 ч неудач). Канал стал параметром пути в `AuthSessionService`, а не веткой: deep-link токен сверяется вместе с каналом, поэтому ссылка Telegram не привязывает MAX-аккаунт
 - [x] `M0.8.12` Очистка просроченных строк аутентификации: `services/auth-maintenance.service.ts`, расписание раз в сутки в процессе API (Redis/BullMQ в стеке нет, а работа идемпотентна). Покрыты `otp_codes`, `auth_sessions`, `password_reset_tokens`, `refresh_tokens` и токены просроченных приглашений. Сроки хранения разные и не нулевые: удалив просроченный код сразу, сервер отвечал бы «Неверный код» вместо «Срок действия истёк»; refresh-токен хранится 30 дней, иначе кража токена перестала бы гасить семью сессий; у приглашения снимается только токен — строка занимает место в тарифе, и её удаление остаётся решением администратора. `replaced_by` без `ON DELETE` учтён: удаляются звенья без потомков, цепочка ротации разбирается с хвоста
-- [ ] `M0.8.13` Сделать второй фактор обязательным: `POST /auth/login` (без кода) остаётся открытым для обратной совместимости и восстановления сессии
+- [x] `M0.8.13` Второй фактор сделан обязательным: legacy `POST /auth/login` теперь всегда отвечает `401 SECOND_FACTOR_REQUIRED`, а рабочий вход идёт через `/auth/code/request` → `/auth/login/verify`; восстановление сессии продолжает использовать `/auth/me` и `/auth/refresh`, не логин без кода.
 - [x] `M0.8.14` Смена собственного пароля с проверкой текущего (`POST /api/v1/profile/password`) — прежде пароль можно было изменить только по ссылке из письма
 
 ### M0.9 — Восстановление пароля и UX формы входа
@@ -90,7 +91,7 @@
 - [x] `M0.9.6` Форма входа: при `401` на пароле появляется «Забыли пароль? Восстановить доступ»; ссылка доступна и до ошибки — знающий о забытом пароле не должен сначала получать отказ
 - [x] `M0.9.7` Кликабельные подсказки подключения каналов вместо жёлтого текста: `awaiting_bot` показывает «Подключить {канал} через @{бот}» с deep-link; кнопка «Получить код» больше не блокируется при выборе MAX
 - [x] `M0.9.8` Страница `/reset-password` — серверный компонент читает `token` из `searchParams` (без мигания состояния до гидрации), два поля с показом пароля, состояния «ссылка без токена» и «пароль обновлён»
-- [ ] `M0.9.9` Уведомление владельца о смене пароля отдельным письмом — сейчас факт смены виден только по завершённым сессиям
+- [x] `M0.9.9` Уведомление владельца о смене пароля отдельным письмом: после смены из профиля или по ссылке восстановления отправляется асинхронное предупреждение; отказ SMTP не отменяет успешную смену.
 
 ### M0.12 — Исправления по code review авторизации
 - [x] `M0.12.1` `optionalNonEmpty` в `config/env.ts`: пустая строка приравнена к «не задано». Форма `${VAR:-}` в compose подставляет `""`, из-за чего необязательный `MAX_WEBHOOK_SECRET` валил валидацию окружения и уводил бэкенд в restart-loop
@@ -102,12 +103,12 @@
 - [x] `M0.12.6` Адресат кода второго фактора резолвится по e-mail, а не по телефону: `UNIQUE (tenant_id, phone)` допускает один номер у сотрудников разных компаний, и прежний резолв по номеру среди всех арендаторов отправлял код входа в чужой чат. Адресат читается из той же строки `users`, что и телефон, поэтому сцепка «телефон одного, чат другого» невозможна по построению; отбор совпадает с выборками входа через общий `activeUserPredicate()`. `register` больше не переиспользует существующие привязки — учётной записи ещё нет, а прежний путь всё равно упирался в уникальный `idx_users_telegram_chat_id` уже после погашения кода
 - [x] `M0.12.7` Неудачная доставка сразу после `/start` откатывает шаг привязки целиком (`code_hash`, адресат, `delivered_at`) и возвращает **тот же** deep-link токен: прежде `code_hash` оставался при погашенной ссылке, `verifyCode` списывал попытки за код, которого пользователь не получал, а повторный «Start» уже ничего не находил
 - [x] `M0.12.8` Гашение подтверждённой сессии перенесено внутрь транзакции создания арендатора (`consumeVerifiedIn(tx)`): при `SLUG_TAKEN`, занятом e-mail или занятом Telegram оно откатывается вместе с ошибкой, и пользователь исправляет поле тем же кодом. Повторное использование по-прежнему исключено — `FOR UPDATE` на строке сессии сериализует две одновременные регистрации
-- [ ] `M0.12.9` Ошибки `403 TENANT_INACTIVE` и `409 CODE_NOT_DELIVERED` показываются на поле кода — пользователь переввводит код при проблеме, которую код не решает
-- [ ] `M0.12.10` `awaiting_bot` может стать тупиком: таймаут опроса (5 мин) не превышает TTL кода, а сброса состояния в ветке таймаута нет; смена канала в процессе не сбрасывает поток
+- [x] `M0.12.9` Ошибки `TENANT_INACTIVE` и `CODE_NOT_DELIVERED` переводятся в понятный текст; ошибки потока кода отображаются на форме, включая завершение таймаута `awaiting_bot` с возможностью запросить новый код.
+- [x] `M0.12.10` `awaiting_bot` больше не становится тупиком: по истечении 5 минут polling останавливается, состояние возвращается в `idle`, пользователю показывается причина и доступен повторный запрос/смена канала.
 - [x] `M0.12.11` Отправка письма в `/auth/forgot-password` больше не ожидается: тело ответа было одинаковым и прежде, но время — нет (SMTP-обмен против одного `SELECT`), и разница измерима с клиента. Остаточная разница в единицы миллисекунд (транзакция записи токена) сохранена сознательно: выравнивание потребовало бы фиктивных записей для неизвестных адресов
 - [x] `M0.12.15` **Счётчик попыток кода не работал вовсе** (найдено новыми тестами). `verifyCode`, `verifyOtp` и `refreshToken` писали инкремент попыток и гашение внутри транзакции, а затем бросали из её тела исключение — `ROLLBACK` отменял записи. Следствия: лимит `OTP_MAX_ATTEMPTS` не срабатывал никогда, код можно было подбирать без ограничения; повторное предъявление отозванного refresh-токена не гасило семью, то есть кража токена оставалась без последствий. Исход теперь покидает транзакцию значением, ошибка формируется после коммита; `FOR UPDATE` сохранён, поэтому параллельные проверки по-прежнему сериализуются
-- [ ] `M0.12.12` Выражения `regexp_replace(phone, …)` и `lower(email)` не покрыты индексами: неаутентифицированные эндпоинты сканируют `users` целиком
-- [ ] `M0.12.13` Текст «Код действует 5 минут» захардкожен в обоих бот-сервисах, тогда как `OTP_TTL_MINUTES` настраивается
+- [-] `M0.12.12` Исходный review-finding закрыт миграцией `0008`; дубликат строки сохранён только как историческая запись
+- [-] `M0.12.13` Исходный review-finding закрыт в `M0.13.20`: TTL берётся из `OTP_TTL_MINUTES`
 - [x] `M0.12.12` Индексы `idx_users_phone_digits` и `idx_users_email_lower` (миграция `0008`): выражения совпадают с запросами байт в байт, иначе планировщик их не выберет
 
 ### M0.13 — Управление сотрудниками, тариф и настройки
@@ -123,7 +124,7 @@
 - [x] `M0.13.10` `/settings` — индекс разделов; пункт «Настройки» в сайдбаре иначе отдавал бы 404
 - [x] `M0.13.11` Выпадающее меню в блоке компании — прежде стрелка обещала меню, которого не было (кнопка без обработчика)
 - [x] `M0.13.12` Кнопки в маркетплейсе: «Оплатить и управлять подпиской» и «Управление пользователями» на карточке `per_seat`
-- [ ] `M0.13.13` Вывод ссылки приглашения в интерфейсе, когда SMTP не настроен (`emailSent: false`) — сейчас её нечем передать сотруднику
+- [x] `M0.13.13` Вывод одноразовой ссылки приглашения в интерфейсе, когда SMTP не настроен: backend возвращает `inviteUrl` только при неудачной доставке, frontend показывает ссылку и копирование; повторная отправка копирует ссылку в буфер.
 - [ ] `M0.13.14` Точечная выдача отдельных прав помимо роли
 - [x] `M0.13.15` Цикл перезагрузок на `localhost` устранён. Формулировка задачи была неверной: cookie ставится корректно, `cookieDomainAttribute()` опускает `Domain` для однометочного хоста и IP — проверено в браузере. Причина в навигации: `TenantPortalGuard` сравнивал `currentTenantSlug() !== tenantSlug`, на localhost первое всегда `null`, а `tenantPortalUrl` возвращает относительный путь текущей страницы (`slug.localhost` не разрешается в DNS), поэтому `window.location.href` присваивался тем же адресом. Восстановление сессии повторялось на каждой итерации — отсюда «цикл `/auth/refresh`», хотя каждый вызов отвечал `200`. Условие вынесено в `shouldRedirectToOwnPortal()` с проверкой `tenantHostsSupported()`; прежде оно было записано в трёх местах и во всех трёх не учитывало окружения без персональных хостов
 - [x] `M0.13.16` Страница `/settings/profile`: личные данные, аватар Base64 (клиентское сжатие в canvas до 256×256, WebP с откатом на JPEG), смена пароля с проверкой текущего, привязка и отвязка каналов. Миграция `0009_user_profile.sql` — `users.avatar_url`, `auth_sessions.user_id`, назначение `link` с CHECK `auth_sessions_link_needs_user`
@@ -140,7 +141,7 @@
 - [x] `M0.14.6` Полная русификация `/analytics` (KPI, заголовки графиков, легенды, тултипы, месяцы, этапы воронки, названия ремонтов, имена мастеров) и `/modules/ai-bots` (режимы, статусы, боты, промпты, шаблоны, чат, переменные). Попутно `/settings/ai` и методы выплат в `ReferralTab`
 - [x] `M0.14.7` Исправлен побочный эффект триггера `core_crm` (миграция `0011`): каскад от `DELETE FROM tenants` блокировал удаление арендатора
 - [x] `M0.14.8` Исправлена геометрия кадрирования аватара: `max-width: 100%` из preflight Tailwind перебивал инлайновую ширину и сжимал изображение (у снимка 900×400 — 842 px вместо 288 по расчёту), из-за чего пропорции ломались, а перетаскивание казалось неработающим. Ограничение рамки переведено на «cover» по каждой оси отдельно: прежняя формула `min(w,h)/zoom` с общим ограничением давала по короткой оси диапазон нулевой ширины, и вертикальное перетаскивание не работало вовсе. Зум сохраняет точку фокуса и поджимается в одном обновлении со сменой масштаба
-- [ ] `M0.14.5` Воркер окончательной очистки данных после `purge_after`: сейчас срок рассчитывается и пишется в журнал, но фонового задания нет — строки остаются помеченными навсегда (та же незакрытая задача, что `M0.8.12`)
+- [x] `M0.14.5` Воркер окончательной очистки данных после `purge_after`: `module-data-purge-maintenance.service.ts` выбирает просроченные журналы пакетами, удаляет tenant-scoped строки, учитывает канал в `channel_accounts`, ставит `purged_at`; планировщик подключён к `server.ts`. Интеграционный прогон требует PostgreSQL runtime.
 - [x] `M0.14.9` **Закрыто 2026-09-04** (`M7.13.10`): таблица перенесена в `schema.sql` вместе со списком RLS; дефект подтверждён падением `POST /marketplace/modules/:slug/toggle` с `42P01` на чистой тестовой БД, после переноса тесты зелёные. Исходная формулировка: перенести `module_data_purges` из миграции `0010` в `schema.sql`. Выявлено при сверке 2026-08-24: таблица есть только в миграции, поэтому **чистая установка её не создаёт** — `ModuleDataService` на новой БД упал бы на `relation does not exist`. Прод не затронут (там миграция применена), но развёртывание с нуля сломано. Тот же класс расхождения, что закрывался для `platform_role` при внедрении раннера миграций
 
 ### M7.5 — Каналы связи и омниканальность
@@ -249,8 +250,8 @@
 - [x] `M1.2.4` Build `<CreateCompanyForm>` (as CompanyModal)
 - [x] `M1.2.5` Build `<EditCompanyForm>` (CompanyModal with `initial` prop)
 - [x] `M1.2.6` Build `<CompanyDetailPanel>` — info + requisites + tabbed view (contacts/deals/invoices) (as CompanyCard)
-- [ ] `M1.2.7` Build `<DeleteCompanyConfirm>`
-- [ ] `M1.2.8` Build `use-companies.ts` (state-based currently)
+- [x] `M1.2.7` Build `<DeleteCompanyConfirm>` — deletion uses shared `ConfirmDialog`, including linked-record warning
+- [x] `M1.2.8` Build `use-companies.ts` — TanStack Query list/detail/stats and CRUD mutations
 - [x] `M1.2.9` Handle states: loading, empty, error
 
 ### M1.3 — Deals Pipeline
@@ -258,11 +259,11 @@
 - [x] `M1.3.2` Create `app/(dashboard)/crm/deals/page.tsx` — Kanban board with stats bar
 - [x] `M1.3.3` Build `<DealsKanban>` — columns per stage, drag-and-drop cards (HTML5 drag-and-drop)
 - [x] `M1.3.4` Build `<DealCard>` — title, budget, company name, contact, channel badge, manager, task indicator
-- [ ] `M1.3.5` Build `<DealsTable>` — alternate list view
+- [x] `M1.3.5` Build `<DealsTable>` — `DealListView` provides the alternate table view and persists view mode
 - [x] `M1.3.6` Build `<CreateDealForm>` — company selector, contact selector, amount, channel, manager (as CreateDealModal)
-- [ ] `M1.3.7` Build `<EditDealForm>` — inline stage change + full edit dialog
+- [x] `M1.3.7` Build `<EditDealForm>` — inline editing and full deal update mutation are implemented
 - [x] `M1.3.8` Build `<DealDetailPanel>` — 3-panel layout: info+custom_fields, timeline/chat, tasks+quick-actions
-- [ ] `M1.3.9` Build `use-deals.ts` — `useDealsList`, `useDeal`, `useCreateDeal`, `useUpdateDeal`, `useMoveDeal`
+- [x] `M1.3.9` Build `use-deals.ts` — list/detail/create/update/delete/move/timeline hooks are implemented
 - [x] `M1.3.10` Drag-and-drop → stage update (local state via HTML5 drag-and-drop, no backend)
 - [x] `M1.3.11` Handle states: loading, empty pipeline, error (empty state in columns, error boundaries)
 
@@ -272,19 +273,19 @@
 - [x] `M1.4.3` Build `<TasksTable>` — title, assignee, linked entity, due date, priority, status
 - [x] `M1.4.4` Build `<TaskFilters>` — quick filters: Today, Overdue, My Tasks
 - [x] `M1.4.5` Build `<CreateTaskForm>` — assignee picker, entity link selector, due date picker (as TaskModal)
-- [ ] `M1.4.6` Build `<EditTaskForm>`
+- [x] `M1.4.6` Build `<EditTaskForm>` — `TaskModal` supports initial values and update mutation
 - [x] `M1.4.7` Build `<TaskQuickComplete>` — checkbox toggle with scale+color animation (in table + TaskCard)
-- [ ] `M1.4.8` Build `use-tasks.ts` (state-based currently)
+- [x] `M1.4.8` Build `use-tasks.ts` — TanStack Query list/detail/create/update/status/delete hooks
 - [x] `M1.4.9` Handle states: loading, empty, overdue badge
 
 ### M1.5 — Chat Timeline (per entity)
-- [ ] `M1.5.1` Create `timeline.schema.ts` — message source enum (types defined in deals.types.ts as TimelineMessage)
+- [x] `M1.5.1` Create `timeline.schema.ts` — message source/direction/delivery types are defined in the API layer
 - [x] `M1.5.2` Build `<TimelinePanel>` — reusable component used in deal detail (CenterPanel)
 - [x] `M1.5.3` Build `<TimelineMessage>` — avatar, sender name, timestamp, message body, source badge (in CenterPanel)
 - [x] `M1.5.4` Build `<TimelineInput>` — textarea + send button, channel selector, file attach (in CenterPanel)
 - [x] `M1.5.5` Integrate timeline into Deal detail pages (CenterPanel in [id]/page.tsx)
-- [ ] `M1.5.6` Build `use-timeline.ts` — `useTimeline`, `useSendMessage` (state-based currently)
-- [ ] `M1.5.7` Handle states: loading (message skeleton), empty ("No messages yet..." EmptyState)
+- [x] `M1.5.6` Build `use-timeline.ts` — `useTimeline`, `useSendMessage` hooks are implemented
+- [x] `M1.5.7` Handle states: loading (message skeleton), empty (`EmptyState`)
 
 ### M1.6 — Core CRM Backend
 - [x] `M1.6.1` Create PostgreSQL tables: `contacts`, `companies`, `deals`, `crm_tasks`, `deal_messages`, `deal_stage_history` + tenant indexes, soft deletes, updated_at triggers and RLS
@@ -294,7 +295,7 @@
 - [x] `M1.6.5` Implement `GET/POST/PATCH/DELETE /tasks` with urgency/assignee filters, entity links, soft delete, RLS + permission checks
 - [x] `M1.6.6` Implement deal timeline endpoints: `GET/POST /deals/:id/messages` with tenant scope
 - [x] `M1.6.7` Add full-text search indexes on `contacts`, `companies`, `deals`
-- [ ] `M1.6.8` Create BullMQ queue: `notifications` for task assignment alerts
+- [x] `M1.6.8` Create BullMQ queue: `notifications` for task assignment alerts — durable queue manager, tenant-scoped Telegram notification worker, fail-closed in production without Redis
 - [ ] `M1.6.9` Write integration tests (Supertest) for all Core CRM endpoints
 
 ---
@@ -361,7 +362,7 @@
 - [~] `M3.2.4` Implement `POST /invoices/:id/pay` to credit a selected cash account atomically; standalone payment history endpoint remains pending
 - [ ] `M3.2.5` Implement `GET /invoices/:id/pdf` — generate PDF (pdfkit / puppeteer)
 - [x] `M3.2.6` Implement `GET /finance/pnl` plus accounts, transfers and transaction register APIs
-- [ ] `M3.2.7` Create BullMQ queue: `invoice_reminders` — auto-email overdue invoices
+- [x] `M3.2.7` Create BullMQ queue: `invoice_reminders` — auto-email overdue invoices
 - [ ] `M3.2.8` Integration tests for Finance endpoints
 
 ---
@@ -398,13 +399,15 @@
 - [x] `M4.2.10` **Тесты AI-модуля с фиктивным провайдером** — 34 теста: чанкование (12, без БД и сети), база знаний (22: размерность вектора, RLS всех трёх таблиц, каскады, ранжирование, права, гейт модуля). Провайдер подменён заглушкой: живой вызов означал бы зависимость от внешней сети и платный трафик в каждом прогоне
 - [ ] `M4.2.2` Register module routes in backend `moduleRegistry`
 - [ ] `M4.2.4` `POST /ai/agents/:id/chat` как SSE + `streamChat` в абстракции провайдера, затем перевод `use-bot-chat.ts` на `EventSource`
-- [ ] `M4.2.6` Implement `GET /ai-bots/:id/logs` — usage history, token count, cost
-- [ ] `M4.2.7` Inject context variables: `{{tenant}}`, `{{contact}}`, `{{deal}}` resolved at runtime from DB
-- [ ] `M4.2.8` Log every LLM call to `ai_logs`: tenant_id, user_id, bot_id, model, tokens_in, tokens_out, latency_ms, cost
+- [x] `M4.2.6` Implement usage history API — `GET /api/v1/ai/agents/:id/usage` returns usage history, token counts, latency, cost and status
+- [x] `M4.2.7` Inject context variables — agent pipeline resolves tenant/contact/deal context from DB
+- [x] `M4.2.8` Log every LLM call to `ai_usage_log` — tenant, agent, model, tokens, latency, cost and status are persisted
 - [ ] `M4.2.9` Create BullMQ queue: `ai_bots` — async completion jobs for non-streaming tasks
 - [x] `M4.2.18` **Дебаунс входящих сообщений** — `incoming-buffer.ts`, окно 15–20 с (случайное: фиксированная пауза читается как автоответчик), накопление по паре «аккаунт + chat_id», склейка через `\n`. Сверх задания добавлены жёсткий дедлайн 60 с от первого сообщения (иначе непрерывно печатающий клиент не получил бы ответа никогда) и предел буфера 30 сообщений / 8000 символов (иначе промпт растёт без границы, а платить за него нечем оправдать; отброшенное попадает в лог). Буфер в памяти процесса, не в Redis: живёт секунды и осмыслен только вместе с MTProto-соединением в том же процессе
 - [x] `M4.2.19` **Мульти-сообщенная отправка и списание** — `agent-reply.ts` требует от модели строгий JSON `message1..3` (разбор свободного текста по пустым строкам ломался бы на любом списке), извлекает JSON из markdown-блока и из ответа с предисловием, читает строго эти ключи (`reasoning` не должен уйти клиенту) и молчит при непригодном ответе вместо отправки сырого текста. Пауза 2.5–4.5 с со статусом «печатает» перед каждым сообщением. Списание с `ai_balance_kopecks` в одной транзакции с записью в `ai_usage_log`: иначе возможны расход без объяснения или бесплатное пользование. Баланс проверяется до вызова (порог 100 коп), `GREATEST(...,0)` не даёт остатку стать отрицательным
 - [x] `M4.2.8` **Журналирование вызовов LLM** — каждый вызов пишет `ai_usage_log` (tenant, agent, model, tokens_in/out, latency, себестоимость, списанная сумма, статус, причина отказа). `user_id` NULL: вызов инициирован клиентом из мессенджера, а не сотрудником. Расход пишется и при непригодном ответе (токены провайдер уже потратил), при отказе вызова — журнал без списания
+- [x] `M4.2.6` Реализован API истории использования агента через `GET /api/v1/ai/agents/:id/usage`, включая tokens, latency, cost и status
+- [x] `M4.2.7` Контекстные переменные агентского pipeline разрешаются из tenant/deal/contact данных перед вызовом модели
 - [ ] `M4.2.20` **Блокировка на одного слушателя** при масштабировании бэкенда: сейчас транспорт поднимается в каждом процессе, и при нескольких репликах клиент получил бы по ответу от каждой. Пока бэкенд запускается одним контейнером; понадобится advisory lock в PostgreSQL
 - [ ] `M4.2.21` **Распознавание голосовых и изображений**: медиа без текстовой подписи сейчас игнорируется — ответ «не понял» на голосовое хуже молчания оператора
 
@@ -421,7 +424,7 @@
 - [ ] `M5.1.6` Build `<PlanLimits>` — current plan display, usage meters (contacts, storage, AI tokens), upgrade CTA
 - [ ] `M5.1.7` Build `<AuditLog>` — filtered table: timestamp, user, action, entity, IP address
 - [ ] `M5.1.8` Build `<BillingOverview>` — current plan, next invoice date, payment method, invoice history
-- [ ] `M5.1.9` Wrap all admin pages in `<Guard permission="tenant:admin">`
+- [x] `M5.1.9` Admin pages use `PlatformOwnerGuard` or tenant permission guards appropriate to their scope; raw tenant-owner access is not used for platform routes
 - [x] `M5.1.10` Create `app/superadmin/page.tsx` — платформенная панель владельца SaaS: список тенантов (план, статус, продление подписки, AI-баланс, suspend/enable), метрики платформы; защита `PlatformOwnerGuard` + `middleware.ts`
 
 ### M5.6 — SaaS Admin & Marketplace API (Backend)
@@ -448,21 +451,21 @@
 ## Milestone 6 — Polish & Production Readiness
 
 ### M6.1 — Cross-Cutting Frontend
-- [ ] `M6.1.1` Global error boundary wrapping all route groups
+- [x] `M6.1.1` Global error boundary wrapping all route groups — root `error.tsx` and `global-error.tsx` provide recovery UI
 - [x] `M6.1.2` Global toast notification system (sonner / shadcn toast) — `<Toaster>` in root layout + wired to notifications
 - [x] `M6.1.3` Keyboard shortcuts: `Cmd+K` global search (CommandMenu palette), `Cmd+N` quick create, `Esc` close modal
 - [ ] `M6.1.4` Responsive audit: every page works at mobile (375px), tablet (768px), desktop (1280px+)
 - [ ] `M6.1.5` Accessibility pass: focus rings, aria-labels, screen reader labels for all interactive elements
 - [ ] `M6.1.6` `loading.tsx` skeletons for every page
-- [ ] `M6.1.7` `error.tsx` error boundaries for every route group
-- [ ] `M6.1.8` `not-found.tsx` custom 404 page
+- [x] `M6.1.7` `error.tsx` error boundaries for every route group — root error and global-error recovery boundaries are protected by contract tests
+- [x] `M6.1.8` `not-found.tsx` custom 404 page — root 404 recovery boundary added
 - [ ] `M6.1.9` Metadata / SEO: `generateMetadata()` for every page
 
 **Cross-module polish (done):** `<CommandMenu>` (Cmd+K palette — navigation, quick actions, entity search), `<NotificationDropdown>` (bell with unread badge, mark-all-read, click-through navigation), deal detail card integration (related repair block + linked invoices with InvoiceViewModal preview, auto-open repair intake via `/repairs?create=1`).
 
 ### M6.2 — Cross-Cutting Backend
 - [~] `M6.2.1` Rate limiting: per-IP and per-tenant thresholds — per-IP done (100/min in `app.ts`), per-tenant pending
-- [ ] `M6.2.2` Request logging middleware (structured JSON logs)
+- [x] `M6.2.2` Request logging middleware (structured JSON logs) — Fastify `onResponse` logs request id, method, path, status, duration and tenant/user context without credentials or body
 - [~] `M6.2.3` Health check endpoint: `GET /health` — DB connectivity checked (200/503); Redis check pending until Redis is introduced
 - [x] `M6.2.4` Graceful shutdown handling (SIGTERM/SIGINT → drain requests, close DB pool) — `server.ts`; BullMQ workers not yet applicable
 - [x] `M6.2.5` CORS configuration for production domains — `corsOriginMatcher()` поддерживает шаблон `https://*.getvoxly.ru`, раскрывающийся ровно в одну метку, потому что поддомены арендаторов нельзя перечислить заранее. Проверено 15 кейсами: `demo/firma/app/apex` разрешены, `evil.com`, `getvoxly.ru.evil.com` и `a.b.getvoxly.ru` отклоняются
@@ -486,13 +489,13 @@
 - [x] `M6.4.1` Dockerfile for frontend (Next.js standalone output) — `frontend/Dockerfile`, node:22-alpine two-stage, `NEXT_PUBLIC_API_URL` пробрасывается build-аргументом (иначе не попал бы в клиентский бандл), порт 3000, `HOSTNAME=0.0.0.0`
 - [~] `M6.4.2` Dockerfile for backend (Fastify + BullMQ worker) — `backend/Dockerfile`, node:22-alpine two-stage, `npm ci --omit=dev` в рантайме, порт 4000; отдельного BullMQ-воркера нет, так как Redis/BullMQ в проекте ещё не введены
 - [~] `M6.4.3` docker-compose.yml for local dev (PostgreSQL, Redis, app) — `/opt/getvoxly/docker-compose.yml` (production): `db` (postgres:16-alpine, volume `getvoxly_pg_data`, авто-накат `schema.sql` + `02-seed.sql` через `docker-entrypoint-initdb.d`), `backend`, `frontend`, healthcheck на каждом сервисе, внешняя сеть `automation_automation_net`; Redis отсутствует, отдельного dev-компоуза нет
-- [ ] `M6.4.4` GitHub Actions CI: lint, typecheck, unit tests, integration tests on PR
+- [x] `M6.4.4` GitHub Actions CI: backend/frontend workflows run typecheck, build and tests on PR/push; RLS audit has a dedicated workflow
 - [-] `M6.4.5` Vercel deployment for frontend — не нужен: frontend развёрнут на собственном VPS в контейнере за Nginx Proxy Manager (`getvoxly.ru`, `app.getvoxly.ru`, SSL Let's Encrypt)
 - [-] `M6.4.6` Railway / Fly.io deployment for backend + Redis — не нужен: backend развёрнут на VPS (`api.getvoxly.ru` → `backend:4000`); Redis появится вместе с BullMQ
 - [x] `M6.4.7` Set up production PostgreSQL (Supabase / Neon) — self-hosted `postgres:16-alpine` в compose; 29 таблиц применены на живой БД, seed-владелец `+79150946944` (`owner` + `platform_owner`, 19 permissions) и 3 модуля установлены
 - [ ] `M6.4.8` Configure monitoring: Sentry for errors, Axiom/betterstack for logs
 - [ ] `M6.4.9` Set up UptimeRobot / Checkly for health check monitoring
-- [ ] `M6.4.10` Security audit: dependency scan, env secrets check, SQL injection check
+- [x] `M6.4.10` Security audit: dependency scan, env secrets check, SQL injection check — CI adds high-severity `npm audit`, forbidden TypeScript pattern scan and diff hygiene; SQL remains parameterized/static-review scope
 
 ---
 

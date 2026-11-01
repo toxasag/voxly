@@ -34,7 +34,7 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
         offset: query.offset ? Number(query.offset) : 0,
       });
 
-      return reply.send(result);
+      return reply.send({ data: result });
     },
   );
 
@@ -44,7 +44,7 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
     async (request, reply) => {
       const { tenant_id } = request;
       const story = await service.getById(tenant_id, request.params.id);
-      return reply.send(story);
+      return reply.send({ data: story });
     },
   );
 
@@ -65,7 +65,7 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
       }
 
       const story = await service.create(tenant_id, parsed.data);
-      return reply.status(201).send(story);
+      return reply.status(201).send({ data: story });
     },
   );
 
@@ -75,7 +75,7 @@ export default async function storiesRoutes(app: FastifyInstance): Promise<void>
     async (request, reply) => {
       const { tenant_id } = request;
       const story = await service.publish(tenant_id, request.params.id);
-      return reply.send(story);
+      return reply.send({ data: story });
     },
   );
 

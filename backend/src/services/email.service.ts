@@ -357,11 +357,29 @@ export class EmailService {
     });
   }
 
+  /** Уведомление о смене пароля владельцу аккаунта. */
+  static async sendPasswordChangedEmail(to: string, changedAt = new Date()): Promise<SendResult> {
+    const stamp = changedAt.toLocaleString("ru-RU", { timeZone: "Europe/Moscow" });
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Пароль изменён</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
+        Пароль вашей учётной записи Voxly был изменён ${escapeHtml(stamp)} (МСК).
+      </p>
+      <p style="margin:0;font-size:13px;line-height:20px;color:#94a3b8;">
+        Если это были не вы, немедленно запросите восстановление пароля и обратитесь к администратору компании.
+      </p>`;
+
+    return EmailService.send({
+      to,
+      subject: "Voxly: пароль изменён",
+      html: layout({ title: "Пароль изменён", preheader: "Пароль вашей учётной записи Voxly был изменён.", body }),
+      text: `Пароль вашей учётной записи Voxly был изменён ${stamp} (МСК).\n\nЕсли это были не вы, запросите восстановление пароля и обратитесь к администратору компании.\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
   /** Диагностическое письмо для `POST /admin/test-email`. */
   static async sendTestEmail(to: string): Promise<SendResult> {
     const env = getEnv();
     const stamp = new Date().toISOString();
-
     const body = `
       <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Проверка почтового сервиса</h1>
       <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
@@ -387,6 +405,251 @@ export class EmailService {
     });
   }
 
+  /**
+   * Сборка темы, HTML и текстовой версии уведомления о новом лиде (без эмодзи).
+   */
+  static renderLeadNotificationEmail(options: {
+    tenantName: string;
+    leadTitle: string;
+    contactName?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    telegram?: string | null;
+    channel?: string | null;
+    stageName?: string | null;
+    budget?: number | string | null;
+    currency?: string | null;
+    conversationSummary?: string | null;
+    customFields?: Record<string, unknown> | null;
+    createdAt?: Date | string | null;
+    crmUrl: string;
+  }): { subject: string; html: string; text: string } {
+    const safeTitle = escapeHtml(options.leadTitle || "Новая заявка");
+    const safeContact = escapeHtml(options.contactName || "Не указано");
+    const safePhone = options.phone ? escapeHtml(options.phone) : null;
+    const safeEmail = options.email ? escapeHtml(options.email) : null;
+    const safeTelegram = options.telegram ? escapeHtml(options.telegram) : null;
+    const safeChannel = escapeHtml(options.channel || "Прямое обращение");
+    const safeStage = escapeHtml(options.stageName || "Новый лид");
+
+    let formattedDate = "Не указано";
+    if (options.createdAt) {
+      try {
+        const d = new Date(options.createdAt);
+        formattedDate = d.toLocaleString("ru-RU", {
+          timeZone: "Europe/Moscow",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }) + " (МСК)";
+      } catch {
+        formattedDate = String(options.createdAt);
+      }
+    }
+
+    const budgetNum = typeof options.budget === "string" ? parseFloat(options.budget) : options.budget;
+    const formattedBudget = budgetNum !== undefined && budgetNum !== null && !isNaN(budgetNum) && budgetNum > 0
+      ? `${budgetNum.toLocaleString("ru-RU")} ${escapeHtml(options.currency || "RUB")}`
+      : null;
+
+    // Сборка таблицы атрибутов
+    const rowsHtml: string[] = [];
+    rowsHtml.push(`
+      <tr>
+        <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;width:38%;border-bottom:1px solid #e2e8f0;">Название заявки</td>
+        <td style="padding:10px 14px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #e2e8f0;">${safeTitle}</td>
+      </tr>`);
+
+    rowsHtml.push(`
+      <tr>
+        <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Контактное лицо</td>
+        <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">${safeContact}</td>
+      </tr>`);
+
+    if (safePhone) {
+      rowsHtml.push(`
+        <tr>
+          <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Телефон</td>
+          <td style="padding:10px 14px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #e2e8f0;">
+            <a href="tel:${safePhone}" style="color:#0f172a;text-decoration:none;">${safePhone}</a>
+          </td>
+        </tr>`);
+    }
+
+    if (safeEmail) {
+      rowsHtml.push(`
+        <tr>
+          <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">E-mail</td>
+          <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">
+            <a href="mailto:${safeEmail}" style="color:#2563eb;text-decoration:none;">${safeEmail}</a>
+          </td>
+        </tr>`);
+    }
+
+    if (safeTelegram) {
+      rowsHtml.push(`
+        <tr>
+          <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Telegram / Мессенджер</td>
+          <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">${safeTelegram}</td>
+        </tr>`);
+    }
+
+    rowsHtml.push(`
+      <tr>
+        <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Источник (канал)</td>
+        <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">${safeChannel}</td>
+      </tr>`);
+
+    rowsHtml.push(`
+      <tr>
+        <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Этап воронки</td>
+        <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">${safeStage}</td>
+      </tr>`);
+
+    if (formattedBudget) {
+      rowsHtml.push(`
+        <tr>
+          <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">Бюджет</td>
+          <td style="padding:10px 14px;font-size:13px;color:#0f172a;font-weight:600;border-bottom:1px solid #e2e8f0;">${formattedBudget}</td>
+        </tr>`);
+    }
+
+    // Кастомные поля из JSONB
+    if (options.customFields && typeof options.customFields === "object") {
+      for (const [key, val] of Object.entries(options.customFields)) {
+        if (val === null || val === undefined || val === "") continue;
+        const displayVal = typeof val === "object" ? JSON.stringify(val) : String(val);
+        rowsHtml.push(`
+          <tr>
+            <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #e2e8f0;">${escapeHtml(key)}</td>
+            <td style="padding:10px 14px;font-size:13px;color:#0f172a;border-bottom:1px solid #e2e8f0;">${escapeHtml(displayVal)}</td>
+          </tr>`);
+      }
+    }
+
+    rowsHtml.push(`
+      <tr>
+        <td style="padding:10px 14px;background-color:#f8fafc;font-size:13px;color:#64748b;font-weight:600;">Время поступления</td>
+        <td style="padding:10px 14px;font-size:13px;color:#64748b;">${escapeHtml(formattedDate)}</td>
+      </tr>`);
+
+    const summaryBlockHtml = options.conversationSummary
+      ? `
+      <div style="background:#f8fafc;border-left:4px solid #3b82f6;padding:12px 16px;margin:16px 0;border-radius:0 8px 8px 0;">
+        <strong style="display:block;font-size:13px;color:#1e293b;margin-bottom:6px;">Краткая суть обращения:</strong>
+        <div style="font-size:13px;color:#334155;line-height:20px;white-space:pre-line;">${escapeHtml(options.conversationSummary)}</div>
+      </div>`
+      : "";
+
+    const body = `
+      <h1 style="margin:16px 0 6px 0;font-size:20px;font-weight:700;color:#0f172a;">Новая заявка в CRM</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">
+        В рабочем пространстве «${escapeHtml(options.tenantName)}» зарегистрирована новая заявка с контактными данными.
+      </p>
+
+      ${summaryBlockHtml}
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 24px 0;border:1px solid #e2e8f0;border-radius:8px;border-collapse:separate;overflow:hidden;">
+        ${rowsHtml.join("")}
+      </table>
+
+      ${button(options.crmUrl, "Открыть карточку в CRM")}
+
+      <p style="margin:16px 0 0 0;font-size:12px;color:#94a3b8;line-height:18px;">
+        Если кнопка не срабатывает, скопируйте ссылку в браузер:
+        <a href="${escapeHtml(options.crmUrl)}" style="color:#2563eb;text-decoration:none;">${escapeHtml(options.crmUrl)}</a>
+      </p>`;
+
+    const textLines = [
+      `Новая заявка в CRM — ${options.tenantName}`,
+      ``,
+      `Название: ${options.leadTitle || "Новая заявка"}`,
+      `Контакт: ${options.contactName || "Не указано"}`,
+    ];
+    if (options.conversationSummary) {
+      textLines.push(``);
+      textLines.push(`Краткая суть обращения:`);
+      textLines.push(options.conversationSummary);
+      textLines.push(``);
+    }
+    if (options.phone) textLines.push(`Телефон: ${options.phone}`);
+    if (options.email) textLines.push(`E-mail: ${options.email}`);
+    if (options.telegram) textLines.push(`Telegram: ${options.telegram}`);
+    textLines.push(`Источник: ${options.channel || "Прямое обращение"}`);
+    textLines.push(`Этап: ${options.stageName || "Новый лид"}`);
+    if (formattedBudget) textLines.push(`Бюджет: ${formattedBudget}`);
+    textLines.push(`Время: ${formattedDate}`);
+    textLines.push(``);
+    textLines.push(`Ссылка на сделку в CRM: ${options.crmUrl}`);
+    textLines.push(``);
+    textLines.push(`Команда Voxly · getvoxly.ru`);
+
+    return {
+      subject: `Новая заявка: ${options.leadTitle || "Заявка с сайта"} (${options.tenantName})`,
+      html: layout({
+        title: `Новая заявка в CRM: ${options.leadTitle || "Заявка с сайта"}`,
+        preheader: `Новая заявка: ${options.leadTitle || "Заявка с сайта"}. Контакт: ${options.contactName || options.phone || options.email || "Получены данные"}.`,
+        body,
+      }),
+      text: textLines.join("\n"),
+    };
+  }
+
+  /**
+   * Уведомление арендатора о новой заявке / лиде.
+   * Отправляется асинхронно через BullMQ при переходе из «Первого контакта»
+   * или при создании лида с заполненными контактами. Без эмодзи в шаблоне.
+   */
+  static async sendLeadNotificationEmail(options: {
+    to: string;
+    tenantName: string;
+    leadTitle: string;
+    contactName?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    telegram?: string | null;
+    channel?: string | null;
+    stageName?: string | null;
+    budget?: number | string | null;
+    currency?: string | null;
+    conversationSummary?: string | null;
+    customFields?: Record<string, unknown> | null;
+    createdAt?: Date | string | null;
+    crmUrl: string;
+  }): Promise<SendResult> {
+    const rendered = EmailService.renderLeadNotificationEmail(options);
+    return EmailService.send({
+      to: options.to,
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    });
+  }
+
+  /** Напоминание о просроченном счёте. */
+  static async sendInvoiceReminderEmail(options: {
+    to: string;
+    invoiceNumber: string;
+    companyName: string;
+    total: number;
+    currency: string;
+    dueDate: Date | string;
+  }): Promise<SendResult> {
+    const due = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeZone: "Europe/Moscow" }).format(new Date(options.dueDate));
+    const amount = `${options.total.toLocaleString("ru-RU")} ${options.currency}`;
+    const body = `
+      <h1 style="margin:16px 0 8px 0;font-size:20px;font-weight:700;color:#0f172a;">Просрочен счёт ${escapeHtml(options.invoiceNumber)}</h1>
+      <p style="margin:0 0 16px 0;font-size:14px;line-height:22px;color:#475569;">Срок оплаты счёта для компании «${escapeHtml(options.companyName)}» истёк ${escapeHtml(due)}.</p>
+      <p style="margin:0;font-size:18px;font-weight:700;color:#0f172a;">К оплате: ${escapeHtml(amount)}</p>`;
+    return EmailService.send({
+      to: options.to,
+      subject: `Voxly: просрочен счёт ${options.invoiceNumber}`,
+      html: layout({ title: "Просрочен счёт Voxly", preheader: `Счёт ${options.invoiceNumber} требует внимания.`, body }),
+      text: `Просрочен счёт ${options.invoiceNumber}\nКомпания: ${options.companyName}\nК оплате: ${amount}\nСрок оплаты: ${due}\n\nКоманда Voxly · getvoxly.ru`,
+    });
+  }
   /** Проверка соединения и авторизации без отправки письма. */
   static async verifyConnection(): Promise<SendResult> {
     if (!EmailService.isConfigured) {

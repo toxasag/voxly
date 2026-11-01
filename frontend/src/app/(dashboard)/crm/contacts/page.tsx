@@ -2,7 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Plus, Users, Search, Building2, AlertCircle, RefreshCw,
+  AlertCircle,
+  Briefcase,
+  Building2,
+  Calendar,
+  Clock,
+  Handshake,
+  Linkedin,
+  Mail,
+  Phone,
+  Plus,
+  RefreshCw,
+  Search,
+  Tag,
+  Trash2,
+  User,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { ContactModal } from "@/components/crm/contacts/ContactModal";
@@ -16,7 +31,12 @@ import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell, RecordCellEditor } from "@/components/crm/shared/RecordCell";
-import { EntityChip } from "@/components/crm/shared/EntityChip";
+import {
+  CompanyBadgeCell,
+  ContactAvatarCell,
+  CreatorCell,
+  PillBadge,
+} from "@/components/crm/shared/twenty-table-helpers";
 import { TagPill } from "@/components/ui/tag";
 import { CompanyCard } from "@/components/crm/companies/CompanyCard";
 import { useCompany, useCompanyStats } from "@/lib/api/use-companies";
@@ -104,8 +124,11 @@ function ContactsPageContent() {
     openRecord: setCompanyDetailId,
     closeRecord: closeCompanyDetail,
   } = useRecordParam("company");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<ContactDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
 
   // Debounced so typing does not fire a request per keystroke.
@@ -113,6 +136,7 @@ function ContactsPageContent() {
     const handle = setTimeout(() => {
       setSearch(searchInput.trim());
       setPage(1);
+      setSelected(new Set());
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(handle);
@@ -185,7 +209,32 @@ function ContactsPageContent() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteContact, deleteTarget]);
+  }, [deleteContact, deleteTarget, closeDetail]);
+
+  const bulkDelete = useCallback(async () => {
+    setBulkDeleteConfirmOpen(false);
+    setIsBulkDeleting(true);
+    const ids = Array.from(selected);
+    let successCount = 0;
+    for (const id of ids) {
+      try {
+        await deleteContact.mutateAsync(id);
+        successCount++;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Не удалось удалить контакт");
+        break;
+      }
+    }
+    setIsBulkDeleting(false);
+    setSelected(new Set());
+    if (detailId !== null && selected.has(detailId)) {
+      closeDetail();
+    }
+    if (successCount > 0) {
+      toast.success(`Удалено контактов: ${successCount}`);
+      void query.refetch();
+    }
+  }, [selected, deleteContact, detailId, closeDetail, query]);
 
   const editInitialValues = useMemo(
     () => (editTarget === null ? undefined : toContactFormValues(editTarget)),
@@ -217,8 +266,9 @@ function ContactsPageContent() {
   const contactColumns = useMemo<RecordColumn<ContactDTO>[]>(() => [
     {
       id: "name",
-      header: "ФИО",
-      width: 260,
+      header: "Имя",
+      icon: User,
+      width: 240,
       sortValue: (contact) => contactFullName(contact),
       render: (contact) =>
         isEditing(contact.id, "name") ? (
@@ -226,9 +276,6 @@ function ContactsPageContent() {
             value={contactFullName(contact)}
             onCancel={() => setEditing(null)}
             onCommit={(value) => {
-              // Разбор «Фамилия Имя Отчество»: обязательна одна часть — имя.
-              // Двойные фамилии и отсутствие отчества здесь неразличимы, поэтому
-              // полный разбор оставлен карточке, где части правятся по отдельности.
               const parts = value.trim().split(/\s+/).filter((part) => part !== "");
 
               if (parts.length === 0) {
@@ -255,14 +302,114 @@ function ContactsPageContent() {
             isLabelIdentifier
             onStartEdit={() => setEditing({ rowId: contact.id, columnId: "name" })}
           >
-            <EntityChip name={contactFullName(contact)} />
-            <span className="truncate font-medium text-[#111111]">{contactFullName(contact)}</span>
+            <ContactAvatarCell name={contactFullName(contact)} />
           </RecordCellShell>
         ),
     },
     {
+      id: "email",
+      header: "Электронные п...",
+      icon: Mail,
+      width: 200,
+      sortValue: (contact) => contact.email ?? "",
+      render: (contact) => (
+        <RecordCellShell isEmpty={contact.email === null || contact.email === ""} emptyLabel="e-mail">
+          {contact.email ? (
+            <PillBadge>{contact.email}</PillBadge>
+          ) : null}
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "created_by",
+      header: "Создано",
+      icon: Clock,
+      width: 140,
+      sortValue: (contact) => contact.createdByName ?? contact.createdBy ?? "",
+      render: (contact) => (
+        <RecordCellShell align="left">
+          <CreatorCell
+            createdBy={contact.createdBy}
+            createdByName={contact.createdByName}
+          />
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "company",
+      header: "Компания",
+      icon: Building2,
+      width: 190,
+      sortValue: (contact) => contact.companyName,
+      render: (contact) => (
+        <RecordCellShell isEmpty={contact.companyName === ""} emptyLabel="компанию">
+          {contact.companyName !== "" ? (
+            contact.companyId !== null ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (contact.companyId !== null) setCompanyDetailId(contact.companyId);
+                }}
+                className="inline-flex min-w-0 items-center rounded hover:underline cursor-pointer"
+              >
+                <CompanyBadgeCell name={contact.companyName} />
+              </button>
+            ) : (
+              <CompanyBadgeCell name={contact.companyName} />
+            )
+          ) : null}
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "phone",
+      header: "Телефоны",
+      icon: Phone,
+      width: 180,
+      sortValue: (contact) => contact.phone,
+      render: (contact) => {
+        const [primary, ...rest] = contact.phones;
+        return (
+          <RecordCellShell isEmpty={primary === undefined} emptyLabel="телефон">
+            {primary !== undefined ? (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <PillBadge>{formatPhone(primary.number, primary.countryCode)}</PillBadge>
+                {rest.length > 0 && (
+                  <span
+                    title={rest.map((p) => formatPhone(p.number, p.countryCode)).join(", ")}
+                    className="shrink-0 rounded-[4px] border border-[#e5e5e5] bg-[#f5f5f5] px-1.5 text-xs text-[#666666]"
+                  >
+                    +{rest.length}
+                  </span>
+                )}
+              </div>
+            ) : null}
+          </RecordCellShell>
+        );
+      },
+    },
+    {
+      id: "created",
+      header: "Дата создания",
+      icon: Calendar,
+      width: 140,
+      sortValue: (contact) => contact.createdAt,
+      render: (contact) => (
+        <RecordCellShell align="left">
+          <span
+            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(contact.createdAt))}
+            className="text-[13px] text-[#111111]"
+          >
+            {timeAgo(contact.createdAt)}
+          </span>
+        </RecordCellShell>
+      ),
+    },
+    {
       id: "jobTitle",
       header: "Должность",
+      icon: Briefcase,
       width: 170,
       sortValue: (contact) => contact.jobTitle,
       render: (contact) =>
@@ -279,87 +426,31 @@ function ContactsPageContent() {
             emptyLabel="должность"
             onStartEdit={() => setEditing({ rowId: contact.id, columnId: "jobTitle" })}
           >
-            <span className="truncate text-[#666666]">{contact.jobTitle}</span>
+            <span className="truncate text-xs text-[#666666]">{contact.jobTitle}</span>
           </RecordCellShell>
         ),
     },
     {
-      id: "phone",
-      header: "Телефон",
-      width: 180,
-      sortValue: (contact) => contact.phone,
-      render: (contact) => {
-        const [primary, ...rest] = contact.phones;
-
-        // Правка номера — только на карточке: там есть селектор кода страны и
-        // проверка формата, которых в однострочном редакторе ячейки нет.
-        return (
-          <RecordCellShell isEmpty={primary === undefined} emptyLabel="телефон">
-            {primary !== undefined && (
-              <>
-                <span className="truncate text-[#111111]">
-                  {formatPhone(primary.number, primary.countryCode)}
-                </span>
-                {rest.length > 0 && (
-                  <span
-                    title={rest.map((phone) => formatPhone(phone.number, phone.countryCode)).join(", ")}
-                    className="shrink-0 rounded-[4px] border border-[#e5e5e5] bg-[#f5f5f5] px-1.5 text-xs text-[#666666]"
-                  >
-                    +{rest.length}
-                  </span>
-                )}
-              </>
-            )}
-          </RecordCellShell>
-        );
-      },
-    },
-    {
-      id: "email",
-      header: "E-mail",
-      width: 200,
-      sortValue: (contact) => contact.email ?? "",
+      id: "linkedin",
+      header: "LinkedIn",
+      icon: Linkedin,
+      width: 140,
+      sortValue: (contact) => contact.linkedinLink,
       render: (contact) => (
-        <RecordCellShell isEmpty={contact.email === null || contact.email === ""} emptyLabel="e-mail">
-          <span className="truncate text-[#666666]">{contact.email}</span>
-        </RecordCellShell>
-      ),
-    },
-    {
-      id: "company",
-      header: "Компания",
-      width: 200,
-      sortValue: (contact) => contact.companyName,
-      render: (contact) => (
-        <RecordCellShell isEmpty={contact.companyName === ""} emptyLabel="компанию">
-          {contact.companyName !== "" && (
-            contact.companyId !== null ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  // Клик остаётся в ячейке: строка открыла бы карточку контакта,
-                  // а по названию компании ожидается переход в компанию.
-                  event.stopPropagation();
-                  // Проверка на null нужна теперь явно: `openRecord` принимает
-                  // идентификатор, а не «идентификатор или ничего» — ссылка в
-                  // адресе без значения бессмысленна.
-                  if (contact.companyId !== null) setCompanyDetailId(contact.companyId);
-                }}
-                className="inline-flex min-w-0 items-center rounded hover:underline"
-              >
-                <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-              </button>
-            ) : (
-              <EntityChip name={contact.companyName} label={contact.companyName} icon={Building2} size="sm" />
-            )
-          )}
+        <RecordCellShell isEmpty={!contact.linkedinLink} emptyLabel="LinkedIn">
+          {contact.linkedinLink ? (
+            <span className="truncate text-xs text-[#4a38f5]">{contact.linkedinLink}</span>
+          ) : null}
         </RecordCellShell>
       ),
     },
     {
       id: "channel",
       header: "Канал",
+      icon: Tag,
       width: 130,
+      hideable: true,
+      defaultHidden: true,
       sortValue: (contact) => contact.channel,
       render: (contact) => (
         <RecordCellShell>
@@ -370,30 +461,16 @@ function ContactsPageContent() {
     {
       id: "deals",
       header: "Сделок",
+      icon: Handshake,
       width: 104,
       align: "right",
+      hideable: true,
+      defaultHidden: true,
       sortValue: (contact) => contact.dealsCount,
       render: (contact) => (
         <RecordCellShell align="right">
-          <span className={contact.dealsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#aaaaaa]"}>
+          <span className={cn("tabular-nums text-xs", contact.dealsCount > 0 ? "text-[#111111]" : "text-[#aaaaaa]")}>
             {contact.dealsCount}
-          </span>
-        </RecordCellShell>
-      ),
-    },
-    {
-      id: "created",
-      header: "Создан",
-      width: 120,
-      align: "right",
-      sortValue: (contact) => contact.createdAt,
-      render: (contact) => (
-        <RecordCellShell align="right">
-          <span
-            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(contact.createdAt))}
-            className="text-[#888888]"
-          >
-            {timeAgo(contact.createdAt)}
           </span>
         </RecordCellShell>
       ),
@@ -437,7 +514,7 @@ function ContactsPageContent() {
         <div className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 md:mx-0 md:flex-wrap md:px-0">
           {CHANNEL_FILTERS.map((filter) => (
             <button key={filter.value} type="button"
-              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); }}
+              onClick={() => { setChannelFilter(filter.value === "all" ? "all" : filter.value); setPage(1); setSelected(new Set()); }}
               aria-pressed={channelFilter === filter.value}
               className={cn("shrink-0 whitespace-nowrap rounded-[8px] border px-2.5 py-1 text-xs font-medium transition-colors",
                 channelFilter === filter.value
@@ -472,7 +549,7 @@ function ContactsPageContent() {
             ? "Измените поисковый запрос или фильтр по каналу."
             : "Создайте первый контакт, чтобы начать работу."}
           action={hasFilters ? (
-            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); }}
+            <button type="button" onClick={() => { setSearchInput(""); setChannelFilter("all"); setSelected(new Set()); }}
               className="rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#fafafa]">
               Сбросить фильтры
             </button>
@@ -491,10 +568,36 @@ function ContactsPageContent() {
             getRowId={(contact) => contact.id}
             columns={contactColumns}
             tableId="contacts"
+            selectable={true}
+            selectedIds={selected}
+            onSelectionChange={setSelected}
             onRowClick={editing === null ? (contact) => setDetailId(contact.id) : undefined}
             // Enter на ячейке в фокусе открывает тот же редактор, что и клик:
             // состояние правки уже описано парой {rowId, columnId}.
             onCellEdit={(contact, columnId) => setEditing({ rowId: contact.id, columnId })}
+            bulkBar={
+              <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
+                <span className="text-xs font-medium text-[#111111]">
+                  Выбрано: {selected.size}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+                >
+                  Снять выделение
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteConfirmOpen(true)}
+                  disabled={isBulkDeleting}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Удалить
+                </button>
+              </div>
+            }
             pagination={
               totalPages > 1 ? (
                 <div className="flex items-center justify-between border-t border-[#e5e5e5] px-4 py-3">
@@ -562,6 +665,17 @@ function ContactsPageContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isDeleting}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        onConfirm={bulkDelete}
+        title={`Удалить контакты: ${selected.size}?`}
+        description="Контакты будут перемещены в корзину (мягкое удаление). В связанных сделках останется ссылка на удалённый контакт."
+        confirmLabel="Удалить"
+        variant="destructive"
+        isPending={isBulkDeleting}
       />
     </div>
   );

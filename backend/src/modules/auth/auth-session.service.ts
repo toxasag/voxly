@@ -603,7 +603,35 @@ export class AuthSessionService {
         [input.userId, value],
       );
 
-      if (updated !== null) return "linked";
+      if (updated !== null) {
+        if (row.channel === "telegram" && value !== null) {
+          const userRow = await queryOne<{ tenant_id: string; telegram_username: string | null; name: string | null }>(
+            `SELECT tenant_id, telegram_username, name FROM users WHERE id = $1`,
+            [input.userId],
+          );
+          if (userRow) {
+            await query(
+              `INSERT INTO tenant_notification_channels (
+                 tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+               )
+               VALUES ($1, 'telegram', $2, $3, true, true)
+               ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+               SET is_active = true, is_verified = true, updated_at = now()`,
+              [
+                userRow.tenant_id,
+                String(value),
+                JSON.stringify({
+                  source: "telegram_auth_login",
+                  auto_linked: true,
+                  username: userRow.telegram_username ?? null,
+                  name: userRow.name ?? null,
+                }),
+              ],
+            );
+          }
+        }
+        return "linked";
+      }
 
       // Строка не обновилась: колонка занята другим значением у этого же
       // пользователя — канал уже привязан к другому чату.

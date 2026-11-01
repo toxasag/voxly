@@ -31,6 +31,7 @@ RUN apk add --no-cache ca-certificates && update-ca-certificates
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
+COPY public ./public
 
 # Миграции (M6.2.7). Копируются в рантайм-образ, а не только в builder: прогон
 # выполняется entrypoint'ом при старте контейнера, поэтому и SQL-файлы, и конфиг

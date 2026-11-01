@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { StoriesService } from "../modules/stories/stories.service.js";
 import * as dbClient from "../db/client.js";
+import { registerStoryPublisher, clearOutboundSenders } from "../modules/channels/outbound-registry.js";
 
 describe("StoriesService", () => {
   const service = new StoriesService();
@@ -8,6 +9,7 @@ describe("StoriesService", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    clearOutboundSenders();
   });
 
   it("успешно создает черновик сторис с дефолтным статусом", async () => {
@@ -107,5 +109,52 @@ describe("StoriesService", () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.viewsCount).toBe(42);
+  });
+
+  it("вызывает зарегистрированный издатель канала при вызове publish", async () => {
+    const mockStory = {
+      id: "story-publish-1",
+      tenant_id: tenantId,
+      channel_account_id: "acc-tg-1",
+      channel: "telegram",
+      media_url: "https://storage.getvoxly.ru/stories/story.jpg",
+      media_type: "photo",
+      text: "Горячее предложение!",
+      link_url: "https://getvoxly.ru",
+      link_text: "Подробнее",
+      views_count: 0,
+      reactions_count: 0,
+      status: "scheduled",
+      scheduled_at: null,
+      posted_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const publishedPayloads: unknown[] = [];
+    registerStoryPublisher("telegram", async (payload) => {
+      publishedPayloads.push(payload);
+      return { ok: true, externalId: "12345" };
+    });
+
+    vi.spyOn(dbClient, "queryOne").mockImplementation(async (sql: string) => {
+      if (sql.includes("SELECT * FROM story_posts")) {
+        return mockStory as unknown as never;
+      }
+      if (sql.includes("UPDATE story_posts") && sql.includes("status = 'published'")) {
+        return { ...mockStory, status: "published" } as unknown as never;
+      }
+      return null as unknown as never;
+    });
+
+    const published = await service.publish(tenantId, "story-publish-1");
+    expect(published.status).toBe("published");
+    expect(publishedPayloads).toHaveLength(1);
+    expect(publishedPayloads[0]).toMatchObject({
+      tenantId,
+      channelAccountId: "acc-tg-1",
+      mediaUrl: "https://storage.getvoxly.ru/stories/story.jpg",
+      caption: "Горячее предложение!",
+    });
   });
 });

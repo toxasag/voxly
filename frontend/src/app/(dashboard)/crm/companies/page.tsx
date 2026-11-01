@@ -1,7 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, Building2, Search, AlertCircle, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  Building2,
+  Calendar,
+  Clock,
+  DollarSign,
+  FileText,
+  Handshake,
+  Linkedin,
+  Link2,
+  MapPin,
+  Phone,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  User,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { CompanyModal } from "@/components/crm/companies/CompanyModal";
 import { DrawerCreateCompany } from "@/components/crm/deals/DrawerCreateCompany";
@@ -16,8 +34,13 @@ import { Guard } from "@/components/shared/Guard";
 import { type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { SyncedRecordTable } from "@/components/crm/shared/SyncedRecordTable";
 import { RecordCellShell, RecordCellEditor } from "@/components/crm/shared/RecordCell";
-import { EntityChip } from "@/components/crm/shared/EntityChip";
-import { timeAgo } from "@/lib/utils";
+import {
+  CompanyBadgeCell,
+  ContactAvatarCell,
+  CreatorCell,
+  PillBadge,
+} from "@/components/crm/shared/twenty-table-helpers";
+import { cn, timeAgo } from "@/lib/utils";
 import {
   useCompanies,
   useCompanyStats,
@@ -55,14 +78,18 @@ function CompaniesContent() {
   /** Контакт, открытый из секции «Контакты» карточки компании. */
   const [contactDetailId, setContactDetailId] = useState<string | null>(null);
   const [edit, setEdit] = useState<CompanyDTO | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<CompanyDTO | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
 
   useEffect(() => {
     const handle = setTimeout(() => {
       setSearch(input.trim());
       setPage(1);
+      setSelected(new Set());
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [input]);
@@ -115,7 +142,32 @@ function CompaniesContent() {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteCompany, deleteTarget]);
+  }, [deleteCompany, deleteTarget, closeDetail]);
+
+  const bulkDelete = useCallback(async () => {
+    setBulkDeleteConfirmOpen(false);
+    setIsBulkDeleting(true);
+    const ids = Array.from(selected);
+    let successCount = 0;
+    for (const id of ids) {
+      try {
+        await deleteCompany.mutateAsync(id);
+        successCount++;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Не удалось удалить компанию");
+        break;
+      }
+    }
+    setIsBulkDeleting(false);
+    setSelected(new Set());
+    if (detailId !== null && selected.has(detailId)) {
+      closeDetail();
+    }
+    if (successCount > 0) {
+      toast.success(`Удалено компаний: ${successCount}`);
+      void query.refetch();
+    }
+  }, [selected, deleteCompany, detailId, closeDetail, query]);
 
   const commitCompany = useCallback(
     (company: CompanyDTO, payload: CreateCompanyPayload) => {
@@ -136,7 +188,8 @@ function CompaniesContent() {
   const companyColumns = useMemo<RecordColumn<CompanyDTO>[]>(() => [
     {
       id: "name",
-      header: "Название",
+      header: "Имя",
+      icon: Building2,
       width: 240,
       sortValue: (company) => company.name,
       render: (company) =>
@@ -160,14 +213,14 @@ function CompaniesContent() {
             isLabelIdentifier
             onStartEdit={() => setEditing({ rowId: company.id, columnId: "name" })}
           >
-            <EntityChip name={company.name} domain={company.domainName} icon={Building2} />
-            <span className="truncate font-medium text-[#111111]">{company.name}</span>
+            <CompanyBadgeCell name={company.name} />
           </RecordCellShell>
         ),
     },
     {
       id: "domain",
-      header: "Домен",
+      header: "Доменное имя",
+      icon: Link2,
       width: 180,
       sortValue: (company) => company.domainName,
       render: (company) =>
@@ -186,17 +239,98 @@ function CompaniesContent() {
             emptyLabel="домен"
             onStartEdit={() => setEditing({ rowId: company.id, columnId: "domain" })}
           >
-            <span className="truncate text-[#4a38f5]">{company.domainName}</span>
+            {company.domainName ? (
+              <PillBadge>{company.domainName}</PillBadge>
+            ) : null}
           </RecordCellShell>
         ),
     },
     {
+      id: "created_by",
+      header: "Создано",
+      icon: Clock,
+      width: 140,
+      sortValue: (company) => company.createdByName ?? company.createdBy ?? "",
+      render: (company) => (
+        <RecordCellShell align="left">
+          <CreatorCell
+            createdBy={company.createdBy}
+            createdByName={company.createdByName}
+          />
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "manager",
+      header: "Владелец аккаунта",
+      icon: User,
+      width: 180,
+      sortValue: (company) => company.managerName,
+      render: (company) => (
+        <RecordCellShell isEmpty={company.managerName === ""} emptyLabel="владельца">
+          {company.managerName !== "" && (
+            <ContactAvatarCell name={company.managerName} />
+          )}
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "created",
+      header: "Дата создания",
+      icon: Calendar,
+      width: 140,
+      sortValue: (company) => company.createdAt,
+      render: (company) => (
+        <RecordCellShell align="left">
+          <span
+            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(company.createdAt))}
+            className="text-[13px] text-[#111111]"
+          >
+            {timeAgo(company.createdAt)}
+          </span>
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "linkedin",
+      header: "LinkedIn",
+      icon: Linkedin,
+      width: 140,
+      sortValue: (company) => company.linkedinLink,
+      render: (company) => (
+        <RecordCellShell isEmpty={!company.linkedinLink} emptyLabel="LinkedIn">
+          {company.linkedinLink ? (
+            <span className="truncate text-xs text-[#4a38f5]">{company.linkedinLink}</span>
+          ) : null}
+        </RecordCellShell>
+      ),
+    },
+    {
+      id: "address",
+      header: "Адрес",
+      icon: MapPin,
+      width: 240,
+      render: (company) => {
+        const addr = [company.address?.street, company.address?.city, company.address?.country]
+          .filter((p) => typeof p === "string" && p.trim() !== "")
+          .join(", ");
+        return (
+          <RecordCellShell isEmpty={!addr} emptyLabel="адрес">
+            <span className="truncate text-xs text-[#111111]">{addr}</span>
+          </RecordCellShell>
+        );
+      },
+    },
+    {
       id: "reach",
       header: "Телефон / E-mail",
-      width: 240,
+      icon: Phone,
+      width: 220,
+      hideable: true,
+      defaultHidden: true,
       render: (company) => (
         <RecordCellShell isEmpty={company.phone === "" && company.email === ""} emptyLabel="контакты">
-          <span className="truncate text-[#666666]">
+          <span className="truncate text-xs text-[#666666]">
             {[company.phone, company.email].filter((value) => value !== "").join(" · ")}
           </span>
         </RecordCellShell>
@@ -205,7 +339,10 @@ function CompaniesContent() {
     {
       id: "inn",
       header: "ИНН",
+      icon: FileText,
       width: 140,
+      hideable: true,
+      defaultHidden: true,
       sortValue: (company) => company.requisites.inn,
       render: (company) => (
         <RecordCellShell isEmpty={company.requisites.inn === ""} emptyLabel="ИНН">
@@ -214,27 +351,17 @@ function CompaniesContent() {
       ),
     },
     {
-      id: "manager",
-      header: "Ответственный",
-      width: 180,
-      sortValue: (company) => company.managerName,
-      render: (company) => (
-        <RecordCellShell isEmpty={company.managerName === ""} emptyLabel="ответственного">
-          {company.managerName !== "" && (
-            <EntityChip name={company.managerName} label={company.managerName} size="sm" />
-          )}
-        </RecordCellShell>
-      ),
-    },
-    {
       id: "contacts",
       header: "Контактов",
+      icon: Users,
       width: 110,
       align: "right",
+      hideable: true,
+      defaultHidden: true,
       sortValue: (company) => company.contactsCount,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.contactsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
+          <span className={cn("tabular-nums text-xs", company.contactsCount > 0 ? "text-[#111111]" : "text-[#888888]")}>
             {company.contactsCount}
           </span>
         </RecordCellShell>
@@ -243,12 +370,15 @@ function CompaniesContent() {
     {
       id: "deals",
       header: "Сделок",
+      icon: Handshake,
       width: 104,
       align: "right",
+      hideable: true,
+      defaultHidden: true,
       sortValue: (company) => company.dealsCount,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.dealsCount > 0 ? "tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
+          <span className={cn("tabular-nums text-xs", company.dealsCount > 0 ? "text-[#111111]" : "text-[#888888]")}>
             {company.dealsCount}
           </span>
         </RecordCellShell>
@@ -257,30 +387,16 @@ function CompaniesContent() {
     {
       id: "budget",
       header: "Сумма сделок",
+      icon: DollarSign,
       width: 150,
       align: "right",
+      hideable: true,
+      defaultHidden: true,
       sortValue: (company) => company.dealsBudgetTotal,
       render: (company) => (
         <RecordCellShell align="right">
-          <span className={company.dealsBudgetTotal > 0 ? "font-medium tabular-nums text-[#111111]" : "tabular-nums text-[#888888]"}>
+          <span className={cn("tabular-nums text-xs", company.dealsBudgetTotal > 0 ? "font-medium text-[#111111]" : "text-[#888888]")}>
             {money.format(company.dealsBudgetTotal)}
-          </span>
-        </RecordCellShell>
-      ),
-    },
-    {
-      id: "created",
-      header: "Создана",
-      width: 120,
-      align: "right",
-      sortValue: (company) => company.createdAt,
-      render: (company) => (
-        <RecordCellShell align="right">
-          <span
-            title={new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(company.createdAt))}
-            className="text-[#888888]"
-          >
-            {timeAgo(company.createdAt)}
           </span>
         </RecordCellShell>
       ),
@@ -338,6 +454,9 @@ function CompaniesContent() {
           getRowId={(company) => company.id}
           columns={companyColumns}
           tableId="companies"
+          selectable={true}
+          selectedIds={selected}
+          onSelectionChange={setSelected}
           onRowClick={editing === null ? (company) => setDetailId(company.id) : undefined}
           onCellEdit={(company, columnId) => setEditing({ rowId: company.id, columnId })}
           footerCells={{
@@ -348,6 +467,29 @@ function CompaniesContent() {
               </span>
             ),
           }}
+          bulkBar={
+            <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[#e5e5e5] bg-white px-4 py-2.5 shadow-2xs">
+              <span className="text-xs font-medium text-[#111111]">
+                Выбрано: {selected.size}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="text-xs text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+              >
+                Снять выделение
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkDeleteConfirmOpen(true)}
+                disabled={isBulkDeleting}
+                className="flex items-center gap-1.5 rounded-[8px] bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-500 disabled:opacity-50 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Удалить
+              </button>
+            </div>
+          }
           emptyState={
             <EmptyState
               icon={Building2}
@@ -428,6 +570,17 @@ function CompaniesContent() {
         confirmLabel="Удалить"
         variant="destructive"
         isPending={isDeleting}
+      />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirmOpen}
+        onClose={() => setBulkDeleteConfirmOpen(false)}
+        onConfirm={bulkDelete}
+        title={`Удалить компании: ${selected.size}?`}
+        description="Компании будут перемещены в корзину (мягкое удаление). Связанные контакты и сделки останутся, но потеряют ссылку на компанию."
+        confirmLabel="Удалить"
+        variant="destructive"
+        isPending={isBulkDeleting}
       />
     </div>
   );

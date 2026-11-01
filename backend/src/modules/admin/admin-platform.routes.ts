@@ -3,6 +3,7 @@ import { z } from "zod";
 import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { EmailService } from "../../services/email.service.js";
+import { platformConfigService } from "./platform-config.service.js";
 
 // ---------------------------------------------------------------------------
 // Платформенные разделы: тарифы/биллинг и системные логи.
@@ -168,8 +169,10 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
           active: plans.reduce((sum, p) => sum + p.active, 0),
           estimatedMrr: plans.reduce((sum, p) => sum + p.estimatedMonthly, 0),
         },
-        // Явный признак: платёжный провайдер не подключён (M5.2.6/M5.2.10).
-        billingProvider: { connected: false, provider: null },
+        billingProvider: {
+          connected: (await platformConfigService.getEffectiveIntegrations()).robokassa.isConfigured,
+          provider: (await platformConfigService.getEffectiveIntegrations()).robokassa.isConfigured ? "robokassa" : null,
+        },
       },
     });
   });
@@ -480,4 +483,113 @@ export default async function adminPlatformRoutes(app: FastifyInstance): Promise
         : null,
     });
   });
+
+  /**
+   * Получение настроек внешних интеграций (Robokassa и LLM) для платформы.
+   */
+  app.get("/integrations/config", { onRequest: platformOwner }, async (_request, reply) => {
+    const config = await platformConfigService.getIntegrationsConfig();
+    return reply.send({ data: config });
+  });
+
+  /**
+   * Сохранение настроек внешних интеграций платформы.
+   */
+  app.put("/integrations/config", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      robokassa: z
+        .object({
+          merchantLogin: z.string().optional(),
+          password1: z.string().optional(),
+          password2: z.string().optional(),
+          isTest: z.boolean().optional(),
+          hashAlgo: z.enum(["SHA256", "MD5"]).optional(),
+          tax: z.string().optional(),
+        })
+        .optional(),
+      llm: z
+        .object({
+          baseUrl: z.string().optional(),
+          apiKey: z.string().optional(),
+          embeddingModel: z.string().optional(),
+          chatModel: z.string().optional(),
+        })
+        .optional(),
+      llmProviders: z
+        .array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            providerType: z.enum(["gemini", "openai", "openrouter", "deepseek", "custom"]),
+            baseUrl: z.string(),
+            apiKeys: z.array(z.string()).optional(),
+            chatModel: z.string(),
+            embeddingModel: z.string(),
+            isActive: z.boolean(),
+            isDefault: z.boolean(),
+          }),
+        )
+        .optional(),
+    });
+
+    const parsed = bodySchema.parse(request.body ?? {});
+    const updated = await platformConfigService.updateIntegrationsConfig(parsed);
+    return reply.send({ data: updated });
+  });
+
+  /**
+   * Тестовая проверка подключения к LLM API.
+   */
+  app.post("/integrations/test-llm", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      baseUrl: z.string().optional(),
+      apiKey: z.string().optional(),
+      providerId: z.string().optional(),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const result = await platformConfigService.testLlmConnection(parsed);
+    return reply.send({ data: result });
+  });
+
+  /**
+   * Получение списка реально доступных моделей у провайдера.
+   */
+  app.post("/integrations/llm/models", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      baseUrl: z.string().optional(),
+      apiKey: z.string().optional(),
+      providerId: z.string().optional(),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const result = await platformConfigService.fetchAvailableModels(parsed);
+    return reply.send({ data: result });
+  });
+
+  /**
+   * Проверка доступности ключей пула (валидность каждого ключа в отдельности).
+   */
+  app.post("/integrations/llm/verify-keys", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      baseUrl: z.string().optional(),
+      providerId: z.string().optional(),
+      keys: z.array(z.string()).optional(),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const result = await platformConfigService.verifyProviderKeys(parsed);
+    return reply.send({ data: result });
+  });
+
+  /**
+   * Удаление неработающих/битых ключей из пула.
+   */
+  app.post("/integrations/llm/remove-invalid-keys", { onRequest: platformOwner }, async (request, reply) => {
+    const bodySchema = z.object({
+      providerId: z.string(),
+      invalidKeys: z.array(z.string()),
+    });
+    const parsed = bodySchema.parse(request.body ?? {});
+    const removedCount = await platformConfigService.removeInvalidKeys(parsed.providerId, parsed.invalidKeys);
+    return reply.send({ data: { success: true, removedCount } });
+  });
 }
+

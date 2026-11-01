@@ -76,6 +76,7 @@ export function formatZodIssues(error: ZodError): Record<string, string[]> {
 
 interface ErrorEnvelope extends ApiError {
   status: "error";
+  requestId: string;
 }
 
 /** Fastify's own schema-validation failures carry a `validation` array. */
@@ -98,11 +99,13 @@ export function errorHandler(
 ): void {
   let statusCode: number;
   let payload: ErrorEnvelope;
+  const requestId = request.id;
 
   if (error instanceof ZodError) {
     statusCode = 400;
     payload = {
       status: "error",
+      requestId,
       error: {
         code: "VALIDATION_ERROR",
         message: "Validation failed",
@@ -113,6 +116,7 @@ export function errorHandler(
     statusCode = error.statusCode;
     payload = {
       status: "error",
+      requestId,
       error: {
         code: error.code,
         message: error.message,
@@ -123,6 +127,7 @@ export function errorHandler(
     statusCode = 400;
     payload = {
       status: "error",
+      requestId,
       error: { code: "VALIDATION_ERROR", message: "Validation failed" },
     };
   } else if (error.statusCode !== undefined && error.statusCode < 500) {
@@ -131,6 +136,7 @@ export function errorHandler(
     statusCode = error.statusCode;
     payload = {
       status: "error",
+      requestId,
       error: {
         code: error.code ?? "REQUEST_ERROR",
         message: error.message,
@@ -140,6 +146,7 @@ export function errorHandler(
     statusCode = 500;
     payload = {
       status: "error",
+      requestId,
       error: { code: "INTERNAL_SERVER_ERROR", message: "Internal server error" },
     };
   }

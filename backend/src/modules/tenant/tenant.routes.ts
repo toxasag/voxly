@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { queryOne } from "../../db/client.js";
+import { ALL_PERMISSIONS } from "../../config/permissions.js";
+import type { Permission } from "../../types/index.js";
+import { query, queryOne } from "../../db/client.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { TenantService } from "./tenant.service.js";
 import { TeamService } from "./team.service.js";
@@ -27,7 +29,12 @@ const inviteBody = z.object({
   confirm_extra_seat: z.boolean().default(false),
 });
 
-const changeRoleBody = z.object({ role: roleSchema });
+const permissionSchema = z.enum([...ALL_PERMISSIONS] as [Permission, ...Permission[]]);
+
+const changeRoleBody = z.object({
+  role: roleSchema,
+  permissions: z.array(permissionSchema).optional(),
+});
 const userParams = z.object({ id: z.string().uuid() });
 
 export default async function tenantRoutes(app: FastifyInstance): Promise<void> {
@@ -68,10 +75,12 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       slug: string;
       plan: string;
       status: string;
+      custom_price_rubles: number | null;
+      custom_plan_name: string | null;
       trial_ends_at: Date | string | null;
       created_at: Date | string;
     }>(
-      `SELECT id, name, slug, plan, status, trial_ends_at, created_at
+      `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name, trial_ends_at, created_at
        FROM tenants WHERE id = $1`,
       [request.tenant_id],
     );
@@ -81,11 +90,32 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     const toIso = (value: Date | string | null): string | null =>
       value === null ? null : value instanceof Date ? value.toISOString() : value;
 
-    const trialEndsAt = toIso(row.trial_ends_at);
-    const trialDaysLeft =
-      trialEndsAt === null
+    const hasCustomPrice = row.custom_price_rubles !== null && row.custom_price_rubles !== undefined;
+    const isFreeCustomPlan = (hasCustomPrice && Number(row.custom_price_rubles) === 0) || row.plan === "custom_free";
+    const isPartner = isFreeCustomPlan || row.plan === "partner" || row.plan === "custom_free";
+    const isTrialAccount = (row.plan === "trial" || row.status === "trial") && !isFreeCustomPlan && !isPartner;
+
+    const rawTrialEndsAt = toIso(row.trial_ends_at);
+    const rawTrialDaysLeft =
+      rawTrialEndsAt === null
         ? 0
-        : Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000));
+        : Math.max(0, Math.ceil((new Date(rawTrialEndsAt).getTime() - Date.now()) / 86_400_000));
+
+    // Считается на сервере: для активных, партнёрских и кастомных бесплатных аккаунтов
+    // триал не действует, даже если в БД сохранилась старая дата триала от регистрации.
+    const trialActive = isTrialAccount && rawTrialDaysLeft > 0;
+    const trialDaysLeft = trialActive ? rawTrialDaysLeft : 0;
+    const trialEndsAt = trialActive ? rawTrialEndsAt : null;
+
+    let customPlanName: string | null = null;
+    if (hasCustomPrice || isPartner) {
+      if (row.custom_plan_name && row.custom_plan_name !== "Индивидуальный") {
+        customPlanName = row.custom_plan_name;
+      } else {
+        customPlanName = isPartner ? "Партнёрский тариф" : "Индивидуальный";
+      }
+    }
+    const customPriceRubles = hasCustomPrice ? Number(row.custom_price_rubles) : null;
 
     return reply.send({
       data: {
@@ -95,13 +125,130 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         plan: row.plan,
         status: row.status,
         trialEndsAt,
-        // Считается на сервере: браузерные часы можно перевести, и клиент
-        // показал бы работающий триал после его окончания.
         trialDaysLeft,
-        trialActive: trialDaysLeft > 0,
+        trialActive,
         createdAt: toIso(row.created_at),
+        customPriceRubles,
+        customPlanName: (hasCustomPrice || isPartner) ? customPlanName : null,
+        isCustomPlan: hasCustomPrice || isPartner,
+        isFreeCustomPlan,
+        isPartner,
       },
     });
+  });
+
+  /**
+   * GET /tenant/workspaces — список доступных рабочих пространств для переключения.
+   * Возвращает текущее пространство, родительскую организацию (если портал дочерний)
+   * и все дочерние компании (для партнеров и суперадминов платформы).
+   */
+  app.get("/workspaces", async (request, reply) => {
+    const currentTenantId = request.tenant_id;
+    const user = request.authUser;
+    const isPlatformOwner = user.platform_role === "platform_owner";
+    const canManageTenants =
+      isPlatformOwner ||
+      user.role === "partner" ||
+      user.role === "owner" ||
+      user.role === "admin" ||
+      request.permissions.has("tenant:admin");
+
+    const currentTenant = await queryOne<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      parent_tenant_id: string | null;
+    }>(
+      "SELECT id, name, slug, plan, status, parent_tenant_id FROM tenants WHERE id = $1",
+      [currentTenantId],
+    );
+
+    if (!currentTenant) {
+      return reply.status(404).send({ error: { code: "NOT_FOUND", message: "Арендатор не найден" } });
+    }
+
+    const workspaces: Array<{
+      id: string;
+      name: string;
+      slug: string;
+      plan: string;
+      status: string;
+      is_current: boolean;
+      is_parent: boolean;
+      role: string;
+    }> = [];
+
+    workspaces.push({
+      id: currentTenant.id,
+      name: currentTenant.name,
+      slug: currentTenant.slug,
+      plan: currentTenant.plan,
+      status: currentTenant.status,
+      is_current: true,
+      is_parent: false,
+      role: user.role,
+    });
+
+    if (currentTenant.parent_tenant_id) {
+      const parentTenant = await queryOne<{
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+      }>(
+        "SELECT id, name, slug, plan, status FROM tenants WHERE id = $1",
+        [currentTenant.parent_tenant_id],
+      );
+      if (parentTenant) {
+        workspaces.push({
+          id: parentTenant.id,
+          name: parentTenant.name,
+          slug: parentTenant.slug,
+          plan: parentTenant.plan,
+          status: parentTenant.status,
+          is_current: false,
+          is_parent: true,
+          role: "owner",
+        });
+      }
+    }
+
+    if (canManageTenants) {
+      const parentIdForChildren = currentTenant.parent_tenant_id ?? currentTenant.id;
+      interface ChildTenantRow {
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+        parent_tenant_id: string | null;
+      }
+      const childRows = await query<ChildTenantRow>(
+        `SELECT id, name, slug, plan, status, parent_tenant_id
+         FROM tenants
+         WHERE parent_tenant_id = $1 AND id != $2
+         ORDER BY name ASC`,
+        [parentIdForChildren, currentTenant.id],
+      );
+
+      for (const child of childRows) {
+        workspaces.push({
+          id: child.id,
+          name: child.name,
+          slug: child.slug,
+          plan: child.plan,
+          status: child.status,
+          is_current: false,
+          is_parent: false,
+          role: "partner",
+        });
+      }
+    }
+
+    return reply.send({ data: workspaces, meta: { total: workspaces.length } });
   });
 
   // -------------------------------------------------------------------------
@@ -145,6 +292,7 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
       actorId: request.authUser.id,
       userId: id,
       role: body.role,
+      permissions: body.permissions,
     });
 
     return reply.send({ data: member });

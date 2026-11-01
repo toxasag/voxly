@@ -28,6 +28,28 @@ export const botContextEntityValues = [
 
 export const botAccentValues = ["amber", "sky", "emerald", "orange", "rose"] as const;
 
+export const wizardConfigSchema = z
+  .object({
+    presetId: z.string().optional(),
+    consultantName: z.string().optional(),
+    consultantRole: z.string().optional(),
+    businessNiche: z.string().optional(),
+    targetAction: z.string().optional(),
+    handoffSpecialist: z.string().optional(),
+    isCustomEdited: z.boolean().optional(),
+    crawl_status: z.enum(["idle", "pending", "in_progress", "ready", "failed"]).optional(),
+    website_url: z.string().optional(),
+    crawl_pages_scanned: z.number().optional(),
+    crawl_pages_indexed: z.number().optional(),
+    crawl_error: z.string().optional(),
+    crawl_updated_at: z.string().optional(),
+  })
+  .passthrough()
+  .optional()
+  .nullable();
+
+export type WizardConfig = z.infer<typeof wizardConfigSchema>;
+
 // ---------------------------------------------------------------------------
 // Create / update bot
 // ---------------------------------------------------------------------------
@@ -35,7 +57,7 @@ export const botAccentValues = ["amber", "sky", "emerald", "orange", "rose"] as 
 export const createBotSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters").max(80),
   description: z.string().max(300).optional().or(z.literal("")),
-  model: z.enum(botModelValues, { required_error: "Model is required" }),
+  model: z.string().min(1, "Model is required"),
   mode: z.enum(botModeValues, { required_error: "Mode is required" }),
   status: z.enum(botStatusValues),
   accent: z.enum(botAccentValues),
@@ -55,6 +77,11 @@ export const createBotSchema = z.object({
   context_entities: z
     .array(z.enum(botContextEntityValues))
     .min(1, "Select at least one context entity"),
+  wizard_config: wizardConfigSchema,
+  website_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
+  map_reviews_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
+  sync_crm: z.boolean().optional(),
+  whatsapp_chat_text: z.string().optional(),
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

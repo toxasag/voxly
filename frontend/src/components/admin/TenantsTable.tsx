@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { Search, Building2, Wrench, Receipt, BellRing, AlertCircle, Settings } from "lucide-react";
+import { Search, Building2, Wrench, Receipt, BellRing, AlertCircle, Settings, Trash2 } from "lucide-react";
 import type { PlatformTenant } from "@/lib/admin/admin.types";
 import { getPlanLabel, getStatusLabel } from "@/lib/admin/admin.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
@@ -16,6 +16,7 @@ interface TenantsTableProps {
   filterStatus: "all" | "active" | "trial" | "expired" | "suspended";
   onFilterStatusChange: (status: "all" | "active" | "trial" | "expired" | "suspended") => void;
   onManage: (tenant: PlatformTenant) => void;
+  onDelete?: (tenant: PlatformTenant) => void;
   isLoading?: boolean;
   isError?: boolean;
   error?: Error | null;
@@ -86,6 +87,7 @@ export const TenantsTable = memo(function TenantsTable({
   filterStatus,
   onFilterStatusChange,
   onManage,
+  onDelete,
   isLoading,
   isError,
   error,
@@ -199,25 +201,40 @@ export const TenantsTable = memo(function TenantsTable({
       {
         id: "actions",
         header: "",
-        width: 50,
+        width: 80,
         render: (t) => (
           <RecordCellShell>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onManage(t);
-              }}
-              className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
-              title="Управление"
-            >
-              <Settings className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onManage(t);
+                }}
+                className="rounded p-1 text-[#888888] hover:text-[#111111] hover:bg-black/[0.04] transition-colors"
+                title="Управление"
+              >
+                <Settings className="h-3.5 w-3.5" />
+              </button>
+              {onDelete && t.slug !== "voxly" && t.slug !== "platform" && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(t);
+                  }}
+                  className="rounded p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors"
+                  title="Удалить компанию"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </RecordCellShell>
         ),
       },
     ],
-    [onManage],
+    [onManage, onDelete],
   );
 
   if (isLoading) {

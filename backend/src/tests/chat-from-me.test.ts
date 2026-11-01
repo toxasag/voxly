@@ -33,6 +33,9 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
       title: "Сделка 1",
     });
 
+    // 2.5. mock dedup check (no duplicate found)
+    mockQueryOne.mockResolvedValueOnce(null);
+
     // 3. mock update deals ai_paused_until
     const futureDate = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     mockQueryOne.mockResolvedValueOnce({
@@ -58,11 +61,11 @@ describe("Chat fromMe Mirroring and AI Handoff (Block 5.3)", () => {
     expect(result.messageId).toBe("msg-out-1");
     expect(result.pausedUntil).toBe(futureDate);
 
-    // Проверяем вызовы
-    expect(mockQueryOne).toHaveBeenCalledTimes(4);
+    // Проверяем вызовы (findContact, findActiveDeal, dedupCheck, updatePausedUntil, insertMessage)
+    expect(mockQueryOne).toHaveBeenCalledTimes(5);
 
     // Проверяем параметры вставки сообщения
-    const insertArgs = mockQueryOne.mock.calls[3];
+    const insertArgs = mockQueryOne.mock.calls[4];
     expect(insertArgs?.[0]).toContain("INSERT INTO deal_messages");
     const insertParams = insertArgs?.[1] as unknown[];
     expect(insertParams[0]).toBe("tenant-1");

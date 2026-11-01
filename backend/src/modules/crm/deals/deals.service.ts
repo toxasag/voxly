@@ -2,25 +2,34 @@ import type {
   CreateDealMessagePayload,
   CreateDealPayload,
   CreateStagePayload,
+  DealContactHistoryDTO,
+  DealContactSummaryDTO,
+  DealContactTimelineItemDTO,
   DealDTO,
   DealMessageDTO,
   DealMessageRow,
+  DealOtherDealItemDTO,
   DealRow,
   DeliveryStatus,
   KanbanColumn,
   PipelineDTO,
+  StageColor,
   StageRow,
   UpdateDealPayload,
   UpdateStagePayload,
 } from "./deals.types.js";
-import { toDealDTO, toDealMessageDTO } from "./deals.types.js";
+import { stageColorSchema, toDealDTO, toDealMessageDTO } from "./deals.types.js";
 import { query, queryOne, withTenant, type SqlParam } from "../../../db/client.js";
 import { NotFoundError, ValidationError } from "../../../plugins/errorHandler.js";
+import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
+import { notificationQueue } from "../../notifications/notification.queue.js";
+import { conversionDispatcher } from "../../analytics/conversion-dispatcher.service.js";
+import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
-  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-  budget, currency, custom_fields, created_by, owner_id, close_date, position,
-  closed_at, created_at, updated_at
+  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
+  budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
+  closed_at, lead_notified_at, created_at, updated_at
 `;
 
 /**
@@ -31,14 +40,26 @@ const DEAL_COLUMNS = `
  * список из 50 сделок стоил бы 150 дополнительных запросов.
  */
 const DEAL_COLUMNS_WITH_LABELS = `
-  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
-  d.description, d.budget, d.currency, d.custom_fields, d.created_by, d.owner_id,
-  d.close_date, d.position, d.closed_at, d.created_at, d.updated_at,
+  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
+  d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
+  d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
+  co.phone AS company_phone,
+  co.email AS company_email,
+  co.domain_name AS company_domain_name,
+  co.address_city AS company_city,
   ct.first_name AS contact_first_name,
   ct.last_name AS contact_last_name,
+  ct.phone AS contact_phone,
+  ct.email AS contact_email,
+  ct.job_title AS contact_job_title,
+  ct.is_personal AS contact_is_personal,
   ow.name AS owner_name,
-  ln.body AS latest_note_body
+  ln.body AS latest_note_body,
+  COALESCE(tk.total_tasks_count, 0) AS tasks_count,
+  COALESCE(tk.pending_tasks_count, 0) AS pending_tasks_count,
+  tk.next_task_title,
+  tk.next_task_due_date
 `;
 
 /**
@@ -65,6 +86,27 @@ const DEAL_LABEL_JOINS = `
     ORDER BY n.created_at DESC
     LIMIT 1
   ) ln ON true
+  LEFT JOIN LATERAL (
+    SELECT 
+      COUNT(*)::int AS total_tasks_count,
+      COUNT(*) FILTER (WHERE t.status != 'done')::int AS pending_tasks_count,
+      (
+        SELECT t2.title 
+        FROM crm_tasks t2 
+        WHERE t2.deal_id = d.id AND t2.tenant_id = d.tenant_id AND t2.deleted_at IS NULL AND t2.status != 'done'
+        ORDER BY t2.due_date ASC NULLS LAST, t2.created_at DESC 
+        LIMIT 1
+      ) AS next_task_title,
+      (
+        SELECT t2.due_date 
+        FROM crm_tasks t2 
+        WHERE t2.deal_id = d.id AND t2.tenant_id = d.tenant_id AND t2.deleted_at IS NULL AND t2.status != 'done'
+        ORDER BY t2.due_date ASC NULLS LAST, t2.created_at DESC 
+        LIMIT 1
+      ) AS next_task_due_date
+    FROM crm_tasks t
+    WHERE t.deal_id = d.id AND t.tenant_id = d.tenant_id AND t.deleted_at IS NULL
+  ) tk ON true
 `;
 
 const MESSAGE_COLUMNS = `
@@ -281,9 +323,14 @@ export class DealsService {
     createdBy: string,
     payload: CreateDealPayload,
   ): Promise<DealDTO> {
-    return withTenant(tenantId, async (tx) => {
+    const created = await withTenant(tenantId, async (tx) => {
       return this.createInTx(tx, tenantId, createdBy, payload);
     });
+
+    void leadNotificationQueue.checkAndTriggerNotification(tenantId, created.id);
+    void notificationQueue.dispatchLeadCreated({ tenantId, dealId: created.id });
+    void conversionDispatcher.handleDealCreated({ tenantId, dealId: created.id });
+    return created;
   }
 
   async createInTx(
@@ -318,8 +365,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, created_by, owner_id, close_date, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -332,12 +379,14 @@ export class DealsService {
           payload.budget,
           payload.currency,
           JSON.stringify(payload.custom_fields ?? {}),
+          JSON.stringify(payload.source_metadata ?? {}),
           createdBy,
           // Ответственный по умолчанию — создатель: сделка без владельца
           // выпадает из отчётов по менеджерам.
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
+          nullIfBlank(payload.source_widget_id),
         ],
       );
 
@@ -410,7 +459,11 @@ export class DealsService {
 
     // Перечитываем через get: RETURNING не отдаёт подписи связей (они приходят
     // JOIN'ами), и ответ на inline-правку обнулял бы чипы в таблице.
-    return this.get(tenantId, id);
+    const updated = await this.get(tenantId, id);
+    if (updated) {
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
+    }
+    return updated;
   }
 
   /**
@@ -570,6 +623,8 @@ export class DealsService {
          WHERE d.tenant_id = $1 AND d.id = $2`,
         [tenantId, id],
       );
+
+      void leadNotificationQueue.checkAndTriggerNotification(tenantId, id);
 
       return toDealDTO(row);
     });
@@ -909,9 +964,11 @@ export class DealsService {
     );
 
     const rows = await tx.query<DealRow>(
-      `SELECT ${DEAL_COLUMNS}
-       FROM deals
-       WHERE tenant_id = $1 AND stage_id = $2 AND deleted_at IS NULL`,
+      `SELECT ${DEAL_COLUMNS_WITH_LABELS}
+       FROM deals d
+       ${DEAL_LABEL_JOINS}
+       WHERE d.tenant_id = $1 AND d.stage_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.position ASC, d.created_at DESC`,
       [tenantId, stageId],
     );
 
@@ -927,6 +984,380 @@ export class DealsService {
       dealCount: deals.length,
       budgetTotal: deals.reduce((sum, deal) => sum + deal.budget, 0),
       deals,
+    };
+  }
+
+  /**
+   * Помечает контакт по сделке как личный контакт:
+   * 1. Устанавливает contacts.is_personal = true и contacts.suppress_deal_creation = true.
+   * 2. Переводит сделку в этап с is_lost = true (Отказ / Закрыто и не реализовано).
+   * 3. Устанавливает closed_at = now() и ai_paused_until = '2099-01-01'.
+   * 4. Добавляет системное сообщение в deal_messages.
+   */
+  async markPersonal(
+    tenantId: string,
+    dealId: string,
+    changedBy: string,
+  ): Promise<{ dealId: string; contactId: string | null; stageId: string }> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{
+        id: string;
+        stage_id: string;
+        pipeline_id: string;
+        contact_id: string | null;
+      }>(
+        `SELECT id, stage_id, pipeline_id, contact_id
+         FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, dealId],
+      );
+
+      if (deal === null) {
+        throw new NotFoundError("Deal not found");
+      }
+
+      let lostStage = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM stages
+         WHERE pipeline_id = $1 AND is_lost = true
+         ORDER BY sort_order DESC
+         LIMIT 1`,
+        [deal.pipeline_id],
+      );
+
+      if (!lostStage) {
+        lostStage = await tx.queryOne<{ id: string; name: string }>(
+          `SELECT id, name FROM stages
+           WHERE pipeline_id = $1
+           ORDER BY sort_order DESC
+           LIMIT 1`,
+          [deal.pipeline_id],
+        );
+      }
+
+      if (!lostStage) {
+        throw new ValidationError("No stages found for pipeline", {});
+      }
+
+      if (deal.contact_id) {
+        await tx.query(
+          `UPDATE contacts
+           SET is_personal = true,
+               suppress_deal_creation = true,
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, deal.contact_id],
+        );
+      }
+
+      await tx.query(
+        `UPDATE deals
+         SET stage_id = $1,
+             closed_at = COALESCE(closed_at, now()),
+             ai_paused_until = '9999-12-31 23:59:59+00'::timestamptz,
+             updated_at = now()
+         WHERE tenant_id = $2 AND id = $3`,
+        [lostStage.id, tenantId, deal.id],
+      );
+
+      if (deal.stage_id !== lostStage.id) {
+        await tx.query(
+          `INSERT INTO deal_stage_history (tenant_id, deal_id, from_stage_id, to_stage_id, changed_by)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, deal.id, deal.stage_id, lostStage.id, changedBy],
+        );
+      }
+
+      // Системное уведомление в переписке сделки
+      await tx.query(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, 'system', 'neutral', 'Система', $3, 'system', 'neutral')`,
+        [
+          tenantId,
+          deal.id,
+          `Контакт помечен как личный. Сделка переведена в «${lostStage.name}», новые сделки не создаются, а сообщения больше не читаются и не сохраняются в CRM.`,
+        ],
+      );
+
+      return {
+        dealId: deal.id,
+        contactId: deal.contact_id,
+        stageId: lostStage.id,
+      };
+    });
+  }
+
+  /**
+   * Снимает пометку личного контакта (возврат в рабочие).
+   */
+  async unmarkPersonal(
+    tenantId: string,
+    dealId: string,
+    _changedBy: string,
+  ): Promise<{ dealId: string; contactId: string | null }> {
+    return withTenant(tenantId, async (tx) => {
+      const deal = await tx.queryOne<{ id: string; contact_id: string | null }>(
+        `SELECT id, contact_id FROM deals
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [tenantId, dealId],
+      );
+
+      if (deal === null) throw new NotFoundError("Deal not found");
+
+      if (deal.contact_id) {
+        await tx.query(
+          `UPDATE contacts
+           SET is_personal = false,
+               suppress_deal_creation = false,
+               updated_at = now()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, deal.contact_id],
+        );
+      }
+
+      await tx.query(
+        `UPDATE deals
+         SET ai_paused_until = NULL,
+             updated_at = now()
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, deal.id],
+      );
+
+      await tx.query(
+        `INSERT INTO deal_messages
+           (tenant_id, deal_id, source, direction, sender_name, content, channel, delivery_status)
+         VALUES ($1, $2, 'system', 'neutral', 'Система', 'Контакт возвращён в категорию рабочих.', 'system', 'neutral')`,
+        [tenantId, deal.id],
+      );
+
+      return { dealId: deal.id, contactId: deal.contact_id };
+    });
+  }
+
+  /**
+   * Сквозная история контакта для карточки сделки (1 контакт : N сделок).
+   *
+   * Возвращает профиль контакта, агрегированные LTV-метрики, список других
+   * сделок этого контакта и объединённый таймлайн активности.
+   */
+  async getContactHistory(tenantId: string, dealId: string): Promise<DealContactHistoryDTO> {
+    const deal = await queryOne<{
+      id: string;
+      contact_id: string | null;
+      budget: string;
+      currency: string;
+      is_won: boolean;
+      is_lost: boolean;
+    }>(
+      `SELECT d.id, d.contact_id, d.budget::text, d.currency, s.is_won, s.is_lost
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.id = $2 AND d.deleted_at IS NULL`,
+      [tenantId, dealId],
+    );
+
+    if (!deal) {
+      throw new NotFoundError("Сделка не найдена");
+    }
+
+    if (!deal.contact_id) {
+      const contactCandidate = await queryOne<{ id: string }>(
+        `SELECT c.id FROM contacts c
+         JOIN deal_messages m ON m.deal_id = $2 AND m.tenant_id = $1
+         WHERE c.tenant_id = $1 AND c.deleted_at IS NULL
+           AND (
+             (c.phone IS NOT NULL AND c.phone != '' AND (m.sender_name ILIKE '%' || c.phone || '%' OR m.content ILIKE '%' || c.phone || '%'))
+             OR (m.channel_account_id IS NOT NULL AND c.custom_fields->>'chat_id' = m.sender_name)
+           )
+         LIMIT 1`,
+        [tenantId, dealId],
+      );
+      if (contactCandidate) {
+        deal.contact_id = contactCandidate.id;
+        await withTenant(tenantId, async (tx) => {
+          await tx.query(`UPDATE deals SET contact_id = $1 WHERE id = $2 AND tenant_id = $3`, [contactCandidate.id, dealId, tenantId]);
+        }).catch(() => {});
+      }
+    }
+
+    if (!deal.contact_id) {
+      const b = Number(deal.budget || 0);
+      return {
+        dealId,
+        contact: null,
+        metrics: {
+          totalDeals: 1,
+          wonDeals: deal.is_won ? 1 : 0,
+          lostDeals: deal.is_lost ? 1 : 0,
+          activeDeals: (!deal.is_won && !deal.is_lost) ? 1 : 0,
+          totalLtv: deal.is_won ? b : 0,
+          avgCheck: b,
+          isRepeatClient: false,
+        },
+        otherDeals: [],
+        timeline: [],
+      };
+    }
+
+    // 1. Профиль контакта
+    interface ContactRow {
+      id: string;
+      first_name: string;
+      last_name: string;
+      email: string | null;
+      phone: string | null;
+      company_id: string | null;
+      company_name: string | null;
+      custom_fields: Record<string, unknown> | null;
+      created_at: Date | string;
+    }
+
+    const contactRow = await queryOne<ContactRow>(
+      `SELECT c.id, c.first_name, c.last_name, c.email, c.phone, c.company_id,
+              co.name AS company_name, c.custom_fields, c.created_at
+       FROM contacts c
+       LEFT JOIN companies co ON co.id = c.company_id AND co.tenant_id = c.tenant_id
+       WHERE c.tenant_id = $1 AND c.id = $2 AND c.deleted_at IS NULL`,
+      [tenantId, deal.contact_id],
+    );
+
+    const contactSummary: DealContactSummaryDTO | null = contactRow
+      ? {
+          id: contactRow.id,
+          firstName: contactRow.first_name,
+          lastName: contactRow.last_name,
+          email: contactRow.email,
+          phone: contactRow.phone,
+          companyId: contactRow.company_id,
+          companyName: contactRow.company_name,
+          customFields: (contactRow.custom_fields as Record<string, unknown>) || {},
+          createdAt:
+            contactRow.created_at instanceof Date
+              ? contactRow.created_at.toISOString()
+              : String(contactRow.created_at),
+        }
+      : null;
+
+    // 2. Все сделки контакта
+    interface DealRowItem {
+      id: string;
+      title: string;
+      budget: string;
+      currency: string;
+      stage_id: string;
+      stage_name: string;
+      stage_color: string;
+      is_won: boolean;
+      is_lost: boolean;
+      created_at: Date | string;
+      closed_at: Date | string | null;
+    }
+
+    const contactDeals = await query<DealRowItem>(
+      `SELECT d.id, d.title, d.budget::text, d.currency, d.stage_id,
+              s.name AS stage_name, COALESCE(s.color, 'slate') AS stage_color, s.is_won, s.is_lost,
+              d.created_at, d.closed_at
+       FROM deals d
+       JOIN stages s ON s.id = d.stage_id
+       WHERE d.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
+       ORDER BY d.created_at DESC`,
+      [tenantId, deal.contact_id],
+    );
+
+    const totalDeals = contactDeals.length;
+    let wonDeals = 0;
+    let lostDeals = 0;
+    let totalLtv = 0;
+    let totalBudget = 0;
+
+    for (const d of contactDeals) {
+      const b = Number(d.budget || 0);
+      totalBudget += b;
+      if (d.is_won) {
+        wonDeals++;
+        totalLtv += b;
+      } else if (d.is_lost) {
+        lostDeals++;
+      }
+    }
+
+    const activeDeals = Math.max(0, totalDeals - (wonDeals + lostDeals));
+    const avgCheck =
+      wonDeals > 0
+        ? Math.round(totalLtv / wonDeals)
+        : totalDeals > 0
+          ? Math.round(totalBudget / totalDeals)
+          : 0;
+
+    const otherDeals: DealOtherDealItemDTO[] = contactDeals
+      .filter((d) => d.id !== dealId)
+      .map((d) => {
+        const colorParsed = stageColorSchema.safeParse(d.stage_color);
+        const stageColor: StageColor = colorParsed.success ? colorParsed.data : "slate";
+
+        return {
+          id: d.id,
+          title: d.title,
+          budget: Number(d.budget || 0),
+          currency: d.currency,
+          stageId: d.stage_id,
+          stageName: d.stage_name,
+          stageColor,
+          isWon: d.is_won,
+          isLost: d.is_lost,
+          createdAt:
+            d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+          closedAt: d.closed_at
+            ? d.closed_at instanceof Date
+              ? d.closed_at.toISOString()
+              : String(d.closed_at)
+            : null,
+        };
+      });
+
+    // 3. Сквозной таймлайн активности контакта
+    const activityService = new ContactActivityService();
+    const activitiesResponse = await activityService.listContactActivities(
+      tenantId,
+      deal.contact_id,
+      {
+        limit: 50,
+        offset: 0,
+      },
+    );
+
+    const timeline: DealContactTimelineItemDTO[] = activitiesResponse.items.map((ev) => ({
+      id: ev.id,
+      type: ev.activityKind,
+      dealId: ev.dealId,
+      dealTitle: ev.dealTitle,
+      timestamp: ev.timestamp,
+      title: ev.title,
+      description: ev.description,
+      authorName: ev.authorName,
+      activityChannel: ev.activityChannel,
+      activityKind: ev.activityKind,
+      direction: ev.direction,
+      payload: ev.payload,
+      metadata: ev.payload,
+    }));
+
+    return {
+      dealId,
+      contact: contactSummary,
+      metrics: {
+        totalDeals,
+        wonDeals,
+        lostDeals,
+        activeDeals,
+        totalLtv,
+        avgCheck,
+        isRepeatClient: totalDeals > 1,
+      },
+      otherDeals,
+      timeline,
     };
   }
 }

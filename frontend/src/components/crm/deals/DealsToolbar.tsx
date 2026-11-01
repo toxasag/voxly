@@ -24,7 +24,13 @@ import {
   MenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import type { DealCardOptions } from "@/components/crm/deals/DealCard";
-import { DEAL_CARD_FIELDS } from "@/components/crm/deals/deal-card-fields";
+import {
+  DEAL_CARD_FIELDS,
+  CONTACT_SUBFIELDS,
+  COMPANY_SUBFIELDS,
+  defaultCompanySubfields,
+  defaultContactSubfields,
+} from "@/components/crm/deals/deal-card-fields";
 import { cn } from "@/lib/utils";
 
 export type DealSortKey = "last_message" | "last_event" | "created" | "title" | "budget";
@@ -95,6 +101,8 @@ const money = new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB
  */
 export function DealsToolbar(props: Props) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [companyExpanded, setCompanyExpanded] = useState(false);
+  const [contactExpanded, setContactExpanded] = useState(false);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const currentPipeline = props.pipelines.find((pipeline) => pipeline.id === props.pipelineId);
 
@@ -236,23 +244,202 @@ export function DealsToolbar(props: Props) {
               <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-[#888888] transition-transform", appearanceOpen && "rotate-180")} />
             </button>
             {appearanceOpen && (
-              <>
+              <div className="max-h-[55vh] overflow-y-auto">
                 {/* Все поля сделки, а не два из них: состав карточки настраивается
-                    так же, как набор колонок в списке. */}
-                {DEAL_CARD_FIELDS.map((field) => (
-                  <MenuCheckboxItem
-                    key={field.id}
-                    label={field.label}
-                    checked={props.appearance[field.id]}
-                    onToggle={() =>
-                      props.onAppearanceChange({
-                        ...props.appearance,
-                        [field.id]: !props.appearance[field.id],
-                      })
-                    }
-                  />
-                ))}
-              </>
+                    так же, как набор колонок в списке. Компания и Контакт разворачиваются
+                    для выбора конкретных отображаемых подполей. */}
+                {DEAL_CARD_FIELDS.map((field) => {
+                  if (field.id === "company") {
+                    return (
+                      <div key={field.id} className="flex flex-col">
+                        <div className="flex w-full items-center justify-between px-3.5 py-1.5 text-sm text-[#111111] transition-colors hover:bg-[#f5f5f5]">
+                          <div className="flex flex-1 items-center gap-1.5 min-w-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCompanyExpanded((prev) => !prev);
+                              }}
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#888888] hover:bg-black/10 hover:text-[#111111] transition-colors"
+                              title={companyExpanded ? "Свернуть подполя" : "Развернуть подполя"}
+                              aria-expanded={companyExpanded}
+                            >
+                              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !companyExpanded && "-rotate-90")} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                props.onAppearanceChange({
+                                  ...props.appearance,
+                                  company: !props.appearance.company,
+                                })
+                              }
+                              className="truncate text-left text-sm text-[#111111] flex-1 font-normal"
+                            >
+                              {field.label}
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            role="menuitemcheckbox"
+                            aria-checked={props.appearance.company}
+                            onClick={() =>
+                              props.onAppearanceChange({
+                                ...props.appearance,
+                                company: !props.appearance.company,
+                              })
+                            }
+                            className={cn(
+                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-xs font-bold transition-colors",
+                              props.appearance.company ? "border-[#4a38f5] bg-[#4a38f5] text-white" : "border-[#e5e5e5] text-transparent"
+                            )}
+                          >
+                            ✓
+                          </button>
+                        </div>
+                        {companyExpanded && (
+                          <div className="bg-[#fafafa] py-1 border-y border-[#f0f0f0]">
+                            {COMPANY_SUBFIELDS.map((sub) => {
+                              const isChecked = props.appearance.companyFields?.[sub.id] ?? true;
+                              return (
+                                <button
+                                  key={sub.id}
+                                  type="button"
+                                  role="menuitemcheckbox"
+                                  aria-checked={isChecked}
+                                  onClick={() => {
+                                    props.onAppearanceChange({
+                                      ...props.appearance,
+                                      companyFields: {
+                                        ...defaultCompanySubfields(),
+                                        ...props.appearance.companyFields,
+                                        [sub.id]: !isChecked,
+                                      },
+                                    });
+                                  }}
+                                  className="flex w-full items-center justify-between pl-8 pr-3.5 py-1 text-left text-xs text-[#444444] transition-colors hover:bg-black/[0.04]"
+                                >
+                                  <span className="truncate">{sub.label}</span>
+                                  <span
+                                    className={cn(
+                                      "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[10px] font-bold transition-colors",
+                                      isChecked ? "border-[#4a38f5] bg-[#4a38f5] text-white" : "border-[#e5e5e5] text-transparent"
+                                    )}
+                                  >
+                                    ✓
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (field.id === "contact") {
+                    return (
+                      <div key={field.id} className="flex flex-col">
+                        <div className="flex w-full items-center justify-between px-3.5 py-1.5 text-sm text-[#111111] transition-colors hover:bg-[#f5f5f5]">
+                          <div className="flex flex-1 items-center gap-1.5 min-w-0">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setContactExpanded((prev) => !prev);
+                              }}
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#888888] hover:bg-black/10 hover:text-[#111111] transition-colors"
+                              title={contactExpanded ? "Свернуть подполя" : "Развернуть подполя"}
+                              aria-expanded={contactExpanded}
+                            >
+                              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !contactExpanded && "-rotate-90")} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                props.onAppearanceChange({
+                                  ...props.appearance,
+                                  contact: !props.appearance.contact,
+                                })
+                              }
+                              className="truncate text-left text-sm text-[#111111] flex-1 font-normal"
+                            >
+                              {field.label}
+                            </button>
+                          </div>
+                          <button
+                            type="button"
+                            role="menuitemcheckbox"
+                            aria-checked={props.appearance.contact}
+                            onClick={() =>
+                              props.onAppearanceChange({
+                                ...props.appearance,
+                                contact: !props.appearance.contact,
+                              })
+                            }
+                            className={cn(
+                              "flex h-4 w-4 shrink-0 items-center justify-center rounded border text-xs font-bold transition-colors",
+                              props.appearance.contact ? "border-[#4a38f5] bg-[#4a38f5] text-white" : "border-[#e5e5e5] text-transparent"
+                            )}
+                          >
+                            ✓
+                          </button>
+                        </div>
+                        {contactExpanded && (
+                          <div className="bg-[#fafafa] py-1 border-y border-[#f0f0f0]">
+                            {CONTACT_SUBFIELDS.map((sub) => {
+                              const isChecked = props.appearance.contactFields?.[sub.id] ?? true;
+                              return (
+                                <button
+                                  key={sub.id}
+                                  type="button"
+                                  role="menuitemcheckbox"
+                                  aria-checked={isChecked}
+                                  onClick={() => {
+                                    props.onAppearanceChange({
+                                      ...props.appearance,
+                                      contactFields: {
+                                        ...defaultContactSubfields(),
+                                        ...props.appearance.contactFields,
+                                        [sub.id]: !isChecked,
+                                      },
+                                    });
+                                  }}
+                                  className="flex w-full items-center justify-between pl-8 pr-3.5 py-1 text-left text-xs text-[#444444] transition-colors hover:bg-black/[0.04]"
+                                >
+                                  <span className="truncate">{sub.label}</span>
+                                  <span
+                                    className={cn(
+                                      "flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[10px] font-bold transition-colors",
+                                      isChecked ? "border-[#4a38f5] bg-[#4a38f5] text-white" : "border-[#e5e5e5] text-transparent"
+                                    )}
+                                  >
+                                    ✓
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <MenuCheckboxItem
+                      key={field.id}
+                      label={field.label}
+                      checked={props.appearance[field.id]}
+                      onToggle={() =>
+                        props.onAppearanceChange({
+                          ...props.appearance,
+                          [field.id]: !props.appearance[field.id],
+                        })
+                      }
+                    />
+                  );
+                })}
+              </div>
             )}
           </div>
 

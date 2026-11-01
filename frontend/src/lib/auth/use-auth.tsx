@@ -9,9 +9,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiClient, ApiClientError } from "@/lib/api/apiClient";
+import { apiClient, ApiClientError, refreshAccessToken } from "@/lib/api/apiClient";
 import { useTenantModules } from "@/lib/api/use-tenant-modules";
-import { clearSession, readRefreshToken, writeTokens } from "@/lib/auth/session";
+import {
+  clearSession,
+  readAccessToken,
+  readRefreshToken,
+  writeTokens,
+  getTokenRemainingSeconds,
+  hasSession,
+} from "@/lib/auth/session";
 import { isModuleSlug } from "@/types";
 import type {
   CurrentUser,
@@ -27,11 +34,7 @@ import type {
 // Backend contract (docs/03_API_CONTRACTS/03_01_AUTH_API.md §4)
 // ---------------------------------------------------------------------------
 
-interface AuthTokensDTO {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  expires_in: string;
+export interface UserProfileDTO {
   user: {
     id: string;
     name: string;
@@ -48,6 +51,13 @@ interface AuthTokensDTO {
     plan: string;
     status: string;
   };
+}
+
+export interface AuthTokensDTO extends UserProfileDTO {
+  access_token?: string;
+  refresh_token?: string;
+  token_type?: string;
+  expires_in?: string;
 }
 
 interface OtpSendDTO {
@@ -230,8 +240,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [liveModules, currentTenantId]);
 
-  const applySession = useCallback((dto: AuthTokensDTO) => {
-    writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
+  const applySession = useCallback((dto: UserProfileDTO & { access_token?: string; refresh_token?: string }) => {
+    if (dto.access_token && dto.refresh_token) {
+      writeTokens({ accessToken: dto.access_token, refreshToken: dto.refresh_token });
+    }
 
     setState({
       user: toCurrentUser(dto.user),
@@ -247,41 +259,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Restores the session on mount by exchanging the stored refresh token.
-   * This validates the session server-side and returns the current profile, so
-   * revoked access and changed permissions take effect on reload.
-   *
-   * The refresh token is read once, into a local, rather than twice via
-   * `readRefreshToken()`. The previous version read it again when building the
-   * request body, so a concurrent `clearSession()` between the two reads sent
-   * `refresh_token: null` and turned a recoverable session into a hard sign-out.
+   * Восстановление сессии при монтировании:
+   * 1. Если текущий access-токен ещё свежий (> 60 сек), запрашиваем профиль через GET /auth/me.
+   *    Это исключает ротацию refresh-токена и race conditions между вкладками.
+   * 2. Если access-токен истёк или отсутствует, но сессия существует (в cookie или localStorage),
+   *    выполняем бесшовный refresh через refreshAccessToken(), затем загружаем профиль.
+   * 3. В случае ошибки очищаем сессию.
    */
   useEffect(() => {
     let cancelled = false;
 
     const restore = async (): Promise<void> => {
-      const refreshToken = readRefreshToken();
+      const accessToken = readAccessToken();
+      const remainingSeconds = getTokenRemainingSeconds(accessToken);
 
-      if (refreshToken === null) {
-        if (!cancelled) setState((prev) => ({ ...prev, isLoading: false }));
-        return;
+      // 1. Быстрое восстановление по активному access_token без ротации refresh_token
+      if (accessToken && remainingSeconds > 60) {
+        try {
+          const res = await apiClient.get<UserProfileDTO>("/auth/me", { retrying: true });
+          if (!cancelled) {
+            applySession(res.data);
+            return;
+          }
+        } catch {
+          // Если токен не принят сервером, пробуем обновить через refresh
+        }
       }
 
-      try {
-        const res = await apiClient.post<AuthTokensDTO>(
-          "/auth/refresh",
-          { refresh_token: refreshToken },
-          // `retrying` suppresses apiClient's own refresh-and-retry: this *is*
-          // the refresh call, and letting it recurse produced two /auth/refresh
-          // requests for one page load, the second replaying a token the first
-          // had already rotated.
-          { retrying: true },
-        );
-        if (!cancelled) applySession(res.data);
-      } catch {
-        // Expired, revoked or unreachable — drop to signed-out rather than
-        // leaving the UI stuck on a loading state.
-        if (!cancelled) resetSession();
+      // 2. Access-токен истёк или отсутствует: пробуем silent refresh
+      if (hasSession()) {
+        try {
+          const refreshedToken = await refreshAccessToken();
+          if (refreshedToken && !cancelled) {
+            const res = await apiClient.get<UserProfileDTO>("/auth/me", { retrying: true });
+            if (!cancelled) {
+              applySession(res.data);
+              return;
+            }
+          }
+        } catch {
+          // Ошибка обновления
+        }
+      }
+
+      // 3. Не авторизован или сессия отозвана
+      if (!cancelled) {
+        if (hasSession()) {
+          resetSession();
+        } else {
+          setState((prev) => ({ ...prev, isLoading: false }));
+        }
       }
     };
 
@@ -291,6 +318,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [applySession, resetSession]);
+
+  /**
+   * Фоновое тихое обновление токена (Silent background refresh):
+   * Автоматически обновляет пару токенов за 2 минуты до истечения 15-минутного access-токена,
+   * а также при возвращении на вкладку (visibilitychange), чтобы пользователь никогда
+   * не сталкивался с вылетом на форму логина.
+   */
+  useEffect(() => {
+    if (!state.isAuthenticated) return;
+
+    let timer: NodeJS.Timeout | null = null;
+
+    const scheduleRefresh = () => {
+      if (timer) clearTimeout(timer);
+      const token = readAccessToken();
+      const remaining = getTokenRemainingSeconds(token);
+
+      if (remaining <= 0) {
+        void refreshAccessToken();
+        return;
+      }
+
+      // Обновляем за 120 секунд до истечения срока или минимум через 10 секунд
+      const delayMs = Math.max(10, remaining - 120) * 1000;
+      timer = setTimeout(async () => {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+          scheduleRefresh();
+        }
+      }, delayMs);
+    };
+
+    scheduleRefresh();
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        const token = readAccessToken();
+        const remaining = getTokenRemainingSeconds(token);
+        if (remaining < 120) {
+          void refreshAccessToken().then((refreshed) => {
+            if (refreshed) scheduleRefresh();
+          });
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [state.isAuthenticated]);
 
   const login = useCallback(
     async (email: string, password: string): Promise<SignedInSession> => {

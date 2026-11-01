@@ -38,6 +38,9 @@ export interface MarketplaceModuleDTO {
   trialEndsAt: string | null;
   trialActive: boolean;
   monthlyTotal: number;
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
+  customPlanName?: string | null;
 }
 
 export interface BillingSummaryDTO {
@@ -52,6 +55,15 @@ export interface BillingSummaryDTO {
     trialActive: boolean;
     trialEndsAt: string | null;
   }[];
+  billingProvider?: {
+    connected: boolean;
+    provider: string | null;
+    testMode?: boolean;
+  };
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
+  customPlanName?: string | null;
+  customPriceRubles?: number | null;
 }
 
 export const marketplaceKeys = {
@@ -157,6 +169,46 @@ export function useUpdateModuleQuantity(): UseMutationResult<
 /** Формат рублёвой суммы: 600 ₽, 1 200 ₽. */
 export function formatRub(value: number): string {
   return `${new Intl.NumberFormat("ru-RU").format(value)} ₽`;
+}
+
+/** Склонение подписи единицы: 1 агент, 2 агента, 5 агентов; 1 бот, 2 бота, 5 ботов; 1 сайт, 2 сайта, 5 сайтов. */
+export function pluralUnit(count: number, label: string): string {
+  if (label === "агент") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "агент";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "агента";
+    return "агентов";
+  }
+  if (label === "аккаунт") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "аккаунт";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
+    return "аккаунтов";
+  }
+  if (label === "сайт") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "сайт";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "сайта";
+    return "сайтов";
+  }
+  if (label === "бот") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "бот";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "бота";
+    return "ботов";
+  }
+  if (label === "пользователь") {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    if (mod10 === 1 && mod100 !== 11) return "пользователь";
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "пользователя";
+    return "пользователей";
+  }
+  return label;
 }
 
 /** Сколько дней осталось до конца пробного периода. */

@@ -1,13 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "./app.js";
-import { closePool } from "./db/client.js";
+import { closePool, query, queryOne, runWithPlatformScope } from "./db/client.js";
 import { getEnv } from "./config/env.js";
 import { TelegramService } from "./modules/auth/telegram.service.js";
 import { MaxService } from "./services/max.service.js";
 import { scheduleAuthMaintenance } from "./services/auth-maintenance.service.js";
 import { scheduleTaskReminders } from "./modules/crm/tasks/task-reminders.service.js";
+import { scheduleDealMaintenance } from "./modules/crm/deals/deal-maintenance.service.js";
+import { scheduleModuleDataPurgeMaintenance } from "./modules/marketplace/module-data-purge-maintenance.service.js";
+import { scheduleInvoiceReminders } from "./modules/finance/invoice-reminders.service.js";
 import { initBackgroundWorker, shutdownWorker } from "./worker.js";
 import { TelegramTransportService } from "./modules/channels/telegram-transport.service.js";
+import { registerOutboundSender } from "./modules/channels/outbound-registry.js";
+import { MaxBridgeService } from "./modules/channels/max-bridge.service.js";
+import { WhatsappEvolutionService } from "./modules/channels/whatsapp-evolution.service.js";
+import { resolveOutboundMedia, isMeaningfulCaption } from "./modules/channels/media-resolver.js";
 
 /**
  * Прописывает адрес webhook у бота при старте.
@@ -78,6 +85,38 @@ async function registerMaxWebhook(app: FastifyInstance): Promise<void> {
   else app.log.error({ url, reason: result.reason }, "MAX webhook registration failed");
 }
 
+/**
+ * Подписывает подключенные инстансы WhatsApp (Evolution API) на входящие сообщения.
+ */
+async function registerWhatsappWebhooks(app: FastifyInstance): Promise<void> {
+  const evo = new WhatsappEvolutionService();
+  if (!evo.isConfigured) return;
+
+  const accounts = await runWithPlatformScope(async () =>
+    query<{ credentials: { instanceName?: string } | null }>(
+      `SELECT credentials FROM channel_accounts
+       WHERE channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL`,
+    ),
+  );
+
+  const env = getEnv();
+  const webhookUrl = env.PUBLIC_API_URL
+    ? `${env.PUBLIC_API_URL.replace(/\/+$/, "")}/api/internal/whatsapp/webhook`
+    : "http://backend:4000/api/internal/whatsapp/webhook";
+
+  for (const acc of accounts) {
+    const inst = acc.credentials?.instanceName;
+    if (inst) {
+      try {
+        await evo.setWebhook(inst, webhookUrl);
+        app.log.info({ instance: inst, webhookUrl }, "WhatsApp Evolution webhook configured");
+      } catch (err) {
+        app.log.warn({ instance: inst, err }, "Failed to configure WhatsApp Evolution webhook");
+      }
+    }
+  }
+}
+
 async function main(): Promise<void> {
   // Fail fast on bad configuration, before a port is bound or a pool opened.
   let env: ReturnType<typeof getEnv>;
@@ -104,6 +143,11 @@ async function main(): Promise<void> {
   // Периодическая проверка напоминаний по задачам (Twenty CRM Parity).
   const stopReminders = scheduleTaskReminders(app.log);
 
+  // Периодическое обслуживание сделок (автозакрытие просроченных анонимных сделок «Первый контакт» через 5 суток).
+  const stopDealMaintenance = scheduleDealMaintenance(app.log);
+  const stopModuleDataPurgeMaintenance = scheduleModuleDataPurgeMaintenance(app.log);
+  const stopInvoiceReminders = scheduleInvoiceReminders(app.log);
+
   // Транспорт входящих сообщений Telegram (M7.5.16).
   //
   // Тоже здесь, а не в buildApp: слушатель держит постоянные MTProto-сокеты по
@@ -115,6 +159,105 @@ async function main(): Promise<void> {
   const transport = new TelegramTransportService(app.log);
   const stopTransport = transport.start();
 
+  // Регистрация исходящих сообщений через личный аккаунт MAX (max-bridge) или бота платформы MAX
+  const unregisterMaxOutbound = registerOutboundSender("max", async (message) => {
+    const maxBridge = new MaxBridgeService();
+    try {
+      const account = await queryOne<{ id: string; label: string }>(
+        `SELECT id, label FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'max' AND deleted_at IS NULL`,
+        [message.tenantId, message.channelAccountId],
+      );
+      if (account) {
+        let mediaBase64: string | undefined;
+        let fileName: string | undefined;
+        let mimeType: string | undefined;
+        let textToSend = message.text;
+
+        if (message.attachment) {
+          const media = await resolveOutboundMedia(
+            message.attachment,
+            message.tenantId,
+            message.attachmentType,
+          );
+          if (media) {
+            mediaBase64 = media.buffer.toString("base64");
+            fileName = media.filename;
+            mimeType = media.mimeType;
+            textToSend = isMeaningfulCaption(message.text, media.filename) ? message.text : "";
+          }
+        }
+
+        const res = await maxBridge.sendMessage({
+          tenantId: message.tenantId,
+          name: account.label,
+          botId: account.id,
+          recipient: message.recipient,
+          text: textToSend,
+          mediaBase64,
+          fileName,
+          mimeType,
+        });
+        if (res.ok) return { ok: true };
+      }
+    } catch {
+      // Fallback к Bot API
+    }
+
+    const max = new MaxService();
+    if (!max.isConfigured) {
+      return { ok: false, reason: "MAX не настроен на платформе" };
+    }
+    const res = await max.sendMessage(message.recipient, message.text);
+    if (res.ok) return { ok: true };
+    return { ok: false, reason: res.reason ?? "Неизвестная ошибка платформы MAX" };
+  });
+
+  // Регистрация исходящих сообщений через WhatsApp Evolution API
+  const unregisterWhatsappOutbound = registerOutboundSender("whatsapp", async (message) => {
+    const evo = new WhatsappEvolutionService();
+    if (!evo.isConfigured) {
+      return { ok: false, reason: "Evolution API (WhatsApp) не настроен" };
+    }
+    try {
+      const account = await queryOne<{ credentials: { instanceName?: string } }>(
+        `SELECT credentials FROM channel_accounts
+         WHERE tenant_id = $1 AND id = $2 AND channel = 'whatsapp' AND deleted_at IS NULL`,
+        [message.tenantId, message.channelAccountId],
+      );
+      const instanceName = account?.credentials?.instanceName;
+      if (!instanceName) {
+        return { ok: false, reason: "Инстанс WhatsApp не найден у подключения" };
+      }
+
+      if (message.attachment) {
+        const media = await resolveOutboundMedia(
+          message.attachment,
+          message.tenantId,
+          message.attachmentType,
+        );
+        if (media) {
+          const caption = isMeaningfulCaption(message.text, media.filename) ? message.text : undefined;
+          const res = await evo.sendMediaMessage(instanceName, message.recipient, {
+            buffer: media.buffer,
+            filename: media.filename,
+            mimeType: media.mimeType,
+            caption,
+          });
+          if (res.ok) return { ok: true };
+          return { ok: false, reason: res.error ?? "Ошибка отправки медиа в WhatsApp" };
+        }
+      }
+
+      const res = await evo.sendTextMessage(instanceName, message.recipient, message.text);
+      if (res.ok) return { ok: true };
+      return { ok: false, reason: res.error ?? "Ошибка отправки WhatsApp" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, reason: msg };
+    }
+  });
+
   // Drain in-flight requests, then release DB connections.
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info({ signal }, "Shutting down");
@@ -124,8 +267,13 @@ async function main(): Promise<void> {
       // остановки, обращался бы к уже закрытому пулу.
       stopMaintenance();
       stopReminders();
+      stopDealMaintenance();
+      stopModuleDataPurgeMaintenance();
+      stopInvoiceReminders();
       await shutdownWorker();
       stopTransport();
+      unregisterMaxOutbound();
+      unregisterWhatsappOutbound();
       await app.close();
       await closePool();
       process.exit(0);
@@ -147,6 +295,7 @@ async function main(): Promise<void> {
     // webhook остаётся вход по паролю, поэтому сервер продолжает работу.
     await registerTelegramWebhook(app);
     await registerMaxWebhook(app);
+    await registerWhatsappWebhooks(app);
   } catch (error) {
     app.log.error(error);
     await closePool();

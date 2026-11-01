@@ -3,7 +3,7 @@
 import { useState, useCallback, type KeyboardEvent } from "react";
 import { Wrench, Plus, Trash2, User } from "lucide-react";
 import type { WorkItem } from "@/lib/repairs/repairs.types";
-import { MOCK_MASTERS } from "@/lib/repairs/mock-repairs";
+import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
 
 interface WorkItemsTableProps {
@@ -24,6 +24,9 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
   const [newMaster, setNewMaster] = useState("");
   const [newCost, setNewCost] = useState("");
 
+  const { data: teamData } = useTeamMembers();
+  const masters = teamData?.members ?? [];
+
   const totalWork = items.reduce((sum, item) => sum + item.cost, 0);
 
   const handleAdd = useCallback(() => {
@@ -31,11 +34,11 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
     const costNum = parseFloat(newCost);
     if (!desc || !newMaster || isNaN(costNum) || costNum < 0) return;
 
-    const master = MOCK_MASTERS.find((m) => m.id === newMaster);
+    const master = masters.find((m) => m.id === newMaster);
     const newItem: WorkItem = {
       id: `wi${Date.now()}`,
       description: desc,
-      master_name: master?.name ?? "Не назначен",
+      master_name: master?.fullName ?? "Не назначен",
       master_id: newMaster,
       cost: costNum,
     };
@@ -148,9 +151,9 @@ export function WorkItemsTable({ items, onChange }: WorkItemsTableProps) {
             <option value="" disabled>
               Мастер...
             </option>
-            {MOCK_MASTERS.map((m) => (
+            {masters.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.name}
+                {m.fullName}
               </option>
             ))}
           </select>

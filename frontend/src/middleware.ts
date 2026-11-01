@@ -126,15 +126,28 @@ export function middleware(request: NextRequest) {
   // Presence only. Signature and expiry are verified by the backend on every
   // request; duplicating that here would mean shipping the JWT secret to the
   // edge for no added safety.
+  // Check both access token and refresh token: if refresh token is present,
+  // the user has an active persistent session (60 days) and client will silently refresh.
   const token = request.cookies.get(AUTH_COOKIE)?.value;
-  const hasSession = token !== undefined && token.length > 0;
+  const refreshToken =
+    request.cookies.get("getvoxly_refresh")?.value ||
+    request.cookies.get("getvoxly_refresh_token")?.value;
+  const hasActiveToken = token !== undefined && token.length > 0;
+  const hasSession =
+    hasActiveToken ||
+    (refreshToken !== undefined && refreshToken.length > 0);
 
-  // Already signed in and sitting on /login or /register → move on. Without
-  // this the visitor is stuck: the page renders, the client sees a session and
-  // navigates, and any failure drops them back here.
-  if (isAuthPage(pathname) && hasSession) {
-    const target = safeRedirectTarget(searchParams.get("redirect"));
-    return withTenantHeader(NextResponse.redirect(new URL(target, request.url)), slug);
+  // If visitor is on /login or /register:
+  // Only redirect away if they have an ACTIVE access token AND they did not land here
+  // with a ?redirect= parameter (which indicates an unauthenticated bounce from a protected route).
+  // If redirect parameter is present or only a refresh token is present, we must NEVER
+  // redirect away — otherwise an invalid/expired token creates an infinite 307 loop!
+  if (isAuthPage(pathname)) {
+    const redirectParam = searchParams.get("redirect");
+    if (hasActiveToken && !redirectParam) {
+      const target = safeRedirectTarget(redirectParam);
+      return withTenantHeader(NextResponse.redirect(new URL(target, request.url)), slug);
+    }
   }
 
   if (isProtected(pathname) && !hasSession) {

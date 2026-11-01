@@ -10,7 +10,7 @@ import {
 import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 import { tenantUserKeys } from "@/lib/api/use-tenant-users";
 import { marketplaceKeys } from "@/lib/api/use-marketplace";
-import type { Role } from "@/types";
+import type { Permission, Role } from "@/types";
 
 // Зеркалит backend/src/modules/tenant/team.service.ts.
 
@@ -22,7 +22,9 @@ export interface TeamMemberDTO {
   email: string;
   phone: string | null;
   role: Role;
+  permissions: Permission[];
   status: TeamMemberStatus;
+  /** Base64 data-URI либо null; при null интерфейс показывает инициалы. */
   isOwner: boolean;
   isSelf: boolean;
   invitedAt: string | null;
@@ -46,12 +48,13 @@ export interface SeatUsageDTO {
  * неограниченную передачу прав на биллинг. Совпадает с `ASSIGNABLE_ROLES` и
  * Zod-схемой бэкенда.
  */
-export type AssignableRole = Exclude<Role, "owner">;
+export type AssignableRole = Exclude<Role, "owner" | "partner">;
 
 export interface TeamListDTO {
   members: TeamMemberDTO[];
   seats: SeatUsageDTO;
   assignableRoles: AssignableRole[];
+  availablePermissions: Permission[];
 }
 
 export interface TenantInfoDTO {
@@ -65,6 +68,11 @@ export interface TenantInfoDTO {
   trialDaysLeft: number;
   trialActive: boolean;
   createdAt: string | null;
+  customPriceRubles?: number | null;
+  customPlanName?: string | null;
+  isCustomPlan?: boolean;
+  isFreeCustomPlan?: boolean;
+  isPartner?: boolean;
 }
 
 export const teamKeys = {
@@ -76,6 +84,7 @@ export const teamKeys = {
 export const ROLE_LABELS: Record<Role, string> = {
   owner: "Владелец",
   admin: "Администратор",
+  partner: "Партнёр",
   manager: "Менеджер",
   technician: "Мастер",
   viewer: "Наблюдатель",
@@ -85,6 +94,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const ROLE_HINTS: Record<Role, string> = {
   owner: "Полный доступ, включая подписку и оплату",
   admin: "Всё, кроме управления подпиской и оплатой",
+  partner: "Управление клиентскими порталами и компаниями",
   manager: "Работа с клиентами, сделками и задачами",
   technician: "Приёмка и выполнение ремонтов, задачи",
   viewer: "Только просмотр данных",
@@ -106,11 +116,12 @@ export function useTenantInfo(): UseQueryResult<TenantInfoDTO, ApiClientError> {
   });
 }
 
-interface InviteResult {
+export interface InviteResultDTO {
   member: TeamMemberDTO;
   seats: SeatUsageDTO;
-  /** false, когда SMTP не настроен: ссылку придётся передать вручную. */
   emailSent: boolean;
+  /** Одноразовая ссылка только когда SMTP не доставил письмо. */
+  inviteUrl: string | null;
 }
 
 export interface InvitePayload {
@@ -137,26 +148,25 @@ function useTeamMutationInvalidation(): () => void {
   };
 }
 
-export function useInviteMember(): UseMutationResult<InviteResult, ApiClientError, InvitePayload> {
+export function useInviteMember(): UseMutationResult<InviteResultDTO, ApiClientError, InvitePayload> {
   const invalidate = useTeamMutationInvalidation();
 
-  return useMutation({
+  return useMutation<InviteResultDTO, ApiClientError, InvitePayload>({
     mutationFn: async (payload) =>
-      (await apiClient.post<InviteResult>("/api/v1/tenant/team/invite", payload)).data,
-    onSuccess: invalidate,
+      (await apiClient.post<InviteResultDTO>("/api/v1/tenant/team/invite", payload)).data,
   });
 }
 
 export function useChangeMemberRole(): UseMutationResult<
   TeamMemberDTO,
   ApiClientError,
-  { id: string; role: AssignableRole }
+  { id: string; role: AssignableRole; permissions?: Permission[] }
 > {
   const invalidate = useTeamMutationInvalidation();
 
   return useMutation({
-    mutationFn: async ({ id, role }) =>
-      (await apiClient.patch<TeamMemberDTO>(`/api/v1/tenant/team/${id}`, { role })).data,
+    mutationFn: async ({ id, role, permissions }) =>
+      (await apiClient.patch<TeamMemberDTO>(`/api/v1/tenant/team/${id}`, { role, permissions })).data,
     onSuccess: invalidate,
   });
 }
@@ -175,14 +185,19 @@ export function useRemoveMember(): UseMutationResult<
   });
 }
 
+export interface ResendInviteResult {
+  emailSent: boolean;
+  inviteUrl: string | null;
+}
+
 export function useResendInvite(): UseMutationResult<
-  { emailSent: boolean },
+  ResendInviteResult,
   ApiClientError,
   { id: string }
 > {
-  return useMutation({
+  return useMutation<ResendInviteResult, ApiClientError, { id: string }>({
     mutationFn: async ({ id }) =>
-      (await apiClient.post<{ emailSent: boolean }>(`/api/v1/tenant/team/${id}/resend`, {})).data,
+      (await apiClient.post<ResendInviteResult>(`/api/v1/tenant/team/${id}/resend`, {})).data,
   });
 }
 
@@ -210,3 +225,5 @@ export function pluralDays(count: number): string {
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "дня";
   return "дней";
 }
+
+export const useTeamMembers = useTeam;

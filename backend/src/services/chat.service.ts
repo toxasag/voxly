@@ -1,5 +1,7 @@
 import { getEnv } from "../config/env.js";
 import { AppError } from "../plugins/errorHandler.js";
+import { platformConfigService } from "../modules/admin/platform-config.service.js";
+import { smartModelRouter } from "../modules/ai/gateway/index.js";
 
 // ---------------------------------------------------------------------------
 // Слой абстракции чат-вызовов LLM (`.cursorrules` §1: без прямого `fetch` к
@@ -56,85 +58,20 @@ export class ChatFailedError extends AppError {
   }
 }
 
-/**
- * Таймаут одного вызова.
- *
- * 90 с: ответ агента в мессенджере уже задержан дебаунсом на 15–20 с, и ещё
- * полторы минуты ожидания клиент воспримет как «не ответили». Дольше держать
- * незачем — лучше честно записать отказ в журнал.
- */
-const REQUEST_TIMEOUT_MS = 90_000;
-
-interface ParsedCompletion {
-  content: string;
-  tokensIn: number;
-  tokensOut: number;
-  model: string;
-}
-
-/**
- * Ответ разбирается вручную, а не приводится типом.
- *
- * Тело приходит от внешнего сервиса: `as` означал бы, что структура принята на
- * веру, и отсутствующее поле обнаружилось бы позже — при отправке `undefined` в
- * Telegram или при записи NULL в журнал расхода.
- */
-function parseCompletion(body: unknown): ParsedCompletion {
-  if (typeof body !== "object" || body === null) {
-    throw new ChatFailedError("ответ провайдера не является объектом");
-  }
-
-  const envelope = body as { choices?: unknown; usage?: unknown; model?: unknown };
-
-  if (!Array.isArray(envelope.choices) || envelope.choices.length === 0) {
-    throw new ChatFailedError("в ответе нет `choices`");
-  }
-
-  const first = envelope.choices[0];
-
-  if (typeof first !== "object" || first === null) {
-    throw new ChatFailedError("элемент `choices` не является объектом");
-  }
-
-  const message = (first as { message?: unknown }).message;
-
-  if (typeof message !== "object" || message === null) {
-    throw new ChatFailedError("в `choices[0]` нет `message`");
-  }
-
-  const content = (message as { content?: unknown }).content;
-
-  if (typeof content !== "string") {
-    throw new ChatFailedError("`message.content` не строка");
-  }
-
-  const usage = envelope.usage;
-  const readUsage = (field: string): number => {
-    if (typeof usage !== "object" || usage === null) return 0;
-    const value = (usage as Record<string, unknown>)[field];
-    return typeof value === "number" ? value : 0;
-  };
-
-  return {
-    content,
-    tokensIn: readUsage("prompt_tokens"),
-    tokensOut: readUsage("completion_tokens"),
-    model: typeof envelope.model === "string" ? envelope.model : "",
-  };
-}
-
 export class GatewayChatProvider implements ChatProvider {
   private readonly baseUrl: string | undefined;
-  private readonly apiKey: string | undefined;
 
   constructor() {
-    const env = getEnv();
-    this.baseUrl = env.LLM_API_BASE_URL?.replace(/\/+$/, "");
-    this.apiKey = env.LLM_API_KEY;
+    try {
+      const env = getEnv();
+      this.baseUrl = env.LLM_API_BASE_URL?.replace(/\/+$/, "");
+    } catch {
+      this.baseUrl = process.env.LLM_API_BASE_URL?.replace(/\/+$/, "");
+    }
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== undefined && this.apiKey !== undefined;
+    return platformConfigService.isLlmConfiguredSync();
   }
 
   async complete(input: {
@@ -143,63 +80,79 @@ export class GatewayChatProvider implements ChatProvider {
     temperature?: number;
     maxTokens?: number;
     jsonMode?: boolean;
+    tenantId?: string;
   }): Promise<ChatCompletionResult> {
-    if (this.baseUrl === undefined || this.apiKey === undefined) {
+    const config = await platformConfigService.getRotatedLlmConfig();
+    const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
+
+    if (!activeBaseUrl) {
       throw new ChatUnavailableError();
     }
 
-    const startedAt = Date.now();
-
-    // Явный таймаут: без него зависший вызов держал бы обработчик входящего
-    // сообщения и вместе с ним место в очереди дебаунса.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let targetModel = input.model;
+    if (!targetModel || targetModel === "default" || targetModel === "auto") {
+      if (config?.chatModel && config.chatModel.trim().length > 0) {
+        targetModel = config.chatModel;
+      }
+    }
+    if (targetModel.startsWith("gemini/")) {
+      targetModel = targetModel.replace(/^gemini\//, "");
+    }
 
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: input.model,
+      const result = await smartModelRouter.execute(
+        {
+          model: targetModel,
           messages: input.messages,
-          temperature: input.temperature ?? 0.7,
-          max_tokens: input.maxTokens ?? 1024,
-          // `stream: false` задаётся явно: шлюз для части моделей включает
-          // стриминг по умолчанию, и тогда тело приходит как SSE, а не JSON.
-          stream: false,
-          ...(input.jsonMode === true && { response_format: { type: "json_object" } }),
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        // Тело читается только для сообщения: наружу уходит код и краткая
-        // причина, без заголовков и ключа.
-        const text = await response.text().catch(() => "");
-        throw new ChatFailedError(
-          `HTTP ${response.status}${text.length > 0 ? `: ${text.slice(0, 200)}` : ""}`,
-        );
-      }
-
-      const parsed = parseCompletion(await response.json());
+          temperature: input.temperature,
+          maxTokens: input.maxTokens,
+          jsonMode: input.jsonMode,
+        },
+        {
+          tenantId: input.tenantId,
+        },
+      );
 
       return {
-        content: parsed.content,
-        tokensIn: parsed.tokensIn,
-        tokensOut: parsed.tokensOut,
-        model: parsed.model.length > 0 ? parsed.model : input.model,
-        latencyMs: Date.now() - startedAt,
+        content: result.content,
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        model: result.model,
+        latencyMs: result.latencyMs,
       };
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-
-      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
-      throw new ChatFailedError(reason);
-    } finally {
-      clearTimeout(timeout);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw new ChatFailedError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * Стриминг ответа от LLM (Server-Sent Events) с поддержкой ротации ключей.
+   */
+  async *streamComplete(input: {
+    model: string;
+    messages: readonly ChatMessage[];
+    temperature?: number;
+    maxTokens?: number;
+    tenantId?: string;
+    signal?: AbortSignal;
+  }): AsyncIterable<{ delta: string; model: string; isComplete: boolean }> {
+    let targetModel = input.model;
+    if (targetModel.startsWith("gemini/")) {
+      targetModel = targetModel.replace(/^gemini\//, "");
+    }
+
+    yield* smartModelRouter.stream(
+      {
+        model: targetModel,
+        messages: input.messages,
+        temperature: input.temperature,
+        maxTokens: input.maxTokens,
+      },
+      {
+        tenantId: input.tenantId,
+        signal: input.signal,
+      },
+    );
   }
 }

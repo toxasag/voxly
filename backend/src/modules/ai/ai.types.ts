@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { AI_MODEL_IDS } from "./ai-pricing.js";
 
 // ---------------------------------------------------------------------------
 // AI-агенты и баланс ИИ.
@@ -21,22 +20,52 @@ export const agentContextEntityValues = [
 export type AgentStatus = (typeof agentStatusValues)[number];
 export type AgentMode = (typeof agentModeValues)[number];
 
+export const wizardConfigSchema = z
+  .object({
+    presetId: z.string().optional(),
+    companyName: z.string().optional(),
+    consultantName: z.string().optional(),
+    consultantRole: z.string().optional(),
+    businessNiche: z.string().optional(),
+    targetAction: z.string().optional(),
+    handoffSpecialist: z.string().optional(),
+    isCustomEdited: z.boolean().optional(),
+    crawl_status: z.enum(["idle", "pending", "in_progress", "ready", "failed"]).optional(),
+    website_url: z.string().optional(),
+    crawl_pages_scanned: z.number().optional(),
+    crawl_pages_indexed: z.number().optional(),
+    crawl_error: z.string().optional(),
+    crawl_updated_at: z.string().optional(),
+  })
+  .passthrough()
+  .optional()
+  .nullable();
+
+export type WizardConfig = z.infer<typeof wizardConfigSchema>;
+
 export const createAgentSchema = z.object({
   name: z.string().trim().min(2, "Название минимум 2 символа").max(80),
-  description: z.string().trim().max(300).optional(),
-  // z.enum требует непустой кортеж, поэтому список моделей приводится явно.
-  model: z.enum(AI_MODEL_IDS as unknown as [string, ...string[]]),
-  mode: z.enum(agentModeValues),
-  status: z.enum(agentStatusValues),
-  accent: z.enum(agentAccentValues),
-  temperature: z.number().min(0, "Минимум 0").max(1, "Максимум 1"),
-  max_tokens: z.number().int().min(128, "Минимум 128").max(8192, "Максимум 8192"),
+  description: z.string().trim().max(300).optional().default(""),
+  model: z.string().trim().min(1, "Укажите модель").max(100).default("gpt-4o-mini"),
+  mode: z.enum(agentModeValues).default("suggester"),
+  status: z.enum(agentStatusValues).default("active"),
+  accent: z.enum(agentAccentValues).default("sky"),
+  temperature: z.number().min(0, "Минимум 0").max(1, "Максимум 1").default(0.7),
+  max_tokens: z.number().int().min(128, "Минимум 128").max(8192, "Максимум 8192").default(2048),
   system_prompt: z
     .string()
     .trim()
     .min(20, "Системный промпт минимум 20 символов")
-    .max(8000, "Системный промпт до 8000 символов"),
+    .max(8000, "Системный промпт до 8000 символов")
+    .default("Ты — вежливый AI-ассистент компании. Отвечай кратко, дружелюбно и по существу."),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
+  wizard_config: wizardConfigSchema,
+  website_url: z.string().optional().or(z.literal("")),
+  websiteUrl: z.string().optional().or(z.literal("")),
+  map_reviews_url: z.string().optional().or(z.literal("")),
+  mapReviewsUrl: z.string().optional().or(z.literal("")),
+  sync_crm: z.boolean().optional(),
+  whatsapp_chat_text: z.string().optional(),
 });
 
 export type CreateAgentPayload = z.infer<typeof createAgentSchema>;
@@ -77,6 +106,7 @@ export interface AiAgentDTO {
   maxTokens: number;
   systemPrompt: string;
   contextEntities: string[];
+  wizardConfig?: WizardConfig | null;
   /** Агрегаты из ai_usage_log: список агентов показывает расход по каждому. */
   tokensUsed: number;
   requestsCount: number;

@@ -9,14 +9,49 @@ export type DealMessageDirection = "inbound" | "outbound" | "neutral";
 /** Ключи пресета цвета стадии; маппятся в статические классы на фронте. */
 export type StageColorKey = "amber" | "emerald" | "sky" | "rose" | "violet" | "orange" | "cyan" | "slate";
 
-export interface DealDTO { id: string; pipelineId: string; stageId: string; contactId: string | null; companyId: string | null; title: string; description: string; budget: number; currency: string; customFields: Record<string, unknown>; createdBy: string; ownerId: string | null; closeDate: string | null; position: number; closedAt: string | null; createdAt: string; updatedAt: string; companyName: string | null; contactName: string | null; ownerName: string | null; latestNote?: string | null; }
+export interface DealDTO {
+  id: string;
+  pipelineId: string;
+  stageId: string;
+  contactId: string | null;
+  companyId: string | null;
+  title: string;
+  description: string;
+  budget: number;
+  currency: string;
+  sourceMetadata?: Record<string, unknown> | null;
+  customFields: Record<string, unknown>;
+  createdBy: string;
+  ownerId: string | null;
+  closeDate: string | null;
+  position: number;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  companyName: string | null;
+  companyPhone?: string | null;
+  companyEmail?: string | null;
+  companyWebsite?: string | null;
+  companyCity?: string | null;
+  contactName: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  contactJobTitle?: string | null;
+  contactIsPersonal?: boolean;
+  ownerName: string | null;
+  latestNote?: string | null;
+  tasksCount?: number;
+  pendingTasksCount?: number;
+  nextTaskTitle?: string | null;
+  nextTaskDueDate?: string | null;
+}
 export interface PipelineDTO { id: string; name: string; sortOrder: number; }
 export interface KanbanColumnDTO { stageId: string; stageName: string; sortOrder: number; isWon: boolean; isLost: boolean; /** Системный этап: вход в воронку, «успех» или «провал» — не правится и не двигается. */ isSystem: boolean; stageColor: StageColorKey; dealCount: number; budgetTotal: number; deals: DealDTO[]; }
 /**
  * Доставка исходящего в канал. `neutral` — доставлять некуда (входящее,
  * системная запись), `failed` держит причину в `deliveryError`.
  */
-export type DealMessageDeliveryStatus = "neutral" | "pending" | "sent" | "failed";
+export type DealMessageDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 export interface DealMessageDTO { id: string; dealId: string; channelAccountId: string | null; source: DealMessageSource; direction: DealMessageDirection; senderName: string; content: string; channel: string; attachment: string | null; attachmentType: string | null; deliveryStatus: DealMessageDeliveryStatus; deliveryError: string | null; createdAt: string; }
 /** contactId / companyId — секции «Сделки» на карточках контакта и компании. */
 export interface DealsParams { pipelineId?: string; stageId?: string; search?: string; contactId?: string; companyId?: string; limit?: number; offset?: number; }
@@ -204,5 +239,47 @@ export function useDeleteDeal(): UseMutationResult<null, ApiClientError, string>
   return useMutation({
     mutationFn: async (id) => { await apiClient.delete<null>(`${BASE}/${id}`); return null; },
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: dealKeys.all }); },
+  });
+}
+
+export function useMarkDealPersonal(): UseMutationResult<
+  { dealId: string; contactId: string | null; stageId: string },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (dealId) =>
+      (await apiClient.post<{ dealId: string; contactId: string | null; stageId: string }>(
+        `${BASE}/${dealId}/mark-personal`,
+        {},
+      )).data,
+    onSuccess: (_, dealId) => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId, "messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+}
+
+export function useUnmarkDealPersonal(): UseMutationResult<
+  { dealId: string; contactId: string | null },
+  ApiClientError,
+  string
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (dealId) =>
+      (await apiClient.post<{ dealId: string; contactId: string | null }>(
+        `${BASE}/${dealId}/unmark-personal`,
+        {},
+      )).data,
+    onSuccess: (_, dealId) => {
+      void queryClient.invalidateQueries({ queryKey: dealKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId] });
+      void queryClient.invalidateQueries({ queryKey: ["crm-chat", "deal", dealId, "messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
   });
 }

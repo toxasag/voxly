@@ -12,28 +12,30 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import type { MonthlyPnL } from "@/lib/analytics/mock-analytics";
+import type { MonthlyPnL } from "@/lib/analytics/analytics.types";
 
 interface PnlChartProps {
-  data: MonthlyPnL[];
+  data?: MonthlyPnL[];
 }
 
 function formatTooltip(value: number): string {
+  const safe = Number.isFinite(value) ? value : 0;
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: "RUB",
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(safe);
 }
 
-export const PnlChart = memo(function PnlChart({ data }: PnlChartProps) {
+export const PnlChart = memo(function PnlChart({ data = [] }: PnlChartProps) {
+  const items = Array.isArray(data) ? data : [];
   return (
     <div className="rounded-[8px] border border-[#e5e5e5] bg-white p-6 shadow-2xs">
       <h2 className="text-sm font-semibold text-[#111111] mb-4">
         Доходы и расходы (P&L)
       </h2>
       <ResponsiveContainer width="100%" height={320}>
-        <ComposedChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+        <ComposedChart data={items} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
           <CartesianGrid stroke="#f0f0f0" strokeDasharray="3 3" />
           <XAxis
             dataKey="month"

@@ -19,7 +19,7 @@ export type Permission =
   | "tenant:admin"
   | "billing:manage";
 
-export type Role = "owner" | "admin" | "manager" | "technician" | "viewer";
+export type Role = "owner" | "admin" | "partner" | "manager" | "technician" | "viewer";
 
 /** Глобальная платформенная роль (superadmin); null у обычных пользователей CRM. */
 export type PlatformRole = "platform_owner";
@@ -210,9 +210,23 @@ export interface ReferralPayout {
 // Notification Types
 // ---------------------------------------------------------------------------
 
-export type NotificationCategory = "message" | "repair" | "payment" | "system";
+export type NotificationCategory =
+  | "message"
+  | "lead"
+  | "task"
+  | "repair"
+  | "payment"
+  | "system";
 
-export type NotificationEntityType = "deal" | "repair" | "invoice" | "contact" | "system";
+export type NotificationEntityType =
+  | "deal"
+  | "lead"
+  | "chat"
+  | "task"
+  | "repair"
+  | "invoice"
+  | "contact"
+  | "system";
 
 export interface AppNotification {
   id: string;
@@ -223,6 +237,7 @@ export interface AppNotification {
   description: string;
   created_at: string;
   read: boolean;
+  data?: Record<string, unknown>;
 }
 
 export interface NotificationGroup {

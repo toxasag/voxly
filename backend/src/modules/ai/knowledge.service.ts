@@ -67,6 +67,11 @@ export interface KnowledgeDocumentDTO {
   errorMessage: string;
   chunksCount: number;
   createdAt: string;
+  category?: string;
+}
+
+export interface KnowledgeDocumentDetailDTO extends KnowledgeDocumentDTO {
+  contentText: string;
 }
 
 export interface KnowledgeSearchHit {
@@ -85,6 +90,7 @@ interface DocumentRow {
   status: DocumentStatus;
   error_message: string;
   chunks_count: string;
+  category?: string;
   created_at: Date | string;
 }
 
@@ -104,6 +110,7 @@ function toDTO(row: DocumentRow): KnowledgeDocumentDTO {
     // COUNT приходит строкой: pg не приводит bigint к number.
     chunksCount: Number(row.chunks_count),
     createdAt: toIso(row.created_at),
+    category: row.category ?? "general",
   };
 }
 
@@ -125,7 +132,7 @@ function toVectorLiteral(vector: readonly number[]): string {
 
 const DOCUMENT_SELECT = `
   SELECT d.id, d.agent_id, d.filename, d.mime_type, d.file_size, d.status,
-         d.error_message, d.created_at,
+         d.error_message, d.created_at, COALESCE(d.category, 'general') AS category,
          COALESCE(c.chunks_count, 0)::text AS chunks_count
   FROM knowledge_base_documents d
   LEFT JOIN LATERAL (
@@ -173,6 +180,134 @@ export class KnowledgeBaseService {
     return rows.map(toDTO);
   }
 
+  /**
+   * Получение полной информации о документе вместе с текстом (для просмотра и редактирования).
+   */
+  async getDocument(tenantId: string, agentId: string, documentId: string): Promise<KnowledgeDocumentDetailDTO> {
+    await this.assertAgentExists(tenantId, agentId);
+
+    const row = await queryOne<DocumentRow & { content_text: string | null }>(
+      `SELECT d.id, d.agent_id, d.filename, d.mime_type, d.file_size, d.content_text, d.status,
+              d.error_message, d.created_at,
+              COALESCE(c.chunks_count, 0)::text AS chunks_count
+       FROM knowledge_base_documents d
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS chunks_count
+         FROM knowledge_base_chunks ch
+         WHERE ch.document_id = d.id
+       ) c ON true
+       WHERE d.tenant_id = $1 AND d.id = $2 AND (d.agent_id = $3 OR d.agent_id IS NULL)`,
+      [tenantId, documentId, agentId],
+    );
+
+    if (row === null) throw new NotFoundError("Документ не найден");
+
+    return {
+      ...toDTO(row),
+      contentText: row.content_text ?? "",
+    };
+  }
+
+  /**
+   * Обновление текста документа и его перевекторизация.
+   * Позволяет на лету менять цены, услуги и регламенты.
+   */
+  async updateDocument(input: {
+    tenantId: string;
+    agentId: string;
+    documentId: string;
+    text: string;
+    filename?: string;
+  }): Promise<KnowledgeDocumentDetailDTO> {
+    await this.assertAgentExists(input.tenantId, input.agentId);
+
+    const existing = await queryOne<{ id: string; filename: string }>(
+      `SELECT id, filename FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND id = $2 AND (agent_id = $3 OR agent_id IS NULL)`,
+      [input.tenantId, input.documentId, input.agentId],
+    );
+
+    if (existing === null) throw new NotFoundError("Документ не найден");
+
+    const chunks = chunkText(input.text);
+    if (chunks.length === 0) {
+      throw new AppError(400, "EMPTY_DOCUMENT", "Документ не содержит текста");
+    }
+
+    if (!this.embeddings.isConfigured) {
+      throw new AppError(503, "EMBEDDINGS_UNAVAILABLE", "Векторизация недоступна: на платформе не настроен доступ к моделям.");
+    }
+
+    await query(
+      `UPDATE knowledge_base_documents
+       SET status = 'processing', error_message = ''
+       WHERE tenant_id = $1 AND id = $2`,
+      [input.tenantId, input.documentId],
+    );
+
+    try {
+      const vectors = await this.embedChunks(chunks);
+
+      await transaction(async (tx) => {
+        // Удаляем старые фрагменты
+        await tx.query(
+          `DELETE FROM knowledge_base_chunks WHERE tenant_id = $1 AND document_id = $2`,
+          [input.tenantId, input.documentId],
+        );
+
+        // Вставляем новые фрагменты с новыми эмбеддингами
+        for (const [position, chunk] of chunks.entries()) {
+          const vector = vectors[position];
+          if (vector === undefined) {
+            throw new Error(`Missing embedding for chunk ${chunk.index}`);
+          }
+          await tx.query(
+            `INSERT INTO knowledge_base_chunks
+               (tenant_id, document_id, agent_id, chunk_index, content, embedding)
+             VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+            [
+              input.tenantId,
+              input.documentId,
+              input.agentId,
+              chunk.index,
+              chunk.content,
+              toVectorLiteral(vector),
+            ],
+          );
+        }
+
+        const newFilename = input.filename?.trim() || existing.filename;
+        await tx.query(
+          `UPDATE knowledge_base_documents
+           SET filename = $1,
+               content_text = $2,
+               file_size = $3,
+               status = 'ready',
+               error_message = ''
+           WHERE tenant_id = $4 AND id = $5`,
+          [
+            newFilename,
+            input.text,
+            Buffer.byteLength(input.text, "utf8"),
+            input.tenantId,
+            input.documentId,
+          ],
+        );
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+      await query(
+        `UPDATE knowledge_base_documents
+         SET status = 'failed', error_message = $3
+         WHERE tenant_id = $1 AND id = $2`,
+        [input.tenantId, input.documentId, reason.slice(0, 500)],
+      );
+      throw error;
+    }
+
+    return this.getDocument(input.tenantId, input.agentId, input.documentId);
+  }
+
   // -------------------------------------------------------------------------
   // Запись
   // -------------------------------------------------------------------------
@@ -214,6 +349,7 @@ export class KnowledgeBaseService {
     filename: string;
     mimeType: string;
     text: string;
+    category?: string;
   }): Promise<KnowledgeDocumentDTO> {
     await this.assertAgentExists(input.tenantId, input.agentId);
 
@@ -236,10 +372,11 @@ export class KnowledgeBaseService {
       );
     }
 
+    const category = input.category?.trim() || "general";
     const created = await queryOne<{ id: string }>(
       `INSERT INTO knowledge_base_documents
-         (tenant_id, agent_id, filename, mime_type, file_size, content_text, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'processing')
+         (tenant_id, agent_id, filename, mime_type, file_size, content_text, status, category)
+       VALUES ($1, $2, $3, $4, $5, $6, 'processing', $7)
        RETURNING id`,
       [
         input.tenantId,
@@ -248,6 +385,7 @@ export class KnowledgeBaseService {
         input.mimeType,
         Buffer.byteLength(input.text, "utf8"),
         input.text,
+        category,
       ],
     );
 
@@ -309,6 +447,72 @@ export class KnowledgeBaseService {
     if (row === null) throw new Error("Knowledge document disappeared after creation");
 
     return toDTO(row);
+  }
+
+  /**
+   * Выполняет нарезку на чанки и векторизацию документа в фоне (Background Worker / BullMQ).
+   */
+  async indexDocument(tenantId: string, documentId: string): Promise<void> {
+    const doc = await queryOne<{
+      id: string;
+      agent_id: string;
+      content_text: string | null;
+      status: DocumentStatus;
+    }>(
+      `SELECT id, agent_id, content_text, status FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, documentId],
+    );
+
+    if (!doc || !doc.content_text) return;
+    const chunks = chunkText(doc.content_text);
+    if (chunks.length === 0) return;
+
+    if (!this.embeddings.isConfigured) {
+      await query(
+        `UPDATE knowledge_base_documents
+         SET status = 'failed', error_message = 'Векторизация недоступна: на платформе не настроен доступ к моделям.'
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, documentId],
+      );
+      return;
+    }
+
+    try {
+      const vectors = await this.embedChunks(chunks);
+      await transaction(async (tx) => {
+        await tx.query(
+          `DELETE FROM knowledge_base_chunks WHERE tenant_id = $1 AND document_id = $2`,
+          [tenantId, documentId],
+        );
+
+        for (const [position, chunk] of chunks.entries()) {
+          const vector = vectors[position];
+          if (!vector) continue;
+          await tx.query(
+            `INSERT INTO knowledge_base_chunks
+               (tenant_id, document_id, agent_id, chunk_index, content, embedding)
+             VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+            [tenantId, documentId, doc.agent_id, chunk.index, chunk.content, toVectorLiteral(vector)],
+          );
+        }
+
+        await tx.query(
+          `UPDATE knowledge_base_documents
+           SET status = 'ready', error_message = ''
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, documentId],
+        );
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+      await query(
+        `UPDATE knowledge_base_documents
+         SET status = 'failed', error_message = $3
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, documentId, reason.slice(0, 500)],
+      );
+    }
   }
 
   /** Векторизация пачками: один вызов на фрагмент дал бы сотни round-trip'ов. */

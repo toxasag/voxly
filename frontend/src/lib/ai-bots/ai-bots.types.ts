@@ -3,19 +3,15 @@
 // Module slug: ai_bots
 // ---------------------------------------------------------------------------
 
+import type { WizardConfig } from "@/schemas/ai-bot.schema";
+
 export type BotStatus = "active" | "paused";
 
 export type BotMode = "suggester" | "autoreply" | "disabled";
 
 export type LlmProvider = "openai" | "anthropic" | "deepseek" | "google";
 
-export type BotModel =
-  | "gpt-4o"
-  | "gpt-4o-mini"
-  | "claude-sonnet-4"
-  | "claude-opus-4"
-  | "deepseek-v3"
-  | "gemini-1.5-pro";
+export type BotModel = string;
 
 /** CRM entities whose data may be injected into the bot context at runtime. */
 export type BotContextEntity =
@@ -45,9 +41,15 @@ export interface ModelInfo {
   price_in_per_1k: number;
   /** Price in RUB per 1 000 output tokens. */
   price_out_per_1k: number;
+  isConfigured?: boolean;
 }
 
 export const MODEL_CATALOG: ModelInfo[] = [
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
+  { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
+  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "google", context_window: 2_000_000, price_in_per_1k: 1.25, price_out_per_1k: 5.00 },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
   { id: "gpt-4o", label: "GPT-4o", provider: "openai", context_window: 128_000, price_in_per_1k: 0.45, price_out_per_1k: 1.35 },
   { id: "gpt-4o-mini", label: "GPT-4o mini", provider: "openai", context_window: 128_000, price_in_per_1k: 0.03, price_out_per_1k: 0.11 },
   { id: "claude-sonnet-4", label: "Claude Sonnet 4", provider: "anthropic", context_window: 200_000, price_in_per_1k: 0.27, price_out_per_1k: 1.35 },
@@ -56,16 +58,31 @@ export const MODEL_CATALOG: ModelInfo[] = [
   { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.11, price_out_per_1k: 0.45 },
 ];
 
-const MODEL_INDEX: Record<BotModel, ModelInfo> = MODEL_CATALOG.reduce(
+const MODEL_INDEX: Record<string, ModelInfo> = MODEL_CATALOG.reduce(
   (acc, model) => {
     acc[model.id] = model;
     return acc;
   },
-  {} as Record<BotModel, ModelInfo>,
+  {} as Record<string, ModelInfo>,
 );
 
-export function getModelInfo(model: BotModel): ModelInfo {
-  return MODEL_INDEX[model];
+export function getModelInfo(model: string): ModelInfo {
+  return (
+    MODEL_INDEX[model] ?? {
+      id: model,
+      label: model,
+      provider: model.includes("gemini")
+        ? "google"
+        : model.includes("claude")
+          ? "anthropic"
+          : model.includes("deepseek")
+            ? "deepseek"
+            : "openai",
+      context_window: 128_000,
+      price_in_per_1k: 0.05,
+      price_out_per_1k: 0.15,
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +102,12 @@ export interface AiBot {
   max_tokens: number;
   system_prompt: string;
   context_entities: BotContextEntity[];
+  wizard_config?: WizardConfig | null;
+  website_url?: string;
+  crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
+  crawl_pages_scanned?: number;
+  crawl_pages_indexed?: number;
+  crawl_error?: string;
   tokens_used: number;
   tokens_limit: number;
   requests_count: number;
@@ -117,14 +140,25 @@ export interface PromptVariable {
 }
 
 export const PROMPT_VARIABLES: PromptVariable[] = [
-  { token: "tenant.name", label: "Название компании", example: "ООО Ромашка" },
-  { token: "user.name", label: "Текущий пользователь", example: "Иван Петров" },
-  { token: "contact.name", label: "Имя контакта", example: "Сергей Волков" },
-  { token: "contact.phone", label: "Телефон контакта", example: "+7 999 123 45 67" },
-  { token: "company.name", label: "Название организации", example: "ООО ТехКорп" },
-  { token: "deal.title", label: "Название сделки", example: "Внедрение CRM" },
-  { token: "deal.budget", label: "Бюджет сделки", example: "450 000 ₽" },
-  { token: "repair.ticket_number", label: "Номер заказ-наряда", example: "ЗН-2026-0042" },
+  { token: "tenant.name", label: "Название компании", example: "Название вашей компании" },
+  { token: "consultant.name", label: "Имя консультанта", example: "Имя сотрудника" },
+  { token: "consultant.role", label: "Должность / роль консультанта", example: "ведущий специалист" },
+  { token: "business.niche", label: "Ниша / профиль компании", example: "профиль вашей компании" },
+  { token: "target.action", label: "Целевое действие", example: "согласование деталей заказа" },
+  { token: "handoff.specialist", label: "Специалист для эскалации", example: "старший специалист" },
+  { token: "channel_type", label: "Канал связи", example: "чат на сайте" },
+  { token: "current_time", label: "Текущее время", example: "текущее время диалога" },
+  { token: "knowledge_base_context", label: "Контекст базы знаний", example: "актуальные документы и прайсы" },
+  { token: "website_context", label: "Материалы сайта", example: "информация со страниц сайта" },
+  { token: "reviews_and_reputation", label: "Отзывы клиентов", example: "отзывы с Яндекс Карт и 2ГИС" },
+  { token: "successful_crm_patterns", label: "Успешный опыт CRM", example: "примеры закрытых сделок" },
+  { token: "user.name", label: "Текущий пользователь", example: "Имя менеджера" },
+  { token: "contact.name", label: "Имя контакта", example: "Имя клиента" },
+  { token: "contact.phone", label: "Телефон контакта", example: "+7 999 000 00 00" },
+  { token: "company.name", label: "Название организации", example: "Организация клиента" },
+  { token: "deal.title", label: "Название сделки", example: "Тема сделки" },
+  { token: "deal.budget", label: "Бюджет сделки", example: "Сумма сделки" },
+  { token: "repair.ticket_number", label: "Номер заказ-наряда", example: "Номер заказа" },
 ];
 
 const VARIABLE_PATTERN = /\{\{\s*([a-z_]+(?:\.[a-z_]+)*)\s*\}\}/g;
@@ -145,10 +179,89 @@ export function findUnknownVariables(body: string): string[] {
   return extractPromptVariables(body).filter((token) => !supported.has(token));
 }
 
-/** Substitutes every known variable with its example value (preview only). */
-export function renderPromptPreview(body: string): string {
-  const examples = new Map(PROMPT_VARIABLES.map((v) => [v.token, v.example]));
-  return body.replace(VARIABLE_PATTERN, (whole, token: string) => examples.get(token) ?? whole);
+export interface PromptPreviewRealContext {
+  tenantName?: string;
+  knowledgeBaseContext?: string;
+  websiteContext?: string;
+  reviewsContext?: string;
+  crmPatternsContext?: string;
+  channelType?: string;
+  currentTime?: string;
+  [key: string]: string | undefined;
+}
+
+/**
+ * Подставляет реальные данные в шаблон промпта и очищает XML-обёртки
+ * (<character_and_identity>, <director_system_prompt> и др.) для корректного отображения.
+ */
+export function renderPromptPreview(
+  body: string,
+  bot?: { name?: string; wizard_config?: WizardConfig },
+  contextOrTenantName?: string | PromptPreviewRealContext,
+): string {
+  const context: PromptPreviewRealContext =
+    typeof contextOrTenantName === "string"
+      ? { tenantName: contextOrTenantName }
+      : (contextOrTenantName ?? {});
+
+  const wc = bot?.wizard_config;
+  const tenant = context.tenantName || "Компания";
+
+  const resolvedValues = new Map<string, string>();
+  resolvedValues.set("tenant.name", tenant);
+  resolvedValues.set("company.name", tenant);
+  resolvedValues.set("consultant.name", wc?.consultantName || bot?.name || "Консультант");
+  resolvedValues.set("consultant.role", wc?.consultantRole || "ведущий специалист");
+  resolvedValues.set("business.niche", wc?.businessNiche || "оказание профильных услуг");
+  resolvedValues.set("target.action", wc?.targetAction || "согласование деталей заказа");
+  resolvedValues.set("handoff.specialist", wc?.handoffSpecialist || "старший специалист");
+  resolvedValues.set(
+    "current_time",
+    context.currentTime ||
+      new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) + " МСК",
+  );
+  resolvedValues.set("channel_type", context.channelType || "чат на сайте");
+  resolvedValues.set(
+    "knowledge_base_context",
+    context.knowledgeBaseContext ||
+      "В базе знаний пока нет добавленных документов. Вы можете загрузить регламенты или прайс на вкладке «База знаний».",
+  );
+  resolvedValues.set(
+    "website_context",
+    context.websiteContext || "Материалы сайта пока не загружены.",
+  );
+  resolvedValues.set(
+    "reviews_and_reputation",
+    context.reviewsContext || "Отзывы клиентов пока не подключены.",
+  );
+  resolvedValues.set(
+    "successful_crm_patterns",
+    context.crmPatternsContext ||
+      "Успешные диалоги формируются автоматически на основе закрытых сделок CRM.",
+  );
+
+  // Fallback for CRM entity tokens
+  resolvedValues.set("user.name", "Имя сотрудника");
+  resolvedValues.set("contact.name", "Имя клиента");
+  resolvedValues.set("contact.phone", "+7 999 000 00 00");
+  resolvedValues.set("deal.title", "Сделка клиента");
+  resolvedValues.set("deal.budget", "от 100 000 ₽");
+  resolvedValues.set("repair.ticket_number", "ЗН-0001");
+
+  // Interpolate tokens
+  let result = body.replace(VARIABLE_PATTERN, (whole, token: string) => resolvedValues.get(token) ?? whole);
+
+  // Strip XML container tags so <character_and_identity> never leaks to human preview
+  result = result
+    .replace(
+      /<\/?(?:director_system_prompt|character_and_identity|context_and_knowledge|style_and_formatting|dialogue_management|golden_cage_rules_and_security|primary_objective|scene_rehearsals)>/gi,
+      "",
+    )
+    .replace(/^\s*<[/]?[a-zA-Z0-9_]+>\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return result;
 }
 
 /**
@@ -260,8 +373,11 @@ export function getBotModeDescription(mode: BotMode): string {
   return MODE_DESCRIPTIONS[mode];
 }
 
-export function getProviderLabel(provider: LlmProvider): string {
-  return PROVIDER_LABELS[provider];
+export function getProviderLabel(provider: LlmProvider | string): string {
+  if (provider in PROVIDER_LABELS) {
+    return PROVIDER_LABELS[provider as LlmProvider];
+  }
+  return provider;
 }
 
 export function getAccentClasses(accent: AiBot["accent"]): string {

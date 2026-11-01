@@ -182,6 +182,18 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     return reply.status(204).send();
   });
 
+  app.post("/:id/mark-personal", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.markPersonal(request.tenant_id, id, request.authUser.id);
+    return reply.send({ data: result });
+  });
+
+  app.post("/:id/unmark-personal", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.unmarkPersonal(request.tenant_id, id, request.authUser.id);
+    return reply.send({ data: result });
+  });
+
   // ---------------------------------------------------------------------------
   // Timeline (M1.6.6)
   // ---------------------------------------------------------------------------
@@ -191,6 +203,22 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const messages = await service.listMessages(request.tenant_id, id);
 
     return reply.send({ data: messages, meta: { total: messages.length } });
+  });
+
+  // Алиас для клиентов и фронтенд-чата: таймлайн сообщений сделки
+  app.get("/:id/timeline", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const messages = await service.listMessages(request.tenant_id, id);
+
+    return reply.send({ data: messages, meta: { total: messages.length } });
+  });
+
+  // GET /deals/:id/contact-history — сквозная история контакта и LTV для карточки сделки
+  app.get("/:id/contact-history", { onRequest: canRead }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const history = await service.getContactHistory(request.tenant_id, id);
+
+    return reply.send({ data: history });
   });
 
   /**
@@ -253,5 +281,14 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const { id } = idParamsSchema.parse(request.params);
     const draft = await messaging.generateAiDraft(request.tenant_id, id);
     return reply.send({ data: draft });
+  });
+
+  /**
+   * Синхронизация предшествующей переписки из подключенных каналов (MAX, Telegram).
+   */
+  app.post("/:id/sync-chat-history", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await messaging.syncDealChatHistory(request.tenant_id, id);
+    return reply.send({ data: result });
   });
 }

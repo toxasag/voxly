@@ -1,5 +1,8 @@
-import { queryOne, transaction } from "../../db/client.js";
+import { queryOne, transaction, runWithPlatformScope } from "../../db/client.js";
 import type { ContactSocialJson } from "./contacts/contacts.types.js";
+import { WhatsappEvolutionService } from "../channels/whatsapp-evolution.service.js";
+import { resolveTelegramPhone } from "../channels/outbound-registry.js";
+import { isPlaceholderName, parseNameFromTelegramUsername } from "./identity-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Автоматическое кросс-канальное обогащение контактов по номеру телефона (4.2).
@@ -60,16 +63,7 @@ function normalizePhoneDigits(raw: string): string {
   return digits;
 }
 
-function isPlaceholderName(firstName: string | null | undefined, lastName: string | null | undefined): boolean {
-  const full = `${firstName ?? ""} ${lastName ?? ""}`.trim().toLowerCase();
-  return (
-    full.length === 0 ||
-    full === "клиент" ||
-    full === "client" ||
-    /^noname\d*$/.test(full) ||
-    /^клиент\s*\d*$/.test(full)
-  );
-}
+// isPlaceholderName импортирован из identity-resolution.js со строгой проверкой шаблонов («Клиент +7...», «Посетитель сайта...»)
 
 export class CrmEnrichmentService {
   private providers: CrossChannelProviders;
@@ -174,6 +168,13 @@ export class CrmEnrichmentService {
             if (tgRes.firstName) updatedFirstName = tgRes.firstName;
             if (tgRes.lastName) updatedLastName = tgRes.lastName;
             enrichedFields.push("name");
+          } else if (shouldUpdateName && (updatedTgUsername || tgRes.username)) {
+            const parsedTg = parseNameFromTelegramUsername(updatedTgUsername || tgRes.username);
+            if (parsedTg && parsedTg.firstName) {
+              updatedFirstName = parsedTg.firstName;
+              if (parsedTg.lastName) updatedLastName = parsedTg.lastName;
+              enrichedFields.push("name");
+            }
           }
         }
       } catch (err) {
@@ -187,13 +188,21 @@ export class CrmEnrichmentService {
       try {
         const maxRes = await this.providers.checkMax(phoneDigits, tenantId);
         if (maxRes.exists) {
-          const hasMaxSocial = existingSocials.some((s) => s.kind === "max");
-          if (!hasMaxSocial && (maxRes.link || maxRes.username || maxRes.userId)) {
-            existingSocials.push({
-              kind: "max",
-              value: maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : `max://user?id=${maxRes.userId}`),
-            });
-            enrichedFields.push("socials:max");
+          const maxVal = maxRes.link ?? (maxRes.username ? `@${maxRes.username}` : (phoneDigits ? `+${phoneDigits}` : ""));
+          if (maxVal) {
+            const existingMax = existingSocials.find((s) => s.kind === "max");
+            if (existingMax) {
+              if (existingMax.value.startsWith("max://user") && (phoneDigits || maxRes.username || maxRes.link)) {
+                existingMax.value = maxVal;
+                enrichedFields.push("socials:max");
+              }
+            } else {
+              existingSocials.push({
+                kind: "max",
+                value: maxVal,
+              });
+              enrichedFields.push("socials:max");
+            }
           }
           if (shouldUpdateName && !enrichedFields.includes("name") && (maxRes.firstName || maxRes.lastName)) {
             if (maxRes.firstName) updatedFirstName = maxRes.firstName;
@@ -231,6 +240,18 @@ export class CrmEnrichmentService {
       }
     }
 
+    // 3.5. Нормализация legacy socials (если ранее туда попал служебный max://user?id=...)
+    if (phoneDigits) {
+      for (const social of existingSocials) {
+        if (social.kind === "max" && social.value.startsWith("max://user")) {
+          social.value = `+${phoneDigits}`;
+          if (!enrichedFields.includes("socials:max")) {
+            enrichedFields.push("socials:max");
+          }
+        }
+      }
+    }
+
     // 4. Если хотя бы одно поле обогатилось — обновляем контакт в транзакции
     if (enrichedFields.length > 0) {
       await transaction(async (tx) => {
@@ -255,6 +276,27 @@ export class CrmEnrichmentService {
             tenantId,
           ],
         );
+
+        if (enrichedFields.includes("name")) {
+          const resolvedFullName = `${updatedFirstName} ${updatedLastName || ""}`.trim();
+          await tx.query(
+            `UPDATE deals
+             SET title = 'Заявка от ' || $1 || ' (' || 
+                 COALESCE(
+                   CASE 
+                     WHEN title LIKE '%(Онлайн-чат)%' THEN 'Онлайн-чат'
+                     WHEN title LIKE '%(Telegram)%' THEN 'Telegram'
+                     WHEN title LIKE '%(WhatsApp)%' THEN 'WhatsApp'
+                     WHEN title LIKE '%(MAX)%' THEN 'MAX'
+                     ELSE 'Прямое обращение'
+                   END, 'Прямое обращение'
+                 ) || ')',
+                 updated_at = now()
+             WHERE contact_id = $2 AND tenant_id = $3
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+            [resolvedFullName, contactId, tenantId],
+          );
+        }
       });
     }
 
@@ -269,7 +311,22 @@ export class CrmEnrichmentService {
 
   // --- Реализации провайдеров по умолчанию ---
 
-  private async defaultTelegramProvider(phone: string, _tenantId: string): Promise<TelegramProfileResolved> {
+  private async defaultTelegramProvider(phone: string, tenantId: string): Promise<TelegramProfileResolved> {
+    try {
+      const resolved = await resolveTelegramPhone(tenantId, phone);
+      if (resolved && resolved.exists) {
+        return {
+          exists: true,
+          userId: resolved.userId,
+          username: resolved.username,
+          firstName: resolved.firstName,
+          lastName: resolved.lastName,
+        };
+      }
+    } catch {
+      // Игнорируем и пробуем bridge fallback
+    }
+
     const bridgeUrl = process.env.GRAMJS_BRIDGE_URL ?? "http://gramjs-bridge:3008";
     const token = process.env.VOXLY_SERVICE_TOKEN;
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
@@ -306,19 +363,30 @@ export class CrmEnrichmentService {
     }
   }
 
-  private async defaultMaxProvider(phone: string, _tenantId: string): Promise<MaxProfileResolved> {
+  private async defaultMaxProvider(phone: string, tenantId: string): Promise<MaxProfileResolved> {
     const bridgeUrl = process.env.MAX_BRIDGE_URL ?? "http://max-bridge:3010";
     const token = process.env.VOXLY_SERVICE_TOKEN;
     if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
 
     try {
+      const account = await runWithPlatformScope(() =>
+        queryOne<{ id: string }>(
+          `SELECT id FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'max' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY connected_at DESC NULLS LAST
+           LIMIT 1`,
+          [tenantId],
+        ),
+      );
+      if (!account) return { exists: false, error: "No active MAX account" };
+
       const res = await fetch(`${bridgeUrl.replace(/\/$/, "")}/users/by-phone`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ phone: `+${phone}` }),
+        body: JSON.stringify({ botId: account.id, phone: `+${phone}` }),
       });
       if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
       const data = (await res.json()) as {
@@ -343,31 +411,34 @@ export class CrmEnrichmentService {
     }
   }
 
-  private async defaultWhatsAppProvider(phone: string, _tenantId: string): Promise<WhatsAppProfileResolved> {
-    const workerUrl = process.env.AI_WHATSAPP_WORKER_URL ?? "http://ai-whatsapp-worker:3006";
-    const token = process.env.VOXLY_SERVICE_TOKEN;
-    if (!token) return { exists: false, error: "VOXLY_SERVICE_TOKEN unset" };
+  private async defaultWhatsAppProvider(phone: string, tenantId: string): Promise<WhatsAppProfileResolved> {
+    const evo = new WhatsappEvolutionService();
+    if (!evo.isConfigured) return { exists: false, error: "Evolution API not configured" };
 
     try {
-      const res = await fetch(`${workerUrl.replace(/\/$/, "")}/internal/crm/check-on-whatsapp`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ phone: `+${phone}` }),
-      });
-      if (!res.ok) return { exists: false, error: `HTTP ${res.status}` };
-      const data = (await res.json()) as {
-        ok?: boolean;
-        exists?: boolean;
-        jid?: string;
-      };
-      return {
-        exists: Boolean(data.ok && data.exists),
-        jid: data.jid,
-        phone: `+${phone}`,
-      };
+      const account = await runWithPlatformScope(() =>
+        queryOne<{ credentials: { instanceName?: string } }>(
+          `SELECT credentials FROM channel_accounts
+           WHERE tenant_id = $1 AND channel = 'whatsapp' AND status = 'connected' AND deleted_at IS NULL
+           ORDER BY connected_at DESC NULLS LAST
+           LIMIT 1`,
+          [tenantId],
+        ),
+      );
+      const instanceName = account?.credentials?.instanceName;
+      if (!instanceName) return { exists: false, error: "No connected WhatsApp instance" };
+
+      const cleanDigits = phone.replace(/\D/g, "");
+      const res = await evo.checkNumberStatus(instanceName, [cleanDigits]);
+      const matched = res.find((r) => r.exists);
+      if (matched) {
+        return {
+          exists: true,
+          jid: matched.jid,
+          phone: `+${cleanDigits}`,
+        };
+      }
+      return { exists: false, phone: `+${cleanDigits}` };
     } catch (err) {
       return { exists: false, error: String(err) };
     }

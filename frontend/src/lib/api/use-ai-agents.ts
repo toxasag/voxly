@@ -42,6 +42,21 @@ interface AiAgentDTO {
   maxTokens: number;
   systemPrompt: string;
   contextEntities: string[];
+  wizardConfig?: {
+    presetId?: string;
+    consultantName?: string;
+    consultantRole?: string;
+    businessNiche?: string;
+    targetAction?: string;
+    handoffSpecialist?: string;
+    isCustomEdited?: boolean;
+    crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";
+    website_url?: string;
+    crawl_pages_scanned?: number;
+    crawl_pages_indexed?: number;
+    crawl_error?: string;
+    crawl_updated_at?: string;
+  } | null;
   tokensUsed: number;
   requestsCount: number;
   avgLatencyMs: number;
@@ -61,6 +76,7 @@ interface AiAgentDTO {
  * как «лимита нет».
  */
 function toAiBot(dto: AiAgentDTO): AiBot {
+  const wizardConfig = dto.wizardConfig;
   return {
     id: dto.id,
     name: dto.name,
@@ -73,6 +89,12 @@ function toAiBot(dto: AiAgentDTO): AiBot {
     max_tokens: dto.maxTokens,
     system_prompt: dto.systemPrompt,
     context_entities: dto.contextEntities as BotContextEntity[],
+    wizard_config: wizardConfig,
+    website_url: wizardConfig?.website_url,
+    crawl_status: wizardConfig?.crawl_status,
+    crawl_pages_scanned: wizardConfig?.crawl_pages_scanned,
+    crawl_pages_indexed: wizardConfig?.crawl_pages_indexed,
+    crawl_error: wizardConfig?.crawl_error,
     tokens_used: dto.tokensUsed,
     tokens_limit: 0,
     requests_count: dto.requestsCount,
@@ -97,6 +119,11 @@ function toPayload(payload: CreateBotPayload | UpdateBotPayload): Record<string,
   if (payload.max_tokens !== undefined) body.max_tokens = payload.max_tokens;
   if (payload.system_prompt !== undefined) body.system_prompt = payload.system_prompt;
   if (payload.context_entities !== undefined) body.context_entities = payload.context_entities;
+  if (payload.wizard_config !== undefined) body.wizard_config = payload.wizard_config;
+  if (payload.website_url !== undefined) body.website_url = payload.website_url;
+  if (payload.map_reviews_url !== undefined) body.map_reviews_url = payload.map_reviews_url;
+  if (payload.sync_crm !== undefined) body.sync_crm = payload.sync_crm;
+  if (payload.whatsapp_chat_text !== undefined) body.whatsapp_chat_text = payload.whatsapp_chat_text;
 
   return body;
 }
@@ -172,6 +199,29 @@ export function useDeleteAiAgent(): UseMutationResult<void, ApiClientError, { id
   });
 }
 
+export interface PromptPreviewResponse {
+  resolvedPrompt: string;
+  variables: Record<string, string>;
+}
+
+export function useAgentPromptPreview(
+  agentId: string,
+  systemPrompt?: string,
+): UseQueryResult<PromptPreviewResponse, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "agents", agentId, "prompt-preview", systemPrompt ?? ""],
+    queryFn: async () => {
+      const res = await apiClient.post<PromptPreviewResponse>(
+        `${BASE_PATH}/agents/${agentId}/prompt-preview`,
+        systemPrompt ? { system_prompt: systemPrompt } : {},
+      );
+      return res.data;
+    },
+    enabled: Boolean(agentId),
+    staleTime: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Баланс ИИ
 // ---------------------------------------------------------------------------
@@ -223,4 +273,72 @@ export function formatKopecks(kopecks: number): string {
     currency: "RUB",
     maximumFractionDigits: kopecks % 100 === 0 ? 0 : 2,
   }).format(kopecks / 100);
+}
+
+export interface ActiveProviderInfo {
+  name: string;
+  providerType: string;
+  chatModel?: string;
+  isConfigured: boolean;
+}
+
+export interface AiModelItem {
+  id: string;
+  label: string;
+  provider: string;
+  contextWindow: number;
+  costInPer1k: number;
+  costOutPer1k: number;
+  isConfigured?: boolean;
+}
+
+export interface AiModelsResponse {
+  activeProvider: ActiveProviderInfo;
+  data: AiModelItem[];
+}
+
+export function useAiModels(): UseQueryResult<AiModelsResponse, ApiClientError> {
+  return useQuery({
+    queryKey: ["ai", "models"],
+    queryFn: async () => {
+      const res = await apiClient.get<unknown>(`${BASE_PATH}/models`);
+      const body = res.data;
+
+      // Формат 1: body это { activeProvider, data: [...] }
+      if (body && typeof body === "object" && !Array.isArray(body) && "activeProvider" in body) {
+        const casted = body as { activeProvider?: ActiveProviderInfo; data?: AiModelItem[] };
+        return {
+          activeProvider: casted.activeProvider ?? {
+            name: "Google Gemini",
+            providerType: "gemini",
+            isConfigured: true,
+          },
+          data: Array.isArray(casted.data) ? casted.data : [],
+        };
+      }
+
+      // Формат 2: body это сразу массив моделей data: AiModelItem[]
+      if (Array.isArray(body)) {
+        const envelope = res as unknown as { activeProvider?: ActiveProviderInfo };
+        return {
+          activeProvider: envelope.activeProvider ?? {
+            name: "Google Gemini",
+            providerType: "gemini",
+            isConfigured: true,
+          },
+          data: body as AiModelItem[],
+        };
+      }
+
+      return {
+        activeProvider: {
+          name: "Google Gemini",
+          providerType: "gemini",
+          isConfigured: true,
+        },
+        data: [],
+      };
+    },
+    staleTime: 60_000,
+  });
 }

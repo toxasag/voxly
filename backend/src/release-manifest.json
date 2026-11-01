@@ -1,0 +1,31 @@
+{
+  "version": "0.1.0",
+  "releaseDate": "2026-10-28T17:36:01Z",
+  "gitCommit": "0e5e36d650e1bf3ceb79e5da7482363e0b7cef0d",
+  "buildId": "0e5e36d650e1bf3ceb79e5da7482363e0b7cef0d",
+  "environment": "source",
+  "targetEnvironment": "production",
+  "modules": [
+    "core",
+    "service-center",
+    "finance",
+    "ai-bots"
+  ],
+  "migrations": {
+    "expected": 62,
+    "applied": 62,
+    "pending": 0,
+    "head": "0062_tenant_users_view"
+  },
+  "database": {
+    "engine": "PostgreSQL 16",
+    "publicTables": 58,
+    "rlsPolicies": 42,
+    "extensions": ["uuid-ossp", "pgcrypto", "vector"]
+  },
+  "queues": [
+    "lead-notifications",
+    "kb",
+    "conversion-events"
+  ]
+}

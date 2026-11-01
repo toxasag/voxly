@@ -118,6 +118,18 @@ services:
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
       # ---------------------------------------------------------------------
+      # WhatsApp (Evolution API) и MAX (max-bridge)
+      # ---------------------------------------------------------------------
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution-api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}
+      EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:?EVOLUTION_WEBHOOK_SECRET is required}
+      MAX_BRIDGE_URL: ${MAX_BRIDGE_URL:-http://max-bridge:3010}
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      # ---------------------------------------------------------------------
+      # Очереди задач и кэш (BullMQ + Redis 7)
+      # ---------------------------------------------------------------------
+      REDIS_URL: ${REDIS_URL:-redis://automation-redis-1:6379/1}
+      # ---------------------------------------------------------------------
       # Шлюз LLM (OpenAI-совместимый API) для эмбеддингов базы знаний.
       #
       # Пара «адрес + ключ» задаётся целиком: с одним из двух вызов упал бы 401 у
@@ -162,6 +174,8 @@ services:
       SMTP_USER: admin@getvoxly.ru
       SMTP_PASS: ${SMTP_PASS:?SMTP_PASS is required}
       SMTP_FROM: '"Voxly" <admin@getvoxly.ru>'
+    volumes:
+      - uploads-data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -196,9 +210,55 @@ services:
     networks:
       - automation
 
+  # --- Evolution API (WhatsApp Baileys QR) ---
+  evolution-api:
+    image: voxly-evolution-api:v2.3.7-lid
+    restart: unless-stopped
+    environment:
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://evolution-api:8080}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://getvoxly:${POSTGRES_PASSWORD}@db:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_getvoxly
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://automation-redis-1:6379/6
+      CACHE_REDIS_PREFIX_KEY: evolution
+      LOG_LEVEL: ERROR,WARN,INFO
+      DEL_INSTANCE: "false"
+      CONFIG_SESSION_PHONE_CLIENT: Voxly
+      CONFIG_SESSION_PHONE_NAME: Chrome
+      CONFIG_SESSION_PHONE_VERSION: 2.3000.1043705293
+      QRCODE_LIMIT: 30
+    volumes:
+      - evolution-instances:/evolution/instances
+    networks:
+      - automation
+
+  # --- MAX bridge (personal MAX account via PyMax / maxapi-python) ---
+  max-bridge:
+    image: voxly-max-bridge:latest
+    restart: unless-stopped
+    environment:
+      VOXLY_SERVICE_TOKEN: ${VOXLY_SERVICE_TOKEN:-}
+      SAAS_API_URL: http://backend:4000
+      MAX_BRIDGE_PORT: 3010
+      MAX_SESSION_DIR: /data/max-sessions
+    volumes:
+      - max-sessions-data:/data/max-sessions
+    networks:
+      - automation
+
 volumes:
   getvoxly_pg_data:
     name: getvoxly_pg_data
+  evolution-instances:
+    name: getvoxly_evolution_instances
+  max-sessions-data:
+    name: getvoxly_max_sessions_data
+  uploads-data:
+    name: getvoxly_uploads_data
 
 networks:
   automation:

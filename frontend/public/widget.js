@@ -1,678 +1,3935 @@
 (function () {
   'use strict';
 
-  // 1. Поиск скрипта подключения и параметров
-  const currentScript = document.currentScript || document.querySelector('script[data-channel-id]');
-  if (!currentScript) {
-    console.warn('[GetVoxly] Webchat script is missing data-channel-id attribute.');
-    return;
+  // 1. Вспомогательная функция телеметрии для диагностики в реальном времени
+  function sendTelemetry(step, detail) {
+    try {
+      var d = detail ? '&d=' + encodeURIComponent(String(detail).slice(0, 200)) : '';
+      var url = 'https://api.getvoxly.ru/api/v1/public/chat/debug?step=' + encodeURIComponent(step) + d + '&t=' + Date.now();
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        navigator.sendBeacon(url);
+      } else {
+        var img = new Image();
+        if (typeof window !== 'undefined') {
+          window._gvx_imgs = window._gvx_imgs || [];
+          window._gvx_imgs.push(img);
+        }
+        img.src = url;
+      }
+    } catch (e) {}
   }
 
-  const channelAccountId = currentScript.getAttribute('data-channel-id');
-  const apiUrl = (currentScript.getAttribute('data-api-url') || 'https://api.getvoxly.ru').replace(/\/$/, '');
-  const telegramBot = currentScript.getAttribute('data-telegram-bot') || '';
-  const proactiveEnabled = currentScript.getAttribute('data-proactive') !== 'false';
-  const proactiveDelay = parseInt(currentScript.getAttribute('data-proactive-delay') || '30000', 10);
+  // Сигнал о старте выполнения скрипта в браузере
+  sendTelemetry('script_loaded', typeof document !== 'undefined' ? document.readyState : 'no_doc');
 
-  // 2. Вспомогательные функции для cookies и хранилища
+  // 2. Безопасная работа с хранилищем (защита от крашей в Incognito / Private Browsing / Cookie Blockers)
+  var memStorage = {};
+  var safeStorage = {
+    getItem: function (key) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          return window.localStorage.getItem(key);
+        }
+      } catch (e) {}
+      return memStorage[key] || null;
+    },
+    setItem: function (key, value) {
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem(key, value);
+          return;
+        }
+      } catch (e) {}
+      memStorage[key] = String(value);
+    },
+  };
+
+  var memSessionStorage = {};
+  var safeSessionStorage = {
+    getItem: function (key) {
+      try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          return window.sessionStorage.getItem(key);
+        }
+      } catch (e) {}
+      return memSessionStorage[key] || null;
+    },
+    setItem: function (key, value) {
+      try {
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem(key, value);
+          return;
+        }
+      } catch (e) {}
+      memSessionStorage[key] = String(value);
+    },
+  };
+
+  // Вспомогательная функция для cookies с защитой от SecurityError
   function getCookie(name) {
-    const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
-    return match ? decodeURIComponent(match[1]) : null;
-  }
-
-  const ymUid = getCookie('_ym_uid') || null;
-  const gaId = getCookie('_ga') || null;
-
-  // 3. Захват и вечное хранение UTM-меток в localStorage
-  const STORAGE_KEY_UTM = 'getvoxly_utm_tags';
-  let utmTags = {};
-  try {
-    utmTags = JSON.parse(localStorage.getItem(STORAGE_KEY_UTM) || '{}');
-  } catch (e) {
-    utmTags = {};
-  }
-
-  const searchParams = new URLSearchParams(window.location.search);
-  const detectedUtm = {};
-  ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'].forEach(function (param) {
-    if (searchParams.has(param)) {
-      detectedUtm[param] = searchParams.get(param);
+    try {
+      if (typeof document === 'undefined' || !document.cookie) return null;
+      var match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+      return match ? decodeURIComponent(match[1]) : null;
+    } catch (e) {
+      return null;
     }
-  });
+  }
 
-  if (Object.keys(detectedUtm).length > 0) {
-    utmTags = Object.assign({}, utmTags, detectedUtm);
+  // 3. Отказоустойчивый поиск ID канала (только стандартные селекторы CSS2)
+  function getChannelAccountId() {
     try {
-      localStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+      var s1 = document.querySelector('script[data-account-id]');
+      if (s1) {
+        var id1 = s1.getAttribute('data-account-id');
+        if (id1 && id1.trim()) return id1.trim();
+      }
     } catch (e) {}
-  }
 
-  // 4. Идентификация посетителя
-  const STORAGE_KEY_VISITOR = 'getvoxly_visitor_' + channelAccountId;
-  let visitorId = localStorage.getItem(STORAGE_KEY_VISITOR) || '';
-  if (!visitorId) {
-    visitorId = ymUid ? 'ym_' + ymUid : 'usr_' + Math.random().toString(36).substring(2, 11);
     try {
-      localStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+      var s2 = document.querySelector('script[data-channel-id]');
+      if (s2) {
+        var id2 = s2.getAttribute('data-channel-id');
+        if (id2 && id2.trim()) return id2.trim();
+      }
     } catch (e) {}
-  }
 
-  // 5. Счётчик визитов и сессий
-  const STORAGE_KEY_VISIT_COUNT = 'getvoxly_visit_count';
-  let visitCount = parseInt(localStorage.getItem(STORAGE_KEY_VISIT_COUNT) || '0', 10);
-  if (!sessionStorage.getItem('getvoxly_session_active')) {
-    visitCount += 1;
     try {
-      localStorage.setItem(STORAGE_KEY_VISIT_COUNT, String(visitCount));
-      sessionStorage.setItem('getvoxly_session_active', 'true');
+      if (document.currentScript) {
+        var idCur =
+          document.currentScript.getAttribute('data-account-id') ||
+          document.currentScript.getAttribute('data-channel-id');
+        if (idCur && idCur.trim()) return idCur.trim();
+      }
     } catch (e) {}
-  }
 
-  // 6. История переходов по страницам сайта (последние 10 страниц)
-  const STORAGE_KEY_PAGE_HISTORY = 'getvoxly_page_history';
-  let pageHistory = [];
-  try {
-    pageHistory = JSON.parse(sessionStorage.getItem(STORAGE_KEY_PAGE_HISTORY) || '[]');
-  } catch (e) {
-    pageHistory = [];
-  }
-
-  const currentUrl = window.location.href;
-  const currentTime = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  if (pageHistory.length === 0 || pageHistory[pageHistory.length - 1].url !== currentUrl) {
-    pageHistory.push({ step: pageHistory.length + 1, time: currentTime, url: currentUrl });
-    if (pageHistory.length > 10) pageHistory.shift();
     try {
-      sessionStorage.setItem(STORAGE_KEY_PAGE_HISTORY, JSON.stringify(pageHistory));
+      var allScripts = document.getElementsByTagName('script');
+      for (var i = 0; i < allScripts.length; i++) {
+        var tag = allScripts[i];
+        var idAttr = tag.getAttribute('data-account-id') || tag.getAttribute('data-channel-id');
+        if (idAttr && idAttr.trim()) return idAttr.trim();
+      }
     } catch (e) {}
+
+    return '';
   }
 
-  // 7. Стили виджета
-  const styles = `
+  function getScriptElement() {
+    try {
+      return (
+        document.querySelector('script[data-account-id]') ||
+        document.querySelector('script[data-channel-id]') ||
+        document.currentScript ||
+        null
+      );
+    } catch (e) {
+      return document.currentScript || null;
+    }
+  }
+
+  // 4. Стили виджета с поддержкой тем (Twenty Light Canvas по умолчанию), мобильных устройств и safe-area
+  var styles = `
     .getvoxly-widget-wrapper {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 2147483647;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      position: fixed !important;
+      bottom: 20px !important;
+      bottom: calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+      right: 20px !important;
+      right: calc(20px + env(safe-area-inset-right, 0px)) !important;
+      z-index: 2147483647 !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+      display: flex !important;
+      align-items: center !important;
+      flex-direction: row !important;
+      gap: 12px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      box-sizing: border-box !important;
+      direction: ltr !important;
+      pointer-events: auto !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      --accent-color: #6366F1;
+      --badge-color: #6366F1;
     }
     .getvoxly-widget-wrapper.position-left {
-      right: auto;
-      left: 24px;
+      right: auto !important;
+      left: 20px !important;
+      left: calc(20px + env(safe-area-inset-left, 0px)) !important;
+      flex-direction: row-reverse !important;
+    }
+    .getvoxly-widget-wrapper * {
+      box-sizing: border-box !important;
     }
 
-    @keyframes getvoxlyPulse {
-      0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
-      70% { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(245, 158, 11, 0); }
-      100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+    /* Эффекты привлечения внимания к кнопке (Attention Grabber System) */
+    @keyframes getvoxly-shimmer-periodic {
+      0% { transform: translate3d(-120%, -120%, 0) rotate(25deg); opacity: 0; }
+      2% { opacity: 1; }
+      16% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 1; }
+      17%, 100% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 0; }
+    }
+    @keyframes getvoxly-shimmer-continuous {
+      0% { transform: translate3d(-120%, -120%, 0) rotate(25deg); opacity: 0; }
+      4% { opacity: 1; }
+      96% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 1; }
+      100% { transform: translate3d(120%, 120%, 0) rotate(25deg); opacity: 0; }
+    }
+
+    @keyframes getvoxly-pulse-ring-periodic {
+      0% { transform: scale(0.96); opacity: 0.85; border-width: 2.5px; }
+      18% { transform: scale(1.48); opacity: 0; border-width: 1px; }
+      19%, 100% { transform: scale(1); opacity: 0; }
+    }
+    @keyframes getvoxly-pulse-ring-continuous {
+      0% { transform: scale(0.96); opacity: 0.85; border-width: 2.5px; }
+      100% { transform: scale(1.48); opacity: 0; border-width: 1px; }
+    }
+    @keyframes getvoxly-pulse-btn-periodic {
+      0%, 20%, 100% { transform: scale(1); }
+      8% { transform: scale(1.05); }
+    }
+    @keyframes getvoxly-pulse-btn-continuous {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
+    @keyframes getvoxly-glow-periodic {
+      0%, 22%, 100% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.2)) !important;
+      }
+      11% {
+        box-shadow: 0 0 32px var(--accent-color, #6366F1), 0 0 16px var(--accent-color, #6366F1) !important;
+        filter: drop-shadow(0 0 20px var(--accent-color, #6366F1)) !important;
+      }
+    }
+    @keyframes getvoxly-glow-continuous {
+      0%, 100% {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.2)) !important;
+      }
+      50% {
+        box-shadow: 0 0 32px var(--accent-color, #6366F1), 0 0 16px var(--accent-color, #6366F1) !important;
+        filter: drop-shadow(0 0 20px var(--accent-color, #6366F1)) !important;
+      }
+    }
+
+    @keyframes getvoxly-bounce-periodic {
+      0%, 24%, 100% { transform: translateY(0); }
+      7% { transform: translateY(-8px) scale(1.02); }
+      13% { transform: translateY(0) scale(0.98); }
+      17% { transform: translateY(-3px) scale(1.01); }
+      20% { transform: translateY(0) scale(1); }
+    }
+    @keyframes getvoxly-bounce-continuous {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+
+    @keyframes getvoxly-mascot-shimmer-periodic {
+      0%, 20%, 100% { filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)) brightness(1); }
+      10% { filter: drop-shadow(0 12px 28px var(--accent-color, #6366F1)) brightness(1.3); }
+    }
+    @keyframes getvoxly-mascot-shimmer-continuous {
+      0%, 100% { filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)) brightness(1); }
+      50% { filter: drop-shadow(0 12px 28px var(--accent-color, #6366F1)) brightness(1.3); }
     }
 
     .getvoxly-widget-bubble {
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      background: #f59e0b;
-      box-shadow: 0 8px 24px rgba(245, 158, 11, 0.35);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      animation: getvoxlyPulse 2.4s infinite;
-      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s;
+      width: 60px !important;
+      height: 60px !important;
+      min-width: 60px !important;
+      min-height: 60px !important;
+      border-radius: 50% !important;
+      background: var(--accent-color, #6366F1) !important;
+      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35) !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      position: relative !important;
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s, background 0.2s !important;
+      user-select: none !important;
+      border: none !important;
+      outline: none !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+    }
+
+    /* Эффект: Shimmer */
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer {
+      position: relative !important;
+      overflow: hidden !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer::after {
+      content: '' !important;
+      position: absolute !important;
+      top: -60% !important;
+      left: -60% !important;
+      width: 220% !important;
+      height: 220% !important;
+      background: linear-gradient(
+        115deg,
+        transparent 20%,
+        rgba(255, 255, 255, 0) 35%,
+        rgba(255, 255, 255, 0.7) 50%,
+        rgba(255, 255, 255, 0) 65%,
+        transparent 80%
+      ) !important;
+      transform: translate3d(-120%, -120%, 0) rotate(25deg) !important;
+      pointer-events: none !important;
+      z-index: 5 !important;
+      animation: getvoxly-shimmer-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: transform, opacity !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-shimmer.is-continuous::after {
+      animation: getvoxly-shimmer-continuous 2.4s ease-in-out infinite !important;
+    }
+
+    /* Shimmer для Маскота */
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer {
+      overflow: visible !important;
+      animation: getvoxly-mascot-shimmer-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer.is-continuous {
+      animation: getvoxly-mascot-shimmer-continuous 2.4s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-shimmer::after {
+      display: none !important;
+    }
+
+    /* Эффект: Pulse */
+    .getvoxly-widget-bubble.getvoxly-effect-pulse {
+      position: relative !important;
+      overflow: visible !important;
+      animation: getvoxly-pulse-btn-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: transform !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse.is-continuous {
+      animation: getvoxly-pulse-btn-continuous 2.2s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse::before {
+      content: '' !important;
+      position: absolute !important;
+      inset: -3px !important;
+      border-radius: 50% !important;
+      border: 2px solid var(--accent-color, #6366F1) !important;
+      pointer-events: none !important;
+      z-index: -1 !important;
+      animation: getvoxly-pulse-ring-periodic var(--attention-duration, 6s) cubic-bezier(0.2, 0.8, 0.2, 1) infinite !important;
+      will-change: transform, opacity !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-pulse.is-continuous::before {
+      animation: getvoxly-pulse-ring-continuous 2.2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite !important;
+    }
+
+    /* Эффект: Glow */
+    .getvoxly-widget-bubble.getvoxly-effect-glow {
+      position: relative !important;
+      overflow: visible !important;
+      animation: getvoxly-glow-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+      will-change: box-shadow, filter !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-glow.is-continuous {
+      animation: getvoxly-glow-continuous 2.6s ease-in-out infinite !important;
+    }
+
+    /* Эффект: Bounce */
+    .getvoxly-widget-bubble.getvoxly-effect-bounce {
+      position: relative !important;
+      animation: getvoxly-bounce-periodic var(--attention-duration, 6s) cubic-bezier(0.34, 1.56, 0.64, 1) infinite !important;
+      will-change: transform !important;
+    }
+    .getvoxly-widget-bubble.getvoxly-effect-bounce.is-continuous {
+      animation: getvoxly-bounce-continuous 2.8s ease-in-out infinite !important;
+    }
+
+    /* Специфика для маскота при bounce / glow / pulse */
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-bounce {
+      animation: getvoxly-bounce-periodic var(--attention-duration, 6s) cubic-bezier(0.34, 1.56, 0.64, 1) infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-bounce.is-continuous {
+      animation: getvoxly-bounce-continuous 2.8s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-glow {
+      animation: getvoxly-glow-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-glow.is-continuous {
+      animation: getvoxly-glow-continuous 2.6s ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-pulse {
+      animation: getvoxly-pulse-btn-periodic var(--attention-duration, 6s) ease-in-out infinite !important;
+    }
+    .getvoxly-widget-bubble.is-mascot.getvoxly-effect-pulse.is-continuous {
+      animation: getvoxly-pulse-btn-continuous 2.2s ease-in-out infinite !important;
+    }
+
+    .getvoxly-widget-bubble:hover,
+    .getvoxly-widget-bubble:hover::before,
+    .getvoxly-widget-bubble:hover::after {
+      animation: none !important;
     }
     .getvoxly-widget-bubble:hover {
-      animation: none;
-      transform: scale(1.06);
-      box-shadow: 0 12px 30px rgba(245, 158, 11, 0.45);
+      animation: none !important;
+      transform: scale(1.06) !important;
+      box-shadow: 0 12px 30px rgba(99, 102, 241, 0.45) !important;
+    }
+    .getvoxly-bubble-icon {
+      display: flex !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-bubble-close-icon {
+      display: none !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
+      color: #ffffff !important;
+    }
+
+    /* Когда чат открыт: кнопка превращается в аккуратную круглую кнопку-крестик, бейдж скрыт */
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo {
+      width: 56px !important;
+      height: 56px !important;
+      min-width: 56px !important;
+      min-height: 56px !important;
+      max-width: 56px !important;
+      max-height: 56px !important;
+      padding: 0 !important;
+      border-radius: 50% !important;
+      background: var(--accent-color, #6366F1) !important;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
+      animation: none !important;
+      overflow: hidden !important;
+      gap: 0 !important;
+      border: none !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::after,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::after,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo::after {
+      animation: none !important;
+      display: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo .getvoxly-bubble-icon {
+      display: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-dot,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-pill-dot {
+      display: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo .getvoxly-bubble-close-icon {
+      display: flex !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
+      display: none !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+
+    /* Формат кнопки-капсулы (Информативная плашка с аватаром, именем и статусом «Онлайн») */
+    .getvoxly-widget-bubble.is-pill {
+      display: inline-flex !important;
+      align-items: center !important;
+      width: auto !important;
+      min-width: 0 !important;
+      max-width: 340px !important;
+      height: 56px !important;
+      min-height: 56px !important;
+      border-radius: 9999px !important;
+      padding: 5px 20px 5px 6px !important;
+      gap: 11px !important;
+      background: var(--accent-color, #4a38f5) !important;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.22) !important;
+      cursor: pointer !important;
+      overflow: hidden !important;
+      border: none !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+    }
+    @media (max-width: 440px) {
+      .getvoxly-widget-bubble.is-pill {
+        max-width: calc(100vw - 36px) !important;
+        padding: 5px 14px 5px 6px !important;
+        gap: 8px !important;
+      }
+    }
+    .getvoxly-widget-bubble.is-pill:hover {
+      transform: scale(1.03) !important;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3) !important;
+    }
+    .getvoxly-widget-wrapper:not(.is-chat-open) .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon {
+      display: flex !important;
+      align-items: center !important;
+      gap: 11px !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .getvoxly-bubble-pill-avatar-wrap {
+      position: relative !important;
+      width: 44px !important;
+      height: 44px !important;
+      min-width: 44px !important;
+      min-height: 44px !important;
+      max-width: 44px !important;
+      max-height: 44px !important;
+      border-radius: 50% !important;
+      border: 2px solid #ffffff !important;
+      background: #ffffff !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+      overflow: visible !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-bubble-pill-avatar-inner {
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: #ffffff !important;
+      position: relative !important;
+    }
+    .getvoxly-bubble-pill-avatar-wrap .getvoxly-mascot-sprite,
+    .getvoxly-bubble-pill-mascot-sprite {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      border-radius: 50% !important;
+      background-size: 300% 300% !important;
+      background-position: 50% 50% !important;
+      background-repeat: no-repeat !important;
+      background-color: transparent !important;
+      image-rendering: -webkit-optimize-contrast !important;
+      display: block !important;
+      pointer-events: none !important;
+      position: static !important;
+      transform: none !important;
+      margin: 0 !important;
+    }
+    .getvoxly-bubble-pill-avatar-img {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      aspect-ratio: 1 / 1 !important;
+      border-radius: 50% !important;
+      object-fit: cover !important;
+      display: block !important;
+      background: #ffffff !important;
+      -webkit-user-drag: none !important;
+      user-select: none !important;
+    }
+    .getvoxly-bubble-pill-dot {
+      position: absolute !important;
+      bottom: -1px !important;
+      right: -1px !important;
+      width: 12px !important;
+      height: 12px !important;
+      background: #10b981 !important;
+      border: 2px solid #ffffff !important;
+      border-radius: 50% !important;
+      z-index: 5 !important;
+      box-shadow: 0 0 5px rgba(16, 185, 129, 0.6) !important;
+    }
+    .getvoxly-bubble-pill-text {
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+      text-align: left !important;
+      min-width: 0 !important;
+      line-height: 1.2 !important;
+    }
+    .getvoxly-bubble-pill-name {
+      color: #ffffff !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      font-size: 14px !important;
+      font-weight: 700 !important;
+      line-height: 1.25 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      letter-spacing: -0.01em !important;
+    }
+    .getvoxly-bubble-pill-status {
+      color: rgba(255, 255, 255, 0.92) !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      line-height: 1.2 !important;
+      white-space: nowrap !important;
+    }
+
+    /* Поддержка режима уменьшения движения (prefers-reduced-motion) */
+    @media (prefers-reduced-motion: reduce) {
+      .getvoxly-widget-bubble,
+      .getvoxly-widget-bubble::before,
+      .getvoxly-widget-bubble::after {
+        animation: none !important;
+        transform: none !important;
+        transition: none !important;
+      }
+    }
+
+    .getvoxly-widget-bubble.is-photo {
+      width: 60px !important;
+      height: 60px !important;
+      min-width: 60px !important;
+      min-height: 60px !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
+      background: #ffffff !important;
+      border: 2px solid #ffffff !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2) !important;
+      overflow: visible !important;
+      position: relative !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-widget-bubble.is-photo:hover {
+      transform: scale(1.06) !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28) !important;
+    }
+    .getvoxly-bubble-photo-wrap {
+      position: relative !important;
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: #ffffff !important;
+    }
+    .getvoxly-bubble-photo-img {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      aspect-ratio: 1 / 1 !important;
+      object-fit: cover !important;
+      border-radius: 50% !important;
+      display: block !important;
+      background: #ffffff !important;
+      -webkit-user-drag: none !important;
+      user-select: none !important;
+    }
+    .getvoxly-widget-bubble.is-photo .getvoxly-bubble-dot {
+      position: absolute !important;
+      bottom: -1px !important;
+      right: -1px !important;
+      width: 14px !important;
+      height: 14px !important;
+      border-radius: 50% !important;
+      background: #10b981 !important;
+      border: 2px solid #ffffff !important;
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.6) !important;
+      z-index: 10 !important;
+    }
+    .getvoxly-widget-bubble.is-mascot {
+      background: transparent !important;
+      box-shadow: none !important;
+      animation: none !important;
+      overflow: visible !important;
+      width: 66px !important;
+      height: 66px !important;
+      min-width: 66px !important;
+      min-height: 66px !important;
+    }
+    .getvoxly-mascot-wrap {
+      width: 66px !important;
+      height: 66px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      position: relative !important;
+      filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.35)) !important;
+      transition: transform 0.15s ease-out !important;
+    }
+    .getvoxly-mascot-wrap:hover {
+      transform: scale(1.08) !important;
+    }
+    .getvoxly-mascot-wrap.squashing {
+      animation: getvoxly-squash 0.35s ease-out !important;
+    }
+    .getvoxly-mascot-sprite {
+      width: 64px !important;
+      height: 64px !important;
+      background-repeat: no-repeat !important;
+      background-size: 300% 300% !important;
+      background-position: 50% 50%;
+      background-color: rgba(99, 102, 241, 0.12) !important;
+      image-rendering: -webkit-optimize-contrast !important;
+      user-select: none !important;
+      -webkit-user-drag: none !important;
+      pointer-events: none !important;
+      border-radius: 50% !important;
+    }
+    @keyframes getvoxly-squash {
+      0% { transform: scale(1, 1); }
+      30% { transform: scale(1.18, 0.82); }
+      60% { transform: scale(0.92, 1.08); }
+      100% { transform: scale(1, 1); }
     }
 
     .getvoxly-chat-badge {
-      position: absolute;
-      right: 74px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: #f59e0b;
-      color: #020617;
-      padding: 7px 14px;
-      font-size: 13px;
-      border-radius: 10px;
-      font-weight: 600;
-      white-space: nowrap;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-      pointer-events: auto;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: opacity 0.25s, transform 0.25s;
+      position: relative !important;
+      right: auto !important;
+      left: auto !important;
+      top: auto !important;
+      transform: none !important;
+      background: var(--badge-color, #6366F1) !important;
+      color: #ffffff !important;
+      padding: 7px 14px !important;
+      font-size: 13px !important;
+      border-radius: 10px !important;
+      font-weight: 600 !important;
+      white-space: normal !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      line-height: 1.35 !important;
+      text-align: center !important;
+      justify-content: center !important;
+      max-width: min(calc(100vw - 100px), 260px) !important;
+      min-width: 60px !important;
+      width: max-content !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+      pointer-events: auto !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      visibility: visible !important;
+      opacity: 1 !important;
+      overflow: visible !important;
+      z-index: 10 !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-chat-badge.is-animating {
+      opacity: 0 !important;
+      transform: translateY(-6px) scale(0.95) !important;
     }
     .position-left .getvoxly-chat-badge {
-      right: auto;
-      left: 74px;
+      right: auto !important;
+      left: auto !important;
     }
     .getvoxly-chat-badge::after {
-      content: '';
-      position: absolute;
-      top: 50%;
-      right: -6px;
-      transform: translateY(-50%);
-      border-width: 6px 0 6px 6px;
-      border-style: solid;
-      border-color: transparent transparent transparent #f59e0b;
+      content: '' !important;
+      position: absolute !important;
+      top: 50% !important;
+      right: -6px !important;
+      transform: translateY(-50%) !important;
+      border-width: 6px 0 6px 6px !important;
+      border-style: solid !important;
+      border-color: transparent transparent transparent var(--badge-color, #6366F1) !important;
     }
     .position-left .getvoxly-chat-badge::after {
-      right: auto;
-      left: -6px;
-      border-width: 6px 6px 6px 0;
-      border-color: transparent #f59e0b transparent transparent;
+      right: auto !important;
+      left: -6px !important;
+      border-width: 6px 6px 6px 0 !important;
+      border-style: solid !important;
+      border-color: transparent var(--badge-color, #6366F1) transparent transparent !important;
     }
 
+    /* Позиционирование бейджа СВЕРХУ для капсулы (Информативная капсула) */
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge {
+      position: absolute !important;
+      bottom: calc(100% + 10px) !important;
+      right: 0 !important;
+      left: auto !important;
+      top: auto !important;
+      transform: none !important;
+      white-space: normal !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      line-height: 1.35 !important;
+      text-align: center !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      max-width: min(calc(100vw - 32px), 260px) !important;
+      min-width: 60px !important;
+      width: max-content !important;
+      padding: 7px 14px !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+      margin: 0 !important;
+    }
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge.is-animating {
+      opacity: 0 !important;
+      transform: translateY(-6px) scale(0.95) !important;
+    }
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge::after {
+      content: '' !important;
+      position: absolute !important;
+      top: 100% !important;
+      right: 48px !important;
+      left: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      border-width: 6px 6px 0 6px !important;
+      border-style: solid !important;
+      border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
+    }
+    .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge {
+      left: 0 !important;
+      right: auto !important;
+      transform: none !important;
+    }
+    .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge::after {
+      top: 100% !important;
+      left: 48px !important;
+      right: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      border-width: 6px 6px 0 6px !important;
+      border-style: solid !important;
+      border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
+    }
+
+    /* Окно диалога (Светлая тема по умолчанию Twenty Light Canvas) */
     .getvoxly-widget-window {
-      position: fixed;
-      bottom: 96px;
-      right: 24px;
-      width: 380px;
-      height: 580px;
-      max-width: calc(100vw - 32px);
-      max-height: calc(100vh - 120px);
-      background: #090d16;
-      border: 1px solid #1e293b;
-      border-radius: 16px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      position: fixed !important;
+      bottom: calc(88px + env(safe-area-inset-bottom, 0px)) !important;
+      right: calc(20px + env(safe-area-inset-right, 0px)) !important;
+      width: 380px !important;
+      max-width: calc(100vw - 32px) !important;
+      height: 580px !important;
+      max-height: calc(100vh - 120px) !important;
+      background: #ffffff !important;
+      color: #111111 !important;
+      border-radius: 16px !important;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.18) !important;
+      border: 1px solid #e5e5e5 !important;
       display: none;
-      flex-direction: column;
-      overflow: hidden;
-      z-index: 2147483647;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      color: #f1f5f9;
-      animation: getvoxlySlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      flex-direction: column !important;
+      overflow: hidden !important;
+      z-index: 2147483647 !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+      box-sizing: border-box !important;
+      direction: ltr !important;
+      --accent-color: #6366F1;
     }
-    .position-left .getvoxly-widget-window {
-      right: auto;
-      left: 24px;
+    .getvoxly-widget-window * {
+      box-sizing: border-box !important;
     }
-    @keyframes getvoxlySlideUp {
-      from { opacity: 0; transform: translateY(16px); }
-      to { opacity: 1; transform: translateY(0); }
+    .getvoxly-widget-window.position-left {
+      right: auto !important;
+      left: calc(20px + env(safe-area-inset-left, 0px)) !important;
     }
+    .getvoxly-widget-window.is-expanded {
+      width: 680px !important;
+      max-width: calc(100vw - 40px) !important;
+      height: 720px !important;
+      max-height: calc(100vh - 100px) !important;
+    }
+
+    /* Тёмная тема (если явно задана в настройках) */
+    .getvoxly-widget-window.is-dark-theme {
+      background: #111111 !important;
+      color: #f8fafc !important;
+      border-color: #27272a !important;
+      box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    @media (max-width: 640px) {
+      .getvoxly-header-expand {
+        display: none !important;
+      }
+      /* На мобильных при открытом чате скрываем плавающую круглую кнопку вызова */
+      .getvoxly-widget-wrapper.is-chat-open {
+        display: none !important;
+      }
+      .getvoxly-widget-window {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100% !important;
+        height: 100dvh !important;
+        max-height: 100% !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+      }
+      .getvoxly-header {
+        border-radius: 0 !important;
+        padding-top: calc(12px + env(safe-area-inset-top, 0px)) !important;
+        padding-bottom: 12px !important;
+        padding-left: calc(14px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(14px + env(safe-area-inset-right, 0px)) !important;
+      }
+      .getvoxly-header-close {
+        width: 36px !important;
+        height: 36px !important;
+        padding: 0 !important;
+        background: rgba(0, 0, 0, 0.15) !important;
+        border-radius: 8px !important;
+      }
+      .getvoxly-messages {
+        padding: 12px !important;
+      }
+      .getvoxly-textarea {
+        font-size: 16px !important; /* Предотвращает нежелательный зум страницы в iOS Safari */
+        line-height: 20px !important;
+      }
+      .getvoxly-input-area {
+        padding-left: calc(12px + env(safe-area-inset-left, 0px)) !important;
+        padding-right: calc(12px + env(safe-area-inset-right, 0px)) !important;
+      }
+      .getvoxly-consent {
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+      }
+    }
+
+    /* Шапка виджета: цвет акцента, аватар консультанта, статус онлайн и крестик */
     .getvoxly-header {
-      background: #0f172a;
-      border-bottom: 1px solid #1e293b;
-      padding: 14px 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      padding: 12px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12) !important;
+      flex-shrink: 0 !important;
     }
-    .getvoxly-header-title {
-      font-weight: 600;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .getvoxly-header-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      min-width: 0 !important;
+      flex: 1 !important;
     }
-    .getvoxly-status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #10b981;
-      display: inline-block;
-      box-shadow: 0 0 8px #10b981;
+    .getvoxly-header-avatar {
+      width: 36px !important;
+      height: 36px !important;
+      border-radius: 50% !important;
+      background: rgba(0, 0, 0, 0.15) !important;
+      position: relative !important;
+      flex-shrink: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      overflow: visible !important;
+    }
+    .getvoxly-header-avatar-inner {
+      width: 36px !important;
+      height: 36px !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-header-status-dot {
+      position: absolute !important;
+      right: -1px !important;
+      bottom: -1px !important;
+      width: 10px !important;
+      height: 10px !important;
+      border-radius: 50% !important;
+      background: #10b981 !important;
+      border: 2px solid #ffffff !important;
+      z-index: 3 !important;
+    }
+    .getvoxly-header-info {
+      min-width: 0 !important;
+      flex: 1 !important;
+    }
+    .getvoxly-header-name {
+      font-size: 13px !important;
+      font-weight: 700 !important;
+      line-height: 1.25 !important;
+      color: #ffffff !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .getvoxly-header-sub {
+      font-size: 11px !important;
+      font-weight: 500 !important;
+      opacity: 0.85 !important;
+      line-height: 1.2 !important;
+      color: #ffffff !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .getvoxly-header-actions {
+      display: flex !important;
+      align-items: center !important;
+      gap: 2px !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-header-btn {
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 6px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 6px !important;
+      transition: background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
+    }
+    .getvoxly-header-btn:hover {
+      background: rgba(0, 0, 0, 0.15) !important;
     }
     .getvoxly-header-close {
-      background: transparent;
-      border: none;
-      color: #94a3b8;
-      cursor: pointer;
-      font-size: 20px;
-      line-height: 1;
-      padding: 4px;
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 6px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 50% !important;
+      transition: background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
     }
     .getvoxly-header-close:hover {
-      color: #f1f5f9;
+      background: rgba(0, 0, 0, 0.15) !important;
     }
-    .getvoxly-telegram-banner {
-      background: #0b1e36;
-      border-bottom: 1px solid #1e3a5f;
-      padding: 8px 14px;
-      font-size: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      color: #38bdf8;
+
+    /* Баннер перехода в мессенджеры */
+    .getvoxly-messenger-container {
+      border-bottom: 1px solid #e5e5e5 !important;
+      flex-shrink: 0 !important;
     }
-    .getvoxly-telegram-btn {
-      background: #0284c7;
-      color: #ffffff;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-weight: 500;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      font-size: 11px;
+    .is-dark-theme .getvoxly-messenger-container {
+      border-bottom-color: #27272a !important;
     }
-    .getvoxly-telegram-btn:hover {
-      background: #0369a1;
+
+    .getvoxly-msg-banner-single {
+      padding: 8px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 10px !important;
+      font-size: 12px !important;
+      text-decoration: none !important;
+      cursor: pointer !important;
+      transition: opacity 0.15s, background 0.15s !important;
     }
+    .getvoxly-msg-banner-single:hover {
+      opacity: 0.9 !important;
+    }
+    .getvoxly-msg-banner-single.is-telegram {
+      background: rgba(2, 132, 199, 0.08) !important;
+      border-bottom: 1px solid rgba(2, 132, 199, 0.2) !important;
+      color: #0284c7 !important;
+    }
+    .getvoxly-msg-banner-single.is-whatsapp {
+      background: rgba(22, 163, 74, 0.08) !important;
+      border-bottom: 1px solid rgba(22, 163, 74, 0.2) !important;
+      color: #15803d !important;
+    }
+    .getvoxly-msg-banner-single.is-max {
+      background: rgba(99, 102, 241, 0.08) !important;
+      border-bottom: 1px solid rgba(99, 102, 241, 0.2) !important;
+      color: #4f46e5 !important;
+    }
+    .getvoxly-msg-banner-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-msg-banner-title {
+      font-weight: 600 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    .getvoxly-msg-banner-action {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      padding: 3px 9px !important;
+      border-radius: 4px !important;
+      white-space: nowrap !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 3px !important;
+      color: #ffffff !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      letter-spacing: 0.01em !important;
+    }
+    .getvoxly-msg-banner-single.is-telegram .getvoxly-msg-banner-action { background: #0284c7 !important; }
+    .getvoxly-msg-banner-single.is-whatsapp .getvoxly-msg-banner-action { background: #16a34a !important; }
+    .getvoxly-msg-banner-single.is-max .getvoxly-msg-banner-action { background: #6366f1 !important; }
+
+    .getvoxly-msg-bar-multi {
+      padding: 7px 12px !important;
+      background: #fafafa !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      gap: 6px !important;
+    }
+    .is-dark-theme .getvoxly-msg-bar-multi {
+      background: #18181b !important;
+    }
+    .getvoxly-msg-bar-title {
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #888888 !important;
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-msg-buttons-row {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      flex-wrap: wrap !important;
+      justify-content: flex-end !important;
+    }
+    .getvoxly-msg-btn-pill {
+      color: #ffffff !important;
+      padding: 3px 8px !important;
+      border-radius: 4px !important;
+      font-weight: 500 !important;
+      font-size: 10px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 4px !important;
+      text-decoration: none !important;
+      cursor: pointer !important;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+      transition: transform 0.1s ease, opacity 0.1s ease !important;
+    }
+    .getvoxly-msg-btn-pill:hover {
+      transform: scale(1.04) !important;
+      opacity: 0.95 !important;
+    }
+    .getvoxly-msg-btn-pill.btn-telegram { background: #0284c7 !important; }
+    .getvoxly-msg-btn-pill.btn-whatsapp { background: #16a34a !important; }
+    .getvoxly-msg-btn-pill.btn-max { background: #6366f1 !important; }
+
+    /* Область сообщений */
     .getvoxly-messages {
-      flex: 1;
-      padding: 16px;
-      overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      background: #090d16;
+      flex: 1 1 0% !important;
+      min-height: 0 !important;
+      padding: 14px !important;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      overscroll-behavior: contain !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      background: #ffffff !important;
     }
+    .is-dark-theme .getvoxly-messages {
+      background: #111111 !important;
+    }
+
+    .getvoxly-msg-row {
+      display: flex !important;
+      width: 100% !important;
+    }
+    .getvoxly-msg-row-bot {
+      align-items: flex-start !important;
+      gap: 8px !important;
+      max-width: 90% !important;
+    }
+    .getvoxly-msg-row-user {
+      justify-content: flex-end !important;
+      align-self: flex-end !important;
+      max-width: 82% !important;
+    }
+    .getvoxly-msg-bot-avatar {
+      width: 28px !important;
+      height: 28px !important;
+      border-radius: 50% !important;
+      background: var(--accent-color, #6366F1) !important;
+      flex-shrink: 0 !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin-top: 2px !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-msg-bot-content {
+      flex: 1 !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-msg-bot-author {
+      font-size: 10px !important;
+      font-weight: 600 !important;
+      color: #888888 !important;
+      margin-bottom: 2px !important;
+    }
+
     .getvoxly-msg {
-      max-width: 82%;
-      padding: 10px 14px;
-      border-radius: 12px;
-      font-size: 13px;
-      line-height: 1.45;
-      word-break: break-word;
+      padding: 10px 14px !important;
+      font-size: 13px !important;
+      line-height: 1.45 !important;
+      word-break: break-word !important;
     }
     .getvoxly-msg-bot {
-      background: #1e293b;
-      color: #f8fafc;
-      align-self: flex-start;
-      border-bottom-left-radius: 4px;
+      background: #f5f5f5 !important;
+      color: #111111 !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 16px !important;
+      border-top-left-radius: 4px !important;
+    }
+    .is-dark-theme .getvoxly-msg-bot {
+      background: #18181b !important;
+      color: #e4e4e7 !important;
+      border-color: #27272a !important;
     }
     .getvoxly-msg-user {
-      background: #f59e0b;
-      color: #020617;
-      font-weight: 500;
-      align-self: flex-end;
-      border-bottom-right-radius: 4px;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      font-weight: 500 !important;
+      border-radius: 16px !important;
+      border-top-right-radius: 4px !important;
     }
+
+    /* Прикрепление файлов и превью */
+    .getvoxly-attach-btn {
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      padding: 0 !important;
+      width: 30px !important;
+      height: 30px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 6px !important;
+      transition: color 0.15s, background 0.15s !important;
+      flex-shrink: 0 !important;
+      line-height: 1 !important;
+    }
+    .getvoxly-attach-btn:hover {
+      color: var(--accent-color, #4a38f5) !important;
+      background: rgba(0, 0, 0, 0.04) !important;
+    }
+    .is-dark-theme .getvoxly-attach-btn:hover {
+      background: rgba(255, 255, 255, 0.08) !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-attachment-preview {
+      margin-bottom: 8px !important;
+    }
+    .getvoxly-preview-card {
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      padding: 6px 10px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 8px !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+    }
+    .is-dark-theme .getvoxly-preview-card {
+      background: #18181b !important;
+      border-color: #27272a !important;
+    }
+    .getvoxly-preview-thumb {
+      width: 32px !important;
+      height: 32px !important;
+      border-radius: 4px !important;
+      object-fit: cover !important;
+      flex-shrink: 0 !important;
+      background: #f5f5f5 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      color: #666666 !important;
+      overflow: hidden !important;
+    }
+    .getvoxly-preview-info {
+      flex: 1 !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-preview-name {
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      color: #111111 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      line-height: 1.3 !important;
+    }
+    .is-dark-theme .getvoxly-preview-name {
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-preview-size {
+      font-size: 10px !important;
+      color: #888888 !important;
+    }
+    .getvoxly-preview-remove {
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      border-radius: 4px !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-preview-remove:hover {
+      color: #e11d48 !important;
+      background: rgba(225, 29, 72, 0.08) !important;
+    }
+
+    /* Отображение вложений в сообщении */
+    .getvoxly-msg-attachment {
+      margin-bottom: 6px !important;
+    }
+    .getvoxly-msg-img {
+      max-width: 100% !important;
+      max-height: 220px !important;
+      border-radius: 10px !important;
+      display: block !important;
+      cursor: pointer !important;
+      transition: opacity 0.15s !important;
+    }
+    .getvoxly-msg-img:hover {
+      opacity: 0.95 !important;
+    }
+    .getvoxly-msg-video {
+      max-width: 100% !important;
+      max-height: 240px !important;
+      border-radius: 10px !important;
+      display: block !important;
+    }
+    .getvoxly-msg-file-link {
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      padding: 6px 10px !important;
+      background: rgba(0, 0, 0, 0.06) !important;
+      border-radius: 8px !important;
+      text-decoration: none !important;
+      color: inherit !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      word-break: break-all !important;
+    }
+    .getvoxly-msg-user .getvoxly-msg-file-link {
+      background: rgba(255, 255, 255, 0.2) !important;
+      color: #ffffff !important;
+    }
+
+    /* Inline Attach Gate */
+    .getvoxly-attach-gate {
+      padding: 8px 10px !important;
+      margin-bottom: 8px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 10px !important;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+    }
+    .is-dark-theme .getvoxly-attach-gate {
+      background: #18181b !important;
+      border-color: #27272a !important;
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-attach-gate-header {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      margin-bottom: 6px !important;
+    }
+    .getvoxly-attach-gate-text {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+      font-size: 11.5px !important;
+      font-weight: 600 !important;
+      color: #334155 !important;
+    }
+    .is-dark-theme .getvoxly-attach-gate-text {
+      color: #cbd5e1 !important;
+    }
+    .getvoxly-attach-gate-text svg {
+      color: var(--accent-color, #4a38f5) !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-attach-cancel-btn {
+      width: 20px !important;
+      height: 20px !important;
+      background: transparent !important;
+      border: none !important;
+      color: #888888 !important;
+      cursor: pointer !important;
+      border-radius: 4px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex-shrink: 0 !important;
+      padding: 0 !important;
+      transition: color 0.15s, background-color 0.15s !important;
+    }
+    .getvoxly-attach-cancel-btn:hover {
+      color: #111111 !important;
+      background: #f1f5f9 !important;
+    }
+    .is-dark-theme .getvoxly-attach-cancel-btn:hover {
+      color: #ffffff !important;
+      background: #27272a !important;
+    }
+    .getvoxly-attach-gate-row {
+      display: flex !important;
+      align-items: center !important;
+      gap: 6px !important;
+    }
+    .getvoxly-attach-phone-input {
+      flex: 1 1 auto !important;
+      min-width: 0 !important;
+      height: 32px !important;
+      padding: 0 10px !important;
+      font-size: 12.5px !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 6px !important;
+      background: #ffffff !important;
+      color: #111111 !important;
+      outline: none !important;
+      transition: border-color 0.15s, box-shadow 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-attach-phone-input {
+      background: #111111 !important;
+      border-color: #27272a !important;
+      color: #f1f5f9 !important;
+    }
+    .getvoxly-attach-phone-input:focus {
+      border-color: var(--accent-color, #4a38f5) !important;
+      box-shadow: 0 0 0 2px rgba(74, 56, 245, 0.15) !important;
+    }
+    .getvoxly-attach-submit-btn {
+      height: 32px !important;
+      padding: 0 12px !important;
+      background: var(--accent-color, #4a38f5) !important;
+      color: #ffffff !important;
+      border: none !important;
+      border-radius: 6px !important;
+      font-size: 12px !important;
+      font-weight: 600 !important;
+      cursor: pointer !important;
+      white-space: nowrap !important;
+      flex-shrink: 0 !important;
+      transition: opacity 0.15s !important;
+    }
+    .getvoxly-attach-submit-btn:hover {
+      opacity: 0.92 !important;
+    }
+    .getvoxly-attach-gate-error {
+      margin-top: 5px !important;
+      font-size: 11px !important;
+      color: #e11d48 !important;
+      font-weight: 500 !important;
+    }
+    .getvoxly-network-status {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      margin: 0 12px 6px 12px;
+      background: #fffbeb !important;
+      border: 1px solid #fef08a !important;
+      border-radius: 6px !important;
+      font-size: 11px !important;
+      color: #92400e !important;
+      line-height: 1.3 !important;
+      animation: getvoxly-fade-in 0.2s ease-out;
+    }
+    .is-dark-theme .getvoxly-network-status {
+      background: #2a2010 !important;
+      border-color: #854d0e !important;
+      color: #fde047 !important;
+    }
+    .getvoxly-network-icon {
+      display: inline-flex;
+      align-items: center;
+      color: #d97706;
+      flex-shrink: 0;
+    }
+    .getvoxly-network-text {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .getvoxly-network-retry-btn {
+      background: #fef3c7 !important;
+      border: 1px solid #fde68a !important;
+      border-radius: 4px !important;
+      padding: 2px 8px !important;
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      color: #78350f !important;
+      cursor: pointer !important;
+      flex-shrink: 0 !important;
+      transition: background-color 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-network-retry-btn {
+      background: #451a03 !important;
+      border-color: #78350f !important;
+      color: #fef08a !important;
+    }
+    .getvoxly-network-retry-btn:hover {
+      background: #fde68a !important;
+    }
+
+
+    /* Поле ввода */
     .getvoxly-input-area {
-      padding: 10px 14px 4px;
-      background: #0f172a;
-      border-top: 1px solid #1e293b;
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
+      padding: 10px 12px 6px !important;
+      background: #fafafa !important;
+      border-top: 1px solid #e5e5e5 !important;
+      flex-shrink: 0 !important;
+    }
+    .is-dark-theme .getvoxly-input-area {
+      background: #18181b !important;
+      border-top-color: #27272a !important;
+    }
+    .getvoxly-input-wrapper {
+      display: flex !important;
+      align-items: flex-end !important;
+      gap: 8px !important;
+      background: #ffffff !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 12px !important;
+      padding: 6px 8px 6px 10px !important;
+      transition: border-color 0.15s !important;
+    }
+    .is-dark-theme .getvoxly-input-wrapper {
+      background: #111111 !important;
+      border-color: #27272a !important;
+    }
+    .getvoxly-input-wrapper:focus-within {
+      border-color: var(--accent-color, #6366F1) !important;
     }
     .getvoxly-textarea {
-      flex: 1;
-      background: #090d16;
-      border: 1px solid #334155;
-      border-radius: 8px;
-      color: #f1f5f9;
-      padding: 8px 12px;
-      font-size: 13px;
-      font-family: inherit;
-      resize: none;
-      height: 38px;
-      max-height: 90px;
-      outline: none;
-      line-height: 1.35;
+      flex: 1 !important;
+      background: transparent !important;
+      border: none !important;
+      color: #111111 !important;
+      padding: 5px 0 !important;
+      font-size: 13px !important;
+      font-family: inherit !important;
+      resize: none !important;
+      min-height: 20px !important;
+      max-height: 120px !important;
+      outline: none !important;
+      line-height: 20px !important;
+      box-sizing: border-box !important;
+      overflow-y: hidden;
+      margin: 0 !important;
     }
-    .getvoxly-textarea:focus {
-      border-color: #f59e0b;
+    .getvoxly-textarea::-webkit-scrollbar {
+      width: 4px !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-track {
+      background: transparent !important;
+    }
+    .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #d4d4d8 !important;
+      border-radius: 4px !important;
+    }
+    .is-dark-theme .getvoxly-textarea::-webkit-scrollbar-thumb {
+      background: #3f3f46 !important;
+    }
+    .is-dark-theme .getvoxly-textarea {
+      color: #f1f5f9 !important;
     }
     .getvoxly-send-btn {
-      background: #f59e0b;
-      color: #020617;
-      border: none;
-      border-radius: 8px;
-      width: 38px;
-      height: 38px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-weight: bold;
-      transition: background 0.15s, opacity 0.15s;
+      background: var(--accent-color, #6366F1) !important;
+      color: #ffffff !important;
+      border: none !important;
+      border-radius: 8px !important;
+      width: 30px !important;
+      height: 30px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
+      transition: transform 0.1s ease, opacity 0.15s !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-send-btn:hover {
+      transform: scale(1.05) !important;
+    }
+    .getvoxly-send-btn:active {
+      transform: scale(0.95) !important;
     }
     .getvoxly-send-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
+      opacity: 0.5 !important;
+      cursor: not-allowed !important;
     }
     .getvoxly-typing {
-      font-size: 11px;
-      color: #94a3b8;
-      font-style: italic;
-      padding: 0 16px 8px;
+      font-size: 11px !important;
+      color: #888888 !important;
+      font-style: italic !important;
+      padding: 0 16px 6px !important;
       display: none;
     }
     .getvoxly-consent {
-      background: #0f172a;
-      font-size: 10px;
-      color: #64748b;
-      text-align: center;
-      padding: 2px 14px 8px;
-      line-height: 1.25;
-      user-select: none;
+      background: #fafafa !important;
+      font-size: 10px !important;
+      color: #888888 !important;
+      text-align: center !important;
+      padding: 2px 12px 6px !important;
+      line-height: 1.25 !important;
+      user-select: none !important;
+    }
+    .is-dark-theme .getvoxly-consent {
+      background: #18181b !important;
+      color: #71717a !important;
+    }
+
+    /* ------------------------------------------------------------- */
+    /* Двухшаговый нативный Pre-Chat Модал (WhatsApp & Telegram)     */
+    /* ------------------------------------------------------------- */
+    .getvoxly-prechat-overlay {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      background: rgba(0, 0, 0, 0.45) !important;
+      z-index: 9999 !important;
+      display: none !important;
+      flex-direction: column !important;
+      justify-content: flex-end !important;
+      backdrop-filter: blur(2px) !important;
+      animation: getvoxly-fade-in 0.18s ease-out !important;
+      pointer-events: none !important;
+    }
+    .getvoxly-prechat-overlay.is-open {
+      display: flex !important;
+      pointer-events: auto !important;
+    }
+    .getvoxly-prechat-card {
+      background: #ffffff !important;
+      border-radius: 16px 16px 0 0 !important;
+      overflow: hidden !important;
+      box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.16) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      max-height: 92% !important;
+      animation: getvoxly-slide-up 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    }
+    .getvoxly-prechat-header {
+      padding: 12px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-prechat-header.theme-telegram {
+      background: #2AABEE !important;
+    }
+    .getvoxly-prechat-header.theme-whatsapp {
+      background: #075E54 !important;
+    }
+    .getvoxly-prechat-header-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-prechat-avatar {
+      width: 34px !important;
+      height: 34px !important;
+      border-radius: 50% !important;
+      background: rgba(255, 255, 255, 0.2) !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-prechat-title {
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      line-height: 1.2 !important;
+    }
+    .getvoxly-prechat-sub {
+      font-size: 11px !important;
+      opacity: 0.85 !important;
+      line-height: 1.2 !important;
+      margin-top: 1px !important;
+    }
+    .getvoxly-prechat-close {
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      border-radius: 50% !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      opacity: 0.85 !important;
+      transition: opacity 0.15s !important;
+    }
+    .getvoxly-prechat-close:hover {
+      opacity: 1 !important;
+    }
+    .getvoxly-prechat-body {
+      padding: 14px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      background: #ffffff !important;
+      overflow-y: auto !important;
+    }
+    .getvoxly-prechat-preview-box {
+      border-radius: 8px !important;
+      padding: 10px 12px !important;
+      font-size: 12px !important;
+      line-height: 1.4 !important;
+      border: 1px solid #e5e5e5 !important;
+      background: #fafafa !important;
+    }
+    .getvoxly-prechat-preview-box.theme-telegram {
+      background: #eef7fe !important;
+      border-color: #cbe6fa !important;
+      color: #0c4a6e !important;
+    }
+    .getvoxly-prechat-preview-box.theme-whatsapp {
+      background: #dcf8c6 !important;
+      border-color: #c7e8a9 !important;
+      color: #064e3b !important;
+    }
+    .getvoxly-prechat-preview-label {
+      font-size: 10px !important;
+      font-weight: 600 !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.05em !important;
+      opacity: 0.7 !important;
+      margin-bottom: 4px !important;
+    }
+    .getvoxly-prechat-field {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 4px !important;
+    }
+    .getvoxly-prechat-label {
+      font-size: 11.5px !important;
+      font-weight: 600 !important;
+      color: #111111 !important;
+    }
+    .getvoxly-prechat-input {
+      width: 100% !important;
+      height: 34px !important;
+      padding: 0 10px !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 6px !important;
+      font-size: 12.5px !important;
+      color: #111111 !important;
+      background: #ffffff !important;
+      outline: none !important;
+      box-sizing: border-box !important;
+      transition: border-color 0.15s, box-shadow 0.15s !important;
+    }
+    .getvoxly-prechat-input:focus {
+      border-color: #4a38f5 !important;
+      box-shadow: 0 0 0 2px rgba(74, 56, 245, 0.15) !important;
+    }
+    .getvoxly-prechat-submit {
+      width: 100% !important;
+      height: 38px !important;
+      border-radius: 8px !important;
+      border: none !important;
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
+      transition: opacity 0.15s, transform 0.1s ease !important;
+    }
+    .getvoxly-prechat-submit:hover {
+      opacity: 0.92 !important;
+      transform: translateY(-1px) !important;
+    }
+    .getvoxly-prechat-submit.btn-telegram {
+      background: #2AABEE !important;
+    }
+    .getvoxly-prechat-submit.btn-whatsapp {
+      background: #25D366 !important;
+    }
+    .getvoxly-prechat-footer-note {
+      font-size: 10.5px !important;
+      color: #888888 !important;
+      text-align: center !important;
+      line-height: 1.3 !important;
     }
   `;
 
-  const styleEl = document.createElement('style');
-  styleEl.textContent = styles;
-  document.head.appendChild(styleEl);
-
-  // 8. Создание DOM-структуры виджета
-  const wrapper = document.createElement('div');
-  wrapper.className = 'getvoxly-widget-wrapper';
-  wrapper.innerHTML = `
-    <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
-    <div class="getvoxly-widget-bubble" id="getvoxly-bubble">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#020617" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
-      </svg>
-    </div>
-  `;
-
-  const win = document.createElement('div');
-  win.className = 'getvoxly-widget-window';
-  win.innerHTML = `
-    <div class="getvoxly-header">
-      <div class="getvoxly-header-title">
-        <span class="getvoxly-status-dot"></span>
-        <span id="getvoxly-bot-title">Онлайн-консультант</span>
-      </div>
-      <button class="getvoxly-header-close" id="getvoxly-close">&times;</button>
-    </div>
-    <div class="getvoxly-telegram-banner" id="getvoxly-tg-banner" style="display: none;">
-      <span>Удобнее в Telegram?</span>
-      <a href="#" target="_blank" class="getvoxly-telegram-btn" id="getvoxly-tg-link">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
-        </svg>
-        Перейти
-      </a>
-    </div>
-    <div class="getvoxly-messages" id="getvoxly-messages"></div>
-    <div class="getvoxly-typing" id="getvoxly-typing">Ассистент печатает ответ...</div>
-    <div class="getvoxly-input-area">
-      <textarea class="getvoxly-textarea" id="getvoxly-input" placeholder="Введите ваш вопрос..."></textarea>
-      <button class="getvoxly-send-btn" id="getvoxly-send">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
-        </svg>
-      </button>
-    </div>
-    <div class="getvoxly-consent">
-      Нажимая «Отправить», вы даете согласие на обработку персональных данных.
-    </div>
-  `;
-
-  document.body.appendChild(wrapper);
-  document.body.appendChild(win);
-
-  const bubble = wrapper.querySelector('#getvoxly-bubble');
-  const badge = wrapper.querySelector('#getvoxly-badge');
-  const messagesContainer = win.querySelector('#getvoxly-messages');
-  const inputEl = win.querySelector('#getvoxly-input');
-  const sendBtn = win.querySelector('#getvoxly-send');
-  const closeBtn = win.querySelector('#getvoxly-close');
-  const typingIndicator = win.querySelector('#getvoxly-typing');
-  const botTitle = win.querySelector('#getvoxly-bot-title');
-  const tgBanner = win.querySelector('#getvoxly-tg-banner');
-  const tgLink = win.querySelector('#getvoxly-tg-link');
-
-  // 9. Локальная история переписки
-  const STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
-  function getLocalHistory() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY_CHAT_HISTORY) || '[]');
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function appendMessageToUI(text, isUser) {
-    const el = document.createElement('div');
-    el.className = 'getvoxly-msg ' + (isUser ? 'getvoxly-msg-user' : 'getvoxly-msg-bot');
-    el.textContent = text;
-    messagesContainer.appendChild(el);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-  }
-
-  function saveAndRenderMessage(text, isUser) {
-    appendMessageToUI(text, isUser);
-    const hist = getLocalHistory();
-    hist.push({ text: text, isUser: isUser, timestamp: Date.now() });
-    try {
-      localStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(hist));
-    } catch (e) {}
-  }
-
-  // Восстановление истории сообщений
-  const existingHistory = getLocalHistory();
-  if (existingHistory.length > 0) {
-    existingHistory.forEach(function (m) {
-      appendMessageToUI(m.text, m.isUser);
-    });
-  }
-
-  // 10. Переключение окна виджета
-  let isOpen = false;
-  function openWidget() {
-    isOpen = true;
-    win.style.display = 'flex';
-    badge.style.display = 'none';
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    inputEl.focus();
-    initSession();
-  }
-
-  function closeWidget() {
-    isOpen = false;
-    win.style.display = 'none';
-  }
-
-  function toggleWidget() {
-    if (isOpen) {
-      closeWidget();
-    } else {
-      openWidget();
-    }
-  }
-
-  bubble.addEventListener('click', toggleWidget);
-  badge.addEventListener('click', openWidget);
-  closeBtn.addEventListener('click', closeWidget);
-
-  // 11. Проактивное открытие через заданный интервал
-  if (proactiveEnabled && existingHistory.length === 0) {
-    setTimeout(function () {
-      if (!isOpen && getLocalHistory().length === 0) {
-        openWidget();
-      }
-    }, proactiveDelay);
-  }
-
-  // 12. Инициализация сессии на сервере (загрузка настроек аккаунта)
-  let sessionInitialized = false;
-  async function initSession() {
-    if (sessionInitialized) return;
-    try {
-      const res = await fetch(apiUrl + '/api/v1/public/chat/init/' + channelAccountId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitorId: visitorId || undefined }),
-      });
-
-      if (res.ok) {
-        sessionInitialized = true;
-        const data = (await res.json()).data;
-        if (data.visitorId) {
-          visitorId = data.visitorId;
-          try {
-            localStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
-          } catch (e) {}
-        }
-
-        botTitle.textContent = data.title || (data.tenantName + ' (' + data.botName + ')');
-
-        if (data.accentColor) {
-          bubble.style.background = data.accentColor;
-          bubble.style.boxShadow = '0 8px 24px ' + data.accentColor + '55';
-          sendBtn.style.background = data.accentColor;
-          badge.style.background = data.accentColor;
-        }
-
-        if (data.position === 'bottom-left') {
-          wrapper.classList.add('position-left');
-          win.classList.add('position-left');
-        }
-
-        if (data.placeholder) {
-          inputEl.placeholder = data.placeholder;
-        }
-
-        // Если в истории ещё нет сообщений, показываем приветствие
-        if (messagesContainer.children.length === 0 && data.greeting) {
-          saveAndRenderMessage(data.greeting, false);
-        }
-
-        // Telegram banner deep-link
-        const targetBot = telegramBot || data.telegramBot;
-        if (targetBot && data.showTelegramBanner !== false) {
-          tgBanner.style.display = 'flex';
-          tgLink.href = 'https://t.me/' + targetBot + '?start=site_' + visitorId;
-        } else {
-          tgBanner.style.display = 'none';
-        }
-      }
-    } catch (e) {
-      console.warn('[GetVoxly] Failed to init chat session', e);
-    }
-  }
-
-  // 13. Умная склейка сообщений (Message Buffer / Debounce)
-  let messageBuffer = [];
-  let sendTimer = null;
-
-  function flushMessageBuffer() {
-    if (messageBuffer.length === 0) return;
-    const combinedText = messageBuffer.join('\n\n');
-    messageBuffer = [];
-
-    executeSendMessage(combinedText);
-  }
-
-  function handleUserSubmit() {
-    const text = inputEl.value.trim();
-    if (!text) return;
-
-    inputEl.value = '';
-    inputEl.style.height = '38px';
-    lastDraft = '';
-
-    // Сразу отрисовываем и сохраняем локально, чтобы посетитель видел своё сообщение
-    saveAndRenderMessage(text, true);
-    messageBuffer.push(text);
-
-    // Сбрасываем предыдущий таймер отправки
-    clearTimeout(sendTimer);
-    typingIndicator.style.display = 'block';
-
-    // Буфер на 2.5 секунды: склеивает быстрые сообщения пользователя в одну реплику для AI
-    sendTimer = setTimeout(flushMessageBuffer, 2500);
-  }
-
-  // 14. Отправка на бэкенд и имитация чтения/печати AI
-  async function executeSendMessage(fullText, isDraft) {
-    try {
-      const payload = {
-        visitorId: visitorId,
-        text: fullText,
-        pageUrl: window.location.href,
-        utmTags: utmTags,
-        ymUid: ymUid || undefined,
-        gaId: gaId || undefined,
-        visitCount: visitCount,
-        pageHistory: pageHistory,
-        isDraft: Boolean(isDraft),
-      };
-
-      const res = await fetch(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      typingIndicator.style.display = 'none';
-
-      if (isDraft) {
-        return; // Черновик отправлен тихо, автоответ не ожидается
-      }
-
-      if (res.ok) {
-        const result = (await res.json()).data;
-        if (result.replies && result.replies.length > 0) {
-          for (let i = 0; i < result.replies.length; i++) {
-            const replyText = result.replies[i];
-            const typingDelay = Math.min(Math.max(replyText.length * 25, 700), 2200);
-
-            typingIndicator.style.display = 'block';
-            await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
-            typingIndicator.style.display = 'none';
-
-            saveAndRenderMessage(replyText, false);
-          }
-        } else if (result.status === 'operator_needed') {
-          saveAndRenderMessage('Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.', false);
-        }
-      } else {
-        saveAndRenderMessage('Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.', false);
-      }
-    } catch (e) {
-      typingIndicator.style.display = 'none';
-      if (!isDraft) {
-        saveAndRenderMessage('Ошибка связи с сервером. Проверьте интернет-соединение.', false);
-      }
-    }
-  }
-
-  sendBtn.addEventListener('click', handleUserSubmit);
-  inputEl.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleUserSubmit();
-    }
-  });
-
-  // 15. Перехват брошенных черновиков (Lead Salvage)
-  let lastDraft = '';
-  let sentDrafts = {};
-
-  inputEl.addEventListener('input', function (e) {
-    const current = e.target.value.trim();
-    // Если посетитель набрал текст > 3 символов и полностью стёр — тихо отправляем стёртый черновик
-    if (current === '' && lastDraft.length > 3 && !sentDrafts[lastDraft]) {
-      sentDrafts[lastDraft] = true;
-      executeSendMessage(lastDraft, true);
-      lastDraft = '';
+  // 5. Функция монтирования виджета
+  function mount(channelAccountId) {
+    if (document.getElementById('getvoxly-bubble')) {
       return;
     }
-    if (current.length > 3) {
-      lastDraft = current;
+
+    sendTelemetry('mount_started', channelAccountId);
+
+    var currentScript = getScriptElement();
+    var apiUrl = (
+      (currentScript && currentScript.getAttribute('data-api-url')) ||
+      'https://api.getvoxly.ru'
+    ).replace(/\/$/, '');
+    var telegramBot = (currentScript && currentScript.getAttribute('data-telegram-bot')) || '';
+    var proactiveEnabled = (currentScript && currentScript.getAttribute('data-proactive')) !== 'false';
+    var proactiveDelay = parseInt((currentScript && currentScript.getAttribute('data-proactive-delay')) || '30000', 10);
+
+    var ymUid = getCookie('_ym_uid') || null;
+    var yandexuid = getCookie('yandexuid') || null;
+    var ymD = getCookie('_ym_d') || null;
+    var yabsSid = getCookie('yabs-sid') || null;
+    var gaId = getCookie('_ga') || null;
+    var gaGid = getCookie('_gid') || null;
+    var fbId = getCookie('_fbp') || getCookie('_fbc') || null;
+    var tmrLvid = getCookie('_tmr_lvid') || null;
+    var vkUid = getCookie('_vk_uid') || getCookie('remixsid') || null;
+
+    try {
+      if (!ymUid && window.Ya && window.Ya.Metrika2) {
+        var counters = window.Ya.Metrika2.counters ? window.Ya.Metrika2.counters() : [];
+        if (counters && counters[0] && typeof counters[0].getClientID === 'function') {
+          ymUid = counters[0].getClientID();
+        }
+      }
+    } catch (e) {}
+
+    try {
+      if (!gaId && window.ga && typeof window.ga.getAll === 'function') {
+        var trackers = window.ga.getAll();
+        if (trackers && trackers[0] && typeof trackers[0].get === 'function') {
+          gaId = trackers[0].get('clientId');
+        }
+      }
+    } catch (e) {}
+
+    function setPersistentCookie(name, value, days) {
+      try {
+        var d = new Date();
+        d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+        document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax';
+      } catch (e) {}
     }
-  });
 
-  // Отправка черновика при закрытии или перезагрузке страницы
-  window.addEventListener('beforeunload', function () {
-    if (lastDraft.length > 3 && !sentDrafts[lastDraft]) {
-      sentDrafts[lastDraft] = true;
-      const payload = JSON.stringify({
-        visitorId: visitorId,
-        text: lastDraft,
-        pageUrl: window.location.href,
-        utmTags: utmTags,
-        ymUid: ymUid || undefined,
-        gaId: gaId || undefined,
-        visitCount: visitCount,
-        pageHistory: pageHistory,
-        isDraft: true,
-      });
+    function getDeviceFingerprint() {
+      try {
+        var scr = window.screen ? [window.screen.width, window.screen.height, window.screen.colorDepth, window.devicePixelRatio || 1].join('x') : '';
+        var tz = '';
+        try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+        var tzOff = new Date().getTimezoneOffset();
+        var lng = (navigator.languages ? navigator.languages.join(',') : navigator.language) || '';
+        var plt = navigator.platform || (navigator.userAgentData && navigator.userAgentData.platform) || '';
+        var cores = navigator.hardwareConcurrency || 0;
+        var mem = navigator.deviceMemory || 0;
+        var touch = navigator.maxTouchPoints || 0;
 
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, new Blob([payload], { type: 'application/json' }));
+        var cvsHash = '';
+        try {
+          var cvs = document.createElement('canvas');
+          cvs.width = 180;
+          cvs.height = 30;
+          var ctx = cvs.getContext('2d');
+          if (ctx) {
+            ctx.textBaseline = 'top';
+            ctx.font = '13px Arial';
+            ctx.fillStyle = '#4a38f5';
+            ctx.fillRect(0, 0, 80, 20);
+            ctx.fillStyle = '#03b2cb';
+            ctx.fillText('GetVoxly,fp26', 2, 2);
+            var dUrl = cvs.toDataURL();
+            var h = 0;
+            for (var i = 0; i < dUrl.length; i++) {
+              h = ((h << 5) - h) + dUrl.charCodeAt(i);
+              h |= 0;
+            }
+            cvsHash = 'cv_' + Math.abs(h).toString(36);
+          }
+        } catch (e) {}
+
+        var gpu = '';
+        try {
+          var glCvs = document.createElement('canvas');
+          var gl = glCvs.getContext('webgl') || glCvs.getContext('experimental-webgl');
+          if (gl) {
+            var ext = gl.getExtension('WEBGL_debug_renderer_info');
+            if (ext) {
+              gpu = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').replace(/[^\w.-]/g, '_').slice(0, 50);
+            }
+          }
+        } catch (e) {}
+
+        var raw = [scr, tz, tzOff, lng, plt, cores, mem, touch, cvsHash, gpu].join('|');
+        var fpH = 0;
+        for (var j = 0; j < raw.length; j++) {
+          fpH = ((fpH << 5) - fpH) + raw.charCodeAt(j);
+          fpH |= 0;
+        }
+
+        return {
+          fingerprint: 'dfp_' + Math.abs(fpH).toString(36),
+          screen: scr,
+          timezone: tz,
+          timezoneOffset: tzOff,
+          language: lng,
+          platform: plt,
+          cpuCores: cores,
+          deviceMemory: mem,
+          maxTouchPoints: touch,
+          canvasHash: cvsHash,
+          gpuRenderer: gpu,
+        };
+      } catch (e) {
+        return { fingerprint: 'dfp_fallback', screen: '', timezone: '', language: '', platform: '' };
       }
     }
-  });
+
+    var dfp = getDeviceFingerprint();
+
+    // UTM-метки и рекламные Click ID (с поддержкой localStorage, sessionStorage, cookie, search и hash SPA)
+    var STORAGE_KEY_UTM = 'getvoxly_utm_tags';
+    var STORAGE_KEY_CLICKS = 'getvoxly_click_ids';
+    var utmTags = {};
+    var clickIds = {};
+    try {
+      var rawUtm = safeStorage.getItem(STORAGE_KEY_UTM) || safeSessionStorage.getItem(STORAGE_KEY_UTM) || getCookie('getvoxly_utm');
+      if (rawUtm) utmTags = JSON.parse(rawUtm);
+      var rawClicks = safeStorage.getItem(STORAGE_KEY_CLICKS) || safeSessionStorage.getItem(STORAGE_KEY_CLICKS) || getCookie('getvoxly_clicks');
+      if (rawClicks) clickIds = JSON.parse(rawClicks);
+    } catch (e) {
+      utmTags = {};
+      clickIds = {};
+    }
+
+    try {
+      var searchParams = new URLSearchParams(window.location.search);
+      var hashParams = null;
+      if (window.location.hash && window.location.hash.indexOf('?') !== -1) {
+        try {
+          hashParams = new URLSearchParams(window.location.hash.substring(window.location.hash.indexOf('?')));
+        } catch (e) {}
+      }
+
+      var detectedUtm = {};
+      ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'utm_id', 'utm_creative_format', 'utm_marketing_tactic'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedUtm[param] = val;
+        }
+      });
+      if (Object.keys(detectedUtm).length > 0) {
+        utmTags = Object.assign({}, utmTags, detectedUtm);
+        safeStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        safeSessionStorage.setItem(STORAGE_KEY_UTM, JSON.stringify(utmTags));
+        setPersistentCookie('getvoxly_utm', JSON.stringify(utmTags), 30);
+      }
+
+      var detectedClicks = {};
+      ['yclid', 'gclid', 'fbclid', 'vkclid', 'ttclid', 'msclkid', '_openstat', 'wbraid', 'gbraid'].forEach(function (param) {
+        var val = searchParams.get(param) || (hashParams && hashParams.get(param)) ||
+                  searchParams.get(param.toUpperCase()) || (hashParams && hashParams.get(param.toUpperCase()));
+        if (val) {
+          detectedClicks[param] = val;
+        }
+      });
+      if (Object.keys(detectedClicks).length > 0) {
+        clickIds = Object.assign({}, clickIds, detectedClicks);
+        safeStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        safeSessionStorage.setItem(STORAGE_KEY_CLICKS, JSON.stringify(clickIds));
+        setPersistentCookie('getvoxly_clicks', JSON.stringify(clickIds), 30);
+      }
+    } catch (e) {}
+
+    // Идентификация посетителя с многоуровневым хранением (Evercookie sync)
+    var STORAGE_KEY_VISITOR = 'getvoxly_visitor_' + channelAccountId;
+    var COOKIE_KEY_VISITOR = 'getvoxly_vid_' + channelAccountId;
+    var visitorId = safeStorage.getItem(STORAGE_KEY_VISITOR) || getCookie(COOKIE_KEY_VISITOR) || '';
+
+    if (!visitorId) {
+      if (yandexuid) {
+        visitorId = 'ya_' + yandexuid;
+      } else if (ymUid) {
+        visitorId = 'ym_' + ymUid;
+      } else if (dfp.fingerprint && dfp.fingerprint !== 'dfp_fallback') {
+        visitorId = 'usr_' + dfp.fingerprint.slice(4) + '_' + Math.random().toString(36).substring(2, 7);
+      } else {
+        visitorId = 'usr_' + Math.random().toString(36).substring(2, 11);
+      }
+    }
+
+    safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+    safeSessionStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+    setPersistentCookie(COOKIE_KEY_VISITOR, visitorId, 365);
+
+    // Счётчик визитов
+    var STORAGE_KEY_VISIT_COUNT = 'getvoxly_visit_count';
+    var visitCount = parseInt(safeStorage.getItem(STORAGE_KEY_VISIT_COUNT) || '0', 10);
+    if (!safeSessionStorage.getItem('getvoxly_session_active')) {
+      visitCount += 1;
+      safeStorage.setItem(STORAGE_KEY_VISIT_COUNT, String(visitCount));
+      safeSessionStorage.setItem('getvoxly_session_active', 'true');
+    }
+
+    // История страниц
+    var STORAGE_KEY_PAGE_HISTORY = 'getvoxly_page_history';
+    var pageHistory = [];
+    try {
+      pageHistory = JSON.parse(safeSessionStorage.getItem(STORAGE_KEY_PAGE_HISTORY) || '[]');
+    } catch (e) {
+      pageHistory = [];
+    }
+
+    try {
+      var currentUrl = window.location.href;
+      var currentTime = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      if (pageHistory.length === 0 || pageHistory[pageHistory.length - 1].url !== currentUrl) {
+        pageHistory.push({ step: pageHistory.length + 1, time: currentTime, url: currentUrl });
+        if (pageHistory.length > 10) pageHistory.shift();
+        safeSessionStorage.setItem(STORAGE_KEY_PAGE_HISTORY, JSON.stringify(pageHistory));
+      }
+    } catch (e) {}
+
+    var isOpen = false;
+    var sessionInitialized = false;
+    var currentConfig = null;
+    var lastDraft = '';
+    var sentDrafts = {};
+    var isBotResponding = false;
+    var messageBuffer = [];
+    var pendingQueueWhileReplying = [];
+    var sendTimer = null;
+    var BUFFER_WAIT_MS = 3500;
+
+    if (!document.getElementById('getvoxly-styles')) {
+      var styleEl = document.createElement('style');
+      styleEl.id = 'getvoxly-styles';
+      styleEl.textContent = styles;
+      (document.head || document.body).appendChild(styleEl);
+    }
+
+    // Создание DOM-структуры виджета
+    var wrapper = document.createElement('div');
+    wrapper.className = 'getvoxly-widget-wrapper';
+    wrapper.id = 'getvoxly-wrapper';
+    wrapper.innerHTML = `
+      <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
+      <div class="getvoxly-widget-bubble" id="getvoxly-bubble" title="Онлайн-консультант">
+        <div class="getvoxly-bubble-icon" id="getvoxly-bubble-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>
+          </svg>
+        </div>
+        <div class="getvoxly-bubble-close-icon" id="getvoxly-bubble-close-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+          </svg>
+        </div>
+      </div>
+    `;
+
+    var win = document.createElement('div');
+    win.className = 'getvoxly-widget-window';
+    win.id = 'getvoxly-window';
+    win.innerHTML = `
+      <div class="getvoxly-header" id="getvoxly-header">
+        <div class="getvoxly-header-left">
+          <div class="getvoxly-header-avatar" id="getvoxly-header-avatar">
+            <div class="getvoxly-header-avatar-inner" id="getvoxly-header-avatar-inner">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>
+              </svg>
+            </div>
+            <span class="getvoxly-header-status-dot"></span>
+          </div>
+          <div class="getvoxly-header-info">
+            <div class="getvoxly-header-name" id="getvoxly-header-name">Онлайн-консультант</div>
+            <div class="getvoxly-header-sub" id="getvoxly-header-sub">В сети · Консультант онлайн</div>
+          </div>
+        </div>
+        <div class="getvoxly-header-actions">
+          <button class="getvoxly-header-btn getvoxly-header-expand" id="getvoxly-expand" title="Развернуть окно" type="button">
+            <svg class="getvoxly-icon-expand" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+            </svg>
+            <svg class="getvoxly-icon-compress" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M10 14l-7 7"/>
+            </svg>
+          </button>
+          <button class="getvoxly-header-btn getvoxly-header-close" id="getvoxly-close" title="Закрыть окно" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
+      <div class="getvoxly-messages" id="getvoxly-messages"></div>
+      <div class="getvoxly-typing" id="getvoxly-typing">печатает...</div>
+      <div class="getvoxly-input-area">
+        <div class="getvoxly-attachment-preview" id="getvoxly-attachment-preview" style="display: none;"></div>
+        <div class="getvoxly-attach-gate" id="getvoxly-attach-gate" style="display: none;">
+          <div class="getvoxly-attach-gate-header">
+            <div class="getvoxly-attach-gate-text">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+              <span>Укажите телефон для прикрепления файла:</span>
+            </div>
+            <button class="getvoxly-attach-cancel-btn" id="getvoxly-attach-cancel" title="Отмена" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="getvoxly-attach-gate-row">
+            <input class="getvoxly-attach-phone-input" id="getvoxly-attach-phone" placeholder="+7 (999) 000-00-00" type="tel" autocomplete="tel" />
+            <button class="getvoxly-attach-submit-btn" id="getvoxly-attach-submit" type="button">Выбрать файл</button>
+          </div>
+          <div class="getvoxly-attach-gate-error" id="getvoxly-attach-error" style="display: none;"></div>
+        </div>
+        <div class="getvoxly-network-status" id="getvoxly-network-status" style="display: none;">
+          <span class="getvoxly-network-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+          <span class="getvoxly-network-text" id="getvoxly-network-text">Проблема со связью. Повторное подключение...</span>
+          <button type="button" class="getvoxly-network-retry-btn" id="getvoxly-network-retry" style="display: none;">Повторить</button>
+        </div>
+        <div class="getvoxly-input-wrapper">
+          <button class="getvoxly-attach-btn" id="getvoxly-attach" title="Прикрепить фото или документ" type="button">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.88-7.88"/>
+            </svg>
+          </button>
+          <input type="file" id="getvoxly-file-input" style="display: none;" accept="image/*,video/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" />
+          <textarea class="getvoxly-textarea" id="getvoxly-input" placeholder="Введите ваш вопрос..."></textarea>
+          <button class="getvoxly-send-btn" id="getvoxly-send" title="Отправить" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="getvoxly-consent">
+        Нажимая «Отправить», вы даете согласие на обработку персональных данных.
+      </div>
+      <div class="getvoxly-prechat-overlay" id="getvoxly-prechat-modal" style="display: none !important;"></div>
+    `;
+
+    document.body.appendChild(wrapper);
+    document.body.appendChild(win);
+
+    sendTelemetry('dom_appended', 'bubble_ready');
+
+    var bubble = document.getElementById('getvoxly-bubble');
+    if (bubble) {
+      bubble.classList.add('getvoxly-effect-shimmer');
+      bubble.style.setProperty('--attention-duration', '6s');
+    }
+    var bubbleIcon = document.getElementById('getvoxly-bubble-icon');
+    var badge = document.getElementById('getvoxly-badge');
+    var messagesContainer = document.getElementById('getvoxly-messages');
+    var inputEl = document.getElementById('getvoxly-input');
+    var sendBtn = document.getElementById('getvoxly-send');
+    var closeBtn = document.getElementById('getvoxly-close');
+    var expandBtn = document.getElementById('getvoxly-expand');
+    var typingIndicator = document.getElementById('getvoxly-typing');
+    var headerName = document.getElementById('getvoxly-header-name');
+    var headerSub = document.getElementById('getvoxly-header-sub');
+    var headerAvatarInner = document.getElementById('getvoxly-header-avatar-inner');
+    var msgContainer = document.getElementById('getvoxly-messenger-container');
+
+    var attachBtn = document.getElementById('getvoxly-attach');
+    var fileInput = document.getElementById('getvoxly-file-input');
+    var attachmentPreview = document.getElementById('getvoxly-attachment-preview');
+    var attachGate = document.getElementById('getvoxly-attach-gate');
+    var attachCloseBtn = document.getElementById('getvoxly-attach-cancel');
+    var attachSubmitBtn = document.getElementById('getvoxly-attach-submit');
+    var attachPhoneInput = document.getElementById('getvoxly-attach-phone');
+    var attachGateError = document.getElementById('getvoxly-attach-error');
+    var networkStatusEl = document.getElementById('getvoxly-network-status');
+    var networkTextEl = document.getElementById('getvoxly-network-text');
+    var networkRetryBtn = document.getElementById('getvoxly-network-retry');
+
+    function showNetworkStatus(text, showRetry, onRetry) {
+      if (!networkStatusEl) return;
+      if (networkTextEl) networkTextEl.textContent = text;
+      if (networkRetryBtn) {
+        if (showRetry && typeof onRetry === 'function') {
+          networkRetryBtn.style.display = 'inline-block';
+          networkRetryBtn.onclick = function() {
+            networkRetryBtn.style.display = 'none';
+            onRetry();
+          };
+        } else {
+          networkRetryBtn.style.display = 'none';
+        }
+      }
+      networkStatusEl.style.display = 'flex';
+    }
+
+    function hideNetworkStatus() {
+      if (networkStatusEl) networkStatusEl.style.display = 'none';
+    }
+
+    function adjustInputHeight() {
+      if (!inputEl) return;
+      inputEl.style.setProperty('height', 'auto', 'important');
+      var scrollH = inputEl.scrollHeight;
+      var minH = 30;
+      var maxH = 120;
+      var newH = Math.max(minH, Math.min(scrollH, maxH));
+      inputEl.style.setProperty('height', newH + 'px', 'important');
+      inputEl.style.setProperty('overflow-y', scrollH > maxH ? 'auto' : 'hidden', 'important');
+      if (messagesContainer) {
+        var isNearBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 50;
+        if (isNearBottom) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      }
+    }
+
+    var isExpanded = false;
+    var pendingAttachment = null;
+
+    var STORAGE_KEY_LEAD_PHONE = 'getvoxly_lead_phone_' + channelAccountId;
+    var STORAGE_KEY_LEAD_EMAIL = 'getvoxly_lead_email_' + channelAccountId;
+    var STORAGE_KEY_LEAD_NAME = 'getvoxly_lead_name_' + channelAccountId;
+
+    function hasKnownLeadContact() {
+      var p = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE);
+      var cleanP = p ? p.replace(/\D/g, '') : '';
+      return Boolean(cleanP.length >= 10);
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      var k = 1024;
+      var sizes = ['B', 'KB', 'MB', 'GB'];
+      var i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function renderAttachmentPreview(att) {
+      if (!attachmentPreview) return;
+      if (!att) {
+        attachmentPreview.innerHTML = '';
+        attachmentPreview.style.display = 'none';
+        return;
+      }
+
+      var isImg = att.mimeType && att.mimeType.startsWith('image/');
+      var thumbHtml = isImg
+        ? '<img src="' + att.url + '" class="getvoxly-preview-thumb" alt="Превью" />'
+        : '<div class="getvoxly-preview-thumb"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>';
+
+      attachmentPreview.innerHTML =
+        '<div class="getvoxly-preview-card">' +
+          thumbHtml +
+          '<div class="getvoxly-preview-info">' +
+            '<div class="getvoxly-preview-name" title="' + (att.filename || 'Файл') + '">' + (att.filename || 'Файл') + '</div>' +
+            '<div class="getvoxly-preview-size">' + formatBytes(att.sizeBytes) + '</div>' +
+          '</div>' +
+          '<button class="getvoxly-preview-remove" id="getvoxly-preview-remove" title="Удалить файл" type="button">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>' +
+          '</button>' +
+        '</div>';
+      attachmentPreview.style.display = 'block';
+
+      var removeBtn = document.getElementById('getvoxly-preview-remove');
+      if (removeBtn) {
+        removeBtn.addEventListener('click', function () {
+          pendingAttachment = null;
+          if (fileInput) fileInput.value = '';
+          renderAttachmentPreview(null);
+        });
+      }
+    }
+
+    function showAttachGate() {
+      if (!attachGate) return;
+      if (attachGateError) {
+        attachGateError.style.display = 'none';
+        attachGateError.textContent = '';
+      }
+      if (attachPhoneInput) {
+        attachPhoneInput.value = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || '';
+      }
+      attachGate.style.display = 'block';
+      if (attachPhoneInput) {
+        setTimeout(function () { attachPhoneInput.focus(); }, 60);
+      }
+    }
+
+    function hideAttachGate() {
+      if (attachGate) attachGate.style.display = 'none';
+      if (attachGateError) {
+        attachGateError.style.display = 'none';
+        attachGateError.textContent = '';
+      }
+    }
+
+    if (attachCloseBtn) {
+      attachCloseBtn.addEventListener('click', hideAttachGate);
+    }
+
+    function submitAttachGate() {
+      var phone = attachPhoneInput ? attachPhoneInput.value.trim() : '';
+      var cleanDigits = phone.replace(/\D/g, '');
+      if (cleanDigits.length < 10) {
+        if (attachGateError) {
+          attachGateError.textContent = 'Пожалуйста, укажите действующий номер телефона.';
+          attachGateError.style.display = 'block';
+        }
+        if (attachPhoneInput) attachPhoneInput.focus();
+        return;
+      }
+
+      safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, phone);
+      hideAttachGate();
+      if (fileInput) {
+        fileInput.click();
+      }
+    }
+
+    if (attachSubmitBtn) {
+      attachSubmitBtn.addEventListener('click', submitAttachGate);
+    }
+
+    if (attachPhoneInput) {
+      attachPhoneInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submitAttachGate();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          hideAttachGate();
+        }
+      });
+    }
+
+    if (expandBtn) {
+      expandBtn.addEventListener('click', function () {
+        isExpanded = !isExpanded;
+        if (isExpanded) {
+          win.classList.add('is-expanded');
+          expandBtn.title = 'Свернуть окно';
+          var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
+          var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
+          if (expIcon) expIcon.style.display = 'none';
+          if (compIcon) compIcon.style.display = 'block';
+        } else {
+          win.classList.remove('is-expanded');
+          expandBtn.title = 'Развернуть окно';
+          var expIcon = expandBtn.querySelector('.getvoxly-icon-expand');
+          var compIcon = expandBtn.querySelector('.getvoxly-icon-compress');
+          if (expIcon) expIcon.style.display = 'block';
+          if (compIcon) compIcon.style.display = 'none';
+        }
+        if (messagesContainer) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      });
+    }
+
+    if (attachBtn && fileInput) {
+      attachBtn.addEventListener('click', function () {
+        if (hasKnownLeadContact()) {
+          fileInput.click();
+        } else {
+          showAttachGate();
+        }
+      });
+
+      fileInput.addEventListener('change', async function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+
+        if (file.size > 20 * 1024 * 1024) {
+          alert('Размер файла не должен превышать 20 МБ');
+          fileInput.value = '';
+          return;
+        }
+
+        if (attachmentPreview) {
+          attachmentPreview.innerHTML =
+            '<div class="getvoxly-preview-card">' +
+              '<div class="getvoxly-preview-thumb"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>' +
+              '<div class="getvoxly-preview-info"><div class="getvoxly-preview-name">Загрузка ' + file.name + '...</div></div>' +
+            '</div>';
+          attachmentPreview.style.display = 'block';
+        }
+
+        try {
+          var formData = new FormData();
+          formData.append('file', file);
+
+          var res = await fetch(apiUrl + '/api/v1/public/chat/upload/' + channelAccountId, {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (res.ok) {
+            var uploadJson = await res.json();
+            var data = uploadJson && uploadJson.data;
+            if (data && data.url) {
+              pendingAttachment = {
+                url: data.url,
+                filename: data.filename || file.name,
+                mimeType: data.mimeType || file.type || 'application/octet-stream',
+                sizeBytes: data.sizeBytes || file.size,
+              };
+              renderAttachmentPreview(pendingAttachment);
+            } else {
+              throw new Error('Пустой ответ сервера');
+            }
+          } else {
+            var errData = await res.json().catch(function () { return {}; });
+            alert('Ошибка загрузки: ' + (errData.error || 'не удалось загрузить файл'));
+            renderAttachmentPreview(null);
+            fileInput.value = '';
+          }
+        } catch (err) {
+          alert('Не удалось загрузить файл. Проверьте соединение с интернетом.');
+          renderAttachmentPreview(null);
+          fileInput.value = '';
+        }
+      });
+    }
+
+    // Локальная история сообщений
+    var STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
+    function getLocalHistory() {
+      try {
+        var rawItems = JSON.parse(safeStorage.getItem(STORAGE_KEY_CHAT_HISTORY) || '[]');
+        if (!Array.isArray(rawItems)) return [];
+        return rawItems.filter(function (it) {
+          if (!it || !it.text) return false;
+          return it.text !== 'Ошибка связи с сервером. Проверьте интернет-соединение.' &&
+                 it.text !== 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.';
+        });
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function resolveAssetUrl(url) {
+      if (!url || typeof url !== 'string') return '';
+      url = url.trim();
+      if (!url) return '';
+      if (url.indexOf('data:') === 0 || url.indexOf('blob:') === 0 || url.indexOf('http://') === 0 || url.indexOf('https://') === 0) {
+        return url;
+      }
+      if (url.indexOf('//') === 0) {
+        return 'https:' + url;
+      }
+      if (url.indexOf('/uploads/') === 0 || url.indexOf('uploads/') === 0) {
+        return 'https://api.getvoxly.ru/' + url.replace(/^\/+/, '');
+      }
+      var base = 'https://getvoxly.ru';
+      return base.replace(/\/+$/, '') + '/' + url.replace(/^\/+/, '');
+    }
+
+    function createMiniAvatarHtml() {
+      var botFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
+      if (!currentConfig) {
+        return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+      }
+      if (currentConfig.avatarType === 'icon') {
+        return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+      }
+      if (currentConfig.avatarType === 'photo' || (!currentConfig.avatarType && currentConfig.consultantAvatar)) {
+        var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar || '/miroslava.png');
+        return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
+      }
+      if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
+        return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      }
+      if (currentConfig._directionsUrl && !currentConfig.consultantAvatar) {
+        return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
+      }
+      return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+    }
+
+    function appendMessageToUI(text, isUser, attachment, attachmentType) {
+      if (!messagesContainer) return;
+
+      var row = document.createElement('div');
+      row.className = 'getvoxly-msg-row ' + (isUser ? 'getvoxly-msg-row-user' : 'getvoxly-msg-row-bot');
+
+      var bubble = document.createElement('div');
+      bubble.className = 'getvoxly-msg ' + (isUser ? 'getvoxly-msg-user' : 'getvoxly-msg-bot');
+
+      if (attachment) {
+        var attContainer = document.createElement('div');
+        attContainer.className = 'getvoxly-msg-attachment';
+
+        var isImg = attachmentType && attachmentType.startsWith('image/');
+        var isVideo = attachmentType && attachmentType.startsWith('video/');
+
+        if (isImg) {
+          var link = document.createElement('a');
+          link.href = attachment;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          var img = document.createElement('img');
+          img.className = 'getvoxly-msg-img';
+          img.src = attachment;
+          img.alt = 'Фотография';
+          img.loading = 'lazy';
+          link.appendChild(img);
+          attContainer.appendChild(link);
+        } else if (isVideo) {
+          var video = document.createElement('video');
+          video.className = 'getvoxly-msg-video';
+          video.src = attachment;
+          video.controls = true;
+          attContainer.appendChild(video);
+        } else {
+          var docLink = document.createElement('a');
+          docLink.className = 'getvoxly-msg-file-link';
+          docLink.href = attachment;
+          docLink.target = '_blank';
+          docLink.rel = 'noopener noreferrer';
+          docLink.download = '';
+          var rawName = (attachment.split('/').pop() || 'Документ').split('?')[0];
+          docLink.innerHTML =
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+            '<span>' + rawName + '</span>';
+          attContainer.appendChild(docLink);
+        }
+        bubble.appendChild(attContainer);
+      }
+
+      var isTextPlaceholder = Boolean(
+        attachment && (!text || text === 'Фотография' || text === 'Видео' || text === 'Вложение')
+      );
+
+      if (text && !isTextPlaceholder) {
+        var textEl = document.createElement('div');
+        textEl.className = 'getvoxly-msg-text';
+        textEl.textContent = text;
+        bubble.appendChild(textEl);
+      }
+
+      if (isUser) {
+        row.appendChild(bubble);
+      } else {
+        var avatarEl = document.createElement('div');
+        avatarEl.className = 'getvoxly-msg-bot-avatar';
+        avatarEl.innerHTML = createMiniAvatarHtml();
+
+        var contentEl = document.createElement('div');
+        contentEl.className = 'getvoxly-msg-bot-content';
+
+        if (currentConfig && currentConfig.consultantName) {
+          var authorEl = document.createElement('div');
+          authorEl.className = 'getvoxly-msg-bot-author';
+          authorEl.textContent = currentConfig.consultantName;
+          contentEl.appendChild(authorEl);
+        }
+
+        contentEl.appendChild(bubble);
+        row.appendChild(avatarEl);
+        row.appendChild(contentEl);
+      }
+
+      messagesContainer.appendChild(row);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    function saveAndRenderMessage(text, isUser, attachment, attachmentType) {
+      if (!isUser && (text === 'Ошибка связи с сервером. Проверьте интернет-соединение.' || text === 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.')) {
+        return;
+      }
+      appendMessageToUI(text, isUser, attachment, attachmentType);
+      var hist = getLocalHistory();
+      hist.push({
+        text: text,
+        isUser: isUser,
+        attachment: attachment || null,
+        attachmentType: attachmentType || null,
+        timestamp: Date.now()
+      });
+      try {
+        safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(hist));
+      } catch (e) {}
+    }
+
+    var existingHistory = getLocalHistory();
+    if (existingHistory.length > 0) {
+      existingHistory.forEach(function (m) {
+        appendMessageToUI(m.text, m.isUser, m.attachment, m.attachmentType);
+      });
+    }
+
+    var syncInProgress = false;
+    var historyPollTimer = null;
+
+    async function syncHistoryFromServer() {
+      // КРИТИЧЕСКИ ВАЖНО: никогда не синхронизировать историю, пока бот отвечает, идет таймер буфера или есть очередь
+      if (!channelAccountId || !visitorId || syncInProgress || isBotResponding || messageBuffer.length > 0 || pendingQueueWhileReplying.length > 0) return;
+      try {
+        syncInProgress = true;
+        var res = await fetch(apiUrl + '/api/v1/public/chat/history/' + channelAccountId + '?visitorId=' + encodeURIComponent(visitorId));
+        if (res.ok) {
+          var json = await res.json();
+          var items = json && json.data;
+          if (Array.isArray(items) && items.length > 0) {
+            var currentRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg') : [];
+            // Если в DOM вообще ничего нет (первая загрузка при чистом кеше)
+            if (currentRows.length === 0) {
+              for (var k = 0; k < items.length; k++) {
+                var m = items[k];
+                appendMessageToUI(m.content, m.direction === 'inbound', m.attachment, m.attachmentType);
+              }
+              if (messagesContainer) {
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+              }
+              return;
+            }
+
+            // Инкрементально добавляем только сообщения оператора из CRM, которых еще нет в чате
+            // НИ В КОЕМ СЛУЧАЕ НЕ ОЧИЩАЕМ messagesContainer.innerHTML = '' !
+            var localHist = getLocalHistory();
+            var addedAny = false;
+            for (var i = 0; i < items.length; i++) {
+              var srvItem = items[i];
+              var srvIsUser = srvItem.direction === 'inbound';
+              var alreadyExists = localHist.some(function (loc) {
+                return loc.text === srvItem.content && loc.isUser === srvIsUser;
+              });
+              if (!alreadyExists) {
+                saveAndRenderMessage(srvItem.content, srvIsUser, srvItem.attachment, srvItem.attachmentType);
+                addedAny = true;
+              }
+            }
+            if (addedAny && messagesContainer) {
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+          }
+        }
+      } catch (e) {
+      } finally {
+        syncInProgress = false;
+      }
+    }
+
+    function isMobileScreen() {
+      return (typeof window !== 'undefined') && (
+        window.innerWidth <= 640 ||
+        (window.matchMedia && window.matchMedia('(max-width: 640px)').matches)
+      );
+    }
+
+    var isScrollLocked = false;
+    var prevBodyOverflow = '';
+    var prevHtmlOverflow = '';
+    var prevTouchAction = '';
+
+    function lockMobileScroll() {
+      if (!isMobileScreen() || isScrollLocked) return;
+      isScrollLocked = true;
+      try {
+        prevBodyOverflow = document.body.style.overflow;
+        prevHtmlOverflow = document.documentElement.style.overflow;
+        prevTouchAction = document.body.style.touchAction;
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.touchAction = 'none';
+      } catch (e) {}
+    }
+
+    function unlockMobileScroll() {
+      if (!isScrollLocked) return;
+      isScrollLocked = false;
+      try {
+        document.body.style.overflow = prevBodyOverflow;
+        document.documentElement.style.overflow = prevHtmlOverflow;
+        document.body.style.touchAction = prevTouchAction;
+      } catch (e) {}
+      prevBodyOverflow = '';
+      prevHtmlOverflow = '';
+      prevTouchAction = '';
+    }
+
+    function updateMobileViewport() {
+      if (!isMobileScreen()) {
+        win.style.top = '';
+        win.style.left = '';
+        win.style.width = '';
+        win.style.height = '';
+        win.style.bottom = '';
+        win.style.maxHeight = '';
+        return;
+      }
+      if (!isOpen) return;
+
+      if (window.visualViewport) {
+        var vv = window.visualViewport;
+        var topPx = Math.max(0, Math.round(vv.offsetTop));
+        var leftPx = Math.max(0, Math.round(vv.offsetLeft));
+        var heightPx = Math.round(vv.height);
+        var widthPx = Math.round(vv.width);
+
+        win.style.setProperty('position', 'fixed', 'important');
+        win.style.setProperty('top', topPx + 'px', 'important');
+        win.style.setProperty('left', leftPx + 'px', 'important');
+        win.style.setProperty('width', widthPx + 'px', 'important');
+        win.style.setProperty('height', heightPx + 'px', 'important');
+        win.style.setProperty('max-height', heightPx + 'px', 'important');
+        win.style.setProperty('bottom', 'auto', 'important');
+      } else {
+        win.style.setProperty('position', 'fixed', 'important');
+        win.style.setProperty('top', '0px', 'important');
+        win.style.setProperty('left', '0px', 'important');
+        win.style.setProperty('width', '100vw', 'important');
+        win.style.setProperty('height', '100%', 'important');
+        win.style.setProperty('max-height', '100%', 'important');
+        win.style.setProperty('bottom', '0px', 'important');
+      }
+
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    }
+
+    function openWidget() {
+      isOpen = true;
+      closePreChatModal();
+      win.style.display = 'flex';
+      wrapper.classList.add('is-chat-open');
+      if (isMobileScreen()) {
+        lockMobileScroll();
+        updateMobileViewport();
+      }
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+      if (inputEl) {
+        adjustInputHeight();
+      }
+      if (!isMobileScreen() && inputEl && typeof inputEl.focus === 'function') {
+        setTimeout(function () {
+          inputEl.focus();
+          adjustInputHeight();
+        }, 100);
+      }
+      initSession();
+      syncHistoryFromServer();
+      if (!historyPollTimer) {
+        historyPollTimer = setInterval(syncHistoryFromServer, 4000);
+      }
+    }
+
+    function closeWidget() {
+      isOpen = false;
+      closePreChatModal();
+      win.style.display = 'none';
+      wrapper.classList.remove('is-chat-open');
+      unlockMobileScroll();
+      if (historyPollTimer) {
+        clearInterval(historyPollTimer);
+        historyPollTimer = null;
+      }
+      win.style.top = '';
+      win.style.left = '';
+      win.style.width = '';
+      win.style.height = '';
+      win.style.bottom = '';
+      win.style.maxHeight = '';
+      if (badge) {
+        badge.style.display = (currentConfig && currentConfig.badgeEnabled === false) ? 'none' : '';
+      }
+    }
+
+    function toggleWidget() {
+      if (isOpen) {
+        closeWidget();
+      } else {
+        openWidget();
+      }
+    }
+
+    if (bubble) bubble.addEventListener('click', toggleWidget);
+    if (badge) badge.addEventListener('click', openWidget);
+    if (closeBtn) closeBtn.addEventListener('click', closeWidget);
+
+    function trackMessengerClick(mType) {
+      try {
+        if (typeof window.ym === 'function') {
+          var cId = null;
+          if (window.Ya && window.Ya.Metrika2 && window.Ya.Metrika2.counters && window.Ya.Metrika2.counters()[0]) {
+            cId = window.Ya.Metrika2.counters()[0].id;
+          }
+          if (cId) {
+            window.ym(cId, 'reachGoal', 'getvoxly_click_' + mType);
+            window.ym(cId, 'reachGoal', 'getvoxly_messenger_click');
+          }
+        }
+      } catch (err) {}
+      try {
+        if (typeof window.gtag === 'function') {
+          window.gtag('event', 'getvoxly_click_' + mType, { event_category: 'messenger', event_label: mType });
+          window.gtag('event', 'getvoxly_messenger_click', { event_category: 'messenger', event_label: mType });
+        }
+      } catch (err) {}
+    }
+
+    // A/B тестирование двухшагового пре-чат модала
+    var abPrechatVariant = safeStorage.getItem('getvoxly_ab_prechat');
+    if (!abPrechatVariant) {
+      abPrechatVariant = Math.random() < 0.5 ? 'modal' : 'direct';
+      safeStorage.setItem('getvoxly_ab_prechat', abPrechatVariant);
+    }
+
+    function sendPreChatTelemetry(eventType, mType, meta) {
+      try {
+        var payload = {
+          sessionId: visitorId,
+          eventType: eventType,
+          abVariant: abPrechatVariant,
+          messengerType: mType || null,
+          channelAccountId: channelAccountId,
+          metadata: meta || {}
+        };
+        fetch('https://api.getvoxly.ru/api/v1/analytics/pre-chat-telemetry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true
+        }).catch(function () {});
+      } catch (e) {}
+    }
+
+    var prechatModalEl = document.getElementById('getvoxly-prechat-modal');
+
+    function closePreChatModal() {
+      if (prechatModalEl) {
+        prechatModalEl.classList.remove('is-open');
+        prechatModalEl.style.setProperty('display', 'none', 'important');
+        prechatModalEl.innerHTML = '';
+      }
+    }
+
+    function openPreChatModal(mType, targetUrl) {
+      if (!prechatModalEl) return;
+
+      var isTg = mType === 'telegram';
+      var themeClass = isTg ? 'theme-telegram' : 'theme-whatsapp';
+      var btnClass = isTg ? 'btn-telegram' : 'btn-whatsapp';
+      var titleText = isTg ? 'Написать в Telegram' : 'Написать в WhatsApp';
+      var subText = isTg ? 'Свяжитесь с нами напрямую' : 'Ответим в течение 2 минут';
+      var ctaText = isTg ? 'Перейти в Telegram' : 'Перейти в WhatsApp';
+
+      var messengerIconSvg = isTg
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ffffff"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ffffff"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+
+      var initialName = safeStorage.getItem('getvoxly_client_name') || '';
+
+      prechatModalEl.innerHTML =
+        '<div class="getvoxly-prechat-card">' +
+          '<div class="getvoxly-prechat-header ' + themeClass + '">' +
+            '<div class="getvoxly-prechat-header-left">' +
+              '<div class="getvoxly-prechat-avatar">' + messengerIconSvg + '</div>' +
+              '<div>' +
+                '<div class="getvoxly-prechat-title">' + titleText + '</div>' +
+                '<div class="getvoxly-prechat-sub">' + subText + '</div>' +
+              '</div>' +
+            '</div>' +
+            '<button class="getvoxly-prechat-close" id="getvoxly-prechat-btn-close" type="button" title="Закрыть">' +
+              '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+                '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>' +
+              '</svg>' +
+            '</button>' +
+          '</div>' +
+          '<div class="getvoxly-prechat-body">' +
+            '<div class="getvoxly-prechat-preview-box ' + themeClass + '">' +
+              '<div class="getvoxly-prechat-preview-label">Текст сообщения в чате:</div>' +
+              '<div id="getvoxly-prechat-preview-text">' +
+                'Здравствуйте! Меня зовут ' + (initialName || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)' +
+              '</div>' +
+            '</div>' +
+            '<div class="getvoxly-prechat-field">' +
+              '<label class="getvoxly-prechat-label">Как к вам обращаться? *</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-name" placeholder="Например, Иван" value="' + initialName + '" autocomplete="name" />' +
+            '</div>' +
+            '<div class="getvoxly-prechat-field">' +
+              '<label class="getvoxly-prechat-label">Тема или вопрос (необязательно)</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-note" placeholder="Например, консультация по ценам" />' +
+            '</div>' +
+            '<button class="getvoxly-prechat-submit ' + btnClass + '" id="getvoxly-prechat-btn-submit" type="button">' +
+              messengerIconSvg + ' ' + ctaText +
+            '</button>' +
+            '<div class="getvoxly-prechat-footer-note">' +
+              'Код диалога свяжет обращение с сайтом без потери истории и контактов' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+      prechatModalEl.classList.add('is-open');
+      prechatModalEl.style.setProperty('display', 'flex', 'important');
+
+      var nameInput = document.getElementById('getvoxly-prechat-input-name');
+      var noteInput = document.getElementById('getvoxly-prechat-input-note');
+      var previewText = document.getElementById('getvoxly-prechat-preview-text');
+      var closeBtn = document.getElementById('getvoxly-prechat-btn-close');
+      var submitBtn = document.getElementById('getvoxly-prechat-btn-submit');
+
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.addEventListener('input', function () {
+          var val = (nameInput.value || '').trim();
+          if (previewText) {
+            previewText.innerHTML = 'Здравствуйте! Меня зовут ' + (val || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)';
+          }
+        });
+      }
+
+      if (closeBtn) {
+        closeBtn.addEventListener('click', closePreChatModal);
+      }
+
+      prechatModalEl.addEventListener('click', function (e) {
+        if (e.target === prechatModalEl) {
+          closePreChatModal();
+        }
+      });
+
+      if (submitBtn) {
+        submitBtn.addEventListener('click', function () {
+          var clientName = nameInput ? (nameInput.value || '').trim() : '';
+          var clientNote = noteInput ? (noteInput.value || '').trim() : '';
+
+          if (clientName) {
+            safeStorage.setItem('getvoxly_client_name', clientName);
+          }
+
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = 'Подготовка перехода...';
+
+          var payload = {
+            name: clientName || 'Посетитель',
+            messenger: mType,
+            channelAccountId: channelAccountId,
+            sessionId: visitorId,
+            abVariant: abPrechatVariant,
+            customNote: clientNote || null,
+            gaClientId: typeof gaClientId !== 'undefined' ? gaClientId : null,
+            ymClientId: typeof ymUid !== 'undefined' ? ymUid : null,
+            yandexuid: typeof yandexuid !== 'undefined' ? yandexuid : null,
+            gclid: (clickIds && clickIds.gclid) || null,
+            yclid: (clickIds && clickIds.yclid) || null,
+            fbclid: (clickIds && clickIds.fbclid) || null,
+            vkclid: (clickIds && clickIds.vkclid) || null,
+            utm: utmTags || {},
+            referrer: typeof document !== 'undefined' ? document.referrer : '',
+            pageUrl: typeof window !== 'undefined' ? window.location.href : ''
+          };
+
+          fetch('https://api.getvoxly.ru/api/v1/analytics/pre-chat-lead', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
+            .then(function (res) { return res.json(); })
+            .then(function (json) {
+              closePreChatModal();
+              if (json && json.data && json.data.deepLink) {
+                window.open(json.data.deepLink, '_blank');
+              } else if (targetUrl) {
+                window.open(targetUrl, '_blank');
+              }
+            })
+            .catch(function () {
+              closePreChatModal();
+              if (targetUrl) {
+                window.open(targetUrl, '_blank');
+              }
+            });
+        });
+      }
+    }
+
+    if (msgContainer) {
+      msgContainer.addEventListener('click', function (e) {
+        var a = e.target && e.target.closest ? e.target.closest('a') : null;
+        if (!a) return;
+        var isTg = a.classList.contains('btn-telegram') || a.classList.contains('is-telegram');
+        var isWa = a.classList.contains('btn-whatsapp') || a.classList.contains('is-whatsapp');
+        var isMax = a.classList.contains('btn-max') || a.classList.contains('is-max');
+        var mType = isTg ? 'telegram' : isWa ? 'whatsapp' : isMax ? 'max' : 'generic';
+        trackMessengerClick(mType);
+
+        var prechatCfg = currentConfig && currentConfig.prechatModal;
+        var isModalActive = prechatCfg ? prechatCfg.enabled !== false : true;
+
+        if (isModalActive && (isTg || isWa)) {
+          if (abPrechatVariant === 'modal') {
+            e.preventDefault();
+            sendPreChatTelemetry('modal_open', mType);
+            openPreChatModal(mType, a.getAttribute('href') || '');
+            return;
+          } else {
+            sendPreChatTelemetry('direct_click', mType);
+          }
+        }
+      });
+    }
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateMobileViewport);
+      window.visualViewport.addEventListener('scroll', updateMobileViewport);
+    }
+    window.addEventListener('resize', updateMobileViewport);
+    window.addEventListener('orientationchange', function () {
+      setTimeout(updateMobileViewport, 200);
+    });
+
+    if (inputEl) {
+      inputEl.addEventListener('focus', function () {
+        if (isMobileScreen()) {
+          setTimeout(updateMobileViewport, 60);
+          setTimeout(updateMobileViewport, 180);
+          setTimeout(updateMobileViewport, 320);
+        }
+      });
+      inputEl.addEventListener('blur', function () {
+        if (isMobileScreen()) {
+          setTimeout(updateMobileViewport, 80);
+        }
+      });
+    }
+
+    // Фоновая инициализация сессии на сервере
+    initSession();
+
+    async function initSession() {
+      if (sessionInitialized) return;
+      try {
+        sendTelemetry('init_fetch_start', channelAccountId);
+
+        var res = await fetch(apiUrl + '/api/v1/public/chat/init/' + channelAccountId, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visitorId: visitorId || undefined }),
+        });
+
+        if (res.ok) {
+          sessionInitialized = true;
+          var data = (await res.json()).data;
+          currentConfig = data;
+          sendTelemetry('init_success', data.mascotId || 'none');
+
+          if (data.visitorId) {
+            visitorId = data.visitorId;
+            safeStorage.setItem(STORAGE_KEY_VISITOR, visitorId);
+          }
+          syncHistoryFromServer();
+
+          // Установка акцентного цвета
+          var accent = data.accentColor || '#6366F1';
+          wrapper.style.setProperty('--accent-color', accent);
+          wrapper.style.setProperty('--badge-color', accent);
+          win.style.setProperty('--accent-color', accent);
+
+          // Настройка эффекта привлечения внимания к кнопке
+          if (bubble) {
+            bubble.classList.remove(
+              'getvoxly-effect-none',
+              'getvoxly-effect-shimmer',
+              'getvoxly-effect-pulse',
+              'getvoxly-effect-glow',
+              'getvoxly-effect-bounce',
+              'is-continuous'
+            );
+            var attentionEff = data.attentionEffect || 'shimmer';
+            var attentionInt = typeof data.attentionInterval === 'number' ? data.attentionInterval : 5;
+            if (data.attentionEnabled === false) {
+              attentionEff = 'none';
+            }
+            if (attentionEff && attentionEff !== 'none') {
+              bubble.classList.add('getvoxly-effect-' + attentionEff);
+              if (attentionInt === 0) {
+                bubble.classList.add('is-continuous');
+              } else {
+                var dur = attentionInt === 3 ? 4 : attentionInt === 5 ? 6 : attentionInt === 10 ? 12 : attentionInt === 15 ? 18 : (attentionInt + 1.2);
+                bubble.style.setProperty('--attention-duration', dur + 's');
+              }
+            } else {
+              bubble.classList.add('getvoxly-effect-none');
+            }
+          }
+
+          // Настройка всплывающего бейджа и динамической смены фраз
+          var badgeEl = document.getElementById('getvoxly-badge');
+          if (badgeEl) {
+            if (data.badgeEnabled === false) {
+              badgeEl.style.display = 'none';
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+            } else {
+              var badgePhrases = [];
+              if (Array.isArray(data.badgeTexts) && data.badgeTexts.length > 0) {
+                badgePhrases = data.badgeTexts.map(function (s) { return String(s).trim(); }).filter(Boolean);
+              } else if (typeof data.badgeTexts === 'string' && data.badgeTexts.trim()) {
+                badgePhrases = data.badgeTexts.split('\n').map(function (s) { return s.trim(); }).filter(Boolean);
+              } else if (typeof data.badgeText === 'string' && data.badgeText.trim()) {
+                badgePhrases = [data.badgeText.trim()];
+              }
+
+              if (badgePhrases.length === 0) {
+                badgePhrases = ['Задайте вопрос'];
+              }
+
+              var badgeCurrentIdx = 0;
+              badgeEl.textContent = badgePhrases[0];
+              if (!isOpen) {
+                badgeEl.style.display = '';
+              }
+
+              if (window.__gvx_badge_timer) {
+                clearInterval(window.__gvx_badge_timer);
+                window.__gvx_badge_timer = null;
+              }
+
+              if (badgePhrases.length > 1) {
+                var intervalSec = Math.max(2, (data.badgeRotateIntervalSec || 5));
+                window.__gvx_badge_timer = setInterval(function () {
+                  if (isOpen) return;
+                  badgeEl.classList.add('is-animating');
+                  setTimeout(function () {
+                    badgeCurrentIdx = (badgeCurrentIdx + 1) % badgePhrases.length;
+                    badgeEl.textContent = badgePhrases[badgeCurrentIdx];
+                    badgeEl.classList.remove('is-animating');
+                  }, 250);
+                }, intervalSec * 1000);
+              }
+            }
+          }
+
+          // Тема (светлая / тёмная)
+          if (data.theme === 'dark') {
+            win.classList.add('is-dark-theme');
+          } else {
+            win.classList.remove('is-dark-theme');
+          }
+
+          // Шапка виджета: имя консультанта и статус
+          if (headerName) {
+            headerName.textContent = data.consultantName || data.title || (data.tenantName + ' (' + data.botName + ')');
+          }
+          if (headerSub) {
+            headerSub.textContent = data.consultantName
+              ? (data.title || 'Онлайн-консультант')
+              : (data.isAiEnabled ? (data.botName || 'AI-ассистент онлайн') : 'В сети · Консультант онлайн');
+          }
+
+          // Позиционирование (слева / справа)
+          if (data.position === 'bottom-left') {
+            wrapper.classList.add('position-left');
+            win.classList.add('position-left');
+          }
+
+          if (data.placeholder && inputEl) {
+            inputEl.placeholder = data.placeholder;
+          }
+
+          // Поддержка интерактивного 3D-маскота или фото консультанта
+          var assetBaseUrl = 'https://getvoxly.ru';
+          var MASCOT_MAP = {
+            voxly_robot: 'drone',
+            friendly_fox: 'fox',
+            smart_cat: 'cat',
+            cyber_owl: 'scout',
+            happy_alien: 'crt',
+            friendly_panda: 'otter',
+            tech_ninja: 'kamran',
+          };
+
+          var resolvedId = data.mascotId || 'drone';
+          if (MASCOT_MAP[resolvedId]) {
+            resolvedId = MASCOT_MAP[resolvedId];
+          }
+
+          var directionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-directions.webp';
+          var reactionsUrl = assetBaseUrl + '/mascots/' + resolvedId + '-reactions.webp';
+
+          if (resolvedId === 'custom' || data.customMascotDirections) {
+            directionsUrl = data.customMascotDirections || directionsUrl;
+            reactionsUrl = data.customMascotReactions || data.customMascotDirections || directionsUrl;
+          }
+          data._directionsUrl = directionsUrl;
+          data._reactionsUrl = reactionsUrl;
+          currentConfig = data;
+
+          // Обновление мини-аватаров и имен во всех уже отрисованных сообщениях бота
+          if (messagesContainer) {
+            var botAvatars = messagesContainer.querySelectorAll('.getvoxly-msg-bot-avatar');
+            var newAvatarHtml = createMiniAvatarHtml();
+            for (var a = 0; a < botAvatars.length; a++) {
+              botAvatars[a].innerHTML = newAvatarHtml;
+            }
+            if (data.consultantName) {
+              var botContents = messagesContainer.querySelectorAll('.getvoxly-msg-bot-content');
+              for (var c = 0; c < botContents.length; c++) {
+                if (!botContents[c].querySelector('.getvoxly-msg-bot-author')) {
+                  var authorEl = document.createElement('div');
+                  authorEl.className = 'getvoxly-msg-bot-author';
+                  authorEl.textContent = data.consultantName;
+                  botContents[c].insertBefore(authorEl, botContents[c].firstChild);
+                }
+              }
+            }
+          }
+
+          // Обновление аватара в шапке
+          if (headerAvatarInner) {
+            if (data.avatarType === 'icon') {
+              headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
+              var headerAvatarUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var headerFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4ODg4ODgiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
+              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else if (directionsUrl && !data.consultantAvatar) {
+              headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+            } else {
+              headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
+            }
+          }
+
+          function setupMascotInteractivity(bubbleEl, spriteEl, mascotWrapEl, dUrl, rUrl) {
+            if (!spriteEl) return;
+            var isBooped = false;
+            var boopTimer = null;
+
+            var CLOCKWISE = [
+              'right',
+              'down-right',
+              'down',
+              'down-left',
+              'left',
+              'up-left',
+              'up',
+              'up-right',
+            ];
+            var POSITIONS = {
+              center: '50% 50%',
+              'up-left': '0% 0%',
+              up: '50% 0%',
+              'up-right': '100% 0%',
+              left: '0% 50%',
+              right: '100% 50%',
+              'down-left': '0% 100%',
+              down: '50% 100%',
+              'down-right': '100% 100%',
+            };
+            var SECTOR = (Math.PI * 2) / 8;
+            var HYSTERESIS = 0.12;
+            var DEAD_ZONE = 36;
+
+            function wrapAngle(angle) {
+              return Math.atan2(Math.sin(angle), Math.cos(angle));
+            }
+
+            var currentSector = -1;
+            function updateMascotAim(clientX, clientY) {
+              if (!spriteEl || isBooped || isOpen) return;
+              var b = bubbleEl.getBoundingClientRect();
+              var cx = b.left + b.width / 2;
+              var cy = b.top + b.height / 2;
+              var dx = clientX - cx;
+              var dy = clientY - cy;
+
+              if (Math.hypot(dx, dy) < DEAD_ZONE) {
+                currentSector = -1;
+                spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+                return;
+              }
+
+              var angle = Math.atan2(dy, dx);
+              if (currentSector !== -1 && Math.abs(wrapAngle(angle - currentSector * SECTOR)) < SECTOR / 2 + HYSTERESIS) {
+                return;
+              }
+
+              currentSector = (Math.round(angle / SECTOR) + 8) % 8;
+              var dirName = CLOCKWISE[currentSector];
+              var pos = POSITIONS[dirName] || '50% 50%';
+              spriteEl.style.setProperty('background-position', pos, 'important');
+            }
+
+            var rAF = null;
+            var lastClientX = 0, lastClientY = 0;
+            function onPointerMove(e) {
+              lastClientX = e.clientX;
+              lastClientY = e.clientY;
+              if (rAF) return;
+              rAF = window.requestAnimationFrame(function () {
+                rAF = null;
+                updateMascotAim(lastClientX, lastClientY);
+              });
+            }
+
+            var moveEvent = window.PointerEvent ? 'pointermove' : 'mousemove';
+            window.addEventListener(moveEvent, onPointerMove, { passive: true });
+
+            if (bubbleEl) {
+              bubbleEl.addEventListener('pointerdown', function () {
+                if (isOpen) return;
+                if (!spriteEl) return;
+                isBooped = true;
+                spriteEl.style.backgroundImage = 'url("' + rUrl + '")';
+                spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+                if (mascotWrapEl) mascotWrapEl.classList.add('squashing');
+
+                clearTimeout(boopTimer);
+                boopTimer = setTimeout(function () {
+                  isBooped = false;
+                  spriteEl.style.backgroundImage = 'url("' + dUrl + '")';
+                  if (mascotWrapEl) mascotWrapEl.classList.remove('squashing');
+                  spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+                }, 600);
+              });
+            }
+          }
+
+          // Рендер плавающего маскота / фото / капсулы в кнопке
+          if (data.launcherStyle === 'pill') {
+            wrapper.classList.add('has-pill');
+            bubble.classList.add('is-pill');
+            bubble.classList.remove('is-mascot', 'is-photo');
+            var pName = data.consultantName || data.title || 'Консультант';
+            var pStatus = data.statusText || 'Онлайн';
+            var avatarHtml = '';
+
+            if (data.avatarType === 'icon') {
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
+              var pillPhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var pillFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiM4ODg4ODgiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
+              avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pillPhotoUrl + '" alt="' + pName + '" onerror="this.onerror=null;this.src=\'' + pillFallbackSvg + '\';">';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
+            } else if (directionsUrl && !data.consultantAvatar) {
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
+            } else {
+              avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            }
+
+            bubbleIcon.innerHTML =
+              '<div class="getvoxly-bubble-pill-avatar-wrap">' +
+                '<div class="getvoxly-bubble-pill-avatar-inner">' +
+                  avatarHtml +
+                '</div>' +
+                '<span class="getvoxly-bubble-pill-dot"></span>' +
+              '</div>' +
+              '<div class="getvoxly-bubble-pill-text">' +
+                '<span class="getvoxly-bubble-pill-name">' + pName + '</span>' +
+                '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
+              '</div>';
+
+            if (data.avatarType === 'mascot' && directionsUrl) {
+              var pillSprite = bubbleIcon.querySelector('#getvoxly-mascot-sprite');
+              if (pillSprite) {
+                setupMascotInteractivity(bubble, pillSprite, null, directionsUrl, reactionsUrl);
+              }
+            }
+          } else {
+            wrapper.classList.remove('has-pill');
+            if (data.avatarType === 'icon') {
+              bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+              bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
+              bubble.classList.add('is-photo');
+              bubble.classList.remove('is-pill', 'is-mascot');
+              var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var circleFallbackSvg = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmZmZmYiIHN0cm9rZS13aWR0aD0iMiI+PHBhdGggZD0iTTE5IDIxdi0yYTQgNCAwIDAgMC00LTRIOWE0IDQgMCAwIDAtNCA0djIiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjciIHI9IjQiLz48L3N2Zz4=';
+              bubbleIcon.innerHTML = '<div class="getvoxly-bubble-photo-wrap"><img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="' + (data.consultantName || 'Консультант') + '" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"></div><span class="getvoxly-bubble-dot"></span>';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              bubble.classList.add('is-mascot');
+              bubble.classList.remove('is-pill', 'is-photo');
+
+              var mascotEl = document.createElement('div');
+              mascotEl.className = 'getvoxly-mascot-wrap';
+              mascotEl.id = 'getvoxly-mascot-el';
+
+              var spriteEl = document.createElement('div');
+              spriteEl.className = 'getvoxly-mascot-sprite';
+              spriteEl.id = 'getvoxly-mascot-sprite';
+              spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
+              spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+
+              var dot = document.createElement('span');
+              dot.className = 'getvoxly-bubble-dot';
+
+              mascotEl.appendChild(spriteEl);
+              mascotEl.appendChild(dot);
+
+              bubbleIcon.innerHTML = '';
+              bubbleIcon.appendChild(mascotEl);
+
+              setupMascotInteractivity(bubble, spriteEl, mascotEl, directionsUrl, reactionsUrl);
+            } else {
+              bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+              bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            }
+          }
+
+          // Приветственное сообщение
+          if ((!messagesContainer.children || messagesContainer.children.length === 0) && data.greeting) {
+            saveAndRenderMessage(data.greeting, false);
+          }
+
+          // Кнопки перехода в мессенджеры (Telegram, WhatsApp, MAX)
+          var buttons = data.messengerButtons || [];
+          if (buttons.length === 0 && (telegramBot || data.telegramBot) && data.showTelegramBanner !== false) {
+            var tb = (telegramBot || data.telegramBot).replace(/^@/, '');
+            buttons.push({
+              type: 'telegram',
+              label: 'Telegram',
+              url: 'https://t.me/' + tb,
+              handle: '@' + tb,
+            });
+          }
+
+          // Проверяем настройку показа баннера мессенджеров (независимо от того, Telegram это, WhatsApp или MAX)
+          if (msgContainer && buttons.length > 0 && data.showMessengerBanner !== false) {
+            msgContainer.style.display = 'block';
+
+            if (data.prechatModal) {
+              if (data.prechatModal.abMode === 'always_modal') {
+                abPrechatVariant = 'modal';
+              } else if (data.prechatModal.abMode === 'always_direct') {
+                abPrechatVariant = 'direct';
+              }
+            }
+            sendPreChatTelemetry('impression', null);
+
+            if (buttons.length === 1) {
+              var b = buttons[0];
+              var linkHref = b.url;
+              if (b.type === 'telegram') {
+                linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
+              } else if (b.type === 'whatsapp') {
+                var waSep = linkHref.indexOf('?') === -1 ? '?' : '&';
+                linkHref += waSep + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
+              } else if (b.type === 'max') {
+                if (linkHref.indexOf('/u/') === -1) {
+                  linkHref += (linkHref.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
+                }
+              }
+              var iconSvg = '';
+
+              if (b.type === 'telegram') {
+                iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
+              } else if (b.type === 'whatsapp') {
+                iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+              } else if (b.type === 'max') {
+                iconSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
+              }
+
+              var actionText = 'Перейти \u2192';
+              msgContainer.innerHTML = '<a href="' + linkHref + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-banner-single is-' + b.type + '">' +
+                '<div class="getvoxly-msg-banner-left">' +
+                  iconSvg +
+                  '<span class="getvoxly-msg-banner-title">Продолжить в ' + b.label + '</span>' +
+                '</div>' +
+                '<span class="getvoxly-msg-banner-action">' + actionText + '</span>' +
+              '</a>';
+            } else {
+              var buttonsHtml = '';
+              for (var j = 0; j < buttons.length; j++) {
+                var btn = buttons[j];
+                var href = btn.url;
+                if (btn.type === 'telegram') {
+                  href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
+                } else if (btn.type === 'whatsapp') {
+                  var waSep2 = href.indexOf('?') === -1 ? '?' : '&';
+                  href += waSep2 + 'text=' + encodeURIComponent('Здравствуйте! [ID:ref_' + visitorId + ']');
+                } else if (btn.type === 'max') {
+                  if (href.indexOf('/u/') === -1) {
+                    href += (href.indexOf('?') === -1 ? '?start=ref_' + visitorId : '&start=ref_' + visitorId);
+                  }
+                }
+                var icon = '';
+                if (btn.type === 'telegram') {
+                  icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>';
+                } else if (btn.type === 'whatsapp') {
+                  icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+                } else if (btn.type === 'max') {
+                  icon = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>';
+                }
+                buttonsHtml += '<a href="' + href + '" target="_blank" rel="noopener noreferrer" class="getvoxly-msg-btn-pill btn-' + btn.type + '">' + icon + ' ' + btn.label + '</a>';
+              }
+
+              msgContainer.innerHTML = '<div class="getvoxly-msg-bar-multi">' +
+                '<span class="getvoxly-msg-bar-title">Продолжить в:</span>' +
+                '<div class="getvoxly-msg-buttons-row">' +
+                  buttonsHtml +
+                '</div>' +
+              '</div>';
+            }
+          } else if (msgContainer) {
+            msgContainer.style.display = 'none';
+          }
+
+          // Проактивное приглашение в диалог
+          var isProactive = data.proactiveEnabled !== undefined ? Boolean(data.proactiveEnabled) : proactiveEnabled;
+          var delaySec = (data.proactiveDelaySeconds !== undefined ? data.proactiveDelaySeconds : Math.round(proactiveDelay / 1000)) || 10;
+          var proKey = 'getvoxly_proactive_shown_' + channelAccountId;
+
+          if (isProactive && !safeSessionStorage.getItem(proKey)) {
+            setTimeout(function () {
+              var alreadyShown = safeSessionStorage.getItem(proKey);
+              if (!alreadyShown) {
+                safeSessionStorage.setItem(proKey, 'true');
+                var hist = getLocalHistory();
+                var userHasSpoken = hist.some(function (m) { return m.isUser; });
+                if (!userHasSpoken) {
+                  if (!isOpen) {
+                    openWidget();
+                  }
+                  var proMsg = data.proactiveMessage || 'Я онлайн, спрашивайте, готов вам помочь';
+                  var lastMsg = hist.length > 0 ? hist[hist.length - 1] : null;
+                  if (!lastMsg || lastMsg.text !== proMsg) {
+                    saveAndRenderMessage(proMsg, false);
+                  }
+                }
+              }
+            }, delaySec * 1000);
+          }
+        } else {
+          sendTelemetry('init_failed_status', res.status);
+        }
+      } catch (e) {
+        sendTelemetry('init_exception', e && e.message);
+        console.warn('[GetVoxly] Failed to init chat session', e);
+      }
+    }
+
+    messageBuffer = [];
+    sendTimer = null;
+
+    async function flushMessageBuffer() {
+      if (messageBuffer.length === 0) return;
+      if (isBotResponding) return;
+      var combinedText = messageBuffer.join(String.fromCharCode(10));
+      messageBuffer = [];
+      await executeSendMessage(combinedText);
+    }
+
+    function extractClientPhone(val) {
+      if (!val || typeof val !== 'string') return null;
+      var cl = val.trim();
+      var m = cl.match(/(?:^|[^\d+])(?:\+?7|8)[\s(-]*(\d{3})[\s)-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2})(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(?:\(?([9]\d{2})\)?[\s-]*(\d{3})[\s-]*(\d{2})[\s-]*(\d{2}))(?!\d)/) ||
+              cl.match(/(?:^|[^\d+])(\+[1-9]\d{9,14})(?!\d)/);
+      if (m) {
+        var raw = m[0].trim();
+        var dig = raw.replace(/\D/g, '');
+        if (raw.charAt(0) === '+' && dig.length >= 10 && dig.length <= 15) {
+          if (dig.charAt(0) === '7' && dig.length === 11) return '+7' + dig.slice(1);
+          return '+' + dig;
+        }
+        if (dig.length === 11 && (dig.charAt(0) === '7' || dig.charAt(0) === '8')) {
+          return '+7' + dig.slice(1);
+        }
+        if (dig.length === 10 && dig.charAt(0) === '9') {
+          return '+7' + dig;
+        }
+      }
+      var onlyDig = cl.replace(/\D/g, '');
+      if (onlyDig.length === 11 && (onlyDig.charAt(0) === '7' || onlyDig.charAt(0) === '8')) {
+        return '+7' + onlyDig.slice(1);
+      }
+      if (onlyDig.length === 10 && onlyDig.charAt(0) === '9') {
+        return '+7' + onlyDig;
+      }
+      return null;
+    }
+
+    function extractClientEmail(val) {
+      if (!val || typeof val !== 'string') return null;
+      var m = val.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      return m ? m[0].toLowerCase() : null;
+    }
+
+    function handleUserSubmit() {
+      var text = inputEl.value.trim();
+      if (!text && !pendingAttachment) return;
+
+      var currentAttachment = pendingAttachment ? pendingAttachment.url : undefined;
+      var currentAttachmentType = pendingAttachment ? pendingAttachment.mimeType : undefined;
+
+      pendingAttachment = null;
+      if (fileInput) fileInput.value = '';
+      renderAttachmentPreview(null);
+
+      inputEl.value = '';
+      adjustInputHeight();
+      lastDraft = '';
+
+      if (text) {
+        var parsedPhone = extractClientPhone(text);
+        if (parsedPhone) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, parsedPhone);
+        }
+        var parsedEmail = extractClientEmail(text);
+        if (parsedEmail) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, parsedEmail);
+        }
+      }
+
+      saveAndRenderMessage(text, true, currentAttachment, currentAttachmentType);
+
+      if (currentAttachment) {
+        clearTimeout(sendTimer);
+        typingIndicator.textContent = 'печатает...';
+        typingIndicator.style.display = 'block';
+        executeSendMessage(text, false, currentAttachment, currentAttachmentType, 0);
+      } else {
+        if (isBotResponding) {
+          pendingQueueWhileReplying.push(text);
+        } else {
+          messageBuffer.push(text);
+          clearTimeout(sendTimer);
+          typingIndicator.textContent = 'печатает...';
+          typingIndicator.style.display = 'block';
+          sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
+        }
+      }
+    }
+
+    async function executeSendMessage(fullText, isDraft, attachment, attachmentType, retryCount) {
+      retryCount = retryCount || 0;
+      var MAX_RETRIES = 3;
+
+      if (!isDraft) {
+        isBotResponding = true;
+        typingIndicator.textContent = 'печатает...';
+        typingIndicator.style.display = 'block';
+      }
+      try {
+        var detectedPhone = extractClientPhone(fullText);
+        var detectedEmail = extractClientEmail(fullText);
+        if (detectedPhone && !safeStorage.getItem(STORAGE_KEY_LEAD_PHONE)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, detectedPhone);
+        }
+        if (detectedEmail && !safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, detectedEmail);
+        }
+
+        var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || detectedPhone || undefined;
+        var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
+        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
+
+        var payload = {
+          visitorId: visitorId,
+          text: fullText || '',
+          senderPhone: storedPhone,
+          senderEmail: storedEmail,
+          senderName: storedName,
+          attachment: attachment || undefined,
+          attachmentType: attachmentType || undefined,
+          pageUrl: window.location.href,
+          referrer: document.referrer || undefined,
+          utmTags: utmTags,
+          clickIds: clickIds,
+          analytics: {
+            ymUid: ymUid || undefined,
+            yandexuid: yandexuid || undefined,
+            ymD: ymD || undefined,
+            yabsSid: yabsSid || undefined,
+            gaId: gaId || undefined,
+            gaGid: gaGid || undefined,
+            fbId: fbId || undefined,
+            tmrLvid: tmrLvid || undefined,
+            vkUid: vkUid || undefined,
+          },
+          deviceFingerprint: dfp.fingerprint,
+          deviceInfo: {
+            screen: dfp.screen,
+            timezone: dfp.timezone,
+            timezoneOffset: dfp.timezoneOffset,
+            language: dfp.language,
+            platform: dfp.platform,
+            cpuCores: dfp.cpuCores,
+            deviceMemory: dfp.deviceMemory,
+            maxTouchPoints: dfp.maxTouchPoints,
+            canvasHash: dfp.canvasHash,
+            gpuRenderer: dfp.gpuRenderer,
+          },
+          visitCount: visitCount,
+          pageHistory: pageHistory,
+          isDraft: Boolean(isDraft),
+        };
+
+        var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timeoutId = controller ? setTimeout(function () { controller.abort(); }, 45000) : null;
+
+        var res = await fetch(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller ? controller.signal : undefined,
+        });
+
+        if (timeoutId) clearTimeout(timeoutId);
+
+        typingIndicator.style.display = 'none';
+
+        if (isDraft) return;
+
+        if (res.ok) {
+          hideNetworkStatus();
+          var json = await res.json();
+          var result = json && json.data;
+          if (result && Array.isArray(result.replies) && result.replies.length > 0) {
+            for (var i = 0; i < result.replies.length; i++) {
+              var replyText = result.replies[i];
+              var typingDelay = Math.min(Math.max(replyText.length * 35, 1200), 4500);
+
+              typingIndicator.textContent = 'печатает...';
+              typingIndicator.style.display = 'block';
+              await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
+              typingIndicator.style.display = 'none';
+
+              saveAndRenderMessage(replyText, false);
+              if (i < result.replies.length - 1) {
+                await new Promise(function (resolve) { setTimeout(resolve, 900); });
+              }
+            }
+          } else if (result && result.status === 'operator_needed') {
+            saveAndRenderMessage('Спасибо за обращение! Мы зафиксировали заявку в CRM. Специалист свяжется с вами в ближайшее время.', false);
+          }
+        } else {
+          throw new Error('HTTP ' + res.status);
+        }
+      } catch (e) {
+        console.error('[GetVoxly] Message delivery failed:', e);
+        sendTelemetry('message_send_failed', e && (e.message || String(e)));
+        typingIndicator.style.display = 'none';
+        if (!isDraft) {
+          if (retryCount < MAX_RETRIES) {
+            var delays = [3000, 6000, 10000];
+            var delayMs = delays[retryCount] || 5000;
+            var seconds = Math.round(delayMs / 1000);
+            showNetworkStatus('Проблема со связью. Повтор через ' + seconds + ' сек...', false);
+            setTimeout(function () {
+              executeSendMessage(fullText, isDraft, attachment, attachmentType, retryCount + 1);
+            }, delayMs);
+            return;
+          } else {
+            showNetworkStatus('Не удалось связаться с сервером.', true, function () {
+              showNetworkStatus('Отправка...', false);
+              executeSendMessage(fullText, false, attachment, attachmentType, 0);
+            });
+          }
+        }
+      } finally {
+        if (!isDraft && (retryCount === 0 || retryCount >= MAX_RETRIES)) {
+          isBotResponding = false;
+          typingIndicator.style.display = 'none';
+
+          if (pendingQueueWhileReplying.length > 0) {
+            messageBuffer = pendingQueueWhileReplying.slice();
+            pendingQueueWhileReplying = [];
+            clearTimeout(sendTimer);
+            typingIndicator.textContent = 'печатает...';
+            typingIndicator.style.display = 'block';
+            sendTimer = setTimeout(flushMessageBuffer, 3000);
+          }
+        }
+      }
+    }
+
+    if (sendBtn) {
+      sendBtn.addEventListener('click', handleUserSubmit);
+    }
+
+    lastDraft = '';
+    sentDrafts = {};
+
+    if (inputEl) {
+      adjustInputHeight();
+
+      inputEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          handleUserSubmit();
+        }
+      });
+
+      inputEl.addEventListener('input', function (e) {
+        adjustInputHeight();
+
+        if (messageBuffer.length > 0 && !isBotResponding) {
+          clearTimeout(sendTimer);
+          typingIndicator.textContent = 'печатает...';
+          typingIndicator.style.display = 'block';
+          sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
+        }
+
+        var current = e.target.value.trim();
+        if (current === '' && lastDraft.length > 3 && !sentDrafts[lastDraft]) {
+          sentDrafts[lastDraft] = true;
+          executeSendMessage(lastDraft, true);
+          lastDraft = '';
+          return;
+        }
+        if (current.length > 3) {
+          lastDraft = current;
+        }
+      });
+
+      inputEl.addEventListener('paste', function () {
+        setTimeout(adjustInputHeight, 0);
+      });
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('beforeunload', function () {
+        if (lastDraft.length > 3 && !sentDrafts[lastDraft]) {
+          sentDrafts[lastDraft] = true;
+          var payload = JSON.stringify({
+            visitorId: visitorId,
+            text: lastDraft,
+            pageUrl: window.location.href,
+            referrer: document.referrer || undefined,
+            utmTags: utmTags,
+            clickIds: clickIds,
+            analytics: {
+              ymUid: ymUid || undefined,
+              yandexuid: yandexuid || undefined,
+              gaId: gaId || undefined,
+              fbId: fbId || undefined,
+              tmrLvid: tmrLvid || undefined,
+            },
+            deviceFingerprint: dfp.fingerprint,
+            deviceInfo: {
+              screen: dfp.screen,
+              timezone: dfp.timezone,
+              language: dfp.language,
+              platform: dfp.platform,
+            },
+            visitCount: visitCount,
+            pageHistory: pageHistory,
+            isDraft: true,
+          });
+
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(apiUrl + '/api/v1/public/chat/message/' + channelAccountId, new Blob([payload], { type: 'application/json' }));
+          }
+        }
+      });
+    }
+  }
+
+  // 6. Отказоустойчивый загрузчик (Bootloader)
+  var bootAttempts = 0;
+  function boot() {
+    try {
+      if (window.__getvoxly_mounted__ || document.getElementById('getvoxly-bubble')) {
+        return;
+      }
+
+      var accountId = getChannelAccountId();
+      if (!accountId) {
+        bootAttempts++;
+        if (bootAttempts < 50) {
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', boot, { once: true });
+          } else {
+            setTimeout(boot, 100);
+          }
+        } else {
+          sendTelemetry('accountId_not_found', 'attempts_exhausted');
+          console.warn('[GetVoxly] Webchat script is missing data-account-id or data-channel-id attribute.');
+        }
+        return;
+      }
+
+      if (!document.body) {
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', boot, { once: true });
+        } else {
+          setTimeout(boot, 30);
+        }
+        return;
+      }
+
+      window.__getvoxly_mounted__ = true;
+      mount(accountId);
+    } catch (err) {
+      sendTelemetry('boot_exception', err && err.message);
+      console.error('[GetVoxly] Boot error:', err);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true });
+  } else {
+    boot();
+  }
 })();

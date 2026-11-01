@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ExternalLink, type LucideIcon } from "lucide-react";
+import { ChevronUp, ExternalLink, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const LABEL_WIDTH_PX = 90;
+const LABEL_WIDTH_PX = 120;
 
 type FieldEditorKind = "text" | "email" | "url" | "number" | "date" | "select";
 
@@ -76,12 +76,12 @@ export function RecordField({
   const isEmpty = value === "";
 
   return (
-    <div className="flex items-start gap-2 px-3 py-1.5">
+    <div className="flex items-center gap-2 px-4 py-1.5 min-h-[30px]">
       <span
-        className="flex h-6 shrink-0 items-center gap-1.5 text-xs text-[#666666]"
+        className="flex shrink-0 items-center gap-2 text-xs text-[#666666]"
         style={{ width: LABEL_WIDTH_PX }}
       >
-        <Icon className="h-4 w-4 shrink-0" />
+        <Icon className="h-3.5 w-3.5 shrink-0 text-[#888888]" />
         <span className="truncate">{label}</span>
       </span>
 
@@ -106,9 +106,12 @@ export function RecordField({
               onChange={(event) => { setDraft(event.target.value); setError(null); }}
               onBlur={() => commit(draft)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === "Escape") {
+                if (event.key === "Enter") {
                   event.preventDefault();
                   commit(draft);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancel?.();
                 }
               }}
               className={cn(
@@ -120,22 +123,19 @@ export function RecordField({
           {error !== null && <p className="mt-1 text-xs text-rose-500">{error}</p>}
         </div>
       ) : (
-        // A div, not a button: display may contain a relation chip button. Nested
-        // buttons are invalid HTML and trigger hydration/accessibility errors.
         <div
           role={readOnly ? undefined : "button"}
           tabIndex={readOnly ? undefined : 0}
           onClick={readOnly ? undefined : onStartEdit}
           onKeyDown={(event) => {
-            // Вложенная ссылка/кнопка сама обрабатывает клавиатуру.
             if (!readOnly && event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
               event.preventDefault();
               onStartEdit?.();
             }
           }}
           className={cn(
-            "min-w-0 flex-1 rounded px-1.5 py-0.5 text-left text-[13px]",
-            readOnly ? "cursor-default text-[#666666]" : "cursor-pointer text-[#111111] hover:bg-[#f5f5f5]",
+            "min-w-0 flex-1 rounded px-1.5 py-0.5 text-left text-[13px] transition-colors",
+            readOnly ? "cursor-default text-[#666666]" : "cursor-pointer text-[#111111] hover:bg-black/[0.04]",
           )}
         >
           {isEmpty ? <span className="text-[#888888]">{readOnly ? "—" : label}</span> : <span className="block truncate">{display ?? value}</span>}
@@ -150,13 +150,19 @@ interface RecordFieldGroupProps { title: string; children: ReactNode; defaultExp
 export function RecordFieldGroup({ title, children, defaultExpanded = true }: RecordFieldGroupProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   return (
-    <section className="overflow-hidden rounded-lg border border-[#e5e5e5] bg-white">
-      <button type="button" onClick={() => setExpanded((prev) => !prev)} aria-expanded={expanded} className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium text-[#666666] transition-colors hover:bg-[#fafafa]">
-        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expanded && "-rotate-90")} />
-        {title}
+    <div className="mt-2">
+      <button
+        type="button"
+        title={`Свернуть / развернуть секцию «${title}»`}
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-expanded={expanded}
+        className="flex w-full items-center justify-between px-4 py-1.5 text-xs font-medium text-[#666666] hover:text-[#111111] transition-colors cursor-pointer"
+      >
+        <span>{title}</span>
+        <ChevronUp className={cn("h-3.5 w-3.5 text-[#888888] transition-transform", !expanded && "rotate-180")} />
       </button>
-      {expanded && <div className="pb-1.5">{children}</div>}
-    </section>
+      {expanded && <div className="space-y-0.5 py-0.5">{children}</div>}
+    </div>
   );
 }
 
@@ -166,5 +172,30 @@ export function RecordFieldLink({ href, label }: { href: string; label: string }
 
 interface RecordRelationSectionProps { title: string; count?: number; onSeeAll?: () => void; action?: ReactNode; children: ReactNode; }
 export function RecordRelationSection({ title, count, onSeeAll, action, children }: RecordRelationSectionProps) {
-  return <section className="rounded-lg border border-[#e5e5e5] bg-white"><header className="flex items-center gap-2 border-b border-[#f0f0f0] px-3 py-2"><span className="text-xs font-medium text-[#666666]">{title}</span>{count !== undefined && count > 0 && <span className="rounded bg-[#f0f0f0] px-1.5 text-xs text-[#666666]">{count}</span>}<span className="ml-auto flex items-center gap-1">{action}{onSeeAll !== undefined && <button type="button" onClick={onSeeAll} title={`Открыть все: ${title}`} className="rounded p-1 text-[#888888] transition-colors hover:bg-[#f5f5f5] hover:text-[#111111]"><ExternalLink className="h-3.5 w-3.5" /></button>}</span></header><div className="p-2">{children}</div></section>;
+  return (
+    <div className="relative mt-4 border-t border-[#f0f0f0] pt-3 px-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-[#111111]">{title}</span>
+          {count !== undefined && count > 0 && (
+            <span className="rounded bg-[#f0f0f0] px-1.5 py-0.5 text-[11px] text-[#666666] font-normal">{count}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {action}
+          {onSeeAll !== undefined && (
+            <button
+              type="button"
+              onClick={onSeeAll}
+              title={`Открыть все: ${title}`}
+              className="rounded p-1 text-[#888888] transition-colors hover:bg-black/[0.04] hover:text-[#111111] cursor-pointer"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+      <div>{children}</div>
+    </div>
+  );
 }

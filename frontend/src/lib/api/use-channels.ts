@@ -14,6 +14,16 @@ import type { ChannelSlug } from "@/types";
 
 // Зеркалит backend/src/modules/channels/channels.types.ts.
 
+export interface ChannelAccountLinksDTO {
+  directUrl: string;
+  trackingUrl: string;
+  accountType: "bot" | "user_api" | "whatsapp" | "max" | "default";
+  cleanIdentifier: string;
+  defaultText?: string;
+  startTag?: string;
+  btnTag?: string;
+}
+
 export interface ChannelAccountDTO {
   id: string;
   channel: ChannelSlug;
@@ -31,6 +41,8 @@ export interface ChannelAccountDTO {
   createdAt: string;
   boundAgentId?: string | null;
   boundAgentName?: string | null;
+  /** Сгенерированные прямые ссылки и трекинг сквозной аналитики */
+  links?: ChannelAccountLinksDTO;
 }
 
 export interface ChannelSummaryDTO {
@@ -168,4 +180,29 @@ export function pluralAccounts(count: number): string {
   if (mod10 === 1 && mod100 !== 11) return "аккаунт";
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
   return "аккаунтов";
+}
+
+/**
+ * Хук получения и кастомизации ссылок подключения (Direct / Smart Tracking Links).
+ */
+export function useChannelAccountCustomLinks(
+  channel: ChannelSlug,
+  accountId: string | null,
+  options?: { text?: string; startTag?: string; btn?: string },
+): UseQueryResult<ChannelAccountLinksDTO, ApiClientError> {
+  const queryParams = new URLSearchParams();
+  if (options?.text) queryParams.set("text", options.text);
+  if (options?.startTag) queryParams.set("startTag", options.startTag);
+  if (options?.btn) queryParams.set("btn", options.btn);
+  const qs = queryParams.toString();
+
+  return useQuery({
+    queryKey: ["channels", channel, "accounts", accountId, "links", qs],
+    queryFn: async () => {
+      const url = `${BASE_PATH}/${channel}/accounts/${accountId}/links${qs ? `?${qs}` : ""}`;
+      const res = await apiClient.get<ChannelAccountLinksDTO>(url);
+      return res.data;
+    },
+    enabled: Boolean(accountId),
+  });
 }

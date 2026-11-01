@@ -33,6 +33,7 @@ import { Skeleton } from "@/components/shared/Skeleton";
 import { DisableModuleDialog } from "@/components/marketplace/DisableModuleDialog";
 import {
   formatRub,
+  pluralUnit,
   trialDaysLeft,
   useMarketplaceBilling,
   useMarketplaceModules,
@@ -70,6 +71,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 /** Подпись тарифа: модель расчёта различается, одной строкой не описать. */
 function priceCaption(module: MarketplaceModuleDTO): string {
+  if (module.isFreeCustomPlan || (module.basePrice === 0 && module.unitPrice === 0)) {
+    if (module.billingKind === "per_seat") {
+      return "0 ₽/мес — все пользователи включены";
+    }
+    if (module.isMulti) {
+      return "0 ₽/мес — без ограничений";
+    }
+    return "0 ₽/мес — включено в ваш тариф";
+  }
+
   switch (module.billingKind) {
     case "per_seat":
       return `${formatRub(module.basePrice)}/мес за ${module.includedUnits} пользователей, далее +${formatRub(module.unitPrice)} за каждого`;
@@ -81,39 +92,6 @@ function priceCaption(module: MarketplaceModuleDTO): string {
     case "flat":
       return `${formatRub(module.basePrice)}/мес`;
   }
-}
-
-/** Склонение подписи единицы: 1 агент, 2 агента, 5 агентов. */
-function pluralUnit(count: number, label: string): string {
-  if (label === "агент") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "агент";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "агента";
-    return "агентов";
-  }
-  if (label === "аккаунт") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "аккаунт";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "аккаунта";
-    return "аккаунтов";
-  }
-  if (label === "сайт") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "сайт";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "сайта";
-    return "сайтов";
-  }
-  if (label === "бот") {
-    const mod10 = count % 10;
-    const mod100 = count % 100;
-    if (mod10 === 1 && mod100 !== 11) return "бот";
-    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "бота";
-    return "ботов";
-  }
-  return label;
 }
 
 function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
@@ -257,15 +235,26 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold text-[#111111]">{module.name}</h3>
 
-        {/* Бейдж пробного периода. Для подключённого модуля показываем остаток,
-            иначе пользователь не знает, сколько ещё бесплатно. */}
-        {module.trialActive ? (
+        {/* Бейдж тарифа / пробного периода.
+            Если единицы модуля включены в тариф навсегда (includedUnits > 0) или кастомный тариф —
+            показываем постоянную отметку «Включено в тариф», а не временный триал. */}
+        {module.isFreeCustomPlan ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <Check className="h-3 w-3" />
+            Включено в ваш тариф
+          </span>
+        ) : module.includedUnits > 0 ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <Check className="h-3 w-3" />
+            {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} в тарифе бесплатно
+          </span>
+        ) : module.trialActive ? (
           <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
             <Gift className="h-3 w-3" />
             Бесплатно ещё {daysLeft} дн.
           </span>
         ) : (
-          !module.installed && (
+          !module.installed && module.trialDays > 0 && (
             <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
               <Gift className="h-3 w-3" />
               {module.trialDays} дней бесплатно
@@ -280,10 +269,37 @@ function ModuleCard({ module }: { module: MarketplaceModuleDTO }) {
         <p className="text-sm font-bold text-[#111111] tabular-nums font-mono">{priceCaption(module)}</p>
         {module.isMulti && (
           <p className="mt-0.5 text-xs text-[#666666]">
-            {quantity} × {formatRub(module.unitPrice)} ={" "}
-            <span className="font-semibold text-[#111111] tabular-nums font-mono">
-              {formatRub(module.unitPrice * quantity)}/мес
-            </span>
+            {module.isFreeCustomPlan || module.unitPrice === 0 ? (
+              <>
+                {quantity} {pluralUnit(quantity, module.unitLabel)} ={" "}
+                <span className="font-semibold text-emerald-700 tabular-nums font-mono">
+                  0 ₽/мес (в тарифе без ограничений)
+                </span>
+              </>
+            ) : module.includedUnits > 0 ? (
+              quantity <= module.includedUnits ? (
+                <>
+                  {quantity} из {module.includedUnits} {pluralUnit(module.includedUnits, module.unitLabel)} ={" "}
+                  <span className="font-semibold text-emerald-700 tabular-nums font-mono">
+                    0 ₽/мес (в тарифе)
+                  </span>
+                </>
+              ) : (
+                <>
+                  {module.includedUnits} в тарифе + {quantity - module.includedUnits} доп. × {formatRub(module.unitPrice)} ={" "}
+                  <span className="font-semibold text-[#111111] tabular-nums font-mono">
+                    {formatRub(module.unitPrice * (quantity - module.includedUnits))}/мес
+                  </span>
+                </>
+              )
+            ) : (
+              <>
+                {quantity} × {formatRub(module.unitPrice)} ={" "}
+                <span className="font-semibold text-[#111111] tabular-nums font-mono">
+                  {formatRub(module.unitPrice * quantity)}/мес
+                </span>
+              </>
+            )}
           </p>
         )}
       </div>
@@ -363,6 +379,94 @@ function BillingBar() {
   if (isLoading) return <Skeleton className="h-20 w-full rounded-[8px]" />;
   if (data === undefined || data.items.length === 0) return null;
 
+  const isFreePlan =
+    data.isFreeCustomPlan ||
+    (data.isCustomPlan && data.customPriceRubles === 0);
+
+  if (isFreePlan) {
+    return (
+      <div className="rounded-[8px] border border-emerald-200 bg-emerald-50/50 p-5 shadow-2xs">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                <Check className="h-3.5 w-3.5" />
+                {data.customPlanName || "Индивидуальный тариф"}
+              </span>
+              <span className="text-xs font-medium text-emerald-700">Безлимитный доступ</span>
+            </div>
+            <p className="mt-1.5 text-2xl font-bold text-emerald-800 tabular-nums font-mono">
+              0 ₽/мес
+            </p>
+            <p className="mt-1 text-xs text-emerald-700 font-medium">
+              Все модули, каналы коммуникаций и пользователи включены в ваш тариф бесплатно
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="text-right">
+              <p className="text-xs text-[#666666]">Пользователей в портале</p>
+              <Link
+                href="/settings/team"
+                className="text-sm font-semibold text-[#111111] tabular-nums underline-offset-2 hover:text-[#4a38f5] hover:underline"
+              >
+                {data.usersCount}
+              </Link>
+            </div>
+
+            <div className="flex items-center gap-1.5 rounded-[8px] border border-emerald-300 bg-white px-3.5 py-2 text-xs font-semibold text-emerald-700 shadow-2xs">
+              <Check className="h-4 w-4 text-emerald-600" />
+              Тариф активен
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.isCustomPlan && typeof data.customPriceRubles === "number" && data.customPriceRubles > 0) {
+    return (
+      <div className="rounded-[8px] border border-violet-200 bg-violet-50/50 p-5 shadow-2xs">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-[4px] border border-violet-300 bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">
+                <Check className="h-3.5 w-3.5" />
+                {data.customPlanName || "Индивидуальный тариф"}
+              </span>
+            </div>
+            <p className="mt-1.5 text-2xl font-bold text-[#111111] tabular-nums font-mono">
+              {formatRub(data.customPriceRubles)}/мес
+            </p>
+            <p className="mt-1 text-xs text-[#666666]">
+              Индивидуальная фиксированная стоимость пакета
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="text-right">
+              <p className="text-xs text-[#666666]">Пользователей в портале</p>
+              <Link
+                href="/settings/team"
+                className="text-sm font-semibold text-[#111111] tabular-nums underline-offset-2 hover:text-[#4a38f5] hover:underline"
+              >
+                {data.usersCount}
+              </Link>
+            </div>
+
+            <Link
+              href="/settings/billing"
+              className="flex items-center gap-2 rounded-[8px] bg-[#4a38f5] px-4 py-2.5 text-sm font-medium text-white shadow-2xs transition-colors hover:bg-[#3d2ee0]"
+            >
+              <CreditCard className="h-4 w-4" />
+              Управление подпиской
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const hasTrials = data.items.some((item) => item.trialActive);
 
   return (
@@ -431,7 +535,7 @@ export default function MarketplacePage() {
         <div>
           <h1 className="text-xl font-bold text-[#111111]">Маркетплейс модулей</h1>
           <p className="mt-1 text-[13px] text-[#666666]">
-            Подключайте модули и каналы. Каждый новый модуль — 14 дней бесплатно.
+            Подключайте модули и каналы. Базовые подключения ботов и каналов уже включены в ваш тариф CRM.
           </p>
         </div>
 
