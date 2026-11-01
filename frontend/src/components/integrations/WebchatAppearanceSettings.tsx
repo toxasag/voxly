@@ -261,12 +261,9 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
       initialCreds.avatarType === "photo" ||
       initialCreds.avatarType === "icon"
     ) {
-      if (initialCreds.mascotId === "custom" || initialCustomDirs) {
-        return "mascot";
-      }
       return initialCreds.avatarType as WebchatAvatarType;
     }
-    return initialCustomDirs ? "mascot" : (initialCreds.consultantAvatar ? "photo" : "mascot");
+    return initialCreds.consultantAvatar ? "photo" : (initialCustomDirs ? "mascot" : "icon");
   });
   const [mascotId, setMascotId] = useState<MascotId>(() => {
     if (typeof initialCreds.mascotId === "string" && initialCreds.mascotId) {
@@ -2570,7 +2567,11 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 <div
                   className={cn(
                     "flex items-center gap-2.5",
-                    position === "bottom-right" ? "flex-row" : "flex-row-reverse",
+                    launcherStyle === "pill"
+                      ? "flex-col items-center"
+                      : position === "bottom-right"
+                        ? "flex-row"
+                        : "flex-row-reverse",
                   )}
                 >
                   {!previewOpen && badgeEnabled && (
@@ -2578,6 +2579,7 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       onClick={() => setPreviewOpen(true)}
                       className={cn(
                         "relative cursor-pointer rounded-[10px] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg transition-all duration-250 select-none whitespace-nowrap",
+                        launcherStyle === "pill" && "mb-1",
                         badgeAnimating ? "opacity-0 -translate-y-2 scale-90" : "opacity-100 translate-y-0 scale-100",
                       )}
                       style={{
@@ -2591,15 +2593,25 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       {/* Стрелочка speech-bubble */}
                       <span
                         className={cn(
-                          "absolute top-1/2 -translate-y-1/2 h-0 w-0 border-solid",
-                          position === "bottom-right"
-                            ? "-right-1.5 border-y-[5px] border-y-transparent border-l-[6px] border-r-0"
-                            : "-left-1.5 border-y-[5px] border-y-transparent border-r-[6px] border-l-0",
+                          launcherStyle === "pill"
+                            ? "absolute top-full left-1/2 -translate-x-1/2 h-0 w-0 border-solid border-x-[6px] border-x-transparent border-t-[6px] border-b-0"
+                            : cn(
+                                "absolute top-1/2 -translate-y-1/2 h-0 w-0 border-solid",
+                                position === "bottom-right"
+                                  ? "-right-1.5 border-y-[5px] border-y-transparent border-l-[6px] border-r-0"
+                                  : "-left-1.5 border-y-[5px] border-y-transparent border-r-[6px] border-l-0",
+                              ),
                         )}
-                        style={{
-                          borderLeftColor: position === "bottom-right" ? accentColor : "transparent",
-                          borderRightColor: position === "bottom-left" ? accentColor : "transparent",
-                        }}
+                        style={
+                          launcherStyle === "pill"
+                            ? {
+                                borderTopColor: accentColor,
+                              }
+                            : {
+                                borderLeftColor: position === "bottom-right" ? accentColor : "transparent",
+                                borderRightColor: position === "bottom-left" ? accentColor : "transparent",
+                              }
+                        }
                       />
                     </div>
                   )}

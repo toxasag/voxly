@@ -409,6 +409,7 @@
       animation: none !important;
       overflow: hidden !important;
       gap: 0 !important;
+      border: none !important;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
@@ -417,20 +418,28 @@
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::before,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::after,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::before,
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::after {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::after,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo::after {
       animation: none !important;
       display: none !important;
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-icon,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon,
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-icon {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo .getvoxly-bubble-icon {
+      display: none !important;
+    }
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-dot,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-pill-dot {
       display: none !important;
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-close-icon,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-close-icon,
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-close-icon,
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-close-icon {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo .getvoxly-bubble-close-icon {
       display: flex !important;
       width: 100% !important;
       height: 100% !important;
@@ -439,6 +448,9 @@
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
       display: none !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
     }
 
     /* Формат кнопки-капсулы (Информативная плашка с аватаром, именем и статусом «Онлайн») */
@@ -506,7 +518,7 @@
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      background: rgba(99, 102, 241, 0.12) !important;
+      background: #ffffff !important;
       position: relative !important;
     }
     .getvoxly-bubble-pill-avatar-wrap .getvoxly-mascot-sprite,
@@ -532,9 +544,17 @@
     .getvoxly-bubble-pill-avatar-img {
       width: 100% !important;
       height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      aspect-ratio: 1 / 1 !important;
       border-radius: 50% !important;
       object-fit: cover !important;
       display: block !important;
+      background: #ffffff !important;
+      -webkit-user-drag: none !important;
+      user-select: none !important;
     }
     .getvoxly-bubble-pill-dot {
       position: absolute !important;
@@ -545,7 +565,7 @@
       background: #10b981 !important;
       border: 2px solid #ffffff !important;
       border-radius: 50% !important;
-      z-index: 3 !important;
+      z-index: 5 !important;
       box-shadow: 0 0 5px rgba(16, 185, 129, 0.6) !important;
     }
     .getvoxly-bubble-pill-text {
@@ -588,29 +608,62 @@
     }
 
     .getvoxly-widget-bubble.is-photo {
-      padding: 2px !important;
-      overflow: visible !important;
+      width: 60px !important;
+      height: 60px !important;
+      min-width: 60px !important;
+      min-height: 60px !important;
+      border-radius: 50% !important;
+      padding: 0 !important;
       background: #ffffff !important;
       border: 2px solid #ffffff !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2) !important;
+      overflow: visible !important;
+      position: relative !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    .getvoxly-widget-bubble.is-photo:hover {
+      transform: scale(1.06) !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28) !important;
+    }
+    .getvoxly-bubble-photo-wrap {
+      position: relative !important;
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: #ffffff !important;
     }
     .getvoxly-bubble-photo-img {
       width: 100% !important;
       height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      aspect-ratio: 1 / 1 !important;
       object-fit: cover !important;
       border-radius: 50% !important;
       display: block !important;
+      background: #ffffff !important;
+      -webkit-user-drag: none !important;
+      user-select: none !important;
     }
-    .getvoxly-bubble-dot {
+    .getvoxly-widget-bubble.is-photo .getvoxly-bubble-dot {
       position: absolute !important;
-      bottom: 1px !important;
-      right: 1px !important;
+      bottom: -1px !important;
+      right: -1px !important;
       width: 14px !important;
       height: 14px !important;
+      border-radius: 50% !important;
       background: #10b981 !important;
       border: 2px solid #ffffff !important;
-      border-radius: 50% !important;
       box-shadow: 0 0 6px rgba(16, 185, 129, 0.6) !important;
-      z-index: 2 !important;
+      z-index: 10 !important;
     }
     .getvoxly-widget-bubble.is-mascot {
       background: transparent !important;
@@ -711,6 +764,52 @@
       border-width: 6px 6px 6px 0 !important;
       border-style: solid !important;
       border-color: transparent var(--badge-color, #6366F1) transparent transparent !important;
+    }
+
+    /* Позиционирование бейджа СВЕРХУ для капсулы (Информативная капсула) */
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge {
+      position: absolute !important;
+      bottom: calc(100% + 10px) !important;
+      left: 50% !important;
+      right: auto !important;
+      top: auto !important;
+      transform: translateX(-50%) !important;
+      white-space: nowrap !important;
+      max-width: 280px !important;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+      margin: 0 !important;
+    }
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge.is-animating {
+      opacity: 0 !important;
+      transform: translateX(-50%) translateY(-6px) scale(0.95) !important;
+    }
+    .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge::after {
+      content: '' !important;
+      position: absolute !important;
+      top: 100% !important;
+      left: 50% !important;
+      right: auto !important;
+      bottom: auto !important;
+      transform: translateX(-50%) !important;
+      width: 0 !important;
+      height: 0 !important;
+      border-width: 6px 6px 0 6px !important;
+      border-style: solid !important;
+      border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
+    }
+    .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge {
+      left: 50% !important;
+      right: auto !important;
+      transform: translateX(-50%) !important;
+    }
+    .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge::after {
+      top: 100% !important;
+      left: 50% !important;
+      right: auto !important;
+      bottom: auto !important;
+      transform: translateX(-50%) !important;
+      border-width: 6px 6px 0 6px !important;
+      border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
     }
 
     /* Окно диалога (Светлая тема по умолчанию Twenty Light Canvas) */
@@ -2382,19 +2481,15 @@
       if (currentConfig.avatarType === 'icon') {
         return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
       }
-      if (currentConfig.avatarType === 'photo' && currentConfig.consultantAvatar) {
-        var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar);
-        return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
+      if (currentConfig.avatarType === 'photo' || (!currentConfig.avatarType && currentConfig.consultantAvatar)) {
+        var miniUrl = resolveAssetUrl(currentConfig.consultantAvatar || '/miroslava.png');
+        return '<img src="' + miniUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
       }
       if (currentConfig.avatarType === 'mascot' && currentConfig._directionsUrl) {
         return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
       }
-      if (currentConfig._directionsUrl) {
+      if (currentConfig._directionsUrl && !currentConfig.consultantAvatar) {
         return '<div style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + currentConfig._directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;display:block;"></div>';
-      }
-      if (currentConfig.consultantAvatar) {
-        var fbUrl = resolveAssetUrl(currentConfig.consultantAvatar);
-        return '<img src="' + fbUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onerror="this.onerror=null;this.src=\'' + botFallbackSvg + '\';">';
       }
       return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
     }
@@ -3138,13 +3233,13 @@
           if (headerAvatarInner) {
             if (data.avatarType === 'icon') {
               headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
-            } else if (data.avatarType === 'photo' && data.consultantAvatar) {
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
               var headerAvatarUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var headerFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
+              headerAvatarInner.innerHTML = '<img src="' + headerAvatarUrl + '" alt="Консультант" style="width:100%;height:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:50%;" onerror="this.onerror=null;this.src=\'' + headerFallbackSvg + '\';">';
             } else if (data.avatarType === 'mascot' && directionsUrl) {
               headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
-            } else if (directionsUrl) {
+            } else if (directionsUrl && !data.consultantAvatar) {
               headerAvatarInner.innerHTML = '<div style="width:34px;height:34px;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
             } else {
               headerAvatarInner.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>';
@@ -3248,6 +3343,7 @@
 
           // Рендер плавающего маскота / фото / капсулы в кнопке
           if (data.launcherStyle === 'pill') {
+            wrapper.classList.add('has-pill');
             bubble.classList.add('is-pill');
             bubble.classList.remove('is-mascot', 'is-photo');
             var pName = data.consultantName || data.title || 'Консультант';
@@ -3256,13 +3352,13 @@
 
             if (data.avatarType === 'icon') {
               avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
-            } else if (data.avatarType === 'photo' && data.consultantAvatar) {
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
               var pillPhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var pillFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
               avatarHtml = '<img class="getvoxly-bubble-pill-avatar-img" src="' + pillPhotoUrl + '" alt="' + pName + '" onerror="this.onerror=null;this.src=\'' + pillFallbackSvg + '\';">';
             } else if (data.avatarType === 'mascot' && directionsUrl) {
               avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
-            } else if (!data.avatarType && directionsUrl) {
+            } else if (directionsUrl && !data.consultantAvatar) {
               avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
             } else {
               avatarHtml = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + (data.accentColor || '#4a38f5') + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
@@ -3280,48 +3376,51 @@
                 '<span class="getvoxly-bubble-pill-status">' + pStatus + '</span>' +
               '</div>';
 
-            if ((data.avatarType === 'mascot' || (!data.avatarType && !data.consultantAvatar)) && directionsUrl) {
+            if (data.avatarType === 'mascot' && directionsUrl) {
               var pillSprite = bubbleIcon.querySelector('#getvoxly-mascot-sprite');
               if (pillSprite) {
                 setupMascotInteractivity(bubble, pillSprite, null, directionsUrl, reactionsUrl);
               }
             }
-          } else if (data.avatarType === 'icon') {
-            bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
-            bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
-          } else if (data.avatarType === 'photo' && data.consultantAvatar) {
-            bubble.classList.add('is-photo');
-            bubble.classList.remove('is-pill', 'is-mascot');
-            var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar);
-            var circleFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-            bubbleIcon.innerHTML = '<img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="Консультант" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"><span class="getvoxly-bubble-dot"></span>';
-          } else if (data.avatarType === 'mascot' && directionsUrl) {
-            bubble.classList.add('is-mascot');
-            bubble.classList.remove('is-pill', 'is-photo');
-
-            var mascotEl = document.createElement('div');
-            mascotEl.className = 'getvoxly-mascot-wrap';
-            mascotEl.id = 'getvoxly-mascot-el';
-
-            var spriteEl = document.createElement('div');
-            spriteEl.className = 'getvoxly-mascot-sprite';
-            spriteEl.id = 'getvoxly-mascot-sprite';
-            spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
-            spriteEl.style.setProperty('background-position', '50% 50%', 'important');
-
-            var dot = document.createElement('span');
-            dot.className = 'getvoxly-bubble-dot';
-
-            mascotEl.appendChild(spriteEl);
-            mascotEl.appendChild(dot);
-
-            bubbleIcon.innerHTML = '';
-            bubbleIcon.appendChild(mascotEl);
-
-            setupMascotInteractivity(bubble, spriteEl, mascotEl, directionsUrl, reactionsUrl);
           } else {
-            bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
-            bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            wrapper.classList.remove('has-pill');
+            if (data.avatarType === 'icon') {
+              bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+              bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            } else if (data.avatarType === 'photo' || (!data.avatarType && data.consultantAvatar)) {
+              bubble.classList.add('is-photo');
+              bubble.classList.remove('is-pill', 'is-mascot');
+              var circlePhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
+              var circleFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23ffffff" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+              bubbleIcon.innerHTML = '<div class="getvoxly-bubble-photo-wrap"><img class="getvoxly-bubble-photo-img" src="' + circlePhotoUrl + '" alt="' + (data.consultantName || 'Консультант') + '" onerror="this.onerror=null;this.src=\'' + circleFallbackSvg + '\';"></div><span class="getvoxly-bubble-dot"></span>';
+            } else if (data.avatarType === 'mascot' && directionsUrl) {
+              bubble.classList.add('is-mascot');
+              bubble.classList.remove('is-pill', 'is-photo');
+
+              var mascotEl = document.createElement('div');
+              mascotEl.className = 'getvoxly-mascot-wrap';
+              mascotEl.id = 'getvoxly-mascot-el';
+
+              var spriteEl = document.createElement('div');
+              spriteEl.className = 'getvoxly-mascot-sprite';
+              spriteEl.id = 'getvoxly-mascot-sprite';
+              spriteEl.style.backgroundImage = 'url("' + directionsUrl + '")';
+              spriteEl.style.setProperty('background-position', '50% 50%', 'important');
+
+              var dot = document.createElement('span');
+              dot.className = 'getvoxly-bubble-dot';
+
+              mascotEl.appendChild(spriteEl);
+              mascotEl.appendChild(dot);
+
+              bubbleIcon.innerHTML = '';
+              bubbleIcon.appendChild(mascotEl);
+
+              setupMascotInteractivity(bubble, spriteEl, mascotEl, directionsUrl, reactionsUrl);
+            } else {
+              bubble.classList.remove('is-pill', 'is-mascot', 'is-photo');
+              bubbleIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>';
+            }
           }
 
           // Приветственное сообщение
