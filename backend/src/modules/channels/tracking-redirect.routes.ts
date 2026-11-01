@@ -60,14 +60,20 @@ export default async function trackingRedirectRoutes(app: FastifyInstance): Prom
     const rawPageUrl = stringParam(queryParams.page_url, 2048) || rawReferrer;
 
     // Читаем аккаунт в platform_scope (публичный редиректор внешнего трафика)
-    const account = await runWithPlatformScope(async () => {
-      return queryOne<ChannelAccountRow>(
-        `SELECT id, tenant_id, channel, label, external_id, credentials, remote_user_id, status
-         FROM channel_accounts
-         WHERE id = $1 AND deleted_at IS NULL`,
-        [accountId],
-      );
-    });
+    let account: ChannelAccountRow | null = null;
+    try {
+      account = await runWithPlatformScope(async () => {
+        return queryOne<ChannelAccountRow>(
+          `SELECT id, tenant_id, channel, label, external_id, credentials, remote_user_id, status
+           FROM channel_accounts
+           WHERE id = $1 AND deleted_at IS NULL`,
+          [accountId],
+        );
+      });
+    } catch (err) {
+      app.log.warn({ err, accountId }, "Smart tracking redirect: DB query failure, falling back to homepage");
+      return reply.redirect("https://getvoxly.ru", 302);
+    }
 
     if (!account) {
       app.log.warn({ accountId }, "Smart tracking redirect: channel account not found");
