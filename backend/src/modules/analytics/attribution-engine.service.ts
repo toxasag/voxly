@@ -32,6 +32,12 @@ interface AnalyticsSessionRow {
   messenger_username: string | null;
   messenger_chat_id: string | null;
   status: "clicked" | "opened" | "first_message_received" | "channel_subscribed";
+  prechat_name?: string | null;
+  prechat_lead_code?: string | null;
+  prechat_message?: string | null;
+  ab_variant?: string | null;
+  is_converted_to_chat?: boolean;
+  chat_converted_at?: Date | string | null;
   yandex_conversion_sent: boolean;
   ga4_conversion_sent: boolean;
   google_ads_conversion_sent: boolean;
@@ -162,7 +168,7 @@ export class AttributionEngineService {
       tokenFromText?: string | null;
     },
   ): Promise<boolean> {
-    // Извлекаем токен из текста, если это WhatsApp/VK
+    // 1. Извлекаем токен ref_... из текста
     let token = extraMeta?.tokenFromText;
     if (!token && text) {
       const match = text.match(/\[ID:(ref_[a-zA-Z0-9_-]+)\]/) || text.match(/(ref_[a-zA-Z0-9_-]+)/);
@@ -171,9 +177,27 @@ export class AttributionEngineService {
       }
     }
 
-    // Ищем подходящую сессию
+    // 2. Извлекаем компактный код лида vx-xxxx из текста двухшагового пре-чата
+    let leadCode: string | null = null;
+    if (text) {
+      const leadMatch =
+        text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i) ||
+        text.match(/\b(vx-[a-z0-9]{4,6})\b/i);
+      if (leadMatch && leadMatch[1]) {
+        leadCode = leadMatch[1].toLowerCase();
+      }
+    }
+
+    // Ищем подходящую сессию: сначала по коду лида, затем по токену, затем по messengerUserId
     let session: AnalyticsSessionRow | null = null;
-    if (token) {
+    if (leadCode) {
+      session = await queryOne<AnalyticsSessionRow>(
+        `SELECT * FROM analytics_sessions WHERE prechat_lead_code = $1 ORDER BY created_at DESC LIMIT 1`,
+        [leadCode],
+      );
+    }
+
+    if (!session && token) {
       session = await queryOne<AnalyticsSessionRow>(
         `SELECT * FROM analytics_sessions WHERE session_token = $1`,
         [token],
@@ -199,10 +223,12 @@ export class AttributionEngineService {
       return true;
     }
 
-    // Переводим сессию в first_message_received
+    // Переводим сессию в first_message_received и фиксируем факт конверсии в реальный диалог
     await query(
       `UPDATE analytics_sessions
        SET status = 'first_message_received',
+           is_converted_to_chat = true,
+           chat_converted_at = now(),
            first_message_at = now(),
            messenger_user_id = COALESCE(messenger_user_id, $2),
            messenger_username = COALESCE(messenger_username, $3),
@@ -210,6 +236,27 @@ export class AttributionEngineService {
        WHERE id = $1`,
       [session.id, messengerUserId, extraMeta?.username || null, extraMeta?.chatId || null],
     );
+
+    // Логируем конверсию A/B теста в prechat_telemetry_events
+    if (session.ab_variant) {
+      try {
+        await query(
+          `INSERT INTO prechat_telemetry_events (
+             tenant_id, session_id, event_type, ab_variant, messenger_type, metadata
+           )
+           VALUES ($1, $2, 'chat_started', $3, $4, $5)`,
+          [
+            session.tenant_id,
+            session.session_token,
+            session.ab_variant,
+            session.messenger_type,
+            JSON.stringify({ leadCode: session.prechat_lead_code, text: text.slice(0, 100) }),
+          ],
+        );
+      } catch {
+        // Игнорируем ошибку телеметрии
+      }
+    }
 
     // Ставим задачу отправки серверных конверсий
     await this.dispatchConversionForSession(session);

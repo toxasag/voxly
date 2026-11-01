@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AnalyticsService } from "./analytics.service.js";
 import { analyticsIntegrationsService } from "./analytics-integrations.service.js";
 import { attributionEngineService } from "./attribution-engine.service.js";
+import { preChatModalService } from "./prechat-modal.service.js";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ANALYTICS_PROVIDERS } from "./analytics.types.js";
 import { NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
@@ -80,6 +81,52 @@ const clickSchema = z.object({
   pageUrl: z.string().optional(),
 });
 
+const preChatLeadSchema = z.object({
+  name: z.string().default("Посетитель"),
+  messenger: z.enum(["telegram", "whatsapp", "vk", "max", "webchat"]),
+  channelAccountId: z.string().uuid().nullable().optional(),
+  sessionId: z.string().nullable().optional(),
+  abVariant: z.enum(["modal", "direct"]).optional(),
+  customNote: z.string().max(500).optional(),
+  gaClientId: z.string().nullable().optional(),
+  ymClientId: z.string().nullable().optional(),
+  yandexuid: z.string().nullable().optional(),
+  gclid: z.string().nullable().optional(),
+  yclid: z.string().nullable().optional(),
+  fbclid: z.string().nullable().optional(),
+  vkclid: z.string().nullable().optional(),
+  utm: z
+    .object({
+      source: z.string().optional(),
+      medium: z.string().optional(),
+      campaign: z.string().optional(),
+      content: z.string().optional(),
+      term: z.string().optional(),
+    })
+    .optional(),
+  referrer: z.string().optional(),
+  pageUrl: z.string().optional(),
+});
+
+const preChatTelemetrySchema = z.object({
+  sessionId: z.string().min(1),
+  eventType: z.enum(["impression", "direct_click", "modal_open", "modal_submit", "chat_started"]),
+  abVariant: z.enum(["direct", "modal"]),
+  messengerType: z.string().nullable().optional(),
+  channelAccountId: z.string().uuid().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const updatePreChatConfigSchema = z.object({
+  isEnabled: z.boolean().optional(),
+  abMode: z.enum(["split_50_50", "always_modal", "always_direct"]).optional(),
+  greetingTemplate: z.string().min(5).max(300).optional(),
+  whatsappEnabled: z.boolean().optional(),
+  telegramEnabled: z.boolean().optional(),
+  whatsappNumber: z.string().nullable().optional(),
+  telegramUsername: z.string().nullable().optional(),
+});
+
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   const service = new AnalyticsService();
 
@@ -107,6 +154,69 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     const result = await attributionEngineService.registerClick(tenantId, payload);
     return reply.status(201).send({ data: result });
+  });
+
+  /**
+   * Публичный эндпоинт регистрации лида из двухшагового пре-чат модала ("Написать в WhatsApp/Telegram").
+   * Генерирует компактный код vx-xxxx, форматирует персонализированный текст и deep link.
+   */
+  app.post("/pre-chat-lead", async (request, reply) => {
+    const payload = preChatLeadSchema.parse(request.body);
+
+    let tenantId = (request as { tenant_id?: string }).tenant_id;
+    if (!tenantId && payload.channelAccountId) {
+      const channel = await queryOne<{ tenant_id: string }>(
+        `SELECT tenant_id FROM channel_accounts WHERE id = $1 AND deleted_at IS NULL`,
+        [payload.channelAccountId],
+      );
+      if (channel) {
+        tenantId = channel.tenant_id;
+      }
+    }
+
+    if (!tenantId) {
+      const defaultTenant = await queryOne<{ id: string }>(
+        `SELECT id FROM tenants WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+      );
+      tenantId = defaultTenant?.id;
+    }
+
+    if (!tenantId) {
+      throw new ValidationError("Не указан арендатор или канал");
+    }
+
+    const result = await preChatModalService.registerPreChatLead(tenantId, payload);
+    return reply.status(201).send({ data: result });
+  });
+
+  /**
+   * Публичный сбор телеметрии воронки A/B тестирования (показы, открытия, клики).
+   */
+  app.post("/pre-chat-telemetry", async (request, reply) => {
+    const payload = preChatTelemetrySchema.parse(request.body);
+
+    let tenantId = (request as { tenant_id?: string }).tenant_id;
+    if (!tenantId && payload.channelAccountId) {
+      const channel = await queryOne<{ tenant_id: string }>(
+        `SELECT tenant_id FROM channel_accounts WHERE id = $1 AND deleted_at IS NULL`,
+        [payload.channelAccountId],
+      );
+      if (channel) {
+        tenantId = channel.tenant_id;
+      }
+    }
+
+    if (!tenantId) {
+      const defaultTenant = await queryOne<{ id: string }>(
+        `SELECT id FROM tenants WHERE deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+      );
+      tenantId = defaultTenant?.id;
+    }
+
+    if (tenantId) {
+      await preChatModalService.logTelemetry(tenantId, payload);
+    }
+    return reply.status(200).send({ ok: true });
   });
 
   // Остальные маршруты требуют авторизации
@@ -240,5 +350,33 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       return reply.send({ data: { jobId, status: "pending", message: "Задача обрабатывается воркером" } });
     }
     return reply.send({ data: result });
+  });
+
+  /**
+   * Получение настроек двухшагового пре-чат модала для арендатора
+   */
+  app.get("/pre-chat-config", async (request, reply) => {
+    const tenantId = request.tenant_id;
+    const data = await preChatModalService.getConfig(tenantId);
+    return reply.send({ data });
+  });
+
+  /**
+   * Обновление настроек двухшагового пре-чат модала и режима A/B тестирования
+   */
+  app.put("/pre-chat-config", async (request, reply) => {
+    const tenantId = request.tenant_id;
+    const payload = updatePreChatConfigSchema.parse(request.body);
+    const data = await preChatModalService.updateConfig(tenantId, payload);
+    return reply.send({ data });
+  });
+
+  /**
+   * Метрики и сводка A/B тестирования (Direct Click vs Pre-Chat Modal)
+   */
+  app.get("/pre-chat-stats", async (request, reply) => {
+    const tenantId = request.tenant_id;
+    const data = await preChatModalService.getStats(tenantId);
+    return reply.send({ data });
   });
 };

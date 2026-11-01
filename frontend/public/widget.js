@@ -1456,6 +1456,183 @@
       background: #18181b !important;
       color: #71717a !important;
     }
+
+    /* ------------------------------------------------------------- */
+    /* Двухшаговый нативный Pre-Chat Модал (WhatsApp & Telegram)     */
+    /* ------------------------------------------------------------- */
+    .getvoxly-prechat-overlay {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      background: rgba(0, 0, 0, 0.45) !important;
+      z-index: 9999 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: flex-end !important;
+      backdrop-filter: blur(2px) !important;
+      animation: getvoxly-fade-in 0.18s ease-out !important;
+    }
+    .getvoxly-prechat-card {
+      background: #ffffff !important;
+      border-radius: 16px 16px 0 0 !important;
+      overflow: hidden !important;
+      box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.16) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      max-height: 92% !important;
+      animation: getvoxly-slide-up 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    }
+    .getvoxly-prechat-header {
+      padding: 12px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      color: #ffffff !important;
+    }
+    .getvoxly-prechat-header.theme-telegram {
+      background: #2AABEE !important;
+    }
+    .getvoxly-prechat-header.theme-whatsapp {
+      background: #075E54 !important;
+    }
+    .getvoxly-prechat-header-left {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      min-width: 0 !important;
+    }
+    .getvoxly-prechat-avatar {
+      width: 34px !important;
+      height: 34px !important;
+      border-radius: 50% !important;
+      background: rgba(255, 255, 255, 0.2) !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-prechat-title {
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      line-height: 1.2 !important;
+    }
+    .getvoxly-prechat-sub {
+      font-size: 11px !important;
+      opacity: 0.85 !important;
+      line-height: 1.2 !important;
+      margin-top: 1px !important;
+    }
+    .getvoxly-prechat-close {
+      background: transparent !important;
+      border: none !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      padding: 4px !important;
+      border-radius: 50% !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      opacity: 0.85 !important;
+      transition: opacity 0.15s !important;
+    }
+    .getvoxly-prechat-close:hover {
+      opacity: 1 !important;
+    }
+    .getvoxly-prechat-body {
+      padding: 14px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 12px !important;
+      background: #ffffff !important;
+      overflow-y: auto !important;
+    }
+    .getvoxly-prechat-preview-box {
+      border-radius: 8px !important;
+      padding: 10px 12px !important;
+      font-size: 12px !important;
+      line-height: 1.4 !important;
+      border: 1px solid #e5e5e5 !important;
+      background: #fafafa !important;
+    }
+    .getvoxly-prechat-preview-box.theme-telegram {
+      background: #eef7fe !important;
+      border-color: #cbe6fa !important;
+      color: #0c4a6e !important;
+    }
+    .getvoxly-prechat-preview-box.theme-whatsapp {
+      background: #dcf8c6 !important;
+      border-color: #c7e8a9 !important;
+      color: #064e3b !important;
+    }
+    .getvoxly-prechat-preview-label {
+      font-size: 10px !important;
+      font-weight: 600 !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.05em !important;
+      opacity: 0.7 !important;
+      margin-bottom: 4px !important;
+    }
+    .getvoxly-prechat-field {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 4px !important;
+    }
+    .getvoxly-prechat-label {
+      font-size: 11.5px !important;
+      font-weight: 600 !important;
+      color: #111111 !important;
+    }
+    .getvoxly-prechat-input {
+      width: 100% !important;
+      height: 34px !important;
+      padding: 0 10px !important;
+      border: 1px solid #e5e5e5 !important;
+      border-radius: 6px !important;
+      font-size: 12.5px !important;
+      color: #111111 !important;
+      background: #ffffff !important;
+      outline: none !important;
+      box-sizing: border-box !important;
+      transition: border-color 0.15s, box-shadow 0.15s !important;
+    }
+    .getvoxly-prechat-input:focus {
+      border-color: #4a38f5 !important;
+      box-shadow: 0 0 0 2px rgba(74, 56, 245, 0.15) !important;
+    }
+    .getvoxly-prechat-submit {
+      width: 100% !important;
+      height: 38px !important;
+      border-radius: 8px !important;
+      border: none !important;
+      font-size: 13px !important;
+      font-weight: 600 !important;
+      color: #ffffff !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
+      transition: opacity 0.15s, transform 0.1s ease !important;
+    }
+    .getvoxly-prechat-submit:hover {
+      opacity: 0.92 !important;
+      transform: translateY(-1px) !important;
+    }
+    .getvoxly-prechat-submit.btn-telegram {
+      background: #2AABEE !important;
+    }
+    .getvoxly-prechat-submit.btn-whatsapp {
+      background: #25D366 !important;
+    }
+    .getvoxly-prechat-footer-note {
+      font-size: 10.5px !important;
+      color: #888888 !important;
+      text-align: center !important;
+      line-height: 1.3 !important;
+    }
   `;
 
   // 5. Функция монтирования виджета
@@ -1810,6 +1987,7 @@
       <div class="getvoxly-consent">
         Нажимая «Отправить», вы даете согласие на обработку персональных данных.
       </div>
+      <div class="getvoxly-prechat-overlay" id="getvoxly-prechat-modal" style="display: none;"></div>
     `;
 
     document.body.appendChild(wrapper);
@@ -2446,6 +2624,180 @@
       } catch (err) {}
     }
 
+    // A/B тестирование двухшагового пре-чат модала
+    var abPrechatVariant = safeStorage.getItem('getvoxly_ab_prechat');
+    if (!abPrechatVariant) {
+      abPrechatVariant = Math.random() < 0.5 ? 'modal' : 'direct';
+      safeStorage.setItem('getvoxly_ab_prechat', abPrechatVariant);
+    }
+
+    function sendPreChatTelemetry(eventType, mType, meta) {
+      try {
+        var payload = {
+          sessionId: visitorId,
+          eventType: eventType,
+          abVariant: abPrechatVariant,
+          messengerType: mType || null,
+          channelAccountId: channelAccountId,
+          metadata: meta || {}
+        };
+        fetch('https://api.getvoxly.ru/api/v1/analytics/pre-chat-telemetry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true
+        }).catch(function () {});
+      } catch (e) {}
+    }
+
+    var prechatModalEl = document.getElementById('getvoxly-prechat-modal');
+
+    function closePreChatModal() {
+      if (prechatModalEl) {
+        prechatModalEl.style.display = 'none';
+        prechatModalEl.innerHTML = '';
+      }
+    }
+
+    function openPreChatModal(mType, targetUrl) {
+      if (!prechatModalEl) return;
+
+      var isTg = mType === 'telegram';
+      var themeClass = isTg ? 'theme-telegram' : 'theme-whatsapp';
+      var btnClass = isTg ? 'btn-telegram' : 'btn-whatsapp';
+      var titleText = isTg ? 'Написать в Telegram' : 'Написать в WhatsApp';
+      var subText = isTg ? 'Свяжитесь с нами напрямую' : 'Ответим в течение 2 минут';
+      var ctaText = isTg ? 'Перейти в Telegram' : 'Перейти в WhatsApp';
+
+      var messengerIconSvg = isTg
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ffffff"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="#ffffff"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19.01L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 14.99 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.34C9.36 7.34 9.09 7.4 8.87 7.65C8.65 7.89 8.02 8.49 8.02 9.71C8.02 10.93 8.91 12.11 9.03 12.27C9.15 12.44 10.74 14.98 13.23 15.96C15.3 16.77 15.72 16.61 16.17 16.57C16.62 16.53 17.62 15.98 17.83 15.4C18.04 14.81 18.04 14.31 17.98 14.21C17.92 14.1 17.76 14.04 17.51 13.92C17.27 13.79 16.07 13.2 15.85 13.12C15.63 13.04 15.46 13 15.3 13.25C15.13 13.49 14.66 14.04 14.52 14.21C14.38 14.37 14.24 14.4 14 14.27C13.75 14.15 12.96 13.89 12.03 13.06C11.3 12.41 10.81 11.61 10.67 11.36C10.53 11.12 10.65 10.99 10.78 10.86C10.89 10.75 11.03 10.57 11.16 10.42C11.28 10.27 11.32 10.16 11.41 9.99C11.49 9.83 11.45 9.68 11.39 9.56C11.33 9.44 10.83 8.21 10.62 7.71C10.42 7.22 10.21 7.29 10.06 7.28C9.92 7.27 9.75 7.27 9.58 7.27"/></svg>';
+
+      var initialName = safeStorage.getItem('getvoxly_client_name') || '';
+
+      prechatModalEl.innerHTML =
+        '<div class="getvoxly-prechat-card">' +
+          '<div class="getvoxly-prechat-header ' + themeClass + '">' +
+            '<div class="getvoxly-prechat-header-left">' +
+              '<div class="getvoxly-prechat-avatar">' + messengerIconSvg + '</div>' +
+              '<div>' +
+                '<div class="getvoxly-prechat-title">' + titleText + '</div>' +
+                '<div class="getvoxly-prechat-sub">' + subText + '</div>' +
+              '</div>' +
+            '</div>' +
+            '<button class="getvoxly-prechat-close" id="getvoxly-prechat-btn-close" type="button" title="Закрыть">' +
+              '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+                '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>' +
+              '</svg>' +
+            '</button>' +
+          '</div>' +
+          '<div class="getvoxly-prechat-body">' +
+            '<div class="getvoxly-prechat-preview-box ' + themeClass + '">' +
+              '<div class="getvoxly-prechat-preview-label">Текст сообщения в чате:</div>' +
+              '<div id="getvoxly-prechat-preview-text">' +
+                'Здравствуйте! Меня зовут ' + (initialName || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)' +
+              '</div>' +
+            '</div>' +
+            '<div class="getvoxly-prechat-field">' +
+              '<label class="getvoxly-prechat-label">Как к вам обращаться? *</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-name" placeholder="Например, Иван" value="' + initialName + '" autocomplete="name" />' +
+            '</div>' +
+            '<div class="getvoxly-prechat-field">' +
+              '<label class="getvoxly-prechat-label">Тема или вопрос (необязательно)</label>' +
+              '<input class="getvoxly-prechat-input" id="getvoxly-prechat-input-note" placeholder="Например, консультация по ценам" />' +
+            '</div>' +
+            '<button class="getvoxly-prechat-submit ' + btnClass + '" id="getvoxly-prechat-btn-submit" type="button">' +
+              messengerIconSvg + ' ' + ctaText +
+            '</button>' +
+            '<div class="getvoxly-prechat-footer-note">' +
+              'Код диалога свяжет обращение с сайтом без потери истории и контактов' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+      prechatModalEl.style.display = 'flex';
+
+      var nameInput = document.getElementById('getvoxly-prechat-input-name');
+      var noteInput = document.getElementById('getvoxly-prechat-input-note');
+      var previewText = document.getElementById('getvoxly-prechat-preview-text');
+      var closeBtn = document.getElementById('getvoxly-prechat-btn-close');
+      var submitBtn = document.getElementById('getvoxly-prechat-btn-submit');
+
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.addEventListener('input', function () {
+          var val = (nameInput.value || '').trim();
+          if (previewText) {
+            previewText.innerHTML = 'Здравствуйте! Меня зовут ' + (val || '<span style="opacity:0.6">[Ваше имя]</span>') + '. (код: vx-...)';
+          }
+        });
+      }
+
+      if (closeBtn) {
+        closeBtn.addEventListener('click', closePreChatModal);
+      }
+
+      prechatModalEl.addEventListener('click', function (e) {
+        if (e.target === prechatModalEl) {
+          closePreChatModal();
+        }
+      });
+
+      if (submitBtn) {
+        submitBtn.addEventListener('click', function () {
+          var clientName = nameInput ? (nameInput.value || '').trim() : '';
+          var clientNote = noteInput ? (noteInput.value || '').trim() : '';
+
+          if (clientName) {
+            safeStorage.setItem('getvoxly_client_name', clientName);
+          }
+
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = 'Подготовка перехода...';
+
+          var payload = {
+            name: clientName || 'Посетитель',
+            messenger: mType,
+            channelAccountId: channelAccountId,
+            sessionId: visitorId,
+            abVariant: abPrechatVariant,
+            customNote: clientNote || null,
+            gaClientId: typeof gaClientId !== 'undefined' ? gaClientId : null,
+            ymClientId: typeof ymUid !== 'undefined' ? ymUid : null,
+            yandexuid: typeof yandexuid !== 'undefined' ? yandexuid : null,
+            gclid: (clickIds && clickIds.gclid) || null,
+            yclid: (clickIds && clickIds.yclid) || null,
+            fbclid: (clickIds && clickIds.fbclid) || null,
+            vkclid: (clickIds && clickIds.vkclid) || null,
+            utm: utmTags || {},
+            referrer: typeof document !== 'undefined' ? document.referrer : '',
+            pageUrl: typeof window !== 'undefined' ? window.location.href : ''
+          };
+
+          fetch('https://api.getvoxly.ru/api/v1/analytics/pre-chat-lead', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          })
+            .then(function (res) { return res.json(); })
+            .then(function (json) {
+              closePreChatModal();
+              if (json && json.data && json.data.deepLink) {
+                window.open(json.data.deepLink, '_blank');
+              } else if (targetUrl) {
+                window.open(targetUrl, '_blank');
+              }
+            })
+            .catch(function () {
+              closePreChatModal();
+              if (targetUrl) {
+                window.open(targetUrl, '_blank');
+              }
+            });
+        });
+      }
+    }
+
     if (msgContainer) {
       msgContainer.addEventListener('click', function (e) {
         var a = e.target && e.target.closest ? e.target.closest('a') : null;
@@ -2455,6 +2807,20 @@
         var isMax = a.classList.contains('btn-max') || a.classList.contains('is-max');
         var mType = isTg ? 'telegram' : isWa ? 'whatsapp' : isMax ? 'max' : 'generic';
         trackMessengerClick(mType);
+
+        var prechatCfg = currentConfig && currentConfig.prechatModal;
+        var isModalActive = prechatCfg ? prechatCfg.enabled !== false : true;
+
+        if (isModalActive && (isTg || isWa)) {
+          if (abPrechatVariant === 'modal') {
+            e.preventDefault();
+            sendPreChatTelemetry('modal_open', mType);
+            openPreChatModal(mType, a.getAttribute('href') || '');
+            return;
+          } else {
+            sendPreChatTelemetry('direct_click', mType);
+          }
+        }
       });
     }
 
@@ -2839,6 +3205,15 @@
           // Проверяем настройку показа баннера мессенджеров (независимо от того, Telegram это, WhatsApp или MAX)
           if (msgContainer && buttons.length > 0 && data.showMessengerBanner !== false) {
             msgContainer.style.display = 'block';
+
+            if (data.prechatModal) {
+              if (data.prechatModal.abMode === 'always_modal') {
+                abPrechatVariant = 'modal';
+              } else if (data.prechatModal.abMode === 'always_direct') {
+                abPrechatVariant = 'direct';
+              }
+            }
+            sendPreChatTelemetry('impression', null);
 
             if (buttons.length === 1) {
               var b = buttons[0];
