@@ -390,28 +390,50 @@
     }
 
     /* Когда чат открыт: кнопка превращается в аккуратную круглую кнопку-крестик, бейдж скрыт */
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-photo {
       width: 56px !important;
       height: 56px !important;
       min-width: 56px !important;
       min-height: 56px !important;
       max-width: 56px !important;
+      max-height: 56px !important;
       padding: 0 !important;
       border-radius: 50% !important;
       background: var(--accent-color, #6366F1) !important;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25) !important;
       animation: none !important;
+      overflow: hidden !important;
+      gap: 0 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::before,
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::after {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble::after,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::before,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill::after {
       animation: none !important;
       display: none !important;
     }
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-icon {
       display: none !important;
     }
-    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-close-icon {
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-pill .getvoxly-bubble-close-icon,
+    .getvoxly-widget-wrapper.is-chat-open .getvoxly-widget-bubble.is-mascot .getvoxly-bubble-close-icon {
       display: flex !important;
+      width: 100% !important;
+      height: 100% !important;
+      align-items: center !important;
+      justify-content: center !important;
     }
     .getvoxly-widget-wrapper.is-chat-open .getvoxly-chat-badge {
       display: none !important;
@@ -449,7 +471,7 @@
       transform: scale(1.03) !important;
       box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3) !important;
     }
-    .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon {
+    .getvoxly-widget-wrapper:not(.is-chat-open) .getvoxly-widget-bubble.is-pill .getvoxly-bubble-icon {
       display: flex !important;
       align-items: center !important;
       gap: 11px !important;
@@ -462,6 +484,8 @@
       height: 44px !important;
       min-width: 44px !important;
       min-height: 44px !important;
+      max-width: 44px !important;
+      max-height: 44px !important;
       border-radius: 50% !important;
       border: 2px solid #ffffff !important;
       background: #ffffff !important;
@@ -470,6 +494,38 @@
       justify-content: center !important;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
       overflow: visible !important;
+      flex-shrink: 0 !important;
+    }
+    .getvoxly-bubble-pill-avatar-inner {
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 50% !important;
+      overflow: hidden !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: rgba(99, 102, 241, 0.12) !important;
+      position: relative !important;
+    }
+    .getvoxly-bubble-pill-avatar-wrap .getvoxly-mascot-sprite,
+    .getvoxly-bubble-pill-mascot-sprite {
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 100% !important;
+      min-height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      border-radius: 50% !important;
+      background-size: 300% 300% !important;
+      background-position: 50% 50% !important;
+      background-repeat: no-repeat !important;
+      background-color: transparent !important;
+      image-rendering: -webkit-optimize-contrast !important;
+      display: block !important;
+      pointer-events: none !important;
+      position: static !important;
+      transform: none !important;
+      margin: 0 !important;
     }
     .getvoxly-bubble-pill-avatar-img {
       width: 100% !important;
@@ -480,14 +536,14 @@
     }
     .getvoxly-bubble-pill-dot {
       position: absolute !important;
-      bottom: 0px !important;
-      right: 0px !important;
-      width: 13px !important;
-      height: 13px !important;
+      bottom: -1px !important;
+      right: -1px !important;
+      width: 12px !important;
+      height: 12px !important;
       background: #10b981 !important;
       border: 2px solid #ffffff !important;
       border-radius: 50% !important;
-      z-index: 2 !important;
+      z-index: 3 !important;
       box-shadow: 0 0 5px rgba(16, 185, 129, 0.6) !important;
     }
     .getvoxly-bubble-pill-text {
@@ -3164,7 +3220,7 @@
             var avatarHtml = '';
 
             if (isMascotPill && directionsUrl) {
-              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite" style="width:100%;height:100%;border-radius:50%;background-image:url(\'' + directionsUrl + '\');background-size:300% 300%;background-position:50% 50%;background-repeat:no-repeat;"></div>';
+              avatarHtml = '<div id="getvoxly-mascot-sprite" class="getvoxly-mascot-sprite getvoxly-bubble-pill-mascot-sprite" style="background-image:url(\'' + directionsUrl + '\');"></div>';
             } else if (data.avatarType === 'photo' || data.consultantAvatar) {
               var pillPhotoUrl = resolveAssetUrl(data.consultantAvatar || '/miroslava.png');
               var pillFallbackSvg = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23888888" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
@@ -3175,7 +3231,9 @@
 
             bubbleIcon.innerHTML =
               '<div class="getvoxly-bubble-pill-avatar-wrap">' +
-                avatarHtml +
+                '<div class="getvoxly-bubble-pill-avatar-inner">' +
+                  avatarHtml +
+                '</div>' +
                 '<span class="getvoxly-bubble-pill-dot"></span>' +
               '</div>' +
               '<div class="getvoxly-bubble-pill-text">' +
