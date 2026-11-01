@@ -24,6 +24,7 @@ export const createDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   custom_fields: z.record(z.unknown()).optional(),
   source_metadata: z.record(z.unknown()).optional(),
@@ -38,6 +39,7 @@ export const updateDealSchema = z.object({
   contact_id: optionalUuid,
   company_id: optionalUuid,
   owner_id: optionalUuid,
+  source_widget_id: optionalUuid,
   close_date: optionalDate,
   position: z.number().optional(),
   custom_fields: z.record(z.unknown()).optional(),
@@ -105,6 +107,7 @@ export interface DealRow {
   stage_id: string;
   contact_id: string | null;
   company_id: string | null;
+  source_widget_id?: string | null;
   title: string;
   description: string;
   /** NUMERIC arrives from pg as a string. */
@@ -153,6 +156,7 @@ export interface DealDTO {
   stageId: string;
   contactId: string | null;
   companyId: string | null;
+  sourceWidgetId?: string | null;
   title: string;
   description: string;
   budget: number;
@@ -213,6 +217,7 @@ export function toDealDTO(row: DealRow): DealDTO {
     stageId: row.stage_id,
     contactId: row.contact_id,
     companyId: row.company_id,
+    sourceWidgetId: row.source_widget_id ?? null,
     title: row.title,
     description: row.description,
     budget: Number(row.budget),

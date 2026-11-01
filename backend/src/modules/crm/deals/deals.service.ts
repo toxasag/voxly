@@ -25,7 +25,7 @@ import { leadNotificationQueue } from "../leads/lead-notification.queue.js";
 import { ContactActivityService } from "../contacts/contact-activity.service.js";
 
 const DEAL_COLUMNS = `
-  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
+  id, tenant_id, pipeline_id, stage_id, contact_id, company_id, source_widget_id, title, description,
   budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position,
   closed_at, lead_notified_at, created_at, updated_at
 `;
@@ -38,7 +38,7 @@ const DEAL_COLUMNS = `
  * список из 50 сделок стоил бы 150 дополнительных запросов.
  */
 const DEAL_COLUMNS_WITH_LABELS = `
-  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.title,
+  d.id, d.tenant_id, d.pipeline_id, d.stage_id, d.contact_id, d.company_id, d.source_widget_id, d.title,
   d.description, d.budget, d.currency, d.custom_fields, d.source_metadata, d.created_by, d.owner_id,
   d.close_date, d.position, d.closed_at, d.lead_notified_at, d.created_at, d.updated_at,
   co.name AS company_name,
@@ -361,8 +361,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealRow>(
         `INSERT INTO deals
            (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description,
-            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15)
+            budget, currency, custom_fields, source_metadata, created_by, owner_id, close_date, position, source_widget_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16)
          RETURNING ${DEAL_COLUMNS}`,
         [
           tenantId,
@@ -382,6 +382,7 @@ export class DealsService {
           nullIfBlank(payload.owner_id) ?? createdBy,
           nullIfBlank(payload.close_date),
           (first?.position ?? 1) - 1,
+          nullIfBlank(payload.source_widget_id),
         ],
       );
 

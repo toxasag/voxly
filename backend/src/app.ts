@@ -329,6 +329,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Публичный онлайн-чат на сайте (виджет для клиентов)
   await app.register(webchatRoutes, { prefix: "/api/v1/public/chat" });
+  await app.register(webchatRoutes, { prefix: "/api/v1/public/widget" });
 
   // Внутренний чат CRM в реальном времени (SSE стрим и дельта-поллинг)
   await app.register(chatStreamRoutes, { prefix: "/api/v1" });

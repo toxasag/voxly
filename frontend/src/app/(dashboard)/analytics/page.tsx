@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, BarChart2, Radio } from "lucide-react";
+import { RefreshCw, BarChart2, Radio, MessageSquareText } from "lucide-react";
 import { KpiCards } from "@/components/analytics/KpiCards";
 import { PnlChart } from "@/components/analytics/PnlChart";
 import { FunnelChart, TopRepairsChart, MasterLoadChart } from "@/components/analytics/Charts";
 import { ServerConversionIntegrationsView } from "@/components/analytics/ServerConversionIntegrationsView";
+import { WebchatAnalyticsDashboardTab } from "@/components/analytics/WebchatAnalyticsDashboardTab";
 import { useAnalyticsOverview } from "@/lib/api/use-analytics";
 import { Skeleton } from "@/components/shared/Skeleton";
 
 export default function AnalyticsPage() {
-  const [activeTab, setActiveTab] = useState<"overview" | "conversions">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "conversions" | "webchat">("overview");
   const { data, isLoading, isError, error, refetch, isFetching } = useAnalyticsOverview();
 
   return (
@@ -64,10 +65,24 @@ export default function AnalyticsPage() {
           <Radio className="h-4 w-4" />
           Серверные конверсии и пиксели
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("webchat")}
+          className={`flex items-center gap-2 border-b-2 px-3.5 py-2.5 text-[13px] font-medium transition-colors ${
+            activeTab === "webchat"
+              ? "border-[#4a38f5] text-[#4a38f5]"
+              : "border-transparent text-[#666666] hover:text-[#111111]"
+          }`}
+        >
+          <MessageSquareText className="h-4 w-4" />
+          Воронка онлайн-чатов
+        </button>
       </div>
 
       {activeTab === "conversions" ? (
         <ServerConversionIntegrationsView />
+      ) : activeTab === "webchat" ? (
+        <WebchatAnalyticsDashboardTab />
       ) : (
         <>
           {isLoading && (
