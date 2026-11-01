@@ -886,12 +886,6 @@ export const ContactCard = memo(function ContactCard({
         targetLabel={contactFullName(contact)}
         onOpenDeal={onOpenDeal}
       />
-
-      {contact.notes !== "" && (
-        <RecordRelationSection title="Описание">
-          <p className="whitespace-pre-wrap px-1 text-[13px] leading-relaxed text-[#111111]">{contact.notes}</p>
-        </RecordRelationSection>
-      )}
     </div>
   );
 

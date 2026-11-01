@@ -16,7 +16,7 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
 import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
-import { isPlaceholderName, resolveBestContactName } from "./identity-resolution.js";
+import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
@@ -371,30 +371,44 @@ export class CrmPipelineService {
           );
         }
 
-        // 2. Если имя контакта было заглушкой («Клиент», «Клиент +7...», «Посетитель...»),
-        // а в сообщении или профиле пришло реальное имя — обогащаем контакт
+        // 2. Многоуровневый экстрактор достоверного имени контакта (Contact Identity Resolver):
+        // Если имя контакта было заглушкой («Клиент», «Клиент +7...», «Посетитель...») или клиент
+        // представился в сообщении («Меня зовут Наталья», подпись «С уважением, Наталья Дюдяева») —
+        // обогащаем карточку контакта и заголовок сделки.
         const newName = contactNameFrom(input);
         const isCurrentPlaceholder = isPlaceholderName(contact.first_name, contact.last_name);
 
-        let resolvedName: { firstName: string; lastName?: string } | null = null;
-        if (isCurrentPlaceholder) {
-          resolvedName = resolveBestContactName({
-            currentFirstName: contact.first_name,
-            currentLastName: contact.last_name,
-            messageText: input.text,
-            telegramUsername: contact.telegram_username,
+        const identity = resolveContactIdentity({
+          messageText: input.text,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: contact.telegram_username || input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
             socials: Array.isArray(contact.socials) ? (contact.socials as Array<{ kind: string; value: string }>) : null,
-          });
-        }
+          },
+          currentContact: {
+            firstName: contact.first_name,
+            lastName: contact.last_name,
+          },
+        });
 
-        if (resolvedName && resolvedName.firstName && (resolvedName.firstName !== contact.first_name || (resolvedName.lastName ?? "") !== (contact.last_name ?? ""))) {
+        const shouldUpdateContact = identity && (
+          isCurrentPlaceholder ||
+          identity.source === "message_body" ||
+          identity.source === "email_signature" ||
+          (!contact.last_name && Boolean(identity.lastName))
+        );
+
+        if (shouldUpdateContact && identity && (identity.firstName !== contact.first_name || (identity.lastName || "") !== (contact.last_name || ""))) {
           await tx.query(
             `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
-            [resolvedName.firstName, resolvedName.lastName || "", contact.id, input.tenantId],
+            [identity.firstName, identity.lastName || "", contact.id, input.tenantId],
           );
-          contact.first_name = resolvedName.firstName;
-          contact.last_name = resolvedName.lastName || "";
-          displayName = `${resolvedName.firstName} ${resolvedName.lastName || ""}`.trim();
+          contact.first_name = identity.firstName;
+          contact.last_name = identity.lastName || "";
+          displayName = `${identity.firstName} ${identity.lastName || ""}`.trim();
         } else if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
           await tx.query(
             `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
@@ -429,14 +443,22 @@ export class CrmPipelineService {
         if (input.pageHistory) customFields.page_history = input.pageHistory;
 
         const initialName = contactNameFrom(input);
-        const resolvedFromName = resolveBestContactName({
-          currentFirstName: initialName.first_name,
-          currentLastName: initialName.last_name,
+        const resolvedIdentity = resolveContactIdentity({
           messageText: input.text,
-          telegramUsername: input.profile?.username,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
+          },
+          currentContact: {
+            firstName: initialName.first_name,
+            lastName: initialName.last_name,
+          },
         });
-        const finalFirstName = resolvedFromName?.firstName || initialName.first_name;
-        const finalLastName = resolvedFromName?.lastName !== undefined ? resolvedFromName.lastName : initialName.last_name;
+        const finalFirstName = resolvedIdentity?.firstName || initialName.first_name;
+        const finalLastName = resolvedIdentity?.lastName !== undefined ? resolvedIdentity.lastName : initialName.last_name;
         if (finalFirstName !== initialName.first_name || (finalLastName && finalLastName !== initialName.last_name)) {
           displayName = `${finalFirstName} ${finalLastName || ""}`.trim();
         }

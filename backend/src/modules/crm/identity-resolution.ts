@@ -266,7 +266,45 @@ export function extractNameFromText(text: string | null | undefined): {
     }
   }
 
-  // 2. «Я [Имя] [Фамилия]» в начале предложения
+  // 2. «ФИО: [Имя] [Фамилия]» или «Имя: [Имя] [Фамилия]»
+  const fieldMatch = text.match(
+    /(?:фио|имя|контактное\s+лицо|клиент)\s*[:—\-]\s*([А-ЯЁ][а-яё]+)(?:\s+([А-ЯЁ][а-яё]+))?/i,
+  );
+  if (fieldMatch && fieldMatch[1]) {
+    const rawFirst = fieldMatch[1].trim();
+    if (!stopWords.has(rawFirst.toLowerCase()) && rawFirst.length >= 2) {
+      const firstName = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase();
+      let lastName: string | undefined;
+      if (fieldMatch[2]) {
+        const rawLast = fieldMatch[2].trim();
+        if (!stopWords.has(rawLast.toLowerCase()) && rawLast.length >= 2) {
+          lastName = rawLast.charAt(0).toUpperCase() + rawLast.slice(1).toLowerCase();
+        }
+      }
+      return { firstName, lastName };
+    }
+  }
+
+  // 3. Email-подписи: «С уважением, [Имя] [Фамилия]», «С наилучшими пожеланиями, [Имя]»
+  const signMatch = text.match(
+    /(?:с\s+уважением|с\s+наилучшими\s+пожеланиями|искренне\s+ваш|best\s+regards|regards|thanks)[,\s\n]+([А-ЯЁ][а-яё]+)(?:\s+([А-ЯЁ][а-яё]+))?/i,
+  );
+  if (signMatch && signMatch[1]) {
+    const rawFirst = signMatch[1].trim();
+    if (!stopWords.has(rawFirst.toLowerCase()) && rawFirst.length >= 2) {
+      const firstName = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase();
+      let lastName: string | undefined;
+      if (signMatch[2]) {
+        const rawLast = signMatch[2].trim();
+        if (!stopWords.has(rawLast.toLowerCase()) && rawLast.length >= 2) {
+          lastName = rawLast.charAt(0).toUpperCase() + rawLast.slice(1).toLowerCase();
+        }
+      }
+      return { firstName, lastName };
+    }
+  }
+
+  // 4. «Я [Имя] [Фамилия]» или «Это [Имя] [Фамилия]» в начале предложения
   const iAmMatch = text.match(
     /(?:^|[.!?\n]\s*)(?:я|это)\s+([А-ЯЁ][а-яё]+)(?:\s+([А-ЯЁ][а-яё]+))?(?:[,\.\s]|$)/i,
   );
@@ -324,63 +362,139 @@ export function parseNameFromTelegramUsername(username: string | null | undefine
   return null;
 }
 
+export interface ContactIdentityInput {
+  messageText?: string | null;
+  channelMetadata?: {
+    senderName?: string | null;
+    email?: string | null;
+    telegramUsername?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    socials?: Array<{ kind: string; value: string }> | null;
+  };
+  currentContact?: {
+    firstName?: string | null;
+    lastName?: string | null;
+  };
+}
+
+export interface ContactIdentityResult {
+  firstName: string;
+  lastName: string;
+  source: "message_body" | "email_signature" | "sender_field" | "messenger_profile" | "telegram_username" | "existing";
+  confidence: number;
+}
+
 /**
- * Комплексный резолвер реального имени клиента.
- * Проверяет сообщение, Telegram, socials и возвращает наиболее достоверное имя.
+ * Многоуровневый экстрактор достоверного имени контакта (Contact Identity Resolver):
+ * 1. Высший приоритет (Приоритет 1): Прямое представление или подпись в теле сообщения.
+ * 2. Приоритет 2: Поле Sender / "От кого" / email-имя, если оно не является автогенерированной заглушкой.
+ * 3. Приоритет 3: Метаданные мессенджера (firstName + lastName) или CamelCase-парсинг username.
+ */
+export function resolveContactIdentity(params: ContactIdentityInput): ContactIdentityResult | null {
+  const currentF = params.currentContact?.firstName;
+  const currentL = params.currentContact?.lastName;
+  const isCurrentPlaceholder = isPlaceholderName(currentF, currentL);
+
+  // 1. Приоритет 1: Тело сообщения или подпись письма
+  const fromText = extractNameFromText(params.messageText);
+
+  // 2. Приоритет 2: Поле От кого / Sender Name (если не заглушка)
+  let fromSender: { firstName: string; lastName?: string } | null = null;
+  const rawSender = (params.channelMetadata?.senderName ?? "").trim();
+  if (rawSender && !isPlaceholderName(rawSender, "")) {
+    const parts = rawSender.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      fromSender = { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+    } else if (parts.length === 1 && parts[0] && parts[0].length >= 2) {
+      fromSender = { firstName: parts[0] };
+    }
+  }
+
+  // 3. Приоритет 3: Метаданные мессенджера (профиль / username)
+  let fromProfile: { firstName: string; lastName?: string } | null = null;
+  const pFirst = (params.channelMetadata?.firstName ?? "").trim();
+  const pLast = (params.channelMetadata?.lastName ?? "").trim();
+  if (pFirst && !isPlaceholderName(pFirst, pLast)) {
+    fromProfile = { firstName: pFirst, lastName: pLast || undefined };
+  } else {
+    let tgUser = params.channelMetadata?.telegramUsername;
+    if (!tgUser && Array.isArray(params.channelMetadata?.socials)) {
+      const s = params.channelMetadata.socials.find((item) => item.kind === "telegram");
+      if (s && s.value) tgUser = s.value;
+    }
+    const fromTg = parseNameFromTelegramUsername(tgUser);
+    if (fromTg) {
+      fromProfile = fromTg;
+    }
+  }
+
+  // Выбор по матрице приоритетов и склейка Имени и Фамилии
+  if (fromText) {
+    const lastName = fromText.lastName || fromSender?.lastName || fromProfile?.lastName || "";
+    return {
+      firstName: fromText.firstName,
+      lastName,
+      source: "message_body",
+      confidence: 1.0,
+    };
+  }
+
+  if (fromSender) {
+    const lastName = fromSender.lastName || fromProfile?.lastName || "";
+    return {
+      firstName: fromSender.firstName,
+      lastName,
+      source: "sender_field",
+      confidence: 0.8,
+    };
+  }
+
+  if (fromProfile) {
+    return {
+      firstName: fromProfile.firstName,
+      lastName: fromProfile.lastName || "",
+      source: "messenger_profile",
+      confidence: 0.6,
+    };
+  }
+
+  if (!isCurrentPlaceholder && currentF) {
+    return {
+      firstName: currentF,
+      lastName: currentL || "",
+      source: "existing",
+      confidence: 0.5,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Комплексный резолвер реального имени клиента (обратная совместимость).
  */
 export function resolveBestContactName(params: {
   currentFirstName?: string | null;
   currentLastName?: string | null;
   messageText?: string | null;
   telegramUsername?: string | null;
+  senderName?: string | null;
   socials?: Array<{ kind: string; value: string }> | null;
 }): { firstName: string; lastName: string } | null {
-  const isCurrentPlaceholder = isPlaceholderName(params.currentFirstName, params.currentLastName);
-
-  // 1. Попытка извлечь имя из текста сообщения
-  const fromText = extractNameFromText(params.messageText);
-
-  // 2. Попытка извлечь имя из Telegram username
-  let tgUsername = params.telegramUsername;
-  if (!tgUsername && Array.isArray(params.socials)) {
-    const tgSocial = params.socials.find((s) => s.kind === "telegram");
-    if (tgSocial && tgSocial.value) {
-      tgUsername = tgSocial.value;
-    }
-  }
-
-  const fromTg = parseNameFromTelegramUsername(tgUsername);
-
-  // Если оба источника дали данные, объединяем:
-  // Имя из текста (например «Наталья») + фамилия из Telegram (например «Дюдяева»)
-  if (fromText && fromTg) {
-    return {
-      firstName: fromText.firstName || fromTg.firstName,
-      lastName: fromText.lastName || fromTg.lastName || "",
-    };
-  }
-
-  if (fromText) {
-    return {
-      firstName: fromText.firstName,
-      lastName: fromText.lastName || "",
-    };
-  }
-
-  if (fromTg) {
-    return {
-      firstName: fromTg.firstName,
-      lastName: fromTg.lastName || "",
-    };
-  }
-
-  // Если текущее имя не плейсхолдер — оставляем его
-  if (!isCurrentPlaceholder && params.currentFirstName) {
-    return {
+  const res = resolveContactIdentity({
+    messageText: params.messageText,
+    currentContact: {
       firstName: params.currentFirstName,
-      lastName: params.currentLastName || "",
-    };
-  }
+      lastName: params.currentLastName,
+    },
+    channelMetadata: {
+      senderName: params.senderName,
+      telegramUsername: params.telegramUsername,
+      socials: params.socials,
+    },
+  });
 
-  return null;
+  if (!res) return null;
+  return { firstName: res.firstName, lastName: res.lastName };
 }

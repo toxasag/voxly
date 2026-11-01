@@ -23,6 +23,7 @@ export type AgentMode = (typeof agentModeValues)[number];
 export const wizardConfigSchema = z
   .object({
     presetId: z.string().optional(),
+    companyName: z.string().optional(),
     consultantName: z.string().optional(),
     consultantRole: z.string().optional(),
     businessNiche: z.string().optional(),

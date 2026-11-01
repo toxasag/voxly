@@ -820,14 +820,6 @@ function HomeTab({
 
   return (
     <div className="py-2 text-[#111111]">
-      {deal.description !== "" && (
-        <div className="px-4 pb-3">
-          <p className="whitespace-pre-wrap rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] px-3.5 py-2 text-[13px] text-[#333333]">
-            {deal.description}
-          </p>
-        </div>
-      )}
-
       {/* Accordion Group 1: Сделка */}
       <div className="mt-1">
         <button
