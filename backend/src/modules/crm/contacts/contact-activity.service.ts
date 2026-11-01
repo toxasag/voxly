@@ -702,7 +702,7 @@ export class ContactActivityService {
    */
   private synthesizeDialogueInsights(
     messages: RawMessageRow[],
-    hasInbound: boolean,
+    _hasInbound: boolean,
   ): {
     summary: string;
     keyPoints: string[];
@@ -722,45 +722,36 @@ export class ContactActivityService {
     const keyPoints: string[] = [];
     const agreements: string[] = [];
 
-    if (isPricing) {
-      summary = hasInbound
-        ? "Клиент обратился с запросом стоимости и условий тарифных планов. Запросил расчёт стоимости внедрения и скидки на объём."
-        : "Менеджер направил клиенту коммерческое предложение с расчетом тарифа и согласовал персональные условия подключения.";
-      keyPoints.push("Запрос условий и сетки тарифов");
-      keyPoints.push("Уточнение скидок и способов безналичной оплаты");
-      agreements.push("Направлена ссылка на подробный прайс-лист");
-      agreements.push("Запланирован контроль оплаты на следующий рабочий день");
-    } else if (isIntegration) {
-      summary = hasInbound
-        ? "Клиент запросил техническую консультацию по настройке API-вебхуков и интеграции диалогового бота со сторонней платформой."
-        : "Менеджер предоставил техническую документацию по интеграции вебхуков и передал пример конфигурации обработчика.";
-      keyPoints.push("Настройка вебхуков для передачи лидов");
-      keyPoints.push("Интеграция Telegram-бота в корпоративную CRM");
-      agreements.push("Предоставлены тестовые ключи доступа к API");
-      agreements.push("Согласовано тестирование сквозной доставки заявок");
-    } else if (isService) {
-      summary = hasInbound
-        ? "Клиент уточнил статус выполнения сервисной заявки и сроки поступления необходимых комплектующих."
-        : "Менеджер проинформировал клиента о ходе сервисных работ и подтвердил плановую дату готовности заказа.";
-      keyPoints.push("Проверка статуса текущего сервисного заказа");
-      keyPoints.push("Уточнение сроков поставки комплектующих");
-      agreements.push("Мастер уведомит клиента по факту завершения сборки");
-    } else if (isDemo) {
-      summary = hasInbound
-        ? "Клиент проявил интерес к функционалу платформы и запросил демонстрацию возможностей автоматизации."
-        : "Менеджер согласовал удобное время проведения онлайн-демонстрации и выслал ссылку на конференцию.";
-      keyPoints.push("Запрос демонстрации ключевых модулей CRM");
-      keyPoints.push("Определение состава участников со стороны клиента");
-      agreements.push("Назначена онлайн-встреча в видеоконференции");
+    // Извлечение реальных сообщений клиента вместо синтетического B2B-шаблона
+    const inboundTexts = messages
+      .filter((m) => m.direction === "inbound" && m.content.trim())
+      .map((m) => m.content.trim());
+
+    if (inboundTexts.length > 0 && inboundTexts[0]) {
+      const firstInbound = inboundTexts[0];
+      const otherInbound = inboundTexts.slice(1).join(" · ");
+      summary = `Обращение клиента: «${firstInbound.slice(0, 140)}»${otherInbound ? `. Уточнение: «${otherInbound.slice(0, 140)}»` : ""}`;
     } else {
-      // Общий случай делового обращения
-      const firstWords = texts.slice(0, 2).join(". ");
-      summary = hasInbound
-        ? `Клиент инициировал диалог с вопросом по обращению: «${firstWords.slice(0, 120)}...». Стороны обменялись уточнениями.`
-        : `Менеджер связался с клиентом для предоставления обратной связи по текущему вопросу и согласования дальнейших шагов.`;
-      keyPoints.push("Консультация по текущему обращению");
-      keyPoints.push("Предоставление ответов на организационные вопросы");
-      agreements.push("Информация зафиксирована в карточке сделки");
+      const firstOutbound = texts[0] || "";
+      summary = `Исходящее обращение менеджера: «${firstOutbound.slice(0, 140)}»`;
+    }
+
+    if (isPricing) {
+      keyPoints.push("Запрос прайс-листа и условий приобретения");
+      keyPoints.push("Уточнение модификаций и комплектаций");
+      agreements.push("Направление актуального коммерческого предложения/прайса");
+    } else if (isIntegration) {
+      keyPoints.push("Техническая консультация по интеграции");
+      agreements.push("Передача параметров подключения");
+    } else if (isService) {
+      keyPoints.push("Сервисное обслуживание и статус заказа");
+      agreements.push("Контроль готовности оборудования");
+    } else if (isDemo) {
+      keyPoints.push("Демонстрация оборудования/решения");
+      agreements.push("Согласование формата демонстрации");
+    } else {
+      keyPoints.push("Первичная консультация по запросу");
+      agreements.push("Информация зафиксирована в CRM");
     }
 
     const sentiment: "positive" | "neutral" | "negative" =

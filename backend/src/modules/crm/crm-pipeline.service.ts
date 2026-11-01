@@ -16,6 +16,8 @@ import { NotFoundError } from "../../plugins/errorHandler.js";
 import { CrmEnrichmentService } from "./enrichment.service.js";
 import { MaxBridgeService } from "../channels/max-bridge.service.js";
 import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
+import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
+import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
 // реэкспортируется здесь: транспорт получает его вместе с типом входящего
@@ -77,6 +79,7 @@ interface ExistingContact {
   telegram_chat_id?: string | number | null;
   telegram_username?: string | null;
   whatsapp?: string | null;
+  socials?: unknown;
   is_personal?: boolean | null;
   custom_fields?: Record<string, unknown> | null;
 }
@@ -89,7 +92,7 @@ export interface CrmPipelineResult {
   isPersonal?: boolean;
 }
 
-const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, is_personal, custom_fields";
+const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields";
 
 const DEFAULT_STAGES: ReadonlyArray<{
   name: string;
@@ -158,7 +161,7 @@ export class CrmPipelineService {
       // не из профиля. Профиль мог стать недоступным (клиент закрыл приватность)
       // или не запрашиваться вовсе, и тогда у постоянного клиента появилась бы
       // сделка «Заявка от Клиент» при заполненном ФИО в карточке.
-      const displayName =
+      let displayName =
         contact === null ? displayNameFrom(input) : this.contactDisplayName(contact);
 
       let contactId: string;
@@ -368,15 +371,52 @@ export class CrmPipelineService {
           );
         }
 
-        // 2. Если имя контакта было заглушкой «Клиент», а в профиле пришло нормальное имя — обновляем
+        // 2. Многоуровневый экстрактор достоверного имени контакта (Contact Identity Resolver):
+        // Если имя контакта было заглушкой («Клиент», «Клиент +7...», «Посетитель...») или клиент
+        // представился в сообщении («Меня зовут Наталья», подпись «С уважением, Наталья Дюдяева») —
+        // обогащаем карточку контакта и заголовок сделки.
         const newName = contactNameFrom(input);
-        if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+        const isCurrentPlaceholder = isPlaceholderName(contact.first_name, contact.last_name);
+
+        const identity = resolveContactIdentity({
+          messageText: input.text,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: contact.telegram_username || input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
+            socials: Array.isArray(contact.socials) ? (contact.socials as Array<{ kind: string; value: string }>) : null,
+          },
+          currentContact: {
+            firstName: contact.first_name,
+            lastName: contact.last_name,
+          },
+        });
+
+        const shouldUpdateContact = identity && (
+          isCurrentPlaceholder ||
+          identity.source === "message_body" ||
+          identity.source === "email_signature" ||
+          (!contact.last_name && Boolean(identity.lastName))
+        );
+
+        if (shouldUpdateContact && identity && (identity.firstName !== contact.first_name || (identity.lastName || "") !== (contact.last_name || ""))) {
           await tx.query(
-            `UPDATE contacts SET first_name = $1, last_name = $2 WHERE id = $3`,
-            [newName.first_name, newName.last_name, contact.id],
+            `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
+            [identity.firstName, identity.lastName || "", contact.id, input.tenantId],
+          );
+          contact.first_name = identity.firstName;
+          contact.last_name = identity.lastName || "";
+          displayName = `${identity.firstName} ${identity.lastName || ""}`.trim();
+        } else if (contact.first_name === UNKNOWN_CONTACT_NAME && newName.first_name !== UNKNOWN_CONTACT_NAME) {
+          await tx.query(
+            `UPDATE contacts SET first_name = $1, last_name = $2, updated_at = now() WHERE id = $3 AND tenant_id = $4`,
+            [newName.first_name, newName.last_name, contact.id, input.tenantId],
           );
           contact.first_name = newName.first_name;
           contact.last_name = newName.last_name;
+          displayName = `${newName.first_name} ${newName.last_name || ""}`.trim();
         }
       } else {
         const customFields: Record<string, unknown> = {};
@@ -402,10 +442,32 @@ export class CrmPipelineService {
         if (input.visitCount) customFields.visit_count = input.visitCount;
         if (input.pageHistory) customFields.page_history = input.pageHistory;
 
+        const initialName = contactNameFrom(input);
+        const resolvedIdentity = resolveContactIdentity({
+          messageText: input.text,
+          channelMetadata: {
+            senderName: input.senderName,
+            email: input.senderEmail,
+            telegramUsername: input.profile?.username,
+            firstName: input.profile?.firstName,
+            lastName: input.profile?.lastName,
+          },
+          currentContact: {
+            firstName: initialName.first_name,
+            lastName: initialName.last_name,
+          },
+        });
+        const finalFirstName = resolvedIdentity?.firstName || initialName.first_name;
+        const finalLastName = resolvedIdentity?.lastName !== undefined ? resolvedIdentity.lastName : initialName.last_name;
+        if (finalFirstName !== initialName.first_name || (finalLastName && finalLastName !== initialName.last_name)) {
+          displayName = `${finalFirstName} ${finalLastName || ""}`.trim();
+        }
+
         // Компания не подставляется заглушкой «Не указана»: у входящего лида её
         // ещё нет, а строка-заглушка создавала бы фиктивную организацию.
         contactId = await this.contacts.createInTx(tx, input.tenantId, {
-          ...contactNameFrom(input),
+          first_name: finalFirstName,
+          last_name: finalLastName,
           phones: contactPhonesFrom(input),
           email: input.senderEmail ? input.senderEmail.trim() : undefined,
           socials: contactSocialsFrom(input),
@@ -476,6 +538,30 @@ export class CrmPipelineService {
                  updated_at = now()
              WHERE id = $2 AND tenant_id = $3`,
             [JSON.stringify(input.sourceMetadata), activeDeal.id, input.tenantId],
+          );
+        }
+
+        // Если в сделке еще нет описания (или оно пустое), заполняем его текстом первого сообщения клиента
+        if (input.text && input.text.trim()) {
+          await tx.query(
+            `UPDATE deals
+             SET description = $1, updated_at = now()
+             WHERE id = $2 AND tenant_id = $3
+               AND (description IS NULL OR description = '')`,
+            [input.text.trim(), activeDeal.id, input.tenantId],
+          );
+        }
+
+        // Если имя контакта известно (не плейсхолдер), обновляем заголовок сделки, если он был заглушкой
+        if (contact && !isPlaceholderName(contact.first_name, contact.last_name)) {
+          const resolvedContactName = `${contact.first_name} ${contact.last_name || ""}`.trim();
+          await tx.query(
+            `UPDATE deals
+             SET title = 'Заявка от ' || $1 || ' (' || $2 || ')',
+                 updated_at = now()
+             WHERE id = $3 AND tenant_id = $4
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+            [resolvedContactName, this.channelLabel(input.channel), activeDeal.id, input.tenantId],
           );
         }
 
@@ -632,7 +718,7 @@ export class CrmPipelineService {
 
           const deal = await this.deals.createInTx(tx, input.tenantId, createdBy, {
             title: dealTitle,
-            description: "",
+            description: input.text?.trim() || "",
             budget: 0,
             currency: "RUB",
             pipeline_id: pipelineId,
@@ -704,6 +790,9 @@ export class CrmPipelineService {
 
     // Асинхронное уведомление о новом лиде (при наличии контактов и этапе не «Первый контакт»)
     void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
+
+    // Автоматическая генерация и синхронизация AI-выжимки в заметку сделки
+    void getDealConversationSummary(input.tenantId, result.dealId).catch(() => {});
 
     // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
     const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];

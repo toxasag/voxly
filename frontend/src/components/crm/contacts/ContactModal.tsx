@@ -345,7 +345,7 @@ export function ContactModal({ open, onClose, onSubmit, initial }: ContactModalP
 
             <div className="space-y-1.5">
               <label htmlFor="contact-notes" className="flex items-center gap-1.5 text-xs font-medium text-[#666666]">
-                <FileText className="h-3 w-3 text-[#888888]" /> Описание
+                <FileText className="h-3 w-3 text-[#888888]" /> Заметки
               </label>
               <textarea
                 id="contact-notes"

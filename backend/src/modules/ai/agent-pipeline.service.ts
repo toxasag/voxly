@@ -8,6 +8,7 @@ import { buildSystemPrompt, parseAgentReply, type AgentReply } from "./agent-rep
 import { KnowledgeBaseService } from "./knowledge.service.js";
 import { SalesLearnService } from "./sales-learn.service.js";
 import type { WizardConfig } from "./ai.types.js";
+import { isPlaceholderName } from "../crm/identity-resolution.js";
 
 // ---------------------------------------------------------------------------
 // Пайплайн ответа агента на входящее сообщение клиента.
@@ -205,6 +206,7 @@ export class AgentPipelineService {
     // Загружаем предыдущую историю сообщений диалога для поддержания целостного контекста
     let conversationHistory: Array<{ role: "user" | "assistant"; content: string }> = [];
     let contactProfileContext = "";
+    let knownContactName: string | undefined;
     if (input.dealId) {
       try {
         interface HistoryMessageRow {
@@ -250,7 +252,14 @@ export class AgentPipelineService {
           if (contactRow) {
             const profileParts: string[] = [];
             const fullName = `${contactRow.first_name || ""} ${contactRow.last_name || ""}`.trim();
-            if (fullName && !fullName.startsWith("Посетитель сайта")) profileParts.push(`Имя клиента: ${fullName}`);
+            const hasRealName = fullName.length > 0 && !isPlaceholderName(contactRow.first_name, contactRow.last_name);
+            if (hasRealName) {
+              knownContactName = contactRow.first_name;
+              profileParts.push(`Имя клиента: ${fullName}`);
+              profileParts.push(`Имя клиента УЖЕ известно (${contactRow.first_name}). Обязательно обращайся к нему по имени и КАТЕГОРИЧЕСКИ НЕ СПРАШИВАЙ его имя повторно!`);
+            } else {
+              profileParts.push(`Имя клиента пока неизвестно. Представься сам (Здравствуйте! Меня зовут {{consultant.name}}, менеджер {{tenant.name}}) и вежливо спроси: «Подскажите, как могу к вам обращаться?».`);
+            }
             if (contactRow.phone) profileParts.push(`Телефон: ${contactRow.phone}`);
             if (contactRow.notes && contactRow.notes.trim()) profileParts.push(`Заметки менеджера: ${contactRow.notes.trim()}`);
             if (contactRow.custom_fields && typeof contactRow.custom_fields === "object") {
@@ -349,11 +358,18 @@ export class AgentPipelineService {
     }
 
     const wc = agent.wizard_config;
+    const effectiveTenantName =
+      wc?.companyName ||
+      (tenantRow?.name && tenantRow.name !== "valera" ? tenantRow.name : "Элерон");
     const variables: Record<string, string> = {
-      "tenant.name": tenantRow?.name ?? "Компания",
+      "tenant.name": effectiveTenantName,
       "channel_type": input.channelType ?? "онлайн-чат",
       "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
     };
+
+    if (knownContactName) {
+      variables["contact.name"] = knownContactName;
+    }
 
     if (wc) {
       if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
