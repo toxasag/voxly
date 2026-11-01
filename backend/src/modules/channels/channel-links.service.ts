@@ -20,8 +20,14 @@ export interface AccountLinkResolutionInput {
 
 export class ChannelLinksService {
   private getPublicApiUrl(): string {
-    const raw = getEnv().PUBLIC_API_URL;
-    return raw && raw.trim().length > 0 ? raw.trim().replace(/\/+$/, "") : "https://api.getvoxly.ru";
+    try {
+      const raw = getEnv().PUBLIC_API_URL;
+      if (raw && raw.trim().length > 0) return raw.trim().replace(/\/+$/, "");
+    } catch {
+      // Игнорируем отсутствие полного env в изолированных тестах
+    }
+    const envVar = process.env.PUBLIC_API_URL;
+    return envVar && envVar.trim().length > 0 ? envVar.trim().replace(/\/+$/, "") : "https://api.getvoxly.ru";
   }
 
   /**
