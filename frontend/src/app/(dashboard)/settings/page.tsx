@@ -111,7 +111,7 @@ export default function SettingsIndexPage() {
         </p>
       </div>
 
-      {info !== undefined && info.trialActive && (
+      {info !== undefined && info.trialActive && !info.isPartner && !info.isFreeCustomPlan && (
         <div className="flex items-center gap-2.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-5 py-4">
           <Gift className="h-4 w-4 shrink-0 text-emerald-600" />
           <p className="text-sm text-emerald-900">

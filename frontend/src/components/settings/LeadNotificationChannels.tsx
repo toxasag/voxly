@@ -422,9 +422,33 @@ export function LeadNotificationChannels() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <TagPill color={cfg.color}>{cfg.label}</TagPill>
-                        <span className="font-mono text-[13px] font-medium text-[#111111] truncate">
-                          {channel.destination}
-                        </span>
+                        {(() => {
+                          const meta = (channel.extra_meta as Record<string, unknown>) ?? {};
+                          const tgUsername = meta.username ? `@${meta.username}` : null;
+                          const metaName = meta.name ? String(meta.name) : null;
+                          const isAutoLinked = Boolean(meta.auto_linked);
+                          return (
+                            <>
+                              {tgUsername ? (
+                                <span className="font-semibold text-[13px] text-[#111111]">
+                                  {tgUsername}
+                                </span>
+                              ) : metaName ? (
+                                <span className="font-semibold text-[13px] text-[#111111]">
+                                  {metaName}
+                                </span>
+                              ) : null}
+                              <span className="font-mono text-xs text-[#666666] bg-[#f5f5f5] px-1.5 py-0.5 rounded-[4px]">
+                                {channel.channel_type === "telegram" ? `ID: ${channel.destination}` : channel.destination}
+                              </span>
+                              {isAutoLinked && (
+                                <span className="text-[10px] text-violet-700 font-medium bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded-[4px]">
+                                  Аккаунт владельца
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                         <span className="text-[10px] text-emerald-700 font-medium bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-[4px]">
                           {cfg.antiBanBadge}
                         </span>

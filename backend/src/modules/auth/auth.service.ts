@@ -819,6 +819,26 @@ export class AuthService {
         );
         if (user === null) throw new Error("Failed to create owner");
 
+        if (input.telegram_chat_id) {
+          await tx.query(
+            `INSERT INTO tenant_notification_channels (
+               tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+             )
+             VALUES ($1, 'telegram', $2, $3, true, true)
+             ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+             SET is_active = true, is_verified = true, updated_at = now()`,
+            [
+              tenant.id,
+              String(input.telegram_chat_id),
+              JSON.stringify({
+                source: "telegram_register",
+                auto_linked: true,
+                name: ownerName,
+              }),
+            ],
+          );
+        }
+
         const created = await tx.queryOne<AuthUserRow>(
           `SELECT ${USER_COLUMNS}
            FROM users u JOIN tenants t ON t.id = u.tenant_id
