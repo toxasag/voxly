@@ -48,16 +48,83 @@ export class NotificationChannelsService {
   }
 
   /**
+   * Автоматическая привязка Telegram-канала к тенанту (при регистрации/входе/бэкфилле).
+   */
+  async ensureTenantTelegramNotificationChannel(
+    tenantId: string,
+    chatId: number | string,
+    extraMeta: Record<string, unknown> = {},
+  ): Promise<NotificationChannelDTO | null> {
+    const cleanDestination = String(chatId).trim();
+    if (!cleanDestination) return null;
+
+    const rows = await query<NotificationChannelRow>(
+      `INSERT INTO tenant_notification_channels (
+         tenant_id, channel_type, destination, extra_meta, is_active, is_verified
+       )
+       VALUES ($1, 'telegram', $2, $3, true, true)
+       ON CONFLICT (tenant_id, channel_type, destination) DO UPDATE
+       SET is_active = true,
+           is_verified = true,
+           extra_meta = tenant_notification_channels.extra_meta || EXCLUDED.extra_meta,
+           updated_at = NOW()
+       RETURNING *`,
+      [tenantId, cleanDestination, JSON.stringify(extraMeta)],
+    );
+
+    const first = rows[0];
+    return first ? toDTO(first) : null;
+  }
+
+  /**
    * Список всех настроенных каналов уведомлений арендатора.
    */
   async listChannels(tenantId: string): Promise<NotificationChannelDTO[]> {
-    const rows = await query<NotificationChannelRow>(
+    let rows = await query<NotificationChannelRow>(
       `SELECT id, tenant_id, channel_type, destination, extra_meta, is_active, is_verified, created_at, updated_at
        FROM tenant_notification_channels
        WHERE tenant_id = $1
        ORDER BY created_at ASC`,
       [tenantId],
     );
+
+    // Если список каналов пуст, проверяем наличие telegram_chat_id у владельца или администратора
+    // тенанта и автоматически создаём канал (автопривязка / self-healing).
+    if (rows.length === 0) {
+      const ownerUser = await queryOne<{
+        telegram_chat_id: string | null;
+        telegram_username: string | null;
+        name: string | null;
+      }>(
+        `SELECT telegram_chat_id::text, telegram_username, name
+         FROM users
+         WHERE tenant_id = $1 AND telegram_chat_id IS NOT NULL AND deleted_at IS NULL
+         ORDER BY CASE WHEN role = 'owner' THEN 0 WHEN role = 'admin' THEN 1 ELSE 2 END ASC
+         LIMIT 1`,
+        [tenantId],
+      );
+
+      if (ownerUser && ownerUser.telegram_chat_id) {
+        await this.ensureTenantTelegramNotificationChannel(
+          tenantId,
+          ownerUser.telegram_chat_id,
+          {
+            username: ownerUser.telegram_username ?? null,
+            name: ownerUser.name ?? null,
+            auto_linked: true,
+            source: "owner_account",
+          },
+        );
+
+        rows = await query<NotificationChannelRow>(
+          `SELECT id, tenant_id, channel_type, destination, extra_meta, is_active, is_verified, created_at, updated_at
+           FROM tenant_notification_channels
+           WHERE tenant_id = $1
+           ORDER BY created_at ASC`,
+          [tenantId],
+        );
+      }
+    }
 
     return rows.map(toDTO);
   }

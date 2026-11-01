@@ -72,6 +72,7 @@ export interface TenantInfoDTO {
   customPlanName?: string | null;
   isCustomPlan?: boolean;
   isFreeCustomPlan?: boolean;
+  isPartner?: boolean;
 }
 
 export const teamKeys = {

@@ -197,6 +197,13 @@ export default async function adminTenantRoutes(app: FastifyInstance): Promise<v
     if (body.custom_price_rubles !== undefined) {
       params.push(body.custom_price_rubles);
       sets.push(`custom_price_rubles = $${params.length}`);
+      if (body.custom_price_rubles === 0) {
+        sets.push(`trial_ends_at = NULL`);
+        if (body.custom_plan_name === undefined) {
+          params.push("Партнёрский тариф");
+          sets.push(`custom_plan_name = $${params.length}`);
+        }
+      }
     }
     if (body.custom_plan_name !== undefined) {
       params.push(body.custom_plan_name);

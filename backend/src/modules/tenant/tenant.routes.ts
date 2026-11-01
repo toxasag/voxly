@@ -90,15 +90,31 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
     const toIso = (value: Date | string | null): string | null =>
       value === null ? null : value instanceof Date ? value.toISOString() : value;
 
-    const trialEndsAt = toIso(row.trial_ends_at);
-    const trialDaysLeft =
-      trialEndsAt === null
-        ? 0
-        : Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000));
-
     const hasCustomPrice = row.custom_price_rubles !== null && row.custom_price_rubles !== undefined;
     const isFreeCustomPlan = (hasCustomPrice && Number(row.custom_price_rubles) === 0) || row.plan === "custom_free";
-    const customPlanName = row.custom_plan_name ?? (isFreeCustomPlan ? "Партнёрский" : "Индивидуальный");
+    const isPartner = isFreeCustomPlan || row.plan === "partner" || row.plan === "custom_free";
+    const isTrialAccount = (row.plan === "trial" || row.status === "trial") && !isFreeCustomPlan && !isPartner;
+
+    const rawTrialEndsAt = toIso(row.trial_ends_at);
+    const rawTrialDaysLeft =
+      rawTrialEndsAt === null
+        ? 0
+        : Math.max(0, Math.ceil((new Date(rawTrialEndsAt).getTime() - Date.now()) / 86_400_000));
+
+    // Считается на сервере: для активных, партнёрских и кастомных бесплатных аккаунтов
+    // триал не действует, даже если в БД сохранилась старая дата триала от регистрации.
+    const trialActive = isTrialAccount && rawTrialDaysLeft > 0;
+    const trialDaysLeft = trialActive ? rawTrialDaysLeft : 0;
+    const trialEndsAt = trialActive ? rawTrialEndsAt : null;
+
+    let customPlanName: string | null = null;
+    if (hasCustomPrice || isPartner) {
+      if (row.custom_plan_name && row.custom_plan_name !== "Индивидуальный") {
+        customPlanName = row.custom_plan_name;
+      } else {
+        customPlanName = isPartner ? "Партнёрский тариф" : "Индивидуальный";
+      }
+    }
     const customPriceRubles = hasCustomPrice ? Number(row.custom_price_rubles) : null;
 
     return reply.send({
@@ -109,15 +125,14 @@ export default async function tenantRoutes(app: FastifyInstance): Promise<void> 
         plan: row.plan,
         status: row.status,
         trialEndsAt,
-        // Считается на сервере: браузерные часы можно перевести, и клиент
-        // показал бы работающий триал после его окончания.
         trialDaysLeft,
-        trialActive: trialDaysLeft > 0,
+        trialActive,
         createdAt: toIso(row.created_at),
         customPriceRubles,
-        customPlanName: hasCustomPrice ? customPlanName : null,
-        isCustomPlan: hasCustomPrice,
+        customPlanName: (hasCustomPrice || isPartner) ? customPlanName : null,
+        isCustomPlan: hasCustomPrice || isPartner,
         isFreeCustomPlan,
+        isPartner,
       },
     });
   });
