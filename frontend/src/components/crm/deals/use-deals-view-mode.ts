@@ -33,7 +33,7 @@ const DEFAULT_VIEW: RecordViewMode = "kanban";
 
 /** Неизвестное значение читается как умолчание: испорченная запись не ломает экран. */
 function normalizeViewMode(value: unknown): RecordViewMode | null {
-  return value === "kanban" || value === "table" ? value : null;
+  return value === "kanban" || value === "table" || value === "calendar" ? value : null;
 }
 
 export interface DealsViewModeResult {

@@ -2,6 +2,7 @@
 
 import { useState, type RefObject } from "react";
 import {
+  Calendar,
   Check,
   CheckSquare,
   ChevronDown,
@@ -39,8 +40,8 @@ interface Props {
   pipelineId: string;
   onPipelineChange: (id: string) => void;
 
-  view: "kanban" | "table";
-  onViewChange: (view: "kanban" | "table") => void;
+  view: "kanban" | "table" | "calendar";
+  onViewChange: (view: "kanban" | "table" | "calendar") => void;
 
   search: string;
   onSearchChange: (value: string) => void;
@@ -137,6 +138,14 @@ export function DealsToolbar(props: Props) {
           className={cn("flex h-8 w-9 items-center justify-center border-l border-[#e5e5e5] transition-colors", props.view === "table" ? "bg-black/[0.07] text-[#000000]" : "text-[#666666] hover:bg-black/[0.03] hover:text-[#000000]")}
         >
           <ListIcon className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          title="Календарь"
+          onClick={() => props.onViewChange("calendar")}
+          className={cn("flex h-8 w-9 items-center justify-center border-l border-[#e5e5e5] transition-colors", props.view === "calendar" ? "bg-black/[0.07] text-[#000000]" : "text-[#666666] hover:bg-black/[0.03] hover:text-[#000000]")}
+        >
+          <Calendar className="h-3.5 w-3.5" />
         </button>
       </div>
 
