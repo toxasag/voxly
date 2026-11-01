@@ -723,9 +723,15 @@
       font-size: 13px !important;
       border-radius: 10px !important;
       font-weight: 600 !important;
-      white-space: nowrap !important;
-      max-width: 320px !important;
-      text-overflow: ellipsis !important;
+      white-space: normal !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      line-height: 1.35 !important;
+      text-align: center !important;
+      justify-content: center !important;
+      max-width: min(calc(100vw - 100px), 260px) !important;
+      min-width: 60px !important;
+      width: max-content !important;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
       pointer-events: auto !important;
       cursor: pointer !important;
@@ -733,7 +739,6 @@
       align-items: center !important;
       gap: 6px !important;
       transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
-      line-height: 1.3 !important;
       visibility: visible !important;
       opacity: 1 !important;
       overflow: visible !important;
@@ -770,27 +775,37 @@
     .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge {
       position: absolute !important;
       bottom: calc(100% + 10px) !important;
-      left: 50% !important;
-      right: auto !important;
+      right: 0 !important;
+      left: auto !important;
       top: auto !important;
-      transform: translateX(-50%) !important;
-      white-space: nowrap !important;
-      max-width: 280px !important;
+      transform: none !important;
+      white-space: normal !important;
+      word-break: break-word !important;
+      overflow-wrap: break-word !important;
+      line-height: 1.35 !important;
+      text-align: center !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      max-width: min(calc(100vw - 32px), 260px) !important;
+      min-width: 60px !important;
+      width: max-content !important;
+      padding: 7px 14px !important;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
       margin: 0 !important;
     }
     .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge.is-animating {
       opacity: 0 !important;
-      transform: translateX(-50%) translateY(-6px) scale(0.95) !important;
+      transform: translateY(-6px) scale(0.95) !important;
     }
     .getvoxly-widget-wrapper.has-pill .getvoxly-chat-badge::after {
       content: '' !important;
       position: absolute !important;
       top: 100% !important;
-      left: 50% !important;
-      right: auto !important;
+      right: 48px !important;
+      left: auto !important;
       bottom: auto !important;
-      transform: translateX(-50%) !important;
+      transform: none !important;
       width: 0 !important;
       height: 0 !important;
       border-width: 6px 6px 0 6px !important;
@@ -798,17 +813,18 @@
       border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
     }
     .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge {
-      left: 50% !important;
+      left: 0 !important;
       right: auto !important;
-      transform: translateX(-50%) !important;
+      transform: none !important;
     }
     .getvoxly-widget-wrapper.has-pill.position-left .getvoxly-chat-badge::after {
       top: 100% !important;
-      left: 50% !important;
+      left: 48px !important;
       right: auto !important;
       bottom: auto !important;
-      transform: translateX(-50%) !important;
+      transform: none !important;
       border-width: 6px 6px 0 6px !important;
+      border-style: solid !important;
       border-color: var(--badge-color, #6366F1) transparent transparent transparent !important;
     }
 
@@ -859,9 +875,6 @@
 
     @media (max-width: 640px) {
       .getvoxly-header-expand {
-        display: none !important;
-      }
-      .getvoxly-chat-badge {
         display: none !important;
       }
       /* На мобильных при открытом чате скрываем плавающую круглую кнопку вызова */

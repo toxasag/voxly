@@ -2566,20 +2566,23 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                 {/* Плавающая кнопка вызова виджета и бейдж */}
                 <div
                   className={cn(
-                    "flex items-center gap-2.5",
+                    "flex gap-2.5",
                     launcherStyle === "pill"
-                      ? "flex-col items-center"
+                      ? position === "bottom-right"
+                        ? "flex-col items-end"
+                        : "flex-col items-start"
                       : position === "bottom-right"
-                        ? "flex-row"
-                        : "flex-row-reverse",
+                        ? "flex-row items-center"
+                        : "flex-row-reverse items-center",
                   )}
                 >
                   {!previewOpen && badgeEnabled && (
                     <div
                       onClick={() => setPreviewOpen(true)}
                       className={cn(
-                        "relative cursor-pointer rounded-[10px] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg transition-all duration-250 select-none whitespace-nowrap",
-                        launcherStyle === "pill" && "mb-1",
+                        "relative cursor-pointer rounded-[10px] px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg transition-all duration-250 select-none text-center flex items-center justify-center break-words leading-snug",
+                        launcherStyle === "pill" && "mb-1 max-w-[260px] whitespace-normal",
+                        launcherStyle !== "pill" && "max-w-[260px] whitespace-normal",
                         badgeAnimating ? "opacity-0 -translate-y-2 scale-90" : "opacity-100 translate-y-0 scale-100",
                       )}
                       style={{
@@ -2587,14 +2590,17 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
                       }}
                       title="Нажмите, чтобы открыть чат"
                     >
-                      <span>
+                      <span className="text-center">
                         {parsedBadgeTexts[previewBadgeIdx % parsedBadgeTexts.length] || "Задайте вопрос"}
                       </span>
                       {/* Стрелочка speech-bubble */}
                       <span
                         className={cn(
                           launcherStyle === "pill"
-                            ? "absolute top-full left-1/2 -translate-x-1/2 h-0 w-0 border-solid border-x-[6px] border-x-transparent border-t-[6px] border-b-0"
+                            ? cn(
+                                "absolute top-full h-0 w-0 border-solid border-x-[6px] border-x-transparent border-t-[6px] border-b-0",
+                                position === "bottom-right" ? "right-12" : "left-12",
+                              )
                             : cn(
                                 "absolute top-1/2 -translate-y-1/2 h-0 w-0 border-solid",
                                 position === "bottom-right"
