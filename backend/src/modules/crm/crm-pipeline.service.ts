@@ -728,6 +728,7 @@ export class CrmPipelineService {
             // не находится, и каждое следующее сообщение клиента создавало
             // новую — канал плодил дубли.
             contact_id: contactId,
+            source_widget_id: input.channel === "webchat" && input.channelAccountId ? input.channelAccountId : undefined,
             custom_fields: dealCustomFields,
             source_metadata: input.sourceMetadata,
           });

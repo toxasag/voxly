@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { WebchatService } from "./webchat.service.js";
+import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 
 // ---------------------------------------------------------------------------
@@ -14,6 +15,7 @@ import { ChatMediaService } from "../crm/chat/media.service.js";
 const messageBodySchema = z
   .object({
     visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+    sessionId: z.string().trim().max(100).optional(),
     text: z.string().trim().max(4000).default(""),
     senderName: z.string().trim().max(100).optional(),
     senderPhone: z.string().trim().max(30).optional(),
@@ -51,6 +53,14 @@ const historyQuerySchema = z.object({
   visitorId: z.string().trim().min(1, "visitorId is required").max(100),
 });
 
+const trackBodySchema = z.object({
+  widgetId: z.string().uuid("widgetId must be a UUID"),
+  sessionId: z.string().trim().min(1, "sessionId is required").max(100),
+  visitorId: z.string().trim().min(1, "visitorId is required").max(100),
+  eventType: z.enum(["VISIT", "WIDGET_OPEN", "CHAT_START", "LEAD_CAPTURED"]),
+  metadata: z.record(z.unknown()).optional(),
+});
+
 export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   const service = new WebchatService(app.log);
 
@@ -80,6 +90,27 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
         .header("Cache-Control", "no-cache, no-store")
         .type("image/gif")
         .send(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
+    },
+  });
+
+  // Публичный сбор событий конверсионной воронки виджета (с сайта клиента)
+  app.route({
+    method: ["POST", "OPTIONS"],
+    url: "/track",
+    handler: async (request, reply) => {
+      reply.header("Access-Control-Allow-Origin", "*");
+      reply.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      reply.header("Access-Control-Allow-Headers", "*");
+
+      if (request.method === "OPTIONS") {
+        return reply.status(204).send();
+      }
+
+      const body = trackBodySchema.parse(request.body);
+      const analyticsService = new WidgetAnalyticsService(app.log);
+      const result = await analyticsService.trackPublicEvent(body);
+
+      return reply.status(200).send({ data: result });
     },
   });
 
@@ -166,6 +197,7 @@ export const webchatRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       const result = await service.processIncomingMessage({
         channelAccountId,
         visitorId: body.visitorId,
+        sessionId: body.sessionId,
         text: body.text,
         senderName: body.senderName,
         senderPhone: body.senderPhone,

@@ -88,6 +88,7 @@ interface AgentRow {
 export interface WebchatMessageInput {
   channelAccountId: string;
   visitorId: string;
+  sessionId?: string;
   text: string;
   senderName?: string;
   senderPhone?: string;
@@ -685,6 +686,48 @@ export class WebchatService {
         sourceMetadata,
       }),
     );
+
+    // Фиксация этапов воронки в widget_analytics_events:
+    // - CHAT_START при первом отправленном сообщении
+    // - LEAD_CAPTURED при обнаружении телефона или email
+    const effectiveSessionId = input.sessionId?.trim() || input.visitorId;
+    if (!input.isDraft) {
+      void runWithTenantContext(account.tenantId, async () => {
+        try {
+          await query(
+            `INSERT INTO widget_analytics_events
+               (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
+             VALUES ($1, $2, $3, $4, 'CHAT_START', $5::jsonb, now())
+             ON CONFLICT (widget_id, session_id, event_type) DO NOTHING`,
+            [
+              account.tenantId,
+              account.id,
+              effectiveSessionId,
+              input.visitorId,
+              JSON.stringify({ textPreview: crmInboundText.slice(0, 100) }),
+            ],
+          );
+
+          if (detectedPhone || detectedEmail) {
+            await query(
+              `INSERT INTO widget_analytics_events
+                 (tenant_id, widget_id, session_id, visitor_id, event_type, metadata, created_at)
+               VALUES ($1, $2, $3, $4, 'LEAD_CAPTURED', $5::jsonb, now())
+               ON CONFLICT (widget_id, session_id, event_type) DO NOTHING`,
+              [
+                account.tenantId,
+                account.id,
+                effectiveSessionId,
+                input.visitorId,
+                JSON.stringify({ phone: Boolean(detectedPhone), email: Boolean(detectedEmail) }),
+              ],
+            );
+          }
+        } catch {
+          // Игнорируем ошибки аналитики, не блокируя доставку сообщений
+        }
+      });
+    }
 
     // Если контакт помечен как личный — CRM не обрабатывает переписку
     if (crmResult.isPersonal) {
