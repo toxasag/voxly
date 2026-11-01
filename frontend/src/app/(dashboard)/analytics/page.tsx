@@ -1,17 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, BarChart2, Radio, MessageSquareText } from "lucide-react";
+import { RefreshCw, BarChart2, Radio, MessageSquareText, Split } from "lucide-react";
 import { KpiCards } from "@/components/analytics/KpiCards";
 import { PnlChart } from "@/components/analytics/PnlChart";
 import { FunnelChart, TopRepairsChart, MasterLoadChart } from "@/components/analytics/Charts";
 import { ServerConversionIntegrationsView } from "@/components/analytics/ServerConversionIntegrationsView";
 import { WebchatAnalyticsDashboardTab } from "@/components/analytics/WebchatAnalyticsDashboardTab";
+import { PreChatMessengerModalView } from "@/components/analytics/PreChatMessengerModalView";
 import { useAnalyticsOverview } from "@/lib/api/use-analytics";
 import { Skeleton } from "@/components/shared/Skeleton";
 
 export default function AnalyticsPage() {
-  const [activeTab, setActiveTab] = useState<"overview" | "conversions" | "webchat">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "conversions" | "webchat" | "prechat">("overview");
   const { data, isLoading, isError, error, refetch, isFetching } = useAnalyticsOverview();
 
   return (
@@ -77,12 +78,26 @@ export default function AnalyticsPage() {
           <MessageSquareText className="h-4 w-4" />
           Воронка онлайн-чатов
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("prechat")}
+          className={`flex items-center gap-2 border-b-2 px-3.5 py-2.5 text-[13px] font-medium transition-colors ${
+            activeTab === "prechat"
+              ? "border-[#4a38f5] text-[#4a38f5]"
+              : "border-transparent text-[#666666] hover:text-[#111111]"
+          }`}
+        >
+          <Split className="h-4 w-4" />
+          Pre-Chat Модал & A/B
+        </button>
       </div>
 
       {activeTab === "conversions" ? (
         <ServerConversionIntegrationsView />
       ) : activeTab === "webchat" ? (
         <WebchatAnalyticsDashboardTab />
+      ) : activeTab === "prechat" ? (
+        <PreChatMessengerModalView />
       ) : (
         <>
           {isLoading && (

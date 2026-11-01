@@ -1,4 +1,4 @@
-import { query, transaction, type TransactionClient } from "../../db/client.js";
+import { query, queryOne, transaction, type TransactionClient } from "../../db/client.js";
 import { DealsService } from "./deals/deals.service.js";
 import { ContactsService } from "./contacts/contacts.service.js";
 import {
@@ -19,6 +19,7 @@ import { leadNotificationQueue } from "./leads/lead-notification.queue.js";
 import { notificationQueue } from "../notifications/notification.queue.js";
 import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution.js";
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
+import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 
 // Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
 // реэкспортируется здесь: транспорт получает его вместе с типом входящего
@@ -129,13 +130,108 @@ export class CrmPipelineService {
    */
   async processIncoming(input: InboundMessageInput): Promise<CrmPipelineResult> {
     const rawText = input.text ? input.text.trim() : "";
+    let baseInput = { ...input };
+
+    // Проверяем наличие кода двухшагового пре-чата (vx-xxxx) или маркетингового токена (ref_xxxx)
+    const leadCodeMatch =
+      rawText.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i) ||
+      rawText.match(/\b(vx-[a-z0-9]{4,6})\b/i);
+    const sessionTokenMatch =
+      rawText.match(/\[ID:(ref_[a-zA-Z0-9_-]+)\]/) ||
+      rawText.match(/\b(ref_[a-zA-Z0-9_-]+)\b/);
+
+    const leadCode = leadCodeMatch && leadCodeMatch[1] ? leadCodeMatch[1].toLowerCase() : null;
+    const sessionToken = sessionTokenMatch && sessionTokenMatch[1] ? sessionTokenMatch[1] : null;
+
+    if (leadCode || sessionToken) {
+      const session = await queryOne<{
+        id: string;
+        tenant_id: string;
+        prechat_name: string | null;
+        ga_client_id: string | null;
+        ym_client_id: string | null;
+        yandexuid: string | null;
+        gclid: string | null;
+        yclid: string | null;
+        fbclid: string | null;
+        vkclid: string | null;
+        utm_source: string | null;
+        utm_medium: string | null;
+        utm_campaign: string | null;
+        utm_content: string | null;
+        utm_term: string | null;
+        referrer: string | null;
+        page_url: string | null;
+      }>(
+        leadCode
+          ? `SELECT * FROM analytics_sessions WHERE prechat_lead_code = $1 ORDER BY created_at DESC LIMIT 1`
+          : `SELECT * FROM analytics_sessions WHERE session_token = $1 ORDER BY created_at DESC LIMIT 1`,
+        [leadCode || sessionToken],
+      );
+
+      if (session) {
+        const utmTags: Record<string, string> = { ...baseInput.utmTags };
+        if (session.utm_source) utmTags.utm_source = session.utm_source;
+        if (session.utm_medium) utmTags.utm_medium = session.utm_medium;
+        if (session.utm_campaign) utmTags.utm_campaign = session.utm_campaign;
+        if (session.utm_content) utmTags.utm_content = session.utm_content;
+        if (session.utm_term) utmTags.utm_term = session.utm_term;
+
+        const clickIds: Record<string, string> = { ...baseInput.clickIds };
+        if (session.yclid) clickIds.yclid = session.yclid;
+        if (session.gclid) clickIds.gclid = session.gclid;
+        if (session.fbclid) clickIds.fbclid = session.fbclid;
+        if (session.vkclid) clickIds.vkclid = session.vkclid;
+
+        baseInput = {
+          ...baseInput,
+          senderName:
+            baseInput.senderName &&
+            !baseInput.senderName.startsWith("Посетитель") &&
+            baseInput.senderName !== "Клиент"
+              ? baseInput.senderName
+              : session.prechat_name || baseInput.senderName,
+          visitorId: baseInput.visitorId || leadCode || sessionToken || undefined,
+          ymUid: baseInput.ymUid || session.ym_client_id || undefined,
+          gaId: baseInput.gaId || session.ga_client_id || undefined,
+          yandexuid: baseInput.yandexuid || session.yandexuid || undefined,
+          referrer: baseInput.referrer || session.referrer || undefined,
+          pageUrl: baseInput.pageUrl || session.page_url || undefined,
+          utmTags: Object.keys(utmTags).length > 0 ? utmTags : baseInput.utmTags,
+          clickIds: Object.keys(clickIds).length > 0 ? clickIds : baseInput.clickIds,
+        };
+
+        const messengerType =
+          baseInput.channel === "whatsapp"
+            ? "whatsapp"
+            : baseInput.channel === "vk"
+              ? "vk"
+              : baseInput.channel === "max"
+                ? "max"
+                : "telegram";
+
+        attributionEngineService
+          .handleIncomingMessage(
+            messengerType,
+            baseInput.senderTelegramChatId || baseInput.chatId,
+            rawText,
+            {
+              username: baseInput.profile?.username ?? null,
+              chatId: baseInput.chatId,
+              tokenFromText: sessionToken,
+            },
+          )
+          .catch(() => {});
+      }
+    }
+
     const extractedPhone = extractPhoneNumber(rawText);
-    const effectiveSenderPhone = input.senderPhone?.trim() || extractedPhone || undefined;
+    const effectiveSenderPhone = baseInput.senderPhone?.trim() || extractedPhone || undefined;
     const extractedEmail = extractEmailAddress(rawText);
-    const effectiveSenderEmail = input.senderEmail?.trim() || extractedEmail || undefined;
+    const effectiveSenderEmail = baseInput.senderEmail?.trim() || extractedEmail || undefined;
 
     const enrichedInput: InboundMessageInput = {
-      ...input,
+      ...baseInput,
       senderPhone: effectiveSenderPhone,
       senderEmail: effectiveSenderEmail,
     };
@@ -241,7 +337,14 @@ export class CrmPipelineService {
         }
 
         // 1.6. Обогащаем данными посетителя сайта (webchat_visitor_id, ym_uid, ga_id, fb_id, utm, page)
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId =
+          input.visitorId ||
+          (input.channel === "webchat" ? input.chatId : undefined) ||
+          (input.text
+            ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+               input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+               input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+            : undefined);
         if (siteVisitorId) {
           await tx.query(
             `UPDATE contacts
@@ -424,7 +527,14 @@ export class CrmPipelineService {
         if (input.channel === "max" && input.chatId) {
           customFields.max_chat_id = input.chatId;
         }
-        const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+        const siteVisitorId =
+          input.visitorId ||
+          (input.channel === "webchat" ? input.chatId : undefined) ||
+          (input.text
+            ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+               input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+               input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+            : undefined);
         if (siteVisitorId) {
           customFields.webchat_visitor_id = siteVisitorId;
           customFields.visitor_ids = [siteVisitorId];
@@ -485,7 +595,14 @@ export class CrmPipelineService {
       let dealId: string;
       let isNewDeal = false;
 
-      const siteVisitorId = input.visitorId || (input.channel === "webchat" ? input.chatId : undefined) || (input.text ? input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] : undefined);
+      const siteVisitorId =
+        input.visitorId ||
+        (input.channel === "webchat" ? input.chatId : undefined) ||
+        (input.text
+          ? (input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/)?.[1] ||
+             input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i)?.[1] ||
+             input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i)?.[1])
+          : undefined);
       const dealCustomFields: Record<string, unknown> = {};
       if (siteVisitorId) dealCustomFields.webchat_visitor_id = siteVisitorId;
       if (input.deviceFingerprint) dealCustomFields.device_fingerprint = input.deviceFingerprint;
@@ -1157,9 +1274,12 @@ export class CrmPipelineService {
     // Идентификация посетителя веб-чата и связывание сессий при переходе в Telegram/WhatsApp
     let siteVisitorIdFromText: string | undefined;
     if (input.text) {
-      const match = input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/);
+      const match =
+        input.text.match(/(?:site|ref)_([a-zA-Z0-9_-]+)/) ||
+        input.text.match(/(?:код|code)[:\s]*(vx-[a-z0-9]{4,6})/i) ||
+        input.text.match(/\b(vx-[a-z0-9]{4,6})\b/i);
       if (match) {
-        siteVisitorIdFromText = match[1];
+        siteVisitorIdFromText = (match[1] || match[0]).toLowerCase();
       }
     }
 

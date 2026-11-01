@@ -3,6 +3,7 @@ import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
+import { preChatModalService } from "../analytics/prechat-modal.service.js";
 
 // ---------------------------------------------------------------------------
 // Сервис публичного онлайн-чата на сайте (WebChat).
@@ -63,6 +64,13 @@ export interface WebchatAccountInfo {
   attentionEnabled?: boolean;
   attentionEffect?: WebchatAttentionEffect;
   attentionInterval?: number;
+  prechatModal?: {
+    enabled: boolean;
+    abMode: string;
+    greetingTemplate: string;
+    whatsappNumber?: string | null;
+    telegramUsername?: string | null;
+  };
 }
 
 interface ChannelAccountRow {
@@ -461,6 +469,8 @@ export class WebchatService {
             ? Math.max(0, parseInt(creds.attentionInterval, 10))
             : 5);
 
+    const prechatConfig = await preChatModalService.getConfig(account.tenant_id).catch(() => null);
+
     return {
       id: account.id,
       tenantId: account.tenant_id,
@@ -513,6 +523,15 @@ export class WebchatService {
       attentionEnabled,
       attentionEffect,
       attentionInterval,
+      prechatModal: prechatConfig
+        ? {
+            enabled: prechatConfig.isEnabled,
+            abMode: prechatConfig.abMode,
+            greetingTemplate: prechatConfig.greetingTemplate,
+            whatsappNumber: prechatConfig.whatsappNumber,
+            telegramUsername: prechatConfig.telegramUsername,
+          }
+        : undefined,
     };
   }
 

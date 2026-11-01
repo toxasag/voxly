@@ -279,3 +279,82 @@ export interface TestQueueStatus {
   responseSnippet: string | null;
   deliveredAt: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Двухшаговый Pre-Chat Модал и A/B Тестирование (Telegram / WhatsApp)
+// ---------------------------------------------------------------------------
+
+export type PreChatABMode = "split_50_50" | "always_modal" | "always_direct";
+export type PreChatABVariant = "modal" | "direct";
+export type PreChatTelemetryEventType =
+  | "impression"
+  | "direct_click"
+  | "modal_open"
+  | "modal_submit"
+  | "chat_started";
+
+export interface PreChatLeadPayload {
+  name: string;
+  messenger: MessengerType;
+  channelAccountId?: string | null;
+  sessionId?: string | null;
+  abVariant?: PreChatABVariant;
+  customNote?: string | null;
+  gaClientId?: string | null;
+  ymClientId?: string | null;
+  yandexuid?: string | null;
+  gclid?: string | null;
+  yclid?: string | null;
+  fbclid?: string | null;
+  vkclid?: string | null;
+  utm?: {
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    content?: string;
+    term?: string;
+  };
+  referrer?: string;
+  pageUrl?: string;
+}
+
+export interface PreChatLeadResult {
+  leadCode: string;
+  deepLink: string;
+  messageText: string;
+  sessionToken: string;
+}
+
+export interface PreChatModalConfigDTO {
+  id?: string;
+  isEnabled: boolean;
+  abMode: PreChatABMode;
+  greetingTemplate: string;
+  whatsappEnabled: boolean;
+  telegramEnabled: boolean;
+  whatsappNumber: string | null;
+  telegramUsername: string | null;
+}
+
+export interface PreChatABStatsDTO {
+  direct: {
+    impressions: number;
+    clicks: number;
+    chatsStarted: number;
+    conversionRate: number;
+  };
+  modal: {
+    impressions: number;
+    modalOpens: number;
+    submits: number;
+    chatsStarted: number;
+    conversionRate: number;
+  };
+  summary: {
+    totalImpressions: number;
+    totalChats: number;
+    winnerVariant: "modal" | "direct" | "insufficient_data";
+    conversionLift: number;
+  };
+}
+
