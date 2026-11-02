@@ -15,6 +15,9 @@
 //     host (app.getvoxly.ru/admin/tenants) restores admin tokens seamlessly.
 // ---------------------------------------------------------------------------
 
+import { apiClient } from "@/lib/api/apiClient";
+import { writeTokens } from "@/lib/auth/session";
+
 export interface ImpersonationBackup {
   accessToken: string;
   refreshToken: string;
@@ -149,4 +152,65 @@ export function getPlatformAdminUrl(): string {
   const parent = labels.slice(1).join(".");
   const suffix = port ? `:${port}` : "";
   return `${protocol}//app.${parent}${suffix}/admin/tenants`;
+}
+
+/**
+ * Безопасно восстанавливает сессию владельца платформы:
+ * 1. Отправляет запрос на бэкенд (/auth/exit-impersonation), чтобы сервер обновил
+ *    долгоживущие HttpOnly cookies (getvoxly_refresh) на общем домене .getvoxly.ru.
+ * 2. Записывает свежие токены в localStorage и cookie getvoxly_auth_token.
+ * 3. Очищает сохранённый бэкап имперсонации.
+ * 4. Имеет устойчивый локальный фоллбэк на случай сетевых сбоев.
+ */
+export async function restoreAdminSession(): Promise<boolean> {
+  if (!isBrowser()) return false;
+
+  const backup = readImpersonationBackup();
+  if (!backup?.refreshToken && !backup?.accessToken) {
+    return false;
+  }
+
+  // 1. Полноценная серверная ротация с выставлением HttpOnly cookie
+  if (backup.refreshToken) {
+    try {
+      const res = await apiClient.post<{
+        access_token?: string;
+        refresh_token?: string;
+        accessToken?: string;
+        refreshToken?: string;
+      }>("/auth/exit-impersonation", {
+        admin_refresh_token: backup.refreshToken,
+      });
+
+      const newAccessToken = res.data?.access_token ?? res.data?.accessToken;
+      const newRefreshToken = res.data?.refresh_token ?? res.data?.refreshToken;
+
+      if (newAccessToken && newRefreshToken) {
+        writeTokens({
+          accessToken: newAccessToken,
+          refreshToken: newRefreshToken,
+        });
+        clearImpersonationBackup();
+        return true;
+      }
+    } catch (err) {
+      console.warn("Серверный выход из имперсонации не удался, пробуем локальный бэкап:", err);
+    }
+  }
+
+  // 2. Локальный фоллбэк: восстанавливаем токены из бэкапа
+  if (backup.accessToken && backup.refreshToken) {
+    try {
+      writeTokens({
+        accessToken: backup.accessToken,
+        refreshToken: backup.refreshToken,
+      });
+      clearImpersonationBackup();
+      return true;
+    } catch (err) {
+      console.error("Ошибка локального восстановления сессии администратора:", err);
+    }
+  }
+
+  return false;
 }

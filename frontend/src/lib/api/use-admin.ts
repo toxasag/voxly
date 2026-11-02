@@ -172,10 +172,11 @@ export const adminKeys = {
 };
 
 /** Все тенанты платформы. 403 для всех, кроме platform_owner. */
-export function useAdminTenants(): UseQueryResult<AdminTenantDTO[], ApiClientError> {
+export function useAdminTenants(options?: { enabled?: boolean }): UseQueryResult<AdminTenantDTO[], ApiClientError> {
   return useQuery({
     queryKey: adminKeys.tenants,
     queryFn: async () => (await apiClient.get<AdminTenantDTO[]>("/api/v1/admin/tenants")).data,
+    enabled: options?.enabled ?? true,
   });
 }
 

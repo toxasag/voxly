@@ -35,11 +35,7 @@ export function TenantPortalGuard({ children }: { children: React.ReactNode }) {
       window.location.pathname.startsWith("/superadmin"));
 
   const isPlatformOwner = user?.platform_role === "platform_owner";
-  const canAutoSwitch =
-    isPlatformOwner ||
-    user?.role === "partner" ||
-    user?.role === "owner" ||
-    Boolean(user?.permissions?.has("tenant:admin"));
+  const canAutoSwitch = isPlatformOwner || user?.role === "partner";
 
   const isImpersonating = typeof window !== "undefined" && readImpersonationBackup() !== null;
 
