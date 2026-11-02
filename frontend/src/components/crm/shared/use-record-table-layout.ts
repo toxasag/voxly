@@ -30,7 +30,7 @@ import type { RecordColumn } from "@/components/crm/shared/RecordTable";
 export const LAYOUT_STORAGE_PREFIX = "getvoxly.recordTable.v1.";
 
 /** Режим отображения списка: часть представления, как ширины и порядок колонок. */
-export type RecordViewMode = "kanban" | "table";
+export type RecordViewMode = "kanban" | "table" | "calendar";
 
 export interface ColumnLayout {
   widths: Record<string, number>;
@@ -83,7 +83,8 @@ export function readLegacyRecordTableLayout(tableId: string | undefined): Column
     if (typeof widths !== "object" || widths === null || Array.isArray(widths)) return null;
     if (!Array.isArray(order) || !Array.isArray(hidden)) return null;
 
-    const validViewMode = viewMode === "kanban" || viewMode === "table" ? viewMode : undefined;
+    const validViewMode =
+      viewMode === "kanban" || viewMode === "table" || viewMode === "calendar" ? viewMode : undefined;
     const validKanbanWidth =
       typeof kanbanColumnWidth === "number" &&
       Number.isInteger(kanbanColumnWidth) &&
