@@ -81,6 +81,9 @@ function resolveRedirect(): string {
  */
 function postLoginTarget(tenantSlug: string): string {
   const path = resolveRedirect();
+  if (path.startsWith("/admin") || path.startsWith("/superadmin")) {
+    return path;
+  }
   if (!shouldRedirectToOwnPortal(tenantSlug)) return path;
   return tenantPortalUrl(tenantSlug, path);
 }

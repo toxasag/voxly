@@ -229,7 +229,10 @@ function DeleteTenantDialog({
 
 export default function AdminTenantsPage() {
   const { user: currentAdminUser } = useAuth();
-  const { data: tenants = [], isLoading, isError, error, refetch, isFetching } = useAdminTenants();
+  const isPlatformOwner = currentAdminUser?.platform_role === "platform_owner";
+  const { data: tenants = [], isLoading, isError, error, refetch, isFetching } = useAdminTenants({
+    enabled: isPlatformOwner,
+  });
   const update = useUpdateTenant();
   const impersonate = useImpersonateTenant();
 
