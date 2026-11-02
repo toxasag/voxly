@@ -8,6 +8,7 @@ import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
+import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -239,6 +240,7 @@ export async function syncMaxDialogHistory(opts: {
              WHERE id = $3 AND tenant_id = $4`,
             [attachmentUrl, attachmentType, existing.id, opts.tenantId],
           );
+          void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, existing.id).catch(() => {});
         }
         continue;
       }
@@ -247,10 +249,11 @@ export async function syncMaxDialogHistory(opts: {
       const direction = msg.out ? "outbound" : "inbound";
       const senderName = msg.out ? "Менеджер" : (target.firstName || opts.senderName || "Клиент MAX");
 
-      await query(
+      const [inserted] = await query<{ id: string }>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11)
+         RETURNING id`,
         [
           opts.tenantId,
           opts.dealId,
@@ -265,6 +268,9 @@ export async function syncMaxDialogHistory(opts: {
           msgDate.toISOString(),
         ],
       );
+      if (inserted && attachmentUrl) {
+        void mediaEnrichmentService.enrichMessageMedia(opts.tenantId, inserted.id).catch(() => {});
+      }
       insertedCount++;
     }
   });
