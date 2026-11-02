@@ -7,6 +7,7 @@ import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
+import { ChatMediaService } from "../crm/chat/media.service.js";
 
 /**
  * INC-113: никогда не записывать номер подключенного аккаунта оператора
@@ -104,6 +105,62 @@ function isDuplicateInbound(key: string): boolean {
   return false;
 }
 
+function guessMimeType(fileName: string, mime?: string): string {
+  if (mime && mime !== "application/octet-stream") return mime;
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "pdf": return "application/pdf";
+    case "wav": return "audio/wav";
+    case "ogg": return "audio/ogg";
+    case "mp3": return "audio/mpeg";
+    case "m4a": return "audio/mp4";
+    case "jpg":
+    case "jpeg": return "image/jpeg";
+    case "png": return "image/png";
+    case "webp": return "image/webp";
+    case "gif": return "image/gif";
+    case "doc": return "application/msword";
+    case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case "xls": return "application/vnd.ms-excel";
+    case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    default: return mime || "application/octet-stream";
+  }
+}
+
+async function resolveAndStoreMaxAttachment(opts: {
+  tenantId: string;
+  botId: string;
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+  log?: FastifyBaseLogger;
+}): Promise<{ url: string; mimeType: string } | null> {
+  const bridge = new MaxBridgeService();
+  try {
+    const downloaded = await bridge.downloadMedia({
+      botId: opts.botId,
+      fileId: opts.fileId,
+    });
+    if (!downloaded.ok || !downloaded.buffer) {
+      opts.log?.warn({ fileId: opts.fileId, error: downloaded.error }, "Failed to download MAX media");
+      return null;
+    }
+    const cleanName = opts.fileName || "file.bin";
+    const realMime = guessMimeType(cleanName, downloaded.mimeType || opts.mimeType);
+    const mediaService = new ChatMediaService();
+    const stored = await mediaService.storeBuffer({
+      buffer: downloaded.buffer,
+      originalName: cleanName,
+      mimeType: realMime,
+      tenantId: opts.tenantId,
+    });
+    return { url: stored.url, mimeType: stored.mimeType };
+  } catch (err) {
+    opts.log?.warn({ err, fileId: opts.fileId }, "Exception downloading MAX media");
+    return null;
+  }
+}
+
 /**
  * Синхронизирует историю приватного диалога MAX в сделку.
  * Подтягивает все предшествующие сообщения клиента и менеджера с точными датами.
@@ -144,6 +201,25 @@ export async function syncMaxDialogHistory(opts: {
       if (!text) continue;
       const msgDate = msg.date ? new Date(msg.date * 1000) : new Date();
 
+      let attachmentUrl: string | null = null;
+      let attachmentType: string | null = null;
+      const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
+      const firstAtt = msgAtts[0];
+      if (firstAtt && firstAtt.fileId) {
+        const stored = await resolveAndStoreMaxAttachment({
+          tenantId: opts.tenantId,
+          botId: opts.channelAccountId,
+          fileId: firstAtt.fileId,
+          fileName: firstAtt.fileName,
+          mimeType: firstAtt.mimeType,
+          log: opts.log,
+        });
+        if (stored) {
+          attachmentUrl = stored.url;
+          attachmentType = stored.mimeType;
+        }
+      }
+
       const existing = await queryOne<{ id: string }>(
         `SELECT id FROM deal_messages
          WHERE tenant_id = $1 AND deal_id = $2
@@ -154,7 +230,18 @@ export async function syncMaxDialogHistory(opts: {
         [opts.tenantId, opts.dealId, text, msgDate.toISOString()],
       );
 
-      if (existing) continue;
+      if (existing) {
+        if (attachmentUrl) {
+          await query(
+            `UPDATE deal_messages
+             SET attachment = COALESCE(attachment, $1),
+                 attachment_type = COALESCE(attachment_type, $2)
+             WHERE id = $3 AND tenant_id = $4`,
+            [attachmentUrl, attachmentType, existing.id, opts.tenantId],
+          );
+        }
+        continue;
+      }
 
       const source = msg.out ? "manager" : "client";
       const direction = msg.out ? "outbound" : "inbound";
@@ -162,8 +249,8 @@ export async function syncMaxDialogHistory(opts: {
 
       await query(
         `INSERT INTO deal_messages
-           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9)`,
+           (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel, delivery_status, attachment, attachment_type, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'max', $8, $9, $10, $11)`,
         [
           opts.tenantId,
           opts.dealId,
@@ -173,6 +260,8 @@ export async function syncMaxDialogHistory(opts: {
           senderName,
           text,
           msg.out ? "sent" : "neutral",
+          attachmentUrl,
+          attachmentType,
           msgDate.toISOString(),
         ],
       );
@@ -276,6 +365,26 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     body.senderName ||
     "Клиент MAX";
 
+  let attachmentUrl: string | undefined;
+  let attachmentType: string | undefined;
+  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+    const att = body.attachments[0];
+    if (att && att.fileId) {
+      const stored = await resolveAndStoreMaxAttachment({
+        tenantId,
+        botId: channelAccountId,
+        fileId: att.fileId,
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        log: request.log,
+      });
+      if (stored) {
+        attachmentUrl = stored.url;
+        attachmentType = stored.mimeType;
+      }
+    }
+  }
+
   const crm = new CrmPipelineService();
   const crmResult = await runWithTenantContext(tenantId, () =>
     crm.processIncoming({
@@ -286,6 +395,8 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       text: body.text,
       senderName,
       senderPhone: peerPhone,
+      attachment: attachmentUrl,
+      attachmentType: attachmentType,
       profile: {
         firstName: body.firstName ?? undefined,
         phone: peerPhone,
@@ -464,6 +575,26 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
   const peerPhone = stripOwnerPhone(rawPhone, selfPhone);
 
   const crm = new CrmPipelineService();
+  let attachmentUrl: string | undefined;
+  let attachmentType: string | undefined;
+  if (Array.isArray(body.attachments) && body.attachments.length > 0) {
+    const att = body.attachments[0];
+    if (att && att.fileId) {
+      const stored = await resolveAndStoreMaxAttachment({
+        tenantId: account.tenant_id,
+        botId: account.id,
+        fileId: att.fileId,
+        fileName: att.fileName,
+        mimeType: att.mimeType,
+        log: request.log,
+      });
+      if (stored) {
+        attachmentUrl = stored.url;
+        attachmentType = stored.mimeType;
+      }
+    }
+  }
+
   const result = await runWithTenantContext(account.tenant_id, () =>
     crm.processNativeOutbound({
       tenantId: account.tenant_id,
@@ -476,6 +607,8 @@ async function processMaxOutbound(request: FastifyRequest, reply: FastifyReply) 
       text: body.text,
       senderName: "Менеджер",
       pauseMinutes: 30,
+      attachment: attachmentUrl,
+      attachmentType: attachmentType,
     }),
   );
 
