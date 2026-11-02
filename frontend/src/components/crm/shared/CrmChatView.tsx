@@ -10,8 +10,12 @@ import {
 import {
   AlertCircle,
   Bot,
+  Check,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Clock,
+  Copy,
   Download,
   ExternalLink,
   FileSpreadsheet,
@@ -29,6 +33,8 @@ import {
   UserX,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api/apiClient";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
@@ -41,6 +47,8 @@ import {
   type ChatMessageDTO,
   type CrmChatEntityType,
   type SendFromOptionDTO,
+  type AudioTranscriptMetadata,
+  type DocumentInfoMetadata,
 } from "@/lib/api/use-crm-chat";
 import { TelegramComposer, type AttachedFile } from "./TelegramComposer";
 
@@ -272,6 +280,20 @@ function getAttachmentInfo(
   };
 }
 
+function formatAudioTime(sec: number): string {
+  if (isNaN(sec) || !isFinite(sec)) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
 function ChatAudioPlayer({
   src,
   fileName,
@@ -312,13 +334,6 @@ function ChatAudioPlayer({
     if (audioRef.current) {
       audioRef.current.currentTime = time;
     }
-  };
-
-  const formatAudioTime = (sec: number) => {
-    if (isNaN(sec) || !isFinite(sec)) return "0:00";
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   return (
@@ -384,6 +399,213 @@ function ChatAudioPlayer({
         />
       </div>
     </div>
+  );
+}
+
+function AudioTranscriptBadge({
+  transcript,
+  messageId,
+  onEnrich,
+}: {
+  transcript?: AudioTranscriptMetadata | null;
+  messageId: string;
+  onEnrich?: (messageId: string) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleCopy = () => {
+    if (!transcript?.text) return;
+    navigator.clipboard.writeText(transcript.text).then(() => {
+      setCopied(true);
+      toast.success("Транскрипция скопирована");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const handleTranscribe = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      if (onEnrich) {
+        onEnrich(messageId);
+      } else {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/transcribe`, {});
+      }
+    } catch {
+      toast.error("Не удалось запустить транскрибацию");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading || transcript?.status === "pending") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[340px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs text-[#666666] shadow-2xs">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+        <span>Распознавание речи...</span>
+      </div>
+    );
+  }
+
+  if (transcript && transcript.status === "completed" && transcript.text) {
+    const isLongText = transcript.text.length > 140;
+
+    return (
+      <div className="mt-1.5 w-full max-w-[340px] rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs shadow-2xs transition-colors hover:border-[#cccccc]">
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#4a38f5]">
+            <Sparkles className="h-3 w-3" />
+            <span>Транскрипция</span>
+            {Boolean(transcript.duration) && (
+              <span className="text-[10px] text-[#888888] tabular-nums font-mono">
+                ({formatAudioTime(transcript.duration || 0)})
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleCopy}
+            title={copied ? "Скопировано" : "Скопировать текст"}
+            className="flex h-5 w-5 items-center justify-center rounded-[4px] border border-[#e5e5e5] bg-white text-[#666666] transition-colors hover:bg-[#f0f0f0] hover:text-[#111111] cursor-pointer"
+          >
+            {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
+          </button>
+        </div>
+        <p className={cn("text-[12px] leading-relaxed text-[#222222]", !isExpanded && isLongText && "line-clamp-3")}>
+          {transcript.text}
+        </p>
+        {isLongText && (
+          <button
+            type="button"
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="mt-1 flex items-center gap-0.5 text-[11px] font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors cursor-pointer"
+          >
+            {isExpanded ? (
+              <>
+                <span>Свернуть</span>
+                <ChevronUp className="h-3 w-3" />
+              </>
+            ) : (
+              <>
+                <span>Читать полностью</span>
+                <ChevronDown className="h-3 w-3" />
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (transcript && transcript.status === "failed") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[340px] items-center justify-between rounded-[8px] border border-[#f0f0f0] bg-[#fafafa] px-2.5 py-1.5 text-[11px] text-[#888888]">
+        <span>Не удалось расшифровать</span>
+        <button
+          type="button"
+          onClick={handleTranscribe}
+          className="font-medium text-[#4a38f5] hover:underline cursor-pointer"
+        >
+          Повторить
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleTranscribe}
+      className="mt-1 inline-flex items-center gap-1 rounded-[4px] px-1 py-0.5 text-[11px] font-medium text-[#666666] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer"
+    >
+      <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+      <span>Расшифровать запись</span>
+    </button>
+  );
+}
+
+function DocumentSummaryCard({
+  documentInfo,
+  messageId,
+  onEnrich,
+}: {
+  documentInfo?: DocumentInfoMetadata | null;
+  messageId: string;
+  onEnrich?: (messageId: string) => void;
+}) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleEnrich = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      if (onEnrich) {
+        onEnrich(messageId);
+      } else {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/enrich`, {});
+      }
+    } catch {
+      toast.error("Не удалось проанализировать документ");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading || documentInfo?.status === "pending") {
+    return (
+      <div className="mt-1.5 flex w-full max-w-[360px] items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs text-[#666666] shadow-2xs">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#4a38f5]" />
+        <span>Анализ документа...</span>
+      </div>
+    );
+  }
+
+  if (documentInfo && documentInfo.status === "completed" && (documentInfo.summary || documentInfo.doc_type)) {
+    return (
+      <div className="mt-1.5 w-full max-w-[360px] rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 text-xs shadow-2xs transition-colors hover:border-[#cccccc]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#4a38f5] tracking-wide">
+            <FileText className="h-2.5 w-2.5" />
+            <span>{documentInfo.doc_type || "Документ"}</span>
+          </span>
+          <div className="flex items-center gap-1 text-[10px] text-[#888888] tabular-nums font-mono">
+            {Boolean(documentInfo.file_size) && <span>{formatFileSize(documentInfo.file_size)}</span>}
+            {Boolean(documentInfo.pages_count) && <span>· {documentInfo.pages_count} стр.</span>}
+          </div>
+        </div>
+        {documentInfo.summary && (
+          <p className="mt-1.5 text-[12px] leading-snug text-[#333333]">
+            {documentInfo.summary}
+          </p>
+        )}
+        {documentInfo.attributes && Object.keys(documentInfo.attributes).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {Object.entries(documentInfo.attributes).map(([key, val]) => (
+              <span
+                key={key}
+                className="inline-flex items-center rounded-[4px] border border-[#e5e5e5] bg-white px-1.5 py-0.5 text-[10px] text-[#555555]"
+              >
+                <span className="text-[#888888] mr-1">{key}:</span>
+                <span className="font-medium text-[#111111]">{val}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleEnrich}
+      className="mt-1 inline-flex items-center gap-1 rounded-[4px] px-1 py-0.5 text-[11px] font-medium text-[#666666] hover:bg-[#f0f0f0] hover:text-[#4a38f5] transition-colors cursor-pointer"
+    >
+      <Sparkles className="h-3 w-3 text-[#4a38f5]" />
+      <span>Определить тип документа</span>
+    </button>
   );
 }
 
@@ -630,6 +852,20 @@ export function CrmChatView({
   const [activeChannel, setActiveChannel] = useState<string>("all");
   const hasUserSelectedTabRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const queryClient = useQueryClient();
+
+  const handleEnrichMessage = useCallback(
+    async (messageId: string) => {
+      try {
+        await apiClient.post(`/api/v1/crm/messages/${messageId}/enrich`, {});
+        queryClient.invalidateQueries({ queryKey: ["crm-chat", entityType, entityId] });
+      } catch (err) {
+        toast.error("Не удалось обогатить данные файла");
+      }
+    },
+    [queryClient, entityType, entityId],
+  );
 
   const messages = messagesQuery.data ?? [];
   const sendFromOptions = sendFromOptionsQuery.data ?? [];
@@ -1199,11 +1435,18 @@ export function CrmChatView({
                             {info && (() => {
                               if (info.isAudio) {
                                 return (
-                                  <ChatAudioPlayer
-                                    src={info.url}
-                                    fileName={info.fileName}
-                                    downloadUrl={info.downloadUrl}
-                                  />
+                                  <div className="flex flex-col">
+                                    <ChatAudioPlayer
+                                      src={info.url}
+                                      fileName={info.fileName}
+                                      downloadUrl={info.downloadUrl}
+                                    />
+                                    <AudioTranscriptBadge
+                                      transcript={message.metadata?.transcript}
+                                      messageId={message.id}
+                                      onEnrich={handleEnrichMessage}
+                                    />
+                                  </div>
                                 );
                               }
 
@@ -1252,60 +1495,67 @@ export function CrmChatView({
                               }
 
                               return (
-                                <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 shadow-2xs transition-colors hover:border-[#cccccc] max-w-[360px]">
-                                  <div className="flex items-center gap-2.5 min-w-0">
-                                    <div
-                                      className={cn(
-                                        "flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] border shadow-2xs",
-                                        info.ext === "PDF"
-                                          ? "bg-rose-50 border-rose-200 text-rose-600"
-                                          : ["DOC", "DOCX"].includes(info.ext)
-                                          ? "bg-blue-50 border-blue-200 text-blue-600"
-                                          : ["XLS", "XLSX"].includes(info.ext)
-                                          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                                          : "bg-white border-[#e5e5e5] text-[#4a38f5]",
-                                      )}
-                                    >
-                                      {["XLS", "XLSX"].includes(info.ext) ? (
-                                        <FileSpreadsheet className="h-5 w-5" />
-                                      ) : (
-                                        <FileText className="h-5 w-5" />
-                                      )}
-                                    </div>
-                                    <div className="min-w-0">
-                                      <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
-                                        {info.fileName}
+                                <div className="flex flex-col">
+                                  <div className="mt-2 flex items-center justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2.5 shadow-2xs transition-colors hover:border-[#cccccc] max-w-[360px]">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <div
+                                        className={cn(
+                                          "flex h-9 w-9 shrink-0 items-center justify-center rounded-[6px] border shadow-2xs",
+                                          info.ext === "PDF"
+                                            ? "bg-rose-50 border-rose-200 text-rose-600"
+                                            : ["DOC", "DOCX"].includes(info.ext)
+                                            ? "bg-blue-50 border-blue-200 text-blue-600"
+                                            : ["XLS", "XLSX"].includes(info.ext)
+                                            ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                            : "bg-white border-[#e5e5e5] text-[#4a38f5]",
+                                        )}
+                                      >
+                                        {["XLS", "XLSX"].includes(info.ext) ? (
+                                          <FileSpreadsheet className="h-5 w-5" />
+                                        ) : (
+                                          <FileText className="h-5 w-5" />
+                                        )}
                                       </div>
-                                      <div className="text-[11px] text-[#666666]">
-                                        {info.typeLabel}
+                                      <div className="min-w-0">
+                                        <div className="truncate text-[13px] font-medium text-[#111111]" title={info.fileName}>
+                                          {info.fileName}
+                                        </div>
+                                        <div className="text-[11px] text-[#666666]">
+                                          {info.typeLabel}
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                                  <div className="flex shrink-0 items-center gap-1">
-                                    {info.ext === "PDF" && (
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      {info.ext === "PDF" && (
+                                        <a
+                                          href={info.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
+                                          title="Открыть документ"
+                                        >
+                                          <ExternalLink className="h-3 w-3 text-[#666666]" />
+                                          <span>Открыть</span>
+                                        </a>
+                                      )}
                                       <a
-                                        href={info.url}
+                                        href={info.downloadUrl || info.url}
+                                        download={info.fileName}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
-                                        title="Открыть документ"
+                                        title="Скачать файл"
                                       >
-                                        <ExternalLink className="h-3 w-3 text-[#666666]" />
-                                        <span>Открыть</span>
+                                        <Download className="h-3 w-3 text-[#666666]" />
+                                        <span>Скачать</span>
                                       </a>
-                                    )}
-                                    <a
-                                      href={info.downloadUrl || info.url}
-                                      download={info.fileName}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex h-7 items-center gap-1 rounded-[6px] bg-white border border-[#e5e5e5] px-2 text-[11px] font-medium text-[#111111] hover:bg-[#f0f0f0] transition-colors shadow-2xs"
-                                      title="Скачать файл"
-                                    >
-                                      <Download className="h-3 w-3 text-[#666666]" />
-                                      <span>Скачать</span>
-                                    </a>
+                                    </div>
                                   </div>
+                                  <DocumentSummaryCard
+                                    documentInfo={message.metadata?.document_info}
+                                    messageId={message.id}
+                                    onEnrich={handleEnrichMessage}
+                                  />
                                 </div>
                               );
                             })()}

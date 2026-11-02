@@ -111,7 +111,7 @@ const DEAL_LABEL_JOINS = `
 
 const MESSAGE_COLUMNS = `
   id, tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
-  attachment, attachment_type, delivery_status, delivery_error, created_at
+  attachment, attachment_type, delivery_status, delivery_error, metadata, created_at
 `;
 
 export type DealWonHandler = (payload: { tenantId: string; dealId: string }) => void | Promise<void>;
@@ -746,8 +746,8 @@ export class DealsService {
       const row = await tx.queryOneOrThrow<DealMessageRow>(
         `INSERT INTO deal_messages
            (tenant_id, deal_id, channel_account_id, source, direction, sender_name, content, channel,
-            attachment, attachment_type, delivery_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            attachment, attachment_type, delivery_status, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING ${MESSAGE_COLUMNS}`,
         [
           tenantId,
@@ -761,6 +761,7 @@ export class DealsService {
           nullIfBlank(payload.attachment),
           nullIfBlank(payload.attachment_type),
           deliveryStatus,
+          payload.metadata ? JSON.stringify(payload.metadata) : "{}",
         ],
       );
 
