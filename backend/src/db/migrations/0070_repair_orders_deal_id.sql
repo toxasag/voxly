@@ -1,4 +1,4 @@
--- Добавление связи заказа на ремонт со сделкой CRM (0069_repair_orders_deal_id.sql)
+-- Добавление связи заказа на ремонт со сделкой CRM (0070_repair_orders_deal_id.sql)
 
 ALTER TABLE repair_orders
   ADD COLUMN IF NOT EXISTS deal_id UUID REFERENCES deals(id) ON DELETE SET NULL;
