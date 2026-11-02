@@ -5,10 +5,12 @@ import {
   Activity,
   CheckCircle2,
   Clock,
+  FileText,
   Filter,
   GitCommit,
   ListChecks,
   MessageCircle,
+  Sparkles,
   StickyNote,
 } from "lucide-react";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -87,6 +89,9 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
     const text = typeof data.text === "string" ? data.text : (typeof data.content === "string" ? data.content : "");
     const channel = typeof data.channel === "string" ? data.channel : null;
     const direction = typeof data.direction === "string" ? data.direction : null;
+    const metadata = (data.metadata as Record<string, unknown> | null) ?? null;
+    const transcript = metadata?.transcript as { text?: string } | undefined;
+    const documentInfo = metadata?.document_info as { summary?: string; doc_type?: string } | undefined;
 
     return (
       <div className="space-y-1">
@@ -105,6 +110,34 @@ function EventContent({ event }: { event: TimelineEventDTO }) {
         <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#111111]">
           {text || "—"}
         </p>
+
+        {/* Распознанный текст аудио */}
+        {transcript?.text && (
+          <div className="mt-1.5 rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs">
+            <div className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-[#4a38f5]">
+              <Sparkles className="h-3 w-3" />
+              <span>Транскрипция</span>
+            </div>
+            <p className="line-clamp-3 text-[12px] leading-relaxed text-[#222222]">
+              {transcript.text}
+            </p>
+          </div>
+        )}
+
+        {/* Аннотация документа */}
+        {documentInfo && (documentInfo.summary || documentInfo.doc_type) && (
+          <div className="mt-1.5 rounded-[6px] border border-[#e5e5e5] bg-[#fafafa] p-2 text-xs">
+            <div className="mb-0.5 flex items-center gap-1.5 text-[10px] font-semibold text-[#4a38f5]">
+              <FileText className="h-2.5 w-2.5" />
+              <span>{documentInfo.doc_type || "Документ"}</span>
+            </div>
+            {documentInfo.summary && (
+              <p className="text-[12px] leading-snug text-[#333333]">
+                {documentInfo.summary}
+              </p>
+            )}
+          </div>
+        )}
       </div>
     );
   }

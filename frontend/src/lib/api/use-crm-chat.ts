@@ -13,6 +13,30 @@ export type ChatMessageSource = "human" | "manager" | "client" | "ai" | "ai_bot"
 export type ChatMessageDirection = "inbound" | "outbound" | "neutral";
 export type ChatDeliveryStatus = "neutral" | "pending" | "sent" | "failed" | "received";
 
+export interface AudioTranscriptMetadata {
+  text: string;
+  status: "pending" | "completed" | "failed";
+  language?: string;
+  duration?: number;
+  error?: string;
+}
+
+export interface DocumentInfoMetadata {
+  summary: string;
+  doc_type: string;
+  status: "pending" | "completed" | "failed";
+  file_size?: number;
+  pages_count?: number;
+  attributes?: Record<string, string>;
+  error?: string;
+}
+
+export interface DealMessageMetadata {
+  transcript?: AudioTranscriptMetadata;
+  document_info?: DocumentInfoMetadata;
+  [key: string]: unknown;
+}
+
 export interface ChatMessageDTO {
   id: string;
   dealId?: string;
@@ -25,6 +49,7 @@ export interface ChatMessageDTO {
   channel: string;
   attachment: string | null;
   attachmentType: string | null;
+  metadata?: DealMessageMetadata | null;
   deliveryStatus: ChatDeliveryStatus;
   deliveryError: string | null;
   createdAt: string;

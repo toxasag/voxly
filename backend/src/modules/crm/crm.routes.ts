@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { ChatMediaService } from "./chat/media.service.js";
+import { mediaEnrichmentService } from "./media/media-enrichment.service.js";
 import { contactsRoutes } from "./contacts/contacts.routes.js";
 import { companiesRoutes } from "./companies/companies.routes.js";
 import { dealsRoutes } from "./deals/deals.routes.js";
@@ -68,4 +69,18 @@ export default async function crmRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/upload", handleUpload);
   app.post("/chat/upload", handleUpload);
+
+  // Транскрибация аудиосообщения
+  app.post("/messages/:id/transcribe", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const transcript = await mediaEnrichmentService.transcribeAudioMessage(request.tenant_id, id);
+    return reply.send({ data: transcript });
+  });
+
+  // Обогащение медиасообщения (аудио или документ)
+  app.post("/messages/:id/enrich", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const updated = await mediaEnrichmentService.enrichMessageMedia(request.tenant_id, id);
+    return reply.send({ data: updated });
+  });
 }

@@ -415,6 +415,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   channel TEXT NOT NULL DEFAULT 'system',
   attachment TEXT,
   attachment_type TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   -- Доставка исходящего в канал. Хранится на строке сообщения, а не тостом на
   -- фронте: тост исчезает, а неотправленное сообщение осталось бы висеть в
   -- таймлайне как отправленное. `neutral` — доставлять некуда (входящие,
@@ -1327,6 +1328,7 @@ CREATE INDEX IF NOT EXISTS idx_companies_tenant_id ON companies(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deals_tenant_id ON deals(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_tenant_id ON deal_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_channel_account_id ON deal_messages(channel_account_id);
+CREATE INDEX IF NOT EXISTS idx_deal_messages_metadata_gin ON deal_messages USING gin (metadata);
 CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
 -- Поиск контакта по любому из его номеров и мессенджеров идёт по JSONB: без GIN
 -- crm-pipeline читал бы таблицу целиком на каждое входящее сообщение.
