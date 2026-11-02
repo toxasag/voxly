@@ -140,6 +140,6 @@ describe("DealsCalendarView", () => {
     );
 
     expect(screen.getByText("Сделка на сегодня")).toBeDefined();
-    expect(screen.getByText(/500\s*000/)).toBeDefined();
+    expect(screen.getAllByText(/500\s*000/).length).toBeGreaterThan(0);
   });
 });

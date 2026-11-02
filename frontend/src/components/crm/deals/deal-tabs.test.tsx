@@ -101,6 +101,7 @@ describe("dealTabContents", () => {
       "home",
       "timeline",
       "analytics",
+      "source",
       "contact-history",
       "tasks",
       "notes",
