@@ -127,6 +127,9 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/auth/login",
   "/auth/refresh",
   "/auth/logout",
+  "/auth/exit-impersonation",
+  "/api/v1/auth/exit-impersonation",
+  "/api/v1/admin/tenants/exit-impersonation",
   // Self-service signup: the caller has no tenant yet, by definition.
   "/auth/register",
   "/auth/slug-available",

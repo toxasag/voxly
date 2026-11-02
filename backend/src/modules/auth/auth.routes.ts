@@ -9,7 +9,7 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError } from "../../plugins/errorHandler.js";
+import { UnauthorizedError, PermissionDeniedError } from "../../plugins/errorHandler.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
@@ -707,6 +707,45 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
       clearAuthCookies(request, reply);
       throw err;
     }
+  });
+
+  app.post("/exit-impersonation", async (request, reply) => {
+    let candidateToken: string | undefined;
+
+    if (request.body && typeof request.body === "object") {
+      const parsed = z.object({ admin_refresh_token: z.string().min(1) }).safeParse(request.body);
+      if (parsed.success) {
+        candidateToken = parsed.data.admin_refresh_token;
+      }
+    }
+
+    if (!candidateToken || typeof candidateToken !== "string" || candidateToken.trim().length === 0) {
+      throw new UnauthorizedError("Admin refresh token is required");
+    }
+
+    const meta = {
+      userAgent: request.headers["user-agent"],
+      ip: request.ip,
+    };
+
+    const tokens = await service.refreshToken(candidateToken.trim(), meta);
+
+    const payload = app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(tokens.access_token);
+    if (!payload?.sub) {
+      throw new UnauthorizedError("Недействительный токен администратора");
+    }
+
+    const adminUser = await queryOne<{ id: string; platform_role: string | null }>(
+      "SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL",
+      [payload.sub],
+    );
+
+    if (adminUser?.platform_role !== "platform_owner") {
+      throw new PermissionDeniedError("Сессия не принадлежит владельцу платформы");
+    }
+
+    setAuthCookies(request, reply, tokens);
+    return reply.status(200).send({ success: true, data: tokens });
   });
 
   app.post("/logout", async (request, reply) => {
