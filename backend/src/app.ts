@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
+import { query, queryOne } from "./db/client.js";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
@@ -350,14 +351,84 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Медиа CRM доступны только авторизованному пользователю своего арендатора.
   // Имя файла содержит tenant UUID, поэтому проверяем принадлежность до открытия
   // потока; публичная кэшируемость отключена, чтобы URL не превращался в
-  // бессрочную ссылку на вложение.
+  // бессрочную ссылку на вложение. Поддерживает HTTP Range requests (206) для перемотки аудио/видео.
   await app.register(async (mediaApp) => {
     await mediaApp.register(authenticatePlugin);
+
+    function streamFileWithRange(
+      filePath: string,
+      stat: { size: number },
+      contentType: string,
+      disposition: string,
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ) {
+      const rangeHeader = request.headers.range;
+      if (rangeHeader && stat.size > 0) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match && match[1] !== undefined) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : stat.size - 1;
+          if (start < stat.size && end >= start) {
+            const boundedEnd = Math.min(end, stat.size - 1);
+            const chunkSize = boundedEnd - start + 1;
+            const stream = createReadStream(filePath, { start, end: boundedEnd });
+
+            return reply
+              .status(206)
+              .type(contentType)
+              .header("Content-Range", `bytes ${start}-${boundedEnd}/${stat.size}`)
+              .header("Accept-Ranges", "bytes")
+              .header("Content-Length", chunkSize)
+              .header("Content-Disposition", disposition)
+              .header("Cache-Control", "private, no-store")
+              .header("Cross-Origin-Resource-Policy", "cross-origin")
+              .send(stream);
+          }
+        }
+      }
+
+      return reply
+        .status(200)
+        .type(contentType)
+        .header("Accept-Ranges", "bytes")
+        .header("Content-Length", stat.size)
+        .header("Content-Disposition", disposition)
+        .header("Cache-Control", "private, no-store")
+        .header("Cross-Origin-Resource-Policy", "cross-origin")
+        .send(createReadStream(filePath));
+    }
+
+    const mimeMap: Record<string, string> = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".mp3": "audio/mpeg",
+      ".ogg": "audio/ogg",
+      ".opus": "audio/ogg",
+      ".m4a": "audio/mp4",
+      ".wav": "audio/wav",
+      ".mp4": "video/mp4",
+      ".mov": "video/quicktime",
+      ".webm": "video/webm",
+      ".pdf": "application/pdf",
+      ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".doc": "application/msword",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xls": "application/vnd.ms-excel",
+      ".txt": "text/plain",
+      ".zip": "application/zip",
+    };
+
     mediaApp.get("/uploads/:filename", async (request, reply) => {
       const { filename } = request.params as { filename: string };
       const safeFilename = path.basename(filename);
       const tenantPrefix = `${request.tenant_id}_`;
-      if (!safeFilename.startsWith(tenantPrefix)) {
+      const isOwner = request.authUser?.platform_role === "platform_owner";
+      if (!safeFilename.startsWith(tenantPrefix) && !isOwner) {
         return reply.status(404).send({ error: "File not found" });
       }
       const filePath = path.join(process.cwd(), "uploads", safeFilename);
@@ -369,46 +440,157 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
 
         const ext = path.extname(safeFilename).toLowerCase();
-        const mimeMap: Record<string, string> = {
-          ".jpg": "image/jpeg",
-          ".jpeg": "image/jpeg",
-          ".png": "image/png",
-          ".webp": "image/webp",
-          ".gif": "image/gif",
-          ".svg": "image/svg+xml",
-          ".mp3": "audio/mpeg",
-          ".ogg": "audio/ogg",
-          ".opus": "audio/ogg",
-          ".m4a": "audio/mp4",
-          ".wav": "audio/wav",
-          ".mp4": "video/mp4",
-          ".mov": "video/quicktime",
-          ".webm": "video/webm",
-          ".pdf": "application/pdf",
-          ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          ".doc": "application/msword",
-          ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          ".xls": "application/vnd.ms-excel",
-          ".txt": "text/plain",
-          ".zip": "application/zip",
-        };
         const contentType = mimeMap[ext] ?? "application/octet-stream";
 
         const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
-        const isInline = contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/");
+        const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+        const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
         const disposition = isInline
           ? "inline"
           : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
 
-        return reply
-          .type(contentType)
-          .header("Content-Disposition", disposition)
-          .header("Cache-Control", "private, no-store")
-          .header("Cross-Origin-Resource-Policy", "cross-origin")
-          .send(createReadStream(filePath));
+        return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
       } catch {
         return reply.status(404).send({ error: "File not found" });
       }
+    });
+
+    // Защищенный эндпоинт получения вложения сообщения по ID сообщения
+    mediaApp.get("/api/v1/crm/messages/:id/attachment", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const message = await queryOne<{
+        id: string;
+        deal_id: string;
+        channel: string;
+        channel_account_id: string | null;
+        content: string;
+        attachment: string | null;
+        attachment_type: string | null;
+        direction: string;
+        created_at: Date;
+      }>(
+        `SELECT id, deal_id, channel, channel_account_id, content, attachment, attachment_type, direction, created_at
+         FROM deal_messages
+         WHERE id = $1 AND tenant_id = $2`,
+        [id, request.tenant_id],
+      );
+
+      if (!message) {
+        return reply.status(404).send({ error: "Message not found" });
+      }
+
+      const isDownload = (request.query as Record<string, string> | undefined)?.download === "1";
+
+      // 1. Если вложение уже привязано и является URL
+      if (message.attachment) {
+        if (message.attachment.startsWith("http://") || message.attachment.startsWith("https://")) {
+          return reply.redirect(message.attachment, 302);
+        }
+
+        const safeFilename = path.basename(message.attachment.split("?")[0] || "");
+        const filePath = path.join(process.cwd(), "uploads", safeFilename);
+
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.isFile()) {
+            const ext = path.extname(safeFilename).toLowerCase();
+            const contentType = message.attachment_type || mimeMap[ext] || "application/octet-stream";
+            const originalName = safeFilename.replace(/^[0-9a-fA-F-]+_[0-9a-fA-F-]+_/, "") || safeFilename;
+            const isInline = !isDownload && (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.startsWith("video/") || contentType === "application/pdf");
+            const disposition = isInline
+              ? "inline"
+              : `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+
+            return streamFileWithRange(filePath, stat, contentType, disposition, request, reply);
+          }
+        } catch {
+          // Файл не найден на диске, пробуем восстановить
+        }
+      }
+
+      // 2. Если вложение отсутствует или не найдено, но канал MAX — пробуем динамически восстановить из max-bridge
+      if (message.channel === "max" && message.channel_account_id) {
+        try {
+          const { MaxBridgeService } = await import("./modules/channels/max-bridge.service.js");
+          const { ChatMediaService } = await import("./modules/crm/chat/media.service.js");
+          const bridge = new MaxBridgeService();
+
+          const resp = await bridge.getPrivateDialogs({
+            botId: message.channel_account_id,
+            dialogLimit: 25,
+            messageLimit: 50,
+          });
+
+          if (resp.ok && Array.isArray(resp.dialogs)) {
+            // Ищем диалог
+            let matchingAttach: { fileId?: string; fileName?: string; mimeType?: string } | null = null;
+            const fileMatch = message.content.match(/\[файл:\s*([^\]]+)\]/i);
+            const expectedFileName = fileMatch && fileMatch[1] ? fileMatch[1].trim() : null;
+
+            for (const d of resp.dialogs) {
+              for (const m of d.messages) {
+                if (Array.isArray(m.attachments) && m.attachments.length > 0) {
+                  for (const att of m.attachments) {
+                    if (expectedFileName && att.fileName && att.fileName.trim().toLowerCase() === expectedFileName.toLowerCase()) {
+                      matchingAttach = att;
+                      break;
+                    }
+                    if (m.text && m.text.trim() === message.content.trim()) {
+                      matchingAttach = att;
+                      break;
+                    }
+                  }
+                }
+                if (matchingAttach) break;
+              }
+              if (matchingAttach) break;
+            }
+
+            if (matchingAttach && matchingAttach.fileId) {
+              const downloaded = await bridge.downloadMedia({
+                botId: message.channel_account_id,
+                fileId: matchingAttach.fileId,
+              });
+
+              if (downloaded.ok && downloaded.buffer) {
+                const cleanName = matchingAttach.fileName || expectedFileName || "file.bin";
+                const ext = path.extname(cleanName).toLowerCase();
+                const realMime = downloaded.mimeType || mimeMap[ext] || "application/octet-stream";
+
+                const mediaService = new ChatMediaService();
+                const stored = await mediaService.storeBuffer({
+                  buffer: downloaded.buffer,
+                  originalName: cleanName,
+                  mimeType: realMime,
+                  tenantId: request.tenant_id,
+                });
+
+                // Обновляем запись в базе
+                await query(
+                  `UPDATE deal_messages
+                   SET attachment = $1, attachment_type = $2
+                   WHERE id = $3 AND tenant_id = $4`,
+                  [stored.url, stored.mimeType, message.id, request.tenant_id],
+                );
+
+                const safeFilename = path.basename(stored.url);
+                const filePath = path.join(process.cwd(), "uploads", safeFilename);
+                const stat = await fs.stat(filePath);
+                const isInline = !isDownload && (realMime.startsWith("image/") || realMime.startsWith("audio/") || realMime.startsWith("video/") || realMime === "application/pdf");
+                const disposition = isInline
+                  ? "inline"
+                  : `attachment; filename="${encodeURIComponent(cleanName)}"; filename*=UTF-8''${encodeURIComponent(cleanName)}`;
+
+                return streamFileWithRange(filePath, stat, realMime, disposition, request, reply);
+              }
+            }
+          }
+        } catch (err) {
+          request.log.warn({ err, messageId: message.id }, "Failed to auto-resolve MAX attachment on demand");
+        }
+      }
+
+      return reply.status(404).send({ error: "Attachment not found" });
     });
   });
 
