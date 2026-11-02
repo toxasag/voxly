@@ -80,6 +80,7 @@ export interface RepairTotalsDTO {
 export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
+  dealId?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
@@ -129,9 +130,11 @@ export interface RepairsQueryParams {
 }
 
 export interface CreateRepairPayload {
-  customer_id: string;
+  deal_id?: string;
+  customer_id?: string;
   customer_name: string;
   customer_phone: string;
+  company_name?: string;
   equipment_type: string;
   equipment_brand: string;
   equipment_model: string;
