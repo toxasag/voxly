@@ -72,9 +72,11 @@ export const diagnosticsSchema = z.object({
 });
 
 export const createRepairSchema = z.object({
-  customer_id: z.string().uuid("customer_id must be a UUID"),
+  deal_id: optionalUuid,
+  customer_id: optionalUuid,
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
+  company_name: z.string().max(200).optional().or(z.literal("")),
   equipment_type: z.string().min(1, "Equipment type is required").max(100),
   equipment_brand: z.string().min(1, "Brand is required").max(100),
   equipment_model: z.string().min(1, "Model is required").max(100),
@@ -173,6 +175,7 @@ export interface RepairOrderRow {
   id: string;
   tenant_id: string;
   ticket_number: string;
+  deal_id: string | null;
   customer_id: string;
   customer_name: string;
   customer_phone: string;
@@ -304,6 +307,7 @@ export interface RepairTotalsDTO {
 export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
+  dealId: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
@@ -358,6 +362,7 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
   return {
     id: row.id,
     ticketNumber: row.ticket_number,
+    dealId: row.deal_id ?? null,
     customerId: row.customer_id,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,

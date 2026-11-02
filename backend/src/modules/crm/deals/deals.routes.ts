@@ -16,6 +16,7 @@ import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   stage_id: z.string().uuid().optional(),
+  status: z.enum(["active", "won", "lost", "all"]).optional(),
   search: z.string().max(200).optional(),
   /** Фильтры для секций «Сделки» на карточках контакта и компании. */
   contact_id: z.string().uuid().optional(),
@@ -48,12 +49,13 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /deals — paginated list
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { pipeline_id, stage_id, search, contact_id, company_id, limit, offset } =
+    const { pipeline_id, stage_id, status, search, contact_id, company_id, limit, offset } =
       listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       pipelineId: pipeline_id,
       stageId: stage_id,
+      status,
       search,
       contactId: contact_id,
       companyId: company_id,
