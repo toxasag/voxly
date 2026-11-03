@@ -323,6 +323,22 @@ export function useFindDuplicateContacts(
     enabled: Boolean(phone && phone.trim().length >= 4),
   });
 }
+
+export function useContactLookup(
+  phone: string | null | undefined,
+): UseQueryResult<ContactDTO | null, ApiClientError> {
+  return useQuery<ContactDTO | null, ApiClientError>({
+    queryKey: ["contacts", "lookup", phone] as const,
+    queryFn: async () => {
+      if (!phone) return null;
+      const res = await apiClient.get<ContactDTO | null>(
+        `${BASE_PATH}/lookup?phone=${encodeURIComponent(phone)}`,
+      );
+      return res.data;
+    },
+    enabled: Boolean(phone && phone.trim().replace(/[^\d+]/g, "").length >= 4),
+  });
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

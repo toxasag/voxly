@@ -153,6 +153,7 @@ function nullIfBlank(value: string | undefined): string | null {
 export interface ListDealsOptions {
   pipelineId?: string;
   stageId?: string;
+  status?: "active" | "won" | "lost" | "all";
   search?: string;
   /** Секция «Сделки» на карточке контакта. */
   contactId?: string;
@@ -184,9 +185,33 @@ export class DealsService {
       conditions.push(`d.stage_id = $${params.length}`);
     }
 
+    if (options.status === "active") {
+      conditions.push("d.closed_at IS NULL");
+    } else if (options.status === "won" || options.status === "lost") {
+      conditions.push("d.closed_at IS NOT NULL");
+    }
+
     if (options.search !== undefined && options.search.length > 0) {
       params.push(`%${options.search}%`);
-      conditions.push(`(d.title ILIKE $${params.length} OR d.description ILIKE $${params.length})`);
+      const placeholder = `$${params.length}`;
+      conditions.push(
+        `(d.title ILIKE ${placeholder}
+          OR d.description ILIKE ${placeholder}
+          OR EXISTS (
+            SELECT 1 FROM contacts ct
+            WHERE ct.id = d.contact_id AND ct.tenant_id = d.tenant_id AND ct.deleted_at IS NULL
+              AND (
+                ct.first_name ILIKE ${placeholder}
+                OR ct.last_name ILIKE ${placeholder}
+                OR ct.phone ILIKE ${placeholder}
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM companies co
+            WHERE co.id = d.company_id AND co.tenant_id = d.tenant_id AND co.deleted_at IS NULL
+              AND (co.name ILIKE ${placeholder} OR co.phone ILIKE ${placeholder})
+          ))`,
+      );
     }
 
     if (options.contactId !== undefined) {

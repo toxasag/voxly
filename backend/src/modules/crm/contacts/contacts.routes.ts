@@ -5,6 +5,7 @@ import { ContactDedupeService } from "./dedupe.service.js";
 import {
   contactChannelSchema,
   createContactSchema,
+  toContactDTO,
   updateContactSchema,
 } from "./contacts.types.js";
 import { NotFoundError } from "../../../plugins/errorHandler.js";
@@ -117,6 +118,16 @@ export async function contactsRoutes(app: FastifyInstance): Promise<void> {
   const duplicatesQuerySchema = z.object({
     phone: z.string().min(1, "phone query parameter is required"),
     exclude_id: z.string().uuid().optional(),
+  });
+
+  app.get("/lookup", { onRequest: canRead }, async (request, reply) => {
+    const { phone } = duplicatesQuerySchema.parse(request.query);
+    const duplicates = await dedupeService.findDuplicatesByPhone(
+      request.tenant_id,
+      phone,
+    );
+    const contact = duplicates.length > 0 && duplicates[0] ? toContactDTO(duplicates[0]) : null;
+    return reply.send({ data: contact });
   });
 
   app.get("/duplicates", { onRequest: canRead }, async (request, reply) => {

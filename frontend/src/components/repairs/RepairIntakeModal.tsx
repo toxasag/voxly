@@ -18,9 +18,9 @@ import {
 } from "lucide-react";
 import { createRepairSchema, type CreateRepairPayload } from "@/schemas/repair.schema";
 import { EQUIPMENT_TYPES } from "@/lib/repairs/repairs.types";
-import { useContacts } from "@/lib/api/use-contacts";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+import { RepairClientSection } from "./RepairClientSection";
 import { cn } from "@/lib/utils";
 
 interface RepairIntakeModalProps {
@@ -38,22 +38,20 @@ export function RepairIntakeModal({
   initialCustomerId,
   isSubmitting = false,
 }: RepairIntakeModalProps) {
-  const [customerSearch, setCustomerSearch] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
 
-  const contactsQuery = useContacts({ search: customerSearch, limit: 10 });
   const teamQuery = useTeamMembers();
-
-  const contacts = contactsQuery.data?.items ?? [];
   const teamMembers = teamQuery.data?.members ?? [];
 
   const form = useForm<CreateRepairPayload>({
     resolver: zodResolver(createRepairSchema),
     defaultValues: {
+      deal_id: "",
       customer_id: "",
       customer_name: "",
       customer_phone: "",
+      company_name: "",
       equipment_type: "",
       equipment_brand: "",
       equipment_model: "",
@@ -71,19 +69,7 @@ export function RepairIntakeModal({
     mode: "onChange",
   });
 
-  const selectedCustomerId = form.watch("customer_id");
   const selectedMasterId = form.watch("master_id");
-
-  useEffect(() => {
-    if (selectedCustomerId) {
-      const customer = contacts.find((c) => c.id === selectedCustomerId);
-      if (customer) {
-        const name = [customer.firstName, customer.lastName].filter(Boolean).join(" ") || "Без имени";
-        form.setValue("customer_name", name, { shouldValidate: true });
-        form.setValue("customer_phone", customer.phone, { shouldValidate: true });
-      }
-    }
-  }, [selectedCustomerId, contacts, form]);
 
   useEffect(() => {
     if (selectedMasterId) {
@@ -100,7 +86,6 @@ export function RepairIntakeModal({
       form.reset();
       setPhotos([]);
       setPhotoPreviews([]);
-      setCustomerSearch("");
       onClose();
     },
     [onSubmit, form, photos, photoPreviews, onClose],
@@ -125,7 +110,6 @@ export function RepairIntakeModal({
       form.reset();
       setPhotos([]);
       setPhotoPreviews([]);
-      setCustomerSearch("");
       if (initialCustomerId) {
         form.setValue("customer_id", initialCustomerId, { shouldValidate: true });
       }
@@ -152,78 +136,8 @@ export function RepairIntakeModal({
       <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
         <form onSubmit={form.handleSubmit(handleSubmit)} className="flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* Customer with autocomplete */}
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
-                <User className="h-3 w-3 text-slate-400" /> Клиент *
-              </label>
-              {!selectedCustomerId ? (
-                <div className="relative">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    autoFocus
-                    placeholder="Поиск по имени или телефону..."
-                    value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
-                    className="w-full rounded-lg border border-[#e5e5e5] bg-white py-2 pl-10 pr-4 text-sm text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-2 focus:ring-[#4a38f5]/20"
-                  />
-                  <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-[#e5e5e5] bg-white shadow-xl z-10 max-h-48 overflow-y-auto">
-                    {contacts.length === 0 ? (
-                      <div className="p-3 text-xs text-slate-500 text-center">
-                        {customerSearch ? "Контакты не найдены" : "Введите имя или номер для поиска"}
-                      </div>
-                    ) : (
-                      contacts.map((c) => {
-                        const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || "Без имени";
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => {
-                              form.setValue("customer_id", c.id, { shouldValidate: true });
-                              form.setValue("customer_name", name, { shouldValidate: true });
-                              form.setValue("customer_phone", c.phone || "", { shouldValidate: true });
-                              setCustomerSearch("");
-                            }}
-                            className="flex w-full items-center justify-between px-4 py-2.5 text-sm text-[#111111] hover:bg-[#f5f5f5] transition-colors cursor-pointer"
-                          >
-                            <span className="font-medium text-[#111111]">{name}</span>
-                            <span className="text-xs text-slate-500 font-mono">{c.phone}</span>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between rounded-lg border border-[#4a38f5]/30 bg-[#4a38f5]/5 px-4 py-2.5">
-                  <span className="text-sm font-medium text-[#111111]">
-                    {form.watch("customer_name") || "Клиент выбран"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      form.setValue("customer_id", "");
-                      form.setValue("customer_name", "");
-                      form.setValue("customer_phone", "");
-                    }}
-                    className="text-xs text-[#4a38f5] hover:underline cursor-pointer"
-                  >
-                    Изменить
-                  </button>
-                </div>
-              )}
-              {errors.customer_id && (
-                <p className="text-xs text-rose-500">{errors.customer_id.message}</p>
-              )}
-              {errors.customer_name && (
-                <p className="text-xs text-rose-500">{errors.customer_name.message}</p>
-              )}
-              {errors.customer_phone && (
-                <p className="text-xs text-rose-500">{errors.customer_phone.message}</p>
-              )}
-            </div>
+            {/* Блок «Клиент и сделка» */}
+            <RepairClientSection form={form} initialCustomerId={initialCustomerId} />
 
             {/* Equipment */}
             <fieldset className="space-y-3 rounded-lg border border-[#e5e5e5] p-4 bg-slate-50/50">
