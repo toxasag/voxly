@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Sparkles,
   GitMerge,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 
@@ -62,10 +63,11 @@ export const INBOX_NAV: NavItem = {
   always: true,
 };
 
-/** Раздел маркетинга (Сторис и Автоворонки) */
+/** Раздел маркетинга (Сторис, Автоворонки и SEO Семантика) */
 export const MARKETING_NAV: NavItem[] = [
   { label: "Сторис", href: "/marketing/stories", icon: Sparkles, always: true },
   { label: "Автоворонки", href: "/marketing/funnels", icon: GitMerge, always: true },
+  { label: "SEO Семантика", href: "/marketing/seo/keywords", icon: Search, always: true },
 ];
 
 /**
