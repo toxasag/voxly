@@ -289,7 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 2. Access-токен истёк или отсутствует: пробуем silent refresh
       if (hasSession()) {
         try {
-          const refreshedToken = await refreshAccessToken();
+          const refreshedToken = await refreshAccessToken(accessToken);
           if (refreshedToken && !cancelled) {
             const res = await apiClient.get<UserProfileDTO>("/auth/me", { retrying: true });
             if (!cancelled) {
@@ -336,14 +336,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const remaining = getTokenRemainingSeconds(token);
 
       if (remaining <= 0) {
-        void refreshAccessToken();
+        void refreshAccessToken(token).then((refreshed) => {
+          if (refreshed) scheduleRefresh();
+        });
         return;
       }
 
       // Обновляем за 120 секунд до истечения срока или минимум через 10 секунд
       const delayMs = Math.max(10, remaining - 120) * 1000;
       timer = setTimeout(async () => {
-        const refreshed = await refreshAccessToken();
+        const refreshed = await refreshAccessToken(token);
         if (refreshed) {
           scheduleRefresh();
         }
@@ -357,7 +359,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const token = readAccessToken();
         const remaining = getTokenRemainingSeconds(token);
         if (remaining < 120) {
-          void refreshAccessToken().then((refreshed) => {
+          void refreshAccessToken(token).then((refreshed) => {
             if (refreshed) scheduleRefresh();
           });
         }
@@ -481,15 +483,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    const refreshToken = readRefreshToken();
-
-    if (refreshToken !== null) {
-      try {
-        await apiClient.post("/auth/logout", { refresh_token: refreshToken });
-      } catch {
-        // Server-side revocation failed; the local session is cleared either
-        // way so the user is not left appearing signed in.
-      }
+    try {
+      await apiClient.post("/auth/logout", {});
+    } catch {
+      // Server-side revocation failed; the local session is cleared either
+      // way so the user is not left appearing signed in.
     }
 
     resetSession();

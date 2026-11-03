@@ -100,16 +100,17 @@ function writeCookie(name: string, value: string): void {
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   const domain = cookieDomainAttribute();
+  const expires = new Date(Date.now() + AUTH_COOKIE_MAX_AGE_SECONDS * 1000).toUTCString();
 
   document.cookie =
     `${name}=${encodeURIComponent(value)}` +
-    `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax` +
+    `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; Expires=${expires}; SameSite=Lax` +
     `${domain}${secure}`;
 
   if (domain) {
     document.cookie =
       `${name}=${encodeURIComponent(value)}` +
-      `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+      `; Path=/; Max-Age=${AUTH_COOKIE_MAX_AGE_SECONDS}; Expires=${expires}; SameSite=Lax${secure}`;
   }
 }
 
@@ -118,15 +119,16 @@ function clearCookie(name: string): void {
 
   const secure = window.location.protocol === "https:" ? "; Secure" : "";
   const domain = cookieDomainAttribute();
+  const epoch = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
   if (domain) {
-    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${domain}${secure}`;
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${domain}${secure}`;
     const rawDomain = domain.replace(/^;\s*Domain=\./i, "; Domain=");
-    document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${rawDomain}${secure}`;
+    document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${rawDomain}${secure}`;
   }
 
   // Also drop a host-only cookie
-  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  document.cookie = `${name}=; Path=/; Max-Age=0${epoch}; SameSite=Lax${secure}`;
 }
 
 function readCookie(name: string): string | null {
@@ -166,31 +168,24 @@ export function readAccessToken(): string | null {
 }
 
 export function readRefreshToken(): string | null {
-  if (!isBrowser()) return null;
-  const cookieRefresh = readCookie(REFRESH_COOKIE_NAME);
-  if (cookieRefresh) {
-    try {
-      if (localStorage.getItem(REFRESH_TOKEN_KEY) !== cookieRefresh) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, cookieRefresh);
-      }
-    } catch {
-      // Ignore localStorage write failures
-    }
-    return cookieRefresh;
-  }
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+  // Долгоживущий refresh-токен хранится исключительно в безопасной HttpOnly cookie,
+  // недоступной для JavaScript (защита от XSS). Браузер передает её автоматически
+  // с credentials: "include".
+  return null;
 }
 
-export function writeTokens({ accessToken, refreshToken }: SessionTokens): void {
+export function writeTokens({ accessToken }: SessionTokens): void {
   if (!isBrowser()) return;
 
   localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  // Запрещено хранить refresh-токены в localStorage (XSS-изоляция).
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
 
-  // Both tokens are mirrored into domain-scoped cookies so the session survives
-  // a hop to another subdomain, where localStorage starts empty.
+  // Выставляем cookies сессии с Max-Age 60d и Expires для Edge Middleware и клиентских проверок
   writeCookie(AUTH_COOKIE_NAME, accessToken);
-  writeCookie(REFRESH_COOKIE_NAME, refreshToken);
+  writeCookie("getvoxly_session", "active");
+  // Удаляем устаревшую не-HttpOnly cookie, если она присутствовала
+  clearCookie(REFRESH_COOKIE_NAME);
 }
 
 export function clearSession(): void {
@@ -200,6 +195,7 @@ export function clearSession(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   clearCookie(AUTH_COOKIE_NAME);
   clearCookie(REFRESH_COOKIE_NAME);
+  clearCookie("getvoxly_session");
 }
 
 export function getTokenRemainingSeconds(token: string | null): number {
@@ -227,5 +223,9 @@ export function getTokenRemainingSeconds(token: string | null): number {
 }
 
 export function hasSession(): boolean {
-  return readAccessToken() !== null || readRefreshToken() !== null;
+  return (
+    readAccessToken() !== null ||
+    readCookie("getvoxly_session") !== null ||
+    readCookie(AUTH_COOKIE_NAME) !== null
+  );
 }
