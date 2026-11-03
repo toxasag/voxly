@@ -72,6 +72,7 @@ interface RefreshRow {
   tenant_id: string;
   revoked_at: Date | string | null;
   expires_at: Date | string;
+  replaced_by?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -574,7 +575,7 @@ export class AuthService {
   ): Promise<AuthTokens> {
     const outcome = await transaction<RefreshOutcome>(async (tx) => {
       const row = await tx.queryOne<RefreshRow>(
-        `SELECT id, user_id, tenant_id, revoked_at, expires_at
+        `SELECT id, user_id, tenant_id, revoked_at, expires_at, replaced_by
          FROM refresh_tokens
          WHERE token_hash = $1
          FOR UPDATE`,
@@ -584,11 +585,33 @@ export class AuthService {
       if (row === null) return { kind: "unknown" };
 
       if (row.revoked_at !== null) {
-        // Family-wide revocation must commit. Throwing here rolled it back
-        // together with the transaction, so a leaked token produced a plain
-        // "already used" error while every other session of that user stayed
-        // valid — exactly the outcome this branch exists to prevent. Caught by
-        // the "reuse revokes the whole family" test.
+        // Concurrency Grace Period (RFC 6819 / OAuth 2.0 Best Practices):
+        // Если токен был отозван недавно (в пределах 30 секунд) и имеет ссылку replaced_by,
+        // это вызвано параллельными запросами из нескольких вкладок или повторной отправкой
+        // из-за задержки сети во время ротации.
+        // Вместо сброса всех сессий пользователя находим преемника и выдаём актуальную пару токенов.
+        const revokedAtMs = toDate(row.revoked_at).getTime();
+        const elapsedSinceRevocation = Date.now() - revokedAtMs;
+
+        if (elapsedSinceRevocation <= 30_000 && row.replaced_by) {
+          const successor = await tx.queryOne<RefreshRow>(
+            `SELECT id, user_id, tenant_id, revoked_at, expires_at, replaced_by
+             FROM refresh_tokens
+             WHERE id = $1`,
+            [row.replaced_by],
+          );
+          if (successor !== null && toDate(successor.expires_at).getTime() > Date.now()) {
+            const user = await this.findById(row.user_id, row.tenant_id);
+            if (user === null) return { kind: "user_gone" };
+            if (user.tenant_status === "suspended" || user.tenant_status === "past_due") {
+              return { kind: "tenant_inactive", status: user.tenant_status };
+            }
+            return { kind: "ok", tokens: await this.issueTokens(user, tx, successor.id, metadata) };
+          }
+        }
+
+        // За пределами grace-периода: реальная утечка или атака повторного использования.
+        // Family-wide revocation must commit.
         await tx.query(
           `UPDATE refresh_tokens SET revoked_at = now()
            WHERE user_id = $1 AND revoked_at IS NULL`,
