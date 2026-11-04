@@ -35,6 +35,7 @@ import {
   User,
   UserCircle2,
   UserRound,
+  Wrench,
 } from "lucide-react";
 import { TagPill } from "@/components/ui/tag";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -2387,11 +2388,33 @@ function FilesTab() {
   );
 }
 
+function DealRepairsTab({ deal }: { deal: DealDTO }) {
+  return (
+    <Guard
+      requiredModule="service_center"
+      requiredPermission="service_center:read"
+      fallback={
+        <div className="px-5 py-4 text-xs text-[#888888]">
+          Модуль «Сервисный центр» не активирован для данного тарифа
+        </div>
+      }
+    >
+      <div className="px-5 py-4 space-y-4">
+        <EmptyState
+          icon={Wrench}
+          title="Сервисный центр и ремонт"
+          description={`Заказы на ремонт и обслуживание оборудования, привязанные к сделке «${deal.title}»`}
+        />
+      </div>
+    </Guard>
+  );
+}
 
 /** Идентификаторы вкладок — ключи реестра и строк `page_layout_tabs`. */
 export const DEAL_TAB_IDS = [
   "home",
   "chat",
+  "repairs",
   "timeline",
   "analytics",
   "source",
@@ -2432,6 +2455,7 @@ export function dealTabContents(
         <ChatTab dealId={deal.id} dealTitle={deal.title} />
       </Guard>
     ),
+    repairs: <DealRepairsTab deal={deal} />,
     timeline: <RecordTimelineTab recordType="deal" recordId={deal.id} />,
     analytics: <DealAnalyticsTab deal={deal} />,
     source: <SourceMetadataTab deal={deal} />,

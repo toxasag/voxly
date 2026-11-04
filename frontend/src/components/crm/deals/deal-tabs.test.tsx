@@ -108,6 +108,27 @@ describe("dealTabContents", () => {
     ]);
   });
 
+  it("показывает вкладку Сервисный центр между Чат и Таймлайн при установленном модуле service_center", () => {
+    const tabs = resolvePageLayoutTabs(
+      FALLBACK_PAGE_LAYOUT_TABS.deal,
+      dealTabContents(deal(), context()),
+      { installedModules: [{ slug: "service_center" }], hasPermission: () => true },
+    );
+
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "home",
+      "chat",
+      "repairs",
+      "timeline",
+      "analytics",
+      "source",
+      "contact-history",
+      "tasks",
+      "notes",
+    ]);
+    expect(tabs.find((tab) => tab.id === "repairs")?.label).toBe("Сервисный центр");
+  });
+
   it("не зависит от наличия справочника этапов", () => {
     const withoutStages = Object.keys(dealTabContents(deal(), context())).sort();
     const withStages = Object.keys(

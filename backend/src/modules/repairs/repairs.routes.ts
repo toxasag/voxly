@@ -27,6 +27,11 @@ const listQuerySchema = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
 });
 
+const clientLookupQuerySchema = z.object({
+  phone: z.string().max(100).optional(),
+  query: z.string().max(200).optional(),
+});
+
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
 
 const nestedParamsSchema = z.object({
@@ -70,6 +75,13 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
       data: items,
       meta: { limit: params.limit, offset: params.offset, total },
     });
+  });
+
+  // GET /repairs/client-lookup — reactive phone/name lookup with active CRM deals
+  app.get("/client-lookup", { onRequest: canRead }, async (request, reply) => {
+    const params = clientLookupQuerySchema.parse(request.query);
+    const result = await service.clientLookup(request.tenant_id, params);
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
