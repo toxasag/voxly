@@ -32,6 +32,19 @@ const clientLookupQuerySchema = z.object({
   query: z.string().max(200).optional(),
 });
 
+const addDictionaryItemSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  brand_name: z.string().max(200).optional(),
+});
+
+const categoryParamSchema = z.object({
+  category: z.string().min(1).max(50),
+});
+
+const serialQuerySchema = z.object({
+  serial: z.string().min(1).max(100),
+});
+
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
 
 const nestedParamsSchema = z.object({
