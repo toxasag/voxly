@@ -10,11 +10,14 @@ import { z } from "zod";
 
 export const repairStatusSchema = z.enum([
   "intake",
+  "waiting_parts",
+  "parts_order",
+  "ready",
+  "issued",
+  // Legacy / fallback compatibility
   "diagnostics",
   "approval",
   "in_progress",
-  "ready",
-  "issued",
   "rejected",
 ]);
 
@@ -23,25 +26,26 @@ export const repairPrioritySchema = z.enum(["low", "normal", "high", "urgent"]);
 export type RepairStatus = z.infer<typeof repairStatusSchema>;
 export type RepairPriority = z.infer<typeof repairPrioritySchema>;
 
-/** Ordered happy path used to derive the next step and render the stepper. */
+/** Ordered happy path: Принят → Заказ запчастей → Готов → Выдан */
 export const REPAIR_STATUS_FLOW: readonly RepairStatus[] = [
   "intake",
-  "diagnostics",
-  "approval",
-  "in_progress",
+  "waiting_parts",
   "ready",
   "issued",
 ] as const;
 
-/** Allowed transitions. Anything not listed here is rejected with 409. */
+/** Allowed transitions between statuses */
 const ALLOWED_TRANSITIONS: Record<RepairStatus, readonly RepairStatus[]> = {
-  intake: ["diagnostics", "rejected"],
-  diagnostics: ["approval", "rejected"],
-  approval: ["in_progress", "rejected"],
-  in_progress: ["ready", "rejected"],
-  ready: ["issued"],
-  issued: [],
-  rejected: [],
+  intake: ["waiting_parts", "parts_order", "ready", "issued", "diagnostics", "in_progress", "rejected"],
+  waiting_parts: ["ready", "issued", "intake", "rejected"],
+  parts_order: ["ready", "issued", "intake", "rejected"],
+  ready: ["issued", "waiting_parts", "parts_order", "intake"],
+  issued: ["ready", "intake"],
+  // Legacy
+  diagnostics: ["waiting_parts", "parts_order", "ready", "issued", "approval", "rejected"],
+  approval: ["waiting_parts", "parts_order", "ready", "issued", "in_progress", "rejected"],
+  in_progress: ["waiting_parts", "parts_order", "ready", "issued", "rejected"],
+  rejected: ["intake"],
 };
 
 export function canTransition(from: RepairStatus, to: RepairStatus): boolean {
@@ -112,6 +116,54 @@ export const createRepairSchema = z.object({
   estimated_cost: z.number().nonnegative("Estimated cost cannot be negative").default(0),
   notes: z.string().max(4000).optional().or(z.literal("")),
 });
+
+export const equipmentIntakeItemSchema = z.object({
+  equipment_type: z.string().min(1, "Тип обязателен").max(100),
+  equipment_brand: z.string().min(1, "Бренд обязателен").max(100),
+  equipment_model: z.string().min(1, "Модель обязательна").max(100),
+  equipment_serial: z.string().max(100).optional().or(z.literal("")),
+  package_contents: z.string().max(1000).optional().or(z.literal("")),
+  package_contents_items: z.array(z.string()).optional(),
+  appearance: z.string().max(1000).optional().or(z.literal("")),
+  defect_description: z.string().max(4000).optional().or(z.literal("")),
+  malfunctions: z.array(z.string()).optional(),
+  defect_photos: z.array(z.string()).optional(),
+  estimated_cost: z.number().nonnegative().default(0),
+  priority: repairPrioritySchema.default("normal"),
+  master_id: z.string().uuid("master_id must be a UUID").optional().or(z.literal("")),
+  master_name: z.string().optional().or(z.literal("")),
+  notes: z.string().max(4000).optional().or(z.literal("")),
+});
+export type EquipmentIntakeItem = z.infer<typeof equipmentIntakeItemSchema>;
+
+export const createBatchRepairSchema = z.object({
+  deal_id: optionalUuid,
+  customer_id: optionalUuid,
+  customer_name: z.string().min(1, "Customer name is required").max(200),
+  customer_phone: z.string().min(5, "Customer phone is required").max(30),
+  customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  additional_contacts: z.array(additionalContactSchema).optional(),
+  company_id: optionalUuid,
+  company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: z.string().optional().or(z.literal("")),
+  company_ogrn: z.string().optional().or(z.literal("")),
+  company_bik: z.string().optional().or(z.literal("")),
+  company_account_number: z.string().optional().or(z.literal("")),
+  company_legal_address: z.string().max(300).optional().or(z.literal("")),
+  equipments: z.array(equipmentIntakeItemSchema).min(1, "Добавьте хотя бы одно оборудование"),
+  defect_photos: z.array(z.string()).optional(),
+  priority: repairPrioritySchema.default("normal"),
+  master_id: z.string().uuid("master_id must be a UUID"),
+  master_name: z.string().min(1, "Master name is required").max(200),
+  estimated_cost: z.number().nonnegative().default(0),
+  notes: z.string().max(4000).optional().or(z.literal("")),
+});
+export type CreateBatchRepairPayload = z.infer<typeof createBatchRepairSchema>;
+
+export const renameDictionaryItemSchema = z.object({
+  name: z.string().min(1, "Наименование не может быть пустым").max(200),
+});
+export type RenameDictionaryItemPayload = z.infer<typeof renameDictionaryItemSchema>;
 
 export const updateRepairSchema = z.object({
   customer_name: z.string().min(1).max(200).optional(),
@@ -224,6 +276,10 @@ export interface RepairOrderRow {
   delivered_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  deal_title?: string | null;
+  deal_notes?: string | null;
+  company_name?: string | null;
+  company_inn?: string | null;
 }
 
 export interface RepairWorkRow {
@@ -332,6 +388,10 @@ export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
   dealId: string | null;
+  dealTitle?: string | null;
+  dealNote?: string | null;
+  companyName?: string | null;
+  companyInn?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
@@ -390,6 +450,10 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     id: row.id,
     ticketNumber: row.ticket_number,
     dealId: row.deal_id ?? null,
+    dealTitle: row.deal_title ?? null,
+    dealNote: row.deal_notes ?? null,
+    companyName: row.company_name ?? null,
+    companyInn: row.company_inn ?? null,
     customerId: row.customer_id,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
@@ -517,12 +581,18 @@ export interface ClientLookupResultDTO {
   activeDeals: ClientLookupDealDTO[];
 }
 
+export interface DictionaryItemDTO {
+  id: string;
+  name: string;
+  brandName?: string;
+}
+
 export interface ServiceDictionariesDTO {
-  types: string[];
-  brands: string[];
-  models: string[];
-  accessories: string[];
-  malfunctions: string[];
+  types: DictionaryItemDTO[];
+  brands: DictionaryItemDTO[];
+  models: DictionaryItemDTO[];
+  accessories: DictionaryItemDTO[];
+  malfunctions: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {

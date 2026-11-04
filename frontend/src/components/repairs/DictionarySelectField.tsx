@@ -1,8 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentType } from "react";
-import { Check, ChevronDown, Loader2, Plus, X } from "lucide-react";
-import { useAddRepairDictionaryItem } from "@/lib/api/use-repairs";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
+  useAddRepairDictionaryItem,
+  useDeleteRepairDictionaryItem,
+  useRenameRepairDictionaryItem,
+  type DictionaryItemDTO,
+} from "@/lib/api/use-repairs";
 import { cn } from "@/lib/utils";
 
 export type DictionaryCategory = "type" | "brand" | "model" | "accessory" | "malfunction";
@@ -13,7 +27,7 @@ export interface DictionarySelectFieldProps {
   icon: ComponentType<{ className?: string }>;
   category: DictionaryCategory;
   brandName?: string;
-  items: string[];
+  items: (string | DictionaryItemDTO)[];
   placeholder?: string;
   mode: "single" | "multi";
   value: string | string[];
@@ -21,6 +35,12 @@ export interface DictionarySelectFieldProps {
   error?: string;
   className?: string;
   disabled?: boolean;
+}
+
+interface NormalizedItem {
+  id?: string;
+  name: string;
+  brandName?: string;
 }
 
 export function DictionarySelectField({
@@ -43,14 +63,32 @@ export function DictionarySelectField({
   const [searchTerm, setSearchTerm] = useState("");
   const [newItemName, setNewItemName] = useState("");
 
+  // Режим инлайн-редактирования элемента
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const addPopoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const addMutation = useAddRepairDictionaryItem();
+  const renameMutation = useRenameRepairDictionaryItem();
+  const deleteMutation = useDeleteRepairDictionaryItem();
 
   const singleValue = typeof value === "string" ? value : "";
-  const multiValues = Array.isArray(value) ? value : [];
+  const multiValues = useMemo(() => (Array.isArray(value) ? value : []), [value]);
+
+  // Нормализуем входящие элементы справочника
+  const normalizedItems: NormalizedItem[] = useMemo(() => {
+    return items.map((it) => {
+      if (typeof it === "string") {
+        return { name: it };
+      }
+      return { id: it.id, name: it.name, brandName: it.brandName };
+    });
+  }, [items]);
 
   // Закрытие при клике снаружи
   useEffect(() => {
@@ -63,6 +101,8 @@ export function DictionarySelectField({
       ) {
         setIsOpen(false);
         setIsAddOpen(false);
+        setEditingId(null);
+        setActionError(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -76,15 +116,26 @@ export function DictionarySelectField({
     }
   }, [isOpen]);
 
-  // Фильтрация вариантов
-  const filteredItems = items.filter((item) =>
-    item.toLowerCase().includes(searchTerm.trim().toLowerCase()),
-  );
+  // Фокус в инпут редактирования
+  useEffect(() => {
+    if (editingId && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editingId]);
 
-  const handleSelectSingle = (item: string) => {
-    onChange(item);
+  // Фильтрация вариантов
+  const filteredItems = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return normalizedItems;
+    return normalizedItems.filter((item) => item.name.toLowerCase().includes(term));
+  }, [normalizedItems, searchTerm]);
+
+  const handleSelectSingle = (item: NormalizedItem) => {
+    onChange(item.name);
     setIsOpen(false);
     setSearchTerm("");
+    setActionError(null);
   };
 
   const handleClearSingle = (e: React.MouseEvent) => {
@@ -92,17 +143,18 @@ export function DictionarySelectField({
     onChange("");
   };
 
-  const handleToggleMulti = (item: string) => {
-    if (multiValues.includes(item)) {
-      onChange(multiValues.filter((v) => v !== item));
+  const handleToggleMulti = (item: NormalizedItem) => {
+    if (multiValues.includes(item.name)) {
+      onChange(multiValues.filter((v) => v !== item.name));
     } else {
-      onChange([...multiValues, item]);
+      onChange([...multiValues, item.name]);
     }
+    setActionError(null);
   };
 
-  const handleRemoveChip = (item: string, e: React.MouseEvent) => {
+  const handleRemoveChip = (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    onChange(multiValues.filter((v) => v !== item));
+    onChange(multiValues.filter((v) => v !== name));
   };
 
   const handleClearAllMulti = (e: React.MouseEvent) => {
@@ -122,7 +174,6 @@ export function DictionarySelectField({
         brand_name: brandName,
       });
 
-      // Автоматически выбираем созданный элемент
       if (mode === "single") {
         onChange(trimmed);
       } else {
@@ -133,8 +184,75 @@ export function DictionarySelectField({
 
       setNewItemName("");
       setIsAddOpen(false);
-    } catch {
-      // Ошибка обрабатывается мутацией
+      setActionError(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось добавить элемент";
+      setActionError(msg);
+    }
+  };
+
+  const handleStartRename = (e: React.MouseEvent, item: NormalizedItem) => {
+    e.stopPropagation();
+    if (!item.id) return;
+    setEditingId(item.id);
+    setEditingName(item.name);
+    setActionError(null);
+  };
+
+  const handleSaveRename = async (e: React.MouseEvent, item: NormalizedItem) => {
+    e.stopPropagation();
+    const trimmed = editingName.trim();
+    if (!item.id || !trimmed || trimmed === item.name) {
+      setEditingId(null);
+      return;
+    }
+
+    try {
+      await renameMutation.mutateAsync({
+        category,
+        id: item.id,
+        name: trimmed,
+      });
+
+      // Обновляем выбранное значение, если оно совпадает с редактируемым
+      if (mode === "single" && singleValue === item.name) {
+        onChange(trimmed);
+      } else if (mode === "multi" && multiValues.includes(item.name)) {
+        onChange(multiValues.map((v) => (v === item.name ? trimmed : v)));
+      }
+
+      setEditingId(null);
+      setActionError(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Не удалось переименовать";
+      setActionError(msg);
+    }
+  };
+
+  const handleDeleteItem = async (e: React.MouseEvent, item: NormalizedItem) => {
+    e.stopPropagation();
+    if (!item.id) return;
+
+    setActionError(null);
+    try {
+      await deleteMutation.mutateAsync({
+        category,
+        id: item.id,
+      });
+
+      // Если удаленный элемент был выбран, удаляем его из значения
+      if (mode === "single" && singleValue === item.name) {
+        onChange("");
+      } else if (mode === "multi" && multiValues.includes(item.name)) {
+        onChange(multiValues.filter((v) => v !== item.name));
+      }
+    } catch (err: unknown) {
+      // При 409 бэкенд возвращает сообщение о блокировке связей
+      let msg = "Не удалось удалить элемент";
+      if (err && typeof err === "object" && "message" in err) {
+        msg = String((err as { message: unknown }).message);
+      }
+      setActionError(msg);
     }
   };
 
@@ -238,6 +356,7 @@ export function DictionarySelectField({
             e.stopPropagation();
             setIsAddOpen((prev) => !prev);
             setIsOpen(false);
+            setActionError(null);
           }}
           className={cn(
             "flex w-9 shrink-0 items-center justify-center border-l border-[#e5e5e5] text-slate-500 rounded-r-[7px] transition-colors",
@@ -251,12 +370,27 @@ export function DictionarySelectField({
         </button>
       </div>
 
-      {/* Ошибка валидации */}
+      {/* Ошибка валидации формы */}
       {error && <p className="text-[11px] text-rose-500">{error}</p>}
+
+      {/* Сообщение об ошибке действия со справочником (например 409 Conflict) */}
+      {actionError && (
+        <div className="flex items-start gap-1.5 rounded-[6px] border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 shadow-2xs">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+          <div className="flex-1 text-[11px] leading-tight">{actionError}</div>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            className="text-amber-500 hover:text-amber-700"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
 
       {/* Выпадающий список выбора из справочника */}
       {isOpen && (
-        <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-60 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-lg flex flex-col">
+        <div className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-hidden rounded-[8px] border border-[#e5e5e5] bg-white shadow-lg flex flex-col">
           {/* Поиск */}
           <div className="p-2 border-b border-[#f0f0f0] bg-slate-50/50">
             <input
@@ -270,15 +404,66 @@ export function DictionarySelectField({
           </div>
 
           {/* Список элементов */}
-          <div className="overflow-y-auto max-h-48 p-1 divide-y divide-[#f5f5f5]">
+          <div className="overflow-y-auto max-h-52 p-1 divide-y divide-[#f5f5f5]">
             {filteredItems.length > 0 ? (
               filteredItems.map((item) => {
                 const isSelected =
-                  mode === "single" ? singleValue === item : multiValues.includes(item);
+                  mode === "single" ? singleValue === item.name : multiValues.includes(item.name);
+                const isEditing = editingId !== null && editingId === item.id;
+
+                if (isEditing) {
+                  return (
+                    <div
+                      key={item.id ?? item.name}
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1 px-2 py-1.5 bg-slate-50 rounded-[4px]"
+                    >
+                      <input
+                        ref={editInputRef}
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void handleSaveRename(e as unknown as React.MouseEvent, item);
+                          } else if (e.key === "Escape") {
+                            setEditingId(null);
+                          }
+                        }}
+                        className="h-6 flex-1 rounded border border-[#4a38f5] bg-white px-1.5 text-xs text-[#111111] focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => void handleSaveRename(e, item)}
+                        disabled={renameMutation.isPending}
+                        className="p-1 rounded text-emerald-600 hover:bg-emerald-50 transition-colors"
+                        title="Сохранить"
+                      >
+                        {renameMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Check className="h-3 w-3" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingId(null);
+                        }}
+                        className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                        title="Отмена"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                }
 
                 return (
                   <div
-                    key={item}
+                    key={item.id ?? item.name}
                     onClick={() => {
                       if (mode === "single") {
                         handleSelectSingle(item);
@@ -287,14 +472,42 @@ export function DictionarySelectField({
                       }
                     }}
                     className={cn(
-                      "flex items-center justify-between px-2.5 py-1.5 text-xs rounded-[4px] cursor-pointer transition-colors",
+                      "group flex items-center justify-between px-2.5 py-1.5 text-xs rounded-[4px] cursor-pointer transition-colors",
                       isSelected
                         ? "bg-[#4a38f5]/10 text-[#4a38f5] font-medium"
                         : "text-[#111111] hover:bg-slate-50",
                     )}
                   >
-                    <span>{item}</span>
-                    {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5]" />}
+                    <div className="flex items-center gap-2 truncate mr-2">
+                      <span>{item.name}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {/* Кнопки переименования и удаления, если элемент персистентный (есть id) */}
+                      {item.id && (
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={(e) => handleStartRename(e, item)}
+                            className="p-1 rounded text-slate-400 hover:text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors"
+                            title="Переименовать"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => void handleDeleteItem(e, item)}
+                            disabled={deleteMutation.isPending}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            title="Удалить из справочника"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+
+                      {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5]" />}
+                    </div>
                   </div>
                 );
               })

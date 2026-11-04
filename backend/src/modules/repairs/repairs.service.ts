@@ -2,6 +2,7 @@ import type {
   ChangeStatusPayload,
   ClientLookupDealDTO,
   ClientLookupResultDTO,
+  CreateBatchRepairPayload,
   CreateNotePayload,
   CreatePartPayload,
   CreatePhotoPayload,
@@ -71,8 +72,8 @@ export class InvalidStatusTransitionError extends AppError {
   }
 }
 
-function nullIfBlank(value: string | undefined): string | null {
-  if (value === undefined || value === "") return null;
+function nullIfBlank(value: string | null | undefined): string | null {
+  if (value === undefined || value === null || value === "") return null;
   return value;
 }
 
@@ -119,58 +120,70 @@ export class RepairsService {
     tenantId: string,
     options: ListRepairsOptions,
   ): Promise<{ items: RepairOrderDTO[]; total: number }> {
-    const conditions: string[] = ["tenant_id = $1", "deleted_at IS NULL"];
+    const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
     const params: SqlParam[] = [tenantId];
 
     if (options.status !== undefined) {
       params.push(options.status);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`ro.status = $${params.length}`);
     }
 
     if (options.priority !== undefined) {
       params.push(options.priority);
-      conditions.push(`priority = $${params.length}`);
+      conditions.push(`ro.priority = $${params.length}`);
     }
 
     if (options.masterId !== undefined) {
       params.push(options.masterId);
-      conditions.push(`master_id = $${params.length}`);
+      conditions.push(`ro.master_id = $${params.length}`);
     }
 
     if (options.customerId !== undefined) {
       params.push(options.customerId);
-      conditions.push(`customer_id = $${params.length}`);
+      conditions.push(`ro.customer_id = $${params.length}`);
     }
 
     if (options.search !== undefined && options.search.length > 0) {
       params.push(`%${options.search}%`);
       const placeholder = `$${params.length}`;
       conditions.push(
-        `(ticket_number ILIKE ${placeholder}
-          OR customer_name ILIKE ${placeholder}
-          OR customer_phone ILIKE ${placeholder}
-          OR equipment_brand ILIKE ${placeholder}
-          OR equipment_model ILIKE ${placeholder}
-          OR equipment_serial ILIKE ${placeholder})`,
+        `(ro.ticket_number ILIKE ${placeholder}
+          OR ro.customer_name ILIKE ${placeholder}
+          OR ro.customer_phone ILIKE ${placeholder}
+          OR ro.equipment_brand ILIKE ${placeholder}
+          OR ro.equipment_model ILIKE ${placeholder}
+          OR ro.equipment_serial ILIKE ${placeholder})`,
       );
     }
 
     const where = conditions.join(" AND ");
 
     const countRow = await queryOne<{ total: string }>(
-      `SELECT COUNT(*)::text AS total FROM repair_orders WHERE ${where}`,
+      `SELECT COUNT(*)::text AS total FROM repair_orders ro WHERE ${where}`,
       params,
     );
 
     params.push(options.limit, options.offset);
 
     const rows = await query<RepairOrderRow>(
-      `SELECT ${ORDER_COLUMNS}
-       FROM repair_orders
+      `SELECT
+         ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
+         ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
+         ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
+         ro.additional_contacts, ro.status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
+         d.title AS deal_title,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         c.name AS company_name,
+         c.inn AS company_inn
+       FROM repair_orders ro
+       LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
+       LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
+       LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ${where}
        ORDER BY
-         CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC,
-         received_at DESC
+         CASE ro.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END ASC,
+         ro.received_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -570,6 +583,285 @@ export class RepairsService {
       }
 
       return toRepairOrderDTO(row);
+    });
+  }
+
+
+  /**
+   * Batch creates multiple repair orders in a single transaction,
+   * linked to the same customer and single CRM deal.
+   */
+  async createBatch(
+    tenantId: string,
+    author: { id: string; name: string },
+    payload: CreateBatchRepairPayload,
+  ): Promise<RepairOrderDTO[]> {
+    return withTenant(tenantId, async (tx) => {
+      let customerId = payload.customer_id ? payload.customer_id.trim() : "";
+      let dealId = payload.deal_id ? payload.deal_id.trim() : "";
+      let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
+
+      // 0. Обработка компании
+      if (!companyId && payload.company_inn && payload.company_inn.trim()) {
+        const inn = payload.company_inn.trim();
+        const existingByInn = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM companies WHERE tenant_id = $1 AND inn = $2 AND deleted_at IS NULL LIMIT 1`,
+          [tenantId, inn],
+        );
+        if (existingByInn) {
+          companyId = existingByInn.id;
+        }
+      }
+
+      if (!companyId && payload.company_name && payload.company_name.trim()) {
+        const compName = payload.company_name.trim();
+        const existingComp = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM companies WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,
+          [tenantId, compName],
+        );
+        if (existingComp) {
+          companyId = existingComp.id;
+        } else {
+          const newComp = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO companies (tenant_id, name, inn, ogrn, bik, account_number, legal_address, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'Создана автоматически при пакетной приёмке оборудования')
+             RETURNING id`,
+            [
+              tenantId,
+              compName,
+              payload.company_inn?.trim() ?? "",
+              payload.company_ogrn?.trim() ?? "",
+              payload.company_bik?.trim() ?? "",
+              payload.company_account_number?.trim() ?? "",
+              payload.company_legal_address?.trim() ?? "",
+            ],
+          );
+          companyId = newComp.id;
+        }
+      }
+
+      // 1. Клиент
+      if (!customerId) {
+        const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
+        if (canonicalPhone) {
+          const last10 = canonicalPhone.slice(-10);
+          const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
+            `SELECT id, company_id FROM contacts
+             WHERE tenant_id = $1 AND deleted_at IS NULL
+               AND (
+                 phone = $2
+                 OR phone LIKE '%' || $3
+                 OR whatsapp = $2
+                 OR whatsapp LIKE '%' || $3
+                 OR EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
+                   WHERE (p->>'number') LIKE '%' || $3
+                 )
+               )
+             ORDER BY created_at ASC LIMIT 1`,
+            [tenantId, canonicalPhone, last10],
+          );
+          if (existingContact) {
+            customerId = existingContact.id;
+            if (!companyId && existingContact.company_id) companyId = existingContact.company_id;
+          }
+        }
+
+        if (!customerId) {
+          const rawName = payload.customer_name.trim();
+          const parts = rawName.split(/\s+/);
+          const firstName = parts[0] || rawName;
+          const lastName = parts.slice(1).join(" ");
+
+          const newContact = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO contacts (tenant_id, first_name, last_name, phone, email, company_name, company_id, channel, notes, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'direct', 'Создан автоматически при пакетной приёмке', $8)
+             RETURNING id`,
+            [
+              tenantId,
+              firstName,
+              lastName,
+              canonicalPhone || payload.customer_phone,
+              payload.customer_email || null,
+              payload.company_name ?? "",
+              companyId,
+              author.id,
+            ],
+          );
+          customerId = newContact.id;
+        }
+      } else if (!companyId) {
+        const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
+          `SELECT id, company_id FROM contacts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, customerId],
+        );
+        if (existingContact?.company_id) {
+          companyId = existingContact.company_id;
+        }
+      }
+
+      // 2. Сделка
+      if (dealId) {
+        const deal = await tx.queryOne<{ id: string; contact_id: string | null; company_id: string | null }>(
+          `SELECT id, contact_id, company_id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, dealId],
+        );
+        if (!deal) throw new NotFoundError("Выбранная сделка не найдена");
+      } else {
+        let pipelineRow = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (!pipelineRow) {
+          await ensureTenantDefaults(tenantId);
+          pipelineRow = await tx.queryOneOrThrow<{ id: string }>(
+            `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
+            [tenantId],
+          );
+        }
+
+        const stageRow = await tx.queryOneOrThrow<{ id: string }>(
+          `SELECT id FROM stages
+           WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+           ORDER BY sort_order ASC LIMIT 1`,
+          [pipelineRow.id],
+        );
+
+        const totalCost = payload.equipments.reduce((sum, e) => sum + (e.estimated_cost || 0), 0) || (payload.estimated_cost ?? 0);
+        const firstEq = payload.equipments[0];
+        const dealTitle = payload.equipments.length === 1 && firstEq
+          ? `Ремонт: ${firstEq.equipment_brand} ${firstEq.equipment_model}`
+          : `Пакетный ремонт (${payload.equipments.length} шт.): ${firstEq ? `${firstEq.equipment_brand} ${firstEq.equipment_model}` : "Оборудование"}`;
+
+        const dealDesc = `Пакетная приёмка (${payload.equipments.length} шт.):\n` +
+          payload.equipments.map((e, idx) => `${idx + 1}. ${e.equipment_type} ${e.equipment_brand} ${e.equipment_model}${e.equipment_serial ? ` (S/N: ${e.equipment_serial})` : ""}. Неисправность: ${e.defect_description || e.malfunctions?.join(", ") || "—"}`).join("\n");
+
+        const newDeal = await tx.queryOneOrThrow<{ id: string }>(
+          `INSERT INTO deals (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description, budget, currency, owner_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'RUB', $9, $9)
+           RETURNING id`,
+          [
+            tenantId,
+            pipelineRow.id,
+            stageRow.id,
+            customerId,
+            companyId,
+            dealTitle,
+            dealDesc,
+            totalCost,
+            author.id,
+          ],
+        );
+        dealId = newDeal.id;
+
+        if (payload.notes && payload.notes.trim()) {
+          await tx.query(
+            `INSERT INTO notes (tenant_id, deal_id, title, body, created_by)
+             VALUES ($1, $2, 'Заметка к приёмке', $3, $4)`,
+            [tenantId, dealId, payload.notes.trim(), author.id],
+          );
+        }
+      }
+
+      // 3. Создаем наряд-заказ на каждую единицу оборудования
+      const createdOrders: RepairOrderDTO[] = [];
+
+      for (const eq of payload.equipments) {
+        const ticketNumber = await this.allocateTicketNumber(tx, tenantId);
+        const packageContents = (eq.package_contents ?? "").trim();
+        const packageContentsItems = eq.package_contents_items ?? (packageContents ? packageContents.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean) : []);
+        const defectDescription = (eq.defect_description ?? "").trim();
+        const malfunctions = eq.malfunctions ?? (defectDescription ? [defectDescription] : []);
+        const defectPhotos = eq.defect_photos ?? payload.defect_photos ?? [];
+
+        const additionalContactsJson = JSON.stringify(payload.additional_contacts ?? []);
+
+        const row = await tx.queryOneOrThrow<RepairOrderRow>(
+          `INSERT INTO repair_orders (
+             tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
+             equipment_type, equipment_brand, equipment_model, equipment_serial,
+             package_contents, package_contents_items, appearance, defect_description, malfunctions,
+             defect_photos, status, priority, master_id, master_name, estimated_cost, notes, additional_contacts, received_at
+           )
+           VALUES (
+             $1, $2, $3, $4, $5, $6,
+             $7, $8, $9, $10,
+             $11, $12, $13, $14, $15,
+             $16, 'intake', $17, $18, $19, $20, $21, $22, now()
+           )
+           RETURNING ${ORDER_COLUMNS}`,
+          [
+            tenantId,
+            ticketNumber,
+            dealId,
+            customerId,
+            payload.customer_name.trim(),
+            payload.customer_phone.trim(),
+            eq.equipment_type.trim(),
+            eq.equipment_brand.trim(),
+            eq.equipment_model.trim(),
+            (eq.equipment_serial ?? "").trim(),
+            packageContents,
+            packageContentsItems,
+            (eq.appearance ?? "").trim(),
+            defectDescription,
+            malfunctions,
+            defectPhotos,
+            payload.priority ?? "normal",
+            payload.master_id,
+            payload.master_name ?? "",
+            eq.estimated_cost ?? 0,
+            payload.notes ?? "",
+            additionalContactsJson,
+          ],
+        );
+
+        await tx.query(
+          `INSERT INTO repair_notes
+             (tenant_id, repair_order_id, author_id, author_name, kind, content, from_status, to_status)
+           VALUES ($1, $2, $3, $4, 'status', 'Приёмка оборудования (пакетная)', null, 'intake')`,
+          [tenantId, row.id, author.id, author.name],
+        );
+
+        if (eq.equipment_type.trim()) {
+          await tx.query(
+            `INSERT INTO equipment_types (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, eq.equipment_type.trim()],
+          ).catch(() => {});
+        }
+        if (eq.equipment_brand.trim()) {
+          await tx.query(
+            `INSERT INTO equipment_brands (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+            [tenantId, eq.equipment_brand.trim()],
+          ).catch(() => {});
+        }
+        if (eq.equipment_model.trim()) {
+          await tx.query(
+            `INSERT INTO equipment_models (tenant_id, brand_name, name) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, brand_name, name) DO NOTHING`,
+            [tenantId, eq.equipment_brand.trim(), eq.equipment_model.trim()],
+          ).catch(() => {});
+        }
+        for (const m of malfunctions) {
+          if (m.trim()) {
+            await tx.query(
+              `INSERT INTO equipment_malfunctions (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+              [tenantId, m.trim()],
+            ).catch(() => {});
+          }
+        }
+        for (const a of packageContentsItems) {
+          if (a.trim()) {
+            await tx.query(
+              `INSERT INTO equipment_accessories (tenant_id, name) VALUES ($1, $2) ON CONFLICT (tenant_id, name) DO NOTHING`,
+              [tenantId, a.trim()],
+            ).catch(() => {});
+          }
+        }
+
+        createdOrders.push(toRepairOrderDTO(row));
+      }
+
+      return createdOrders;
     });
   }
 
@@ -1188,37 +1480,62 @@ export class RepairsService {
   }
 
   /**
+   * Translates category slug to actual table name
+   */
+  private getDictionaryTable(category: string): string {
+    switch (category.toLowerCase()) {
+      case "type":
+      case "types":
+        return "equipment_types";
+      case "brand":
+      case "brands":
+        return "equipment_brands";
+      case "model":
+      case "models":
+        return "equipment_models";
+      case "accessory":
+      case "accessories":
+        return "equipment_accessories";
+      case "malfunction":
+      case "malfunctions":
+        return "equipment_malfunctions";
+      default:
+        throw new ValidationError(`Unknown dictionary category: ${category}`, {});
+    }
+  }
+
+  /**
    * Retrieves all dictionary items for the tenant: types, brands, models, accessories, malfunctions.
    */
   async getDictionaries(tenantId: string): Promise<ServiceDictionariesDTO> {
     return withTenant(tenantId, async (tx) => {
-      const types = await tx.query<{ name: string }>(
-        `SELECT name FROM equipment_types WHERE tenant_id = $1 ORDER BY name ASC`,
+      const types = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_types WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
-      const brands = await tx.query<{ name: string }>(
-        `SELECT name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC`,
+      const brands = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
-      const models = await tx.query<{ name: string }>(
-        `SELECT name FROM equipment_models WHERE tenant_id = $1 ORDER BY name ASC`,
+      const models = await tx.query<{ id: string; name: string; brand_name: string }>(
+        `SELECT id, name, brand_name FROM equipment_models WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
-      const accessories = await tx.query<{ name: string }>(
-        `SELECT name FROM equipment_accessories WHERE tenant_id = $1 ORDER BY name ASC`,
+      const accessories = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_accessories WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
-      const malfunctions = await tx.query<{ name: string }>(
-        `SELECT name FROM equipment_malfunctions WHERE tenant_id = $1 ORDER BY name ASC`,
+      const malfunctions = await tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_malfunctions WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
 
       return {
-        types: types.map((r) => r.name),
-        brands: brands.map((r) => r.name),
-        models: models.map((r) => r.name),
-        accessories: accessories.map((r) => r.name),
-        malfunctions: malfunctions.map((r) => r.name),
+        types: types.map((r) => ({ id: r.id, name: r.name })),
+        brands: brands.map((r) => ({ id: r.id, name: r.name })),
+        models: models.map((r) => ({ id: r.id, name: r.name, brandName: r.brand_name })),
+        accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
+        malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
       };
     });
   }
@@ -1236,31 +1553,7 @@ export class RepairsService {
     if (!trimmedName) throw new ValidationError("Name cannot be empty", {});
 
     return withTenant(tenantId, async (tx) => {
-      let table = "";
-      switch (category.toLowerCase()) {
-        case "type":
-        case "types":
-          table = "equipment_types";
-          break;
-        case "brand":
-        case "brands":
-          table = "equipment_brands";
-          break;
-        case "model":
-        case "models":
-          table = "equipment_models";
-          break;
-        case "accessory":
-        case "accessories":
-          table = "equipment_accessories";
-          break;
-        case "malfunction":
-        case "malfunctions":
-          table = "equipment_malfunctions";
-          break;
-        default:
-          throw new ValidationError(`Unknown dictionary category: ${category}`, {});
-      }
+      const table = this.getDictionaryTable(category);
 
       if (table === "equipment_models") {
         const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
@@ -1281,6 +1574,102 @@ export class RepairsService {
         [tenantId, trimmedName],
       );
       return row;
+    });
+  }
+
+  /**
+   * Renames an existing dictionary item.
+   */
+  async renameDictionaryItem(
+    tenantId: string,
+    category: string,
+    id: string,
+    newName: string,
+  ): Promise<{ id: string; name: string }> {
+    const trimmed = newName.trim();
+    if (!trimmed) throw new ValidationError("Name cannot be empty", {});
+
+    return withTenant(tenantId, async (tx) => {
+      const table = this.getDictionaryTable(category);
+      const row = await tx.queryOne<{ id: string; name: string }>(
+        `UPDATE ${table} SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+        [trimmed, tenantId, id],
+      );
+      if (!row) {
+        throw new NotFoundError("Элемент справочника не найден");
+      }
+      return row;
+    });
+  }
+
+  /**
+   * Deletes a dictionary item with integrity protection:
+   * Rejects with 409 Conflict if used in any existing repair order.
+   */
+  async deleteDictionaryItem(
+    tenantId: string,
+    category: string,
+    id: string,
+  ): Promise<{ success: boolean; id: string }> {
+    return withTenant(tenantId, async (tx) => {
+      const table = this.getDictionaryTable(category);
+      const existing = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM ${table} WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+      if (!existing) {
+        throw new NotFoundError("Элемент справочника не найден");
+      }
+
+      const itemName = existing.name;
+      let count = 0;
+
+      const normCategory = category.toLowerCase();
+      if (normCategory === "type" || normCategory === "types") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders WHERE tenant_id = $1 AND equipment_type = $2 AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "brand" || normCategory === "brands") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders WHERE tenant_id = $1 AND equipment_brand = $2 AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "model" || normCategory === "models") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders WHERE tenant_id = $1 AND equipment_model = $2 AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "accessory" || normCategory === "accessories") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders
+           WHERE tenant_id = $1 AND ($2 = ANY(package_contents_items) OR package_contents ILIKE '%' || $2 || '%') AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      } else if (normCategory === "malfunction" || normCategory === "malfunctions") {
+        const res = await tx.queryOne<{ count: string }>(
+          `SELECT count(*)::text AS count FROM repair_orders
+           WHERE tenant_id = $1 AND ($2 = ANY(malfunctions) OR defect_description ILIKE '%' || $2 || '%') AND deleted_at IS NULL`,
+          [tenantId, itemName],
+        );
+        count = Number(res?.count ?? 0);
+      }
+
+      if (count > 0) {
+        throw new AppError(
+          409,
+          "DICTIONARY_ITEM_IN_USE",
+          `Нельзя удалить, так как используется в ${count} ремонтах. Переименуйте или отвяжите от оборудования.`,
+          { count: [String(count)], name: [itemName] },
+        );
+      }
+
+      await tx.query(`DELETE FROM ${table} WHERE tenant_id = $1 AND id = $2`, [tenantId, id]);
+      return { success: true, id };
     });
   }
 

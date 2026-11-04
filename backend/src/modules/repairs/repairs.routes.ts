@@ -3,11 +3,13 @@ import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
 import {
   changeStatusSchema,
+  createBatchRepairSchema,
   createNoteSchema,
   createPartSchema,
   createPhotoSchema,
   createRepairSchema,
   createWorkSchema,
+  renameDictionaryItemSchema,
   repairPrioritySchema,
   repairStatusSchema,
   updatePartSchema,
@@ -39,6 +41,11 @@ const addDictionaryItemSchema = z.object({
 
 const categoryParamSchema = z.object({
   category: z.string().min(1).max(50),
+});
+
+const dictionaryItemParamsSchema = z.object({
+  category: z.string().min(1).max(50),
+  id: z.string().uuid("id must be a UUID"),
 });
 
 const serialQuerySchema = z.object({
@@ -114,6 +121,41 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
       body.brand_name,
     );
     return reply.status(201).send({ data: item });
+  });
+
+  // PATCH /repairs/dictionaries/:category/:id — rename dictionary item
+  app.patch("/dictionaries/:category/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { category, id } = dictionaryItemParamsSchema.parse(request.params);
+    const body = renameDictionaryItemSchema.parse(request.body);
+    const updated = await service.renameDictionaryItem(
+      request.tenant_id,
+      category,
+      id,
+      body.name,
+    );
+    return reply.send({ data: updated });
+  });
+
+  // DELETE /repairs/dictionaries/:category/:id — delete dictionary item with safety check
+  app.delete("/dictionaries/:category/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { category, id } = dictionaryItemParamsSchema.parse(request.params);
+    const result = await service.deleteDictionaryItem(
+      request.tenant_id,
+      category,
+      id,
+    );
+    return reply.send({ data: result });
+  });
+
+  // POST /repairs/batch — batch create repairs (multi-equipment intake)
+  app.post("/batch", { onRequest: canWrite }, async (request, reply) => {
+    const body = createBatchRepairSchema.parse(request.body);
+    const orders = await service.createBatch(
+      request.tenant_id,
+      { id: request.authUser.id, name: request.authUser.name },
+      body,
+    );
+    return reply.status(201).send({ data: orders });
   });
 
   // GET /repairs/equipment/search-serial — search equipment history by serial

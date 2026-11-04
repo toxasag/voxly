@@ -6,14 +6,14 @@ import {
   Wrench,
   Search,
   Printer,
-  User,
+  Phone,
+  Building2,
   AlertCircle,
 } from "lucide-react";
 import type { RepairTicket, RepairStatus, RepairFilterStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel } from "@/lib/repairs/repairs.types";
 import { RecordTable, type RecordColumn } from "@/components/crm/shared/RecordTable";
 import { RecordCellShell } from "@/components/crm/shared/RecordCell";
-import { TagPill, type TagColor } from "@/components/ui/tag";
 import { cn } from "@/lib/utils";
 
 interface RepairsTableProps {
@@ -28,27 +28,31 @@ interface RepairsTableProps {
   error?: Error | null;
 }
 
-const ALL_STATUSES: { value: RepairFilterStatus; label: string }[] = [
+// 4 стандартизированных рабочих статуса + таб «Все»
+const STATUS_TABS: { value: RepairFilterStatus; label: string }[] = [
   { value: "all", label: "Все" },
-  { value: "intake", label: "Приёмка" },
-  { value: "diagnostics", label: "Диагностика" },
-  { value: "approval", label: "Согласование" },
-  { value: "in_progress", label: "В работе" },
+  { value: "intake", label: "Принят" },
+  { value: "waiting_parts", label: "Заказ запчастей" },
   { value: "ready", label: "Готов" },
   { value: "issued", label: "Выдан" },
-  { value: "rejected", label: "Отказ" },
 ];
 
-function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "2-digit",
-  }).format(new Date(iso));
+function formatDateTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return new Intl.DateTimeFormat("ru-RU", {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return iso;
+  }
 }
 
 function formatCost(amount: number | null): string {
-  if (amount === null) return "—";
+  if (amount === null || amount === undefined) return "0 ₽";
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: "RUB",
@@ -56,24 +60,38 @@ function formatCost(amount: number | null): string {
   }).format(amount);
 }
 
-function repairStatusColor(status: RepairStatus): TagColor {
+function renderStatusBadge(status: RepairStatus) {
   switch (status) {
-    case "ready":
-      return "emerald";
-    case "in_progress":
-      return "cyan";
-    case "approval":
-      return "amber";
-    case "diagnostics":
-      return "violet";
     case "intake":
-      return "sky";
+      return (
+        <span className="inline-flex items-center rounded-[4px] border border-[#bae6fd] bg-[#e0f2fe] px-2 py-0.5 text-xs font-medium text-[#0369a1]">
+          Принят
+        </span>
+      );
+    case "waiting_parts":
+      return (
+        <span className="inline-flex items-center rounded-[4px] border border-[#fde68a] bg-[#fef3c7] px-2 py-0.5 text-xs font-medium text-[#92400e]">
+          Заказ запчастей
+        </span>
+      );
+    case "ready":
+      return (
+        <span className="inline-flex items-center rounded-[4px] border border-[#bbf7d0] bg-[#dcfce7] px-2 py-0.5 text-xs font-medium text-[#15803d]">
+          Готов
+        </span>
+      );
     case "issued":
-      return "slate";
-    case "rejected":
-      return "rose";
+      return (
+        <span className="inline-flex items-center rounded-[4px] border border-[#bbf7d0] bg-[#f0fdf4] px-2 py-0.5 text-xs font-medium text-[#166534]">
+          Выдан
+        </span>
+      );
     default:
-      return "slate";
+      return (
+        <span className="inline-flex items-center rounded-[4px] border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+          {getRepairStatusLabel(status)}
+        </span>
+      );
   }
 }
 
@@ -101,38 +119,18 @@ export const RepairsTable = memo(function RepairsTable({
     () => [
       {
         id: "ticket_number",
-        header: "Наряд №",
-        width: 120,
+        header: "Акт приёма",
+        width: 135,
         sortValue: (t) => t.ticket_number,
         render: (ticket) => (
           <RecordCellShell isLabelIdentifier>
-            <span className="font-mono text-xs font-medium text-[#111111]">
-              {ticket.ticket_number}
-            </span>
-          </RecordCellShell>
-        ),
-      },
-      {
-        id: "received_at",
-        header: "Принят",
-        width: 104,
-        sortValue: (t) => t.received_at,
-        render: (ticket) => (
-          <RecordCellShell>
-            <span className="text-xs text-[#666666]">{formatDate(ticket.received_at)}</span>
-          </RecordCellShell>
-        ),
-      },
-      {
-        id: "customer_name",
-        header: "Клиент",
-        width: 180,
-        sortValue: (t) => t.customer_name,
-        render: (ticket) => (
-          <RecordCellShell>
-            <div className="truncate text-xs">
-              <span className="font-medium text-[#111111]">{ticket.customer_name}</span>
-              <span className="ml-1.5 text-[#888888]">{ticket.customer_phone}</span>
+            <div className="flex flex-col py-0.5">
+              <span className="font-mono text-xs font-bold text-[#111111]">
+                №{ticket.ticket_number}
+              </span>
+              <span className="text-[11px] text-[#666666]">
+                {formatDateTime(ticket.received_at)}
+              </span>
             </div>
           </RecordCellShell>
         ),
@@ -140,49 +138,113 @@ export const RepairsTable = memo(function RepairsTable({
       {
         id: "equipment",
         header: "Оборудование",
-        width: 200,
+        width: 220,
         sortValue: (t) => `${t.equipment.brand} ${t.equipment.model}`,
         render: (ticket) => (
           <RecordCellShell>
-            <span className="truncate text-xs text-[#111111]">
-              {ticket.equipment.brand} {ticket.equipment.model}
-            </span>
+            <div className="flex flex-col py-0.5 min-w-0">
+              <span className="truncate text-xs font-semibold text-[#111111]">
+                {ticket.equipment.type ? `${ticket.equipment.type} ` : ""}
+                {ticket.equipment.brand} {ticket.equipment.model}
+              </span>
+              <span className="truncate text-[11px] text-[#666666]">
+                {ticket.defect_description || "Без описания дефекта"}
+                {ticket.equipment.serial_number ? ` · S/N: ${ticket.equipment.serial_number}` : ""}
+              </span>
+            </div>
           </RecordCellShell>
         ),
       },
       {
-        id: "defect_description",
-        header: "Неисправность",
-        width: 220,
+        id: "customer_name",
+        header: "Клиент",
+        width: 210,
+        sortValue: (t) => t.customer_name,
         render: (ticket) => (
           <RecordCellShell>
-            <span className="truncate text-xs text-[#666666]">{ticket.defect_description}</span>
+            <div className="flex flex-col py-0.5 min-w-0">
+              <span className="truncate text-xs font-semibold text-[#111111]">
+                {ticket.customer_name}
+              </span>
+              <div className="flex items-center gap-2 text-[11px] text-[#666666] truncate">
+                <span className="inline-flex items-center gap-1 shrink-0">
+                  <Phone className="h-2.5 w-2.5 text-slate-400" />
+                  {ticket.customer_phone}
+                </span>
+                {ticket.company_name && (
+                  <span
+                    className="inline-flex items-center gap-1 truncate text-slate-500"
+                    title={`${ticket.company_name}${ticket.company_inn ? ` (ИНН: ${ticket.company_inn})` : ""}`}
+                  >
+                    <Building2 className="h-2.5 w-2.5 shrink-0 text-slate-400" />
+                    <span className="truncate">{ticket.company_name}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "deal",
+        header: "Сделка",
+        width: 170,
+        sortValue: (t) => t.deal_title ?? "",
+        render: (ticket) => (
+          <RecordCellShell>
+            {ticket.deal_title ? (
+              <span
+                className="inline-flex items-center gap-1 rounded-[4px] bg-[#4a38f5]/10 border border-[#4a38f5]/20 px-2 py-0.5 text-[11px] font-medium text-[#4a38f5] max-w-[155px] truncate"
+                title={ticket.deal_title}
+              >
+                <span className="truncate">{ticket.deal_title}</span>
+              </span>
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
+          </RecordCellShell>
+        ),
+      },
+      {
+        id: "deal_note",
+        header: "Заметка",
+        width: 180,
+        render: (ticket) => (
+          <RecordCellShell>
+            {ticket.deal_note ? (
+              <div
+                className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2 py-0.5 text-[11px] text-[#854d0e] truncate max-w-[165px]"
+                title={ticket.deal_note}
+              >
+                {ticket.deal_note}
+              </div>
+            ) : (
+              <span className="text-xs text-[#888888]">—</span>
+            )}
           </RecordCellShell>
         ),
       },
       {
         id: "status",
         header: "Статус",
-        width: 130,
+        width: 140,
         sortValue: (t) => t.status,
         render: (ticket) => (
           <RecordCellShell>
-            <TagPill color={repairStatusColor(ticket.status)}>
-              {getRepairStatusLabel(ticket.status)}
-            </TagPill>
+            {renderStatusBadge(ticket.status)}
           </RecordCellShell>
         ),
       },
       {
-        id: "master_name",
-        header: "Мастер",
-        width: 130,
+        id: "team",
+        header: "Команда",
+        width: 140,
         sortValue: (t) => t.master_name,
         render: (ticket) => (
           <RecordCellShell>
-            <div className="flex items-center gap-1.5 truncate text-xs text-[#666666]">
-              <User className="h-3 w-3 shrink-0 text-[#888888]" />
-              <span className="truncate">{ticket.master_name}</span>
+            <div className="flex items-center gap-1.5 truncate text-xs text-[#111111]">
+              <Wrench className="h-3 w-3 shrink-0 text-[#888888]" />
+              <span className="truncate">{ticket.master_name || "Не назначен"}</span>
             </div>
           </RecordCellShell>
         ),
@@ -195,9 +257,19 @@ export const RepairsTable = memo(function RepairsTable({
         sortValue: (t) => t.final_cost ?? t.estimated_cost ?? 0,
         render: (ticket) => (
           <RecordCellShell align="right">
-            <span className="font-mono text-xs font-medium text-[#111111]">
-              {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
-            </span>
+            <div className="flex flex-col items-end py-0.5">
+              <span className="font-mono text-xs font-bold text-[#111111]">
+                {formatCost(ticket.final_cost ?? ticket.estimated_cost)}
+              </span>
+              <span
+                className={cn(
+                  "text-[10px] font-medium",
+                  ticket.status === "issued" ? "text-emerald-600" : "text-slate-400",
+                )}
+              >
+                {ticket.status === "issued" ? "Оплачен" : "Не оплачен"}
+              </span>
+            </div>
           </RecordCellShell>
         ),
       },
@@ -235,7 +307,7 @@ export const RepairsTable = memo(function RepairsTable({
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {ALL_STATUSES.map((st) => (
+            {STATUS_TABS.map((st) => (
               <div key={st.value} className="rounded-[8px] border border-[#e5e5e5] px-2.5 py-1 text-xs text-[#888888] bg-white">
                 {st.label}
               </div>
@@ -281,7 +353,7 @@ export const RepairsTable = memo(function RepairsTable({
         </div>
 
         <div className="flex items-center gap-1 flex-wrap">
-          {ALL_STATUSES.map((st) => (
+          {STATUS_TABS.map((st) => (
             <button
               key={st.value}
               type="button"
