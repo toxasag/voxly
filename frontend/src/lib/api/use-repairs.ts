@@ -156,6 +156,11 @@ export interface EquipmentHistoryItemDTO {
   estimatedCost: number;
   finalCost: number | null;
   masterName: string;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  customerName?: string;
+  customerPhone?: string;
+  works?: { id: string; description: string; cost: number; masterName: string }[];
 }
 
 export interface EquipmentSearchSerialResultDTO {
@@ -227,6 +232,7 @@ export interface RepairsListResult {
 }
 
 export interface RepairsQueryParams {
+  dealId?: string;
   status?: RepairStatus;
   priority?: RepairPriority;
   masterId?: string;
@@ -424,6 +430,7 @@ export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<Repa
     queryFn: async () => {
       const res = await apiClient.get<RepairOrderDTO[]>(BASE_PATH, {
         query: {
+          deal_id: params.dealId,
           status: params.status,
           priority: params.priority,
           master_id: params.masterId,
@@ -698,6 +705,7 @@ export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -712,6 +720,7 @@ export function useDeleteRepair(): UseMutationResult<void, ApiClientError, strin
     onSuccess: (_, id) => {
       queryClient.removeQueries({ queryKey: repairKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -730,6 +739,7 @@ export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiCl
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -746,6 +756,7 @@ export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -762,6 +773,7 @@ export function useUpdateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -778,6 +790,7 @@ export function useDeleteWork(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

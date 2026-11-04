@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { createRepairSchema, type CreateRepairPayload } from "@/schemas/repair.schema";
 import { useTeamMembers } from "@/lib/api/use-team";
+import { useDeal } from "@/lib/api/use-deals";
 import {
   useRepairDictionaries,
   useSearchEquipmentBySerial,
@@ -300,6 +301,7 @@ export interface RepairIntakeModalProps {
   // Поддерживает и одиночный, и пакетный CreateRepairPayload
   onSubmit: (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }, photos: File[]) => void;
   initialCustomerId?: string;
+  initialDealId?: string | null;
   isSubmitting?: boolean;
 }
 
@@ -308,8 +310,10 @@ export function RepairIntakeModal({
   onClose,
   onSubmit,
   initialCustomerId,
+  initialDealId,
   isSubmitting = false,
 }: RepairIntakeModalProps) {
+  const { data: initialDeal } = useDeal(initialDealId ?? null);
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
   const [isHistorySheetOpen, setIsHistorySheetOpen] = useState(false);
@@ -390,8 +394,31 @@ export function RepairIntakeModal({
       if (initialCustomerId) {
         form.setValue("customer_id", initialCustomerId, { shouldValidate: true });
       }
+      if (initialDeal) {
+        form.setValue("deal_id", initialDeal.id, { shouldValidate: true });
+        if (initialDeal.contactId) {
+          form.setValue("customer_id", initialDeal.contactId, { shouldValidate: true });
+        }
+        if (initialDeal.contactName) {
+          form.setValue("customer_name", initialDeal.contactName, { shouldValidate: true });
+        }
+        if (initialDeal.contactPhone) {
+          form.setValue("customer_phone", initialDeal.contactPhone, { shouldValidate: true });
+        }
+        if (initialDeal.contactEmail) {
+          form.setValue("customer_email", initialDeal.contactEmail, { shouldValidate: true });
+        }
+        if (initialDeal.companyId) {
+          form.setValue("company_id", initialDeal.companyId, { shouldValidate: true });
+        }
+        if (initialDeal.companyName) {
+          form.setValue("company_name", initialDeal.companyName, { shouldValidate: true });
+        }
+      } else if (initialDealId) {
+        form.setValue("deal_id", initialDealId, { shouldValidate: true });
+      }
     }
-  }, [open, form, initialCustomerId]);
+  }, [open, form, initialCustomerId, initialDeal, initialDealId]);
 
   // Копирование карточки оборудования
   const handleCopyEquipment = useCallback((idx: number) => {

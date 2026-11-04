@@ -21,6 +21,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
 
 const listQuerySchema = z.object({
+  deal_id: z.string().uuid().optional(),
   status: repairStatusSchema.optional(),
   priority: repairPrioritySchema.optional(),
   master_id: z.string().uuid().optional(),
@@ -83,6 +84,7 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     const params = listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
+      dealId: params.deal_id,
       status: params.status,
       priority: params.priority,
       masterId: params.master_id,

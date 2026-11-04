@@ -4,23 +4,25 @@ import { useState, useCallback, useEffect } from "react";
 import { useParams, notFound } from "next/navigation";
 import {
   ChevronLeft, Wrench, User, Calendar, Banknote, Building2,
-  FileText, ClipboardCheck, MessageCircle, Printer, Receipt, CheckCircle2,
+  FileText, History, MessageCircle, Printer, Receipt, CheckCircle2,
   Loader2, Pencil, Check, X, Phone, Mail, Briefcase, Tag, Hash,
+  AlertCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { RepairStatusStepper } from "@/components/repairs/detail/RepairStatusStepper";
 import { WorkItemsTable } from "@/components/repairs/detail/WorkItemsTable";
 import { PartsTable } from "@/components/repairs/detail/PartsTable";
-import { DiagnosticsPanel } from "@/components/repairs/detail/DiagnosticsPanel";
 import { FinancialSummary } from "@/components/repairs/detail/FinancialSummary";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { RepairWorkOrderModal } from "@/components/repairs/RepairWorkOrderModal";
 import { InvoiceCreateModal } from "@/components/finance/InvoiceCreateModal";
+import { CrmChatView } from "@/components/crm/shared/CrmChatView";
+import { TagPill, type TagColor } from "@/components/ui/tag";
 import { Guard } from "@/components/shared/Guard";
 import { isModuleInstalled } from "@/lib/context/tenant";
 import { useAuth } from "@/lib/auth/use-auth";
-import type { WorkItem, PartItem, RepairTicket } from "@/lib/repairs/repairs.types";
+import type { WorkItem, PartItem, RepairTicket, RepairStatus } from "@/lib/repairs/repairs.types";
 import { getRepairStatusLabel, getRepairStatusColors, EQUIPMENT_TYPES } from "@/lib/repairs/repairs.types";
 import {
   useRepair,
@@ -28,17 +30,19 @@ import {
   useRepairWorks,
   useRepairParts,
   useUpdateRepair,
+  useSearchEquipmentBySerial,
 } from "@/lib/api/use-repairs";
 import { useTeamMembers } from "@/lib/api/use-team";
 import { cn } from "@/lib/utils";
 
-type DetailTab = "details" | "work_parts" | "diagnostics" | "chat";
+type DetailTab = "details" | "work_parts" | "history" | "finance" | "chat";
 
 const TABS: { key: DetailTab; label: string; icon: typeof FileText }[] = [
   { key: "details", label: "Данные заказа", icon: FileText },
   { key: "work_parts", label: "Работы и запчасти", icon: Wrench },
-  { key: "diagnostics", label: "Диагностика", icon: ClipboardCheck },
-  { key: "chat", label: "История / Чат", icon: MessageCircle },
+  { key: "history", label: "История", icon: History },
+  { key: "finance", label: "Финансы", icon: Receipt },
+  { key: "chat", label: "Чат", icon: MessageCircle },
 ];
 
 function formatDate(iso: string): string {
@@ -52,6 +56,34 @@ function formatDate(iso: string): string {
 function formatCost(amount: number | null | undefined): string {
   if (amount === null || amount === undefined) return "0 ₽";
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(amount);
+}
+
+function getStatusBadge(status: string): { label: string; color: TagColor } {
+  switch (status.toLowerCase()) {
+    case "intake":
+    case "received":
+      return { label: "Принят", color: "slate" };
+    case "diagnostics":
+      return { label: "Диагностика", color: "sky" };
+    case "in_progress":
+    case "in-progress":
+      return { label: "В работе", color: "sky" };
+    case "waiting_parts":
+      return { label: "Заказ запчастей", color: "amber" };
+    case "approval":
+      return { label: "Согласование", color: "amber" };
+    case "ready":
+    case "completed":
+      return { label: "Готов", color: "emerald" };
+    case "issued":
+    case "delivered":
+      return { label: "Выдан", color: "emerald" };
+    case "rejected":
+    case "cancelled":
+      return { label: "Отказ", color: "rose" };
+    default:
+      return { label: status, color: "slate" };
+  }
 }
 
 export default function RepairDetailPage() {
@@ -73,6 +105,11 @@ export default function RepairDetailPage() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [workOrderOpen, setWorkOrderOpen] = useState(false);
   const [invoiceCreateOpen, setInvoiceCreateOpen] = useState(false);
+
+  // История по серийному номеру оборудования
+  const serialNumber = detail?.equipment?.serialNumber ?? "";
+  const equipmentHistoryQuery = useSearchEquipmentBySerial(serialNumber);
+  const equipmentHistory = equipmentHistoryQuery.data?.history ?? [];
 
   // Состояние инлайн-редактирования карточки наряда
   const [isEditing, setIsEditing] = useState(false);
@@ -169,24 +206,34 @@ export default function RepairDetailPage() {
     }
   };
 
-  const handleStatusAdvance = useCallback(() => {
-    if (!detail) return;
-    const next = detail.nextStatus;
-    if (!next) return;
-    changeStatusMutation.mutate(
-      { id: detail.id, payload: { status: next, comment: `Advanced to ${next}` } },
-      {
-        onSettled: () => {
-          // query invalidation handled by hook
+  // Прямое изменение статуса при клике на шаги в степпере
+  const handleChangeStatus = useCallback(
+    (newStatus: RepairStatus) => {
+      if (!detail || detail.status === newStatus) return;
+      changeStatusMutation.mutate(
+        { id: detail.id, payload: { status: newStatus, comment: `Статус изменен на ${getRepairStatusLabel(newStatus)}` } },
+        {
+          onSuccess: () => {
+            toast.success(`Статус наряда изменен на «${getRepairStatusLabel(newStatus)}»`);
+          },
+          onError: (err) => {
+            toast.error(err instanceof Error ? err.message : "Не удалось изменить статус");
+          },
         },
-      },
-    );
-  }, [detail, changeStatusMutation]);
+      );
+    },
+    [detail, changeStatusMutation],
+  );
 
   const handleIssue = useCallback(() => {
     if (!detail) return;
     changeStatusMutation.mutate(
       { id: detail.id, payload: { status: "issued", comment: "Order issued to client" } },
+      {
+        onSuccess: () => {
+          toast.success("Оборудование успешно выдано заказчику");
+        },
+      },
     );
   }, [detail, changeStatusMutation]);
 
@@ -289,7 +336,7 @@ export default function RepairDetailPage() {
   return (
     <Guard requiredPermission="service_center:read" requiredModule="service_center">
       <div className="flex flex-col h-[calc(100vh-4rem)] -m-6 bg-white">
-        {/* Top Bar */}
+        {/* Top Bar с кнопками «Акт приемки» и «Акт выполненных работ» */}
         <div className="shrink-0 flex flex-wrap items-center justify-between gap-y-2 border-b border-[#e5e5e5] bg-white px-6 py-3">
           <div className="flex items-center gap-3">
             <Link
@@ -317,24 +364,24 @@ export default function RepairDetailPage() {
             <button
               type="button"
               onClick={() => setReceiptOpen(true)}
-              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
-              Печать квитанции
+              Акт приемки
             </button>
             <button
               type="button"
               onClick={() => setWorkOrderOpen(true)}
-              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors"
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#111111] shadow-2xs hover:bg-[#fafafa] transition-colors cursor-pointer"
             >
               <Printer className="h-3.5 w-3.5 text-[#666666]" />
-              Печать заказ-наряда
+              Акт выполненных работ
             </button>
             {hasFinance && (
               <button
                 type="button"
                 onClick={() => setInvoiceCreateOpen(true)}
-                className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors"
+                className="flex items-center gap-1.5 rounded-[8px] border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
               >
                 <Receipt className="h-3.5 w-3.5" />
                 Создать счёт
@@ -345,7 +392,7 @@ export default function RepairDetailPage() {
                 type="button"
                 onClick={handleIssue}
                 disabled={changeStatusMutation.isPending}
-                className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-[8px] px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Завершить и выдать
@@ -354,16 +401,19 @@ export default function RepairDetailPage() {
           </div>
         </div>
 
-        {/* Stepper */}
-        <div className="shrink-0 px-6 py-4 bg-[#fbfbfb] border-b border-[#e5e5e5]">
-          <RepairStatusStepper current={ticket.status} onAdvance={handleStatusAdvance} />
+        {/* Компактный кликабельный статус-бар высотой ~38px (в 3 раза компактнее) */}
+        <div className="shrink-0 px-6 py-2 bg-[#fbfbfb] border-b border-[#e5e5e5]">
+          <RepairStatusStepper
+            current={ticket.status}
+            onChangeStatus={handleChangeStatus}
+            disabled={changeStatusMutation.isPending}
+          />
         </div>
 
         {/* Content */}
         <div className="flex flex-col md:flex-row flex-1 min-h-0 bg-white">
-          {/* Left sidebar — Full Info & Inline Editing */}
+          {/* Левая боковая панель — Карточка наряда и инлайн-редактирование */}
           <div className="w-full shrink-0 border-b border-[#e5e5e5] p-5 space-y-4 md:w-[360px] md:min-w-[360px] md:border-b-0 md:border-r md:overflow-y-auto bg-white">
-            {/* Header with edit toggle */}
             <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
               <span className="text-[11px] font-semibold text-[#888888] uppercase tracking-wider">
                 Карточка наряда
@@ -372,7 +422,7 @@ export default function RepairDetailPage() {
                 <button
                   type="button"
                   onClick={handleStartEdit}
-                  className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors"
+                  className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs font-medium text-[#4a38f5] hover:bg-[#4a38f5]/10 transition-colors cursor-pointer"
                   title="Редактировать данные заказа"
                 >
                   <Pencil className="h-3 w-3" />
@@ -384,7 +434,7 @@ export default function RepairDetailPage() {
                     type="button"
                     onClick={handleCancelEdit}
                     disabled={updateMutation.isPending}
-                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs font-medium text-[#666666] hover:bg-[#f0f0f0] transition-colors"
+                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-xs font-medium text-[#666666] hover:bg-[#f0f0f0] transition-colors cursor-pointer"
                   >
                     <X className="h-3 w-3" />
                     Отмена
@@ -393,7 +443,7 @@ export default function RepairDetailPage() {
                     type="button"
                     onClick={handleSaveEdit}
                     disabled={updateMutation.isPending}
-                    className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-[6px] bg-[#4a38f5] px-2.5 py-1 text-xs font-medium text-white shadow-2xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     {updateMutation.isPending ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -773,7 +823,7 @@ export default function RepairDetailPage() {
                     type="button"
                     onClick={() => setTab(t.key)}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-xs font-medium transition-colors",
+                      "flex items-center gap-1.5 rounded-[8px] px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
                       tab === t.key
                         ? "bg-[#4a38f5] text-white shadow-2xs"
                         : "text-[#666666] hover:text-[#111111] hover:bg-[#f0f0f0]",
@@ -787,6 +837,7 @@ export default function RepairDetailPage() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-[#fbfbfb]">
+              {/* Вкладка 1: Данные заказа */}
               {tab === "details" && (
                 <div className="space-y-4">
                   <div className="text-sm text-[#111111] leading-relaxed whitespace-pre-wrap">
@@ -804,11 +855,161 @@ export default function RepairDetailPage() {
                 </div>
               )}
 
+              {/* Вкладка 2: Работы и запчасти */}
               {tab === "work_parts" && (
                 <div className="space-y-6">
-                  {/* WorkItemsTable с привязкой orderId для прямой работы с API */}
                   <WorkItemsTable orderId={ticket.id} items={ticket.work_items} />
                   <PartsTable items={ticket.parts_used} onChange={() => {}} />
+                </div>
+              )}
+
+              {/* Вкладка 3: История (по серийному номеру оборудования) */}
+              {tab === "history" && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-[#111111]">
+                        История ремонтов оборудования
+                      </h3>
+                      <p className="text-xs text-[#666666]">
+                        {ticket.equipment.brand} {ticket.equipment.model} (S/N: {ticket.equipment.serial_number || "не указан"})
+                      </p>
+                    </div>
+                  </div>
+
+                  {!serialNumber ? (
+                    <div className="rounded-[8px] border border-dashed border-[#e5e5e5] bg-white p-8 text-center text-xs text-[#888888]">
+                      <AlertCircle className="h-6 w-6 text-[#cccccc] mx-auto mb-2" />
+                      Укажите серийный номер оборудования в карточке наряда, чтобы просматривать сквозную историю обращений.
+                    </div>
+                  ) : equipmentHistoryQuery.isLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-6 w-6 animate-spin text-[#888888]" />
+                    </div>
+                  ) : equipmentHistory.length === 0 ? (
+                    <div className="rounded-[8px] border border-dashed border-[#e5e5e5] bg-white p-8 text-center text-xs text-[#888888]">
+                      Предыдущих нарядов по данному серийному номеру не найдено.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {equipmentHistory.map((item) => {
+                        const badge = getStatusBadge(item.status);
+                        const isCurrentTicket = item.id === ticket.id;
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={cn(
+                              "rounded-[8px] border bg-white p-4 shadow-2xs transition-colors space-y-3",
+                              isCurrentTicket ? "border-[#4a38f5]/40 ring-1 ring-[#4a38f5]/20" : "border-[#e5e5e5] hover:border-[#cccccc]",
+                            )}
+                          >
+                            <div className="flex items-center justify-between pb-2 border-b border-[#f0f0f0]">
+                              <div className="flex items-center gap-2">
+                                <Link
+                                  href={`/repairs/${item.id}`}
+                                  className="font-mono text-xs font-semibold text-[#4a38f5] hover:underline"
+                                >
+                                  №{item.ticketNumber}
+                                </Link>
+                                {isCurrentTicket && (
+                                  <span className="rounded bg-[#4a38f5]/10 text-[#4a38f5] text-[10px] font-medium px-1.5 py-0.5">
+                                    Текущий заказ
+                                  </span>
+                                )}
+                                <TagPill color={badge.color}>{badge.label}</TagPill>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 text-xs text-[#666666]">
+                                <Calendar className="h-3.5 w-3.5 text-[#888888]" />
+                                <span>{formatDate(item.receivedAt)}</span>
+                              </div>
+                            </div>
+
+                            {/* Сделка CRM и заказчик */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <span className="text-[#888888]">Заказчик:</span>{" "}
+                                <span className="font-medium text-[#111111]">
+                                  {item.customerName || "—"}
+                                </span>
+                                {item.customerPhone && (
+                                  <span className="text-[#666666] ml-1">({item.customerPhone})</span>
+                                )}
+                              </div>
+                              <div>
+                                <span className="text-[#888888]">Сделка CRM:</span>{" "}
+                                {item.dealTitle ? (
+                                  <Link
+                                    href={`/crm/deals/${item.dealId}`}
+                                    className="font-medium text-[#4a38f5] hover:underline"
+                                  >
+                                    {item.dealTitle}
+                                  </Link>
+                                ) : (
+                                  <span className="text-[#888888]">—</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Неисправность */}
+                            {item.defectDescription && (
+                              <div className="text-xs bg-[#fafafa] p-2.5 rounded-[6px] border border-[#f0f0f0]">
+                                <span className="text-[#888888] font-medium mr-1.5">Неисправность:</span>
+                                <span className="text-[#222222]">{item.defectDescription}</span>
+                              </div>
+                            )}
+
+                            {/* Выполненные работы */}
+                            {item.works && item.works.length > 0 && (
+                              <div className="space-y-1">
+                                <span className="text-[11px] font-medium text-[#888888]">
+                                  Выполненные работы:
+                                </span>
+                                <div className="space-y-1">
+                                  {item.works.map((w) => (
+                                    <div
+                                      key={w.id}
+                                      className="flex items-center justify-between text-xs py-1 px-2 rounded bg-[#fafafa] border border-[#f0f0f0]"
+                                    >
+                                      <span className="text-[#111111]">{w.description}</span>
+                                      <span className="font-mono tabular-nums text-[#666666]">
+                                        {formatCost(w.cost)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Мастер и стоимость */}
+                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#f0f0f0] text-xs">
+                              <div className="flex items-center gap-1.5 text-[#666666]">
+                                <User className="h-3.5 w-3.5 text-[#888888]" />
+                                <span>Мастер: <strong className="text-[#111111] font-medium">{item.masterName || "—"}</strong></span>
+                              </div>
+
+                              <div className="flex items-center justify-end gap-1.5 text-[#666666]">
+                                <Banknote className="h-3.5 w-3.5 text-[#888888]" />
+                                <span>
+                                  Стоимость:{" "}
+                                  <strong className="font-mono tabular-nums text-[#111111]">
+                                    {formatCost(item.finalCost ?? item.estimatedCost)}
+                                  </strong>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Вкладка 4: Финансы (агрегация работ/запчастей + создание счета) */}
+              {tab === "finance" && (
+                <div className="space-y-6 max-w-2xl">
                   <FinancialSummary
                     workItems={ticket.work_items}
                     parts={ticket.parts_used}
@@ -818,14 +1019,32 @@ export default function RepairDetailPage() {
                 </div>
               )}
 
-              {tab === "diagnostics" && (
-                <DiagnosticsPanel diagnostics={ticket.diagnostics} status={ticket.status} />
-              )}
-
+              {/* Вкладка 5: Встроенный CRM-чат */}
               {tab === "chat" && (
-                <div className="flex flex-col items-center justify-center py-20">
-                  <MessageCircle className="h-10 w-10 text-[#cccccc] mb-3" />
-                  <p className="text-sm text-[#888888]">Здесь появится история чата</p>
+                <div className="h-full min-h-[550px] bg-white rounded-[8px] border border-[#e5e5e5] overflow-hidden">
+                  {ticket.deal_id ? (
+                    <CrmChatView
+                      entityType="deal"
+                      entityId={ticket.deal_id}
+                      entityName={ticket.deal_title || ticket.ticket_number}
+                      className="h-full"
+                    />
+                  ) : ticket.customer_id ? (
+                    <CrmChatView
+                      entityType="contact"
+                      entityId={ticket.customer_id}
+                      entityName={ticket.customer_name}
+                      className="h-full"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-20 text-center p-6">
+                      <MessageCircle className="h-10 w-10 text-[#cccccc] mb-3" />
+                      <p className="text-sm font-semibold text-[#111111]">CRM-чат не привязан</p>
+                      <p className="text-xs text-[#888888] mt-1 max-w-sm">
+                        Привяжите к наряду сделку или контакт клиента через кнопку «Редактировать», чтобы общаться в Telegram, WhatsApp и онлайн-чате.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
