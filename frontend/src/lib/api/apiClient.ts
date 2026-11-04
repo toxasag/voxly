@@ -10,6 +10,7 @@
 
 import {
   clearSession,
+  getTokenRemainingSeconds,
   readAccessToken,
   readRefreshToken,
   writeTokens,
@@ -128,7 +129,18 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
  */
 let refreshInFlight: Promise<string | null> | null = null;
 
-async function performRefresh(): Promise<string | null> {
+async function performRefresh(failedToken?: string | null): Promise<string | null> {
+  // 1. Проверяем, не обновила ли уже другая вкладка access-токен пока мы ожидали:
+  const currentToken = readAccessToken();
+  if (
+    currentToken &&
+    failedToken &&
+    currentToken !== failedToken &&
+    getTokenRemainingSeconds(currentToken) > 60
+  ) {
+    return currentToken;
+  }
+
   const refreshToken = readRefreshToken();
 
   try {
@@ -152,13 +164,13 @@ async function performRefresh(): Promise<string | null> {
       refresh_token?: unknown;
     };
 
-    if (typeof tokens.access_token !== "string" || typeof tokens.refresh_token !== "string") {
+    if (typeof tokens.access_token !== "string") {
       return null;
     }
 
     writeTokens({
       accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
+      refreshToken: typeof tokens.refresh_token === "string" ? tokens.refresh_token : "",
     });
 
     return tokens.access_token;
@@ -169,21 +181,43 @@ async function performRefresh(): Promise<string | null> {
   }
 }
 
-export function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(failedToken?: string | null): Promise<string | null> {
   const pending = refreshInFlight;
   if (pending !== null) return pending;
 
-  // The promise is assigned before any await runs, so parallel 401s arriving in
-  // the same tick observe a non-null value and join this call instead of
-  // starting their own. Clearing it in `finally` (rather than reading it back)
-  // avoids a stale promise outliving the request.
-  const started = performRefresh();
+  // Межвкладочная координация: предотвращает шквал параллельных запросов /auth/refresh
+  // при одновременном пробуждении нескольких вкладок
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    const lockPromise: Promise<string | null> = navigator.locks
+      .request("getvoxly_refresh_lock", async (): Promise<string | null> => {
+        const currentToken = readAccessToken();
+        if (
+          currentToken &&
+          failedToken &&
+          currentToken !== failedToken &&
+          getTokenRemainingSeconds(currentToken) > 60
+        ) {
+          return currentToken;
+        }
+        return await performRefresh(failedToken);
+      })
+      .then((res) => (typeof res === "string" ? res : null));
+
+    refreshInFlight = lockPromise.finally(() => {
+      refreshInFlight = null;
+    });
+
+    return lockPromise;
+  }
+
+  // Fallback для окружений без Web Locks API
+  const started = performRefresh(failedToken);
 
   refreshInFlight = started.finally(() => {
     refreshInFlight = null;
   });
 
-  return refreshInFlight;
+  return started;
 }
 
 /**
@@ -277,7 +311,7 @@ async function request<T>(
   // loop: a failed sign-in cleared the session and navigated to /login, so the
   // form appeared to reload silently with no error shown.
   if (res.status === 401 && options.retrying !== true && !isCredentialPath(path)) {
-    const refreshed = await refreshAccessToken();
+    const refreshed = await refreshAccessToken(token);
 
     if (refreshed !== null) {
       return request<T>(method, path, body, { ...options, retrying: true });

@@ -3,6 +3,7 @@ import { getEnv } from "../../config/env.js";
 
 export const REFRESH_COOKIE_NAME = "getvoxly_refresh";
 export const AUTH_COOKIE_NAME = "getvoxly_auth_token";
+export const SESSION_COOKIE_NAME = "getvoxly_session";
 
 /** 60 дней в секундах: 60 * 24 * 60 * 60 = 5_184_000 */
 export const REFRESH_COOKIE_MAX_AGE_SECONDS = 60 * 24 * 60 * 60;
@@ -47,9 +48,10 @@ export function parseCookies(cookieHeader?: string | null): Record<string, strin
 }
 
 /**
- * Выставление долгоживущих защищенных cookies:
- * 1. getvoxly_refresh: HttpOnly, Secure, SameSite=Lax, Max-Age=60d (безопасное хранение refresh_token)
- * 2. getvoxly_auth_token: Secure, SameSite=Lax, Max-Age=60d (маркер активной сессии для Next.js Edge Middleware)
+ * Выставление долгоживущих защищенных cookies (Remember Me / Long-Lived Session):
+ * 1. getvoxly_refresh: HttpOnly, Secure, SameSite=Lax, Max-Age=60d, Expires (безопасное хранение refresh_token)
+ * 2. getvoxly_auth_token: Secure, SameSite=Lax, Max-Age=60d, Expires (маркер активной сессии для Next.js Edge Middleware)
+ * 3. getvoxly_session: Secure, SameSite=Lax, Max-Age=60d, Expires (маркер сессии для клиентского SPA)
  */
 export function setAuthCookies(
   request: FastifyRequest,
@@ -62,16 +64,19 @@ export function setAuthCookies(
     request.headers["x-forwarded-proto"] === "https" ||
     getEnv().NODE_ENV === "production";
   const secureAttr = isSecure ? "; Secure" : "";
+  const expiresDate = new Date(Date.now() + REFRESH_COOKIE_MAX_AGE_SECONDS * 1000).toUTCString();
 
   const cookies = [
-    `${REFRESH_COOKIE_NAME}=${encodeURIComponent(tokens.refresh_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${domainAttr}${secureAttr}`,
-    `${AUTH_COOKIE_NAME}=${encodeURIComponent(tokens.access_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${REFRESH_COOKIE_NAME}=${encodeURIComponent(tokens.refresh_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; HttpOnly; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${AUTH_COOKIE_NAME}=${encodeURIComponent(tokens.access_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${SESSION_COOKIE_NAME}=active; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${domainAttr}${secureAttr}`,
   ];
 
   if (domainAttr) {
     cookies.push(
-      `${REFRESH_COOKIE_NAME}=${encodeURIComponent(tokens.refresh_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${secureAttr}`,
-      `${AUTH_COOKIE_NAME}=${encodeURIComponent(tokens.access_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; SameSite=Lax${secureAttr}`,
+      `${REFRESH_COOKIE_NAME}=${encodeURIComponent(tokens.refresh_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; HttpOnly; SameSite=Lax${secureAttr}`,
+      `${AUTH_COOKIE_NAME}=${encodeURIComponent(tokens.access_token)}; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${secureAttr}`,
+      `${SESSION_COOKIE_NAME}=active; Path=/; Max-Age=${REFRESH_COOKIE_MAX_AGE_SECONDS}; Expires=${expiresDate}; SameSite=Lax${secureAttr}`,
     );
   }
 
@@ -88,12 +93,15 @@ export function clearAuthCookies(request: FastifyRequest, reply: FastifyReply): 
     request.headers["x-forwarded-proto"] === "https" ||
     getEnv().NODE_ENV === "production";
   const secureAttr = isSecure ? "; Secure" : "";
+  const epochExpires = "; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
   const cookies = [
-    `${REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${domainAttr}${secureAttr}`,
-    `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${domainAttr}${secureAttr}`,
-    `${REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secureAttr}`,
-    `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0; SameSite=Lax${secureAttr}`,
+    `${REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; HttpOnly; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${domainAttr}${secureAttr}`,
+    `${REFRESH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; HttpOnly; SameSite=Lax${secureAttr}`,
+    `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${secureAttr}`,
+    `${SESSION_COOKIE_NAME}=; Path=/; Max-Age=0${epochExpires}; SameSite=Lax${secureAttr}`,
   ];
 
   reply.header("Set-Cookie", cookies);
