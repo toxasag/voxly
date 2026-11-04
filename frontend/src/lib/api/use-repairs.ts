@@ -77,6 +77,45 @@ export interface RepairTotalsDTO {
   marginPercent: number;
 }
 
+export interface ClientLookupDealDTO {
+  id: string;
+  title: string;
+  description: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColor: string;
+  pipelineId: string;
+  pipelineName: string;
+  createdAt: string;
+  ownerName: string | null;
+}
+
+export interface ClientLookupResultDTO {
+  found: boolean;
+  client: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    middleName: string;
+    phone: string;
+    email: string | null;
+    companyId: string | null;
+    companyName: string | null;
+  } | null;
+  company: {
+    id: string;
+    name: string;
+    inn: string;
+    ogrn: string;
+    bik: string;
+    accountNumber: string;
+    legalAddress: string;
+  } | null;
+  activeDeals: ClientLookupDealDTO[];
+}
+
 export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
@@ -234,6 +273,7 @@ export const repairKeys = {
   parts: (id: string) => ["repairs", "parts", id] as const,
   notes: (id: string) => ["repairs", "notes", id] as const,
   photos: (id: string) => ["repairs", "photos", id] as const,
+  clientLookup: (params: { phone?: string; query?: string }) => ["repairs", "client-lookup", params] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -335,6 +375,29 @@ export function useRepairPhotos(id: string | null): UseQueryResult<RepairPhotoDT
       return res.data;
     },
     enabled: id !== null && id.length > 0,
+  });
+}
+
+export function useRepairClientLookup(params: {
+  phone?: string;
+  query?: string;
+  enabled?: boolean;
+}): UseQueryResult<ClientLookupResultDTO, ApiClientError> {
+  const phone = params.phone?.trim() ?? "";
+  const query = params.query?.trim() ?? "";
+  const isEnabled = (params.enabled ?? true) && (phone.replace(/\D/g, "").length >= 6 || query.length >= 2);
+
+  return useQuery<ClientLookupResultDTO, ApiClientError>({
+    queryKey: repairKeys.clientLookup({ phone, query }),
+    queryFn: async () => {
+      const searchParams = new URLSearchParams();
+      if (phone) searchParams.set("phone", phone);
+      if (query) searchParams.set("query", query);
+      const res = await apiClient.get<ClientLookupResultDTO>(`${BASE_PATH}/client-lookup?${searchParams.toString()}`);
+      return res.data;
+    },
+    enabled: isEnabled,
+    staleTime: 30_000,
   });
 }
 
