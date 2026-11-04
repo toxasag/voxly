@@ -795,8 +795,8 @@ export class WebchatService {
       });
     }
 
-    // Если контакт помечен как личный — CRM не обрабатывает переписку
-    if (crmResult.isPersonal) {
+    // Если контакт помечен как личный или отправитель распознан как бот — CRM не обрабатывает переписку
+    if (crmResult.isPersonal || crmResult.isBot) {
       return {
         dealId: "",
         contactId: crmResult.contactId,
