@@ -754,7 +754,7 @@ export class CrmPipelineService {
              SET title = 'Заявка от ' || $1 || ' (' || $2 || ')',
                  updated_at = now()
              WHERE id = $3 AND tenant_id = $4
-               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
             [resolvedContactName, this.channelLabel(input.channel), activeDeal.id, input.tenantId],
           );
         }
@@ -844,7 +844,7 @@ export class CrmPipelineService {
                   source: "system",
                   direction: "neutral",
                   content: `Получены контактные данные клиента (${contactIdentifier}). Сделка автоматически переведена из этапа «Первый контакт» в «Новый лид».`,
-                  channel: input.channel,
+                  channel: "system",
                   channel_account_id: input.channelAccountId,
                 },
                 "neutral",
