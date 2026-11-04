@@ -1217,6 +1217,7 @@
       font-size: 13px !important;
       line-height: 1.45 !important;
       word-break: break-word !important;
+      white-space: pre-wrap !important;
     }
     .getvoxly-msg-bot {
       background: #f5f5f5 !important;
@@ -2053,6 +2054,7 @@
     var currentConfig = null;
     var lastDraft = '';
     var sentDrafts = {};
+    var sentBatchTexts = {};
     var isBotResponding = false;
     var messageBuffer = [];
     var pendingQueueWhileReplying = [];
@@ -2455,15 +2457,61 @@
 
     // Локальная история сообщений
     var STORAGE_KEY_CHAT_HISTORY = 'getvoxly_chat_history_' + channelAccountId;
+
+    function sanitizeHistory(list) {
+      if (!Array.isArray(list) || list.length === 0) return [];
+      var clean = [];
+
+      for (var i = 0; i < list.length; i++) {
+        var item = list[i];
+        if (!item || typeof item.text !== 'string') continue;
+
+        if (item.isUser) {
+          var trimmed = item.text.trim();
+          var isGhost = false;
+          var inboundsSoFar = clean.filter(function (x) { return x.isUser; }).map(function (x) { return x.text.trim(); });
+
+          if (inboundsSoFar.length >= 2) {
+            if (trimmed === inboundsSoFar.join('\n') || trimmed === inboundsSoFar.join(' ')) {
+              isGhost = true;
+            }
+            if (!isGhost) {
+              for (var sliceLen = 2; sliceLen <= Math.min(inboundsSoFar.length, 5); sliceLen++) {
+                var subSlice = inboundsSoFar.slice(-sliceLen);
+                if (trimmed === subSlice.join('\n') || trimmed === subSlice.join(' ')) {
+                  isGhost = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (isGhost) {
+            continue;
+          }
+        }
+
+        clean.push(item);
+      }
+
+      if (clean.length !== list.length) {
+        try {
+          safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(clean));
+        } catch (e) {}
+      }
+      return clean;
+    }
+
     function getLocalHistory() {
       try {
         var rawItems = JSON.parse(safeStorage.getItem(STORAGE_KEY_CHAT_HISTORY) || '[]');
         if (!Array.isArray(rawItems)) return [];
-        return rawItems.filter(function (it) {
+        var filtered = rawItems.filter(function (it) {
           if (!it || !it.text) return false;
           return it.text !== 'Ошибка связи с сервером. Проверьте интернет-соединение.' &&
                  it.text !== 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.';
         });
+        return sanitizeHistory(filtered);
       } catch (e) {
         return [];
       }
@@ -2594,13 +2642,14 @@
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    function saveAndRenderMessage(text, isUser, attachment, attachmentType) {
+    function saveAndRenderMessage(text, isUser, attachment, attachmentType, id) {
       if (!isUser && (text === 'Ошибка связи с сервером. Проверьте интернет-соединение.' || text === 'Не удалось доставить сообщение. Пожалуйста, попробуйте еще раз позже.')) {
         return;
       }
       appendMessageToUI(text, isUser, attachment, attachmentType);
       var hist = getLocalHistory();
       hist.push({
+        id: id || null,
         text: text,
         isUser: isUser,
         attachment: attachment || null,
@@ -2633,12 +2682,25 @@
           var items = json && json.data;
           if (Array.isArray(items) && items.length > 0) {
             var currentRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg') : [];
-            // Если в DOM вообще ничего нет (первая загрузка при чистом кеше)
+            // Если в DOM вообще ничего нет (первая загрузка при чистом кеше / новой сессии)
             if (currentRows.length === 0) {
+              var loadedHist = [];
               for (var k = 0; k < items.length; k++) {
                 var m = items[k];
-                appendMessageToUI(m.content, m.direction === 'inbound', m.attachment, m.attachmentType);
+                var isUser = m.direction === 'inbound';
+                appendMessageToUI(m.content, isUser, m.attachment, m.attachmentType);
+                loadedHist.push({
+                  id: m.id || null,
+                  text: m.content,
+                  isUser: isUser,
+                  attachment: m.attachment || null,
+                  attachmentType: m.attachmentType || null,
+                  timestamp: m.createdAt ? new Date(m.createdAt).getTime() : Date.now()
+                });
               }
+              try {
+                safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(loadedHist));
+              } catch (e) {}
               if (messagesContainer) {
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
               }
@@ -2652,11 +2714,22 @@
             for (var i = 0; i < items.length; i++) {
               var srvItem = items[i];
               var srvIsUser = srvItem.direction === 'inbound';
+
+              // Входящие сообщения посетителя (inbound) в активном чате НИКОГДА не дублируем
+              if (srvIsUser) {
+                continue;
+              }
+
+              // Исходящие сообщения (outbound) от оператора CRM или бота
               var alreadyExists = localHist.some(function (loc) {
-                return loc.text === srvItem.content && loc.isUser === srvIsUser;
+                if (loc.isUser) return false;
+                if (loc.id && srvItem.id && loc.id === srvItem.id) return true;
+                if (loc.text === srvItem.content) return true;
+                return false;
               });
+
               if (!alreadyExists) {
-                saveAndRenderMessage(srvItem.content, srvIsUser, srvItem.attachment, srvItem.attachmentType);
+                saveAndRenderMessage(srvItem.content, false, srvItem.attachment, srvItem.attachmentType, srvItem.id);
                 addedAny = true;
               }
             }
@@ -3574,7 +3647,11 @@
     async function flushMessageBuffer() {
       if (messageBuffer.length === 0) return;
       if (isBotResponding) return;
+      for (var b = 0; b < messageBuffer.length; b++) {
+        sentBatchTexts[messageBuffer[b]] = true;
+      }
       var combinedText = messageBuffer.join(String.fromCharCode(10));
+      sentBatchTexts[combinedText] = true;
       messageBuffer = [];
       await executeSendMessage(combinedText);
     }
@@ -3631,6 +3708,7 @@
       lastDraft = '';
 
       if (text) {
+        sentBatchTexts[text] = true;
         var parsedPhone = extractClientPhone(text);
         if (parsedPhone) {
           safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, parsedPhone);
