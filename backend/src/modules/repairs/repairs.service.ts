@@ -38,6 +38,7 @@ import {
   toRepairPartDTO,
   toRepairPhotoDTO,
   toRepairWorkDTO,
+  toIso,
 } from "./repairs.types.js";
 import {
   query,
@@ -185,7 +186,7 @@ export class RepairsService {
          ct.email AS customer_email
        FROM repair_orders ro
        LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
-       LEFT JOIN stages st ON st.id = d.stage_id AND st.tenant_id = ro.tenant_id
+       LEFT JOIN stages st ON st.id = d.stage_id
        LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
        LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ${where}
@@ -217,7 +218,7 @@ export class RepairsService {
          ct.email AS customer_email
        FROM repair_orders ro
        LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
-       LEFT JOIN stages st ON st.id = d.stage_id AND st.tenant_id = ro.tenant_id
+       LEFT JOIN stages st ON st.id = d.stage_id
        LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
        LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ro.tenant_id = $1 AND ro.id = $2 AND ro.deleted_at IS NULL`,
