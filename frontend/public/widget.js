@@ -1161,7 +1161,7 @@
     .getvoxly-messages {
       flex: 1 1 0% !important;
       min-height: 0 !important;
-      padding: 14px !important;
+      padding: 14px 14px 10px 14px !important;
       overflow-y: auto !important;
       -webkit-overflow-scrolling: touch !important;
       overscroll-behavior: contain !important;
@@ -1169,6 +1169,12 @@
       flex-direction: column !important;
       gap: 12px !important;
       background: #ffffff !important;
+    }
+    .getvoxly-messages::after {
+      content: '' !important;
+      display: block !important;
+      height: 8px !important;
+      flex-shrink: 0 !important;
     }
     .is-dark-theme .getvoxly-messages {
       background: #111111 !important;
@@ -1615,11 +1621,18 @@
       cursor: not-allowed !important;
     }
     .getvoxly-typing {
-      font-size: 11px !important;
+      font-size: 11.5px !important;
       color: #888888 !important;
       font-style: italic !important;
-      padding: 0 16px 6px !important;
+      padding: 4px 6px 4px !important;
       display: none;
+      align-self: flex-start !important;
+      flex-shrink: 0 !important;
+      line-height: 1.4 !important;
+      animation: getvoxly-fade-in 0.15s ease-out !important;
+    }
+    .is-dark-theme .getvoxly-typing {
+      color: #a1a1aa !important;
     }
     .getvoxly-consent {
       background: #fafafa !important;
@@ -2124,8 +2137,9 @@
         </div>
       </div>
       <div class="getvoxly-messenger-container" id="getvoxly-messenger-container" style="display: none;"></div>
-      <div class="getvoxly-messages" id="getvoxly-messages"></div>
-      <div class="getvoxly-typing" id="getvoxly-typing">печатает...</div>
+      <div class="getvoxly-messages" id="getvoxly-messages">
+        <div class="getvoxly-typing" id="getvoxly-typing">печатает...</div>
+      </div>
       <div class="getvoxly-input-area">
         <div class="getvoxly-attachment-preview" id="getvoxly-attachment-preview" style="display: none;"></div>
         <div class="getvoxly-attach-gate" id="getvoxly-attach-gate" style="display: none;">
@@ -2230,6 +2244,50 @@
       if (networkStatusEl) networkStatusEl.style.display = 'none';
     }
 
+    function scrollToBottom(smooth) {
+      if (!messagesContainer) return;
+      var doScroll = function () {
+        try {
+          if (smooth && typeof messagesContainer.scrollTo === 'function') {
+            messagesContainer.scrollTo({
+              top: messagesContainer.scrollHeight,
+              behavior: 'smooth',
+            });
+          } else {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          }
+        } catch (e) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      };
+
+      doScroll();
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(doScroll);
+      }
+      setTimeout(doScroll, 40);
+      setTimeout(doScroll, 120);
+    }
+
+    function showTypingIndicator(show, text) {
+      if (!typingIndicator) return;
+      if (show) {
+        typingIndicator.textContent = text || 'печатает...';
+        typingIndicator.style.display = 'block';
+        if (messagesContainer) {
+          if (typingIndicator.parentNode !== messagesContainer) {
+            messagesContainer.appendChild(typingIndicator);
+          } else {
+            messagesContainer.appendChild(typingIndicator);
+          }
+        }
+        scrollToBottom(true);
+      } else {
+        typingIndicator.style.display = 'none';
+        scrollToBottom(false);
+      }
+    }
+
     function adjustInputHeight() {
       if (!inputEl) return;
       inputEl.style.setProperty('height', 'auto', 'important');
@@ -2242,7 +2300,7 @@
       if (messagesContainer) {
         var isNearBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 50;
         if (isNearBottom) {
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+          scrollToBottom(false);
         }
       }
     }
@@ -2384,9 +2442,7 @@
           if (expIcon) expIcon.style.display = 'block';
           if (compIcon) compIcon.style.display = 'none';
         }
-        if (messagesContainer) {
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
+        scrollToBottom(false);
       });
     }
 
@@ -2466,8 +2522,26 @@
         var item = list[i];
         if (!item || typeof item.text !== 'string') continue;
 
+        // Исключаем системные сообщения/логи CRM, попавшие в локальный кэш
+        var rawText = item.text.trim();
+        if (
+          item.source === 'system' ||
+          item.source === 'internal_note' ||
+          item.source === 'audit' ||
+          item.direction === 'neutral' ||
+          item.senderName === 'Система' ||
+          rawText.indexOf('Сделка автоматически переведена') !== -1 ||
+          rawText.indexOf('Получены контактные данные') !== -1 ||
+          rawText.indexOf('Создан лид') !== -1 ||
+          rawText.indexOf('Лид создан') !== -1 ||
+          rawText.indexOf('Лид №') === 0 ||
+          rawText.indexOf('Сделка автоматически закрыта') !== -1
+        ) {
+          continue;
+        }
+
         if (item.isUser) {
-          var trimmed = item.text.trim();
+          var trimmed = rawText;
           var isGhost = false;
           var inboundsSoFar = clean.filter(function (x) { return x.isUser; }).map(function (x) { return x.text.trim(); });
 
@@ -2638,8 +2712,12 @@
         row.appendChild(contentEl);
       }
 
-      messagesContainer.appendChild(row);
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      if (typingIndicator && typingIndicator.parentNode === messagesContainer) {
+        messagesContainer.insertBefore(row, typingIndicator);
+      } else {
+        messagesContainer.appendChild(row);
+      }
+      scrollToBottom(true);
     }
 
     function saveAndRenderMessage(text, isUser, attachment, attachmentType, id) {
@@ -2681,6 +2759,32 @@
           var json = await res.json();
           var items = json && json.data;
           if (Array.isArray(items) && items.length > 0) {
+            // Строго исключаем системные события и логи CRM из публичного интерфейса
+            items = items.filter(function (it) {
+              if (!it) return false;
+              if (
+                it.source === 'system' ||
+                it.source === 'internal_note' ||
+                it.source === 'audit' ||
+                it.direction === 'neutral' ||
+                it.senderName === 'Система'
+              ) {
+                return false;
+              }
+              var c = it.content || '';
+              if (
+                c.indexOf('Сделка автоматически переведена') !== -1 ||
+                c.indexOf('Получены контактные данные') !== -1 ||
+                c.indexOf('Создан лид') !== -1 ||
+                c.indexOf('Лид создан') !== -1 ||
+                c.indexOf('Лид №') === 0 ||
+                c.indexOf('Сделка автоматически закрыта') !== -1
+              ) {
+                return false;
+              }
+              return true;
+            });
+
             var currentRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg') : [];
             // Если в DOM вообще ничего нет (первая загрузка при чистом кеше / новой сессии)
             if (currentRows.length === 0) {
@@ -2701,9 +2805,7 @@
               try {
                 safeStorage.setItem(STORAGE_KEY_CHAT_HISTORY, JSON.stringify(loadedHist));
               } catch (e) {}
-              if (messagesContainer) {
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-              }
+              scrollToBottom(false);
               return;
             }
 
@@ -2733,8 +2835,8 @@
                 addedAny = true;
               }
             }
-            if (addedAny && messagesContainer) {
-              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            if (addedAny) {
+              scrollToBottom(true);
             }
           }
         }
@@ -2818,9 +2920,7 @@
         win.style.setProperty('bottom', '0px', 'important');
       }
 
-      if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      }
+      scrollToBottom(false);
     }
 
     function openWidget() {
@@ -2832,9 +2932,7 @@
         lockMobileScroll();
         updateMobileViewport();
       }
-      if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-      }
+      scrollToBottom(false);
       if (inputEl) {
         adjustInputHeight();
       }
@@ -3510,7 +3608,8 @@
           }
 
           // Приветственное сообщение
-          if ((!messagesContainer.children || messagesContainer.children.length === 0) && data.greeting) {
+          var existingMsgRows = messagesContainer ? messagesContainer.querySelectorAll('.getvoxly-msg-row') : [];
+          if (existingMsgRows.length === 0 && data.greeting) {
             saveAndRenderMessage(data.greeting, false);
           }
 
@@ -3692,6 +3791,65 @@
       return m ? m[0].toLowerCase() : null;
     }
 
+    function extractClientName(val) {
+      if (!val || typeof val !== 'string') return null;
+      var cl = val.trim();
+      var stopWords = [
+        'отладчик', 'тестер', 'тестировщик', 'клиент', 'посетитель', 'пользователь',
+        'заказчик', 'мастер', 'директор', 'менеджер', 'хочу', 'могу', 'буду', 'ищу',
+        'прошу', 'думаю', 'не', 'уже', 'тоже', 'очень', 'просто', 'только', 'сейчас',
+        'тут', 'здесь', 'привет', 'здравствуйте', 'добрый', 'день', 'вечер', 'утро'
+      ];
+
+      // 1. «меня зовут [Имя] [Фамилия]» или «мое имя [Имя]»
+      var m1 = cl.match(/(?:меня\s+зовут|мое\s+имя|моё\s+имя|зовут\s+меня|зовут)\s+([А-ЯЁа-яё]{2,20})(?:\s+([А-ЯЁа-яё]{2,20}))?/i);
+      if (m1 && m1[1]) {
+        var raw1 = m1[1].trim();
+        if (stopWords.indexOf(raw1.toLowerCase()) === -1) {
+          var first1 = raw1.charAt(0).toUpperCase() + raw1.slice(1).toLowerCase();
+          if (m1[2] && stopWords.indexOf(m1[2].toLowerCase()) === -1) {
+            var last1 = m1[2].trim().charAt(0).toUpperCase() + m1[2].trim().slice(1).toLowerCase();
+            return first1 + ' ' + last1;
+          }
+          return first1;
+        }
+      }
+
+      // 2. «я [Имя]» или «это [Имя]»
+      var m2 = cl.match(/(?:^|[.!?\n]\s*)(?:я|это)\s+([А-ЯЁа-яё]{2,20})(?:\s+([А-ЯЁа-яё]{2,20}))?(?:[,\.\s]|$)/i);
+      if (m2 && m2[1]) {
+        var raw2 = m2[1].trim();
+        if (stopWords.indexOf(raw2.toLowerCase()) === -1) {
+          var first2 = raw2.charAt(0).toUpperCase() + raw2.slice(1).toLowerCase();
+          if (m2[2] && stopWords.indexOf(m2[2].toLowerCase()) === -1) {
+            var last2 = m2[2].trim().charAt(0).toUpperCase() + m2[2].trim().slice(1).toLowerCase();
+            return first2 + ' ' + last2;
+          }
+          return first2;
+        }
+      }
+
+      // 3. «[Имя] я, ...» («антон я, мой номер...»)
+      var m3 = cl.match(/(?:^|[.!?\n]\s*)([А-ЯЁа-яё]{2,20})\s+я(?:[,\.\s]|$)/i);
+      if (m3 && m3[1]) {
+        var raw3 = m3[1].trim();
+        if (stopWords.indexOf(raw3.toLowerCase()) === -1) {
+          return raw3.charAt(0).toUpperCase() + raw3.slice(1).toLowerCase();
+        }
+      }
+
+      // 4. «[Имя], [номер]» или «[Имя], мой номер / телефон ...»
+      var m4 = cl.match(/(?:^|[.!?\n]\s*)([А-ЯЁа-яё]{2,20})[,\s:]+(?:мой\s+номер|мой\s+телефон|мои\s+контакты|тел|телефон|номер|phone)?\s*[:—\-]?\s*(?:\+?7|8|\+?[1-9]\d{1,3})/i);
+      if (m4 && m4[1]) {
+        var raw4 = m4[1].trim();
+        if (stopWords.indexOf(raw4.toLowerCase()) === -1) {
+          return raw4.charAt(0).toUpperCase() + raw4.slice(1).toLowerCase();
+        }
+      }
+
+      return null;
+    }
+
     function handleUserSubmit() {
       var text = inputEl.value.trim();
       if (!text && !pendingAttachment) return;
@@ -3717,14 +3875,17 @@
         if (parsedEmail) {
           safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, parsedEmail);
         }
+        var parsedName = extractClientName(text);
+        if (parsedName && !safeStorage.getItem(STORAGE_KEY_LEAD_NAME)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_NAME, parsedName);
+        }
       }
 
       saveAndRenderMessage(text, true, currentAttachment, currentAttachmentType);
 
       if (currentAttachment) {
         clearTimeout(sendTimer);
-        typingIndicator.textContent = 'печатает...';
-        typingIndicator.style.display = 'block';
+        showTypingIndicator(true, 'печатает...');
         executeSendMessage(text, false, currentAttachment, currentAttachmentType, 0);
       } else {
         if (isBotResponding) {
@@ -3732,8 +3893,7 @@
         } else {
           messageBuffer.push(text);
           clearTimeout(sendTimer);
-          typingIndicator.textContent = 'печатает...';
-          typingIndicator.style.display = 'block';
+          showTypingIndicator(true, 'печатает...');
           sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
         }
       }
@@ -3745,22 +3905,25 @@
 
       if (!isDraft) {
         isBotResponding = true;
-        typingIndicator.textContent = 'печатает...';
-        typingIndicator.style.display = 'block';
+        showTypingIndicator(true, 'печатает...');
       }
       try {
         var detectedPhone = extractClientPhone(fullText);
         var detectedEmail = extractClientEmail(fullText);
+        var detectedName = extractClientName(fullText);
         if (detectedPhone && !safeStorage.getItem(STORAGE_KEY_LEAD_PHONE)) {
           safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, detectedPhone);
         }
         if (detectedEmail && !safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL)) {
           safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, detectedEmail);
         }
+        if (detectedName && !safeStorage.getItem(STORAGE_KEY_LEAD_NAME)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_NAME, detectedName);
+        }
 
         var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || detectedPhone || undefined;
         var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
-        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
+        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || detectedName || undefined;
 
         var payload = {
           visitorId: visitorId,
@@ -3815,7 +3978,7 @@
 
         if (timeoutId) clearTimeout(timeoutId);
 
-        typingIndicator.style.display = 'none';
+        showTypingIndicator(false);
 
         if (isDraft) return;
 
@@ -3826,12 +3989,21 @@
           if (result && Array.isArray(result.replies) && result.replies.length > 0) {
             for (var i = 0; i < result.replies.length; i++) {
               var replyText = result.replies[i];
+              if (
+                replyText.indexOf('Сделка автоматически переведена') !== -1 ||
+                replyText.indexOf('Получены контактные данные') !== -1 ||
+                replyText.indexOf('Создан лид') !== -1 ||
+                replyText.indexOf('Лид создан') !== -1 ||
+                replyText.indexOf('Лид №') === 0 ||
+                replyText.indexOf('Сделка автоматически закрыта') !== -1
+              ) {
+                continue;
+              }
               var typingDelay = Math.min(Math.max(replyText.length * 35, 1200), 4500);
 
-              typingIndicator.textContent = 'печатает...';
-              typingIndicator.style.display = 'block';
+              showTypingIndicator(true, 'печатает...');
               await new Promise(function (resolve) { setTimeout(resolve, typingDelay); });
-              typingIndicator.style.display = 'none';
+              showTypingIndicator(false);
 
               saveAndRenderMessage(replyText, false);
               if (i < result.replies.length - 1) {
@@ -3847,7 +4019,7 @@
       } catch (e) {
         console.error('[GetVoxly] Message delivery failed:', e);
         sendTelemetry('message_send_failed', e && (e.message || String(e)));
-        typingIndicator.style.display = 'none';
+        showTypingIndicator(false);
         if (!isDraft) {
           if (retryCount < MAX_RETRIES) {
             var delays = [3000, 6000, 10000];
@@ -3868,14 +4040,13 @@
       } finally {
         if (!isDraft && (retryCount === 0 || retryCount >= MAX_RETRIES)) {
           isBotResponding = false;
-          typingIndicator.style.display = 'none';
+          showTypingIndicator(false);
 
           if (pendingQueueWhileReplying.length > 0) {
             messageBuffer = pendingQueueWhileReplying.slice();
             pendingQueueWhileReplying = [];
             clearTimeout(sendTimer);
-            typingIndicator.textContent = 'печатает...';
-            typingIndicator.style.display = 'block';
+            showTypingIndicator(true, 'печатает...');
             sendTimer = setTimeout(flushMessageBuffer, 3000);
           }
         }
@@ -3904,8 +4075,7 @@
 
         if (messageBuffer.length > 0 && !isBotResponding) {
           clearTimeout(sendTimer);
-          typingIndicator.textContent = 'печатает...';
-          typingIndicator.style.display = 'block';
+          showTypingIndicator(true, 'печатает...');
           sendTimer = setTimeout(flushMessageBuffer, BUFFER_WAIT_MS);
         }
 

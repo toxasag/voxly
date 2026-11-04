@@ -164,13 +164,17 @@ export class CrmEnrichmentService {
             });
             enrichedFields.push("socials:telegram");
           }
-          if (shouldUpdateName && (tgRes.firstName || tgRes.lastName)) {
+          const hasValidTgName = Boolean(
+            (tgRes.firstName || tgRes.lastName) &&
+            !isPlaceholderName(tgRes.firstName, tgRes.lastName),
+          );
+          if (shouldUpdateName && hasValidTgName) {
             if (tgRes.firstName) updatedFirstName = tgRes.firstName;
             if (tgRes.lastName) updatedLastName = tgRes.lastName;
             enrichedFields.push("name");
           } else if (shouldUpdateName && (updatedTgUsername || tgRes.username)) {
             const parsedTg = parseNameFromTelegramUsername(updatedTgUsername || tgRes.username);
-            if (parsedTg && parsedTg.firstName) {
+            if (parsedTg && parsedTg.firstName && !isPlaceholderName(parsedTg.firstName, parsedTg.lastName)) {
               updatedFirstName = parsedTg.firstName;
               if (parsedTg.lastName) updatedLastName = parsedTg.lastName;
               enrichedFields.push("name");
@@ -204,7 +208,11 @@ export class CrmEnrichmentService {
               enrichedFields.push("socials:max");
             }
           }
-          if (shouldUpdateName && !enrichedFields.includes("name") && (maxRes.firstName || maxRes.lastName)) {
+          const hasValidMaxName = Boolean(
+            (maxRes.firstName || maxRes.lastName) &&
+            !isPlaceholderName(maxRes.firstName, maxRes.lastName),
+          );
+          if (shouldUpdateName && !enrichedFields.includes("name") && hasValidMaxName) {
             if (maxRes.firstName) updatedFirstName = maxRes.firstName;
             if (maxRes.lastName) updatedLastName = maxRes.lastName;
             enrichedFields.push("name");
@@ -293,7 +301,7 @@ export class CrmEnrichmentService {
                  ) || ')',
                  updated_at = now()
              WHERE contact_id = $2 AND tenant_id = $3
-               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
             [resolvedFullName, contactId, tenantId],
           );
         }

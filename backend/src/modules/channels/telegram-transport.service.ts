@@ -1199,12 +1199,16 @@ export class TelegramTransportService {
         // ignore
       }
 
+      const isLeadPlaceholder =
+        (user.firstName === "Lead" && user.lastName === "Contact") ||
+        (user.firstName === "Lead" && !user.lastName);
+
       return {
         exists: true,
         userId: user.id ? user.id.toString() : undefined,
         username: username || undefined,
-        firstName: user.firstName ? String(user.firstName).trim() : undefined,
-        lastName: user.lastName ? String(user.lastName).trim() : undefined,
+        firstName: !isLeadPlaceholder && user.firstName ? String(user.firstName).trim() : undefined,
+        lastName: !isLeadPlaceholder && user.lastName ? String(user.lastName).trim() : undefined,
       };
     } catch (err) {
       this.log.warn({ err, phone }, "Telegram resolveUserByPhone failed");
