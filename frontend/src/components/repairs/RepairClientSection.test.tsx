@@ -217,4 +217,35 @@ describe("RepairClientSection Component (Unified Reactive Flow)", () => {
       expect(screen.getByTestId("form-company-inn").textContent).toBe("7701234567");
     });
   });
+
+  it("allows adding and removing multiple additional contacts", async () => {
+    render(<TestWrapper />);
+
+    expect(screen.getByText("Добавить контакт для связи")).toBeDefined();
+
+    // Click add contact
+    fireEvent.click(screen.getByText("Добавить контакт для связи"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Имя контакта / ФИО *")).toBeDefined();
+      expect(screen.getByPlaceholderText("Роль (прораб, мастер...)")).toBeDefined();
+    });
+
+    const nameInput = screen.getByPlaceholderText("Имя контакта / ФИО *");
+    const roleInput = screen.getByPlaceholderText("Роль (прораб, мастер...)");
+
+    fireEvent.change(nameInput, { target: { value: "Сергей Прораб" } });
+    fireEvent.change(roleInput, { target: { value: "Прораб" } });
+
+    expect(screen.getByDisplayValue("Сергей Прораб")).toBeDefined();
+    expect(screen.getByDisplayValue("Прораб")).toBeDefined();
+
+    // Remove contact
+    const deleteBtn = screen.getByTitle("Удалить контакт");
+    fireEvent.click(deleteBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByPlaceholderText("Имя контакта / ФИО *")).toBeNull();
+    });
+  });
 });

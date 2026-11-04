@@ -1335,11 +1335,11 @@ export class RepairsService {
         [tenantId, trimmedSerial],
       );
 
-      if (rows.length === 0) {
+      const latest = rows[0];
+      if (!latest) {
         return { found: false, equipment: null, customer: null, historyCount: 0, history: [] };
       }
 
-      const latest = rows[0];
       const history: EquipmentHistoryItemDTO[] = rows.map((r) => ({
         id: r.id,
         ticketNumber: r.ticket_number,

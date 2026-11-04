@@ -97,6 +97,39 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: result });
   });
 
+  // GET /repairs/dictionaries — retrieve service center dictionary lists
+  app.get("/dictionaries", { onRequest: canRead }, async (request, reply) => {
+    const dictionaries = await service.getDictionaries(request.tenant_id);
+    return reply.send({ data: dictionaries });
+  });
+
+  // POST /repairs/dictionaries/:category — add new dictionary item
+  app.post("/dictionaries/:category", { onRequest: canWrite }, async (request, reply) => {
+    const { category } = categoryParamSchema.parse(request.params);
+    const body = addDictionaryItemSchema.parse(request.body);
+    const item = await service.addDictionaryItem(
+      request.tenant_id,
+      category,
+      body.name,
+      body.brand_name,
+    );
+    return reply.status(201).send({ data: item });
+  });
+
+  // GET /repairs/equipment/search-serial — search equipment history by serial
+  app.get("/equipment/search-serial", { onRequest: canRead }, async (request, reply) => {
+    const { serial } = serialQuerySchema.parse(request.query);
+    const result = await service.searchEquipmentBySerial(request.tenant_id, serial);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/equipment/history — alias
+  app.get("/equipment/history", { onRequest: canRead }, async (request, reply) => {
+    const { serial } = serialQuerySchema.parse(request.query);
+    const result = await service.searchEquipmentBySerial(request.tenant_id, serial);
+    return reply.send({ data: result });
+  });
+
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const order = await service.getDetail(request.tenant_id, id);

@@ -84,7 +84,7 @@ export const createRepairSchema = z.object({
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
-  additional_contacts: z.array(additionalContactSchema).optional().default([]),
+  additional_contacts: z.array(additionalContactSchema).optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -97,14 +97,14 @@ export const createRepairSchema = z.object({
   equipment_model: z.string().min(1, "Model is required").max(100),
   equipment_serial: z.string().max(100).optional().or(z.literal("")),
   package_contents: z.string().max(1000).optional().or(z.literal("")),
-  package_contents_items: z.array(z.string()).optional().default([]),
+  package_contents_items: z.array(z.string()).optional(),
   appearance: z.string().max(1000).optional().or(z.literal("")),
   defect_description: z
     .string()
     .max(4000)
     .optional()
     .or(z.literal("")),
-  malfunctions: z.array(z.string()).optional().default([]),
+  malfunctions: z.array(z.string()).optional(),
   defect_photos: z.array(z.string().url("Each photo must be a URL")).max(20).optional(),
   priority: repairPrioritySchema.default("normal"),
   master_id: z.string().uuid("master_id must be a UUID"),

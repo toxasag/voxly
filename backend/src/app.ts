@@ -223,6 +223,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
   await app.register(repairsRoutes, { prefix: "/api/v1/repairs" });
+  await app.register(repairsRoutes, { prefix: "/api/v1/service" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
