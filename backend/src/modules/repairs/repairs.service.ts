@@ -283,7 +283,46 @@ export class RepairsService {
 
       let customerId = payload.customer_id ? payload.customer_id.trim() : "";
       let dealId = payload.deal_id ? payload.deal_id.trim() : "";
-      let companyId: string | null = null;
+      let companyId: string | null = payload.company_id ? payload.company_id.trim() : null;
+
+      // 0. Обработка реквизитов компании (дедупликация по ИНН или названию)
+      if (!companyId && payload.company_inn && payload.company_inn.trim()) {
+        const inn = payload.company_inn.trim();
+        const existingByInn = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM companies WHERE tenant_id = $1 AND inn = $2 AND deleted_at IS NULL LIMIT 1`,
+          [tenantId, inn],
+        );
+        if (existingByInn) {
+          companyId = existingByInn.id;
+        }
+      }
+
+      if (!companyId && payload.company_name && payload.company_name.trim()) {
+        const compName = payload.company_name.trim();
+        const existingComp = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM companies WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,
+          [tenantId, compName],
+        );
+        if (existingComp) {
+          companyId = existingComp.id;
+        } else {
+          const newComp = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO companies (tenant_id, name, inn, ogrn, bik, account_number, legal_address, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'Создана автоматически при приёмке оборудования в ремонт')
+             RETURNING id`,
+            [
+              tenantId,
+              compName,
+              payload.company_inn?.trim() ?? "",
+              payload.company_ogrn?.trim() ?? "",
+              payload.company_bik?.trim() ?? "",
+              payload.company_account_number?.trim() ?? "",
+              payload.company_legal_address?.trim() ?? "",
+            ],
+          );
+          companyId = newComp.id;
+        }
+      }
 
       // 1. Если передана сделка (Режим 1: Выбор существующей активной сделки)
       if (dealId) {
@@ -293,7 +332,9 @@ export class RepairsService {
         );
         if (deal === null) throw new NotFoundError("Выбранная сделка не найдена");
         dealId = deal.id;
-        companyId = deal.company_id;
+        if (!companyId && deal.company_id) {
+          companyId = deal.company_id;
+        }
         if (!customerId && deal.contact_id) {
           customerId = deal.contact_id;
         }
@@ -323,7 +364,7 @@ export class RepairsService {
           );
           if (existingContact) {
             customerId = existingContact.id;
-            if (!companyId) companyId = existingContact.company_id;
+            if (!companyId && existingContact.company_id) companyId = existingContact.company_id;
           }
         }
 
@@ -334,30 +375,33 @@ export class RepairsService {
           const firstName = parts[0] || rawName;
           const lastName = parts.slice(1).join(" ");
 
-          if (payload.company_name && payload.company_name.trim()) {
-            const compName = payload.company_name.trim();
-            const existingComp = await tx.queryOne<{ id: string }>(
-              `SELECT id FROM companies WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,
-              [tenantId, compName],
-            );
-            if (existingComp) {
-              companyId = existingComp.id;
-            } else {
-              const newComp = await tx.queryOneOrThrow<{ id: string }>(
-                `INSERT INTO companies (tenant_id, name, notes) VALUES ($1, $2, 'Создана автоматически при приёмке в ремонт') RETURNING id`,
-                [tenantId, compName],
-              );
-              companyId = newComp.id;
-            }
-          }
-
           const newContact = await tx.queryOneOrThrow<{ id: string }>(
-            `INSERT INTO contacts (tenant_id, first_name, last_name, phone, company_name, company_id, channel, notes, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, 'direct', 'Создан автоматически при приёмке оборудования в ремонт', $7)
+            `INSERT INTO contacts (tenant_id, first_name, last_name, phone, email, company_name, company_id, channel, notes, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'direct', 'Создан автоматически при приёмке оборудования в ремонт', $8)
              RETURNING id`,
-            [tenantId, firstName, lastName, canonicalPhone || payload.customer_phone, payload.company_name ?? "", companyId, author.id],
+            [
+              tenantId,
+              firstName,
+              lastName,
+              canonicalPhone || payload.customer_phone,
+              payload.customer_email || null,
+              payload.company_name ?? "",
+              companyId,
+              author.id,
+            ],
           );
           customerId = newContact.id;
+        }
+      } else {
+        // Если клиент передан явно, проверяем его компанию
+        if (!companyId) {
+          const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
+            `SELECT id, company_id FROM contacts WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+            [tenantId, customerId],
+          );
+          if (existingContact?.company_id) {
+            companyId = existingContact.company_id;
+          }
         }
       }
 
