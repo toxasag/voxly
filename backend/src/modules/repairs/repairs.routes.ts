@@ -38,6 +38,7 @@ const clientLookupQuerySchema = z.object({
 
 const addDictionaryItemSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
+  brand_id: z.string().uuid().optional(),
   brand_name: z.string().max(200).optional(),
 });
 
@@ -113,6 +114,34 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     return reply.send({ data: dictionaries });
   });
 
+  // GET /repairs/dictionaries/brands — retrieve brands list
+  app.get("/dictionaries/brands", { onRequest: canRead }, async (request, reply) => {
+    const brands = await service.listBrands(request.tenant_id);
+    return reply.send({ data: brands });
+  });
+
+  // POST /repairs/dictionaries/brands — create brand
+  app.post("/dictionaries/brands", { onRequest: canWrite }, async (request, reply) => {
+    const body = z.object({ name: z.string().min(1, "Name is required").max(100) }).parse(request.body);
+    const brand = await service.createBrand(request.tenant_id, body.name);
+    return reply.status(201).send({ data: brand });
+  });
+
+  // GET /repairs/dictionaries/brands/:brandId/models — retrieve models for brand
+  app.get("/dictionaries/brands/:brandId/models", { onRequest: canRead }, async (request, reply) => {
+    const { brandId } = z.object({ brandId: z.string().uuid("brandId must be a valid UUID") }).parse(request.params);
+    const models = await service.listBrandModels(request.tenant_id, brandId);
+    return reply.send({ data: models });
+  });
+
+  // POST /repairs/dictionaries/brands/:brandId/models — create model for brand
+  app.post("/dictionaries/brands/:brandId/models", { onRequest: canWrite }, async (request, reply) => {
+    const { brandId } = z.object({ brandId: z.string().uuid("brandId must be a valid UUID") }).parse(request.params);
+    const body = z.object({ name: z.string().min(1, "Name is required").max(100) }).parse(request.body);
+    const model = await service.createBrandModel(request.tenant_id, brandId, body.name);
+    return reply.status(201).send({ data: model });
+  });
+
   // POST /repairs/dictionaries/:category — add new dictionary item
   app.post("/dictionaries/:category", { onRequest: canWrite }, async (request, reply) => {
     const { category } = categoryParamSchema.parse(request.params);
@@ -122,6 +151,7 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
       category,
       body.name,
       body.brand_name,
+      body.brand_id,
     );
     return reply.status(201).send({ data: item });
   });

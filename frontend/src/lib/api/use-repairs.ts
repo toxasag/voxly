@@ -134,6 +134,7 @@ export interface DictionaryItemDTO {
   id: string;
   name: string;
   brandName?: string;
+  brandId?: string;
 }
 
 export interface ServiceDictionariesDTO {
@@ -543,6 +544,12 @@ export function useRepairClientLookup(params: {
   });
 }
 
+export const dictionaryKeys = {
+  all: ["dictionaries"] as const,
+  brands: () => ["dictionaries", "brands"] as const,
+  brandModels: (brandId?: string) => ["dictionaries", "brands", brandId, "models"] as const,
+};
+
 export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, ApiClientError> {
   return useQuery<ServiceDictionariesDTO, ApiClientError>({
     queryKey: repairKeys.dictionaries,
@@ -551,6 +558,67 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
       return res.data;
     },
     staleTime: 60_000,
+  });
+}
+
+export function useBrands(): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
+  return useQuery<DictionaryItemDTO[], ApiClientError>({
+    queryKey: dictionaryKeys.brands(),
+    queryFn: async () => {
+      const res = await apiClient.get<DictionaryItemDTO[]>("/api/v1/dictionaries/brands");
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useBrandModels(brandId?: string): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
+  const isEnabled = Boolean(brandId && brandId.trim().length > 0);
+  return useQuery<DictionaryItemDTO[], ApiClientError>({
+    queryKey: dictionaryKeys.brandModels(brandId),
+    queryFn: async () => {
+      if (!brandId) return [];
+      const res = await apiClient.get<DictionaryItemDTO[]>(`/api/v1/dictionaries/brands/${brandId}/models`);
+      return res.data;
+    },
+    enabled: isEnabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateBrand(): UseMutationResult<
+  DictionaryItemDTO,
+  ApiClientError,
+  { name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<DictionaryItemDTO, ApiClientError, { name: string }>({
+    mutationFn: async ({ name }) => {
+      const res = await apiClient.post<DictionaryItemDTO>("/api/v1/dictionaries/brands", { name });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.brands() });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
+  });
+}
+
+export function useCreateBrandModel(): UseMutationResult<
+  DictionaryItemDTO,
+  ApiClientError,
+  { brandId: string; name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<DictionaryItemDTO, ApiClientError, { brandId: string; name: string }>({
+    mutationFn: async ({ brandId, name }) => {
+      const res = await apiClient.post<DictionaryItemDTO>(`/api/v1/dictionaries/brands/${brandId}/models`, { name });
+      return res.data;
+    },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.brandModels(variables.brandId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
   });
 }
 
@@ -633,22 +701,31 @@ export function useCreateBatchRepair(): UseMutationResult<RepairOrderDTO[], ApiC
 }
 
 export function useAddRepairDictionaryItem(): UseMutationResult<
-  { id: string; name: string },
+  { id: string; name: string; brandId?: string; brandName?: string },
   ApiClientError,
-  { category: string; name: string; brand_name?: string }
+  { category: string; name: string; brand_name?: string; brand_id?: string }
 > {
   const queryClient = useQueryClient();
 
-  return useMutation<{ id: string; name: string }, ApiClientError, { category: string; name: string; brand_name?: string }>({
-    mutationFn: async ({ category, name, brand_name }) => {
-      const res = await apiClient.post<{ id: string; name: string }>(`${BASE_PATH}/dictionaries/${category}`, {
-        name,
-        brand_name,
-      });
+  return useMutation<
+    { id: string; name: string; brandId?: string; brandName?: string },
+    ApiClientError,
+    { category: string; name: string; brand_name?: string; brand_id?: string }
+  >({
+    mutationFn: async ({ category, name, brand_name, brand_id }) => {
+      const res = await apiClient.post<{ id: string; name: string; brandId?: string; brandName?: string }>(
+        `${BASE_PATH}/dictionaries/${category}`,
+        {
+          name,
+          brand_name,
+          brand_id,
+        },
+      );
       return res.data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
     },
   });
 }
@@ -669,6 +746,7 @@ export function useRenameRepairDictionaryItem(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
     },
   });
 }
@@ -687,6 +765,7 @@ export function useDeleteRepairDictionaryItem(): UseMutationResult<
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
     },
   });
 }

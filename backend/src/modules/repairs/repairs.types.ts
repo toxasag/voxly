@@ -625,6 +625,7 @@ export interface ClientLookupResultDTO {
 export interface DictionaryItemDTO {
   id: string;
   name: string;
+  brandId?: string;
   brandName?: string;
 }
 
