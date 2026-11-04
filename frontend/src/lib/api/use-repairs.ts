@@ -7,7 +7,15 @@ import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClien
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type RepairStatus = "intake" | "diagnostics" | "approval" | "in_progress" | "ready" | "issued" | "rejected";
+export type RepairStatus =
+  | "intake"
+  | "waiting_parts"
+  | "ready"
+  | "issued"
+  | "diagnostics"
+  | "approval"
+  | "in_progress"
+  | "rejected";
 export type RepairPriority = "low" | "normal" | "high" | "urgent";
 
 export interface EquipmentDTO {
@@ -122,12 +130,18 @@ export interface AdditionalContact {
   role?: string;
 }
 
+export interface DictionaryItemDTO {
+  id: string;
+  name: string;
+  brandName?: string;
+}
+
 export interface ServiceDictionariesDTO {
-  types: string[];
-  brands: string[];
-  models: string[];
-  accessories: string[];
-  malfunctions: string[];
+  types: DictionaryItemDTO[];
+  brands: DictionaryItemDTO[];
+  models: DictionaryItemDTO[];
+  accessories: DictionaryItemDTO[];
+  malfunctions: DictionaryItemDTO[];
 }
 
 export interface EquipmentHistoryItemDTO {
@@ -166,6 +180,10 @@ export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  dealNote?: string | null;
+  companyName?: string | null;
+  companyInn?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
@@ -212,6 +230,42 @@ export interface RepairsQueryParams {
   search?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface EquipmentIntakeItem {
+  equipment_type: string;
+  equipment_brand: string;
+  equipment_model: string;
+  equipment_serial?: string;
+  package_contents?: string;
+  package_contents_items?: string[];
+  appearance?: string;
+  defect_description?: string;
+  malfunctions?: string[];
+  defect_photos?: string[];
+  estimated_cost?: number;
+}
+
+export interface CreateBatchRepairPayload {
+  customer_id?: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  additional_contacts?: AdditionalContact[];
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_ogrn?: string;
+  company_bik?: string;
+  company_account_number?: string;
+  company_legal_address?: string;
+  deal_id?: string;
+  priority?: RepairPriority;
+  master_id: string;
+  master_name?: string;
+  estimated_cost?: number;
+  notes?: string;
+  equipments: EquipmentIntakeItem[];
 }
 
 export interface CreateRepairPayload {
@@ -505,6 +559,20 @@ export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
   });
 }
 
+export function useCreateBatchRepair(): UseMutationResult<RepairOrderDTO[], ApiClientError, CreateBatchRepairPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO[], ApiClientError, CreateBatchRepairPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<RepairOrderDTO[]>(`${BASE_PATH}/batch`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
 export function useAddRepairDictionaryItem(): UseMutationResult<
   { id: string; name: string },
   ApiClientError,
@@ -518,6 +586,44 @@ export function useAddRepairDictionaryItem(): UseMutationResult<
         name,
         brand_name,
       });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
+  });
+}
+
+export function useRenameRepairDictionaryItem(): UseMutationResult<
+  { id: string; name: string },
+  ApiClientError,
+  { category: string; id: string; name: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: string; name: string }, ApiClientError, { category: string; id: string; name: string }>({
+    mutationFn: async ({ category, id, name }) => {
+      const res = await apiClient.patch<{ id: string; name: string }>(`${BASE_PATH}/dictionaries/${category}/${id}`, {
+        name,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
+  });
+}
+
+export function useDeleteRepairDictionaryItem(): UseMutationResult<
+  { success: boolean; id: string },
+  ApiClientError,
+  { category: string; id: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; id: string }, ApiClientError, { category: string; id: string }>({
+    mutationFn: async ({ category, id }) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(`${BASE_PATH}/dictionaries/${category}/${id}`);
       return res.data;
     },
     onSuccess: () => {

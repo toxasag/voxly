@@ -98,6 +98,11 @@ export default function RepairDetailPage() {
     ? {
         id: detail.id,
         ticket_number: detail.ticketNumber,
+        deal_id: detail.dealId ?? null,
+        deal_title: detail.dealTitle ?? null,
+        deal_note: detail.dealNote ?? null,
+        company_name: detail.companyName ?? null,
+        company_inn: detail.companyInn ?? null,
         customer_name: detail.customerName,
         customer_phone: detail.customerPhone,
         customer_id: detail.customerId,
