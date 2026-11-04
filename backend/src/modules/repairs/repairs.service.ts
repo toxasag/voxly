@@ -7,6 +7,7 @@ import type {
   CreatePartPayload,
   CreatePhotoPayload,
   CreateRepairPayload,
+  CreateRepairServiceCatalogPayload,
   CreateWorkPayload,
   EquipmentHistoryItemDTO,
   EquipmentSearchSerialResultDTO,
@@ -18,6 +19,8 @@ import type {
   RepairPartRow,
   RepairPhotoRow,
   RepairPriority,
+  RepairServiceCatalogItemDTO,
+  RepairServiceCatalogRow,
   RepairStatus,
   RepairWorkDTO,
   RepairWorkRow,
@@ -173,11 +176,16 @@ export class RepairsService {
          ro.additional_contacts, ro.status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
          ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
          d.title AS deal_title,
+         d.budget AS deal_budget,
+         st.name AS deal_stage_name,
          COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         c.id AS company_id,
          c.name AS company_name,
-         c.inn AS company_inn
+         c.inn AS company_inn,
+         ct.email AS customer_email
        FROM repair_orders ro
        LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
+       LEFT JOIN stages st ON st.id = d.stage_id AND st.tenant_id = ro.tenant_id
        LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
        LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
        WHERE ${where}
@@ -193,9 +201,26 @@ export class RepairsService {
 
   async get(tenantId: string, id: string): Promise<RepairOrderDTO | null> {
     const row = await queryOne<RepairOrderRow>(
-      `SELECT ${ORDER_COLUMNS}
-       FROM repair_orders
-       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      `SELECT
+         ro.id, ro.tenant_id, ro.ticket_number, ro.deal_id, ro.customer_id, ro.customer_name, ro.customer_phone,
+         ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
+         ro.package_contents, ro.package_contents_items, ro.appearance, ro.defect_description, ro.malfunctions, ro.defect_photos,
+         ro.additional_contacts, ro.status, ro.priority, ro.master_id, ro.master_name, ro.estimated_cost, ro.final_cost,
+         ro.notes, ro.diagnostics, ro.received_at, ro.completed_at, ro.delivered_at, ro.created_at, ro.updated_at,
+         d.title AS deal_title,
+         d.budget AS deal_budget,
+         st.name AS deal_stage_name,
+         COALESCE((SELECT body FROM notes WHERE deal_id = d.id AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1), NULLIF(d.description, ''), '') AS deal_notes,
+         c.id AS company_id,
+         c.name AS company_name,
+         c.inn AS company_inn,
+         ct.email AS customer_email
+       FROM repair_orders ro
+       LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id AND d.deleted_at IS NULL
+       LEFT JOIN stages st ON st.id = d.stage_id AND st.tenant_id = ro.tenant_id
+       LEFT JOIN contacts ct ON ct.id = ro.customer_id AND ct.tenant_id = ro.tenant_id
+       LEFT JOIN companies c ON c.id = COALESCE(d.company_id, ct.company_id) AND c.tenant_id = ro.tenant_id
+       WHERE ro.tenant_id = $1 AND ro.id = $2 AND ro.deleted_at IS NULL`,
       [tenantId, id],
     );
 
@@ -880,14 +905,29 @@ export class RepairsService {
 
     if (payload.customer_name !== undefined) push("customer_name", payload.customer_name);
     if (payload.customer_phone !== undefined) push("customer_phone", payload.customer_phone);
+    if (payload.deal_id !== undefined) {
+      push("deal_id", nullIfBlank(payload.deal_id));
+    }
+    if (payload.customer_id !== undefined) {
+      const custId = nullIfBlank(payload.customer_id);
+      if (custId !== null) push("customer_id", custId);
+    }
     if (payload.equipment_type !== undefined) push("equipment_type", payload.equipment_type);
     if (payload.equipment_brand !== undefined) push("equipment_brand", payload.equipment_brand);
     if (payload.equipment_model !== undefined) push("equipment_model", payload.equipment_model);
     if (payload.equipment_serial !== undefined) push("equipment_serial", payload.equipment_serial);
     if (payload.package_contents !== undefined) push("package_contents", payload.package_contents);
+    if (payload.package_contents_items !== undefined) {
+      params.push(payload.package_contents_items);
+      assignments.push(`package_contents_items = $${params.length}`);
+    }
     if (payload.appearance !== undefined) push("appearance", payload.appearance);
     if (payload.defect_description !== undefined) {
       push("defect_description", payload.defect_description);
+    }
+    if (payload.malfunctions !== undefined) {
+      params.push(payload.malfunctions);
+      assignments.push(`malfunctions = $${params.length}`);
     }
     if (payload.priority !== undefined) push("priority", payload.priority);
     if (payload.master_id !== undefined) {
@@ -901,18 +941,94 @@ export class RepairsService {
     if (payload.final_cost !== undefined) push("final_cost", payload.final_cost);
     if (payload.notes !== undefined) push("notes", payload.notes);
 
-    if (assignments.length === 0) {
-      return this.get(tenantId, id);
+    if (assignments.length > 0) {
+      await query(
+        `UPDATE repair_orders SET ${assignments.join(", ")}
+         WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        params,
+      );
     }
 
-    const row = await queryOne<RepairOrderRow>(
-      `UPDATE repair_orders SET ${assignments.join(", ")}
-       WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
-       RETURNING ${ORDER_COLUMNS}`,
-      params,
-    );
+    const current = await this.get(tenantId, id);
+    if (!current) return null;
 
-    return row === null ? null : toRepairOrderDTO(row);
+    // Синхронизация данных связанного контакта
+    if (current.customerId && (payload.customer_name || payload.customer_phone || payload.customer_email !== undefined)) {
+      const contactAssignments: string[] = [];
+      const contactParams: SqlParam[] = [tenantId, current.customerId];
+      if (payload.customer_name) {
+        const parts = payload.customer_name.trim().split(/\s+/);
+        contactParams.push(parts[0] || payload.customer_name);
+        contactAssignments.push(`first_name = $${contactParams.length}`);
+        contactParams.push(parts.slice(1).join(" "));
+        contactAssignments.push(`last_name = $${contactParams.length}`);
+      }
+      if (payload.customer_phone) {
+        contactParams.push(payload.customer_phone.trim());
+        contactAssignments.push(`phone = $${contactParams.length}`);
+      }
+      if (payload.customer_email !== undefined) {
+        contactParams.push(payload.customer_email.trim() || null);
+        contactAssignments.push(`email = $${contactParams.length}`);
+      }
+      if (contactAssignments.length > 0) {
+        await query(
+          `UPDATE contacts SET ${contactAssignments.join(", ")} WHERE tenant_id = $1 AND id = $2`,
+          contactParams,
+        ).catch(() => {});
+      }
+    }
+
+    // Синхронизация данных компании
+    if (payload.company_name !== undefined || payload.company_inn !== undefined) {
+      if (current.companyId) {
+        const compAssignments: string[] = [];
+        const compParams: SqlParam[] = [tenantId, current.companyId];
+        if (payload.company_name !== undefined) {
+          compParams.push(payload.company_name.trim());
+          compAssignments.push(`name = $${compParams.length}`);
+        }
+        if (payload.company_inn !== undefined) {
+          compParams.push(payload.company_inn.trim());
+          compAssignments.push(`inn = $${compParams.length}`);
+        }
+        if (compAssignments.length > 0) {
+          await query(
+            `UPDATE companies SET ${compAssignments.join(", ")} WHERE tenant_id = $1 AND id = $2`,
+            compParams,
+          ).catch(() => {});
+        }
+      } else if (payload.company_name && payload.company_name.trim()) {
+        const newComp = await queryOne<{ id: string }>(
+          `INSERT INTO companies (tenant_id, name, inn) VALUES ($1, $2, $3) RETURNING id`,
+          [tenantId, payload.company_name.trim(), payload.company_inn?.trim() ?? ""],
+        ).catch(() => null);
+        if (newComp && current.customerId) {
+          await query(
+            `UPDATE contacts SET company_id = $1, company_name = $2 WHERE tenant_id = $3 AND id = $4`,
+            [newComp.id, payload.company_name.trim(), tenantId, current.customerId],
+          ).catch(() => {});
+        }
+      }
+    }
+
+    // Синхронизация названия и заметки сделки CRM
+    if (current.dealId && payload.deal_title && payload.deal_title.trim()) {
+      await query(
+        `UPDATE deals SET title = $1 WHERE tenant_id = $2 AND id = $3`,
+        [payload.deal_title.trim(), tenantId, current.dealId],
+      ).catch(() => {});
+    }
+
+    if (current.dealId && payload.deal_note && payload.deal_note.trim()) {
+      await query(
+        `INSERT INTO notes (tenant_id, deal_id, title, body)
+         VALUES ($1, $2, 'Заметка к заказу', $3)`,
+        [tenantId, current.dealId, payload.deal_note.trim()],
+      ).catch(() => {});
+    }
+
+    return this.get(tenantId, id);
   }
 
   // -------------------------------------------------------------------------
@@ -1762,6 +1878,68 @@ export class RepairsService {
         historyCount: history.length,
         history,
       };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Services Catalog
+  // -------------------------------------------------------------------------
+
+  async listServicesCatalog(tenantId: string): Promise<RepairServiceCatalogItemDTO[]> {
+    return withTenant(tenantId, async (tx) => {
+      const rows = await tx.query<RepairServiceCatalogRow>(
+        `SELECT id, tenant_id, name, default_price, created_at
+         FROM repair_services_catalog
+         WHERE tenant_id = $1
+         ORDER BY name ASC`,
+        [tenantId],
+      );
+
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        defaultPrice: Number(r.default_price),
+        createdAt: toIso(r.created_at),
+      }));
+    });
+  }
+
+  async addServiceToCatalog(
+    tenantId: string,
+    payload: CreateRepairServiceCatalogPayload,
+  ): Promise<RepairServiceCatalogItemDTO> {
+    const trimmed = payload.name.trim();
+    if (!trimmed) throw new ValidationError("Название услуги не может быть пустым", {});
+
+    return withTenant(tenantId, async (tx) => {
+      const row = await tx.queryOneOrThrow<RepairServiceCatalogRow>(
+        `INSERT INTO repair_services_catalog (tenant_id, name, default_price)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, name)
+         DO UPDATE SET default_price = EXCLUDED.default_price
+         RETURNING id, tenant_id, name, default_price, created_at`,
+        [tenantId, trimmed, payload.default_price ?? 0],
+      );
+
+      return {
+        id: row.id,
+        name: row.name,
+        defaultPrice: Number(row.default_price),
+        createdAt: toIso(row.created_at),
+      };
+    });
+  }
+
+  async deleteServiceFromCatalog(
+    tenantId: string,
+    id: string,
+  ): Promise<{ success: boolean; id: string }> {
+    return withTenant(tenantId, async (tx) => {
+      await tx.query(
+        `DELETE FROM repair_services_catalog WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, id],
+      );
+      return { success: true, id };
     });
   }
 }

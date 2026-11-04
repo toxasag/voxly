@@ -182,11 +182,15 @@ export interface RepairOrderDTO {
   dealId?: string | null;
   dealTitle?: string | null;
   dealNote?: string | null;
+  dealBudget?: number | null;
+  dealStageName?: string | null;
+  companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string | null;
   equipment: EquipmentDTO;
   defectDescription: string;
   defectPhotos: string[];
@@ -299,16 +303,34 @@ export interface CreateRepairPayload {
   notes?: string;
 }
 
+export interface RepairServiceCatalogItemDTO {
+  id: string;
+  name: string;
+  defaultPrice: number;
+  createdAt: string;
+}
+
 export interface UpdateRepairPayload {
+  deal_id?: string;
+  deal_title?: string;
+  deal_note?: string;
+  customer_id?: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  additional_contacts?: AdditionalContact[];
   equipment_type?: string;
   equipment_brand?: string;
   equipment_model?: string;
   equipment_serial?: string;
   package_contents?: string;
+  package_contents_items?: string[];
   appearance?: string;
   defect_description?: string;
+  malfunctions?: string[];
   priority?: RepairPriority;
   master_id?: string;
   master_name?: string;
@@ -385,6 +407,7 @@ export const repairKeys = {
   photos: (id: string) => ["repairs", "photos", id] as const,
   clientLookup: (params: { phone?: string; query?: string }) => ["repairs", "client-lookup", params] as const,
   dictionaries: ["repairs", "dictionaries"] as const,
+  servicesCatalog: ["repairs", "services-catalog"] as const,
   equipmentHistory: (serial: string) => ["repairs", "equipment", "history", serial] as const,
 };
 
@@ -521,6 +544,35 @@ export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, 
       return res.data;
     },
     staleTime: 60_000,
+  });
+}
+
+export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogItemDTO[], ApiClientError> {
+  return useQuery<RepairServiceCatalogItemDTO[], ApiClientError>({
+    queryKey: repairKeys.servicesCatalog,
+    queryFn: async () => {
+      const res = await apiClient.get<RepairServiceCatalogItemDTO[]>(`${BASE_PATH}/catalog/services`);
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useAddRepairServiceToCatalog(): UseMutationResult<
+  RepairServiceCatalogItemDTO,
+  ApiClientError,
+  { name: string; default_price?: number }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairServiceCatalogItemDTO, ApiClientError, { name: string; default_price?: number }>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<RepairServiceCatalogItemDTO>(`${BASE_PATH}/catalog/services`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+    },
   });
 }
 

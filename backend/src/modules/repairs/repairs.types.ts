@@ -166,8 +166,16 @@ export const renameDictionaryItemSchema = z.object({
 export type RenameDictionaryItemPayload = z.infer<typeof renameDictionaryItemSchema>;
 
 export const updateRepairSchema = z.object({
+  deal_id: optionalUuid,
+  deal_title: z.string().max(300).optional().or(z.literal("")),
+  deal_note: z.string().max(4000).optional().or(z.literal("")),
+  customer_id: optionalUuid,
   customer_name: z.string().min(1).max(200).optional(),
   customer_phone: z.string().min(5).max(30).optional(),
+  customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  company_id: optionalUuid,
+  company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: z.string().optional().or(z.literal("")),
   additional_contacts: z.array(additionalContactSchema).optional(),
   equipment_type: z.string().min(1).max(100).optional(),
   equipment_brand: z.string().min(1).max(100).optional(),
@@ -185,6 +193,27 @@ export const updateRepairSchema = z.object({
   final_cost: z.number().nonnegative().optional(),
   notes: z.string().max(4000).optional().or(z.literal("")),
 });
+
+export const createRepairServiceCatalogSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  default_price: z.number().nonnegative("Price cannot be negative").default(0),
+});
+export type CreateRepairServiceCatalogPayload = z.infer<typeof createRepairServiceCatalogSchema>;
+
+export interface RepairServiceCatalogRow {
+  id: string;
+  tenant_id: string;
+  name: string;
+  default_price: string;
+  created_at: Date | string;
+}
+
+export interface RepairServiceCatalogItemDTO {
+  id: string;
+  name: string;
+  defaultPrice: number;
+  createdAt: string;
+}
 
 export const changeStatusSchema = z.object({
   status: repairStatusSchema,
@@ -278,8 +307,12 @@ export interface RepairOrderRow {
   updated_at: Date | string;
   deal_title?: string | null;
   deal_notes?: string | null;
+  deal_budget?: string | number | null;
+  deal_stage_name?: string | null;
+  company_id?: string | null;
   company_name?: string | null;
   company_inn?: string | null;
+  customer_email?: string | null;
 }
 
 export interface RepairWorkRow {
@@ -390,11 +423,15 @@ export interface RepairOrderDTO {
   dealId: string | null;
   dealTitle?: string | null;
   dealNote?: string | null;
+  dealBudget?: number | null;
+  dealStageName?: string | null;
+  companyId?: string | null;
   companyName?: string | null;
   companyInn?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string | null;
   equipment: {
     type: string;
     brand: string;
@@ -452,11 +489,15 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
     dealId: row.deal_id ?? null,
     dealTitle: row.deal_title ?? null,
     dealNote: row.deal_notes ?? null,
+    dealBudget: row.deal_budget !== undefined && row.deal_budget !== null ? Number(row.deal_budget) : null,
+    dealStageName: row.deal_stage_name ?? null,
+    companyId: row.company_id ?? null,
     companyName: row.company_name ?? null,
     companyInn: row.company_inn ?? null,
     customerId: row.customer_id,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
+    customerEmail: row.customer_email ?? null,
     equipment: {
       type: row.equipment_type,
       brand: row.equipment_brand,
