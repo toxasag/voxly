@@ -381,6 +381,8 @@ export const RepairsTable = memo(function RepairsTable({
         columns={columns}
         getRowId={(ticket) => ticket.id}
         tableId="repairs"
+        rowHeight={52}
+        scrollPaddingBottom="pb-4"
         onRowClick={(ticket) => handleRowClick(ticket.id)}
         emptyState={
           <div className="flex flex-col items-center gap-2 py-16 text-center">

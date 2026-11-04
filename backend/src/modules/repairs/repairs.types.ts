@@ -474,7 +474,7 @@ export interface RepairOrderDetailDTO extends RepairOrderDTO {
 // Mappers
 // ---------------------------------------------------------------------------
 
-function toIso(value: Date | string): string {
+export function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 

@@ -822,7 +822,6 @@ export function RecordTable<T>({
                       className="sticky left-0 z-10 flex items-center justify-center bg-inherit border-r border-[#e5e5e5]"
                       style={{ minHeight: `${effectiveRowHeight}px` }}
                     >
-                    >
                       <input
                         type="checkbox"
                         checked={isSelected}
