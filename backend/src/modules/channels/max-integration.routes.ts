@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { MaxBridgeService } from "./max-bridge.service.js";
 import { query, queryOne, withTenant, runWithTenantContext, runWithPlatformScope } from "../../db/client.js";
-import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
+import { CrmPipelineService, isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { ChatMediaService } from "../crm/chat/media.service.js";
 import { mediaEnrichmentService } from "../crm/media/media-enrichment.service.js";
@@ -83,6 +83,10 @@ const internalInboundSchema = z.object({
   selfPhone: z.string().nullable().optional(),
   maxLink: z.string().nullable().optional(),
   attachments: z.array(inboundAttachmentSchema).max(20).optional(),
+  isBot: z.boolean().optional(),
+  is_bot: z.boolean().optional(),
+  type: z.string().optional(),
+  senderType: z.string().optional(),
   // Устаревшие поля для обратной совместимости
   tenantId: z.string().uuid().optional(),
   chatId: z.string().optional(),
@@ -391,6 +395,36 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
     }
   }
 
+  const isBotFlag =
+    body.isBot === true ||
+    body.is_bot === true ||
+    body.type === "bot" ||
+    body.senderType === "bot";
+
+  const maxProfile: ChannelProfile = {
+    firstName: body.firstName ?? undefined,
+    phone: peerPhone,
+    username: body.username ?? body.senderUsername ?? undefined,
+    isBot: isBotFlag,
+  };
+
+  if (
+    isBotSender({
+      channel: "max",
+      chatId: peerId,
+      senderUsername: maxProfile.username,
+      senderName,
+      profile: maxProfile,
+      isBot: isBotFlag,
+    })
+  ) {
+    request.log.info(
+      { peerId, username: maxProfile.username, botId: channelAccountId },
+      `Skipping lead/contact creation: sender is a bot (@${(maxProfile.username || "unknown").replace(/^@/, "")})`,
+    );
+    return reply.send({ ok: true, skipped: "bot" });
+  }
+
   const crm = new CrmPipelineService();
   const crmResult = await runWithTenantContext(tenantId, () =>
     crm.processIncoming({
@@ -403,17 +437,19 @@ async function processMaxInbound(request: FastifyRequest, reply: FastifyReply) {
       senderPhone: peerPhone,
       attachment: attachmentUrl,
       attachmentType: attachmentType,
-      profile: {
-        firstName: body.firstName ?? undefined,
-        phone: peerPhone,
-        username: body.username ?? body.senderUsername ?? undefined,
-      },
+      isBot: isBotFlag,
+      profile: maxProfile,
     }),
   );
 
   if (crmResult.isPersonal) {
     request.log.info({ peerId }, "Personal MAX contact message ignored by CRM");
     return reply.send({ ok: true });
+  }
+
+  if (crmResult.isBot) {
+    request.log.info({ peerId, username: body.username }, "Bot MAX sender ignored by CRM");
+    return reply.send({ ok: true, skipped: "bot" });
   }
 
   // Проверяем, не отключен ли или приостановлен AI-автопилот

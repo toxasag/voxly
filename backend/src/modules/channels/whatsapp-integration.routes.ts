@@ -238,6 +238,11 @@ async function handleWhatsappWebhook(request: FastifyRequest, reply: FastifyRepl
       continue;
     }
 
+    if (crmResult.isBot) {
+      request.log.info({ phoneE164 }, "Bot WhatsApp message ignored by CRM");
+      continue;
+    }
+
     // Проверяем, не отключен ли или приостановлен AI-автопилот
     const dealIdToCheck = crmResult.dealId;
     const isAiPaused = await runWithTenantContext(account.tenant_id, async () => {
