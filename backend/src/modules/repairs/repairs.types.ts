@@ -455,6 +455,45 @@ export function toRepairPhotoDTO(row: RepairPhotoRow): RepairPhotoDTO {
   };
 }
 
+export interface ClientLookupDealDTO {
+  id: string;
+  title: string;
+  description: string;
+  budget: number;
+  currency: string;
+  stageId: string;
+  stageName: string;
+  stageColor: string;
+  pipelineId: string;
+  pipelineName: string;
+  createdAt: string;
+  ownerName: string | null;
+}
+
+export interface ClientLookupResultDTO {
+  found: boolean;
+  client: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    middleName: string;
+    phone: string;
+    email: string | null;
+    companyId: string | null;
+    companyName: string | null;
+  } | null;
+  company: {
+    id: string;
+    name: string;
+    inn: string;
+    ogrn: string;
+    bik: string;
+    accountNumber: string;
+    legalAddress: string;
+  } | null;
+  activeDeals: ClientLookupDealDTO[];
+}
+
 /** Sums works and parts into the order's money breakdown. */
 export function calculateTotals(
   works: RepairWorkDTO[],

@@ -1,5 +1,7 @@
 import type {
   ChangeStatusPayload,
+  ClientLookupDealDTO,
+  ClientLookupResultDTO,
   CreateNotePayload,
   CreatePartPayload,
   CreatePhotoPayload,
@@ -924,5 +926,200 @@ export class RepairsService {
     );
 
     return row !== null;
+  }
+
+  /**
+   * Reactive lookup for customer identification during repair intake.
+   * Searches contacts by phone (normalized digits match) or query (name/company).
+   * If customer found, also loads their company requisites and active CRM deals.
+   */
+  async clientLookup(
+    tenantId: string,
+    params: { phone?: string; query?: string },
+  ): Promise<ClientLookupResultDTO> {
+    return withTenant(tenantId, async (tx) => {
+      const rawPhone = params.phone?.trim() ?? "";
+      const rawQuery = params.query?.trim() ?? "";
+
+      if (!rawPhone && !rawQuery) {
+        return { found: false, client: null, company: null, activeDeals: [] };
+      }
+
+      let contact: {
+        id: string;
+        first_name: string;
+        last_name: string | null;
+        middle_name: string | null;
+        phone: string | null;
+        email: string | null;
+        company_id: string | null;
+        company_name: string | null;
+      } | null = null;
+
+      // 1. Try search by phone digits if phone is provided
+      const phoneDigits = rawPhone.replace(/\D/g, "");
+      if (phoneDigits.length >= 6) {
+        const searchSuffix = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+        contact = await tx.queryOne<{
+          id: string;
+          first_name: string;
+          last_name: string | null;
+          middle_name: string | null;
+          phone: string | null;
+          email: string | null;
+          company_id: string | null;
+          company_name: string | null;
+        }>(
+          `SELECT id, first_name, last_name, middle_name, phone, email, company_id, company_name
+           FROM contacts
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+             AND (
+               regexp_replace(phone, '[^0-9]', '', 'g') LIKE '%' || $2
+               OR additional_phones::text LIKE '%' || $2 || '%'
+             )
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [tenantId, searchSuffix],
+        );
+      }
+
+      // 2. If not found by phone and query is provided (or search by name)
+      if (!contact && rawQuery.length >= 2) {
+        contact = await tx.queryOne<{
+          id: string;
+          first_name: string;
+          last_name: string | null;
+          middle_name: string | null;
+          phone: string | null;
+          email: string | null;
+          company_id: string | null;
+          company_name: string | null;
+        }>(
+          `SELECT id, first_name, last_name, middle_name, phone, email, company_id, company_name
+           FROM contacts
+           WHERE tenant_id = $1 AND deleted_at IS NULL
+             AND (
+               first_name ILIKE '%' || $2 || '%'
+               OR last_name ILIKE '%' || $2 || '%'
+               OR (first_name || ' ' || COALESCE(last_name, '')) ILIKE '%' || $2 || '%'
+               OR company_name ILIKE '%' || $2 || '%'
+             )
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [tenantId, rawQuery],
+        );
+      }
+
+      if (!contact) {
+        return { found: false, client: null, company: null, activeDeals: [] };
+      }
+
+      // 3. Find company requisites if company_id is present
+      let company: ClientLookupResultDTO["company"] = null;
+      if (contact.company_id) {
+        const compRow = await tx.queryOne<{
+          id: string;
+          name: string;
+          inn: string | null;
+          ogrn: string | null;
+          bik: string | null;
+          account_number: string | null;
+          legal_address: string | null;
+        }>(
+          `SELECT id, name, inn, ogrn, bik, account_number, legal_address
+           FROM companies
+           WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, contact.company_id],
+        );
+        if (compRow) {
+          company = {
+            id: compRow.id,
+            name: compRow.name,
+            inn: compRow.inn ?? "",
+            ogrn: compRow.ogrn ?? "",
+            bik: compRow.bik ?? "",
+            accountNumber: compRow.account_number ?? "",
+            legalAddress: compRow.legal_address ?? "",
+          };
+        }
+      }
+
+      // 4. Find active deals associated with this contact or company
+      // Active deals: is_won = false AND is_lost = false AND deleted_at IS NULL
+      const dealRows = await tx.query<{
+        id: string;
+        title: string;
+        description: string | null;
+        budget: string | number | null;
+        currency: string | null;
+        stage_id: string;
+        stage_name: string;
+        stage_color: string | null;
+        pipeline_id: string;
+        pipeline_name: string;
+        created_at: Date | string;
+        owner_name: string | null;
+      }>(
+        `SELECT
+           d.id,
+           d.title,
+           d.description,
+           d.budget,
+           d.currency,
+           d.stage_id,
+           s.name AS stage_name,
+           s.color AS stage_color,
+           d.pipeline_id,
+           p.name AS pipeline_name,
+           d.created_at,
+           u.name AS owner_name
+         FROM deals d
+         JOIN stages s ON s.id = d.stage_id
+         JOIN pipelines p ON p.id = d.pipeline_id
+         LEFT JOIN users u ON u.id = d.owner_id
+         WHERE d.tenant_id = $1
+           AND d.deleted_at IS NULL
+           AND s.is_won = false
+           AND s.is_lost = false
+           AND (
+             d.contact_id = $2
+             ${contact.company_id ? "OR d.company_id = $3" : ""}
+           )
+         ORDER BY d.created_at DESC
+         LIMIT 20`,
+        contact.company_id ? [tenantId, contact.id, contact.company_id] : [tenantId, contact.id],
+      );
+
+      const activeDeals: ClientLookupDealDTO[] = dealRows.map((d) => ({
+        id: d.id,
+        title: d.title,
+        description: d.description ?? "",
+        budget: typeof d.budget === "number" ? d.budget : (parseFloat(String(d.budget || 0)) || 0),
+        currency: d.currency || "RUB",
+        stageId: d.stage_id,
+        stageName: d.stage_name,
+        stageColor: d.stage_color || "#4a38f5",
+        pipelineId: d.pipeline_id,
+        pipelineName: d.pipeline_name,
+        createdAt: d.created_at instanceof Date ? d.created_at.toISOString() : String(d.created_at),
+        ownerName: d.owner_name ?? null,
+      }));
+
+      return {
+        found: true,
+        client: {
+          id: contact.id,
+          firstName: contact.first_name,
+          lastName: contact.last_name ?? "",
+          middleName: contact.middle_name ?? "",
+          phone: contact.phone ?? "",
+          email: contact.email ?? null,
+          companyId: contact.company_id ?? null,
+          companyName: contact.company_name ?? null,
+        },
+        company,
+        activeDeals,
+      };
+    });
   }
 }

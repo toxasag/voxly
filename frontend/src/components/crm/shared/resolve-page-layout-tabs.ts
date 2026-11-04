@@ -76,6 +76,7 @@ export const FALLBACK_PAGE_LAYOUT_TABS: Record<
   deal: [
     { tabKey: "home", title: "Главная", icon: "Home", position: 10, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "chat", title: "Чат", icon: "MessageCircle", position: 15, isActive: true, moduleSlug: null, requiredPermission: "deals:write", updatedAt: "" },
+    { tabKey: "repairs", title: "Сервисный центр", icon: "Wrench", position: 17, isActive: true, moduleSlug: "service_center", requiredPermission: "service_center:read", updatedAt: "" },
     { tabKey: "timeline", title: "Таймлайн", icon: "Activity", position: 20, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "analytics", title: "Аналитика", icon: "BarChart3", position: 22, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },
     { tabKey: "source", title: "Источник", icon: "Globe", position: 24, isActive: true, moduleSlug: null, requiredPermission: null, updatedAt: "" },

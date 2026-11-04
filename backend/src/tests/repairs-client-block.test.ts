@@ -248,4 +248,71 @@ describe("RepairsService Client & Deal Integration", () => {
     expect(res.dealId).toBe(newDealId);
     expect(res.customerId).toBe(newContactId);
   });
+
+  it("clientLookup performs reactive lookup and returns client, company, and active deals", async () => {
+    const contactId = "44444444-4444-4444-4444-444444444444";
+    const companyId = "66666666-6666-6666-6666-666666666666";
+
+    // 1. queryOne for contact
+    mockQueryOne.mockResolvedValueOnce({
+      id: contactId,
+      first_name: "Иван",
+      last_name: "Петров",
+      middle_name: "Сергеевич",
+      phone: "+79991234567",
+      email: "ivan@test.ru",
+      company_id: companyId,
+      company_name: "ООО Вектор",
+    });
+
+    // 2. queryOne for company requisites
+    mockQueryOne.mockResolvedValueOnce({
+      id: companyId,
+      name: "ООО Вектор",
+      inn: "7701234567",
+      ogrn: "1027700132195",
+      bik: "044525225",
+      account_number: "40702810000000000000",
+      legal_address: "г. Москва",
+    });
+
+    // 3. query for active deals
+    mockQuery.mockResolvedValueOnce([
+      {
+        id: "deal-1",
+        title: "Ремонт MacBook",
+        description: "Замена батареи",
+        budget: 12000,
+        currency: "RUB",
+        stage_id: "s-1",
+        stage_name: "В диагностике",
+        stage_color: "#4a38f5",
+        pipeline_id: "p-1",
+        pipeline_name: "Ремонты",
+        created_at: new Date("2026-11-01T12:00:00Z"),
+        owner_name: "Алексей Мастер",
+      },
+    ]);
+
+    const result = await service.clientLookup(tenantId, { phone: "+7 (999) 123-45-67" });
+
+    expect(result.found).toBe(true);
+    expect(result.client?.id).toBe(contactId);
+    expect(result.client?.firstName).toBe("Иван");
+    expect(result.company?.inn).toBe("7701234567");
+    expect(result.activeDeals.length).toBe(1);
+    expect(result.activeDeals[0]?.title).toBe("Ремонт MacBook");
+    expect(result.activeDeals[0]?.stageName).toBe("В диагностике");
+  });
+
+  it("clientLookup returns not found for empty or unknown params", async () => {
+    const emptyResult = await service.clientLookup(tenantId, {});
+    expect(emptyResult.found).toBe(false);
+    expect(emptyResult.activeDeals).toEqual([]);
+
+    mockQueryOne.mockResolvedValueOnce(null);
+    const unknownResult = await service.clientLookup(tenantId, { phone: "+79990000000" });
+    expect(unknownResult.found).toBe(false);
+    expect(unknownResult.client).toBeNull();
+  });
 });
