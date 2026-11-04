@@ -28,6 +28,7 @@ export interface DictionarySelectFieldProps {
   icon: ComponentType<{ className?: string }>;
   category: DictionaryCategory;
   brandName?: string;
+  brandId?: string;
   items: (string | DictionaryItemDTO)[];
   placeholder?: string;
   mode: "single" | "multi";
@@ -42,6 +43,7 @@ interface NormalizedItem {
   id?: string;
   name: string;
   brandName?: string;
+  brandId?: string;
 }
 
 export function DictionarySelectField({
@@ -50,6 +52,7 @@ export function DictionarySelectField({
   icon: Icon,
   category,
   brandName,
+  brandId,
   items,
   placeholder,
   mode,
@@ -63,6 +66,14 @@ export function DictionarySelectField({
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [newItemName, setNewItemName] = useState("");
+
+  const isModelCategory = category === "model";
+  const isBrandSelected = Boolean((brandId && brandId.trim()) || (brandName && brandName.trim()));
+  const isLocked = isModelCategory && !isBrandSelected;
+  const isEffectivelyDisabled = disabled || isLocked;
+  const displayPlaceholder = isLocked
+    ? "Сначала выберите бренд"
+    : (placeholder ?? (mode === "single" ? "Выберите из списка..." : "Выберите несколько..."));
 
   // Режим инлайн-редактирования элемента
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -87,7 +98,7 @@ export function DictionarySelectField({
       if (typeof it === "string") {
         return { name: it };
       }
-      return { id: it.id, name: it.name, brandName: it.brandName };
+      return { id: it.id, name: it.name, brandName: it.brandName, brandId: it.brandId };
     });
   }, [items]);
 
@@ -125,12 +136,30 @@ export function DictionarySelectField({
     }
   }, [editingId]);
 
-  // Фильтрация вариантов
+  // Фильтрация вариантов по бренду (для модели) и поисковому запросу
   const filteredItems = useMemo(() => {
+    let source = normalizedItems;
+
+    if (isModelCategory) {
+      if (!isBrandSelected) {
+        return [];
+      }
+      const normBrandName = brandName?.trim().toLowerCase();
+      source = source.filter((item) => {
+        if (brandId && item.brandId) {
+          return item.brandId === brandId;
+        }
+        if (normBrandName && item.brandName) {
+          return item.brandName.trim().toLowerCase() === normBrandName;
+        }
+        return false;
+      });
+    }
+
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return normalizedItems;
-    return normalizedItems.filter((item) => item.name.toLowerCase().includes(term));
-  }, [normalizedItems, searchTerm]);
+    if (!term) return source;
+    return source.filter((item) => item.name.toLowerCase().includes(term));
+  }, [normalizedItems, isModelCategory, isBrandSelected, brandId, brandName, searchTerm]);
 
   const handleSelectSingle = (item: NormalizedItem) => {
     onChange(item.name);
@@ -175,7 +204,8 @@ export function DictionarySelectField({
       await addMutation.mutateAsync({
         category,
         name: trimmed,
-        brand_name: brandName,
+        brand_name: brandName?.trim(),
+        brand_id: brandId?.trim(),
       });
 
       if (mode === "single") {
@@ -279,7 +309,7 @@ export function DictionarySelectField({
             : isOpen
               ? "border-[#4a38f5] ring-1 ring-[#4a38f5]/20"
               : "border-[#e5e5e5] hover:border-[#cccccc]",
-          disabled && "opacity-50 pointer-events-none bg-slate-50",
+          isEffectivelyDisabled && "opacity-60 bg-slate-50 cursor-not-allowed",
         )}
       >
         {/* Левая ячейка: Иконка сущности */}
@@ -289,9 +319,12 @@ export function DictionarySelectField({
 
         {/* Центральная часть: Селектор/чипы */}
         <div
-          className="flex flex-1 items-center gap-1.5 px-2.5 py-1 min-w-0 cursor-pointer select-none"
+          className={cn(
+            "flex flex-1 items-center gap-1.5 px-2.5 py-1 min-w-0 select-none",
+            isEffectivelyDisabled ? "cursor-not-allowed" : "cursor-pointer",
+          )}
           onClick={() => {
-            if (!disabled) setIsOpen((prev) => !prev);
+            if (!isEffectivelyDisabled) setIsOpen((prev) => !prev);
           }}
         >
           {mode === "single" ? (
@@ -299,7 +332,9 @@ export function DictionarySelectField({
               {singleValue ? (
                 <span className="font-medium text-[#111111]">{singleValue}</span>
               ) : (
-                <span className="text-slate-400">{placeholder ?? "Выберите из списка..."}</span>
+                <span className={cn(isLocked ? "italic text-slate-400 font-normal" : "text-slate-400")}>
+                  {displayPlaceholder}
+                </span>
               )}
             </div>
           ) : (
@@ -313,6 +348,7 @@ export function DictionarySelectField({
                     <span>{chip}</span>
                     <button
                       type="button"
+                      disabled={isEffectivelyDisabled}
                       onClick={(e) => handleRemoveChip(chip, e)}
                       className="rounded hover:bg-slate-200 p-0.5 text-slate-400 hover:text-slate-600 transition-colors"
                       title="Удалить"
@@ -322,15 +358,15 @@ export function DictionarySelectField({
                   </span>
                 ))
               ) : (
-                <span className="text-xs text-slate-400">
-                  {placeholder ?? "Выберите несколько..."}
+                <span className={cn(isLocked ? "italic text-slate-400 font-normal" : "text-xs text-slate-400")}>
+                  {displayPlaceholder}
                 </span>
               )}
             </div>
           )}
 
           {/* Кнопка сброса */}
-          {mode === "single" && singleValue && (
+          {!isEffectivelyDisabled && mode === "single" && singleValue && (
             <button
               type="button"
               onClick={handleClearSingle}
@@ -341,7 +377,7 @@ export function DictionarySelectField({
             </button>
           )}
 
-          {mode === "multi" && multiValues.length > 0 && (
+          {!isEffectivelyDisabled && mode === "multi" && multiValues.length > 0 && (
             <button
               type="button"
               onClick={handleClearAllMulti}
@@ -352,25 +388,35 @@ export function DictionarySelectField({
             </button>
           )}
 
-          <ChevronDown className={cn("h-3.5 w-3.5 text-slate-400 transition-transform", isOpen && "rotate-180")} />
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 text-slate-400 transition-transform",
+              isOpen && "rotate-180",
+              isEffectivelyDisabled && "opacity-40",
+            )}
+          />
         </div>
 
         {/* Правая ячейка: Кнопка «+» добавления нового элемента */}
         <button
           type="button"
+          disabled={isEffectivelyDisabled}
           onClick={(e) => {
             e.stopPropagation();
+            if (isEffectivelyDisabled) return;
             setIsAddOpen((prev) => !prev);
             setIsOpen(false);
             setActionError(null);
           }}
           className={cn(
             "flex w-9 shrink-0 items-center justify-center border-l border-[#e5e5e5] text-slate-500 rounded-r-[7px] transition-colors",
-            isAddOpen
-              ? "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
-              : "hover:bg-slate-50 hover:text-[#4a38f5]",
+            isEffectivelyDisabled
+              ? "opacity-40 cursor-not-allowed hover:bg-transparent hover:text-slate-500"
+              : isAddOpen
+                ? "bg-[#4a38f5] text-white hover:bg-[#3d2ee0]"
+                : "hover:bg-slate-50 hover:text-[#4a38f5]",
           )}
-          title="Добавить в справочник"
+          title={isLocked ? "Сначала выберите бренд" : "Добавить в справочник"}
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -535,8 +581,14 @@ export function DictionarySelectField({
         >
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-[#111111]">
-                Добавить в справочник
+              <span className="text-xs font-semibold text-[#111111] truncate pr-2">
+                {isModelCategory && brandName
+                  ? `Добавить модель для ${brandName}`
+                  : isModelCategory
+                    ? "Добавить модель"
+                    : category === "brand"
+                      ? "Добавить бренд"
+                      : "Добавить в справочник"}
               </span>
               <button
                 type="button"
@@ -567,7 +619,13 @@ export function DictionarySelectField({
                   setIsAddOpen(false);
                 }
               }}
-              placeholder="Введите наименование..."
+              placeholder={
+                isModelCategory
+                  ? "Название модели (например, GSN50)..."
+                  : category === "brand"
+                    ? "Название бренда (например, Toua)..."
+                    : "Введите наименование..."
+              }
               className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
 

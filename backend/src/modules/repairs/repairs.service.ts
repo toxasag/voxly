@@ -1726,8 +1726,12 @@ export class RepairsService {
         `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC`,
         [tenantId],
       );
-      const models = await tx.query<{ id: string; name: string; brand_name: string }>(
-        `SELECT id, name, brand_name FROM equipment_models WHERE tenant_id = $1 ORDER BY name ASC`,
+      const models = await tx.query<{ id: string; name: string; brand_id: string; brand_name: string }>(
+        `SELECT em.id, em.name, em.brand_id, COALESCE(eb.name, em.brand_name) AS brand_name
+         FROM equipment_models em
+         LEFT JOIN equipment_brands eb ON em.brand_id = eb.id
+         WHERE em.tenant_id = $1
+         ORDER BY em.name ASC`,
         [tenantId],
       );
       const accessories = await tx.query<{ id: string; name: string }>(
@@ -1742,9 +1746,109 @@ export class RepairsService {
       return {
         types: types.map((r) => ({ id: r.id, name: r.name })),
         brands: brands.map((r) => ({ id: r.id, name: r.name })),
-        models: models.map((r) => ({ id: r.id, name: r.name, brandName: r.brand_name })),
+        models: models.map((r) => ({ id: r.id, name: r.name, brandId: r.brand_id, brandName: r.brand_name })),
         accessories: accessories.map((r) => ({ id: r.id, name: r.name })),
         malfunctions: malfunctions.map((r) => ({ id: r.id, name: r.name })),
+      };
+    });
+  }
+
+  /**
+   * Retrieves all equipment brands for the tenant.
+   */
+  async listBrands(tenantId: string): Promise<Array<{ id: string; name: string }>> {
+    return withTenant(tenantId, async (tx) => {
+      return tx.query<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 ORDER BY name ASC`,
+        [tenantId],
+      );
+    });
+  }
+
+  /**
+   * Creates a new brand for the tenant.
+   */
+  async createBrand(tenantId: string, name: string): Promise<{ id: string; name: string }> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new ValidationError("Brand name cannot be empty", {});
+
+    return withTenant(tenantId, async (tx) => {
+      return tx.queryOneOrThrow<{ id: string; name: string }>(
+        `INSERT INTO equipment_brands (tenant_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name`,
+        [tenantId, trimmed],
+      );
+    });
+  }
+
+  /**
+   * Retrieves models for a specific brand in the tenant.
+   */
+  async listBrandModels(
+    tenantId: string,
+    brandId: string,
+  ): Promise<Array<{ id: string; name: string; brandId: string; brandName: string }>> {
+    return withTenant(tenantId, async (tx) => {
+      const brand = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, brandId],
+      );
+      if (!brand) {
+        throw new NotFoundError("Бренд не найден");
+      }
+
+      const rows = await tx.query<{ id: string; name: string; brand_id: string }>(
+        `SELECT id, name, brand_id
+         FROM equipment_models
+         WHERE tenant_id = $1 AND brand_id = $2
+         ORDER BY name ASC`,
+        [tenantId, brandId],
+      );
+
+      return rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        brandId: r.brand_id,
+        brandName: brand.name,
+      }));
+    });
+  }
+
+  /**
+   * Creates a model under a specific brand.
+   */
+  async createBrandModel(
+    tenantId: string,
+    brandId: string,
+    name: string,
+  ): Promise<{ id: string; name: string; brandId: string; brandName: string }> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new ValidationError("Model name cannot be empty", {});
+
+    return withTenant(tenantId, async (tx) => {
+      const brand = await tx.queryOne<{ id: string; name: string }>(
+        `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, brandId],
+      );
+      if (!brand) {
+        throw new NotFoundError("Бренд не найден");
+      }
+
+      const row = await tx.queryOneOrThrow<{ id: string; name: string; brand_id: string }>(
+        `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id, name, brand_id`,
+        [tenantId, brand.id, brand.name, trimmed],
+      );
+
+      return {
+        id: row.id,
+        name: row.name,
+        brandId: row.brand_id,
+        brandName: brand.name,
       };
     });
   }
@@ -1757,7 +1861,8 @@ export class RepairsService {
     category: string,
     name: string,
     brandName?: string,
-  ): Promise<{ id: string; name: string }> {
+    brandId?: string,
+  ): Promise<{ id: string; name: string; brandId?: string; brandName?: string }> {
     const trimmedName = name.trim();
     if (!trimmedName) throw new ValidationError("Name cannot be empty", {});
 
@@ -1765,14 +1870,51 @@ export class RepairsService {
       const table = this.getDictionaryTable(category);
 
       if (table === "equipment_models") {
-        const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
-          `INSERT INTO equipment_models (tenant_id, brand_name, name)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (tenant_id, brand_name, name) DO UPDATE SET name = EXCLUDED.name
-           RETURNING id, name`,
-          [tenantId, brandName?.trim() ?? "", trimmedName],
+        let targetBrandId = brandId;
+        let targetBrandName = brandName?.trim();
+
+        if (targetBrandId) {
+          const brandRow = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, targetBrandId],
+          );
+          if (!brandRow) {
+            throw new NotFoundError("Указанный бренд не найден");
+          }
+          targetBrandName = brandRow.name;
+        } else if (targetBrandName) {
+          let brandRow = await tx.queryOne<{ id: string; name: string }>(
+            `SELECT id, name FROM equipment_brands WHERE tenant_id = $1 AND lower(name) = lower($2)`,
+            [tenantId, targetBrandName],
+          );
+          if (!brandRow) {
+            brandRow = await tx.queryOneOrThrow<{ id: string; name: string }>(
+              `INSERT INTO equipment_brands (tenant_id, name)
+               VALUES ($1, $2)
+               ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
+               RETURNING id, name`,
+              [tenantId, targetBrandName],
+            );
+          }
+          targetBrandId = brandRow.id;
+          targetBrandName = brandRow.name;
+        } else {
+          throw new ValidationError("Для добавления модели необходимо указать бренд", {});
+        }
+
+        const row = await tx.queryOneOrThrow<{ id: string; name: string; brand_id: string }>(
+          `INSERT INTO equipment_models (tenant_id, brand_id, brand_name, name)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (tenant_id, brand_id, lower(name)) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id, name, brand_id`,
+          [tenantId, targetBrandId, targetBrandName, trimmedName],
         );
-        return row;
+        return {
+          id: row.id,
+          name: row.name,
+          brandId: row.brand_id,
+          brandName: targetBrandName,
+        };
       }
 
       const row = await tx.queryOneOrThrow<{ id: string; name: string }>(
@@ -1800,6 +1942,22 @@ export class RepairsService {
 
     return withTenant(tenantId, async (tx) => {
       const table = this.getDictionaryTable(category);
+
+      if (table === "equipment_brands") {
+        const row = await tx.queryOne<{ id: string; name: string }>(
+          `UPDATE equipment_brands SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
+          [trimmed, tenantId, id],
+        );
+        if (!row) {
+          throw new NotFoundError("Элемент справочника не найден");
+        }
+        await tx.query(
+          `UPDATE equipment_models SET brand_name = $1 WHERE tenant_id = $2 AND brand_id = $3`,
+          [trimmed, tenantId, id],
+        );
+        return row;
+      }
+
       const row = await tx.queryOne<{ id: string; name: string }>(
         `UPDATE ${table} SET name = $1 WHERE tenant_id = $2 AND id = $3 RETURNING id, name`,
         [trimmed, tenantId, id],

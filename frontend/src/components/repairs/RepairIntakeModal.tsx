@@ -126,6 +126,15 @@ function EquipmentCard({
     }
   }, [searchResult, item, onChange]);
 
+  // Находим id выбранного бренда для каскадной фильтрации моделей
+  const selectedBrandId = useMemo(() => {
+    if (!item.equipment_brand) return undefined;
+    const found = dictionaries.brands.find(
+      (b) => b.name.toLowerCase() === item.equipment_brand.trim().toLowerCase(),
+    );
+    return found?.id;
+  }, [dictionaries.brands, item.equipment_brand]);
+
   return (
     <fieldset className="space-y-3.5 rounded-lg border border-[#e5e5e5] p-4 bg-slate-50/50 shadow-2xs relative">
       <div className="flex items-center justify-between border-b border-[#e5e5e5] pb-2.5">
@@ -181,7 +190,15 @@ function EquipmentCard({
           placeholder="Выберите бренд..."
           items={dictionaries.brands}
           value={item.equipment_brand}
-          onChange={(val) => onChange({ ...item, equipment_brand: val as string })}
+          onChange={(val) => {
+            const nextBrand = (val as string) || "";
+            const isDifferent = nextBrand.trim().toLowerCase() !== item.equipment_brand.trim().toLowerCase();
+            onChange({
+              ...item,
+              equipment_brand: nextBrand,
+              equipment_model: isDifferent ? "" : item.equipment_model,
+            });
+          }}
           error={errors.equipment_brand}
         />
       </div>
@@ -194,8 +211,9 @@ function EquipmentCard({
           icon={Layers}
           category="model"
           brandName={item.equipment_brand}
+          brandId={selectedBrandId}
           mode="single"
-          placeholder="Выберите модель..."
+          placeholder={item.equipment_brand ? "Выберите модель..." : "Сначала выберите бренд"}
           items={dictionaries.models}
           value={item.equipment_model}
           onChange={(val) => onChange({ ...item, equipment_model: val as string })}
