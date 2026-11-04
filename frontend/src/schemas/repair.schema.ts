@@ -1,11 +1,24 @@
 import { z } from "zod";
 
+const digitsOnly = (lengths: number[], label: string) =>
+  z.string().refine(
+    (v) => v === "" || (/^\d+$/.test(v) && lengths.includes(v.length)),
+    `${label} must contain ${lengths.join(" or ")} digits`,
+  );
+
 export const createRepairSchema = z.object({
   deal_id: z.string().optional().or(z.literal("")),
   customer_id: z.string().optional().or(z.literal("")),
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Phone is required").max(30),
+  customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  company_id: z.string().optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: digitsOnly([10, 12], "ИНН").optional().or(z.literal("")),
+  company_ogrn: digitsOnly([13, 15], "ОГРН").optional().or(z.literal("")),
+  company_bik: digitsOnly([9], "БИК").optional().or(z.literal("")),
+  company_account_number: digitsOnly([20], "Расчетный счет").optional().or(z.literal("")),
+  company_legal_address: z.string().max(300).optional().or(z.literal("")),
   equipment_type: z.string().min(1, "Equipment type is required"),
   equipment_brand: z.string().min(1, "Brand is required").max(100),
   equipment_model: z.string().min(1, "Model is required").max(100),
