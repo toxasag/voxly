@@ -171,4 +171,81 @@ describe("RepairsService Client & Deal Integration", () => {
     expect(res.dealId).toBe(newDealId);
     expect(res.customerId).toBe(existingContactId);
   });
+
+  it("handles company requisites and deduplication by INN (Mode 4)", async () => {
+    const existingCompanyId = "66666666-6666-6666-6666-666666666666";
+    const newContactId = "77777777-7777-7777-7777-777777777777";
+    const pipelineId = "88888888-8888-8888-8888-888888888888";
+    const stageId = "99999999-9999-9999-9999-999999999999";
+    const newDealId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const repairOrderId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+    // 1. allocateTicketNumber: queryOneOrThrow
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({ last_number: 3 });
+    // 2. find existing company by INN: queryOne
+    mockTxQueryOne.mockResolvedValueOnce({ id: existingCompanyId });
+    // 3. find existing contact by phone: queryOne (null)
+    mockTxQueryOne.mockResolvedValueOnce(null);
+    // 4. insert contact: queryOneOrThrow
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({ id: newContactId });
+    // 5. find default pipeline: queryOne
+    mockTxQueryOne.mockResolvedValueOnce({ id: pipelineId });
+    // 6. find stage: queryOneOrThrow
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({ id: stageId });
+    // 7. insert deal: queryOneOrThrow
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({ id: newDealId });
+    // 8. insert repair_order: queryOneOrThrow
+    mockTxQueryOneOrThrow.mockResolvedValueOnce({
+      id: repairOrderId,
+      tenant_id: tenantId,
+      ticket_number: "ЗН-2026-0003",
+      deal_id: newDealId,
+      customer_id: newContactId,
+      customer_name: "Ольга Морозова",
+      customer_phone: "+79991112233",
+      equipment_type: "printer",
+      equipment_brand: "HP",
+      equipment_model: "LaserJet Pro",
+      equipment_serial: "",
+      package_contents: "",
+      appearance: "",
+      defect_description: "Замятие бумаги",
+      defect_photos: [],
+      status: "intake",
+      priority: "normal",
+      master_id: author.id,
+      master_name: author.name,
+      estimated_cost: "4500",
+      final_cost: null,
+      notes: "",
+      diagnostics: null,
+      received_at: new Date(),
+      completed_at: null,
+      delivered_at: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const payload: CreateRepairPayload = {
+      customer_name: "Ольга Морозова",
+      customer_phone: "+79991112233",
+      company_name: "ООО Альфа",
+      company_inn: "7701234567",
+      company_legal_address: "г. Москва, ул. Ленина, д. 1",
+      equipment_type: "printer",
+      equipment_brand: "HP",
+      equipment_model: "LaserJet Pro",
+      defect_description: "Постоянное замятие бумаги в лотке 2",
+      master_id: author.id,
+      master_name: author.name,
+      priority: "normal",
+      estimated_cost: 4500,
+    };
+
+    const res = await service.create(tenantId, author, payload);
+
+    expect(res.id).toBe(repairOrderId);
+    expect(res.dealId).toBe(newDealId);
+    expect(res.customerId).toBe(newContactId);
+  });
 });

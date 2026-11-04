@@ -19,15 +19,46 @@ vi.mock("@/lib/api/use-deals", () => ({
     data: { items: [], total: 0 },
     isLoading: false,
   }),
+  useCreateDeal: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  usePipelines: () => ({
+    data: [],
+    isLoading: false,
+  }),
+  useKanban: () => ({
+    data: [],
+    isLoading: false,
+  }),
 }));
 
 vi.mock("@/lib/api/use-contacts", () => ({
+  useContacts: () => ({
+    data: { items: [], total: 0 },
+    isLoading: false,
+  }),
+  useContact: () => ({
+    data: null,
+    isLoading: false,
+  }),
   useContactLookup: () => ({
     data: null,
     isFetching: false,
   }),
   useFindDuplicateContacts: () => ({
     data: [],
+    isLoading: false,
+  }),
+}));
+
+vi.mock("@/lib/api/use-companies", () => ({
+  useCompanies: () => ({
+    data: { items: [], total: 0 },
+    isLoading: false,
+  }),
+  useCompany: () => ({
+    data: null,
     isLoading: false,
   }),
 }));
