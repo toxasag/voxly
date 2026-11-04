@@ -174,12 +174,20 @@ export function isPlaceholderName(
     full === "не указано" ||
     full === "неизвестно" ||
     full === "лид" ||
-    full === "lead"
+    full === "lead" ||
+    full === "отладчик" ||
+    full === "debugger" ||
+    full === "тестер" ||
+    full === "tester" ||
+    full === "тестировщик"
   ) {
     return true;
   }
 
   if (/^noname\d*$/i.test(full)) return true;
+  if (/^(?:отладчик|тестер|тестировщик|debugger|tester)(?:\s*[\+\d\s\(\)\-_a-zа-яё]+)?$/i.test(full)) {
+    return true;
+  }
   // «Клиент +79102470980», «Клиент 79102470980», «Клиент (Онлайн-чат)»
   if (/^клиент(?:\s*[\+\d\s\(\)\-_a-zа-яё]+)?$/i.test(full) && !/^[А-ЯЁ][а-яё]+$/.test(f)) {
     return true;
@@ -227,6 +235,19 @@ export function extractNameFromText(text: string | null | undefined): {
     "менеджер",
     "врач",
     "косметолог",
+    "отладчик",
+    "тестер",
+    "тестировщик",
+    "программист",
+    "разработчик",
+    "админ",
+    "администратор",
+    "робот",
+    "бот",
+    "гость",
+    "человек",
+    "лид",
+    "lead",
     "хочу",
     "могу",
     "буду",
@@ -320,6 +341,30 @@ export function extractNameFromText(text: string | null | undefined): {
         }
       }
       return { firstName, lastName };
+    }
+  }
+
+  // 5. «[Имя] я» («антон я, мой номер...», «Иван я», «Наталья я»)
+  const invertedIAmMatch = text.match(
+    /(?:^|[.!?\n]\s*)([А-ЯЁ][а-яё]+)\s+я(?:[,\.\s]|$)/i,
+  );
+  if (invertedIAmMatch && invertedIAmMatch[1]) {
+    const rawFirst = invertedIAmMatch[1].trim();
+    if (!stopWords.has(rawFirst.toLowerCase()) && rawFirst.length >= 2) {
+      const firstName = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase();
+      return { firstName };
+    }
+  }
+
+  // 6. «[Имя], [мой номер / тел / контакты] ...» («Антон, 8915...», «Антон: мой номер +7915...»)
+  const nameWithPhoneMatch = text.match(
+    /(?:^|[.!?\n]\s*)([А-ЯЁ][а-яё]+)[,\s:]+(?:мой\s+номер|мой\s+телефон|мои\s+контакты|тел|телефон|номер|phone)?\s*[:—\-]?\s*(?:\+?7|8|\+?[1-9]\d{1,3})/i,
+  );
+  if (nameWithPhoneMatch && nameWithPhoneMatch[1]) {
+    const rawFirst = nameWithPhoneMatch[1].trim();
+    if (!stopWords.has(rawFirst.toLowerCase()) && rawFirst.length >= 2) {
+      const firstName = rawFirst.charAt(0).toUpperCase() + rawFirst.slice(1).toLowerCase();
+      return { firstName };
     }
   }
 

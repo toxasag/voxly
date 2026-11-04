@@ -3,6 +3,7 @@ import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
+import { extractNameFromText } from "../crm/identity-resolution.js";
 import { preChatModalService } from "../analytics/prechat-modal.service.js";
 
 // ---------------------------------------------------------------------------
@@ -716,9 +717,17 @@ export class WebchatService {
     // Метаданные источника сохраняются непосредственно в source_metadata контакта и сделки.
     const crmInboundText = effectiveText;
 
+    let detectedName = input.senderName?.trim();
+    if (!detectedName && crmInboundText) {
+      const extracted = extractNameFromText(crmInboundText);
+      if (extracted?.firstName) {
+        detectedName = `${extracted.firstName} ${extracted.lastName || ""}`.trim();
+      }
+    }
+
     const senderDisplayName =
-      input.senderName && input.senderName.trim().length > 0
-        ? input.senderName.trim()
+      detectedName && detectedName.length > 0
+        ? detectedName
         : `Посетитель сайта (${input.visitorId.slice(-4)})`;
 
     // 1. Создаем или находим контакт и сделку в CRM.

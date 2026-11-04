@@ -3791,6 +3791,65 @@
       return m ? m[0].toLowerCase() : null;
     }
 
+    function extractClientName(val) {
+      if (!val || typeof val !== 'string') return null;
+      var cl = val.trim();
+      var stopWords = [
+        'отладчик', 'тестер', 'тестировщик', 'клиент', 'посетитель', 'пользователь',
+        'заказчик', 'мастер', 'директор', 'менеджер', 'хочу', 'могу', 'буду', 'ищу',
+        'прошу', 'думаю', 'не', 'уже', 'тоже', 'очень', 'просто', 'только', 'сейчас',
+        'тут', 'здесь', 'привет', 'здравствуйте', 'добрый', 'день', 'вечер', 'утро'
+      ];
+
+      // 1. «меня зовут [Имя] [Фамилия]» или «мое имя [Имя]»
+      var m1 = cl.match(/(?:меня\s+зовут|мое\s+имя|моё\s+имя|зовут\s+меня|зовут)\s+([А-ЯЁа-яё]{2,20})(?:\s+([А-ЯЁа-яё]{2,20}))?/i);
+      if (m1 && m1[1]) {
+        var raw1 = m1[1].trim();
+        if (stopWords.indexOf(raw1.toLowerCase()) === -1) {
+          var first1 = raw1.charAt(0).toUpperCase() + raw1.slice(1).toLowerCase();
+          if (m1[2] && stopWords.indexOf(m1[2].toLowerCase()) === -1) {
+            var last1 = m1[2].trim().charAt(0).toUpperCase() + m1[2].trim().slice(1).toLowerCase();
+            return first1 + ' ' + last1;
+          }
+          return first1;
+        }
+      }
+
+      // 2. «я [Имя]» или «это [Имя]»
+      var m2 = cl.match(/(?:^|[.!?\n]\s*)(?:я|это)\s+([А-ЯЁа-яё]{2,20})(?:\s+([А-ЯЁа-яё]{2,20}))?(?:[,\.\s]|$)/i);
+      if (m2 && m2[1]) {
+        var raw2 = m2[1].trim();
+        if (stopWords.indexOf(raw2.toLowerCase()) === -1) {
+          var first2 = raw2.charAt(0).toUpperCase() + raw2.slice(1).toLowerCase();
+          if (m2[2] && stopWords.indexOf(m2[2].toLowerCase()) === -1) {
+            var last2 = m2[2].trim().charAt(0).toUpperCase() + m2[2].trim().slice(1).toLowerCase();
+            return first2 + ' ' + last2;
+          }
+          return first2;
+        }
+      }
+
+      // 3. «[Имя] я, ...» («антон я, мой номер...»)
+      var m3 = cl.match(/(?:^|[.!?\n]\s*)([А-ЯЁа-яё]{2,20})\s+я(?:[,\.\s]|$)/i);
+      if (m3 && m3[1]) {
+        var raw3 = m3[1].trim();
+        if (stopWords.indexOf(raw3.toLowerCase()) === -1) {
+          return raw3.charAt(0).toUpperCase() + raw3.slice(1).toLowerCase();
+        }
+      }
+
+      // 4. «[Имя], [номер]» или «[Имя], мой номер / телефон ...»
+      var m4 = cl.match(/(?:^|[.!?\n]\s*)([А-ЯЁа-яё]{2,20})[,\s:]+(?:мой\s+номер|мой\s+телефон|мои\s+контакты|тел|телефон|номер|phone)?\s*[:—\-]?\s*(?:\+?7|8|\+?[1-9]\d{1,3})/i);
+      if (m4 && m4[1]) {
+        var raw4 = m4[1].trim();
+        if (stopWords.indexOf(raw4.toLowerCase()) === -1) {
+          return raw4.charAt(0).toUpperCase() + raw4.slice(1).toLowerCase();
+        }
+      }
+
+      return null;
+    }
+
     function handleUserSubmit() {
       var text = inputEl.value.trim();
       if (!text && !pendingAttachment) return;
@@ -3815,6 +3874,10 @@
         var parsedEmail = extractClientEmail(text);
         if (parsedEmail) {
           safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, parsedEmail);
+        }
+        var parsedName = extractClientName(text);
+        if (parsedName && !safeStorage.getItem(STORAGE_KEY_LEAD_NAME)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_NAME, parsedName);
         }
       }
 
@@ -3847,16 +3910,20 @@
       try {
         var detectedPhone = extractClientPhone(fullText);
         var detectedEmail = extractClientEmail(fullText);
+        var detectedName = extractClientName(fullText);
         if (detectedPhone && !safeStorage.getItem(STORAGE_KEY_LEAD_PHONE)) {
           safeStorage.setItem(STORAGE_KEY_LEAD_PHONE, detectedPhone);
         }
         if (detectedEmail && !safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL)) {
           safeStorage.setItem(STORAGE_KEY_LEAD_EMAIL, detectedEmail);
         }
+        if (detectedName && !safeStorage.getItem(STORAGE_KEY_LEAD_NAME)) {
+          safeStorage.setItem(STORAGE_KEY_LEAD_NAME, detectedName);
+        }
 
         var storedPhone = safeStorage.getItem(STORAGE_KEY_LEAD_PHONE) || detectedPhone || undefined;
         var storedEmail = safeStorage.getItem(STORAGE_KEY_LEAD_EMAIL) || detectedEmail || undefined;
-        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || undefined;
+        var storedName = safeStorage.getItem(STORAGE_KEY_LEAD_NAME) || detectedName || undefined;
 
         var payload = {
           visitorId: visitorId,

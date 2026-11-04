@@ -754,7 +754,7 @@ export class CrmPipelineService {
              SET title = 'Заявка от ' || $1 || ' (' || $2 || ')',
                  updated_at = now()
              WHERE id = $3 AND tenant_id = $4
-               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%')`,
+               AND (title ILIKE 'Заявка от Клиент%' OR title ILIKE 'Заявка от Посетитель%' OR title ILIKE 'Заявка от +%' OR title ILIKE 'Заявка от Отладчик%')`,
             [resolvedContactName, this.channelLabel(input.channel), activeDeal.id, input.tenantId],
           );
         }
