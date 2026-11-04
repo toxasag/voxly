@@ -50,10 +50,14 @@ export interface RepairTicket {
   deal_id?: string | null;
   deal_title?: string | null;
   deal_note?: string | null;
+  deal_budget?: number | null;
+  deal_stage_name?: string | null;
+  company_id?: string | null;
   company_name?: string | null;
   company_inn?: string | null;
   customer_name: string;
   customer_phone: string;
+  customer_email?: string | null;
   customer_id: string;
   equipment: EquipmentInfo;
   defect_description: string;

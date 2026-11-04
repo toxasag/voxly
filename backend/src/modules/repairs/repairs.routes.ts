@@ -8,6 +8,7 @@ import {
   createPartSchema,
   createPhotoSchema,
   createRepairSchema,
+  createRepairServiceCatalogSchema,
   createWorkSchema,
   renameDictionaryItemSchema,
   repairPrioritySchema,
@@ -169,6 +170,26 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
   app.get("/equipment/history", { onRequest: canRead }, async (request, reply) => {
     const { serial } = serialQuerySchema.parse(request.query);
     const result = await service.searchEquipmentBySerial(request.tenant_id, serial);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/catalog/services — catalog of repair services
+  app.get("/catalog/services", { onRequest: canRead }, async (request, reply) => {
+    const services = await service.listServicesCatalog(request.tenant_id);
+    return reply.send({ data: services });
+  });
+
+  // POST /repairs/catalog/services — add service to catalog
+  app.post("/catalog/services", { onRequest: canWrite }, async (request, reply) => {
+    const body = createRepairServiceCatalogSchema.parse(request.body);
+    const item = await service.addServiceToCatalog(request.tenant_id, body);
+    return reply.status(201).send({ data: item });
+  });
+
+  // DELETE /repairs/catalog/services/:id — delete service from catalog
+  app.delete("/catalog/services/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.deleteServiceFromCatalog(request.tenant_id, id);
     return reply.send({ data: result });
   });
 
