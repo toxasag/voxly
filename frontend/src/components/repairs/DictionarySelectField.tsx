@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { toast } from "sonner";
 import {
   AlertTriangle,
   Check,
@@ -162,8 +163,11 @@ export function DictionarySelectField({
     onChange([]);
   };
 
-  const handleAddNewItem = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddNewItem = async (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     const trimmed = newItemName.trim();
     if (!trimmed) return;
 
@@ -185,9 +189,11 @@ export function DictionarySelectField({
       setNewItemName("");
       setIsAddOpen(false);
       setActionError(null);
+      toast.success(`Добавлено в справочник: ${trimmed}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Не удалось добавить элемент";
       setActionError(msg);
+      toast.error(msg);
     }
   };
 
@@ -524,16 +530,21 @@ export function DictionarySelectField({
       {isAddOpen && (
         <div
           ref={addPopoverRef}
+          onClick={(e) => e.stopPropagation()}
           className="absolute right-0 top-full z-50 mt-1 w-72 rounded-[8px] border border-[#e5e5e5] bg-white p-3 shadow-xl"
         >
-          <form onSubmit={handleAddNewItem} className="space-y-2">
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-[#111111]">
                 Добавить в справочник
               </span>
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsAddOpen(false);
+                }}
                 className="text-slate-400 hover:text-slate-600"
               >
                 <X className="h-3.5 w-3.5" />
@@ -545,6 +556,17 @@ export function DictionarySelectField({
               autoFocus
               value={newItemName}
               onChange={(e) => setNewItemName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleAddNewItem(e);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsAddOpen(false);
+                }
+              }}
               placeholder="Введите наименование..."
               className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-slate-400 focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
             />
@@ -552,13 +574,22 @@ export function DictionarySelectField({
             <div className="flex items-center justify-end gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIsAddOpen(false)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsAddOpen(false);
+                }}
                 className="h-7 rounded-[6px] border border-[#e5e5e5] px-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
                 Отмена
               </button>
               <button
-                type="submit"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleAddNewItem(e);
+                }}
                 disabled={!newItemName.trim() || addMutation.isPending}
                 className="flex h-7 items-center gap-1 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] disabled:opacity-50"
               >
@@ -570,7 +601,7 @@ export function DictionarySelectField({
                 Добавить
               </button>
             </div>
-          </form>
+          </div>
         </div>
       )}
     </div>

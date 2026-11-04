@@ -31,6 +31,7 @@ import {
   type ServiceDictionariesDTO,
 } from "@/lib/api/use-repairs";
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet";
+import { toast } from "sonner";
 import { RepairClientSection } from "./RepairClientSection";
 import { DictionarySelectField } from "./DictionarySelectField";
 import { EquipmentRepairHistorySheet } from "./EquipmentRepairHistorySheet";
@@ -299,7 +300,7 @@ export interface RepairIntakeModalProps {
   open: boolean;
   onClose: () => void;
   // Поддерживает и одиночный, и пакетный CreateRepairPayload
-  onSubmit: (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }, photos: File[]) => void;
+  onSubmit: (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }, photos: File[]) => void | Promise<void>;
   initialCustomerId?: string;
   initialDealId?: string | null;
   isSubmitting?: boolean;
@@ -490,8 +491,11 @@ export function RepairIntakeModal({
   const serialHistorySearch = useSearchEquipmentBySerial(historySerial);
 
   const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
+    async (e?: React.FormEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
 
       // Валидация полей карточек оборудования
       const newErrors: Record<string, Record<string, string>> = {};
@@ -556,8 +560,13 @@ export function RepairIntakeModal({
         equipments: batchEquipments,
       };
 
-      onSubmit(finalPayload, photos);
-      onClose();
+      try {
+        await onSubmit(finalPayload, photos);
+        onClose();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Ошибка при сохранении наряда";
+        toast.error(msg);
+      }
     },
     [equipments, form, photoPreviews, onSubmit, photos, onClose],
   );
@@ -585,7 +594,14 @@ export function RepairIntakeModal({
         </SheetHeader>
 
         <SheetContent className="flex flex-col h-full bg-white text-[#111111]">
-          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void handleSubmit(e);
+            }}
+            className="flex flex-col flex-1 min-h-0"
+          >
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
               {/* Блок «Клиент и сделка» (с множественными контактами) */}
               <RepairClientSection form={form} initialCustomerId={initialCustomerId} />
@@ -673,9 +689,14 @@ export function RepairIntakeModal({
                   </label>
                   <select
                     value={form.watch("master_id")}
-                    onChange={(e) =>
-                      form.setValue("master_id", e.target.value, { shouldValidate: true })
-                    }
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      form.setValue("master_id", id, { shouldValidate: true });
+                      const m = teamMembers.find((item) => item.id === id);
+                      if (m) {
+                        form.setValue("master_name", m.fullName, { shouldValidate: true });
+                      }
+                    }}
                     className={cn(
                       "w-full rounded-lg border bg-white py-2 px-3 text-sm text-[#111111] appearance-none focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20",
                       errors.master_id ? "border-rose-500" : "border-[#e5e5e5]",
@@ -715,7 +736,12 @@ export function RepairIntakeModal({
                 Отмена
               </button>
               <button
-                type="submit"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleSubmit(e);
+                }}
                 disabled={isSubmitting}
                 className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3b2be0] disabled:opacity-50 disabled:cursor-not-allowed"
               >
