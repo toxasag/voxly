@@ -844,7 +844,7 @@ export class CrmPipelineService {
                   source: "system",
                   direction: "neutral",
                   content: `Получены контактные данные клиента (${contactIdentifier}). Сделка автоматически переведена из этапа «Первый контакт» в «Новый лид».`,
-                  channel: input.channel,
+                  channel: "system",
                   channel_account_id: input.channelAccountId,
                 },
                 "neutral",

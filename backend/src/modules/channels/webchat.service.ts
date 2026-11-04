@@ -976,6 +976,9 @@ export class WebchatService {
          WHERE m.tenant_id = $1
            AND m.channel_account_id = $2
            AND m.channel = 'webchat'
+           AND m.direction IN ('inbound', 'outbound')
+           AND m.source NOT IN ('system', 'internal_note', 'audit')
+           AND m.sender_name != 'Система'
            AND (
              c.socials @> $3::jsonb
              OR c.custom_fields->>'webchat_visitor_id' = $4
@@ -996,7 +999,26 @@ export class WebchatService {
       ),
     );
 
-    return rows.map((r) => {
+    return rows
+      .filter((r) => {
+        // Защита от утечки системных логов/событий CRM в публичный чат посетителя
+        if (r.direction !== "inbound" && r.direction !== "outbound") return false;
+        if (r.source === "system" || r.source === "internal_note" || r.source === "audit") return false;
+        if (r.sender_name === "Система") return false;
+        const text = r.content || "";
+        if (
+          text.includes("Сделка автоматически переведена") ||
+          text.includes("Получены контактные данные клиента") ||
+          text.includes("Создан лид") ||
+          text.includes("Лид создан") ||
+          text.startsWith("Лид №") ||
+          text.includes("Сделка автоматически закрыта")
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((r) => {
       let content = r.content;
       if (r.direction === "inbound") {
         content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();
