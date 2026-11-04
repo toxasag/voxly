@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 export const createRepairSchema = z.object({
-  customer_id: z.string().min(1, "Customer is required"),
+  deal_id: z.string().optional().or(z.literal("")),
+  customer_id: z.string().optional().or(z.literal("")),
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Phone is required").max(30),
+  company_name: z.string().max(200).optional().or(z.literal("")),
   equipment_type: z.string().min(1, "Equipment type is required"),
   equipment_brand: z.string().min(1, "Brand is required").max(100),
   equipment_model: z.string().min(1, "Model is required").max(100),

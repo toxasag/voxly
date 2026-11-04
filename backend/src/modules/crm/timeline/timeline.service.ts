@@ -142,6 +142,9 @@ export class TimelineService {
             'channel', m.channel,
             'content', m.content,
             'text', m.content,
+            'attachment', m.attachment,
+            'attachmentType', m.attachment_type,
+            'metadata', m.metadata,
             'deliveryStatus', m.delivery_status
           ) AS event_data
         FROM deal_messages m

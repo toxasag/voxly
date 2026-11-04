@@ -415,6 +415,7 @@ CREATE TABLE IF NOT EXISTS deal_messages (
   channel TEXT NOT NULL DEFAULT 'system',
   attachment TEXT,
   attachment_type TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   -- Доставка исходящего в канал. Хранится на строке сообщения, а не тостом на
   -- фронте: тост исчезает, а неотправленное сообщение осталось бы висеть в
   -- таймлайне как отправленное. `neutral` — доставлять некуда (входящие,
@@ -569,6 +570,7 @@ CREATE TABLE IF NOT EXISTS repair_orders (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   ticket_number TEXT NOT NULL,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
   customer_id UUID NOT NULL,
   customer_name TEXT NOT NULL,
   customer_phone TEXT NOT NULL,
@@ -624,6 +626,8 @@ ALTER TABLE repair_works ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tena
 ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
 
 ALTER TABLE repair_orders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE repair_orders ADD COLUMN IF NOT EXISTS deal_id UUID REFERENCES deals(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_repair_orders_deal_id ON repair_orders(tenant_id, deal_id) WHERE deal_id IS NOT NULL;
 
 -- Technician notes and status-change log for a repair order
 CREATE TABLE IF NOT EXISTS repair_notes (
@@ -1327,6 +1331,7 @@ CREATE INDEX IF NOT EXISTS idx_companies_tenant_id ON companies(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deals_tenant_id ON deals(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_tenant_id ON deal_messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_deal_messages_channel_account_id ON deal_messages(channel_account_id);
+CREATE INDEX IF NOT EXISTS idx_deal_messages_metadata_gin ON deal_messages USING gin (metadata);
 CREATE INDEX IF NOT EXISTS idx_contacts_telegram_chat_id ON contacts(tenant_id, telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;
 -- Поиск контакта по любому из его номеров и мессенджеров идёт по JSONB: без GIN
 -- crm-pipeline читал бы таблицу целиком на каждое входящее сообщение.

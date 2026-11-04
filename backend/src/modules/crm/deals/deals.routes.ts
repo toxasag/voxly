@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { DealsService } from "./deals.service.js";
 import { DealMessagingService } from "./deal-messaging.service.js";
+import { mediaEnrichmentService } from "../media/media-enrichment.service.js";
 import {
   createDealMessageSchema,
   createDealSchema,
@@ -16,6 +17,7 @@ import { ensureTenantDefaults } from "../../tenant/tenant-defaults.js";
 const listQuerySchema = z.object({
   pipeline_id: z.string().uuid().optional(),
   stage_id: z.string().uuid().optional(),
+  status: z.enum(["active", "won", "lost", "all"]).optional(),
   search: z.string().max(200).optional(),
   /** Фильтры для секций «Сделки» на карточках контакта и компании. */
   contact_id: z.string().uuid().optional(),
@@ -48,12 +50,13 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /deals — paginated list
   app.get("", { onRequest: canRead }, async (request, reply) => {
-    const { pipeline_id, stage_id, search, contact_id, company_id, limit, offset } =
+    const { pipeline_id, stage_id, status, search, contact_id, company_id, limit, offset } =
       listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
       pipelineId: pipeline_id,
       stageId: stage_id,
+      status,
       search,
       contactId: contact_id,
       companyId: company_id,
@@ -211,6 +214,28 @@ export async function dealsRoutes(app: FastifyInstance): Promise<void> {
     const messages = await service.listMessages(request.tenant_id, id);
 
     return reply.send({ data: messages, meta: { total: messages.length } });
+  });
+
+  // Пакетное обогащение всех медиа-вложений в переписке сделки
+  app.post("/:id/enrich-media", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const count = await mediaEnrichmentService.batchEnrichDealMessages(request.tenant_id, id);
+    const messages = await service.listMessages(request.tenant_id, id);
+    return reply.send({ data: { enrichedCount: count, messages } });
+  });
+
+  // Обогащение конкретного сообщения в сделке
+  app.post("/:id/messages/:messageId/enrich", { onRequest: canWrite }, async (request, reply) => {
+    const { messageId } = request.params as { messageId: string };
+    const updated = await mediaEnrichmentService.enrichMessageMedia(request.tenant_id, messageId);
+    return reply.send({ data: updated });
+  });
+
+  // Транскрибация аудиосообщения в сделке
+  app.post("/:id/messages/:messageId/transcribe", { onRequest: canWrite }, async (request, reply) => {
+    const { messageId } = request.params as { messageId: string };
+    const transcript = await mediaEnrichmentService.transcribeAudioMessage(request.tenant_id, messageId);
+    return reply.send({ data: transcript });
   });
 
   // GET /deals/:id/contact-history — сквозная история контакта и LTV для карточки сделки

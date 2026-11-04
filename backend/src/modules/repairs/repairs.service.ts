@@ -38,9 +38,11 @@ import {
   type TransactionClient,
 } from "../../db/client.js";
 import { AppError, NotFoundError, ValidationError } from "../../plugins/errorHandler.js";
+import { normalizePhoneToE164 } from "../crm/contacts/dedupe.service.js";
+import { ensureTenantDefaults } from "../tenant/tenant-defaults.js";
 
 const ORDER_COLUMNS = `
-  id, tenant_id, ticket_number, customer_id, customer_name, customer_phone,
+  id, tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
   equipment_type, equipment_brand, equipment_model, equipment_serial,
   package_contents, appearance, defect_description, defect_photos,
   status, priority, master_id, master_name, estimated_cost, final_cost,
@@ -279,19 +281,143 @@ export class RepairsService {
       const ticketNumber = await this.allocateTicketNumber(tx, tenantId);
       const photos = payload.defect_photos ?? [];
 
+      let customerId = payload.customer_id ? payload.customer_id.trim() : "";
+      let dealId = payload.deal_id ? payload.deal_id.trim() : "";
+      let companyId: string | null = null;
+
+      // 1. Если передана сделка (Режим 1: Выбор существующей активной сделки)
+      if (dealId) {
+        const deal = await tx.queryOne<{ id: string; contact_id: string | null; company_id: string | null }>(
+          `SELECT id, contact_id, company_id FROM deals WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+          [tenantId, dealId],
+        );
+        if (deal === null) throw new NotFoundError("Выбранная сделка не найдена");
+        dealId = deal.id;
+        companyId = deal.company_id;
+        if (!customerId && deal.contact_id) {
+          customerId = deal.contact_id;
+        }
+      }
+
+      // 2. Если сделка не выбрана или требуется верификация контакта (Режим 2: Новый клиент / сделка)
+      if (!customerId) {
+        // Проверяем дедупликацию по номеру телефона
+        const canonicalPhone = normalizePhoneToE164(payload.customer_phone);
+        if (canonicalPhone) {
+          const last10 = canonicalPhone.slice(-10);
+          const existingContact = await tx.queryOne<{ id: string; company_id: string | null }>(
+            `SELECT id, company_id FROM contacts
+             WHERE tenant_id = $1 AND deleted_at IS NULL
+               AND (
+                 phone = $2
+                 OR phone LIKE '%' || $3
+                 OR whatsapp = $2
+                 OR whatsapp LIKE '%' || $3
+                 OR EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(additional_phones) AS p
+                   WHERE (p->>'number') LIKE '%' || $3
+                 )
+               )
+             ORDER BY created_at ASC LIMIT 1`,
+            [tenantId, canonicalPhone, last10],
+          );
+          if (existingContact) {
+            customerId = existingContact.id;
+            if (!companyId) companyId = existingContact.company_id;
+          }
+        }
+
+        // Если контакт так и не найден — создаём новый контакт
+        if (!customerId) {
+          const rawName = payload.customer_name.trim();
+          const parts = rawName.split(/\s+/);
+          const firstName = parts[0] || rawName;
+          const lastName = parts.slice(1).join(" ");
+
+          if (payload.company_name && payload.company_name.trim()) {
+            const compName = payload.company_name.trim();
+            const existingComp = await tx.queryOne<{ id: string }>(
+              `SELECT id FROM companies WHERE tenant_id = $1 AND lower(btrim(name)) = lower($2) AND deleted_at IS NULL LIMIT 1`,
+              [tenantId, compName],
+            );
+            if (existingComp) {
+              companyId = existingComp.id;
+            } else {
+              const newComp = await tx.queryOneOrThrow<{ id: string }>(
+                `INSERT INTO companies (tenant_id, name, notes) VALUES ($1, $2, 'Создана автоматически при приёмке в ремонт') RETURNING id`,
+                [tenantId, compName],
+              );
+              companyId = newComp.id;
+            }
+          }
+
+          const newContact = await tx.queryOneOrThrow<{ id: string }>(
+            `INSERT INTO contacts (tenant_id, first_name, last_name, phone, company_name, company_id, channel, notes, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, 'direct', 'Создан автоматически при приёмке оборудования в ремонт', $7)
+             RETURNING id`,
+            [tenantId, firstName, lastName, canonicalPhone || payload.customer_phone, payload.company_name ?? "", companyId, author.id],
+          );
+          customerId = newContact.id;
+        }
+      }
+
+      // 3. Если сделки всё ещё нет — создаём её автоматически в CRM на стартовом этапе воронки
+      if (!dealId) {
+        let pipelineRow = await tx.queryOne<{ id: string }>(
+          `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
+          [tenantId],
+        );
+        if (!pipelineRow) {
+          await ensureTenantDefaults(tenantId);
+          pipelineRow = await tx.queryOneOrThrow<{ id: string }>(
+            `SELECT id FROM pipelines WHERE tenant_id = $1 ORDER BY sort_order ASC, created_at ASC LIMIT 1`,
+            [tenantId],
+          );
+        }
+
+        const stageRow = await tx.queryOneOrThrow<{ id: string }>(
+          `SELECT id FROM stages
+           WHERE pipeline_id = $1 AND is_won = false AND is_lost = false
+           ORDER BY sort_order ASC LIMIT 1`,
+          [pipelineRow.id],
+        );
+
+        const dealTitle = `Ремонт: ${payload.equipment_brand} ${payload.equipment_model}`;
+        const dealDesc = `Приёмка оборудования в ремонт ${ticketNumber}: ${payload.equipment_type} ${payload.equipment_brand} ${payload.equipment_model}${payload.equipment_serial ? ` (S/N: ${payload.equipment_serial})` : ""}.\nНеисправность: ${payload.defect_description}`;
+
+        const newDeal = await tx.queryOneOrThrow<{ id: string }>(
+          `INSERT INTO deals (tenant_id, pipeline_id, stage_id, contact_id, company_id, title, description, budget, currency, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'RUB', $9)
+           RETURNING id`,
+          [
+            tenantId,
+            pipelineRow.id,
+            stageRow.id,
+            customerId,
+            companyId,
+            dealTitle,
+            dealDesc,
+            payload.estimated_cost,
+            author.id,
+          ],
+        );
+        dealId = newDeal.id;
+      }
+
       const row = await tx.queryOneOrThrow<RepairOrderRow>(
         `INSERT INTO repair_orders
-           (tenant_id, ticket_number, customer_id, customer_name, customer_phone,
+           (tenant_id, ticket_number, deal_id, customer_id, customer_name, customer_phone,
             equipment_type, equipment_brand, equipment_model, equipment_serial,
             package_contents, appearance, defect_description, defect_photos,
             status, priority, master_id, master_name, estimated_cost, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                 'intake', $14, $15, $16, $17, $18)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                 'intake', $15, $16, $17, $18, $19)
          RETURNING ${ORDER_COLUMNS}`,
         [
           tenantId,
           ticketNumber,
-          payload.customer_id,
+          dealId || null,
+          customerId,
           payload.customer_name,
           payload.customer_phone,
           payload.equipment_type,

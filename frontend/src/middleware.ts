@@ -132,10 +132,12 @@ export function middleware(request: NextRequest) {
   const refreshToken =
     request.cookies.get("getvoxly_refresh")?.value ||
     request.cookies.get("getvoxly_refresh_token")?.value;
+  const sessionMarker = request.cookies.get("getvoxly_session")?.value;
   const hasActiveToken = token !== undefined && token.length > 0;
   const hasSession =
     hasActiveToken ||
-    (refreshToken !== undefined && refreshToken.length > 0);
+    (refreshToken !== undefined && refreshToken.length > 0) ||
+    sessionMarker === "active";
 
   // If visitor is on /login or /register:
   // Only redirect away if they have an ACTIVE access token AND they did not land here

@@ -240,4 +240,34 @@ export class MaxBridgeService {
       return null;
     }
   }
+
+  /** Скачивание вложения из max-bridge в виде буфера */
+  async downloadMedia(input: {
+    botId: string;
+    fileId: string;
+  }): Promise<{ ok: boolean; buffer?: Buffer; mimeType?: string; error?: string }> {
+    const res = await this.bridgeFetch<{
+      ok: boolean;
+      dataBase64?: string;
+      mimeType?: string;
+      detail?: string;
+    }>("/messages/media", {
+      method: "POST",
+      body: JSON.stringify({
+        botId: input.botId,
+        fileId: input.fileId,
+      }),
+    });
+
+    if (!res.ok || !res.json?.dataBase64) {
+      return { ok: false, error: res.json?.detail || "Ошибка скачивания медиа из max-bridge" };
+    }
+
+    const buffer = Buffer.from(res.json.dataBase64, "base64");
+    return {
+      ok: true,
+      buffer,
+      mimeType: res.json.mimeType || "application/octet-stream",
+    };
+  }
 }

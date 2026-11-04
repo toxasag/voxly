@@ -576,7 +576,7 @@ export class DealMessagingService {
   async listContactMessages(tenantId: string, contactId: string): Promise<DealMessageDTO[]> {
     const rows = await query<any>(
       `SELECT m.id, m.tenant_id, m.deal_id, m.channel_account_id, m.source, m.direction, m.sender_name, m.content, m.channel,
-              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.created_at
+              m.attachment, m.attachment_type, m.delivery_status, m.delivery_error, m.metadata, m.created_at
        FROM deal_messages m
        JOIN deals d ON d.id = m.deal_id AND d.tenant_id = m.tenant_id
        WHERE m.tenant_id = $1 AND d.contact_id = $2 AND d.deleted_at IS NULL
@@ -597,6 +597,7 @@ export class DealMessagingService {
       attachmentType: r.attachment_type,
       deliveryStatus: r.delivery_status,
       deliveryError: r.delivery_error,
+      metadata: r.metadata ?? {},
       createdAt: r.created_at,
     }));
   }
