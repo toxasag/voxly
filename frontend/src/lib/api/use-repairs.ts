@@ -116,6 +116,52 @@ export interface ClientLookupResultDTO {
   activeDeals: ClientLookupDealDTO[];
 }
 
+export interface AdditionalContact {
+  name: string;
+  phone: string;
+  role?: string;
+}
+
+export interface ServiceDictionariesDTO {
+  types: string[];
+  brands: string[];
+  models: string[];
+  accessories: string[];
+  malfunctions: string[];
+}
+
+export interface EquipmentHistoryItemDTO {
+  id: string;
+  ticketNumber: string;
+  receivedAt: string;
+  completedAt: string | null;
+  deliveredAt: string | null;
+  status: string;
+  defectDescription: string;
+  malfunctions: string[];
+  estimatedCost: number;
+  finalCost: number | null;
+  masterName: string;
+}
+
+export interface EquipmentSearchSerialResultDTO {
+  found: boolean;
+  equipment: {
+    type: string;
+    brand: string;
+    model: string;
+    serial: string;
+    packageContents: string[];
+  } | null;
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+  } | null;
+  historyCount: number;
+  history: EquipmentHistoryItemDTO[];
+}
+
 export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
@@ -173,19 +219,29 @@ export interface CreateRepairPayload {
   customer_id?: string;
   customer_name: string;
   customer_phone: string;
+  customer_email?: string;
+  additional_contacts?: AdditionalContact[];
+  company_id?: string;
   company_name?: string;
+  company_inn?: string;
+  company_ogrn?: string;
+  company_bik?: string;
+  company_account_number?: string;
+  company_legal_address?: string;
   equipment_type: string;
   equipment_brand: string;
   equipment_model: string;
   equipment_serial?: string;
   package_contents?: string;
+  package_contents_items?: string[];
   appearance?: string;
-  defect_description: string;
+  defect_description?: string;
+  malfunctions?: string[];
   defect_photos?: string[];
   priority?: RepairPriority;
   master_id: string;
-  master_name: string;
-  estimated_cost: number;
+  master_name?: string;
+  estimated_cost?: number;
   notes?: string;
 }
 
@@ -274,6 +330,8 @@ export const repairKeys = {
   notes: (id: string) => ["repairs", "notes", id] as const,
   photos: (id: string) => ["repairs", "photos", id] as const,
   clientLookup: (params: { phone?: string; query?: string }) => ["repairs", "client-lookup", params] as const,
+  dictionaries: ["repairs", "dictionaries"] as const,
+  equipmentHistory: (serial: string) => ["repairs", "equipment", "history", serial] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -401,6 +459,34 @@ export function useRepairClientLookup(params: {
   });
 }
 
+export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, ApiClientError> {
+  return useQuery<ServiceDictionariesDTO, ApiClientError>({
+    queryKey: repairKeys.dictionaries,
+    queryFn: async () => {
+      const res = await apiClient.get<ServiceDictionariesDTO>(`${BASE_PATH}/dictionaries`);
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useSearchEquipmentBySerial(serial: string): UseQueryResult<EquipmentSearchSerialResultDTO, ApiClientError> {
+  const trimmed = serial.trim();
+  const isEnabled = trimmed.length >= 3;
+
+  return useQuery<EquipmentSearchSerialResultDTO, ApiClientError>({
+    queryKey: repairKeys.equipmentHistory(trimmed),
+    queryFn: async () => {
+      const res = await apiClient.get<EquipmentSearchSerialResultDTO>(
+        `${BASE_PATH}/equipment/search-serial?serial=${encodeURIComponent(trimmed)}`,
+      );
+      return res.data;
+    },
+    enabled: isEnabled,
+    staleTime: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
@@ -415,6 +501,27 @@ export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useAddRepairDictionaryItem(): UseMutationResult<
+  { id: string; name: string },
+  ApiClientError,
+  { category: string; name: string; brand_name?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: string; name: string }, ApiClientError, { category: string; name: string; brand_name?: string }>({
+    mutationFn: async ({ category, name, brand_name }) => {
+      const res = await apiClient.post<{ id: string; name: string }>(`${BASE_PATH}/dictionaries/${category}`, {
+        name,
+        brand_name,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
     },
   });
 }

@@ -71,12 +71,20 @@ export const diagnosticsSchema = z.object({
   condition_notes: z.string().max(4000).optional().or(z.literal("")),
 });
 
+export const additionalContactSchema = z.object({
+  name: z.string().min(1, "Имя контакта обязательно").max(200),
+  phone: z.string().min(5, "Телефон обязателен").max(30),
+  role: z.string().max(100).optional().or(z.literal("")),
+});
+export type AdditionalContact = z.infer<typeof additionalContactSchema>;
+
 export const createRepairSchema = z.object({
   deal_id: optionalUuid,
   customer_id: optionalUuid,
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Customer phone is required").max(30),
   customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  additional_contacts: z.array(additionalContactSchema).optional(),
   company_id: optionalUuid,
   company_name: z.string().max(200).optional().or(z.literal("")),
   company_inn: z.string().optional().or(z.literal("")),
@@ -89,11 +97,14 @@ export const createRepairSchema = z.object({
   equipment_model: z.string().min(1, "Model is required").max(100),
   equipment_serial: z.string().max(100).optional().or(z.literal("")),
   package_contents: z.string().max(1000).optional().or(z.literal("")),
+  package_contents_items: z.array(z.string()).optional(),
   appearance: z.string().max(1000).optional().or(z.literal("")),
   defect_description: z
     .string()
-    .min(10, "Describe the defect in at least 10 characters")
-    .max(4000),
+    .max(4000)
+    .optional()
+    .or(z.literal("")),
+  malfunctions: z.array(z.string()).optional(),
   defect_photos: z.array(z.string().url("Each photo must be a URL")).max(20).optional(),
   priority: repairPrioritySchema.default("normal"),
   master_id: z.string().uuid("master_id must be a UUID"),
@@ -105,13 +116,16 @@ export const createRepairSchema = z.object({
 export const updateRepairSchema = z.object({
   customer_name: z.string().min(1).max(200).optional(),
   customer_phone: z.string().min(5).max(30).optional(),
+  additional_contacts: z.array(additionalContactSchema).optional(),
   equipment_type: z.string().min(1).max(100).optional(),
   equipment_brand: z.string().min(1).max(100).optional(),
   equipment_model: z.string().min(1).max(100).optional(),
   equipment_serial: z.string().max(100).optional().or(z.literal("")),
   package_contents: z.string().max(1000).optional().or(z.literal("")),
+  package_contents_items: z.array(z.string()).optional(),
   appearance: z.string().max(1000).optional().or(z.literal("")),
-  defect_description: z.string().min(10).max(4000).optional(),
+  defect_description: z.string().max(4000).optional(),
+  malfunctions: z.array(z.string()).optional(),
   priority: repairPrioritySchema.optional(),
   master_id: optionalUuid,
   master_name: z.string().max(200).optional().or(z.literal("")),
@@ -191,9 +205,12 @@ export interface RepairOrderRow {
   equipment_model: string;
   equipment_serial: string;
   package_contents: string;
+  package_contents_items?: string[];
   appearance: string;
   defect_description: string;
+  malfunctions?: string[];
   defect_photos: string[];
+  additional_contacts?: AdditionalContact[];
   status: RepairStatus;
   priority: RepairPriority;
   master_id: string;
@@ -324,10 +341,13 @@ export interface RepairOrderDTO {
     model: string;
     serialNumber: string;
     packageContents: string;
+    packageContentsItems?: string[];
     appearance: string;
   };
   defectDescription: string;
+  malfunctions?: string[];
   defectPhotos: string[];
+  additionalContacts?: AdditionalContact[];
   status: RepairStatus;
   nextStatus: RepairStatus | null;
   allowedTransitions: RepairStatus[];
@@ -379,10 +399,13 @@ export function toRepairOrderDTO(row: RepairOrderRow): RepairOrderDTO {
       model: row.equipment_model,
       serialNumber: row.equipment_serial,
       packageContents: row.package_contents,
+      packageContentsItems: Array.isArray(row.package_contents_items) ? row.package_contents_items : [],
       appearance: row.appearance,
     },
     defectDescription: row.defect_description,
+    malfunctions: Array.isArray(row.malfunctions) ? row.malfunctions : [],
     defectPhotos: row.defect_photos,
+    additionalContacts: Array.isArray(row.additional_contacts) ? row.additional_contacts : [],
     status: row.status,
     nextStatus: nextStatus(row.status),
     allowedTransitions: [...allowedTransitionsFrom(row.status)],
@@ -492,6 +515,46 @@ export interface ClientLookupResultDTO {
     legalAddress: string;
   } | null;
   activeDeals: ClientLookupDealDTO[];
+}
+
+export interface ServiceDictionariesDTO {
+  types: string[];
+  brands: string[];
+  models: string[];
+  accessories: string[];
+  malfunctions: string[];
+}
+
+export interface EquipmentHistoryItemDTO {
+  id: string;
+  ticketNumber: string;
+  receivedAt: string;
+  completedAt: string | null;
+  deliveredAt: string | null;
+  status: string;
+  defectDescription: string;
+  malfunctions: string[];
+  estimatedCost: number;
+  finalCost: number | null;
+  masterName: string;
+}
+
+export interface EquipmentSearchSerialResultDTO {
+  found: boolean;
+  equipment: {
+    type: string;
+    brand: string;
+    model: string;
+    serial: string;
+    packageContents: string[];
+  } | null;
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+  } | null;
+  historyCount: number;
+  history: EquipmentHistoryItemDTO[];
 }
 
 /** Sums works and parts into the order's money breakdown. */
