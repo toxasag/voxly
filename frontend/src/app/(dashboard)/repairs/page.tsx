@@ -39,7 +39,7 @@ function RepairsPageContent() {
   const createBatchMutation = useCreateBatchRepair();
 
   useEffect(() => {
-    if (searchParams.get("create") === "1") {
+    if (searchParams.get("create") === "1" || searchParams.get("action") === "intake") {
       setCreateModalOpen(true);
     }
   }, [searchParams]);
@@ -262,6 +262,7 @@ function RepairsPageContent() {
           onClose={() => setCreateModalOpen(false)}
           onSubmit={handleCreateRepair}
           initialCustomerId={searchParams.get("customer_id") ?? undefined}
+          initialDealId={searchParams.get("dealId") ?? undefined}
           isSubmitting={createMutation.isPending || createBatchMutation.isPending}
         />
         <RepairReceiptModal

@@ -639,6 +639,10 @@ export interface ServiceDictionariesDTO {
 export interface EquipmentHistoryItemDTO {
   id: string;
   ticketNumber: string;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  customerName?: string;
+  customerPhone?: string;
   receivedAt: string;
   completedAt: string | null;
   deliveredAt: string | null;
@@ -648,6 +652,7 @@ export interface EquipmentHistoryItemDTO {
   estimatedCost: number;
   finalCost: number | null;
   masterName: string;
+  works?: { id: string; description: string; cost: number; masterName: string }[];
 }
 
 export interface EquipmentSearchSerialResultDTO {

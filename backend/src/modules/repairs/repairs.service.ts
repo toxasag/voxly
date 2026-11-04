@@ -82,6 +82,7 @@ function nullIfBlank(value: string | null | undefined): string | null {
 }
 
 export interface ListRepairsOptions {
+  dealId?: string;
   status?: RepairStatus;
   priority?: RepairPriority;
   masterId?: string;
@@ -126,6 +127,11 @@ export class RepairsService {
   ): Promise<{ items: RepairOrderDTO[]; total: number }> {
     const conditions: string[] = ["ro.tenant_id = $1", "ro.deleted_at IS NULL"];
     const params: SqlParam[] = [tenantId];
+
+    if (options.dealId !== undefined) {
+      params.push(options.dealId);
+      conditions.push(`ro.deal_id = $${params.length}`);
+    }
 
     if (options.status !== undefined) {
       params.push(options.status);
@@ -198,6 +204,54 @@ export class RepairsService {
     );
 
     return { items: rows.map(toRepairOrderDTO), total: Number(countRow?.total ?? 0) };
+  }
+
+  async syncDealBudgetFromRepairs(tenantId: string, dealId: string | null | undefined): Promise<void> {
+    if (!dealId) return;
+    try {
+      await withTenant(tenantId, async (tx) => {
+        const sumRows = await tx.query<{ total: string }>(
+          `WITH order_totals AS (
+             SELECT
+               ro.id,
+               ro.final_cost,
+               ro.estimated_cost,
+               COALESCE((SELECT SUM(cost) FROM repair_works WHERE repair_order_id = ro.id), 0) +
+               COALESCE((SELECT SUM(retail_price * quantity) FROM repair_parts WHERE repair_order_id = ro.id), 0) AS calc_total
+             FROM repair_orders ro
+             WHERE ro.tenant_id = $1 AND ro.deal_id = $2 AND ro.deleted_at IS NULL
+           )
+           SELECT COALESCE(SUM(
+             CASE
+               WHEN final_cost IS NOT NULL AND final_cost > 0 THEN final_cost
+               WHEN calc_total > 0 THEN calc_total
+               ELSE COALESCE(estimated_cost, 0)
+             END
+           ), 0)::text AS total
+           FROM order_totals`,
+          [tenantId, dealId],
+        );
+
+        const totalBudget = parseFloat(sumRows[0]?.total ?? "0") || 0;
+
+        await tx.query(
+          `UPDATE deals
+           SET budget = $1, updated_at = NOW()
+           WHERE tenant_id = $2 AND id = $3`,
+          [totalBudget, tenantId, dealId],
+        );
+      });
+    } catch (err) {
+      console.error("[repairs.service] Failed to sync deal budget:", err);
+    }
+  }
+
+  private async getOrderDealId(tenantId: string, orderId: string): Promise<string | null> {
+    const row = await queryOne<{ deal_id: string | null }>(
+      `SELECT deal_id FROM repair_orders WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, orderId],
+    );
+    return row?.deal_id ?? null;
   }
 
   async get(tenantId: string, id: string): Promise<RepairOrderDTO | null> {
@@ -608,7 +662,9 @@ export class RepairsService {
         }
       }
 
-      return toRepairOrderDTO(row);
+      const dto = toRepairOrderDTO(row);
+      if (dto.dealId) void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+      return dto;
     });
   }
 
@@ -1029,7 +1085,9 @@ export class RepairsService {
       ).catch(() => {});
     }
 
-    return this.get(tenantId, id);
+    const updated = await this.get(tenantId, id);
+    if (updated?.dealId) void this.syncDealBudgetFromRepairs(tenantId, updated.dealId);
+    return updated;
   }
 
   // -------------------------------------------------------------------------
@@ -1120,7 +1178,9 @@ export class RepairsService {
         [tenantId, id, author.id, author.name, comment, from, to],
       );
 
-      return toRepairOrderDTO(row);
+      const dto = toRepairOrderDTO(row);
+      if (dto.dealId) void this.syncDealBudgetFromRepairs(tenantId, dto.dealId);
+      return dto;
     });
   }
 
@@ -1186,7 +1246,11 @@ export class RepairsService {
         ],
       );
 
-      return toRepairWorkDTO(row);
+      const result = toRepairWorkDTO(row);
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+      return result;
     });
   }
 
@@ -1225,6 +1289,12 @@ export class RepairsService {
       params,
     );
 
+    if (row !== null) {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    }
+
     return row === null ? null : toRepairWorkDTO(row);
   }
 
@@ -1235,6 +1305,12 @@ export class RepairsService {
        RETURNING id`,
       [tenantId, orderId, workId],
     );
+
+    if (row !== null) {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    }
 
     return row !== null;
   }
@@ -1267,7 +1343,11 @@ export class RepairsService {
         ],
       );
 
-      return toRepairPartDTO(row);
+      const result = toRepairPartDTO(row);
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+      return result;
     });
   }
 
@@ -1307,6 +1387,12 @@ export class RepairsService {
       params,
     );
 
+    if (row !== null) {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    }
+
     return row === null ? null : toRepairPartDTO(row);
   }
 
@@ -1317,6 +1403,12 @@ export class RepairsService {
        RETURNING id`,
       [tenantId, orderId, partId],
     );
+
+    if (row !== null) {
+      void this.getOrderDealId(tenantId, orderId).then((dealId) => {
+        if (dealId) void this.syncDealBudgetFromRepairs(tenantId, dealId);
+      });
+    }
 
     return row !== null;
   }
@@ -1807,6 +1899,8 @@ export class RepairsService {
       const rows = await tx.query<{
         id: string;
         ticket_number: string;
+        deal_id: string | null;
+        deal_title: string | null;
         customer_id: string;
         customer_name: string;
         customer_phone: string;
@@ -1825,18 +1919,26 @@ export class RepairsService {
         received_at: Date | string;
         completed_at: Date | string | null;
         delivered_at: Date | string | null;
+        works: { id: string; description: string; cost: number; masterName: string }[] | null;
       }>(
         `SELECT
-           id, ticket_number, customer_id, customer_name, customer_phone,
-           equipment_type, equipment_brand, equipment_model, equipment_serial,
-           package_contents, package_contents_items, defect_description, malfunctions,
-           status, master_name, estimated_cost, final_cost,
-           received_at, completed_at, delivered_at
-         FROM repair_orders
-         WHERE tenant_id = $1
-           AND lower(btrim(equipment_serial)) = lower($2)
-           AND deleted_at IS NULL
-         ORDER BY received_at DESC
+           ro.id, ro.ticket_number, ro.deal_id, d.title AS deal_title,
+           ro.customer_id, ro.customer_name, ro.customer_phone,
+           ro.equipment_type, ro.equipment_brand, ro.equipment_model, ro.equipment_serial,
+           ro.package_contents, ro.package_contents_items, ro.defect_description, ro.malfunctions,
+           ro.status, ro.master_name, ro.estimated_cost, ro.final_cost,
+           ro.received_at, ro.completed_at, ro.delivered_at,
+           COALESCE(
+             (SELECT json_agg(json_build_object('id', rw.id, 'description', rw.description, 'cost', rw.cost, 'masterName', rw.master_name))
+              FROM repair_works rw WHERE rw.repair_order_id = ro.id),
+             '[]'::json
+           ) AS works
+         FROM repair_orders ro
+         LEFT JOIN deals d ON d.id = ro.deal_id AND d.tenant_id = ro.tenant_id
+         WHERE ro.tenant_id = $1
+           AND lower(btrim(ro.equipment_serial)) = lower($2)
+           AND ro.deleted_at IS NULL
+         ORDER BY ro.received_at DESC
          LIMIT 20`,
         [tenantId, trimmedSerial],
       );
@@ -1849,6 +1951,10 @@ export class RepairsService {
       const history: EquipmentHistoryItemDTO[] = rows.map((r) => ({
         id: r.id,
         ticketNumber: r.ticket_number,
+        dealId: r.deal_id ?? null,
+        dealTitle: r.deal_title ?? null,
+        customerName: r.customer_name,
+        customerPhone: r.customer_phone,
         receivedAt: r.received_at instanceof Date ? r.received_at.toISOString() : String(r.received_at),
         completedAt: r.completed_at ? (r.completed_at instanceof Date ? r.completed_at.toISOString() : String(r.completed_at)) : null,
         deliveredAt: r.delivered_at ? (r.delivered_at instanceof Date ? r.delivered_at.toISOString() : String(r.delivered_at)) : null,
@@ -1858,6 +1964,7 @@ export class RepairsService {
         estimatedCost: typeof r.estimated_cost === "number" ? r.estimated_cost : (parseFloat(String(r.estimated_cost || 0)) || 0),
         finalCost: r.final_cost !== null ? (typeof r.final_cost === "number" ? r.final_cost : parseFloat(String(r.final_cost))) : null,
         masterName: r.master_name,
+        works: Array.isArray(r.works) ? r.works : [],
       }));
 
       return {
