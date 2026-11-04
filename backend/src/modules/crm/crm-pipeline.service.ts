@@ -9,6 +9,7 @@ import {
   displayNameFrom,
   extractPhoneNumber,
   extractEmailAddress,
+  isBotSender,
   UNKNOWN_CONTACT_NAME,
   type ChannelProfile,
 } from "./channel-identity.js";
@@ -21,10 +22,11 @@ import { isPlaceholderName, resolveContactIdentity } from "./identity-resolution
 import { getDealConversationSummary } from "./leads/lead-summary.service.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 
-// Профиль объявлен в `channel-identity.ts` вместе с раскладкой по полям, но
-// реэкспортируется здесь: транспорт получает его вместе с типом входящего
+// Профиль и проверка бота объявлены в `channel-identity.ts` вместе с раскладкой по полям,
+// но реэкспортируются здесь: транспорт получает их вместе с типом входящего
 // сообщения и не должен знать о внутреннем делении модуля CRM.
 export type { ChannelProfile } from "./channel-identity.js";
+export { isBotSender } from "./channel-identity.js";
 
 // ---------------------------------------------------------------------------
 // CRM operational core (M7.5.18).
@@ -47,6 +49,9 @@ export interface InboundMessageInput {
   senderPhone?: string;
   senderEmail?: string;
   senderTelegramChatId?: string;
+  senderTelegramUsername?: string;
+  senderUsername?: string;
+  isBot?: boolean;
   attachment?: string | null;
   attachmentType?: string | null;
   deliveryStatus?: "neutral" | "pending" | "sent" | "failed" | "received";
@@ -92,6 +97,7 @@ export interface CrmPipelineResult {
   isNewContact: boolean;
   isNewDeal: boolean;
   isPersonal?: boolean;
+  isBot?: boolean;
 }
 
 const EXISTING_CONTACT_COLUMNS = "id, first_name, last_name, phone, email, telegram_chat_id, telegram_username, socials, is_personal, custom_fields";
@@ -118,9 +124,26 @@ function nullIfBlank(value: string | undefined): string | null {
   return value;
 }
 
+interface PipelineLogger {
+  info: (obj: object, message: string) => void;
+  warn: (obj: object, message: string) => void;
+  error: (obj: object, message: string) => void;
+}
+
+const defaultPipelineLogger: PipelineLogger = {
+  info: (obj, msg) => console.info(JSON.stringify(obj), msg),
+  warn: (obj, msg) => console.warn(JSON.stringify(obj), msg),
+  error: (obj, msg) => console.error(JSON.stringify(obj), msg),
+};
+
 export class CrmPipelineService {
   private readonly deals = new DealsService();
   private readonly contacts = new ContactsService();
+  private readonly log: PipelineLogger;
+
+  constructor(logger?: PipelineLogger) {
+    this.log = logger ?? defaultPipelineLogger;
+  }
 
   /**
    * Processes an incoming message from a channel:
@@ -236,6 +259,35 @@ export class CrmPipelineService {
       senderEmail: effectiveSenderEmail,
     };
 
+    // Защита CRM-воронки: запрет автогенерации контактов и сделок для ботов
+    if (isBotSender(enrichedInput)) {
+      const botIdentifier =
+        enrichedInput.profile?.username ||
+        enrichedInput.senderTelegramUsername ||
+        enrichedInput.senderUsername ||
+        enrichedInput.senderName ||
+        "bot";
+      const cleanBotName = botIdentifier.replace(/^@/, "");
+      this.log.info(
+        {
+          tenantId: input.tenantId,
+          channel: input.channel,
+          chatId: input.chatId,
+          senderName: input.senderName,
+          botIdentifier,
+        },
+        `Skipping lead/contact creation: sender is a bot (@${cleanBotName})`,
+      );
+
+      return {
+        contactId: "",
+        dealId: "",
+        isNewContact: false,
+        isNewDeal: false,
+        isBot: true,
+      };
+    }
+
     const result = await transaction(async (tx) => {
       const contact = await this.findContact(tx, input.tenantId, enrichedInput);
 
@@ -249,6 +301,30 @@ export class CrmPipelineService {
           isNewContact: false,
           isNewDeal: false,
           isPersonal: true,
+        };
+      }
+
+      // Если существующий контакт был ранее распознан как бот
+      if (
+        contact !== null &&
+        ((contact.telegram_username && isBotSender({ senderUsername: contact.telegram_username })) ||
+          (contact.custom_fields && (contact.custom_fields.is_bot === true || contact.custom_fields.isBot === true)))
+      ) {
+        const botUsername = contact.telegram_username || "bot";
+        this.log.info(
+          {
+            tenantId: input.tenantId,
+            contactId: contact.id,
+            username: botUsername,
+          },
+          `Skipping lead/contact creation: sender is a bot (@${botUsername.replace(/^@/, "")})`,
+        );
+        return {
+          contactId: contact.id,
+          dealId: "",
+          isNewContact: false,
+          isNewDeal: false,
+          isBot: true,
         };
       }
 
@@ -907,42 +983,46 @@ export class CrmPipelineService {
       return { contactId, dealId, isNewContact, isNewDeal };
     });
 
-    // Асинхронное уведомление о новом лиде (при наличии контактов и этапе не «Первый контакт»)
-    void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
+    // Асинхронные уведомления и выжимка только если создана или найдена сделка (не бот, не личный контакт)
+    if (result.dealId) {
+      void leadNotificationQueue.checkAndTriggerNotification(input.tenantId, result.dealId);
 
-    // Мгновенные Web Push & In-App уведомления
-    if (result.isNewDeal) {
-      void notificationQueue.dispatchLeadCreated({
-        tenantId: input.tenantId,
-        dealId: result.dealId,
-      });
-    } else {
-      const messageText = input.text.trim() || (input.attachment ? "Вложение" : "Входящее сообщение");
-      void notificationQueue.dispatchMessageReceived({
-        tenantId: input.tenantId,
-        dealId: result.dealId,
-        senderName: input.senderName,
-        text: messageText,
-        channel: input.channel,
-      });
+      // Мгновенные Web Push & In-App уведомления
+      if (result.isNewDeal) {
+        void notificationQueue.dispatchLeadCreated({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+        });
+      } else {
+        const messageText = input.text.trim() || (input.attachment ? "Вложение" : "Входящее сообщение");
+        void notificationQueue.dispatchMessageReceived({
+          tenantId: input.tenantId,
+          dealId: result.dealId,
+          senderName: input.senderName,
+          text: messageText,
+          channel: input.channel,
+        });
+      }
+
+      // Автоматическая генерация и синхронизация AI-выжимки в заметку сделки
+      void getDealConversationSummary(input.tenantId, result.dealId).catch(() => {});
     }
 
-    // Автоматическая генерация и синхронизация AI-выжимки в заметку сделки
-    void getDealConversationSummary(input.tenantId, result.dealId).catch(() => {});
-
     // Автоматическое кросс-канальное обогащение контакта по номеру телефона (Never invent)
-    const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
-    const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
-    if (validPhone) {
-      const enrichService = new CrmEnrichmentService();
-      void enrichService
-        .enrichContact(input.tenantId, result.contactId, {
-          phoneOverride: validPhone,
-          channels: ["telegram", "max", "whatsapp"],
-        })
-        .catch(() => {
-          // Ошибки провайдеров не влияют на создание сделки
-        });
+    if (result.contactId) {
+      const phoneCandidates = [input.senderPhone, contactPhonesFrom(input)[0]?.number];
+      const validPhone = phoneCandidates.find((p) => p && p.replace(/\D/g, "").length >= 10);
+      if (validPhone) {
+        const enrichService = new CrmEnrichmentService();
+        void enrichService
+          .enrichContact(input.tenantId, result.contactId, {
+            phoneOverride: validPhone,
+            channels: ["telegram", "max", "whatsapp"],
+          })
+          .catch(() => {
+            // Ошибки провайдеров не влияют на создание сделки
+          });
+      }
     }
 
     return result;
