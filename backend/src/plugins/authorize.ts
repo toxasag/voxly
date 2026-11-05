@@ -149,7 +149,12 @@ export const authorizePlugin: FastifyPluginAsync = fp(
       return async (request: FastifyRequest): Promise<void> => {
         assertAuthenticated(request);
 
-        if (request.authUser.platform_role !== "platform_owner") {
+        const isPlatformOwner = request.authUser.platform_role === "platform_owner";
+        const isImpersonatedByPlatformOwner = Boolean(
+          request.impersonator_id && request.impersonator_platform_role === "platform_owner",
+        );
+
+        if (!isPlatformOwner && !isImpersonatedByPlatformOwner) {
           throw new PermissionDeniedError("Platform owner role required");
         }
 

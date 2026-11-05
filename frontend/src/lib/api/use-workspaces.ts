@@ -63,7 +63,7 @@ export async function switchWorkspace(
   if (normTarget === "voxly" && existingBackup) {
     writeTokens({
       accessToken: existingBackup.accessToken,
-      refreshToken: existingBackup.refreshToken,
+      refreshToken: existingBackup.refreshToken || existingBackup.accessToken,
     });
     clearImpersonationBackup();
     window.location.href = tenantPortalUrl(normTarget, "/crm/contacts");
@@ -71,12 +71,13 @@ export async function switchWorkspace(
   }
 
   // При входе в дочернее пространство сохраняем текущую сессию в бэкап
-  if (currentAccessToken && currentRefreshToken && !existingBackup) {
+  if (currentAccessToken && !existingBackup) {
     writeImpersonationBackup({
       accessToken: currentAccessToken,
-      refreshToken: currentRefreshToken,
+      refreshToken: currentRefreshToken || currentAccessToken,
       adminUserEmail: userEmail ?? "",
       adminUserName: userName ?? "",
+      adminOriginHost: typeof window !== "undefined" ? window.location.host : "",
       impersonatedTenantSlug: normTarget,
       enteredAt: new Date().toISOString(),
     });
