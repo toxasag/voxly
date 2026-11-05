@@ -101,6 +101,11 @@ const DEFAULT_VALUES: CreateBotPayload = {
   map_reviews_url: "https://yandex.ru/maps/org/team_big/2489543575/",
   sync_crm: true,
   whatsapp_chat_text: "",
+  company_name_override: "",
+  consultant_source: "manual",
+  consultant_name: "Алексей",
+  consultant_role: "ведущий специалист",
+  fallback_models: ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
   wizard_config: {
     presetId: "tpl-universal-closer",
     consultantName: "Алексей",
@@ -131,6 +136,11 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     map_reviews_url: "",
     sync_crm: false,
     whatsapp_chat_text: "",
+    company_name_override: bot.company_name_override ?? "",
+    consultant_source: bot.consultant_source ?? "manual",
+    consultant_name: bot.consultant_name ?? (wizardConfig?.consultantName as string | undefined) ?? "",
+    consultant_role: bot.consultant_role ?? (wizardConfig?.consultantRole as string | undefined) ?? "",
+    fallback_models: bot.fallback_models ?? ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
     wizard_config: bot.wizard_config ?? {
       presetId: "tpl-universal-closer",
       consultantName: "Алексей",
@@ -303,6 +313,22 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
   const systemPrompt = form.watch("system_prompt");
   const isPaused = form.watch("status") === "paused";
   const wizardConfig = form.watch("wizard_config");
+  const fallbackModels = form.watch("fallback_models") ?? [];
+  const consultantSource = form.watch("consultant_source") ?? "manual";
+  const companyNameOverride = form.watch("company_name_override") ?? "";
+  const consultantName = form.watch("consultant_name") ?? "";
+  const consultantRole = form.watch("consultant_role") ?? "";
+
+  const toggleFallbackModel = useCallback(
+    (modelId: string) => {
+      const current = form.getValues("fallback_models") ?? [];
+      const next = current.includes(modelId)
+        ? current.filter((m) => m !== modelId)
+        : [...current, modelId];
+      form.setValue("fallback_models", next, { shouldDirty: true });
+    },
+    [form],
+  );
 
   const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useAiModels();
   const { data: crmStats } = useCrmKnowledgeStats();
@@ -587,6 +613,49 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                   )}
                 </>
               )}
+            </div>
+
+            {/* Fallback Chains */}
+            <div className="space-y-1.5 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa]/60 p-3">
+              <div className="flex items-center justify-between">
+                <span className="block text-xs font-medium text-slate-700">
+                  Цепочка отказоустойчивости (Fallback Chain)
+                </span>
+                <span className="text-[11px] text-[#666666]">
+                  Каскад при 429 / 5xx / Timeout
+                </span>
+              </div>
+              <p className="text-[11px] text-[#666666] leading-relaxed">
+                Если основная модель перегружена или не отвечает, запрос автоматически переключается на резервные модели по порядку:
+              </p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {modelsList
+                  .filter((m) => m.id !== selectedModel)
+                  .map((m) => {
+                    const isSelected = fallbackModels.includes(m.id);
+                    const priorityIndex = fallbackModels.indexOf(m.id);
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => toggleFallbackModel(m.id)}
+                        className={cn(
+                          "rounded-[6px] border px-2.5 py-1 text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5",
+                          isSelected
+                            ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                            : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                        )}
+                      >
+                        {isSelected && (
+                          <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#4a38f5] text-[9px] text-white font-mono">
+                            {priorityIndex + 1}
+                          </span>
+                        )}
+                        <span>{m.label}</span>
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
 
             {/* Mode */}
@@ -1100,8 +1169,105 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                     </div>
                   </div>
 
-                  {/* 5 Core Consultant Parameters */}
+                  {/* Core Consultant Parameters & Dynamic Variables */}
                   <div className="grid grid-cols-2 gap-3 pt-2">
+                    {/* Название компании (override) */}
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Название компании (переменная {"{{tenant.name}}"})
+                      </label>
+                      <input
+                        type="text"
+                        value={companyNameOverride}
+                        onChange={(e) =>
+                          form.setValue("company_name_override", e.target.value, {
+                            shouldDirty: true,
+                          })
+                        }
+                        placeholder="Например: Банкирро (по умолчанию используется название компании из CRM)"
+                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                      />
+                      <p className="text-[11px] text-[#888888]">
+                        Если не заполнено, имя подставляется автоматически из профиля компании в системе.
+                      </p>
+                    </div>
+
+                    {/* Источник консультанта */}
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="block text-xs font-medium text-slate-700">
+                        Источник консультанта ({"{{consultant.name}}"} и {"{{consultant.role}}"})
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => form.setValue("consultant_source", "manual", { shouldDirty: true })}
+                          className={cn(
+                            "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
+                            consultantSource === "manual"
+                              ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                          )}
+                        >
+                          Указать вручную
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => form.setValue("consultant_source", "chat_widget", { shouldDirty: true })}
+                          className={cn(
+                            "rounded-[6px] border px-3 py-1.5 text-xs font-medium text-left transition-colors cursor-pointer",
+                            consultantSource === "chat_widget"
+                              ? "border-[#4a38f5] bg-[#4a38f5]/10 text-[#4a38f5]"
+                              : "border-[#e5e5e5] bg-white text-[#666666] hover:bg-slate-50",
+                          )}
+                        >
+                          Из настроек онлайн-чата
+                        </button>
+                      </div>
+                    </div>
+
+                    {consultantSource === "chat_widget" ? (
+                      <div className="col-span-2 rounded-[8px] border border-blue-100 bg-blue-50/60 p-3 text-xs text-[#333333] flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-[#4a38f5] shrink-0" />
+                        <span className="text-[11px] text-[#555555]">
+                          Имя и должность консультанта подтягиваются динамически из настроек подключенного виджета онлайн-чата на сайте.
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-slate-700">
+                            Имя консультанта
+                          </label>
+                          <input
+                            type="text"
+                            value={consultantName || (wizardConfig?.consultantName ?? "")}
+                            onChange={(e) => {
+                              form.setValue("consultant_name", e.target.value, { shouldDirty: true });
+                              form.setValue("wizard_config.consultantName", e.target.value, { shouldDirty: true });
+                            }}
+                            placeholder="Екатерина"
+                            className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-slate-700">
+                            Должность / роль консультанта
+                          </label>
+                          <input
+                            type="text"
+                            value={consultantRole || (wizardConfig?.consultantRole ?? "")}
+                            onChange={(e) => {
+                              form.setValue("consultant_role", e.target.value, { shouldDirty: true });
+                              form.setValue("wizard_config.consultantRole", e.target.value, { shouldDirty: true });
+                            }}
+                            placeholder="ведущий специалист профильного отдела"
+                            className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                          />
+                        </div>
+                      </>
+                    )}
+
                     <div className="col-span-2 space-y-1">
                       <label className="block text-xs font-medium text-slate-700">
                         Ниша / профиль компании (в именительном падеже)
@@ -1115,40 +1281,6 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
                           })
                         }
                         placeholder="сервис технического обслуживания автомобилей"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Имя консультанта
-                      </label>
-                      <input
-                        type="text"
-                        value={wizardConfig?.consultantName ?? ""}
-                        onChange={(e) =>
-                          form.setValue("wizard_config.consultantName", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="Дмитрий"
-                        className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="block text-xs font-medium text-slate-700">
-                        Должность / роль консультанта
-                      </label>
-                      <input
-                        type="text"
-                        value={wizardConfig?.consultantRole ?? ""}
-                        onChange={(e) =>
-                          form.setValue("wizard_config.consultantRole", e.target.value, {
-                            shouldDirty: true,
-                          })
-                        }
-                        placeholder="старший мастер-приёмщик"
                         className="h-8 w-full rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
                       />
                     </div>

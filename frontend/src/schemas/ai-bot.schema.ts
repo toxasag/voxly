@@ -82,6 +82,11 @@ export const createBotSchema = z.object({
   map_reviews_url: z.string().url("Укажите корректный URL (http:// или https://)").optional().or(z.literal("")),
   sync_crm: z.boolean().optional(),
   whatsapp_chat_text: z.string().optional(),
+  company_name_override: z.string().max(120).optional().or(z.literal("")),
+  consultant_source: z.enum(["manual", "chat_widget"]).optional(),
+  consultant_name: z.string().max(100).optional().or(z.literal("")),
+  consultant_role: z.string().max(150).optional().or(z.literal("")),
+  fallback_models: z.array(z.string()).optional(),
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

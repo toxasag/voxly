@@ -25,7 +25,7 @@ export const knowledgeKeys = {
   channels: (agentId: string) => ["ai", "agents", agentId, "channels"] as const,
 };
 
-export type DocumentStatus = "processing" | "ready" | "failed";
+export type DocumentStatus = "draft" | "processing" | "ready" | "failed" | "approved";
 
 export interface KnowledgeDocument {
   id: string;
@@ -37,6 +37,7 @@ export interface KnowledgeDocument {
   errorMessage: string;
   chunksCount: number;
   category?: string;
+  sourceUrl?: string | null;
   createdAt: string;
 }
 
@@ -433,6 +434,53 @@ export function useUpdateKnowledgeDocument(
     onSuccess: (data, variables) => {
       void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
       queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useApproveKnowledgeDocument(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { docId: string; text?: string; filename?: string; category?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ docId, text, filename, category }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/${docId}/approve`,
+        { text, filename, category },
+      );
+      return res.data;
+    },
+    onSuccess: (data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
+      queryClient.setQueryData(["ai", "agents", agentId, "knowledge", variables.docId], data);
+    },
+  });
+}
+
+export function useCreateKnowledgeDraft(
+  agentId: string,
+): UseMutationResult<
+  KnowledgeDocumentDetail,
+  ApiClientError,
+  { title: string; text: string; category?: string; sourceUrl?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ title, text, category, sourceUrl }) => {
+      const res = await apiClient.post<KnowledgeDocumentDetail>(
+        `${BASE_PATH}/agents/${agentId}/knowledge/draft`,
+        { title, text, category, sourceUrl },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
     },
   });
 }

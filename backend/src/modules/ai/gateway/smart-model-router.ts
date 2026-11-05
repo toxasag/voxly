@@ -128,10 +128,16 @@ export class SmartModelRouter {
     const estimatedTokens = Math.ceil(promptChars / 4) + (input.maxTokens ?? 1024);
 
     const normalizedRequested = this.tierRouter.normalizeModelId(input.model);
-    const candidateModels = [
+    const customFallbacks = (options.fallbackModels ?? [])
+      .map((m) => this.tierRouter.normalizeModelId(m))
+      .filter((m) => m.length > 0 && m !== normalizedRequested);
+    const defaultChain = this.tierRouter.getFallbackChain(normalizedRequested, options.tierHint);
+
+    const candidateModels = Array.from(new Set([
       normalizedRequested,
-      ...this.tierRouter.getFallbackChain(normalizedRequested, options.tierHint),
-    ];
+      ...customFallbacks,
+      ...defaultChain,
+    ]));
 
     const maxAttempts = options.maxAttempts ?? Math.min(candidateModels.length * 3, 10);
     const globallyExcludedKeyIds = new Set<string>();
@@ -339,10 +345,16 @@ export class SmartModelRouter {
     const estimatedTokens = Math.ceil(promptChars / 4) + (input.maxTokens ?? 1024);
 
     const normalizedRequested = this.tierRouter.normalizeModelId(input.model);
-    const candidateModels = [
+    const customFallbacks = (options.fallbackModels ?? [])
+      .map((m) => this.tierRouter.normalizeModelId(m))
+      .filter((m) => m.length > 0 && m !== normalizedRequested);
+    const defaultChain = this.tierRouter.getFallbackChain(normalizedRequested, options.tierHint);
+
+    const candidateModels = Array.from(new Set([
       normalizedRequested,
-      ...this.tierRouter.getFallbackChain(normalizedRequested, options.tierHint),
-    ];
+      ...customFallbacks,
+      ...defaultChain,
+    ]));
 
     let selectedSlot: AcquiredSlot | null = null;
     let selectedModelProfile = this.tierRouter.getModelProfile(normalizedRequested);
