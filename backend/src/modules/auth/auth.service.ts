@@ -38,7 +38,7 @@ export interface AuthTokens {
   };
 }
 
-interface AuthUserRow {
+export interface AuthUserRow {
   id: string;
   tenant_id: string;
   email: string;
@@ -123,7 +123,7 @@ type RefreshOutcome =
 // Helpers
 // ---------------------------------------------------------------------------
 
-const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
+export const USER_COLUMNS = `u.id, u.tenant_id, u.email, u.phone, u.name, u.role, u.platform_role, u.permissions,
     u.password_hash, t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan,
     t.status AS tenant_status, t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name,
     t.auth_settings AS tenant_auth_settings, t.parent_tenant_id AS tenant_parent_id, t.custom_pricing AS tenant_custom_pricing`;
@@ -247,11 +247,12 @@ export class AuthService {
    * rotated refresh token. `typ` lets authenticate.ts reject a refresh token
    * presented as a bearer credential.
    */
-  private async issueTokens(
+  public async issueTokens(
     user: AuthUserRow,
     tx?: TransactionClient,
     replacesId?: string,
     metadata?: { userAgent?: string; ip?: string },
+    impersonatorId?: string,
   ): Promise<AuthTokens> {
     const env = getEnv();
 
@@ -260,6 +261,7 @@ export class AuthService {
       tenant_id: user.tenant_id,
       role: user.role,
       typ: "access",
+      ...(impersonatorId ? { impersonator_id: impersonatorId } : {}),
     });
 
     const refresh_token = randomBytes(48).toString("base64url");
@@ -665,7 +667,7 @@ export class AuthService {
    * для него полноценный JWT-токен, записывая действие в аудит-лог платформы.
    */
   async impersonateTenant(tenantId: string, actorUserId: string): Promise<AuthTokens> {
-    const user = await queryOne<AuthUserRow>(
+    let user = await queryOne<AuthUserRow>(
       `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
               u.password_hash, u.permissions,
               t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status,
@@ -679,10 +681,55 @@ export class AuthService {
     );
 
     if (user === null) {
-      throw new AppError(404, "USER_NOT_FOUND", "В компании нет активных пользователей для входа");
+      const tenant = await queryOne<{
+        id: string;
+        name: string;
+        slug: string;
+        plan: string;
+        status: string;
+        custom_price_rubles: number | null;
+        custom_plan_name: string | null;
+      }>(
+        `SELECT id, name, slug, plan, status, custom_price_rubles, custom_plan_name FROM tenants WHERE id = $1`,
+        [tenantId],
+      );
+
+      if (tenant === null) {
+        throw new AppError(404, "TENANT_NOT_FOUND", "Компания не найдена");
+      }
+
+      const defaultEmail = `admin@${tenant.slug}.local`;
+      const defaultName = `${tenant.name} Owner`;
+      const placeholderPasswordHash = await argon2.hash(randomBytes(16).toString("hex"));
+
+      const createdUser = await queryOne<{ id: string }>(
+        `INSERT INTO users (tenant_id, email, phone, name, role, password_hash, permissions, activated_at)
+         VALUES ($1, $2, null, $3, 'owner', $4, $5, now())
+         RETURNING id`,
+        [tenant.id, defaultEmail, defaultName, placeholderPasswordHash, [...OWNER_PERMISSIONS]],
+      );
+
+      if (createdUser === null) {
+        throw new AppError(500, "CREATE_USER_FAILED", "Не удалось создать владельца компании");
+      }
+
+      user = await queryOne<AuthUserRow>(
+        `SELECT u.id, u.tenant_id, u.role, u.platform_role, u.name, u.email, u.phone,
+                u.password_hash, u.permissions,
+                t.name AS tenant_name, t.slug AS tenant_slug, t.plan AS tenant_plan, t.status AS tenant_status,
+                t.custom_price_rubles AS tenant_custom_price_rubles, t.custom_plan_name AS tenant_custom_plan_name
+         FROM users u
+         JOIN tenants t ON t.id = u.tenant_id
+         WHERE u.id = $1`,
+        [createdUser.id],
+      );
+
+      if (user === null) {
+        throw new AppError(500, "LOAD_USER_FAILED", "Не удалось загрузить созданного владельца компании");
+      }
     }
 
-    const tokens = await this.issueTokens(user);
+    const tokens = await this.issueTokens(user, undefined, undefined, undefined, actorUserId);
 
     await query(
       `INSERT INTO tenant_audit_log
@@ -701,6 +748,72 @@ export class AuthService {
     );
 
     return tokens;
+  }
+
+  /**
+   * Безопасный выход из режима имперсонации с полным восстановлением сессии платформенного владельца.
+   */
+  async exitImpersonation(
+    tokens: {
+      adminRefreshToken?: string;
+      adminAccessToken?: string;
+      cookieRefreshToken?: string;
+    },
+    meta?: { userAgent?: string; ip?: string },
+  ): Promise<AuthTokens> {
+    const candidateRefresh = tokens.adminRefreshToken || tokens.cookieRefreshToken;
+
+    // 1. Попытка восстановить через refresh token
+    if (candidateRefresh && typeof candidateRefresh === "string" && candidateRefresh.trim().length > 0) {
+      try {
+        const refreshed = await this.refreshToken(candidateRefresh.trim(), meta);
+        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(
+          refreshed.access_token,
+        );
+        if (payload?.sub) {
+          const adminUser = await queryOne<{ id: string; platform_role: string | null }>(
+            "SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL",
+            [payload.sub],
+          );
+          if (adminUser?.platform_role === "platform_owner") {
+            return refreshed;
+          }
+        }
+      } catch {
+        // Fallback к проверке access token
+      }
+    }
+
+    // 2. Попытка восстановить через access token
+    if (
+      tokens.adminAccessToken &&
+      typeof tokens.adminAccessToken === "string" &&
+      tokens.adminAccessToken.trim().length > 0
+    ) {
+      try {
+        const payload = this.app.jwt.decode<{ sub: string; tenant_id: string; impersonator_id?: string }>(
+          tokens.adminAccessToken.trim(),
+        );
+        const targetUserId = payload?.impersonator_id || payload?.sub;
+        if (targetUserId) {
+          const adminUser = await queryOne<AuthUserRow>(
+            `SELECT ${USER_COLUMNS}
+             FROM users u
+             JOIN tenants t ON t.id = u.tenant_id
+             WHERE u.id = $1 AND u.deleted_at IS NULL`,
+            [targetUserId],
+          );
+
+          if (adminUser && adminUser.platform_role === "platform_owner") {
+            return await this.issueTokens(adminUser, undefined, undefined, meta);
+          }
+        }
+      } catch {
+        // Ошибка декодирования
+      }
+    }
+
+    throw new UnauthorizedError("Не удалось восстановить сессию администратора платформы");
   }
 
   // -- registration ---------------------------------------------------------

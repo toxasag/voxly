@@ -9,7 +9,7 @@ import { MaxService } from "../../services/max.service.js";
 import { EmailService } from "../../services/email.service.js";
 import { getEnv } from "../../config/env.js";
 import { query, queryOne } from "../../db/client.js";
-import { UnauthorizedError, PermissionDeniedError } from "../../plugins/errorHandler.js";
+import { UnauthorizedError } from "../../plugins/errorHandler.js";
 import { attributionEngineService } from "../analytics/attribution-engine.service.js";
 import {
   setAuthCookies,
@@ -710,39 +710,39 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
   });
 
   app.post("/exit-impersonation", async (request, reply) => {
-    let candidateToken: string | undefined;
+    let candidateRefresh: string | undefined;
+    let candidateAccess: string | undefined;
 
     if (request.body && typeof request.body === "object") {
-      const parsed = z.object({ admin_refresh_token: z.string().min(1) }).safeParse(request.body);
+      const parsed = z
+        .object({
+          admin_refresh_token: z.string().optional(),
+          admin_access_token: z.string().optional(),
+        })
+        .safeParse(request.body);
       if (parsed.success) {
-        candidateToken = parsed.data.admin_refresh_token;
+        candidateRefresh = parsed.data.admin_refresh_token;
+        candidateAccess = parsed.data.admin_access_token;
       }
     }
 
-    if (!candidateToken || typeof candidateToken !== "string" || candidateToken.trim().length === 0) {
-      throw new UnauthorizedError("Admin refresh token is required");
-    }
+    const cookies = parseCookies(request.headers.cookie);
+    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
 
     const meta = {
       userAgent: request.headers["user-agent"],
       ip: request.ip,
     };
 
-    const tokens = await service.refreshToken(candidateToken.trim(), meta);
-
-    const payload = app.jwt.decode<{ sub: string; tenant_id: string; role: string }>(tokens.access_token);
-    if (!payload?.sub) {
-      throw new UnauthorizedError("Недействительный токен администратора");
-    }
-
-    const adminUser = await queryOne<{ id: string; platform_role: string | null }>(
-      "SELECT id, platform_role FROM users WHERE id = $1 AND deleted_at IS NULL",
-      [payload.sub],
+    const tokens = await service.exitImpersonation(
+      {
+        adminRefreshToken: candidateRefresh,
+        adminAccessToken: candidateAccess || headerToken,
+        cookieRefreshToken: cookieRefresh,
+      },
+      meta,
     );
-
-    if (adminUser?.platform_role !== "platform_owner") {
-      throw new PermissionDeniedError("Сессия не принадлежит владельцу платформы");
-    }
 
     setAuthCookies(request, reply, tokens);
     return reply.status(200).send({ success: true, data: tokens });

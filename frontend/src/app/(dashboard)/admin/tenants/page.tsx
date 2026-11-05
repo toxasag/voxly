@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -27,7 +28,7 @@ import {
   type AdminTenantDTO,
 } from "@/lib/api/use-admin";
 import { readAccessToken, readRefreshToken, writeTokens } from "@/lib/auth/session";
-import { writeImpersonationBackup } from "@/lib/auth/impersonation";
+import { writeImpersonationBackup, type ImpersonationBackup } from "@/lib/auth/impersonation";
 import { useAuth } from "@/lib/auth/use-auth";
 import { tenantPortalUrl } from "@/lib/auth/tenant-host";
 import { TenantManageModal } from "@/components/admin/TenantManageModal";
@@ -228,6 +229,7 @@ function DeleteTenantDialog({
 }
 
 export default function AdminTenantsPage() {
+  const queryClient = useQueryClient();
   const { user: currentAdminUser } = useAuth();
   const isPlatformOwner = currentAdminUser?.platform_role === "platform_owner";
   const { data: tenants = [], isLoading, isError, error, refetch, isFetching } = useAdminTenants({
@@ -363,10 +365,9 @@ export default function AdminTenantsPage() {
       setPendingId(tenant.id);
       try {
         const currentAccessToken = readAccessToken();
-        const currentRefreshToken = readRefreshToken();
 
-        if (!currentAccessToken || !currentRefreshToken) {
-          toast.error("Не найдены токены текущей сессии администратора");
+        if (!currentAccessToken) {
+          toast.error("Не найден токен авторизации администратора");
           return;
         }
 
@@ -383,17 +384,26 @@ export default function AdminTenantsPage() {
 
         // Сохраняем исходную сессию суперадминистратора в бэкап (domain-scoped cookie + localStorage)
         const targetSlug = tenant.slug || "";
-        const backup = {
-          accessToken: currentAccessToken,
-          refreshToken: currentRefreshToken,
-          adminUserEmail: currentAdminUser?.email ?? "",
-          adminUserName: currentAdminUser?.name ?? "",
+        const adminAccessToken = res.admin_access_token || currentAccessToken;
+        const adminRefreshToken = res.admin_refresh_token || adminAccessToken;
+        const adminEmail = res.admin_user?.email || currentAdminUser?.email || "";
+        const adminName = res.admin_user?.name || currentAdminUser?.name || "";
+
+        const backup: ImpersonationBackup = {
+          accessToken: adminAccessToken,
+          refreshToken: adminRefreshToken,
+          adminUserEmail: adminEmail,
+          adminUserName: adminName,
+          adminOriginHost: typeof window !== "undefined" ? window.location.host : "",
           impersonatedTenantSlug: targetSlug,
           impersonatedTenantName: tenant.name,
           impersonatedUserEmail: userEmail,
           enteredAt: new Date().toISOString(),
         };
         writeImpersonationBackup(backup);
+
+        // Очищаем кэш запросов, чтобы данные админки не смешивались с данными тенанта
+        queryClient.clear();
 
         // Применяем токен клиента
         writeTokens({
@@ -410,7 +420,7 @@ export default function AdminTenantsPage() {
         setPendingId(null);
       }
     },
-    [impersonate, currentAdminUser],
+    [impersonate, currentAdminUser, queryClient],
   );
 
   // Переключение статуса
