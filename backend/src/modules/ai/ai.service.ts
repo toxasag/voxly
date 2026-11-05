@@ -11,6 +11,7 @@ import type {
   AgentStatus,
   AiAgentDTO,
   AiBalanceDTO,
+  ConsultantSource,
   CreateAgentPayload,
   UpdateAgentPayload,
 } from "./ai.types.js";
@@ -37,6 +38,11 @@ interface AgentRow {
   max_tokens: number;
   system_prompt: string;
   context_entities: string[];
+  company_name_override: string | null;
+  consultant_source: ConsultantSource;
+  consultant_name: string | null;
+  consultant_role: string | null;
+  fallback_models: string[];
   wizard_config: AiAgentDTO["wizardConfig"];
   tokens_used: string;
   requests_count: string;
@@ -67,6 +73,11 @@ function toDTO(row: AgentRow): AiAgentDTO {
     maxTokens: row.max_tokens,
     systemPrompt: row.system_prompt,
     contextEntities: row.context_entities,
+    companyNameOverride: row.company_name_override,
+    consultantSource: row.consultant_source ?? "manual",
+    consultantName: row.consultant_name,
+    consultantRole: row.consultant_role,
+    fallbackModels: row.fallback_models ?? [],
     wizardConfig: row.wizard_config ?? null,
     tokensUsed: Number(row.tokens_used),
     requestsCount: Number(row.requests_count),
@@ -87,6 +98,7 @@ function toDTO(row: AgentRow): AiAgentDTO {
 const AGENT_SELECT = `
   SELECT a.id, a.name, a.description, a.accent, a.model, a.status, a.mode,
          a.temperature, a.max_tokens, a.system_prompt, a.context_entities,
+         a.company_name_override, a.consultant_source, a.consultant_name, a.consultant_role, a.fallback_models,
          a.wizard_config,
          COALESCE(u.tokens_used, 0)::text AS tokens_used,
          COALESCE(u.requests_count, 0)::text AS requests_count,
@@ -150,11 +162,19 @@ export class AiService {
         throw new AppError(409, "AGENT_NAME_TAKEN", "Агент с таким названием уже есть");
       }
 
+      const companyOverride = payload.company_name_override ?? payload.companyNameOverride ?? null;
+      const consultantSource = payload.consultant_source ?? payload.consultantSource ?? "manual";
+      const consultantName = payload.consultant_name ?? payload.consultantName ?? null;
+      const consultantRole = payload.consultant_role ?? payload.consultantRole ?? null;
+      const fallbackModels = payload.fallback_models ?? payload.fallbackModels ?? [];
+
       return tx.queryOneOrThrow<{ id: string }>(
         `INSERT INTO ai_agents
            (tenant_id, name, description, accent, model, status, mode,
-            temperature, max_tokens, system_prompt, context_entities, wizard_config)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+            temperature, max_tokens, system_prompt, context_entities,
+            company_name_override, consultant_source, consultant_name, consultant_role, fallback_models,
+            wizard_config)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
          RETURNING id`,
         [
           tenantId,
@@ -168,6 +188,11 @@ export class AiService {
           payload.max_tokens,
           payload.system_prompt,
           payload.context_entities,
+          companyOverride,
+          consultantSource,
+          consultantName,
+          consultantRole,
+          fallbackModels,
           payload.wizard_config ? JSON.stringify(payload.wizard_config) : null,
         ],
       );
@@ -190,6 +215,32 @@ export class AiService {
       });
     }
 
+    const companyOverride = payload.company_name_override !== undefined
+      ? payload.company_name_override
+      : payload.companyNameOverride !== undefined
+        ? payload.companyNameOverride
+        : undefined;
+    const consultantSource = payload.consultant_source !== undefined
+      ? payload.consultant_source
+      : payload.consultantSource !== undefined
+        ? payload.consultantSource
+        : undefined;
+    const consultantName = payload.consultant_name !== undefined
+      ? payload.consultant_name
+      : payload.consultantName !== undefined
+        ? payload.consultantName
+        : undefined;
+    const consultantRole = payload.consultant_role !== undefined
+      ? payload.consultant_role
+      : payload.consultantRole !== undefined
+        ? payload.consultantRole
+        : undefined;
+    const fallbackModels = payload.fallback_models !== undefined
+      ? payload.fallback_models
+      : payload.fallbackModels !== undefined
+        ? payload.fallbackModels
+        : undefined;
+
     const row = await queryOne<{ id: string }>(
       `UPDATE ai_agents SET
          name = COALESCE($3, name),
@@ -202,6 +253,11 @@ export class AiService {
          max_tokens = COALESCE($10, max_tokens),
          system_prompt = COALESCE($11, system_prompt),
          context_entities = COALESCE($12, context_entities),
+         company_name_override = CASE WHEN $14::boolean THEN $15::text ELSE company_name_override END,
+         consultant_source = COALESCE($16, consultant_source),
+         consultant_name = CASE WHEN $17::boolean THEN $18::text ELSE consultant_name END,
+         consultant_role = CASE WHEN $19::boolean THEN $20::text ELSE consultant_role END,
+         fallback_models = COALESCE($21, fallback_models),
          wizard_config = CASE WHEN $13::text IS NOT NULL THEN $13::jsonb ELSE wizard_config END
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
        RETURNING id`,
@@ -219,6 +275,14 @@ export class AiService {
         payload.system_prompt ?? null,
         payload.context_entities ?? null,
         payload.wizard_config !== undefined ? (payload.wizard_config ? JSON.stringify(payload.wizard_config) : null) : null,
+        companyOverride !== undefined,
+        companyOverride ?? null,
+        consultantSource ?? null,
+        consultantName !== undefined,
+        consultantName ?? null,
+        consultantRole !== undefined,
+        consultantRole ?? null,
+        fallbackModels ?? null,
       ],
     );
 

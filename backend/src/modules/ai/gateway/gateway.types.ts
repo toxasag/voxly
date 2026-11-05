@@ -96,6 +96,7 @@ export interface GatewayChatMessage {
 export interface GatewayExecutionOptions {
   tenantId?: string;
   tierHint?: ModelTier;
+  fallbackModels?: string[];
   maxAttempts?: number;
   temperature?: number;
   maxTokens?: number;

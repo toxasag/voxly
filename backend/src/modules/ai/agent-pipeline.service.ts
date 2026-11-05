@@ -75,6 +75,11 @@ interface AgentRow {
   temperature: string;
   max_tokens: number;
   system_prompt: string;
+  company_name_override?: string | null;
+  consultant_source?: "manual" | "chat_widget" | null;
+  consultant_name?: string | null;
+  consultant_role?: string | null;
+  fallback_models?: string[] | null;
   wizard_config: WizardConfig | null;
 }
 
@@ -117,7 +122,9 @@ export class AgentPipelineService {
   }): Promise<AgentRow | null> {
     return queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt, a.wizard_config
+              a.max_tokens, a.system_prompt, a.company_name_override,
+              a.consultant_source, a.consultant_name, a.consultant_role,
+              a.fallback_models, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
@@ -216,15 +223,36 @@ export class AgentPipelineService {
         }
 
         // 1. Находим contact_id сделки для сквозной памяти по всем каналам (Webchat -> Telegram -> WhatsApp)
-        const dealInfo = await queryOne<{ contact_id: string | null }>(
-          `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
-          [input.dealId, input.tenantId],
-        );
-        const contactId = dealInfo?.contact_id;
+        let contactId: string | null = null;
+        if (input.dealId) {
+          const dealInfo = await queryOne<{ contact_id: string | null }>(
+            `SELECT contact_id FROM deals WHERE id = $1 AND tenant_id = $2`,
+            [input.dealId, input.tenantId],
+          );
+          contactId = dealInfo?.contact_id ?? null;
+        }
+
+        // Если у сделки нет контакта напрямую, разрешаем его по номеру/chatId
+        if (!contactId && (cleanDigits.length >= 10 || /^\d+$/.test(input.chatId))) {
+          const resolved = await queryOne<{ id: string }>(
+            `SELECT id FROM contacts
+             WHERE tenant_id = $1 AND deleted_at IS NULL
+               AND (
+                 phone = $2
+                 OR phone = '+' || $2
+                 OR additional_phones @> jsonb_build_array(jsonb_build_object('number', $2::text))
+                 OR additional_phones @> jsonb_build_array(jsonb_build_object('number', ('+' || $2)::text))
+                 OR telegram_chat_id = CASE WHEN $2 ~ '^\\d+$' THEN $2::bigint ELSE NULL END
+               )
+             LIMIT 1`,
+            [input.tenantId, cleanDigits],
+          );
+          contactId = resolved?.id ?? null;
+        }
 
         let rows: HistoryMessageRow[] = [];
         if (contactId) {
-          // Сквозная выборка истории: все сообщения контакта по всем каналам и сделкам
+          // Сквозная выборка истории: все сообщения контакта по всем каналам и сделкам (Webchat, Telegram, WhatsApp)
           rows = await query<HistoryMessageRow>(
             `SELECT m.direction, m.content, m.channel
              FROM deal_messages m
@@ -358,11 +386,62 @@ export class AgentPipelineService {
     }
 
     const wc = agent.wizard_config;
+
+    // 1. Вычисляем название компании: ручной оверрайд агента -> wizard_config -> имя тенанта -> дефолт
     const effectiveTenantName =
-      wc?.companyName ||
-      (tenantRow?.name && tenantRow.name !== "valera" ? tenantRow.name : "Элерон");
+      (agent.company_name_override && agent.company_name_override.trim().length > 0 ? agent.company_name_override.trim() : null) ||
+      (wc?.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
+      (wc?.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||
+      (tenantRow?.name && tenantRow.name.trim().length > 0 ? tenantRow.name.trim() : null) ||
+      "Компания";
+
+    // 2. Вычисляем имя и роль консультанта: ручной ввод vs настройки онлайн-виджета
+    let widgetConsultantName: string | undefined;
+    let widgetConsultantRole: string | undefined;
+    if (input.channelAccountId) {
+      try {
+        const chAcc = await queryOne<{ label: string; credentials: Record<string, unknown> }>(
+          `SELECT label, credentials FROM channel_accounts WHERE id = $1 AND tenant_id = $2`,
+          [input.channelAccountId, input.tenantId],
+        );
+        if (chAcc?.credentials && typeof chAcc.credentials === "object") {
+          const creds = chAcc.credentials;
+          if (typeof creds.consultantName === "string" && creds.consultantName.trim().length > 0) {
+            widgetConsultantName = creds.consultantName.trim();
+          } else if (typeof creds.botName === "string" && creds.botName.trim().length > 0) {
+            widgetConsultantName = creds.botName.trim();
+          } else if (chAcc.label && chAcc.label.trim().length > 0) {
+            widgetConsultantName = chAcc.label.trim();
+          }
+
+          if (typeof creds.consultantRole === "string" && creds.consultantRole.trim().length > 0) {
+            widgetConsultantRole = creds.consultantRole.trim();
+          } else if (typeof creds.title === "string" && creds.title.trim().length > 0) {
+            widgetConsultantRole = creds.title.trim();
+          }
+        }
+      } catch (err) {
+        this.log.warn({ err, channelAccountId: input.channelAccountId }, "Failed to fetch channel account for widget consultant");
+      }
+    }
+
+    const isWidgetSource =
+      agent.consultant_source === "chat_widget" ||
+      wc?.consultant_source === "chat_widget" ||
+      wc?.consultantSource === "chat_widget";
+
+    const effectiveConsultantName = isWidgetSource
+      ? (widgetConsultantName || agent.consultant_name || wc?.consultantName || "Консультант")
+      : (agent.consultant_name || wc?.consultantName || widgetConsultantName || "Консультант");
+
+    const effectiveConsultantRole = isWidgetSource
+      ? (widgetConsultantRole || agent.consultant_role || wc?.consultantRole || "менеджер")
+      : (agent.consultant_role || wc?.consultantRole || widgetConsultantRole || "менеджер");
+
     const variables: Record<string, string> = {
       "tenant.name": effectiveTenantName,
+      "consultant.name": effectiveConsultantName,
+      "consultant.role": effectiveConsultantRole,
       "channel_type": input.channelType ?? "онлайн-чат",
       "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
     };
@@ -372,8 +451,6 @@ export class AgentPipelineService {
     }
 
     if (wc) {
-      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
-      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
@@ -394,6 +471,11 @@ export class AgentPipelineService {
     });
 
     try {
+      const fallbackList = [
+        ...(agent.fallback_models ?? []),
+        ...(wc?.fallback_models ?? wc?.fallbackModels ?? []),
+      ].filter((m): m is string => typeof m === "string" && m.trim().length > 0);
+
       const completion = await this.chat.complete({
         model: GATEWAY_MODEL[model] ?? model,
         messages: [
@@ -404,6 +486,8 @@ export class AgentPipelineService {
         temperature: Number(agent.temperature),
         maxTokens: agent.max_tokens,
         jsonMode: true,
+        tenantId: input.tenantId,
+        fallbackModels: fallbackList,
       });
 
       const reply = parseAgentReply(completion.content);
@@ -553,7 +637,9 @@ export class AgentPipelineService {
   }): Promise<{ reply: string; messages: string[]; tokens: number; latencyMs: number }> {
     const agent = await queryOne<AgentRow>(
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
-              a.max_tokens, a.system_prompt, a.wizard_config
+              a.max_tokens, a.system_prompt, a.company_name_override,
+              a.consultant_source, a.consultant_name, a.consultant_role,
+              a.fallback_models, a.wizard_config
        FROM ai_agents a
        WHERE a.tenant_id = $1
          AND a.id = $2
@@ -591,15 +677,32 @@ export class AgentPipelineService {
     ]);
 
     const wc = agent.wizard_config;
+    const effectiveTenantName =
+      (agent.company_name_override && agent.company_name_override.trim().length > 0 ? agent.company_name_override.trim() : null) ||
+      (wc?.company_name_override && wc.company_name_override.trim().length > 0 ? wc.company_name_override.trim() : null) ||
+      (wc?.companyName && wc.companyName.trim().length > 0 ? wc.companyName.trim() : null) ||
+      (tenantRow?.name && tenantRow.name.trim().length > 0 ? tenantRow.name.trim() : null) ||
+      "Компания";
+
+    const effectiveConsultantName =
+      agent.consultant_name ||
+      wc?.consultantName ||
+      "Консультант";
+
+    const effectiveConsultantRole =
+      agent.consultant_role ||
+      wc?.consultantRole ||
+      "менеджер";
+
     const variables: Record<string, string> = {
-      "tenant.name": tenantRow?.name || "Компания",
+      "tenant.name": effectiveTenantName,
+      "consultant.name": effectiveConsultantName,
+      "consultant.role": effectiveConsultantRole,
       "channel_type": "тестовый чат",
       "current_time": new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }),
     };
 
     if (wc) {
-      if (wc.consultantName) variables["consultant.name"] = wc.consultantName;
-      if (wc.consultantRole) variables["consultant.role"] = wc.consultantRole;
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
@@ -634,12 +737,19 @@ export class AgentPipelineService {
 
     chatMessages.push({ role: "user", content: input.message });
 
+    const fallbackList = [
+      ...(agent.fallback_models ?? []),
+      ...(wc?.fallback_models ?? wc?.fallbackModels ?? []),
+    ].filter((m): m is string => typeof m === "string" && m.trim().length > 0);
+
     const completion = await this.chat.complete({
       model: GATEWAY_MODEL[model] ?? model,
       messages: chatMessages,
       temperature: Number(agent.temperature),
       maxTokens: agent.max_tokens,
       jsonMode: true,
+      tenantId: input.tenantId,
+      fallbackModels: fallbackList,
     });
 
     const parsed = parseAgentReply(completion.content);

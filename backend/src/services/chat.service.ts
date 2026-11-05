@@ -39,6 +39,8 @@ export interface ChatProvider {
     maxTokens?: number;
     /** Требовать от модели строгий JSON. */
     jsonMode?: boolean;
+    tenantId?: string;
+    fallbackModels?: string[];
   }): Promise<ChatCompletionResult>;
 }
 
@@ -81,6 +83,7 @@ export class GatewayChatProvider implements ChatProvider {
     maxTokens?: number;
     jsonMode?: boolean;
     tenantId?: string;
+    fallbackModels?: string[];
   }): Promise<ChatCompletionResult> {
     const config = await platformConfigService.getRotatedLlmConfig();
     const activeBaseUrl = (config?.baseUrl || this.baseUrl)?.replace(/\/+$/, "");
@@ -110,6 +113,7 @@ export class GatewayChatProvider implements ChatProvider {
         },
         {
           tenantId: input.tenantId,
+          fallbackModels: input.fallbackModels,
         },
       );
 
