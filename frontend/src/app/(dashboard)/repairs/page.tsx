@@ -2,14 +2,15 @@
 
 import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 import { Plus, Wrench, Clock, CheckCircle2 } from "lucide-react";
 import { RepairsTable } from "@/components/repairs/RepairsTable";
 import { RepairIntakeModal } from "@/components/repairs/RepairIntakeModal";
 import { RepairReceiptModal } from "@/components/repairs/RepairReceiptModal";
 import { Guard } from "@/components/shared/Guard";
 import type { RepairTicket, RepairFilterStatus } from "@/lib/repairs/repairs.types";
-import type { RepairOrderDTO } from "@/lib/api/use-repairs";
-import { useRepairs, useCreateRepair } from "@/lib/api/use-repairs";
+import type { RepairOrderDTO, EquipmentIntakeItem, CreateBatchRepairPayload } from "@/lib/api/use-repairs";
+import { useRepairs, useCreateRepair, useCreateBatchRepair } from "@/lib/api/use-repairs";
 import type { CreateRepairPayload } from "@/schemas/repair.schema";
 import { cn } from "@/lib/utils";
 
@@ -36,9 +37,10 @@ function RepairsPageContent() {
   });
 
   const createMutation = useCreateRepair();
+  const createBatchMutation = useCreateBatchRepair();
 
   useEffect(() => {
-    if (searchParams.get("create") === "1") {
+    if (searchParams.get("create") === "1" || searchParams.get("action") === "intake") {
       setCreateModalOpen(true);
     }
   }, [searchParams]);
@@ -48,6 +50,11 @@ function RepairsPageContent() {
     return data.items.map((item: RepairOrderDTO): RepairTicket => ({
       id: item.id,
       ticket_number: item.ticketNumber,
+      deal_id: item.dealId ?? null,
+      deal_title: item.dealTitle ?? null,
+      deal_note: item.dealNote ?? null,
+      company_name: item.companyName ?? null,
+      company_inn: item.companyInn ?? null,
       customer_name: item.customerName,
       customer_phone: item.customerPhone,
       customer_id: item.customerId,
@@ -89,55 +96,109 @@ function RepairsPageContent() {
 
   const statsTotal = data?.total ?? 0;
   const statsInProgress = tickets.filter(
-    (t) => t.status === "intake" || t.status === "diagnostics" || t.status === "approval" || t.status === "in_progress",
+    (t) =>
+      t.status === "intake" ||
+      t.status === "waiting_parts" ||
+      t.status === "diagnostics" ||
+      t.status === "approval" ||
+      t.status === "in_progress",
   ).length;
   const statsReady = tickets.filter((t) => t.status === "ready").length;
 
   const handleCreateRepair = useCallback(
-    async (payload: CreateRepairPayload) => {
-      const created = await createMutation.mutateAsync(payload);
-      setReceiptTarget({
-        id: created.id,
-        ticket_number: created.ticketNumber,
-        customer_name: created.customerName,
-        customer_phone: created.customerPhone,
-        customer_id: created.customerId,
-        equipment: {
-          type: created.equipment.type,
-          brand: created.equipment.brand,
-          model: created.equipment.model,
-          serial_number: created.equipment.serialNumber,
-          package_contents: created.equipment.packageContents,
-          appearance: created.equipment.appearance,
-        },
-        defect_description: created.defectDescription,
-        defect_photos: created.defectPhotos,
-        status: created.status,
-        priority: created.priority,
-        master_name: created.masterName,
-        master_id: created.masterId,
-        estimated_cost: created.estimatedCost,
-        final_cost: created.finalCost,
-        received_at: created.receivedAt,
-        completed_at: created.completedAt,
-        delivered_at: created.deliveredAt,
-        notes: created.notes,
-        diagnostics: created.diagnostics
-          ? {
-              performed_at: created.diagnostics.performed_at,
-              performed_by: created.diagnostics.performed_by,
-              findings: created.diagnostics.findings,
-              recommended_action: created.diagnostics.recommended_action,
-              condition_notes: created.diagnostics.condition_notes,
-            }
-          : null,
-        work_items: [],
-        parts_used: [],
-        nextStatus: created.nextStatus,
-        allowedTransitions: created.allowedTransitions,
-      });
+    async (payload: CreateRepairPayload & { equipments?: EquipmentIntakeItem[] }) => {
+      try {
+        let createdOrders: RepairOrderDTO[] = [];
+
+        if (payload.equipments && payload.equipments.length > 0) {
+          const batchPayload: CreateBatchRepairPayload = {
+            customer_id: payload.customer_id,
+            customer_name: payload.customer_name,
+            customer_phone: payload.customer_phone,
+            customer_email: payload.customer_email,
+            additional_contacts: payload.additional_contacts,
+            company_id: payload.company_id,
+            company_name: payload.company_name,
+            company_inn: payload.company_inn,
+            company_ogrn: payload.company_ogrn,
+            company_bik: payload.company_bik,
+            company_account_number: payload.company_account_number,
+            company_legal_address: payload.company_legal_address,
+            deal_id: payload.deal_id,
+            priority: payload.priority,
+            master_id: payload.master_id,
+            master_name: payload.master_name,
+            estimated_cost: payload.estimated_cost,
+            notes: payload.notes,
+            equipments: payload.equipments,
+          };
+          createdOrders = await createBatchMutation.mutateAsync(batchPayload);
+        } else {
+          const single = await createMutation.mutateAsync(payload);
+          createdOrders = [single];
+        }
+
+        if (createdOrders.length > 0 && createdOrders[0]) {
+          const created = createdOrders[0];
+          toast.success(
+            createdOrders.length > 1
+              ? `Оформлен пакет ремонтов (${createdOrders.length} шт.)`
+              : `Наряд-заказ ${created.ticketNumber} успешно создан`,
+          );
+          setReceiptTarget({
+            id: created.id,
+            ticket_number: created.ticketNumber,
+            deal_id: created.dealId ?? null,
+            deal_title: created.dealTitle ?? null,
+            deal_note: created.dealNote ?? null,
+            company_name: created.companyName ?? null,
+            company_inn: created.companyInn ?? null,
+            customer_name: created.customerName,
+            customer_phone: created.customerPhone,
+            customer_id: created.customerId,
+            equipment: {
+              type: created.equipment.type,
+              brand: created.equipment.brand,
+              model: created.equipment.model,
+              serial_number: created.equipment.serialNumber,
+              package_contents: created.equipment.packageContents,
+              appearance: created.equipment.appearance,
+            },
+            defect_description: created.defectDescription,
+            defect_photos: created.defectPhotos,
+            status: created.status,
+            priority: created.priority,
+            master_name: created.masterName,
+            master_id: created.masterId,
+            estimated_cost: created.estimatedCost,
+            final_cost: created.finalCost,
+            received_at: created.receivedAt,
+            completed_at: created.completedAt,
+            delivered_at: created.deliveredAt,
+            notes: created.notes,
+            diagnostics: created.diagnostics
+              ? {
+                  performed_at: created.diagnostics.performed_at,
+                  performed_by: created.diagnostics.performed_by,
+                  findings: created.diagnostics.findings,
+                  recommended_action: created.diagnostics.recommended_action,
+                  condition_notes: created.diagnostics.condition_notes,
+                }
+              : null,
+            work_items: [],
+            parts_used: [],
+            nextStatus: created.nextStatus,
+            allowedTransitions: created.allowedTransitions,
+          });
+        }
+      } catch (err: unknown) {
+        console.error("Ошибка при создании наряда:", err);
+        const msg = err instanceof Error ? err.message : "Не удалось оформить наряд";
+        toast.error(msg);
+        throw err;
+      }
     },
-    [createMutation],
+    [createBatchMutation, createMutation],
   );
 
   return (
@@ -214,7 +275,8 @@ function RepairsPageContent() {
           onClose={() => setCreateModalOpen(false)}
           onSubmit={handleCreateRepair}
           initialCustomerId={searchParams.get("customer_id") ?? undefined}
-          isSubmitting={createMutation.isPending}
+          initialDealId={searchParams.get("dealId") ?? undefined}
+          isSubmitting={createMutation.isPending || createBatchMutation.isPending}
         />
         <RepairReceiptModal
           open={!!receiptTarget}

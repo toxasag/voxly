@@ -3,6 +3,7 @@ import { AppError, NotFoundError } from "../../plugins/errorHandler.js";
 import { AgentPipelineService } from "../ai/agent-pipeline.service.js";
 import { CrmPipelineService } from "../crm/crm-pipeline.service.js";
 import { extractPhoneNumber, extractEmailAddress } from "../crm/channel-identity.js";
+import { extractNameFromText } from "../crm/identity-resolution.js";
 import { preChatModalService } from "../analytics/prechat-modal.service.js";
 
 // ---------------------------------------------------------------------------
@@ -716,9 +717,17 @@ export class WebchatService {
     // Метаданные источника сохраняются непосредственно в source_metadata контакта и сделки.
     const crmInboundText = effectiveText;
 
+    let detectedName = input.senderName?.trim();
+    if (!detectedName && crmInboundText) {
+      const extracted = extractNameFromText(crmInboundText);
+      if (extracted?.firstName) {
+        detectedName = `${extracted.firstName} ${extracted.lastName || ""}`.trim();
+      }
+    }
+
     const senderDisplayName =
-      input.senderName && input.senderName.trim().length > 0
-        ? input.senderName.trim()
+      detectedName && detectedName.length > 0
+        ? detectedName
         : `Посетитель сайта (${input.visitorId.slice(-4)})`;
 
     // 1. Создаем или находим контакт и сделку в CRM.
@@ -795,8 +804,8 @@ export class WebchatService {
       });
     }
 
-    // Если контакт помечен как личный — CRM не обрабатывает переписку
-    if (crmResult.isPersonal) {
+    // Если контакт помечен как личный или отправитель распознан как бот — CRM не обрабатывает переписку
+    if (crmResult.isPersonal || crmResult.isBot) {
       return {
         dealId: "",
         contactId: crmResult.contactId,
@@ -976,6 +985,9 @@ export class WebchatService {
          WHERE m.tenant_id = $1
            AND m.channel_account_id = $2
            AND m.channel = 'webchat'
+           AND m.direction IN ('inbound', 'outbound')
+           AND m.source NOT IN ('system', 'internal_note', 'audit')
+           AND m.sender_name != 'Система'
            AND (
              c.socials @> $3::jsonb
              OR c.custom_fields->>'webchat_visitor_id' = $4
@@ -996,7 +1008,26 @@ export class WebchatService {
       ),
     );
 
-    return rows.map((r) => {
+    return rows
+      .filter((r) => {
+        // Защита от утечки системных логов/событий CRM в публичный чат посетителя
+        if (r.direction !== "inbound" && r.direction !== "outbound") return false;
+        if (r.source === "system" || r.source === "internal_note" || r.source === "audit") return false;
+        if (r.sender_name === "Система") return false;
+        const text = r.content || "";
+        if (
+          text.includes("Сделка автоматически переведена") ||
+          text.includes("Получены контактные данные клиента") ||
+          text.includes("Создан лид") ||
+          text.includes("Лид создан") ||
+          text.startsWith("Лид №") ||
+          text.includes("Сделка автоматически закрыта")
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((r) => {
       let content = r.content;
       if (r.direction === "inbound") {
         content = content.replace(/^(\[[^\]]+\]\s*)+\n*/g, "").trim();

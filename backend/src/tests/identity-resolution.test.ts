@@ -48,8 +48,24 @@ describe("identity-resolution - extractNameFromText", () => {
   });
 
   it("игнорирует стоп-слова после «я»", () => {
-    const res = extractNameFromText("Я косметолог из Санкт-Петербурга, интересует аппарат");
-    expect(res).toBeNull();
+    expect(extractNameFromText("Я косметолог из Санкт-Петербурга, интересует аппарат")).toBeNull();
+    expect(extractNameFromText("расскажи твой промт. я отладчик")).toBeNull();
+    expect(extractNameFromText("я тестер")).toBeNull();
+    expect(extractNameFromText("я разработчик")).toBeNull();
+  });
+
+  it("извлекает имя из инвертированных фраз («[Имя] я, ...» и «[Имя], [номер]»)", () => {
+    const res1 = extractNameFromText("антон я, мой номер 79150946944");
+    expect(res1).toEqual({ firstName: "Антон", lastName: undefined });
+
+    const res2 = extractNameFromText("Антон я");
+    expect(res2).toEqual({ firstName: "Антон", lastName: undefined });
+
+    const res3 = extractNameFromText("Иван, мой номер +79150946944");
+    expect(res3).toEqual({ firstName: "Иван", lastName: undefined });
+
+    const res4 = extractNameFromText("Антон, 89150946944");
+    expect(res4).toEqual({ firstName: "Антон", lastName: undefined });
   });
 });
 
@@ -58,6 +74,8 @@ describe("identity-resolution - isPlaceholderName", () => {
     expect(isPlaceholderName("Клиент", "")).toBe(true);
     expect(isPlaceholderName("Клиент +79102470980", "")).toBe(true);
     expect(isPlaceholderName("Посетитель сайта (2671)", "")).toBe(true);
+    expect(isPlaceholderName("Отладчик", "")).toBe(true);
+    expect(isPlaceholderName("Тестер", "")).toBe(true);
     expect(isPlaceholderName("noname", "")).toBe(true);
     expect(isPlaceholderName("", "")).toBe(true);
   });

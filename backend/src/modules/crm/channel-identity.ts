@@ -34,6 +34,7 @@ export interface ChannelProfile {
   lastName?: string;
   username?: string;
   phone?: string;
+  isBot?: boolean;
 }
 
 /** Что известно о собеседнике на момент создания контакта. */
@@ -42,7 +43,11 @@ export interface SenderIdentity {
   chatId: string;
   senderName: string;
   senderPhone?: string;
+  senderUsername?: string;
+  senderTelegramUsername?: string;
   profile?: ChannelProfile;
+  isBot?: boolean;
+  sourceMetadata?: Record<string, unknown>;
 }
 
 /**
@@ -286,3 +291,57 @@ export function extractEmailAddress(text?: string | null): string | null {
   const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
   return match ? match[0].toLowerCase() : null;
 }
+
+/**
+ * Проверяет, является ли отправитель сообщения ботом (Telegram bot, MAX bot и т.д.).
+ * Защищает CRM от автоматического создания контактов и сделок для ботов.
+ */
+export function isBotSender(input: {
+  channel?: string;
+  chatId?: string;
+  senderName?: string;
+  senderPhone?: string;
+  senderUsername?: string;
+  senderTelegramUsername?: string;
+  profile?: ChannelProfile | null;
+  isBot?: boolean | null;
+  sourceMetadata?: Record<string, unknown> | null;
+}): boolean {
+  // 1. Нативный или явно переданный признак бота
+  if (input.isBot === true) return true;
+  if (input.profile?.isBot === true) return true;
+
+  // 2. Метаданные источника (sourceMetadata / raw webhook payload)
+  if (input.sourceMetadata && typeof input.sourceMetadata === "object") {
+    if (input.sourceMetadata.is_bot === true || input.sourceMetadata.isBot === true) return true;
+    if (input.sourceMetadata.type === "bot" || input.sourceMetadata.sender_type === "bot") return true;
+  }
+
+  // 3. Анализ username отправителя
+  const usernameCandidates = [
+    input.profile?.username,
+    input.senderTelegramUsername,
+    input.senderUsername,
+    input.chatId?.startsWith("@") ? input.chatId : undefined,
+  ];
+
+  for (const rawUsername of usernameCandidates) {
+    if (!rawUsername || typeof rawUsername !== "string") continue;
+    const clean = rawUsername.trim().replace(/^@/, "");
+    // По спецификации Telegram юзернеймы ботов обязаны заканчиваться на 'bot' (например, 'kupmsk_bot', 'myBot')
+    if (clean.length >= 3 && /(?:_bot|bot)$/i.test(clean)) {
+      return true;
+    }
+  }
+
+  // 4. Анализ senderName: если в качестве имени передан юзернейм бота вида @kupmsk_bot или my_bot
+  if (input.senderName && typeof input.senderName === "string") {
+    const trimmedSender = input.senderName.trim().replace(/^@/, "");
+    if (/^[a-zA-Z0-9_]{3,}(?:_bot|bot)$/i.test(trimmedSender)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+

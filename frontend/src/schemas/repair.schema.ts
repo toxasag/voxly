@@ -1,21 +1,41 @@
 import { z } from "zod";
 
+const digitsOnly = (lengths: number[], label: string) =>
+  z.string().refine(
+    (v) => v === "" || (/^\d+$/.test(v) && lengths.includes(v.length)),
+    `${label} must contain ${lengths.join(" or ")} digits`,
+  );
+
+export const additionalContactSchema = z.object({
+  name: z.string().min(1, "Имя контакта обязательно").max(200),
+  phone: z.string().min(5, "Телефон обязателен").max(30),
+  role: z.string().max(100).optional().or(z.literal("")),
+});
+export type AdditionalContact = z.infer<typeof additionalContactSchema>;
+
 export const createRepairSchema = z.object({
   deal_id: z.string().optional().or(z.literal("")),
   customer_id: z.string().optional().or(z.literal("")),
   customer_name: z.string().min(1, "Customer name is required").max(200),
   customer_phone: z.string().min(5, "Phone is required").max(30),
+  customer_email: z.string().email("Invalid email").optional().or(z.literal("")),
+  additional_contacts: z.array(additionalContactSchema).optional().default([]),
+  company_id: z.string().optional().or(z.literal("")),
   company_name: z.string().max(200).optional().or(z.literal("")),
+  company_inn: digitsOnly([10, 12], "ИНН").optional().or(z.literal("")),
+  company_ogrn: digitsOnly([13, 15], "ОГРН").optional().or(z.literal("")),
+  company_bik: digitsOnly([9], "БИК").optional().or(z.literal("")),
+  company_account_number: digitsOnly([20], "Расчетный счет").optional().or(z.literal("")),
+  company_legal_address: z.string().max(300).optional().or(z.literal("")),
   equipment_type: z.string().min(1, "Equipment type is required"),
   equipment_brand: z.string().min(1, "Brand is required").max(100),
   equipment_model: z.string().min(1, "Model is required").max(100),
   equipment_serial: z.string().max(100).optional().or(z.literal("")),
   package_contents: z.string().max(1000).optional().or(z.literal("")),
-  appearance: z.string().max(1000).optional().or(z.literal("")),
-  defect_description: z
-    .string()
-    .min(10, "Description must be at least 10 characters")
-    .max(2000),
+  package_contents_items: z.array(z.string()).optional().default([]),
+  appearance: z.string().max(1000).optional().or(z.literal("")).default(""),
+  defect_description: z.string().max(2000).optional().default(""),
+  malfunctions: z.array(z.string()).optional().default([]),
   defect_photos: z.array(z.string()).max(20).optional(),
   priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
   master_id: z.string().min(1, "Master is required"),
@@ -24,20 +44,29 @@ export const createRepairSchema = z.object({
     .number({ invalid_type_error: "Cost must be a number" })
     .min(0, "Cost must be positive"),
   notes: z.string().max(1000).optional(),
-});
+}).refine(
+  (data) => (data.malfunctions && data.malfunctions.length > 0) || (data.defect_description && data.defect_description.trim().length >= 3),
+  {
+    message: "Укажите хотя бы одну заявленную неисправность",
+    path: ["malfunctions"],
+  },
+);
 
 export type CreateRepairPayload = z.infer<typeof createRepairSchema>;
 
 export const updateRepairSchema = z.object({
   customer_name: z.string().min(1).max(200).optional(),
   customer_phone: z.string().min(5).max(30).optional(),
+  additional_contacts: z.array(additionalContactSchema).optional(),
   equipment_type: z.string().min(1).max(100).optional(),
   equipment_brand: z.string().min(1).max(100).optional(),
   equipment_model: z.string().min(1).max(100).optional(),
   equipment_serial: z.string().max(100).optional().or(z.literal("")),
   package_contents: z.string().max(1000).optional().or(z.literal("")),
+  package_contents_items: z.array(z.string()).optional(),
   appearance: z.string().max(1000).optional().or(z.literal("")),
-  defect_description: z.string().min(10).max(2000).optional(),
+  defect_description: z.string().max(2000).optional(),
+  malfunctions: z.array(z.string()).optional(),
   estimated_cost: z.number().min(0).optional(),
   final_cost: z.number().min(0).optional(),
   master_id: z.string().uuid().optional().or(z.literal("")),

@@ -27,7 +27,7 @@ import {
   type StoryPublishResult,
 } from "./outbound-registry.js";
 import { ChannelProfileCache } from "./profile-cache.js";
-import type { ChannelProfile } from "../crm/crm-pipeline.service.js";
+import { isBotSender, type ChannelProfile } from "../crm/crm-pipeline.service.js";
 
 // ---------------------------------------------------------------------------
 // Транспорт входящих и исходящих сообщений Telegram (M7.5.16).
@@ -509,6 +509,16 @@ export class TelegramTransportService {
 
       if (senderId === undefined || chatId === undefined) return;
 
+      // Быстрая проверка: если профиль отправителя уже в кэше и это бот — сразу игнорируем
+      const cachedProfile = this.profiles.get(account.id, senderId);
+      if (cachedProfile && isBotSender({ profile: cachedProfile, channel: "telegram", chatId })) {
+        this.log.info(
+          { senderId, username: cachedProfile.username, accountId: account.id },
+          `Skipping lead/contact creation: sender is a bot (@${(cachedProfile.username || "").replace(/^@/, "")})`,
+        );
+        return;
+      }
+
       const text = typeof message.message === "string" ? message.message.trim() : "";
 
       // Проверяем наличие медиавложения (фотография, документ)
@@ -561,6 +571,14 @@ export class TelegramTransportService {
       // Если получено медиа (фотография или документ)
       if (mediaAttachment !== null) {
         const profile = connection ? await this.fetchProfile(connection, senderId) : null;
+        if (profile && isBotSender({ profile, channel: "telegram", chatId })) {
+          this.log.info(
+            { senderId, username: profile.username, accountId: account.id },
+            `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+          );
+          return;
+        }
+
         const senderName = profile?.firstName || senderId;
         const contentText =
           text || (mediaAttachment.mimeType.startsWith("image/") ? "Фотография" : "Вложение");
@@ -574,6 +592,7 @@ export class TelegramTransportService {
             text: contentText,
             senderName,
             senderTelegramChatId: senderId,
+            senderTelegramUsername: profile?.username,
             profile: profile ?? undefined,
             attachment: mediaAttachment.url,
             attachmentType: mediaAttachment.mimeType,
@@ -588,6 +607,11 @@ export class TelegramTransportService {
 
         if (crmResult?.isPersonal) {
           this.log.info({ senderId }, "Personal Telegram contact media ignored by CRM");
+          return;
+        }
+
+        if (crmResult?.isBot) {
+          this.log.info({ senderId, username: profile?.username }, "Bot Telegram media ignored by CRM");
           return;
         }
 
@@ -636,6 +660,15 @@ export class TelegramTransportService {
     // заполнить имя потом будет нечем. Отказ не мешает сохранить переписку.
     const profile = await this.fetchProfile(connection, batch.peerId);
 
+    // Защита от ботов: если собеседник — бот, прерываем обработку до создания контактов/сделок
+    if (profile && isBotSender({ profile, channel: "telegram", chatId: batch.chatId })) {
+      this.log.info(
+        { peerId: batch.peerId, username: profile.username, channelAccountId: batch.channelAccountId },
+        `Skipping lead/contact creation: sender is a bot (@${(profile.username || "").replace(/^@/, "")})`,
+      );
+      return;
+    }
+
     // 2. Сохраняем входящее сообщение в CRM и получаем/создаём контакт и сделку.
     let dealId: string | null = null;
     let contactId: string | null = null;
@@ -650,12 +683,18 @@ export class TelegramTransportService {
           text: batch.text,
           senderName: batch.peerId,
           senderTelegramChatId: batch.peerId,
+          senderTelegramUsername: profile?.username,
           profile: profile ?? undefined,
         }),
       );
 
       if (crmResult.isPersonal) {
         this.log.info({ peerId: batch.peerId }, "Personal Telegram contact message ignored by CRM");
+        return;
+      }
+
+      if (crmResult.isBot) {
+        this.log.info({ peerId: batch.peerId, username: profile?.username }, "Bot Telegram message ignored by CRM");
         return;
       }
 
@@ -814,6 +853,7 @@ export class TelegramTransportService {
           // Номер приходит только если открыт настройками приватности или
           // собеседник в контактах аккаунта.
           phone: entity.phone ?? undefined,
+          isBot: Boolean(entity.bot),
         };
       }
     } catch (error) {
@@ -1159,12 +1199,16 @@ export class TelegramTransportService {
         // ignore
       }
 
+      const isLeadPlaceholder =
+        (user.firstName === "Lead" && user.lastName === "Contact") ||
+        (user.firstName === "Lead" && !user.lastName);
+
       return {
         exists: true,
         userId: user.id ? user.id.toString() : undefined,
         username: username || undefined,
-        firstName: user.firstName ? String(user.firstName).trim() : undefined,
-        lastName: user.lastName ? String(user.lastName).trim() : undefined,
+        firstName: !isLeadPlaceholder && user.firstName ? String(user.firstName).trim() : undefined,
+        lastName: !isLeadPlaceholder && user.lastName ? String(user.lastName).trim() : undefined,
       };
     } catch (err) {
       this.log.warn({ err, phone }, "Telegram resolveUserByPhone failed");

@@ -3,11 +3,14 @@ import { z } from "zod";
 import { RepairsService } from "./repairs.service.js";
 import {
   changeStatusSchema,
+  createBatchRepairSchema,
   createNoteSchema,
   createPartSchema,
   createPhotoSchema,
   createRepairSchema,
+  createRepairServiceCatalogSchema,
   createWorkSchema,
+  renameDictionaryItemSchema,
   repairPrioritySchema,
   repairStatusSchema,
   updatePartSchema,
@@ -18,6 +21,7 @@ import { authenticatePlugin } from "../../plugins/authenticate.js";
 import { NotFoundError } from "../../plugins/errorHandler.js";
 
 const listQuerySchema = z.object({
+  deal_id: z.string().uuid().optional(),
   status: repairStatusSchema.optional(),
   priority: repairPrioritySchema.optional(),
   master_id: z.string().uuid().optional(),
@@ -25,6 +29,30 @@ const listQuerySchema = z.object({
   search: z.string().max(200).optional(),
   limit: z.coerce.number().int().positive().max(100).default(25),
   offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+const clientLookupQuerySchema = z.object({
+  phone: z.string().max(100).optional(),
+  query: z.string().max(200).optional(),
+});
+
+const addDictionaryItemSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  brand_id: z.string().uuid().optional(),
+  brand_name: z.string().max(200).optional(),
+});
+
+const categoryParamSchema = z.object({
+  category: z.string().min(1).max(50),
+});
+
+const dictionaryItemParamsSchema = z.object({
+  category: z.string().min(1).max(50),
+  id: z.string().uuid("id must be a UUID"),
+});
+
+const serialQuerySchema = z.object({
+  serial: z.string().min(1).max(100),
 });
 
 const idParamsSchema = z.object({ id: z.string().uuid("id must be a UUID") });
@@ -57,6 +85,7 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
     const params = listQuerySchema.parse(request.query);
 
     const { items, total } = await service.list(request.tenant_id, {
+      dealId: params.deal_id,
       status: params.status,
       priority: params.priority,
       masterId: params.master_id,
@@ -70,6 +99,130 @@ export default async function repairsRoutes(app: FastifyInstance): Promise<void>
       data: items,
       meta: { limit: params.limit, offset: params.offset, total },
     });
+  });
+
+  // GET /repairs/client-lookup — reactive phone/name lookup with active CRM deals
+  app.get("/client-lookup", { onRequest: canRead }, async (request, reply) => {
+    const params = clientLookupQuerySchema.parse(request.query);
+    const result = await service.clientLookup(request.tenant_id, params);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/dictionaries — retrieve service center dictionary lists
+  app.get("/dictionaries", { onRequest: canRead }, async (request, reply) => {
+    const dictionaries = await service.getDictionaries(request.tenant_id);
+    return reply.send({ data: dictionaries });
+  });
+
+  // GET /repairs/dictionaries/brands — retrieve brands list
+  app.get("/dictionaries/brands", { onRequest: canRead }, async (request, reply) => {
+    const brands = await service.listBrands(request.tenant_id);
+    return reply.send({ data: brands });
+  });
+
+  // POST /repairs/dictionaries/brands — create brand
+  app.post("/dictionaries/brands", { onRequest: canWrite }, async (request, reply) => {
+    const body = z.object({ name: z.string().min(1, "Name is required").max(100) }).parse(request.body);
+    const brand = await service.createBrand(request.tenant_id, body.name);
+    return reply.status(201).send({ data: brand });
+  });
+
+  // GET /repairs/dictionaries/brands/:brandId/models — retrieve models for brand
+  app.get("/dictionaries/brands/:brandId/models", { onRequest: canRead }, async (request, reply) => {
+    const { brandId } = z.object({ brandId: z.string().uuid("brandId must be a valid UUID") }).parse(request.params);
+    const models = await service.listBrandModels(request.tenant_id, brandId);
+    return reply.send({ data: models });
+  });
+
+  // POST /repairs/dictionaries/brands/:brandId/models — create model for brand
+  app.post("/dictionaries/brands/:brandId/models", { onRequest: canWrite }, async (request, reply) => {
+    const { brandId } = z.object({ brandId: z.string().uuid("brandId must be a valid UUID") }).parse(request.params);
+    const body = z.object({ name: z.string().min(1, "Name is required").max(100) }).parse(request.body);
+    const model = await service.createBrandModel(request.tenant_id, brandId, body.name);
+    return reply.status(201).send({ data: model });
+  });
+
+  // POST /repairs/dictionaries/:category — add new dictionary item
+  app.post("/dictionaries/:category", { onRequest: canWrite }, async (request, reply) => {
+    const { category } = categoryParamSchema.parse(request.params);
+    const body = addDictionaryItemSchema.parse(request.body);
+    const item = await service.addDictionaryItem(
+      request.tenant_id,
+      category,
+      body.name,
+      body.brand_name,
+      body.brand_id,
+    );
+    return reply.status(201).send({ data: item });
+  });
+
+  // PATCH /repairs/dictionaries/:category/:id — rename dictionary item
+  app.patch("/dictionaries/:category/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { category, id } = dictionaryItemParamsSchema.parse(request.params);
+    const body = renameDictionaryItemSchema.parse(request.body);
+    const updated = await service.renameDictionaryItem(
+      request.tenant_id,
+      category,
+      id,
+      body.name,
+    );
+    return reply.send({ data: updated });
+  });
+
+  // DELETE /repairs/dictionaries/:category/:id — delete dictionary item with safety check
+  app.delete("/dictionaries/:category/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { category, id } = dictionaryItemParamsSchema.parse(request.params);
+    const result = await service.deleteDictionaryItem(
+      request.tenant_id,
+      category,
+      id,
+    );
+    return reply.send({ data: result });
+  });
+
+  // POST /repairs/batch — batch create repairs (multi-equipment intake)
+  app.post("/batch", { onRequest: canWrite }, async (request, reply) => {
+    const body = createBatchRepairSchema.parse(request.body);
+    const orders = await service.createBatch(
+      request.tenant_id,
+      { id: request.authUser.id, name: request.authUser.name },
+      body,
+    );
+    return reply.status(201).send({ data: orders });
+  });
+
+  // GET /repairs/equipment/search-serial — search equipment history by serial
+  app.get("/equipment/search-serial", { onRequest: canRead }, async (request, reply) => {
+    const { serial } = serialQuerySchema.parse(request.query);
+    const result = await service.searchEquipmentBySerial(request.tenant_id, serial);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/equipment/history — alias
+  app.get("/equipment/history", { onRequest: canRead }, async (request, reply) => {
+    const { serial } = serialQuerySchema.parse(request.query);
+    const result = await service.searchEquipmentBySerial(request.tenant_id, serial);
+    return reply.send({ data: result });
+  });
+
+  // GET /repairs/catalog/services — catalog of repair services
+  app.get("/catalog/services", { onRequest: canRead }, async (request, reply) => {
+    const services = await service.listServicesCatalog(request.tenant_id);
+    return reply.send({ data: services });
+  });
+
+  // POST /repairs/catalog/services — add service to catalog
+  app.post("/catalog/services", { onRequest: canWrite }, async (request, reply) => {
+    const body = createRepairServiceCatalogSchema.parse(request.body);
+    const item = await service.addServiceToCatalog(request.tenant_id, body);
+    return reply.status(201).send({ data: item });
+  });
+
+  // DELETE /repairs/catalog/services/:id — delete service from catalog
+  app.delete("/catalog/services/:id", { onRequest: canWrite }, async (request, reply) => {
+    const { id } = idParamsSchema.parse(request.params);
+    const result = await service.deleteServiceFromCatalog(request.tenant_id, id);
+    return reply.send({ data: result });
   });
 
   app.get("/:id", { onRequest: canRead }, async (request, reply) => {
