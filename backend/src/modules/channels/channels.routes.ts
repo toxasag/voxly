@@ -6,6 +6,7 @@ import { ChannelsService } from "./channels.service.js";
 import { WidgetAnalyticsService } from "./widget-analytics.service.js";
 import {
   channelSlugSchema,
+  channelStatusSchema,
   createChannelAccountSchema,
   customizeAccountLinksSchema,
   updateChannelAccountSchema,
@@ -66,6 +67,36 @@ export default async function channelsRoutes(app: FastifyInstance): Promise<void
     const body = updateChannelAccountSchema.parse(request.body);
 
     const account = await service.update(request.tenant_id, channel, id, body);
+
+    return reply.send({ data: account });
+  });
+
+  app.patch("/:channel/accounts/:id/toggle", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const account = await service.toggleStatus(request.tenant_id, channel, id);
+    return reply.send({ data: account });
+  });
+
+  app.patch("/:channel/accounts/:id/status", { onRequest: guards }, async (request, reply) => {
+    const { channel, id } = accountParams.parse(request.params);
+    const body = z
+      .object({
+        status: channelStatusSchema.optional(),
+        is_enabled: z.boolean().optional(),
+      })
+      .refine((v) => v.status !== undefined || v.is_enabled !== undefined, {
+        message: "Укажите status или is_enabled",
+      })
+      .parse(request.body);
+
+    const nextStatus =
+      body.status ??
+      (body.is_enabled !== undefined ? (body.is_enabled ? "connected" : "disabled") : undefined);
+
+    const account = await service.update(request.tenant_id, channel, id, {
+      status: nextStatus,
+      is_enabled: body.is_enabled,
+    });
 
     return reply.send({ data: account });
   });
