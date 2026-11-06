@@ -468,16 +468,27 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    * Пароль проверяется первым: код без пароля не должен пускать в систему, а
    * пароль без кода — тем более.
    */
-  app.post("/login/verify", async (request, reply) => {
-    const body = loginWithCodeBody.parse(request.body);
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    const result = await service.loginWithPasswordAndCode(sessions, body, meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
-  });
+  app.post(
+    "/login/verify",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = loginWithCodeBody.parse(request.body);
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      const result = await service.loginWithPasswordAndCode(sessions, body, meta);
+      setAuthCookies(request, reply, result);
+      return reply.status(200).send({ data: result });
+    },
+  );
 
   app.post("/otp/send", async (request, reply) => {
     const body = sendOtpBody.parse(request.body);
@@ -496,16 +507,27 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
     return reply.status(200).send({ data: result });
   });
 
-  app.post("/login", async (request, reply) => {
-    const body = loginBody.parse(request.body);
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    const result = await service.loginWithPassword(body.email, body.password, meta);
-    setAuthCookies(request, reply, result);
-    return reply.status(200).send({ data: result });
-  });
+  app.post(
+    "/login",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = loginBody.parse(request.body);
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      const result = await service.loginWithPassword(body.email, body.password, meta);
+      setAuthCookies(request, reply, result);
+      return reply.status(200).send({ data: result });
+    },
+  );
 
   /**
    * Public self-service registration: creates the tenant, its subdomain and
@@ -648,126 +670,170 @@ const authRoutes = async (app: FastifyInstance): Promise<void> => {
    * Получение данных текущей сессии без ротации refresh-токена.
    * Позволяет Next.js восстанавливать профиль на старте без гонок и сброса сессий.
    */
-  app.get("/me", async (request, reply) => {
-    const authHeader = request.headers.authorization;
-    const cookies = parseCookies(request.headers.cookie);
-    let token: string | null = null;
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      token = authHeader.slice("Bearer ".length);
-    } else if (cookies[AUTH_COOKIE_NAME]) {
-      token = cookies[AUTH_COOKIE_NAME];
-    }
-
-    if (!token) {
-      throw new UnauthorizedError("Missing bearer token");
-    }
-
-    let payload: { sub: string; tenant_id: string; typ?: string };
-    try {
-      payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string };
-    } catch {
-      throw new UnauthorizedError("Invalid or expired token");
-    }
-
-    if (payload.typ !== undefined && payload.typ !== "access") {
-      throw new UnauthorizedError("Invalid token type");
-    }
-
-    const data = await service.getMe(payload.sub, payload.tenant_id);
-    return reply.status(200).send({ data });
-  });
-
-  app.post("/refresh", async (request, reply) => {
-    const cookies = parseCookies(request.headers.cookie);
-    let candidateToken: string | undefined;
-
-    if (request.body && typeof request.body === "object") {
-      const parsed = refreshBody.safeParse(request.body);
-      if (parsed.success) {
-        candidateToken = parsed.data.refresh_token;
-      }
-    }
-
-    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
-      clearAuthCookies(request, reply);
-      throw new UnauthorizedError("Refresh token is required");
-    }
-
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-    try {
-      const result = await service.refreshToken(refreshToken.trim(), meta);
-      setAuthCookies(request, reply, result);
-      return reply.status(200).send({ data: result });
-    } catch (err) {
-      clearAuthCookies(request, reply);
-      throw err;
-    }
-  });
-
-  app.post("/exit-impersonation", async (request, reply) => {
-    let candidateRefresh: string | undefined;
-    let candidateAccess: string | undefined;
-
-    if (request.body && typeof request.body === "object") {
-      const parsed = z
-        .object({
-          admin_refresh_token: z.string().optional(),
-          admin_access_token: z.string().optional(),
-        })
-        .safeParse(request.body);
-      if (parsed.success) {
-        candidateRefresh = parsed.data.admin_refresh_token;
-        candidateAccess = parsed.data.admin_access_token;
-      }
-    }
-
-    const cookies = parseCookies(request.headers.cookie);
-    const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
-
-    const meta = {
-      userAgent: request.headers["user-agent"],
-      ip: request.ip,
-    };
-
-    const tokens = await service.exitImpersonation(
-      {
-        adminRefreshToken: candidateRefresh,
-        adminAccessToken: candidateAccess || headerToken,
-        cookieRefreshToken: cookieRefresh,
+  app.get(
+    "/me",
+    {
+      config: {
+        rateLimit: {
+          max: 200,
+          timeWindow: "1 minute",
+        },
       },
-      meta,
-    );
+    },
+    async (request, reply) => {
+      const authHeader = request.headers.authorization;
+      const cookies = parseCookies(request.headers.cookie);
+      let token: string | null = null;
 
-    setAuthCookies(request, reply, tokens);
-    return reply.status(200).send({ success: true, data: tokens });
-  });
-
-  app.post("/logout", async (request, reply) => {
-    const cookies = parseCookies(request.headers.cookie);
-    let candidateToken: string | undefined;
-
-    if (request.body && typeof request.body === "object") {
-      const parsed = refreshBody.safeParse(request.body);
-      if (parsed.success) {
-        candidateToken = parsed.data.refresh_token;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (cookies[AUTH_COOKIE_NAME]) {
+        token = cookies[AUTH_COOKIE_NAME];
       }
-    }
 
-    const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
-    let result = { message: "Logged out" };
-    if (refreshToken && typeof refreshToken === "string" && refreshToken.trim().length > 0) {
-      result = await service.logout(refreshToken.trim());
-    }
+      if (!token) {
+        throw new UnauthorizedError("Missing bearer token");
+      }
 
-    clearAuthCookies(request, reply);
-    return reply.status(200).send({ data: result });
-  });
+      let payload: { sub: string; tenant_id: string; typ?: string };
+      try {
+        payload = app.jwt.verify(token) as { sub: string; tenant_id: string; typ?: string };
+      } catch {
+        throw new UnauthorizedError("Invalid or expired token");
+      }
+
+      if (payload.typ !== undefined && payload.typ !== "access") {
+        throw new UnauthorizedError("Invalid token type");
+      }
+
+      const data = await service.getMe(payload.sub, payload.tenant_id);
+      return reply.status(200).send({ data });
+    },
+  );
+
+  app.post(
+    "/refresh",
+    {
+      config: {
+        rateLimit: {
+          max: 120,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      let candidateToken: string | undefined;
+
+      if (request.body && typeof request.body === "object") {
+        const parsed = refreshBody.safeParse(request.body);
+        if (parsed.success) {
+          candidateToken = parsed.data.refresh_token;
+        }
+      }
+
+      const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+      if (!refreshToken || typeof refreshToken !== "string" || refreshToken.trim().length === 0) {
+        clearAuthCookies(request, reply);
+        throw new UnauthorizedError("Refresh token is required");
+      }
+
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+      try {
+        const result = await service.refreshToken(refreshToken.trim(), meta);
+        setAuthCookies(request, reply, result);
+        return reply.status(200).send({ data: result });
+      } catch (err) {
+        clearAuthCookies(request, reply);
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    "/exit-impersonation",
+    {
+      config: {
+        rateLimit: {
+          max: 60,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      let candidateRefresh: string | undefined;
+      let candidateAccess: string | undefined;
+
+      if (request.body && typeof request.body === "object") {
+        const parsed = z
+          .object({
+            admin_refresh_token: z.string().optional(),
+            admin_access_token: z.string().optional(),
+          })
+          .safeParse(request.body);
+        if (parsed.success) {
+          candidateRefresh = parsed.data.admin_refresh_token;
+          candidateAccess = parsed.data.admin_access_token;
+        }
+      }
+
+      const cookies = parseCookies(request.headers.cookie);
+      const cookieRefresh = cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+      const headerToken = (request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+
+      const meta = {
+        userAgent: request.headers["user-agent"],
+        ip: request.ip,
+      };
+
+      const tokens = await service.exitImpersonation(
+        {
+          adminRefreshToken: candidateRefresh,
+          adminAccessToken: candidateAccess || headerToken,
+          cookieRefreshToken: cookieRefresh,
+        },
+        meta,
+      );
+
+      setAuthCookies(request, reply, tokens);
+      return reply.status(200).send({ success: true, data: tokens });
+    },
+  );
+
+  app.post(
+    "/logout",
+    {
+      config: {
+        rateLimit: {
+          max: 30,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
+      const cookies = parseCookies(request.headers.cookie);
+      let candidateToken: string | undefined;
+
+      if (request.body && typeof request.body === "object") {
+        const parsed = refreshBody.safeParse(request.body);
+        if (parsed.success) {
+          candidateToken = parsed.data.refresh_token;
+        }
+      }
+
+      const refreshToken = candidateToken || cookies[REFRESH_COOKIE_NAME] || cookies["getvoxly_refresh_token"];
+      let result = { message: "Logged out" };
+      if (refreshToken && typeof refreshToken === "string" && refreshToken.trim().length > 0) {
+        result = await service.logout(refreshToken.trim());
+      }
+
+      clearAuthCookies(request, reply);
+      return reply.status(200).send({ data: result });
+    },
+  );
 };
 
 export default authRoutes;
