@@ -294,13 +294,19 @@ export class AiService {
   /** Мягкое удаление: журнал вызовов ссылается на агента и должен остаться читаемым. */
   async deleteAgent(tenantId: string, id: string): Promise<void> {
     const row = await queryOne<{ id: string }>(
-      `UPDATE ai_agents SET deleted_at = now()
+      `UPDATE ai_agents SET deleted_at = now(), status = 'paused'
        WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL
        RETURNING id`,
       [tenantId, id],
     );
 
     if (row === null) throw new NotFoundError("AI-агент не найден");
+
+    // Отвязываем каналы связи от удалённого агента, чтобы диалоги больше не маршрутизировались
+    await query(
+      `DELETE FROM ai_agent_channel_bindings WHERE tenant_id = $1 AND agent_id = $2`,
+      [tenantId, id],
+    );
   }
 
   // -------------------------------------------------------------------------
