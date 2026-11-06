@@ -51,6 +51,7 @@ interface BotModalProps {
   bot?: AiBot | null;
   onClose: () => void;
   onSubmit: (payload: CreateBotPayload) => Promise<unknown> | unknown;
+  onDelete?: (bot: AiBot) => void;
 }
 
 export type KnowledgeCategory = "price_list" | "commercial_offer" | "manual" | "general";
@@ -153,7 +154,7 @@ function toFormValues(bot: AiBot): CreateBotPayload {
   };
 }
 
-export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps) {
+export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotModalProps) {
   const isEdit = bot !== null;
   const { data: crawlStatusData } = useCrawlStatus(bot?.id);
   const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
@@ -1410,36 +1411,54 @@ export function BotModal({ open, bot = null, onClose, onSubmit }: BotModalProps)
           </div>
 
           {/* Footer */}
-          <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-[#e5e5e5] bg-white px-6 py-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Отмена
-            </button>
-            <button
-              type="submit"
-              disabled={!isValid || isSubmitting || isUploadingDocs}
-              className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-            >
-              {isSubmitting || isUploadingDocs ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {isUploadingDocs ? "Загружаем документы..." : "Сохраняем..."}
-                </>
-              ) : isEdit ? (
-                <>
-                  <Save className="h-4 w-4" />
-                  Сохранить изменения
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  Создать бота
-                </>
+          <div className="sticky bottom-0 flex items-center justify-between border-t border-[#e5e5e5] bg-white px-6 py-4">
+            <div>
+              {isEdit && bot && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onDelete(bot);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition-colors hover:bg-rose-100"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Удалить агента
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-[#e5e5e5] px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                disabled={!isValid || isSubmitting || isUploadingDocs}
+                className="flex items-center gap-2 rounded-lg bg-[#4a38f5] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#3d2ee0] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              >
+                {isSubmitting || isUploadingDocs ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {isUploadingDocs ? "Загружаем документы..." : "Сохраняем..."}
+                  </>
+                ) : isEdit ? (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Сохранить изменения
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Создать бота
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </form>
       </SheetContent>
