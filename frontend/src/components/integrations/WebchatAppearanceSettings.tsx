@@ -28,6 +28,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
 import type { ChannelAccountDTO } from "@/lib/api/use-channels";
 import { useChannelAccounts, useUpdateChannelAccount } from "@/lib/api/use-channels";
 import {
@@ -213,6 +215,8 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
   const hasSystemMaxAccounts = maxAccounts.length > 0;
 
   const initialCreds = (account.credentials ?? {}) as Record<string, unknown>;
+
+  const [isWidgetEnabled, setIsWidgetEnabled] = useState(account.status !== "disabled");
 
   const [accentColor, setAccentColor] = useState<string>(
     typeof initialCreds.accentColor === "string" ? initialCreds.accentColor : "#F59E0B",
@@ -583,6 +587,37 @@ export function WebchatAppearanceSettings({ account, onBack }: WebchatAppearance
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 shadow-2xs">
+            <span className="text-xs font-medium text-[#666666]">
+              {isWidgetEnabled ? "Виджет активен" : "Виджет отключен"}
+            </span>
+            <Switch
+              checked={isWidgetEnabled}
+              disabled={updateAccount.isPending}
+              onCheckedChange={(checked) => {
+                setIsWidgetEnabled(checked);
+                const nextStatus = checked ? "connected" : "disabled";
+                updateAccount.mutate(
+                  { id: account.id, status: nextStatus, is_enabled: checked },
+                  {
+                    onSuccess: () => {
+                      toast.success(
+                        checked
+                          ? `Виджет «${account.label}» включен`
+                          : `Виджет «${account.label}» отключен`,
+                      );
+                    },
+                    onError: () => {
+                      setIsWidgetEnabled(!checked);
+                      toast.error("Не удалось изменить статус виджета");
+                    },
+                  },
+                );
+              }}
+              aria-label={isWidgetEnabled ? "Отключить виджет" : "Включить виджет"}
+            />
+          </div>
+
           {saveError && (
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-lg">
               <AlertCircle className="h-3.5 w-3.5" />

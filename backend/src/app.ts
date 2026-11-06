@@ -27,6 +27,7 @@ import telegramIntegrationRoutes from "./modules/channels/telegram-integration.r
 import whatsappIntegrationRoutes, { whatsappInternalRoutes } from "./modules/channels/whatsapp-integration.routes.js";
 import maxIntegrationRoutes, { maxInternalRoutes } from "./modules/channels/max-integration.routes.js";
 import { webchatRoutes } from "./modules/channels/webchat.routes.js";
+import { widgetsRoutes } from "./modules/channels/widgets.routes.js";
 import { chatStreamRoutes } from "./modules/crm/chat/chat-stream.routes.js";
 import aiRoutes from "./modules/ai/ai.routes.js";
 import botAliasRoutes from "./modules/ai/bot-alias.routes.js";
@@ -237,6 +238,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Каналы связи. Модуль определяется параметром `:channel`, поэтому гейт
   // установки применяется на каждом запросе, а не при регистрации группы.
   await app.register(channelsRoutes, { prefix: "/api/v1/channels" });
+
+  // Выделенный API для управления и bootstrap онлайн-виджетов
+  await app.register(widgetsRoutes, { prefix: "/api/v1/widgets" });
+  await app.register(widgetsRoutes, { prefix: "/api/widgets" });
 
   // Публичный умный редиректор сквозной аналитики (Direct & Deep Links)
   await app.register(trackingRedirectRoutes, { prefix: "/to" });
