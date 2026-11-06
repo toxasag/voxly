@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import {
   useMutation,
   useQuery,
@@ -21,7 +22,7 @@ import { apiClient, type ApiClientError } from "@/lib/api/apiClient";
 const BASE_PATH = "/api/v1/ai";
 
 export const knowledgeKeys = {
-  documents: (agentId: string) => ["ai", "agents", agentId, "knowledge"] as const,
+  documents: (agentId: string) => ["ai", "agents", agentId, "knowledge", "docs"] as const,
   channels: (agentId: string) => ["ai", "agents", agentId, "channels"] as const,
 };
 
@@ -554,17 +555,15 @@ export function useCrawlStatus(
   agentId: string | null | undefined,
 ): UseQueryResult<CrawlStatusData, ApiClientError> {
   const queryClient = useQueryClient();
+  const prevStatusRef = useRef<CrawlStatusData["status"] | null>(null);
 
-  return useQuery({
-    queryKey: ["ai", "agents", agentId, "knowledge", "crawl-status"],
+  const query = useQuery<CrawlStatusData, ApiClientError>({
+    queryKey: ["ai", "agents", agentId, "crawl-status"],
     queryFn: async () => {
       if (!agentId) throw new Error("No agentId");
       const res = await apiClient.get<CrawlStatusData>(
         `${BASE_PATH}/agents/${agentId}/knowledge/crawl-status`,
       );
-      if (res.data?.status === "ready" || res.data?.status === "failed") {
-        void queryClient.invalidateQueries({ queryKey: knowledgeKeys.documents(agentId) });
-      }
       return res.data;
     },
     enabled: Boolean(agentId),
@@ -576,6 +575,25 @@ export function useCrawlStatus(
       return false;
     },
   });
+
+  const currentStatus = query.data?.status;
+  useEffect(() => {
+    if (!agentId || !currentStatus) return;
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = currentStatus;
+
+    // Инвалидируем список документов строго по завершению активного сканирования (переход из pending/in_progress в ready/failed)
+    if (
+      (prev === "pending" || prev === "in_progress") &&
+      (currentStatus === "ready" || currentStatus === "failed")
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: knowledgeKeys.documents(agentId),
+      });
+    }
+  }, [agentId, currentStatus, queryClient]);
+
+  return query;
 }
 
 
