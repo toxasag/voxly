@@ -3330,6 +3330,11 @@
         if (res.ok) {
           sessionInitialized = true;
           var data = (await res.json()).data;
+          if (data && (data.enabled === false || data.is_enabled === false || data.status === 'disabled')) {
+            sendTelemetry('init_widget_disabled_flag', 'disabled');
+            destroyWidget('Widget disabled in config', true);
+            return;
+          }
           currentConfig = data;
           sendTelemetry('init_success', data.mascotId || 'none');
 

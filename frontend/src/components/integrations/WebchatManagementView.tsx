@@ -27,6 +27,9 @@ import { useAiAgents } from "@/lib/api/use-ai-agents";
 import { WebchatAppearanceSettings } from "./WebchatAppearanceSettings";
 import { WebchatAnalyticsDrawer } from "./WebchatAnalyticsDrawer";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface WebchatManagementViewProps {
   accounts: ChannelAccountDTO[];
@@ -220,24 +223,75 @@ export function WebchatManagementView({
                         <h3 className="font-semibold text-[#111111]">{acc.label}</h3>
                         <p className="flex items-center gap-1.5 text-xs text-[#666666]">
                           <span>{acc.externalId}</span>
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                          <span className="text-emerald-700 font-medium">Активен</span>
+                          <span
+                            className={cn(
+                              "inline-block h-1.5 w-1.5 rounded-full",
+                              acc.status === "disabled" ? "bg-slate-400" : "bg-emerald-500",
+                            )}
+                          />
+                          <span
+                            className={cn(
+                              "font-medium",
+                              acc.status === "disabled" ? "text-[#888888]" : "text-emerald-700",
+                            )}
+                          >
+                            {acc.status === "disabled" ? "Отключен" : "Активен"}
+                          </span>
                         </p>
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
-                          deleteAccount.mutate({ id: acc.id });
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="flex items-center"
+                        title={
+                          acc.status === "disabled"
+                            ? "Виджет отключен и не отображается на сайте"
+                            : "Виджет активен и отображается на сайте"
                         }
-                      }}
-                      className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
-                      title="Удалить сайт"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                      >
+                        <Switch
+                          checked={acc.status !== "disabled"}
+                          disabled={updateAccount.isPending}
+                          onCheckedChange={(checked) => {
+                            const newStatus = checked ? "connected" : "disabled";
+                            updateAccount.mutate(
+                              { id: acc.id, status: newStatus, is_enabled: checked },
+                              {
+                                onSuccess: () => {
+                                  toast.success(
+                                    checked
+                                      ? `Виджет «${acc.label}» включен`
+                                      : `Виджет «${acc.label}» отключен`,
+                                  );
+                                },
+                                onError: () => {
+                                  toast.error("Не удалось изменить статус виджета");
+                                },
+                              },
+                            );
+                          }}
+                          aria-label={
+                            acc.status === "disabled"
+                              ? `Включить виджет: ${acc.label}`
+                              : `Отключить виджет: ${acc.label}`
+                          }
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Удалить сайт «${acc.label}» из CRM?`)) {
+                            deleteAccount.mutate({ id: acc.id });
+                          }
+                        }}
+                        className="rounded-lg p-1.5 text-[#666666] transition-colors hover:bg-[#f5f5f5] hover:text-rose-600"
+                        title="Удалить сайт"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Привязанный AI-агент */}

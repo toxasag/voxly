@@ -31,6 +31,8 @@ export interface ChannelAccountDTO {
   externalId: string;
   status: ChannelStatus;
   statusMessage: string;
+  is_enabled?: boolean;
+  isEnabled?: boolean;
   /** Признак заполненности авторизации: сами токены сервер не отдаёт. */
   hasCredentials: boolean;
   credentials?: Record<string, unknown>;
@@ -129,6 +131,7 @@ export interface UpdateChannelAccountPayload {
   status_message?: string;
   credentials?: Record<string, unknown>;
   agent_id?: string | null;
+  is_enabled?: boolean;
 }
 
 export function useUpdateChannelAccount(
@@ -144,6 +147,31 @@ export function useUpdateChannelAccount(
     mutationFn: async ({ id, ...body }) =>
       (await apiClient.patch<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts/${id}`, body))
         .data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
+    },
+  });
+}
+
+export function useToggleChannelAccount(
+  channel: ChannelSlug,
+): UseMutationResult<
+  ChannelAccountDTO,
+  ApiClientError,
+  { id: string; currentStatus: ChannelStatus }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, currentStatus }) => {
+      const nextStatus: ChannelStatus = currentStatus === "disabled" ? "connected" : "disabled";
+      return (
+        await apiClient.patch<ChannelAccountDTO>(`${BASE_PATH}/${channel}/accounts/${id}`, {
+          status: nextStatus,
+          is_enabled: nextStatus === "connected",
+        })
+      ).data;
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: channelKeys.accounts(channel) });
     },
