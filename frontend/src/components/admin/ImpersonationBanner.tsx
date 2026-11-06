@@ -72,7 +72,7 @@ export function ImpersonationBanner() {
         // Fallback: локальное восстановление
         writeTokens({
           accessToken: backup.accessToken,
-          refreshToken: backup.refreshToken,
+          refreshToken: backup.refreshToken || backup.accessToken,
         });
         clearImpersonationBackup();
         window.location.href = getPlatformAdminUrl();

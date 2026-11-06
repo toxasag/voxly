@@ -15,11 +15,11 @@ import { authorizePlugin } from "./plugins/authorize.js";
 import authRoutes from "./modules/auth/auth.routes.js";
 import crmRoutes from "./modules/crm/crm.routes.js";
 import repairsRoutes from "./modules/repairs/repairs.routes.js";
+import dictionariesRoutes from "./modules/dictionaries/dictionaries.routes.js";
 import financeRoutes from "./modules/finance/finance.routes.js";
 import invoiceRoutes from "./modules/finance/invoices.routes.js";
 import billingRoutes from "./modules/finance/billing/billing.routes.js";
 import storiesRoutes from "./modules/stories/stories.routes.js";
-import seoRoutes from "./modules/marketing/seo/seo.routes.js";
 import marketplaceRoutes from "./modules/marketplace/marketplace.routes.js";
 import channelsRoutes from "./modules/channels/channels.routes.js";
 import trackingRedirectRoutes from "./modules/channels/tracking-redirect.routes.js";
@@ -130,7 +130,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(sensible);
 
   await app.register(rateLimit, {
-    max: 300,
+    max: 600,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
     /**
@@ -223,12 +223,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Service Center — additionally gated on the `service_center` module being
   // installed for the tenant (403 MODULE_NOT_INSTALLED otherwise).
   await app.register(repairsRoutes, { prefix: "/api/v1/repairs" });
+  await app.register(repairsRoutes, { prefix: "/api/v1/service" });
+  await app.register(dictionariesRoutes, { prefix: "/api/v1/dictionaries" });
+  await app.register(dictionariesRoutes, { prefix: "/api/dictionaries" });
   await app.register(financeRoutes, { prefix: "/api/v1/finance" });
   await app.register(invoiceRoutes, { prefix: "/api/v1/invoices" });
   await app.register(billingRoutes, { prefix: "/api/v1/billing" });
   await app.register(storiesRoutes, { prefix: "/api/v1/stories" });
-  await app.register(seoRoutes, { prefix: "/api/v1/marketing/seo" });
-  await app.register(seoRoutes, { prefix: "/api/marketing/seo" });
   await app.register(marketplaceRoutes, { prefix: "/api/v1/marketplace" });
   await app.register(analyticsRoutes, { prefix: "/api/v1/analytics" });
   await app.register(analyticsRoutes, { prefix: "/api/analytics" });

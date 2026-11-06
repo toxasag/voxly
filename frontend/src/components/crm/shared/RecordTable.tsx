@@ -127,6 +127,8 @@ export interface RecordTableProps<T> {
   emptyState?: ReactNode;
   bulkBar?: ReactNode;
   pagination?: ReactNode;
+  rowHeight?: number;
+  scrollPaddingBottom?: string;
 }
 
 export function RecordTable<T>({
@@ -145,6 +147,8 @@ export function RecordTable<T>({
   emptyState,
   bulkBar,
   pagination,
+  rowHeight,
+  scrollPaddingBottom = "pb-4",
 }: RecordTableProps<T>) {
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortAsc, setSortAsc] = useState(false);
@@ -605,6 +609,8 @@ export function RecordTable<T>({
     setFocusedRow(null);
   }, [rows]);
 
+  const effectiveRowHeight = rowHeight ?? RECORD_TABLE_ROW_HEIGHT;
+
   if (rows.length === 0 && emptyState !== undefined) return <>{emptyState}</>;
 
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds?.has(getRowId(row)) === true);
@@ -638,7 +644,7 @@ export function RecordTable<T>({
         )}
 
         <div
-          className="overflow-x-auto"
+          className={cn("overflow-x-auto", scrollPaddingBottom)}
           // Порог 0, а не запас: колонка возвращается ровно в начале прокрутки,
           // и промежуточное состояние выглядело бы как подрагивание.
           onScroll={(event) => setScrolled(event.currentTarget.scrollLeft > 0)}
@@ -808,12 +814,13 @@ export function RecordTable<T>({
                         : "bg-white hover:bg-[#fafafa]",
                     onRowClick !== undefined && "cursor-pointer",
                   )}
-                  style={{ gridTemplateColumns: gridTemplate, minHeight: `${RECORD_TABLE_ROW_HEIGHT}px` }}
+                  style={{ gridTemplateColumns: gridTemplate, minHeight: `${effectiveRowHeight}px` }}
                 >
                   {selectionEnabled && (
                     <div
                       onClick={(event) => event.stopPropagation()}
                       className="sticky left-0 z-10 flex items-center justify-center bg-inherit border-r border-[#e5e5e5]"
+                      style={{ minHeight: `${effectiveRowHeight}px` }}
                     >
                       <input
                         type="checkbox"
@@ -844,7 +851,7 @@ export function RecordTable<T>({
                           columnIndex === 0 && "sticky z-10 bg-inherit border-r border-[#e5e5e5]",
                           isCellFocused && "ring-1 ring-[#3b82f6] rounded-[3px] -m-px bg-white z-20",
                         )}
-                        style={columnIndex === 0 ? { left: stickyLeft } : undefined}
+                        style={columnIndex === 0 ? { left: stickyLeft, minHeight: `${effectiveRowHeight}px` } : { minHeight: `${effectiveRowHeight}px` }}
                       >
                         {column.render(row)}
                       </div>

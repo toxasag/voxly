@@ -54,15 +54,19 @@ interface AgentKnowledgeTabProps {
 }
 
 const STATUS_LABEL: Record<KnowledgeDocument["status"], string> = {
+  draft: "Черновик (на проверке)",
   processing: "Векторизация...",
   ready: "Готов",
   failed: "Ошибка",
+  approved: "Утверждён",
 };
 
 const STATUS_CLASS: Record<KnowledgeDocument["status"], string> = {
-  processing: "bg-yellow-400/10 text-yellow-400 border-yellow-400/30",
-  ready: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-  failed: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+  draft: "bg-amber-500/10 text-amber-700 border-amber-300",
+  processing: "bg-yellow-400/10 text-yellow-600 border-yellow-400/30",
+  ready: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30",
+  failed: "bg-rose-500/10 text-rose-500 border-rose-500/30",
+  approved: "bg-blue-500/10 text-blue-700 border-blue-300",
 };
 
 function formatSize(bytes: number): string {
@@ -894,6 +898,19 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
                       >
                         {STATUS_LABEL[document.status]}
                       </span>
+
+                      {document.status === "draft" && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingDocId(document.id);
+                          }}
+                          className="shrink-0 rounded-[6px] border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 transition-colors"
+                        >
+                          Проверить черновик
+                        </button>
+                      )}
 
                       <button
                         type="button"

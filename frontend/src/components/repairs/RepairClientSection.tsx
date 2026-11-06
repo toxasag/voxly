@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { UseFormReturn } from "react-hook-form";
+import { useFieldArray, type UseFormReturn } from "react-hook-form";
 import {
   Building2,
   Check,
@@ -14,6 +14,7 @@ import {
   PlusCircle,
   RotateCcw,
   Sparkles,
+  Trash2,
   User,
   UserCheck,
   UserPlus,
@@ -87,6 +88,16 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
 
   // Развернутые подробности сделок (accordion)
   const [expandedDealId, setExpandedDealId] = useState<string | null>(null);
+
+  // Множественные контакты заказчика
+  const {
+    fields: additionalContactFields,
+    append: appendAdditionalContact,
+    remove: removeAdditionalContact,
+  } = useFieldArray({
+    control: form.control,
+    name: "additional_contacts",
+  });
 
   // Флаг, был ли клиент выбран или сброшен вручную
   const [isManuallyDetached, setIsManuallyDetached] = useState<boolean>(false);
@@ -188,6 +199,7 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
     form.setValue("company_bik", "");
     form.setValue("company_account_number", "");
     form.setValue("company_legal_address", "");
+    form.setValue("additional_contacts", []);
     setPhoneInput("");
     setIsCompanyChecked(false);
     setIsRequisitesOpen(false);
@@ -352,6 +364,74 @@ export function RepairClientSection({ form }: RepairClientSectionProps) {
             <p className="text-[11px] text-rose-600">{form.formState.errors.customer_email.message}</p>
           )}
         </div>
+      </div>
+
+      {/* Множественные контакты для связи */}
+      <div className="space-y-2 pt-1 border-t border-[#f0f0f0]">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-medium text-[#666666] uppercase tracking-wider">
+            Контакты для связи ({additionalContactFields.length})
+          </span>
+          <button
+            type="button"
+            onClick={() => appendAdditionalContact({ name: "", phone: "", role: "" })}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[#4a38f5] hover:text-[#3d2ee0] transition-colors"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Добавить контакт для связи
+          </button>
+        </div>
+
+        {additionalContactFields.length > 0 && (
+          <div className="space-y-2">
+            {additionalContactFields.map((fieldItem, index) => (
+              <div
+                key={fieldItem.id}
+                className="flex items-center gap-2 rounded-[8px] border border-[#e5e5e5] bg-[#fafafa] p-2"
+              >
+                <div className="flex-1">
+                  <input
+                    type="text"
+                    placeholder="Имя контакта / ФИО *"
+                    {...form.register(`additional_contacts.${index}.name` as const)}
+                    className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                  />
+                </div>
+                <div className="w-44">
+                  <input
+                    type="tel"
+                    placeholder="+7 (999) 000-00-00 *"
+                    value={form.watch(`additional_contacts.${index}.phone`) ?? ""}
+                    onChange={(e) => {
+                      const formatted = formatAsYouType(e.target.value, "RU");
+                      form.setValue(`additional_contacts.${index}.phone`, formatted, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      });
+                    }}
+                    className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                  />
+                </div>
+                <div className="w-36">
+                  <input
+                    type="text"
+                    placeholder="Роль (прораб, мастер...)"
+                    {...form.register(`additional_contacts.${index}.role` as const)}
+                    className="h-8 w-full rounded-[6px] border border-[#e5e5e5] bg-white px-2.5 text-xs text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAdditionalContact(index)}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                  title="Удалить контакт"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Чекбокс «Организация / Юридическое лицо» */}

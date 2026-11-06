@@ -67,6 +67,22 @@ const knowledgeTextSchema = z.object({
 const knowledgeUrlSchema = z.object({
   url: z.string().url("Укажите корректный URL (http:// или https://)"),
   title: z.string().trim().max(120).optional(),
+  as_draft: z.boolean().optional(),
+  asDraft: z.boolean().optional(),
+});
+
+const createDraftSchema = z.object({
+  title: z.string().trim().min(1, "Укажите название").max(200),
+  text: z.string().trim().min(1, "Текст не может быть пустым").max(500_000),
+  category: z.string().trim().optional(),
+  source_url: z.string().trim().optional(),
+  sourceUrl: z.string().trim().optional(),
+});
+
+const approveDraftSchema = z.object({
+  text: z.string().trim().optional(),
+  filename: z.string().trim().optional(),
+  category: z.string().trim().optional(),
 });
 
 /**
@@ -696,7 +712,9 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/agents/:id/knowledge/url", { onRequest: writeAgents }, async (request, reply) => {
     const { id } = agentParams.parse(request.params);
-    const { url, title } = knowledgeUrlSchema.parse(request.body);
+    const urlBody = knowledgeUrlSchema.parse(request.body);
+    const { url, title } = urlBody;
+    const isDraft = urlBody.as_draft === true || urlBody.asDraft === true;
 
     const parsedUrl = new URL(url);
     if (!["http:", "https:"].includes(parsedUrl.protocol)) {
@@ -752,6 +770,19 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const docTitle = title?.trim() || `${parsedUrl.hostname}${parsedUrl.pathname !== "/" ? parsedUrl.pathname : ""}`;
+
+    if (isDraft) {
+      const draftDoc = await knowledge.createDraftDocument({
+        tenantId: request.tenant_id,
+        agentId: id,
+        filename: `Сайт: ${docTitle}`,
+        mimeType: "text/html",
+        text: cleanText.slice(0, 100_000),
+        sourceUrl: url,
+        category: "website",
+      });
+      return reply.status(201).send({ data: draftDoc });
+    }
 
     const document = await knowledge.addDocument({
       tenantId: request.tenant_id,
@@ -897,6 +928,37 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       body.filename,
     );
     return reply.status(201).send({ data: result });
+  });
+
+  // Human-in-the-loop RAG: создание черновика документа (без векторизации)
+  app.post("/agents/:id/knowledge/draft", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = createDraftSchema.parse(request.body);
+    const draft = await knowledge.createDraftDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      filename: body.title,
+      mimeType: "text/markdown",
+      text: body.text,
+      category: body.category || "general",
+      sourceUrl: body.source_url || body.sourceUrl,
+    });
+    return reply.status(201).send({ data: draft });
+  });
+
+  // Human-in-the-loop RAG: согласование и векторизация черновика (Approve & Vectorize)
+  app.post("/agents/:id/knowledge/:docId/approve", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, docId } = documentParams.parse(request.params);
+    const body = approveDraftSchema.parse(request.body ?? {});
+    const doc = await knowledge.approveAndIndexDocument({
+      tenantId: request.tenant_id,
+      agentId: id,
+      documentId: docId,
+      text: body.text,
+      filename: body.filename,
+      category: body.category,
+    });
+    return reply.send({ data: doc });
   });
 
   app.get("/agents/:id/knowledge/:docId", { onRequest: readAgents }, async (request, reply) => {

@@ -6,12 +6,15 @@ import { Bot, Plus, Search, Zap } from "lucide-react";
 import type { AiBot, BotStatus } from "@/lib/ai-bots/ai-bots.types";
 import { BotCard } from "@/components/ai-bots/BotCard";
 import { BotModal } from "@/components/ai-bots/BotModal";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Guard } from "@/components/shared/Guard";
 import { Skeleton } from "@/components/shared/Skeleton";
+import { useHasPermission } from "@/lib/auth/use-auth";
 import {
   useAiAgents,
   useCreateAiAgent,
+  useDeleteAiAgent,
   useUpdateAiAgent,
 } from "@/lib/api/use-ai-agents";
 import type { CreateBotPayload } from "@/schemas/ai-bot.schema";
@@ -31,6 +34,8 @@ function AiBotsContent() {
   const { data, isLoading, isError, error, refetch } = useAiAgents();
   const create = useCreateAiAgent();
   const update = useUpdateAiAgent();
+  const deleteMutation = useDeleteAiAgent();
+  const canConfigure = useHasPermission("ai_bots:configure");
 
   const bots = useMemo(() => data ?? [], [data]);
 
@@ -38,6 +43,7 @@ function AiBotsContent() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AiBot | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AiBot | null>(null);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -107,6 +113,17 @@ function AiBotsContent() {
     },
     [bots, update],
   );
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (pendingDelete === null) return;
+    try {
+      await deleteMutation.mutateAsync({ id: pendingDelete.id });
+      toast.success(`AI-агент «${pendingDelete.name}» успешно удалён`);
+      setPendingDelete(null);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить агента");
+    }
+  }, [deleteMutation, pendingDelete]);
 
   return (
     <div className="space-y-5">
@@ -235,6 +252,8 @@ function AiBotsContent() {
               bot={bot}
               onToggleStatus={(id) => void handleToggleStatus(id)}
               onConfigure={openEdit}
+              onDelete={canConfigure ? (target) => setPendingDelete(target) : undefined}
+              isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === bot.id}
             />
           ))}
         </div>
@@ -256,6 +275,23 @@ function AiBotsContent() {
         bot={editTarget}
         onClose={closeModal}
         onSubmit={handleSubmit}
+        onDelete={canConfigure ? (target) => setPendingDelete(target) : undefined}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Удалить AI-агента?"
+        description={
+          pendingDelete !== null
+            ? `Вы уверены, что хотите удалить агента «${pendingDelete.name}»? Бот будет выведен из эксплуатации, а все привязанные каналы связи отвязаны. Действие необратимо.`
+            : ""
+        }
+        confirmLabel="Удалить агента"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={handleConfirmDelete}
+        onClose={() => setPendingDelete(null)}
       />
     </div>
   );

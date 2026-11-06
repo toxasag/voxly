@@ -315,4 +315,76 @@ describe("RepairsService Client & Deal Integration", () => {
     expect(unknownResult.found).toBe(false);
     expect(unknownResult.client).toBeNull();
   });
+
+  it("getDictionaries retrieves dictionaries for tenant", async () => {
+    mockTxQuery
+      .mockResolvedValueOnce([{ name: "Смартфон" }, { name: "Ноутбук" }])
+      .mockResolvedValueOnce([{ name: "Apple" }, { name: "Samsung" }])
+      .mockResolvedValueOnce([{ name: "iPhone 15" }])
+      .mockResolvedValueOnce([{ name: "Обойма" }, { name: "2 АКБ" }])
+      .mockResolvedValueOnce([{ name: "Не включается" }]);
+
+    const dicts = await service.getDictionaries(tenantId);
+    expect(dicts.types).toEqual(["Смартфон", "Ноутбук"]);
+    expect(dicts.brands).toEqual(["Apple", "Samsung"]);
+    expect(dicts.models).toEqual(["iPhone 15"]);
+    expect(dicts.accessories).toEqual(["Обойма", "2 АКБ"]);
+    expect(dicts.malfunctions).toEqual(["Не включается"]);
+  });
+
+  it("addDictionaryItem inserts new item into correct table", async () => {
+    mockTxQueryOne.mockResolvedValueOnce({
+      id: "type-1",
+      name: "Планшет",
+    });
+
+    const item = await service.addDictionaryItem(tenantId, "type", "Планшет");
+    expect(item.name).toBe("Планшет");
+    expect(mockTxQueryOne).toHaveBeenCalled();
+  });
+
+  it("searchEquipmentBySerial returns equipment and previous repair history", async () => {
+    const serial = "R58N90L2AX";
+
+    // 1. query for last order
+    mockTxQuery.mockResolvedValueOnce([
+      {
+        id: "rep-1",
+        ticket_number: "ЗН-2026-0010",
+        equipment_type: "Смартфон",
+        equipment_brand: "Samsung",
+        equipment_model: "Galaxy S24",
+        equipment_serial: serial,
+        package_contents_items: ["Оригинальная коробка"],
+        customer_id: "c-1",
+        customer_name: "Сергей Васильев",
+        customer_phone: "+79998887766",
+      },
+    ]);
+
+    // 2. query for history
+    mockTxQuery.mockResolvedValueOnce([
+      {
+        id: "rep-1",
+        ticket_number: "ЗН-2026-0010",
+        received_at: new Date("2026-10-15T10:00:00Z"),
+        completed_at: new Date("2026-10-16T12:00:00Z"),
+        delivered_at: new Date("2026-10-17T14:00:00Z"),
+        status: "delivered",
+        defect_description: "Замена батареи",
+        malfunctions: ["Быстро разряжается"],
+        estimated_cost: "4500",
+        final_cost: "4500",
+        master_name: "Мастер Иван",
+      },
+    ]);
+
+    const res = await service.searchEquipmentBySerial(tenantId, serial);
+    expect(res.found).toBe(true);
+    expect(res.equipment?.serial).toBe(serial);
+    expect(res.equipment?.brand).toBe("Samsung");
+    expect(res.customer?.name).toBe("Сергей Васильев");
+    expect(res.historyCount).toBe(1);
+    expect(res.history[0]?.ticketNumber).toBe("ЗН-2026-0010");
+  });
 });

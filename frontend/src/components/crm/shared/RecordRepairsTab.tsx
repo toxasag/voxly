@@ -18,6 +18,7 @@ const money = new Intl.NumberFormat("ru-RU", {
 
 const statusClass: Record<RepairStatus, string> = {
   intake: "bg-sky-50 text-sky-700 border-sky-200",
+  waiting_parts: "bg-amber-50 text-amber-700 border-amber-200",
   diagnostics: "bg-amber-50 text-amber-700 border-amber-200",
   approval: "bg-orange-50 text-orange-700 border-orange-200",
   in_progress: "bg-indigo-50 text-indigo-700 border-indigo-200",

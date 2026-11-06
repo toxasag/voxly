@@ -7,7 +7,15 @@ import { apiClient, type ApiClientError, type ApiMeta } from "@/lib/api/apiClien
 // DTOs — mirror backend/src/modules/repairs/repairs.types.ts.
 // ---------------------------------------------------------------------------
 
-export type RepairStatus = "intake" | "diagnostics" | "approval" | "in_progress" | "ready" | "issued" | "rejected";
+export type RepairStatus =
+  | "intake"
+  | "waiting_parts"
+  | "ready"
+  | "issued"
+  | "diagnostics"
+  | "approval"
+  | "in_progress"
+  | "rejected";
 export type RepairPriority = "low" | "normal" | "high" | "urgent";
 
 export interface EquipmentDTO {
@@ -116,13 +124,79 @@ export interface ClientLookupResultDTO {
   activeDeals: ClientLookupDealDTO[];
 }
 
+export interface AdditionalContact {
+  name: string;
+  phone: string;
+  role?: string;
+}
+
+export interface DictionaryItemDTO {
+  id: string;
+  name: string;
+  brandName?: string;
+  brandId?: string;
+}
+
+export interface ServiceDictionariesDTO {
+  types: DictionaryItemDTO[];
+  brands: DictionaryItemDTO[];
+  models: DictionaryItemDTO[];
+  accessories: DictionaryItemDTO[];
+  malfunctions: DictionaryItemDTO[];
+}
+
+export interface EquipmentHistoryItemDTO {
+  id: string;
+  ticketNumber: string;
+  receivedAt: string;
+  completedAt: string | null;
+  deliveredAt: string | null;
+  status: string;
+  defectDescription: string;
+  malfunctions: string[];
+  estimatedCost: number;
+  finalCost: number | null;
+  masterName: string;
+  dealId?: string | null;
+  dealTitle?: string | null;
+  customerName?: string;
+  customerPhone?: string;
+  works?: { id: string; description: string; cost: number; masterName: string }[];
+}
+
+export interface EquipmentSearchSerialResultDTO {
+  found: boolean;
+  equipment: {
+    type: string;
+    brand: string;
+    model: string;
+    serial: string;
+    packageContents: string[];
+  } | null;
+  customer: {
+    id: string;
+    name: string;
+    phone: string;
+  } | null;
+  historyCount: number;
+  history: EquipmentHistoryItemDTO[];
+}
+
 export interface RepairOrderDTO {
   id: string;
   ticketNumber: string;
   dealId?: string | null;
+  dealTitle?: string | null;
+  dealNote?: string | null;
+  dealBudget?: number | null;
+  dealStageName?: string | null;
+  companyId?: string | null;
+  companyName?: string | null;
+  companyInn?: string | null;
   customerId: string;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string | null;
   equipment: EquipmentDTO;
   defectDescription: string;
   defectPhotos: string[];
@@ -159,6 +233,7 @@ export interface RepairsListResult {
 }
 
 export interface RepairsQueryParams {
+  dealId?: string;
   status?: RepairStatus;
   priority?: RepairPriority;
   masterId?: string;
@@ -168,37 +243,101 @@ export interface RepairsQueryParams {
   offset?: number;
 }
 
-export interface CreateRepairPayload {
-  deal_id?: string;
-  customer_id?: string;
-  customer_name: string;
-  customer_phone: string;
-  company_name?: string;
+export interface EquipmentIntakeItem {
   equipment_type: string;
   equipment_brand: string;
   equipment_model: string;
   equipment_serial?: string;
   package_contents?: string;
+  package_contents_items?: string[];
   appearance?: string;
-  defect_description: string;
+  defect_description?: string;
+  malfunctions?: string[];
+  defect_photos?: string[];
+  estimated_cost?: number;
+}
+
+export interface CreateBatchRepairPayload {
+  customer_id?: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  additional_contacts?: AdditionalContact[];
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_ogrn?: string;
+  company_bik?: string;
+  company_account_number?: string;
+  company_legal_address?: string;
+  deal_id?: string;
+  priority?: RepairPriority;
+  master_id: string;
+  master_name?: string;
+  estimated_cost?: number;
+  notes?: string;
+  equipments: EquipmentIntakeItem[];
+}
+
+export interface CreateRepairPayload {
+  deal_id?: string;
+  customer_id?: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  additional_contacts?: AdditionalContact[];
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  company_ogrn?: string;
+  company_bik?: string;
+  company_account_number?: string;
+  company_legal_address?: string;
+  equipment_type: string;
+  equipment_brand: string;
+  equipment_model: string;
+  equipment_serial?: string;
+  package_contents?: string;
+  package_contents_items?: string[];
+  appearance?: string;
+  defect_description?: string;
+  malfunctions?: string[];
   defect_photos?: string[];
   priority?: RepairPriority;
   master_id: string;
-  master_name: string;
-  estimated_cost: number;
+  master_name?: string;
+  estimated_cost?: number;
   notes?: string;
 }
 
+export interface RepairServiceCatalogItemDTO {
+  id: string;
+  name: string;
+  defaultPrice: number;
+  createdAt: string;
+}
+
 export interface UpdateRepairPayload {
+  deal_id?: string;
+  deal_title?: string;
+  deal_note?: string;
+  customer_id?: string;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
+  company_id?: string;
+  company_name?: string;
+  company_inn?: string;
+  additional_contacts?: AdditionalContact[];
   equipment_type?: string;
   equipment_brand?: string;
   equipment_model?: string;
   equipment_serial?: string;
   package_contents?: string;
+  package_contents_items?: string[];
   appearance?: string;
   defect_description?: string;
+  malfunctions?: string[];
   priority?: RepairPriority;
   master_id?: string;
   master_name?: string;
@@ -274,6 +413,9 @@ export const repairKeys = {
   notes: (id: string) => ["repairs", "notes", id] as const,
   photos: (id: string) => ["repairs", "photos", id] as const,
   clientLookup: (params: { phone?: string; query?: string }) => ["repairs", "client-lookup", params] as const,
+  dictionaries: ["repairs", "dictionaries"] as const,
+  servicesCatalog: ["repairs", "services-catalog"] as const,
+  equipmentHistory: (serial: string) => ["repairs", "equipment", "history", serial] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -289,6 +431,7 @@ export function useRepairs(params: RepairsQueryParams = {}): UseQueryResult<Repa
     queryFn: async () => {
       const res = await apiClient.get<RepairOrderDTO[]>(BASE_PATH, {
         query: {
+          deal_id: params.dealId,
           status: params.status,
           priority: params.priority,
           master_id: params.masterId,
@@ -401,6 +544,130 @@ export function useRepairClientLookup(params: {
   });
 }
 
+export const dictionaryKeys = {
+  all: ["dictionaries"] as const,
+  brands: () => ["dictionaries", "brands"] as const,
+  brandModels: (brandId?: string) => ["dictionaries", "brands", brandId, "models"] as const,
+};
+
+export function useRepairDictionaries(): UseQueryResult<ServiceDictionariesDTO, ApiClientError> {
+  return useQuery<ServiceDictionariesDTO, ApiClientError>({
+    queryKey: repairKeys.dictionaries,
+    queryFn: async () => {
+      const res = await apiClient.get<ServiceDictionariesDTO>(`${BASE_PATH}/dictionaries`);
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useBrands(): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
+  return useQuery<DictionaryItemDTO[], ApiClientError>({
+    queryKey: dictionaryKeys.brands(),
+    queryFn: async () => {
+      const res = await apiClient.get<DictionaryItemDTO[]>("/api/v1/dictionaries/brands");
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useBrandModels(brandId?: string): UseQueryResult<DictionaryItemDTO[], ApiClientError> {
+  const isEnabled = Boolean(brandId && brandId.trim().length > 0);
+  return useQuery<DictionaryItemDTO[], ApiClientError>({
+    queryKey: dictionaryKeys.brandModels(brandId),
+    queryFn: async () => {
+      if (!brandId) return [];
+      const res = await apiClient.get<DictionaryItemDTO[]>(`/api/v1/dictionaries/brands/${brandId}/models`);
+      return res.data;
+    },
+    enabled: isEnabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useCreateBrand(): UseMutationResult<
+  DictionaryItemDTO,
+  ApiClientError,
+  { name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<DictionaryItemDTO, ApiClientError, { name: string }>({
+    mutationFn: async ({ name }) => {
+      const res = await apiClient.post<DictionaryItemDTO>("/api/v1/dictionaries/brands", { name });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.brands() });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
+  });
+}
+
+export function useCreateBrandModel(): UseMutationResult<
+  DictionaryItemDTO,
+  ApiClientError,
+  { brandId: string; name: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation<DictionaryItemDTO, ApiClientError, { brandId: string; name: string }>({
+    mutationFn: async ({ brandId, name }) => {
+      const res = await apiClient.post<DictionaryItemDTO>(`/api/v1/dictionaries/brands/${brandId}/models`, { name });
+      return res.data;
+    },
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.brandModels(variables.brandId) });
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+    },
+  });
+}
+
+export function useRepairServicesCatalog(): UseQueryResult<RepairServiceCatalogItemDTO[], ApiClientError> {
+  return useQuery<RepairServiceCatalogItemDTO[], ApiClientError>({
+    queryKey: repairKeys.servicesCatalog,
+    queryFn: async () => {
+      const res = await apiClient.get<RepairServiceCatalogItemDTO[]>(`${BASE_PATH}/catalog/services`);
+      return res.data;
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useAddRepairServiceToCatalog(): UseMutationResult<
+  RepairServiceCatalogItemDTO,
+  ApiClientError,
+  { name: string; default_price?: number }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairServiceCatalogItemDTO, ApiClientError, { name: string; default_price?: number }>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<RepairServiceCatalogItemDTO>(`${BASE_PATH}/catalog/services`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.servicesCatalog });
+    },
+  });
+}
+
+export function useSearchEquipmentBySerial(serial: string): UseQueryResult<EquipmentSearchSerialResultDTO, ApiClientError> {
+  const trimmed = serial.trim();
+  const isEnabled = trimmed.length >= 3;
+
+  return useQuery<EquipmentSearchSerialResultDTO, ApiClientError>({
+    queryKey: repairKeys.equipmentHistory(trimmed),
+    queryFn: async () => {
+      const res = await apiClient.get<EquipmentSearchSerialResultDTO>(
+        `${BASE_PATH}/equipment/search-serial?serial=${encodeURIComponent(trimmed)}`,
+      );
+      return res.data;
+    },
+    enabled: isEnabled,
+    staleTime: 30_000,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
@@ -419,6 +686,90 @@ export function useCreateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
   });
 }
 
+export function useCreateBatchRepair(): UseMutationResult<RepairOrderDTO[], ApiClientError, CreateBatchRepairPayload> {
+  const queryClient = useQueryClient();
+
+  return useMutation<RepairOrderDTO[], ApiClientError, CreateBatchRepairPayload>({
+    mutationFn: async (payload) => {
+      const res = await apiClient.post<RepairOrderDTO[]>(`${BASE_PATH}/batch`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+    },
+  });
+}
+
+export function useAddRepairDictionaryItem(): UseMutationResult<
+  { id: string; name: string; brandId?: string; brandName?: string },
+  ApiClientError,
+  { category: string; name: string; brand_name?: string; brand_id?: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    { id: string; name: string; brandId?: string; brandName?: string },
+    ApiClientError,
+    { category: string; name: string; brand_name?: string; brand_id?: string }
+  >({
+    mutationFn: async ({ category, name, brand_name, brand_id }) => {
+      const res = await apiClient.post<{ id: string; name: string; brandId?: string; brandName?: string }>(
+        `${BASE_PATH}/dictionaries/${category}`,
+        {
+          name,
+          brand_name,
+          brand_id,
+        },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+    },
+  });
+}
+
+export function useRenameRepairDictionaryItem(): UseMutationResult<
+  { id: string; name: string },
+  ApiClientError,
+  { category: string; id: string; name: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ id: string; name: string }, ApiClientError, { category: string; id: string; name: string }>({
+    mutationFn: async ({ category, id, name }) => {
+      const res = await apiClient.patch<{ id: string; name: string }>(`${BASE_PATH}/dictionaries/${category}/${id}`, {
+        name,
+      });
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+    },
+  });
+}
+
+export function useDeleteRepairDictionaryItem(): UseMutationResult<
+  { success: boolean; id: string },
+  ApiClientError,
+  { category: string; id: string }
+> {
+  const queryClient = useQueryClient();
+
+  return useMutation<{ success: boolean; id: string }, ApiClientError, { category: string; id: string }>({
+    mutationFn: async ({ category, id }) => {
+      const res = await apiClient.delete<{ success: boolean; id: string }>(`${BASE_PATH}/dictionaries/${category}/${id}`);
+      return res.data;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: repairKeys.dictionaries });
+      void queryClient.invalidateQueries({ queryKey: dictionaryKeys.all });
+    },
+  });
+}
+
 export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientError, { id: string; payload: UpdateRepairPayload }> {
   const queryClient = useQueryClient();
 
@@ -433,6 +784,7 @@ export function useUpdateRepair(): UseMutationResult<RepairOrderDTO, ApiClientEr
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -447,6 +799,7 @@ export function useDeleteRepair(): UseMutationResult<void, ApiClientError, strin
     onSuccess: (_, id) => {
       queryClient.removeQueries({ queryKey: repairKeys.detail(id) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -465,6 +818,7 @@ export function useChangeRepairStatus(): UseMutationResult<RepairOrderDTO, ApiCl
         return { ...old, ...order };
       });
       void queryClient.invalidateQueries({ queryKey: repairKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -481,6 +835,7 @@ export function useCreateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -497,6 +852,7 @@ export function useUpdateWork(): UseMutationResult<RepairWorkDTO, ApiClientError
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }
@@ -513,6 +869,7 @@ export function useDeleteWork(): UseMutationResult<{ id: string; deleted: boolea
       void queryClient.invalidateQueries({ queryKey: repairKeys.works(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.detail(variables.orderId) });
       void queryClient.invalidateQueries({ queryKey: repairKeys.totals(variables.orderId) });
+      void queryClient.invalidateQueries({ queryKey: ["deals"] });
     },
   });
 }

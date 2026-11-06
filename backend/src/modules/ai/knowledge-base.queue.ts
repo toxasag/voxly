@@ -10,7 +10,7 @@
 import { Queue, Worker, type JobsOptions } from "bullmq";
 import { getRedisConnectionOptions, requireDurableQueue } from "../../infrastructure/redis.js";
 import { registerBullQueue } from "../../infrastructure/queue-metrics.js";
-import { query } from "../../db/client.js";
+import { query, runWithTenantContext } from "../../db/client.js";
 import { crawlWebsite } from "./site-crawler.js";
 import { KnowledgeBaseService } from "./knowledge.service.js";
 
@@ -134,18 +134,20 @@ export class KnowledgeBaseQueueService {
 
     // Инициализируем статус 'pending' в wizard_config агента
     try {
-      await query(
-        `UPDATE ai_agents
-         SET wizard_config = jsonb_set(
-           jsonb_set(
-             jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"pending"'),
-             '{website_url}', to_jsonb($3::text)
-           ),
-           '{crawl_updated_at}', to_jsonb(now()::text)
-         )
-         WHERE tenant_id = $1 AND id = $2`,
-        [data.tenantId, data.botId, data.url],
-      );
+      await runWithTenantContext(data.tenantId, async () => {
+        await query(
+          `UPDATE ai_agents
+           SET wizard_config = jsonb_set(
+             jsonb_set(
+               jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"pending"'),
+               '{website_url}', to_jsonb($3::text)
+             ),
+             '{crawl_updated_at}', to_jsonb(now()::text)
+           )
+           WHERE tenant_id = $1 AND id = $2`,
+          [data.tenantId, data.botId, data.url],
+        );
+      });
     } catch (dbErr) {
       console.warn(`[KnowledgeBaseQueue] Failed to set pending status in agent wizard_config:`, dbErr);
     }
@@ -195,95 +197,98 @@ export class KnowledgeBaseQueueService {
 
   async processCrawlWebsite(data: CrawlWebsiteJobData): Promise<void> {
     const { tenantId, botId, url, maxPages = 25 } = data;
-    console.log(`[KnowledgeBaseQueue] Starting site crawl for bot ${botId}, URL: ${url}`);
+    return runWithTenantContext(tenantId, async () => {
+      console.log(`[KnowledgeBaseQueue] Starting site crawl for bot ${botId}, URL: ${url}`);
 
-    // Обновляем статус на in_progress
-    await query(
-      `UPDATE ai_agents
-       SET wizard_config = jsonb_set(
-         jsonb_set(
-           jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"in_progress"'),
-           '{website_url}', to_jsonb($3::text)
-         ),
-         '{crawl_updated_at}', to_jsonb(now()::text)
-       )
-       WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, botId, url],
-    );
+      // Обновляем статус на in_progress
+      await query(
+        `UPDATE ai_agents
+         SET wizard_config = jsonb_set(
+           jsonb_set(
+             jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"in_progress"'),
+             '{website_url}', to_jsonb($3::text)
+           ),
+           '{crawl_updated_at}', to_jsonb(now()::text)
+         )
+         WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, botId, url],
+      );
 
-    if (!this.knowledgeService) {
-      this.knowledgeService = new KnowledgeBaseService();
-    }
+      if (!this.knowledgeService) {
+        this.knowledgeService = new KnowledgeBaseService();
+      }
 
-    try {
-      const crawledPages = await crawlWebsite(url, { maxPages });
+      try {
+        const crawledPages = await crawlWebsite(url, { maxPages });
 
-      if (crawledPages.length === 0) {
+        if (crawledPages.length === 0) {
+          await query(
+            `UPDATE ai_agents
+             SET wizard_config = jsonb_set(
+               jsonb_set(
+                 jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"failed"'),
+                 '{crawl_error}', '"На сайте не найдено подходящих страниц с текстовым содержимым"'
+               ),
+               '{crawl_updated_at}', to_jsonb(now()::text)
+             )
+             WHERE tenant_id = $1 AND id = $2`,
+            [tenantId, botId],
+          );
+          return;
+        }
+
+        let indexedCount = 0;
+        for (const page of crawledPages) {
+          try {
+            await this.knowledgeService.createDraftDocument({
+              tenantId,
+              agentId: botId,
+              filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
+              mimeType: "text/html",
+              text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
+              category: "general",
+              sourceUrl: page.url,
+            });
+            indexedCount++;
+          } catch (pageErr) {
+            console.warn(`[KnowledgeBaseQueue] Failed to create draft for page ${page.url}:`, pageErr);
+          }
+        }
+
+        await query(
+          `UPDATE ai_agents
+           SET wizard_config = jsonb_set(
+             jsonb_set(
+               jsonb_set(
+                 jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"ready"'),
+                 '{crawl_pages_scanned}', to_jsonb($3::int)
+               ),
+               '{crawl_pages_indexed}', to_jsonb($4::int)
+             ),
+             '{crawl_updated_at}', to_jsonb(now()::text)
+           )
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, botId, crawledPages.length, indexedCount],
+        );
+
+        console.log(`[KnowledgeBaseQueue] Completed crawl for bot ${botId}: ${indexedCount}/${crawledPages.length} draft pages added to knowledge base`);
+      } catch (err: unknown) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[KnowledgeBaseQueue] Error crawling site for bot ${botId}:`, errorMsg);
         await query(
           `UPDATE ai_agents
            SET wizard_config = jsonb_set(
              jsonb_set(
                jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"failed"'),
-               '{crawl_error}', '"На сайте не найдено подходящих страниц с текстовым содержимым"'
+               '{crawl_error}', to_jsonb($3::text)
              ),
              '{crawl_updated_at}', to_jsonb(now()::text)
            )
            WHERE tenant_id = $1 AND id = $2`,
-          [tenantId, botId],
+          [tenantId, botId, errorMsg.slice(0, 300)],
         );
-        return;
       }
-
-      let indexedCount = 0;
-      for (const page of crawledPages) {
-        try {
-          await this.knowledgeService.addDocument({
-            tenantId,
-            agentId: botId,
-            filename: `Сайт [${page.path}]: ${page.title.slice(0, 50)}`,
-            mimeType: "text/html",
-            text: `# ${page.title}\nURL: ${page.url}\n\n${page.text}`,
-            category: "general",
-          });
-          indexedCount++;
-        } catch (pageErr) {
-          console.warn(`[KnowledgeBaseQueue] Failed to index page ${page.url}:`, pageErr);
-        }
-      }
-
-      await query(
-        `UPDATE ai_agents
-         SET wizard_config = jsonb_set(
-           jsonb_set(
-             jsonb_set(
-               jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"ready"'),
-               '{crawl_pages_scanned}', to_jsonb($3::int)
-             ),
-             '{crawl_pages_indexed}', to_jsonb($4::int)
-           ),
-           '{crawl_updated_at}', to_jsonb(now()::text)
-         )
-         WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, botId, crawledPages.length, indexedCount],
-      );
-
-      console.log(`[KnowledgeBaseQueue] Completed crawl for bot ${botId}: ${indexedCount}/${crawledPages.length} pages added to knowledge base`);
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[KnowledgeBaseQueue] Error crawling site for bot ${botId}:`, errorMsg);
-      await query(
-        `UPDATE ai_agents
-         SET wizard_config = jsonb_set(
-           jsonb_set(
-             jsonb_set(COALESCE(wizard_config, '{}'::jsonb), '{crawl_status}', '"failed"'),
-             '{crawl_error}', to_jsonb($3::text)
-           ),
-           '{crawl_updated_at}', to_jsonb(now()::text)
-         )
-         WHERE tenant_id = $1 AND id = $2`,
-        [tenantId, botId, errorMsg.slice(0, 300)],
-      );
-    }
+    });
   }
 
   async shutdown(): Promise<void> {

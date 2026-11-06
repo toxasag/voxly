@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { notFound, useParams } from "next/navigation";
+import { notFound, useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   BarChart3,
@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Plug,
   Settings2,
+  Trash2,
 } from "lucide-react";
 import type { AiBot } from "@/lib/ai-bots/ai-bots.types";
 import {
@@ -25,8 +26,14 @@ import {
   renderPromptPreview,
 } from "@/lib/ai-bots/ai-bots.types";
 import { PROMPT_TEMPLATES } from "@/lib/ai-bots/prompt-templates";
-import { useAiAgent, useAgentPromptPreview, useUpdateAiAgent } from "@/lib/api/use-ai-agents";
+import {
+  useAiAgent,
+  useAgentPromptPreview,
+  useDeleteAiAgent,
+  useUpdateAiAgent,
+} from "@/lib/api/use-ai-agents";
 import { useAuth, useHasPermission } from "@/lib/auth/use-auth";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { AgentChannelsTab } from "@/components/ai-bots/AgentChannelsTab";
 import { AgentKnowledgeTab } from "@/components/ai-bots/AgentKnowledgeTab";
@@ -55,7 +62,9 @@ interface BotDetailContentProps {
 }
 
 function BotDetailContent({ bot }: BotDetailContentProps) {
+  const router = useRouter();
   const update = useUpdateAiAgent();
+  const deleteMutation = useDeleteAiAgent();
   const { tenant } = useAuth();
   const tenantName = tenant?.tenantName ?? "Компания";
 
@@ -65,6 +74,7 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
 
   const [tab, setTab] = useState<BotTab>("chat");
   const [configOpen, setConfigOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [promptDraft, setPromptDraft] = useState(bot.system_prompt);
 
   const { data: previewData } = useAgentPromptPreview(bot.id, promptDraft);
@@ -131,6 +141,16 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
   const resetPrompt = useCallback(() => setPromptDraft(bot.system_prompt), [bot.system_prompt]);
 
   const applyTemplate = useCallback((body: string) => setPromptDraft(body), []);
+
+  const handleDeleteAgent = useCallback(async () => {
+    try {
+      await deleteMutation.mutateAsync({ id: bot.id });
+      toast.success(`AI-агент «${bot.name}» успешно удалён`);
+      router.push("/modules/ai-bots");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось удалить агента");
+    }
+  }, [bot.id, bot.name, deleteMutation, router]);
 
   return (
     <div className="space-y-5">
@@ -200,6 +220,14 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
             >
               <Settings2 className="h-3.5 w-3.5" />
               Настроить
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteConfirmOpen(true)}
+              className="flex items-center gap-1.5 rounded-[8px] border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#666666] shadow-2xs transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Удалить
             </button>
           </Guard>
         </div>
@@ -369,6 +397,19 @@ function BotDetailContent({ bot }: BotDetailContentProps) {
         bot={bot}
         onClose={() => setConfigOpen(false)}
         onSubmit={handleConfigSubmit}
+        onDelete={() => setDeleteConfirmOpen(true)}
+      />
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="Удалить AI-агента?"
+        description={`Вы уверены, что хотите удалить агента «${bot.name}»? Бот будет выведен из эксплуатации, а все привязанные каналы связи отвязаны. Действие необратимо.`}
+        confirmLabel="Удалить агента"
+        cancelLabel="Отмена"
+        variant="destructive"
+        isPending={deleteMutation.isPending}
+        onConfirm={handleDeleteAgent}
+        onClose={() => setDeleteConfirmOpen(false)}
       />
     </div>
   );

@@ -20,15 +20,24 @@ export const agentContextEntityValues = [
 export type AgentStatus = (typeof agentStatusValues)[number];
 export type AgentMode = (typeof agentModeValues)[number];
 
+export const consultantSourceValues = ["manual", "chat_widget"] as const;
+export type ConsultantSource = (typeof consultantSourceValues)[number];
+
 export const wizardConfigSchema = z
   .object({
     presetId: z.string().optional(),
     companyName: z.string().optional(),
+    company_name_override: z.string().optional(),
+    companyNameOverride: z.string().optional(),
+    consultantSource: z.enum(consultantSourceValues).optional().default("manual"),
+    consultant_source: z.enum(consultantSourceValues).optional().default("manual"),
     consultantName: z.string().optional(),
     consultantRole: z.string().optional(),
     businessNiche: z.string().optional(),
     targetAction: z.string().optional(),
     handoffSpecialist: z.string().optional(),
+    fallbackModels: z.array(z.string()).optional(),
+    fallback_models: z.array(z.string()).optional(),
     isCustomEdited: z.boolean().optional(),
     crawl_status: z.enum(["idle", "pending", "in_progress", "ready", "failed"]).optional(),
     website_url: z.string().optional(),
@@ -59,6 +68,16 @@ export const createAgentSchema = z.object({
     .max(8000, "Системный промпт до 8000 символов")
     .default("Ты — вежливый AI-ассистент компании. Отвечай кратко, дружелюбно и по существу."),
   context_entities: z.array(z.enum(agentContextEntityValues)).default([]),
+  company_name_override: z.string().trim().optional().nullable(),
+  companyNameOverride: z.string().trim().optional().nullable(),
+  consultant_source: z.enum(consultantSourceValues).default("manual"),
+  consultantSource: z.enum(consultantSourceValues).optional(),
+  consultant_name: z.string().trim().optional().nullable(),
+  consultantName: z.string().trim().optional().nullable(),
+  consultant_role: z.string().trim().optional().nullable(),
+  consultantRole: z.string().trim().optional().nullable(),
+  fallback_models: z.array(z.string()).default([]),
+  fallbackModels: z.array(z.string()).optional(),
   wizard_config: wizardConfigSchema,
   website_url: z.string().optional().or(z.literal("")),
   websiteUrl: z.string().optional().or(z.literal("")),
@@ -106,6 +125,11 @@ export interface AiAgentDTO {
   maxTokens: number;
   systemPrompt: string;
   contextEntities: string[];
+  companyNameOverride?: string | null;
+  consultantSource?: ConsultantSource;
+  consultantName?: string | null;
+  consultantRole?: string | null;
+  fallbackModels?: string[];
   wizardConfig?: WizardConfig | null;
   /** Агрегаты из ai_usage_log: список агентов показывает расход по каждому. */
   tokensUsed: number;
