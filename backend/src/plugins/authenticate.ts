@@ -150,6 +150,12 @@ const PUBLIC_PATHS: ReadonlySet<string> = new Set([
   "/auth/invite",
   "/auth/invite/accept",
   "/health",
+  "/api/ai-bots/generate-prompt",
+  "/api/v1/ai-bots/generate-prompt",
+  "/api/ai/generate-prompt",
+  "/api/v1/ai/generate-prompt",
+  "/api/bots/generate-prompt",
+  "/api/v1/bots/generate-prompt",
 ]);
 
 /**

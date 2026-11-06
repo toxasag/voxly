@@ -1,35 +1,46 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  BookOpen,
+  CheckCircle2,
   Database,
   Edit3,
   Eye,
+  FileCode,
   FileText,
   Globe,
   Loader2,
   MessageSquare,
+  MessageSquareQuote,
   Plus,
+  Save,
   Sparkles,
   Star,
   Trash2,
   Upload,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
   useAddKnowledgeText,
+  useAgentFeedbacks,
+  useApproveFeedback,
   useCrawlSite,
   useCrmKnowledgeStats,
   useDeleteKnowledgeDocument,
   useImportKnowledgeUrl,
   useImportMapReviews,
   useKnowledgeDocuments,
+  useRejectFeedback,
   useSalesExamples,
+  useSyncKnowledgeMd,
   useUploadKnowledgeFile,
   type KnowledgeDocument,
 } from "@/lib/api/use-agent-knowledge";
+import { useAiAgent } from "@/lib/api/use-ai-agents";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { Skeleton } from "@/components/shared/Skeleton";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
@@ -161,8 +172,16 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   const importMapReviews = useImportMapReviews(agentId);
   const remove = useDeleteKnowledgeDocument(agentId);
   const { data: salesExamplesData, isLoading: isLoadingSales } = useSalesExamples(agentId);
+  const { data: agentData } = useAiAgent(agentId);
+  const { data: feedbacksData, isLoading: isLoadingFeedbacks } = useAgentFeedbacks(agentId);
+  const approveFeedback = useApproveFeedback(agentId);
+  const rejectFeedback = useRejectFeedback(agentId);
+  const syncKnowledgeMd = useSyncKnowledgeMd(agentId);
 
-  const [activeSubTab, setActiveSubTab] = useState<"documents" | "sales">("documents");
+  const [activeSubTab, setActiveSubTab] = useState<"documents" | "markdown" | "feedback" | "sales">("documents");
+  const [markdownContent, setMarkdownContent] = useState("");
+  const [isMarkdownDirty, setIsMarkdownDirty] = useState(false);
+  const [feedbackFilter, setFeedbackFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [textOpen, setTextOpen] = useState(false);
@@ -334,6 +353,58 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
       .finally(() => setPendingDelete(null));
   }, [pendingDelete, remove]);
 
+  const agentKnowledgeMd = agentData?.knowledge_base_md;
+  // Инициализация редактора живой базы знаний из данных агента
+  useEffect(() => {
+    if (agentKnowledgeMd !== undefined && !isMarkdownDirty) {
+      setMarkdownContent(agentKnowledgeMd ?? "");
+    }
+  }, [agentKnowledgeMd, isMarkdownDirty]);
+
+  const handleSaveMarkdown = useCallback(() => {
+    void syncKnowledgeMd
+      .mutateAsync({ knowledgeBaseMd: markdownContent })
+      .then(() => {
+        setIsMarkdownDirty(false);
+        toast.success("Живая база знаний (.md) сохранена и синхронизирована!");
+      })
+      .catch((err: unknown) => {
+        toast.error(err instanceof Error ? err.message : "Не удалось сохранить базу знаний");
+      });
+  }, [markdownContent, syncKnowledgeMd]);
+
+  const handleApproveFeedback = useCallback(
+    (feedbackId: string) => {
+      void approveFeedback
+        .mutateAsync({ feedbackId })
+        .then((res) => {
+          toast.success("Правило утверждено и внесено в базу знаний!");
+          if (res.knowledgeBaseMd) {
+            setMarkdownContent(res.knowledgeBaseMd);
+            setIsMarkdownDirty(false);
+          }
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Ошибка утверждения правила");
+        });
+    },
+    [approveFeedback],
+  );
+
+  const handleRejectFeedback = useCallback(
+    (feedbackId: string) => {
+      void rejectFeedback
+        .mutateAsync({ feedbackId })
+        .then(() => {
+          toast.success("Отзыв отклонён");
+        })
+        .catch((err: unknown) => {
+          toast.error(err instanceof Error ? err.message : "Ошибка отклонения");
+        });
+    },
+    [rejectFeedback],
+  );
+
   const isBusy =
     uploadFile.isPending ||
     addText.isPending ||
@@ -345,7 +416,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
   return (
     <div className="space-y-4">
       {/* Sub-tab switcher */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => setActiveSubTab("documents")}
@@ -357,7 +428,33 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
           )}
         >
           <FileText className="h-3.5 w-3.5" />
-          Документы и материалы ({documents.length})
+          Документы и файлы ({documents.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("markdown")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "markdown"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <BookOpen className="h-3.5 w-3.5" />
+          Живая база знаний (.md)
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("feedback")}
+          className={cn(
+            "flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-[8px] transition-colors cursor-pointer border",
+            activeSubTab === "feedback"
+              ? "bg-[#4a38f5] text-white border-[#4a38f5] shadow-2xs"
+              : "bg-white text-[#666666] border-[#e5e5e5] hover:text-[#111111] hover:bg-slate-50",
+          )}
+        >
+          <MessageSquareQuote className="h-3.5 w-3.5" />
+          Обучение на диалогах ({feedbacksData?.length ?? 0})
         </button>
         <button
           type="button"
@@ -370,7 +467,7 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
           )}
         >
           <Sparkles className="h-3.5 w-3.5" />
-          Опыт успешных сделок (Closed-Won) ({salesExamplesData?.length ?? 0})
+          Опыт успешных сделок ({salesExamplesData?.length ?? 0})
         </button>
       </div>
 
@@ -946,7 +1043,271 @@ export function AgentKnowledgeTab({ agentId, canEdit }: AgentKnowledgeTabProps) 
         </div>
       )}
 
-      {/* Вкладка 2: ОБУЧЕНИЕ НА СДЕЛКАХ (CLOSED-WON RAG) */}
+      {/* Вкладка: ЖИВАЯ БАЗА ЗНАНИЙ (.MD) */}
+      {activeSubTab === "markdown" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3.5 rounded-[8px] border border-[#4a38f5]/20 bg-[#4a38f5]/[0.03] p-4">
+            <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-[#4a38f5]" />
+            <div className="space-y-1 text-xs">
+              <p className="font-semibold text-[#111111]">
+                Живая база знаний агента (.md)
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                Этот Markdown-документ является активным живым источником знаний и правил агента. Все изменения синхронизируются атомарно и внедряются в системный контекст агента с наивысшим приоритетом над фоновыми векторными выдержками.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+              <div>
+                <h3 className="text-sm font-semibold text-[#111111]">Редактор базы знаний (.md)</h3>
+                <p className="text-xs text-[#666666]">
+                  Свободно структурируйте факты о компании, прайс-лист, тарифы, регламенты и утвержденные правила.
+                </p>
+              </div>
+
+              {canEdit && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const template = `# База знаний компании\n\n## 1. Основные направления и услуги\n- Услуга 1: описание и условия\n- Услуга 2: описание и условия\n\n## 2. Прайс-лист и ценообразование\n- Базовый тариф: от ... руб.\n- Полный комплекс: от ... руб.\n\n## 3. Регламент консультации\n- Всегда уточнять ключевые параметры запроса\n- Запрашивать номер телефона для связи с профильным специалистом\n\n## Обучение на диалогах (Утвержденные правила)\n`;
+                      setMarkdownContent((prev) => (prev.trim().length > 0 ? `${prev.trim()}\n\n${template}` : template));
+                      setIsMarkdownDirty(true);
+                    }}
+                    className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Вставить шаблон
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={syncKnowledgeMd.isPending}
+                    onClick={handleSaveMarkdown}
+                    className="h-8 rounded-[8px] bg-[#4a38f5] px-4 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                  >
+                    {syncKnowledgeMd.isPending ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Синхронизация...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-3.5 w-3.5" />
+                        <span>Сохранить базу знаний (.md)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Формат: Markdown / GFM</span>
+                <span>{markdownContent.length} символов</span>
+              </div>
+              <textarea
+                rows={18}
+                value={markdownContent}
+                disabled={!canEdit}
+                onChange={(e) => {
+                  setMarkdownContent(e.target.value);
+                  setIsMarkdownDirty(true);
+                }}
+                placeholder="# Введите структурированные знания, прайс, факты или регламенты компании..."
+                className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-3.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Вкладка: ОБУЧЕНИЕ НА ДИАЛОГАХ (ОБРАТНАЯ СВЯЗЬ) */}
+      {activeSubTab === "feedback" && (
+        <div className="space-y-4">
+          <div className="flex items-start gap-3.5 rounded-[8px] border border-amber-200 bg-amber-50/70 p-4">
+            <MessageSquareQuote className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <div className="space-y-1 text-xs">
+              <p className="font-semibold text-[#111111]">
+                Петля самообучения через обратную связь диалогов (Human-in-the-loop)
+              </p>
+              <p className="text-[#555555] leading-relaxed">
+                Операторы и клиенты могут оценивать качество работы агента (1-5 звёзд) и оставлять комментарии после диалогов. Если замечание обоснованно, вы можете в один клик утвердить правило, и оно автоматически дополнит живую базу знаний агента.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-[8px] border border-[#e5e5e5] bg-white shadow-2xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#e5e5e5] px-6 py-4 bg-[#fafafa]">
+              <div>
+                <h3 className="text-sm font-semibold text-[#111111]">
+                  Журнал обратной связи и предложенных правил
+                </h3>
+                <p className="text-xs text-[#666666]">
+                  Оценки ответов бота, комментарии операторов и статус включения в базу знаний.
+                </p>
+              </div>
+
+              {/* Фильтр по статусу */}
+              <div className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-[#e5e5e5]">
+                {(["all", "pending", "approved", "rejected"] as const).map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setFeedbackFilter(status)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs rounded font-medium transition-colors cursor-pointer",
+                      feedbackFilter === status
+                        ? "bg-[#4a38f5] text-white"
+                        : "text-[#666666] hover:text-[#111111] hover:bg-slate-50",
+                    )}
+                  >
+                    {status === "all" && "Все"}
+                    {status === "pending" && "На проверке"}
+                    {status === "approved" && "Утверждённые"}
+                    {status === "rejected" && "Отклонённые"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-6">
+              {isLoadingFeedbacks && (
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }, (_, index) => (
+                    <Skeleton key={index} className="h-20 w-full" />
+                  ))}
+                </div>
+              )}
+
+              {!isLoadingFeedbacks &&
+                (!feedbacksData ||
+                  feedbacksData.filter(
+                    (fb) => feedbackFilter === "all" || fb.status === feedbackFilter,
+                  ).length === 0) && (
+                  <EmptyState
+                    icon={MessageSquareQuote}
+                    title="Нет отзывов с выбранным статусом"
+                    description="Комментарии операторов после диалогов с агентом появятся здесь. Вы сможете подтвердить правило или отклонить его."
+                  />
+                )}
+
+              {!isLoadingFeedbacks && feedbacksData && feedbacksData.length > 0 && (
+                <div className="space-y-3">
+                  {feedbacksData
+                    .filter((fb) => feedbackFilter === "all" || fb.status === feedbackFilter)
+                    .map((item) => {
+                      const isPending = item.status === "pending";
+                      const isApproved = item.status === "approved";
+                      return (
+                        <div
+                          key={item.id}
+                          className="rounded-[8px] border border-[#e5e5e5] bg-white p-4 space-y-3 hover:border-[#cccccc] transition-colors shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {/* Звёздочки */}
+                              <div className="flex items-center gap-0.5 text-amber-500">
+                                {Array.from({ length: 5 }, (_, i) => (
+                                  <Star
+                                    key={i}
+                                    className={cn(
+                                      "h-3.5 w-3.5",
+                                      i < item.rating
+                                        ? "fill-amber-400 text-amber-400"
+                                        : "text-slate-200",
+                                    )}
+                                  />
+                                ))}
+                              </div>
+                              <span className="text-xs font-semibold text-[#111111]">
+                                Оценка {item.rating} из 5
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <span className="text-[11px] text-[#888888] font-mono">
+                                {formatDate(item.createdAt)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "text-[11px] px-2 py-0.5 rounded-full font-medium border",
+                                  isPending && "bg-amber-50 text-amber-700 border-amber-200",
+                                  isApproved && "bg-emerald-50 text-emerald-700 border-emerald-200",
+                                  item.status === "rejected" && "bg-slate-50 text-slate-600 border-slate-200",
+                                )}
+                              >
+                                {isPending && "Ожидает проверки"}
+                                {isApproved && "Утверждено в базу знаний"}
+                                {item.status === "rejected" && "Отклонено"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Комментарий */}
+                          <div className="text-xs bg-[#fafafa] p-3 rounded-[6px] border border-[#f0f0f0] space-y-1.5">
+                            <div>
+                              <span className="font-semibold text-slate-700">Комментарий оператора: </span>
+                              <span className="text-[#111111]">{item.userComment}</span>
+                            </div>
+
+                            {/* Уточняющие вопросы/ответы */}
+                            {item.clarificationQa && item.clarificationQa.length > 0 && (
+                              <div className="pt-1.5 border-t border-[#f0f0f0] text-[11px] space-y-1">
+                                {item.clarificationQa.map((qa, i) => (
+                                  <div key={i} className="text-slate-600">
+                                    <p className="italic">Вопрос: {qa.question}</p>
+                                    {qa.answer && <p className="font-medium text-[#111111]">Ответ: {qa.answer}</p>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Скомпилированное правило */}
+                            {item.compiledRule && (
+                              <div className="pt-1 border-t border-[#f0f0f0] text-xs">
+                                <span className="font-semibold text-[#4a38f5]">Скомпилированное правило: </span>
+                                <span className="font-mono text-xs text-[#111111]">{item.compiledRule}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Кнопки управления (для pending) */}
+                          {canEdit && isPending && (
+                            <div className="flex items-center justify-end gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={rejectFeedback.isPending}
+                                onClick={() => handleRejectFeedback(item.id)}
+                                className="h-7 rounded-[6px] border border-rose-200 bg-rose-50 px-2.5 text-xs font-medium text-rose-600 hover:bg-rose-100 cursor-pointer flex items-center gap-1 transition-colors"
+                              >
+                                <XCircle className="h-3 w-3" />
+                                <span>Отклонить</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={approveFeedback.isPending}
+                                onClick={() => handleApproveFeedback(item.id)}
+                                className="h-7 rounded-[6px] bg-[#4a38f5] px-3 text-xs font-medium text-white hover:bg-[#3d2ee0] cursor-pointer flex items-center gap-1 transition-colors"
+                              >
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span>Утвердить правило</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Вкладка: ОБУЧЕНИЕ НА СДЕЛКАХ (CLOSED-WON RAG) */}
       {activeSubTab === "sales" && (
         <div className="space-y-4">
           <div className="flex items-start gap-3.5 rounded-[8px] border border-blue-200 bg-blue-50/70 p-4">

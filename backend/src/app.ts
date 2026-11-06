@@ -615,6 +615,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiRoutes, { prefix: "/api/ai" });
   await app.register(botAliasRoutes, { prefix: "/api/bots" });
   await app.register(botAliasRoutes, { prefix: "/api/v1/bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/ai-bots" });
+  await app.register(botAliasRoutes, { prefix: "/api/v1/ai-bots" });
   await app.register(adminTenantRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminMetricsRoutes, { prefix: "/api/v1/admin" });
   await app.register(adminPlatformRoutes, { prefix: "/api/v1/admin" });

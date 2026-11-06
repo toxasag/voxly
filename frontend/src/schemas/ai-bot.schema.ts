@@ -89,6 +89,10 @@ export const createBotSchema = z.object({
   consultant_name: z.string().max(100).optional().or(z.literal("")),
   consultant_role: z.string().max(150).optional().or(z.literal("")),
   fallback_models: z.array(z.string()).optional(),
+  target_page_url: z.string().optional().or(z.literal("")),
+  generated_system_prompt: z.string().optional().or(z.literal("")),
+  knowledge_base_md: z.string().optional(),
+  feedback_learning_enabled: z.boolean().optional(),
 });
 
 export type CreateBotPayload = z.infer<typeof createBotSchema>;

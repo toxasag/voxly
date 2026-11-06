@@ -11,8 +11,10 @@ import {
   ChevronDown,
   FileCode,
   FileText,
+  Globe,
   Info,
   Loader2,
+  MessageSquare,
   RefreshCw,
   Save,
   Sliders,
@@ -30,6 +32,7 @@ import {
   getProviderLabel,
 } from "@/lib/ai-bots/ai-bots.types";
 import { useAiModels, type AiModelItem } from "@/lib/api/use-ai-agents";
+import { useGeneratePrompt } from "@/lib/api/use-agent-knowledge";
 import { createBotSchema, type CreateBotPayload } from "@/schemas/ai-bot.schema";
 import { PromptTemplateEditor } from "@/components/ai-bots/PromptTemplateEditor";
 import {
@@ -79,6 +82,10 @@ const DEFAULT_VALUES: CreateBotPayload = {
   consultant_name: "Алексей",
   consultant_role: "ведущий специалист",
   fallback_models: ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+  target_page_url: "",
+  generated_system_prompt: "",
+  knowledge_base_md: "",
+  feedback_learning_enabled: true,
   wizard_config: {
     presetId: "tpl-universal-closer",
     consultantName: "Алексей",
@@ -116,6 +123,10 @@ function toFormValues(bot: AiBot): CreateBotPayload {
     consultant_name: bot.consultant_name ?? (wizardConfig?.consultantName as string | undefined) ?? "",
     consultant_role: bot.consultant_role ?? (wizardConfig?.consultantRole as string | undefined) ?? "",
     fallback_models: bot.fallback_models ?? ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"],
+    target_page_url: bot.target_page_url ?? "",
+    generated_system_prompt: bot.generated_system_prompt ?? "",
+    knowledge_base_md: bot.knowledge_base_md ?? "",
+    feedback_learning_enabled: bot.feedback_learning_enabled ?? true,
     wizard_config: bot.wizard_config ?? {
       presetId: "tpl-universal-closer",
       consultantName: "Алексей",
@@ -136,6 +147,9 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
   const [promptTab, setPromptTab] = useState<"wizard" | "editor">("wizard");
   const [pendingPreset, setPendingPreset] = useState<IndustryPreset | null>(null);
   const [showAllModels, setShowAllModels] = useState(false);
+  const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
+
+  const generatePromptMutation = useGeneratePrompt();
 
   const form = useForm<CreateBotPayload>({
     resolver: zodResolver(createBotSchema),
@@ -287,6 +301,63 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
     },
     [applyPreset, form],
   );
+
+  const handleGeneratePrompt = useCallback(async () => {
+    try {
+      const targetPageUrl = form.getValues("target_page_url");
+      const currentWc = form.getValues("wizard_config");
+      const companyName = form.getValues("company_name_override");
+
+      const result = await generatePromptMutation.mutateAsync({
+        target_page_url: targetPageUrl,
+        company_name: companyName,
+        business_niche: currentWc?.businessNiche,
+        client_profile: currentWc?.clientProfile,
+        target_action: currentWc?.targetAction,
+        constraints: currentWc?.constraints,
+        consultant_name: form.getValues("consultant_name"),
+        consultant_role: form.getValues("consultant_role"),
+        handoff_specialist: currentWc?.handoffSpecialist,
+      });
+
+      if (result) {
+        form.setValue("system_prompt", result.systemPrompt, {
+          shouldValidate: true,
+          shouldDirty: true,
+        });
+        form.setValue("generated_system_prompt", result.systemPrompt, {
+          shouldDirty: true,
+        });
+        if (result.consultantName) {
+          form.setValue("consultant_name", result.consultantName, { shouldDirty: true });
+        }
+        if (result.consultantRole) {
+          form.setValue("consultant_role", result.consultantRole, { shouldDirty: true });
+        }
+        form.setValue(
+          "wizard_config",
+          {
+            ...currentWc,
+            businessNiche: result.businessNiche || currentWc?.businessNiche,
+            clientProfile: result.clientProfile || currentWc?.clientProfile,
+            targetAction: result.targetAction || currentWc?.targetAction,
+            constraints: result.constraints || currentWc?.constraints,
+            consultantName: result.consultantName || currentWc?.consultantName,
+            consultantRole: result.consultantRole || currentWc?.consultantRole,
+            handoffSpecialist: result.handoffSpecialist || currentWc?.handoffSpecialist,
+            isCustomEdited: true,
+          },
+          { shouldValidate: true, shouldDirty: true },
+        );
+
+        toast.success("Роль и системный промпт успешно сгенерированы!");
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Не удалось сгенерировать системный промпт",
+      );
+    }
+  }, [form, generatePromptMutation]);
 
   if (!open) return null;
 
@@ -472,42 +543,118 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                 </div>
               </div>
 
-              {/* Быстрый выбор отраслевого пресета */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-slate-700">
-                  Отраслевой шаблон роли (быстрый выбор)
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {INDUSTRY_PRESETS.map((preset, index) => {
-                    const isSelected = wizardConfig?.presetId === preset.id;
-                    const isLast = index === INDUSTRY_PRESETS.length - 1;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => handleSelectPreset(preset)}
-                        className={cn(
-                          "rounded-lg border p-2.5 text-left transition-all cursor-pointer flex flex-col justify-between",
-                          isLast && "col-span-2",
-                          isSelected
-                            ? "border-[#4a38f5] bg-white ring-1 ring-[#4a38f5] shadow-2xs"
-                            : "border-[#e5e5e5] bg-white hover:border-[#cccccc]",
-                        )}
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-1.5">
-                            <span className="text-xs font-semibold text-[#111111] leading-snug">
-                              {preset.name}
-                            </span>
-                            {isSelected && <Check className="h-3.5 w-3.5 text-[#4a38f5] shrink-0 mt-0.5" />}
-                          </div>
-                          <p className="mt-1 text-[11px] text-[#666666] leading-relaxed line-clamp-2">
-                            {preset.description}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
+              {/* ГЕНЕРАТИВНЫЙ СИНТЕЗ РОЛИ И СИСТЕМНОГО ПРОМПТА */}
+              <div className="space-y-3 rounded-lg border border-[#4a38f5]/25 bg-[#4a38f5]/[0.02] p-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4 text-[#4a38f5]" />
+                    <span className="text-xs font-semibold text-[#111111]">
+                      Генеративный синтез роли и промпта
+                    </span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#4a38f5]/10 text-[#4a38f5] font-medium">
+                    6 навыков продаж (B2B/CRM)
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-[#666666] leading-relaxed">
+                  Укажите адрес целевой веб-страницы (сайт / лендинг) или контекст бизнеса. ИИ автоматически спарсит страницу, выявит ценность и сгенерирует подробный системный промпт.
+                </p>
+
+                {/* Поле ввода URL целевой страницы */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-medium text-slate-700">
+                    URL целевой страницы внедрения (сайт / лендинг)
+                  </label>
+                  <div className="relative">
+                    <Globe className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                    <input
+                      type="url"
+                      value={form.watch("target_page_url") ?? ""}
+                      onChange={(e) =>
+                        form.setValue("target_page_url", e.target.value, { shouldDirty: true })
+                      }
+                      placeholder="https://example.com/services/b2b-consulting"
+                      className="h-8.5 w-full rounded-[8px] border border-[#e5e5e5] bg-white pl-8 pr-3 text-[13px] text-[#111111] placeholder:text-[#888888] focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20"
+                    />
+                  </div>
+                </div>
+
+                {/* Кнопка генерации + быстрое меню пресетов */}
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={generatePromptMutation.isPending}
+                    onClick={handleGeneratePrompt}
+                    className="h-8 rounded-[8px] bg-[#4a38f5] px-3.5 text-xs font-medium text-white shadow-xs transition-colors hover:bg-[#3d2ee0] disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                  >
+                    {generatePromptMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Синтез промпта и роли...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>Сгенерировать роль и системный промпт</span>
+                      </>
+                    )}
+                  </button>
+
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowPresetsDropdown(!showPresetsDropdown)}
+                      className="h-8 rounded-[8px] border border-[#e5e5e5] bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer flex items-center gap-1"
+                    >
+                      <span>Быстрые пресеты</span>
+                      <ChevronDown className="h-3 w-3 text-slate-500" />
+                    </button>
+                    {showPresetsDropdown && (
+                      <div className="absolute right-0 top-9 z-20 w-64 rounded-lg border border-[#e5e5e5] bg-white p-1.5 shadow-lg space-y-1">
+                        {INDUSTRY_PRESETS.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => {
+                              applyPreset(p);
+                              setShowPresetsDropdown(false);
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-slate-100 flex flex-col cursor-pointer"
+                          >
+                            <span className="font-medium text-[#111111]">{p.name}</span>
+                            <span className="text-[10px] text-[#888888] line-clamp-1">{p.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Интерактивное отображение и инлайн-редактор сгенерированного промпта */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-semibold text-slate-700 flex items-center gap-1">
+                      <FileCode className="h-3 w-3 text-[#4a38f5]" />
+                      Сгенерированный системный промпт (активный)
+                    </label>
+                    <span className="text-[10px] text-slate-500">
+                      {(form.watch("system_prompt") || "").length} символов
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={6}
+                    value={form.watch("system_prompt")}
+                    onChange={(e) =>
+                      form.setValue("system_prompt", e.target.value, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Системный промпт роли агента..."
+                    className="w-full rounded-[8px] border border-[#e5e5e5] bg-white p-2.5 text-xs text-[#111111] font-mono leading-relaxed focus:border-[#4a38f5] focus:outline-none focus:ring-1 focus:ring-[#4a38f5]/20 resize-y"
+                  />
                 </div>
               </div>
 
@@ -746,6 +893,28 @@ export function BotModal({ open, bot = null, onClose, onSubmit, onDelete }: BotM
                   <p className="text-[11px] text-[#888888]">
                     Сотрудник, на которого переводится диалог при сложных вопросах, жалобах или претензиях. Бот напишет: «Давайте подключу нашего специалиста ([должность]), он этим вопросом занимается напрямую. На какой номер коллеге удобнее вам набрать?» и передаст управление человеку.
                   </p>
+                </div>
+
+                {/* 8. Самообучение на диалогах (Dialogue Feedback Loop) */}
+                <div className="flex items-start justify-between gap-3 rounded-[8px] border border-[#e5e5e5] bg-white p-3">
+                  <div className="space-y-0.5">
+                    <label className="text-xs font-semibold text-[#111111] flex items-center gap-1.5 cursor-pointer" htmlFor="feedback-toggle">
+                      <MessageSquare className="h-3.5 w-3.5 text-[#4a38f5]" />
+                      Запрашивать комментарии для обучения после диалогов
+                    </label>
+                    <p className="text-[11px] text-[#666666] leading-relaxed">
+                      Оператор или клиент может оценить качество ответа и оставить пожелание по корректировке. Утвержденные правила автоматически дополняют Markdown-базу знаний агента.
+                    </p>
+                  </div>
+                  <input
+                    id="feedback-toggle"
+                    type="checkbox"
+                    checked={form.watch("feedback_learning_enabled") ?? true}
+                    onChange={(e) =>
+                      form.setValue("feedback_learning_enabled", e.target.checked, { shouldDirty: true })
+                    }
+                    className="h-4 w-4 rounded border-slate-300 accent-[#4a38f5] cursor-pointer mt-0.5"
+                  />
                 </div>
               </div>
 
