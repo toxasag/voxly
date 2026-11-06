@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Sheet } from "@/components/ui/sheet";
 import {
+  useApproveKnowledgeDocument,
   useKnowledgeDocumentDetail,
   useUpdateKnowledgeDocument,
 } from "@/lib/api/use-agent-knowledge";
@@ -28,6 +29,7 @@ export function EditDocumentSheet({
 }: EditDocumentSheetProps) {
   const { data: document, isLoading, error } = useKnowledgeDocumentDetail(agentId, documentId);
   const updateMutation = useUpdateKnowledgeDocument(agentId);
+  const approveMutation = useApproveKnowledgeDocument(agentId);
 
   const [filename, setFilename] = useState("");
   const [text, setText] = useState("");
@@ -56,6 +58,26 @@ export function EditDocumentSheet({
       onClose();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Не удалось обновить документ");
+    }
+  };
+
+  const handleApprove = async () => {
+    if (!documentId) return;
+    if (text.trim().length === 0) {
+      toast.error("Текст документа не может быть пустым");
+      return;
+    }
+
+    try {
+      await approveMutation.mutateAsync({
+        docId: documentId,
+        text: text.trim(),
+        filename: filename.trim() || undefined,
+      });
+      toast.success("Документ утверждён и отправлен в активную базу знаний (RAG)!");
+      onClose();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Не удалось утвердить документ");
     }
   };
 
@@ -113,6 +135,21 @@ export function EditDocumentSheet({
 
           {!isLoading && document && (
             <>
+              {/* Бейдж черновика (Human-in-the-Loop RAG) */}
+              {document.status === "draft" && (
+                <div className="rounded-[8px] border border-amber-200 bg-amber-50/80 p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="leading-relaxed space-y-1">
+                    <p className="font-semibold text-amber-900">
+                      Черновик документа на проверке (Human-in-the-Loop RAG)
+                    </p>
+                    <p className="text-amber-800">
+                      Материал подготовлен парсером или загружен как черновик. Ознакомьтесь с текстом, внесите необходимые правки и нажмите кнопку <strong>«Утвердить и отправить в RAG»</strong> внизу, чтобы документ попал в векторную память агента.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Бейдж приоритета прайса */}
               {isPriceDoc && (
                 <div className="rounded-[8px] border border-[#fef08a] bg-[#fefce8] p-3 text-xs text-[#854d0e] flex items-start gap-2.5">
@@ -155,18 +192,24 @@ export function EditDocumentSheet({
                   Статус:{" "}
                   <strong
                     className={cn(
-                      document.status === "ready"
+                      document.status === "ready" || document.status === "approved"
                         ? "text-emerald-600"
-                        : document.status === "processing"
+                        : document.status === "draft"
                           ? "text-amber-600"
-                          : "text-rose-600",
+                          : document.status === "processing"
+                            ? "text-blue-600"
+                            : "text-rose-600",
                     )}
                   >
                     {document.status === "ready"
                       ? "Готов"
-                      : document.status === "processing"
-                        ? "Векторизация..."
-                        : "Ошибка"}
+                      : document.status === "approved"
+                        ? "Утверждён"
+                        : document.status === "draft"
+                          ? "Черновик (на согласовании)"
+                          : document.status === "processing"
+                            ? "Векторизация..."
+                            : "Ошибка"}
                   </strong>
                 </span>
               </div>
@@ -204,15 +247,40 @@ export function EditDocumentSheet({
             Закрыть
           </button>
           {canEdit && (
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={updateMutation.isPending || isLoading}
-              className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50"
-            >
-              {updateMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {updateMutation.isPending ? "Перевекторизация..." : "Сохранить и обновить векторы"}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={updateMutation.isPending || approveMutation.isPending || isLoading}
+                className="rounded-[8px] border border-[#e5e5e5] bg-white px-3.5 py-1.5 text-xs font-medium text-[#111111] hover:bg-[#f5f5f5] transition-colors disabled:opacity-50"
+              >
+                {updateMutation.isPending ? "Сохранение..." : "Сохранить правки"}
+              </button>
+
+              {document?.status === "draft" && (
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={approveMutation.isPending || updateMutation.isPending || isLoading}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-emerald-600 px-4 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  {approveMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {approveMutation.isPending ? "Индексация в RAG..." : "Утвердить и отправить в RAG"}
+                </button>
+              )}
+
+              {document?.status !== "draft" && (
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={updateMutation.isPending || isLoading}
+                  className="flex items-center gap-1.5 rounded-[8px] bg-[#4a38f5] px-4 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-[#3d2ee0] transition-colors disabled:opacity-50"
+                >
+                  {updateMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {updateMutation.isPending ? "Перевекторизация..." : "Сохранить и обновить векторы"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

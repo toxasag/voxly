@@ -45,6 +45,8 @@ export interface ModelInfo {
 }
 
 export const MODEL_CATALOG: ModelInfo[] = [
+  { id: "gemini-flash-lite-latest", label: "Gemini Flash Lite (Fast)", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
+  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
   { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.05, price_out_per_1k: 0.20 },
   { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", provider: "google", context_window: 1_000_000, price_in_per_1k: 0.10, price_out_per_1k: 0.40 },
@@ -102,6 +104,11 @@ export interface AiBot {
   max_tokens: number;
   system_prompt: string;
   context_entities: BotContextEntity[];
+  company_name_override?: string;
+  consultant_source?: "manual" | "chat_widget";
+  consultant_name?: string;
+  consultant_role?: string;
+  fallback_models?: string[];
   wizard_config?: WizardConfig | null;
   website_url?: string;
   crawl_status?: "idle" | "pending" | "in_progress" | "ready" | "failed";

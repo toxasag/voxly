@@ -55,7 +55,7 @@ const SEARCH_LIMIT = 4;
  */
 const SEARCH_MAX_DISTANCE = 0.75;
 
-export type DocumentStatus = "processing" | "ready" | "failed";
+export type DocumentStatus = "draft" | "processing" | "ready" | "failed" | "approved";
 
 export interface KnowledgeDocumentDTO {
   id: string;
@@ -68,6 +68,7 @@ export interface KnowledgeDocumentDTO {
   chunksCount: number;
   createdAt: string;
   category?: string;
+  sourceUrl?: string | null;
 }
 
 export interface KnowledgeDocumentDetailDTO extends KnowledgeDocumentDTO {
@@ -91,6 +92,7 @@ interface DocumentRow {
   error_message: string;
   chunks_count: string;
   category?: string;
+  source_url?: string | null;
   created_at: Date | string;
 }
 
@@ -111,6 +113,7 @@ function toDTO(row: DocumentRow): KnowledgeDocumentDTO {
     chunksCount: Number(row.chunks_count),
     createdAt: toIso(row.created_at),
     category: row.category ?? "general",
+    sourceUrl: row.source_url ?? null,
   };
 }
 
@@ -133,6 +136,7 @@ function toVectorLiteral(vector: readonly number[]): string {
 const DOCUMENT_SELECT = `
   SELECT d.id, d.agent_id, d.filename, d.mime_type, d.file_size, d.status,
          d.error_message, d.created_at, COALESCE(d.category, 'general') AS category,
+         d.source_url,
          COALESCE(c.chunks_count, 0)::text AS chunks_count
   FROM knowledge_base_documents d
   LEFT JOIN LATERAL (
@@ -292,6 +296,164 @@ export class KnowledgeBaseService {
             input.tenantId,
             input.documentId,
           ],
+        );
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+      await query(
+        `UPDATE knowledge_base_documents
+         SET status = 'failed', error_message = $3
+         WHERE tenant_id = $1 AND id = $2`,
+        [input.tenantId, input.documentId, reason.slice(0, 500)],
+      );
+      throw error;
+    }
+
+    return this.getDocument(input.tenantId, input.agentId, input.documentId);
+  }
+
+  /**
+   * Создание черновика документа базы знаний (Human-in-the-loop RAG).
+   *
+   * Документ сохраняется со статусом 'draft', НЕ нарезается на чанки и НЕ векторизуется,
+   * пока пользователь не проверит и не подтвердит его в интерфейсе.
+   */
+  async createDraftDocument(input: {
+    tenantId: string;
+    agentId: string;
+    filename: string;
+    mimeType: string;
+    text: string;
+    category?: string;
+    sourceUrl?: string;
+  }): Promise<KnowledgeDocumentDetailDTO> {
+    await this.assertAgentExists(input.tenantId, input.agentId);
+
+    const category = input.category?.trim() || "general";
+    const text = input.text.trim();
+    if (text.length === 0) {
+      throw new AppError(400, "EMPTY_DOCUMENT", "Текст документа не может быть пустым");
+    }
+
+    const created = await queryOne<{ id: string }>(
+      `INSERT INTO knowledge_base_documents
+         (tenant_id, agent_id, filename, mime_type, file_size, content_text, status, category, source_url)
+       VALUES ($1, $2, $3, $4, $5, $6, 'draft', $7, $8)
+       RETURNING id`,
+      [
+        input.tenantId,
+        input.agentId,
+        input.filename,
+        input.mimeType,
+        Buffer.byteLength(text, "utf8"),
+        text,
+        category,
+        input.sourceUrl ?? null,
+      ],
+    );
+
+    if (created === null) throw new Error("Failed to create draft document");
+
+    return this.getDocument(input.tenantId, input.agentId, created.id);
+  }
+
+  /**
+   * Подтверждение и индексация черновика документа (Approve & Vectorize).
+   *
+   * Применяет финальные правки пользователя (если переданы), нарезает на фрагменты,
+   * запрашивает эмбеддинги и переводит документ в статус 'ready'.
+   */
+  async approveAndIndexDocument(input: {
+    tenantId: string;
+    agentId: string;
+    documentId: string;
+    text?: string;
+    filename?: string;
+    category?: string;
+  }): Promise<KnowledgeDocumentDetailDTO> {
+    await this.assertAgentExists(input.tenantId, input.agentId);
+
+    const existing = await queryOne<{ id: string; content_text: string | null; filename: string; category: string }>(
+      `SELECT id, content_text, filename, category FROM knowledge_base_documents
+       WHERE tenant_id = $1 AND id = $2 AND (agent_id = $3 OR agent_id IS NULL)`,
+      [input.tenantId, input.documentId, input.agentId],
+    );
+
+    if (existing === null) throw new NotFoundError("Документ не найден");
+
+    const textToUse = input.text !== undefined ? input.text.trim() : (existing.content_text ?? "").trim();
+    const filenameToUse = input.filename?.trim() || existing.filename;
+    const categoryToUse = input.category?.trim() || existing.category || "general";
+
+    if (textToUse.length === 0) {
+      throw new AppError(400, "EMPTY_DOCUMENT", "Документ не содержит текста для индексации");
+    }
+
+    if (!this.embeddings.isConfigured) {
+      throw new AppError(
+        503,
+        "EMBEDDINGS_UNAVAILABLE",
+        "Векторизация недоступна: на платформе не настроен доступ к моделям. Обратитесь к администратору.",
+      );
+    }
+
+    const chunks = chunkText(textToUse);
+    if (chunks.length === 0) {
+      throw new AppError(400, "EMPTY_DOCUMENT", "Не удалось сформировать текстовые фрагменты");
+    }
+
+    await query(
+      `UPDATE knowledge_base_documents
+       SET status = 'processing',
+           content_text = $3,
+           filename = $4,
+           category = $5,
+           file_size = $6,
+           error_message = ''
+       WHERE tenant_id = $1 AND id = $2`,
+      [
+        input.tenantId,
+        input.documentId,
+        textToUse,
+        filenameToUse,
+        categoryToUse,
+        Buffer.byteLength(textToUse, "utf8"),
+      ],
+    );
+
+    try {
+      const vectors = await this.embedChunks(chunks);
+
+      await transaction(async (tx) => {
+        await tx.query(
+          `DELETE FROM knowledge_base_chunks WHERE tenant_id = $1 AND document_id = $2`,
+          [input.tenantId, input.documentId],
+        );
+
+        for (const [position, chunk] of chunks.entries()) {
+          const vector = vectors[position];
+          if (!vector) throw new Error(`Missing embedding for chunk ${chunk.index}`);
+
+          await tx.query(
+            `INSERT INTO knowledge_base_chunks
+               (tenant_id, document_id, agent_id, chunk_index, content, embedding)
+             VALUES ($1, $2, $3, $4, $5, $6::vector)`,
+            [
+              input.tenantId,
+              input.documentId,
+              input.agentId,
+              chunk.index,
+              chunk.content,
+              toVectorLiteral(vector),
+            ],
+          );
+        }
+
+        await tx.query(
+          `UPDATE knowledge_base_documents
+           SET status = 'ready', error_message = ''
+           WHERE tenant_id = $1 AND id = $2`,
+          [input.tenantId, input.documentId],
         );
       });
     } catch (error) {
@@ -574,6 +736,8 @@ export class KnowledgeBaseService {
     const vector = embedded.vectors[0];
     if (vector === undefined) return [];
 
+    const effectiveLimit = input.limit && input.limit > 0 ? Math.min(input.limit, 20) : SEARCH_LIMIT;
+
     const rows = await query<{
       content: string;
       distance: string;
@@ -588,9 +752,10 @@ export class KnowledgeBaseService {
        JOIN knowledge_base_documents d ON d.id = ch.document_id
        WHERE ch.tenant_id = $1
          AND (ch.agent_id = $2 OR ch.agent_id IS NULL)
+         AND d.status IN ('ready', 'approved')
          AND (ch.embedding <=> $4::vector) <= $3
        ORDER BY distance ASC
-       LIMIT ${SEARCH_LIMIT}`,
+       LIMIT ${effectiveLimit}`,
       [input.tenantId, input.agentId, SEARCH_MAX_DISTANCE, toVectorLiteral(vector)],
     );
 
