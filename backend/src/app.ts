@@ -131,7 +131,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(sensible);
 
   await app.register(rateLimit, {
-    max: 300,
+    max: 600,
     timeWindow: "1 minute",
     keyGenerator: (request) => request.ip,
     /**
