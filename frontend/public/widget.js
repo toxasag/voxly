@@ -1833,6 +1833,10 @@
 
   // 5. Функция монтирования виджета
   function mount(channelAccountId) {
+    if (window.__getvoxly_disabled__ || safeSessionStorage.getItem('getvoxly_disabled_' + channelAccountId) === 'true') {
+      return;
+    }
+
     if (document.getElementById('getvoxly-bubble')) {
       return;
     }
@@ -2072,7 +2076,70 @@
     var messageBuffer = [];
     var pendingQueueWhileReplying = [];
     var sendTimer = null;
+    var proactiveTimer = null;
     var BUFFER_WAIT_MS = 3500;
+
+    function destroyWidget(reason, isPermanent) {
+      if (isPermanent === undefined) isPermanent = true;
+      try {
+        sendTelemetry('widget_destroyed', (reason || 'unspecified') + (isPermanent ? '_perm' : '_temp'));
+      } catch (e) {}
+
+      try {
+        if (typeof unlockMobileScroll === 'function') {
+          unlockMobileScroll();
+        }
+      } catch (e) {}
+
+      try {
+        if (historyPollTimer) {
+          clearInterval(historyPollTimer);
+          historyPollTimer = null;
+        }
+        if (window.__gvx_badge_timer) {
+          clearInterval(window.__gvx_badge_timer);
+          window.__gvx_badge_timer = null;
+        }
+        if (sendTimer) {
+          clearTimeout(sendTimer);
+          sendTimer = null;
+        }
+        if (proactiveTimer) {
+          clearTimeout(proactiveTimer);
+          proactiveTimer = null;
+        }
+      } catch (e) {}
+
+      try {
+        var wrp = document.getElementById('getvoxly-wrapper');
+        if (wrp && wrp.parentNode) {
+          wrp.parentNode.removeChild(wrp);
+        }
+        var wn = document.getElementById('getvoxly-window');
+        if (wn && wn.parentNode) {
+          wn.parentNode.removeChild(wn);
+        }
+        var pcm = document.getElementById('getvoxly-prechat-modal');
+        if (pcm && pcm.parentNode) {
+          pcm.parentNode.removeChild(pcm);
+        }
+        var stl = document.getElementById('getvoxly-styles');
+        if (stl && stl.parentNode) {
+          stl.parentNode.removeChild(stl);
+        }
+      } catch (e) {}
+
+      try {
+        window.__getvoxly_mounted__ = false;
+        if (isPermanent) {
+          window.__getvoxly_disabled__ = true;
+          if (channelAccountId) {
+            safeSessionStorage.setItem('getvoxly_disabled_' + channelAccountId, 'true');
+          }
+        }
+      } catch (e) {}
+    }
+    window.__getvoxly_destroy__ = destroyWidget;
 
     if (!document.getElementById('getvoxly-styles')) {
       var styleEl = document.createElement('style');
@@ -2081,10 +2148,11 @@
       (document.head || document.body).appendChild(styleEl);
     }
 
-    // Создание DOM-структуры виджета
+    // Создание DOM-структуры виджета (изначально скрыта до подтверждения статуса на сервере)
     var wrapper = document.createElement('div');
     wrapper.className = 'getvoxly-widget-wrapper';
     wrapper.id = 'getvoxly-wrapper';
+    wrapper.style.setProperty('display', 'none', 'important');
     wrapper.innerHTML = `
       <div class="getvoxly-chat-badge" id="getvoxly-badge">Задайте вопрос</div>
       <div class="getvoxly-widget-bubble" id="getvoxly-bubble" title="Онлайн-консультант">
@@ -2483,6 +2551,11 @@
             body: formData,
           });
 
+          if (res.status === 404 || res.status === 403 || res.status === 410) {
+            destroyWidget('Account terminated during upload: HTTP ' + res.status, true);
+            return;
+          }
+
           if (res.ok) {
             var uploadJson = await res.json();
             var data = uploadJson && uploadJson.data;
@@ -2755,6 +2828,10 @@
       try {
         syncInProgress = true;
         var res = await fetch(apiUrl + '/api/v1/public/chat/history/' + channelAccountId + '?visitorId=' + encodeURIComponent(visitorId));
+        if (res.status === 404 || res.status === 403 || res.status === 410) {
+          destroyWidget('Account terminated during history sync: HTTP ' + res.status, true);
+          return;
+        }
         if (res.ok) {
           var json = await res.json();
           var items = json && json.data;
@@ -3243,11 +3320,21 @@
           body: JSON.stringify({ visitorId: visitorId || undefined }),
         });
 
+        // 404 = аккаунт удален, 403 = чат отключен, 410 = ресурс удален
+        if (res.status === 404 || res.status === 403 || res.status === 410) {
+          sendTelemetry('init_account_terminated', res.status);
+          destroyWidget('Account deleted or disabled: HTTP ' + res.status, true);
+          return;
+        }
+
         if (res.ok) {
           sessionInitialized = true;
           var data = (await res.json()).data;
           currentConfig = data;
           sendTelemetry('init_success', data.mascotId || 'none');
+
+          // Аккаунт активен: отображаем виджет на сайте
+          wrapper.style.removeProperty('display');
 
           if (data.visitorId) {
             visitorId = data.visitorId;
@@ -3712,7 +3799,7 @@
           var proKey = 'getvoxly_proactive_shown_' + channelAccountId;
 
           if (isProactive && !safeSessionStorage.getItem(proKey)) {
-            setTimeout(function () {
+            proactiveTimer = setTimeout(function () {
               var alreadyShown = safeSessionStorage.getItem(proKey);
               if (!alreadyShown) {
                 safeSessionStorage.setItem(proKey, 'true');
@@ -3733,10 +3820,13 @@
           }
         } else {
           sendTelemetry('init_failed_status', res.status);
+          var isFatal = res.status >= 400 && res.status < 500;
+          destroyWidget('Init failed with HTTP ' + res.status, isFatal);
         }
       } catch (e) {
         sendTelemetry('init_exception', e && e.message);
         console.warn('[GetVoxly] Failed to init chat session', e);
+        destroyWidget('Init network exception: ' + (e && e.message), false);
       }
     }
 
@@ -3982,6 +4072,11 @@
 
         if (isDraft) return;
 
+        if (res.status === 404 || res.status === 403 || res.status === 410) {
+          destroyWidget('Account terminated during message send: HTTP ' + res.status, true);
+          return;
+        }
+
         if (res.ok) {
           hideNetworkStatus();
           var json = await res.json();
@@ -4138,7 +4233,7 @@
   var bootAttempts = 0;
   function boot() {
     try {
-      if (window.__getvoxly_mounted__ || document.getElementById('getvoxly-bubble')) {
+      if (window.__getvoxly_mounted__ || window.__getvoxly_disabled__ || document.getElementById('getvoxly-bubble')) {
         return;
       }
 
@@ -4155,6 +4250,11 @@
           sendTelemetry('accountId_not_found', 'attempts_exhausted');
           console.warn('[GetVoxly] Webchat script is missing data-account-id or data-channel-id attribute.');
         }
+        return;
+      }
+
+      if (safeSessionStorage.getItem('getvoxly_disabled_' + accountId) === 'true') {
+        window.__getvoxly_disabled__ = true;
         return;
       }
 
