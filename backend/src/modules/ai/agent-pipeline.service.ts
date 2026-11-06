@@ -80,6 +80,8 @@ interface AgentRow {
   consultant_name?: string | null;
   consultant_role?: string | null;
   fallback_models?: string[] | null;
+  knowledge_base_md?: string | null;
+  feedback_learning_enabled?: boolean | null;
   wizard_config: WizardConfig | null;
 }
 
@@ -124,7 +126,7 @@ export class AgentPipelineService {
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.company_name_override,
               a.consultant_source, a.consultant_name, a.consultant_role,
-              a.fallback_models, a.wizard_config
+              a.fallback_models, a.knowledge_base_md, a.feedback_learning_enabled, a.wizard_config
        FROM ai_agent_channel_bindings b
        JOIN ai_agents a ON a.id = b.agent_id
        WHERE b.tenant_id = $1
@@ -462,6 +464,7 @@ export class AgentPipelineService {
 
     const systemPrompt = buildSystemPrompt({
       agentPrompt: agent.system_prompt,
+      knowledgeBaseMd: agent.knowledge_base_md || "",
       contextChunks: contextChunks.map((hit) => ({
         content: hit.content,
         filename: hit.filename,
@@ -643,7 +646,7 @@ export class AgentPipelineService {
       `SELECT a.id, a.name, a.model, a.status, a.mode, a.temperature,
               a.max_tokens, a.system_prompt, a.company_name_override,
               a.consultant_source, a.consultant_name, a.consultant_role,
-              a.fallback_models, a.wizard_config
+              a.fallback_models, a.knowledge_base_md, a.feedback_learning_enabled, a.wizard_config
        FROM ai_agents a
        WHERE a.tenant_id = $1
          AND a.id = $2
@@ -718,6 +721,7 @@ export class AgentPipelineService {
 
     const systemPrompt = buildSystemPrompt({
       agentPrompt: agent.system_prompt,
+      knowledgeBaseMd: agent.knowledge_base_md || "",
       contextChunks: contextChunks.map((hit) => ({
         content: hit.content,
         filename: hit.filename,

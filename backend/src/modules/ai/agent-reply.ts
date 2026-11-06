@@ -225,6 +225,7 @@ export function interpolatePromptVariables(
 export interface BuildSystemPromptInput {
   agentPrompt: string;
   contextChunks: readonly { content: string; filename: string }[];
+  knowledgeBaseMd?: string;
   variables?: Record<string, string | undefined | null>;
   crmPatterns?: readonly { customerQuery: string; agentReply: string }[];
   contactProfile?: string;
@@ -276,6 +277,16 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
   const interpolated = interpolatePromptVariables(input.agentPrompt, effectiveVariables);
 
   const parts = [interpolated.trim()];
+
+  // Если у агента есть живая Markdown база знаний — внедряем её с наивысшим приоритетом
+  if (input.knowledgeBaseMd && input.knowledgeBaseMd.trim().length > 0) {
+    parts.push(
+      [
+        "ЖИВАЯ БАЗА ЗНАНИЙ И УТВЕРЖДЕННЫЕ ПРАВИЛА АГЕНТА (Markdown, наивысший приоритет):",
+        input.knowledgeBaseMd.trim(),
+      ].join("\n\n"),
+    );
+  }
 
   // Если в промпте НЕ было плейсхолдера {{knowledge_base_context}}, добавляем блок в конец (обратная совместимость)
   if (!input.agentPrompt.includes("{{knowledge_base_context}}")) {

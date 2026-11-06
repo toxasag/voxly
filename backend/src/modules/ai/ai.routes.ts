@@ -11,6 +11,9 @@ import { PRODUCT_CODES } from "../finance/billing/billing.types.js";
 import { platformConfigService } from "../admin/platform-config.service.js";
 import {
   createAgentSchema,
+  createDialogueFeedbackSchema,
+  generatePromptSchema,
+  syncKnowledgeMdSchema,
   topupBalanceSchema,
   updateAgentSchema,
 } from "./ai.types.js";
@@ -46,6 +49,11 @@ const agentParams = z.object({ id: z.string().uuid("id must be a UUID") });
 const documentParams = z.object({
   id: z.string().uuid("id must be a UUID"),
   docId: z.string().uuid("docId must be a UUID"),
+});
+
+const feedbackParams = z.object({
+  id: z.string().uuid("id must be a UUID"),
+  feedbackId: z.string().uuid("feedbackId must be a UUID"),
 });
 
 /**
@@ -434,6 +442,78 @@ export default async function aiRoutes(app: FastifyInstance): Promise<void> {
       history: body.history,
     });
 
+    return reply.send({ data: result });
+  });
+
+  // -------------------------------------------------------------------------
+  // Генеративный синтез системного промпта из контекста и URL целевой страницы
+  // -------------------------------------------------------------------------
+
+  app.post("/generate-prompt", async (request, reply) => {
+    let tenantId: string | undefined = request.tenant_id;
+    if (!tenantId) {
+      let token: string | undefined;
+      const authHeader = request.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.slice("Bearer ".length);
+      } else if (request.headers.cookie) {
+        const cookieMatch = request.headers.cookie.match(/(?:^|;\s*)(?:getvoxly_auth_token|access_token)=([^;]+)/);
+        if (cookieMatch && cookieMatch[1]) token = decodeURIComponent(cookieMatch[1]);
+      }
+      if (token) {
+        try {
+          const payload = app.jwt.verify(token) as { tenant_id?: string };
+          if (payload?.tenant_id) {
+            tenantId = payload.tenant_id;
+          }
+        } catch {
+          // Опциональный токен
+        }
+      }
+    }
+    const body = generatePromptSchema.parse(request.body ?? {});
+    const result = await service.generatePrompt(body, tenantId);
+    return reply.send({ data: result, ...result });
+  });
+
+  // -------------------------------------------------------------------------
+  // Синхронизация активной Markdown базы знаний агента
+  // -------------------------------------------------------------------------
+
+  app.post("/agents/:id/knowledge-sync", { onRequest: writeAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = syncKnowledgeMdSchema.parse(request.body ?? {});
+    const md = body.knowledge_base_md ?? body.knowledgeBaseMd ?? "";
+    const agent = await service.syncKnowledgeBaseMd(request.tenant_id, id, md);
+    return reply.send({ data: agent });
+  });
+
+  // -------------------------------------------------------------------------
+  // Обратная связь по диалогам и петля обучения (Dialogue Feedback Loop)
+  // -------------------------------------------------------------------------
+
+  app.post("/agents/:id/feedback", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const body = createDialogueFeedbackSchema.parse(request.body);
+    const feedback = await service.createFeedback(request.tenant_id, id, body);
+    return reply.status(201).send({ data: feedback });
+  });
+
+  app.get("/agents/:id/feedback", { onRequest: readAgents }, async (request, reply) => {
+    const { id } = agentParams.parse(request.params);
+    const feedbacks = await service.listFeedbacks(request.tenant_id, id);
+    return reply.send({ data: feedbacks });
+  });
+
+  app.post("/agents/:id/feedback/:feedbackId/approve", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, feedbackId } = feedbackParams.parse(request.params);
+    const result = await service.approveFeedback(request.tenant_id, id, feedbackId);
+    return reply.send({ data: result });
+  });
+
+  app.post("/agents/:id/feedback/:feedbackId/reject", { onRequest: writeAgents }, async (request, reply) => {
+    const { id, feedbackId } = feedbackParams.parse(request.params);
+    const result = await service.rejectFeedback(request.tenant_id, id, feedbackId);
     return reply.send({ data: result });
   });
 
