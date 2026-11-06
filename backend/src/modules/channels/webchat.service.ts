@@ -235,6 +235,11 @@ export class WebchatService {
    * Выполняется в platform_scope, поскольку запрос приходит от неавторизованного посетителя сайта.
    */
   async resolveAccount(channelAccountId: string): Promise<WebchatAccountInfo> {
+    const trimmedId = (channelAccountId || "").trim();
+    if (!trimmedId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmedId)) {
+      throw new NotFoundError("Аккаунт веб-чата не найден");
+    }
+
     const account = await runWithPlatformScope(() =>
       queryOne<ChannelAccountRow>(
         `SELECT id, tenant_id, label, status, external_id, credentials
@@ -242,7 +247,7 @@ export class WebchatService {
          WHERE id = $1
            AND channel = 'webchat'
            AND deleted_at IS NULL`,
-        [channelAccountId],
+        [trimmedId],
       ),
     );
 
@@ -252,6 +257,10 @@ export class WebchatService {
 
     if (account.status === "disabled") {
       throw new AppError(403, "CHAT_DISABLED", "Чат временно отключен администратором");
+    }
+
+    if (account.status !== "connected") {
+      throw new AppError(403, "CHAT_UNAVAILABLE", "Чат временно недоступен");
     }
 
     const tenant = await runWithPlatformScope(() =>
