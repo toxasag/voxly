@@ -452,7 +452,11 @@ export class AgentPipelineService {
 
     if (wc) {
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.clientProfile || (wc as Record<string, unknown>).client_profile) {
+        variables["client.profile"] = String(wc.clientProfile || (wc as Record<string, unknown>).client_profile);
+      }
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.constraints) variables["constraints"] = wc.constraints;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
     }
 
@@ -704,7 +708,11 @@ export class AgentPipelineService {
 
     if (wc) {
       if (wc.businessNiche) variables["business.niche"] = wc.businessNiche;
+      if (wc.clientProfile || (wc as Record<string, unknown>).client_profile) {
+        variables["client.profile"] = String(wc.clientProfile || (wc as Record<string, unknown>).client_profile);
+      }
       if (wc.targetAction) variables["target.action"] = wc.targetAction;
+      if (wc.constraints) variables["constraints"] = wc.constraints;
       if (wc.handoffSpecialist) variables["handoff.specialist"] = wc.handoffSpecialist;
     }
 
